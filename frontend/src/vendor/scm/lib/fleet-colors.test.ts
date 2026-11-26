@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { assignRouteColors, routeColorFor, FLEET_ROUTE_COLORS } from './fleet-colors';
 
-/* Per-lorry route colour assignment for the A4 day map. PURE — the same trip ids
-   must always yield the same colours so the map, the side panel and the printed
-   run-sheet never disagree, and a reload never reshuffles the routes. */
 describe('assignRouteColors', () => {
   test('assigns palette colours in order, one per trip', () => {
     const c = assignRouteColors(['a', 'b', 'c']);

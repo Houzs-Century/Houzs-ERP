@@ -24,9 +24,6 @@ const SOFA = { fabricCode: 'PC151-12', seatHeight: '28"', legHeight: 'DEFAULT' }
 
 describe('the variant summary carries its label', () => {
   test('the label is exactly the word the rest of the system uses', () => {
-    /* Not a third name for this string. The desktop SO line editor's own
-       column header is the authority; so-audit-labels.ts is the machine-readable
-       copy of it that this test can read without mounting an 8,000-line page. */
     const labels = readFileSync(
       resolve(process.cwd(), 'src/pages/scm-v2/so-audit-labels.ts'),
       'utf8',
@@ -45,10 +42,6 @@ describe('the variant summary carries its label', () => {
       />,
     );
     expect(screen.getByText(DESCRIPTION_2_LABEL)).toBeTruthy();
-    /* The summary must stay ONE findable string. Gluing the label into the same
-       text node would make this row read as "Description 2PC151-12 / …" to
-       anything matching on text — including convertPickerVariants.test.tsx,
-       which is the existing referee for these pickers. */
     expect(screen.getByText('PC151-12 / SEAT 28" / LEG DEFAULT')).toBeTruthy();
   });
 
@@ -74,10 +67,6 @@ describe('the variant summary carries its label', () => {
   });
 });
 
-/* ── every transfer picker gets it from here ────────────────────────────────
-   The label lives on the shared component precisely so no picker has to
-   remember it. These assert the wiring is still shared — remove a picker's
-   import and the failure names that file. */
 describe('the transfer pickers render through the shared component', () => {
   const PICKERS = [
     'src/pages/scm-v2/ConsignmentNoteFromOrder.tsx',
@@ -100,10 +89,6 @@ describe('the transfer pickers render through the shared component', () => {
   }
 
   test('the mobile convert wizard uses the same WORD, spelled its own way', () => {
-    /* Desktop and mobile are one product: the phone's convert wizard renders
-       the identical buildVariantSummary string and had the identical bare-line
-       problem. It labels fields "Label: value" ("Supplier SKU:" sits two lines
-       below), so the presentation differs and the word does not. */
     const src = readFileSync(resolve(process.cwd(), 'src/mobile/MobileConvertWizard.tsx'), 'utf8');
     expect(src).toContain('DESCRIPTION_2_LABEL');
     expect(

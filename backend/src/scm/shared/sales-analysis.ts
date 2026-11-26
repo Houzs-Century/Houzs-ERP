@@ -1,11 +1,3 @@
-// sales-analysis — pure aggregation core for the Sales Analysis page (Part B).
-// Read-only: inputs are plain rows the API loads; outputs are display-ready
-// aggregates. Money is integer centi throughout (UI converts to RM). Per the
-// spec's cross-cutting rules: a "physical purchase" collapses cross-category
-// follow-up SO chains into one; cancelled orders are filtered upstream.
-//
-// Vendored verbatim from 2990 packages/shared/src/sales-analysis.ts — imports
-// re-pointed at the sibling vendored SCM shared modules (all present here).
 
 import { ageFromBirthday, RACE_OPTIONS, GENDER_OPTIONS } from './customer-demographics';
 import { pickComboMatch, buildComboLabel, type SofaComboRow, type SofaPriceTier } from './sofa-combo-pricing';
@@ -14,20 +6,14 @@ import { resolveFabricTierOverride } from './fabric-tier-override-resolve';
 
 export interface SaOrderRow {
   docNo: string;
-  /** cross_category_source_doc_no — the earlier SO this one follows up; null = standalone. */
   sourceDocNo: string | null;
-  /** so_date as 'YYYY-MM-DD'. */
   soDate: string;
-  /** total_revenue_sen — full order grand total incl. delivery/service. */
   totalRevenueSen: number;
-  /** total_margin_sen. */
   totalMarginSen: number;
-  /** service_sen — delivery+lift+dispose bucket; subtracted for product-only. */
   serviceSen: number;
 }
 
 export interface OverviewResult {
-  /** Sample size = non-cancelled orders in scope. */
   n: number;
   orderCount: { bySo: number; byPurchase: number };
   aovSen: {
@@ -35,12 +21,11 @@ export interface OverviewResult {
     perPurchase: { full: number; product: number };
   };
   deliverySen: { avgAll: number; avgCharged: number; chargedCount: number };
-  /** margin / revenue × 100; null when revenue is 0. */
   grossMarginPct: number | null;
 }
 
 export interface MonthlyRow {
-  month: string; // 'YYYY-MM'
+  month: string;
   orders: number;
   revenueSen: number;
   marginSen: number;
@@ -140,25 +125,25 @@ export interface SaCustomerRow {
   gender: string | null;
   state: string | null;
   city: string | null;
-  orderCount: number;     // collapsed physical purchases in scope
-  ltvSen: number;       // sum of total_revenue_sen over scoped orders
-  marginSen: number;    // sum of total_margin_sen over scoped orders
+  orderCount: number;
+  ltvSen: number;
+  marginSen: number;
   firstOrderDate: string | null;
   lastOrderDate: string | null;
-  isReturning: boolean;   // >1 physical purchase in scope
+  isReturning: boolean;
 }
 
 export interface DistributionBucket { key: string; count: number }
 
 export interface CustomerDemographicsSummary {
-  total: number;          // customers after the age filter
-  withBirthday: number;   // of those, how many have a usable birthday
+  total: number;
+  withBirthday: number;
   perCustomer: Array<SaCustomerRow & { age: number | null }>;
-  gender: DistributionBucket[];   // includes 'Unknown'
-  race: DistributionBucket[];     // includes 'Unknown'
-  byState: DistributionBucket[];  // includes 'Unknown'
-  city: DistributionBucket[];     // includes 'Unknown'
-  ageHistogram: Array<{ age: number; count: number }>; // per exact year, ascending
+  gender: DistributionBucket[];
+  race: DistributionBucket[];
+  byState: DistributionBucket[];
+  city: DistributionBucket[];
+  ageHistogram: Array<{ age: number; count: number }>;
   avgAge: number | null;
   medianAge: number | null;
   newVsReturning: { newCount: number; returningCount: number };
@@ -303,9 +288,6 @@ export function computeTargetMatch(
 ): TargetMatchResult {
   const total = customers.length;
 
-  // Age dimension: % of customers whose exact age falls in the target range
-  // [min, max] (both inclusive, either bound optional). Hit-rate like Area —
-  // customers with no usable birthday count against (denominator = everyone).
   const ageConfigured = targets.ageRangeMin != null || targets.ageRangeMax != null;
   const ageLo = targets.ageRangeMin ?? Number.NEGATIVE_INFINITY;
   const ageHi = targets.ageRangeMax ?? Number.POSITIVE_INFINITY;
@@ -350,9 +332,9 @@ export interface SpendBucket {
   customers: number;
   revenueSen: number;
   purchases: number;
-  aovSen: number;        // revenueSen / purchases
+  aovSen: number;
   marginSen: number;
-  marginPct: number | null; // marginSen / revenueSen × 100
+  marginPct: number | null;
 }
 
 /** Spend power per categorical segment. 'Unknown' for blank keys. Sorted by
@@ -384,7 +366,6 @@ export function spendBySegment(
     .sort((a, b) => b.revenueSen - a.revenueSen || a.key.localeCompare(b.key));
 }
 
-// ── Task 1: age bands + buyer demographics ──────────────────────────────────
 
 export const AGE_BANDS = [
   { code: 'le25',   label: '≤25',   min: 0,   max: 25 },
@@ -432,7 +413,6 @@ export function summarizeBuyerDemographics(
   };
 }
 
-// ── Task 2: SaItemRow, ProductUnit, ProductCtx, foldProductUnits ──────────────
 
 export interface SaItemRow {
   docNo: string; soDate: string;
@@ -440,8 +420,7 @@ export interface SaItemRow {
   qty: number; totalSen: number; costSen: number;
   buildKey: string | null; fabricId: string | null;
   legHeight: string | null; seatHeight: string | null;
-  isPwp: boolean;   // variants.pwp === true (PWP reward line)
-  // buyer (attached from the SO's customer)
+  isPwp: boolean;
   race: string | null; birthday: string | null; gender: string | null;
 }
 
@@ -452,13 +431,9 @@ export interface ProductUnit {
   sofaClass: 'combo' | 'custom' | 'pwp' | null;
   comboLabel: string | null;
   fabricUpgrade: boolean | null;
-  /** All line item_codes folded into this unit (a sofa build's module codes; non-sofa = [itemCode]). */
   itemCodes: string[];
-  /** Fabric library id for the build (first non-null across lines); null when none. */
   fabricId: string | null;
-  /** Seat height/depth for the build (first non-null across lines); null when none. */
   seatHeight: string | null;
-  /** True if any line in the build is a PWP reward line. */
   isPwp: boolean;
   race: string | null; birthday: string | null; gender: string | null;
 }
@@ -518,17 +493,12 @@ export function foldProductUnits(rows: ReadonlyArray<SaItemRow>, ctx: ProductCtx
   return out;
 }
 
-// ── Task 3: classifySofaBuild + isFabricUpgrade ──────────────────────────────
 
 export interface SofaClassifyInput {
   baseModel: string;
-  /** Compartment codes from splitSofaCode(item_code).sizeCode, e.g. ['2A(LHF)','L(RHF)'] */
   moduleCodes: string[];
-  /** Resolved selling tier (caller defaults PRICE_1). */
   tier: SofaPriceTier;
-  /** Seat height/depth (caller defaults '24'). */
   height: string;
-  /** SO date as 'YYYY-MM-DD' — used for combo effective-dating. */
   soDate: string;
   isPwp: boolean;
 }
@@ -558,9 +528,7 @@ export function classifySofaBuild(
 
 export interface FabricUpgradeInput {
   category: 'SOFA' | 'BEDFRAME';
-  /** The fabric's category-appropriate selling tier; null when unknown (→ not an upgrade). */
   tier: FabricTier | null;
-  /** Sofa: module compartment codes; bedframe: []. */
   buildCompartments: string[];
   modelId: string | null;
 }
@@ -577,7 +545,6 @@ export function isFabricUpgrade(
   compartmentOverrides: ReadonlyMap<string, FabricTierModelOverride>,
 ): boolean {
   const baseOverride = input.modelId ? (modelOverrides.get(input.modelId) ?? null) : null;
-  // resolveFabricTierOverride only calls .get() — safe to cast ReadonlyMap → Map.
   const override = resolveFabricTierOverride(
     input.buildCompartments,
     baseOverride,
@@ -586,7 +553,6 @@ export function isFabricUpgrade(
   return fabricTierAddon(input.category, input.tier, config, override) > 0;
 }
 
-// ── Task 4: VariantRank, ModelRank, ProductsSection, buildProductsSection ────
 
 export interface VariantRank {
   label: string;
@@ -633,7 +599,6 @@ export function buildProductsSection(
 ): ProductsSection {
   if (units.length === 0) return { byCategory: {} };
 
-  // Phase 1 — group by category → model key → ProductUnit[]
   const byCat = new Map<string, Map<string, ProductUnit[]>>();
   for (const u of units) {
     let catMap = byCat.get(u.category);
@@ -643,7 +608,6 @@ export function buildProductsSection(
     if (arr) arr.push(u); else catMap.set(modelKey, [u]);
   }
 
-  // Phase 2 — build ModelRank[] for each category
   const byCategory: Record<string, ModelRank[]> = {};
   for (const [category, modelMap] of byCat) {
     const models: ModelRank[] = [];
@@ -651,7 +615,6 @@ export function buildProductsSection(
     for (const [, modelUnits] of modelMap) {
       const lead = modelUnits[0]!;
 
-      // Aggregate totals (all Σqty)
       let totalUnits = 0;
       let totalRevenue = 0;
       let totalMargin = 0;
@@ -672,7 +635,6 @@ export function buildProductsSection(
         if (u.fabricUpgrade === true)  fabricUpgradeUnits  += u.qty;
       }
 
-      // Variants — group by variantLabel, Σqty / Σrevenue, demographics by object count
       const variantMap = new Map<string, ProductUnit[]>();
       for (const u of modelUnits) {
         const arr = variantMap.get(u.variantLabel);
@@ -704,7 +666,6 @@ export function buildProductsSection(
       });
     }
 
-    // Sort models: units desc, tie revenueSen desc
     models.sort((a, b) => b.units - a.units || b.revenueSen - a.revenueSen);
     byCategory[category] = models;
   }

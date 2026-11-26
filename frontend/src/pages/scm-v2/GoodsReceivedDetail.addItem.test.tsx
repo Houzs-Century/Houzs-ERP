@@ -64,7 +64,6 @@ vi.mock('../../vendor/scm/lib/mfg-products-queries', () => ({
   useMfgProducts: () => ({ data: [] }),
 }));
 
-// useConfirm / useNotify read a context and throw outside their provider.
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({
   useConfirm: () => async () => true,
 }));

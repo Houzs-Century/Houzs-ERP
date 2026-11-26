@@ -21,7 +21,6 @@
 /** The grid's column labels. `SO_DEFAULT_COLUMNS` names the AutoCount layout
  *  the grid opens with; the rest are what the chooser offers. */
 export const SO_LABELS = {
-  /* Header — AutoCount captions. */
   docNo: 'Doc. No.',
   date: 'Date',
   ref: 'Ref.',
@@ -42,7 +41,6 @@ export const SO_LABELS = {
   phone: 'Phone',
   cancelled: 'Cancelled',
   payment: 'PAYEMENT',
-  /* Line — AutoCount captions. */
   itemGroup: 'Item Group',
   itemCode: 'Item Code',
   detailDescription: 'Detail Description',
@@ -55,7 +53,6 @@ export const SO_LABELS = {
   lineTotal: 'Total (Inc)',
   deliveryDate: 'Delivery Date',
   poDocNo: 'PO Doc No.',
-  /* Line — the ERP's own, no AutoCount caption. */
   deliveredQty: 'Delivered Qty',
   returnedQty: 'Returned Qty',
   remainingQty: 'Remaining Qty',
@@ -125,10 +122,6 @@ export function senToRinggit(sen: number | string | null | undefined, places: nu
   return Number.isFinite(n) ? Number((n / 100).toFixed(places)) : null;
 }
 
-/* The word the Sales Orders LIST pill shows for each stored status — the label
-   half of STATUS_TONE in frontend/src/pages/scm-v2/so-list-status.ts, keyed by
-   the stored value. This file's canonical test asserts the two say the same
-   words. */
 export const SO_STATUS_WORDS: Readonly<Record<string, string>> = {
   DRAFT: 'Draft',
   CONFIRMED: 'Submitted',
@@ -147,8 +140,6 @@ export const SO_STATUS_WORDS: Readonly<Record<string, string>> = {
 export type SoDeliveryState = 'none' | 'partial' | 'full';
 export type SoLifecycleState = 'none' | 'delivered' | 'invoiced' | 'returned';
 
-/* The statuses whose stored word stands whatever the delivery records say —
-   soStatusDisplay's TERMINAL set (frontend/src/vendor/scm/lib/so-status.ts). */
 const SO_TERMINAL = ['CANCELLED', 'CLOSED', 'ON_HOLD'];
 
 /**

@@ -1,9 +1,3 @@
-// ----------------------------------------------------------------------------
-// moneyInDocQueries — what a Money-in document's page reads beyond the
-// document itself (the owner's Claude Design, batch 5 §8.3): the journals it
-// booked, for the Books line and the trail. Read from the ledger, never
-// assumed — the Books line names the accounts the entry actually hit.
-// ----------------------------------------------------------------------------
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../../vendor/scm/lib/authed-fetch';
@@ -60,7 +54,6 @@ export function booksSentence(je: DocJournal, named: Named): string {
   return `Dr ${side(lines, true, named)} · Cr ${side(lines, false, named)} · ${fmtSen(total)}`;
 }
 
-/* ── The receipts' pages (batch 5 §8.3 c7, c4) ────────────────────────────── */
 
 export type OfficialReceiptRow = {
   id: number; or_number: string; status: string; payment_source: string; payment_id: string; doc_no: string | null;
@@ -76,7 +69,6 @@ export type OfficialReceiptDetail = {
   replacedBy: ReceiptRef | null;
   replaces: ReceiptRef | null;
   paymentJournal: { id: string; jeNo: string; reversed: boolean } | null;
-  /** What the payment says now; null when it was deleted. */
   payment: { amountSen: number; paidAt: string | null; method: string | null; soDocNo: string | null; salesInvoiceId: string | null } | null;
   salesOrder: string | null;
   salesInvoice: { id: string; number: string } | null;
@@ -109,7 +101,6 @@ export const useFormaliseReceipt = () => {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['official-receipts'] });
       void qc.invalidateQueries({ queryKey: ['official-receipts-check'] });
-      /* To do's transfers job counts the draft non-card receipts. */
       void qc.invalidateQueries({ queryKey: ['finance-todo'] });
     },
   });

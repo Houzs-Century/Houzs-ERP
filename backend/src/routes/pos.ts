@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// /api/pos — POS auth on Houzs (Phase 1 of the 2990-backend replacement).
-//
-// Lets the 2990 POS log into HOUZS (session auth) so it can stop using Supabase
-// Auth. Mounted BEFORE the global /api/* auth gate; every route below the two
-// PRE-AUTH ones re-applies `auth` per-route.
-//   POST /pin-login   {staffId, pin}  -> mints a Houzs session      (PRE-AUTH)
-//   GET  /sales-staff                 -> PIN-login picker list        (PRE-AUTH)
-//   POST /set-pin      {pin}          -> set the caller's own PIN      (authed)
-//   POST /verify-pin   {pin}          -> re-verify for sensitive ops   (authed)
-//   GET  /sales-stats                 -> caller's MTD KPI tiles        (authed)
-//   POST /admin-set-pin/:userId       -> issue a member's PIN   (users.manage)
-//   POST /admin-reset-pin/:userId     -> clear a member's PIN   (users.manage)
-//   GET  /admin-pin-status/:userId    -> has-PIN + tablet readiness    (  ~   )
-//
-// staffId = an scm.staff uuid (from /sales-staff). scm.staff.user_id links to the
-// public.users integer (migration 0066); we mint the session for THAT user.
-// PIN store + brute-force RPCs live in migration 0099 (scm.pos_pins /
-// scm.pos_pin_attempts / scm.pin_attempt_*).
-// ----------------------------------------------------------------------------
 import { Hono, type Context } from "hono";
 import type { Env } from "../types";
 import { auth, requirePermission } from "../middleware/auth";
@@ -32,10 +12,6 @@ import {
   SESSION_ORIGIN_POS,
 } from "../services/auth";
 import { posPinWriteRefusal, readPosPinStatus, setPosPinForUser } from "../services/posPin";
-/* item-KPI: the SAME source /hr/commission reads, so the dashboard's KPI row
-   and the commission run can never disagree about what a flagged item earned.
-   getSupabaseService rather than the `supabase` middleware: /api/pos is
-   session-authed and mounted pre-auth, so it has no Supabase context to read. */
 import { getSupabaseService } from "../db/supabase";
 import { loadKpiUnitsByDoc } from "../scm/lib/kpi-units";
 import { kpiSenForDocs, splitScopeRevenue } from "../scm/lib/pos-kpi-split";
@@ -44,9 +20,6 @@ import { loadFairsByIds, type FairDb } from "../scm/lib/fair-binding";
 import type { FairProjectRow } from "../scm/lib/fair-options";
 import { activeCompanySql } from "../scm/lib/companyScope";
 
-/* No `sessionOrigin` here on purpose. This router does not READ the origin of
-   the caller's session anywhere — /exchange-web-session used to, and the ruling
-   at that handler is why it no longer does. */
 type Vars = { user?: { id: number }; companyId?: number };
 const pos = new Hono<{ Bindings: Env; Variables: Vars }>();
 
@@ -55,32 +28,24 @@ const WINDOW_SECONDS = 60;
 const isPin = (v: unknown): v is string => typeof v === "string" && /^\d{6}$/.test(v);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// ── PRE-AUTH: PIN login → Houzs session ─────────────────────────────────────
 pos.post("/pin-login", async (c) => {
   let body: { staffId?: string; pin?: string };
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid_json" }, 400); }
   const staffId = String(body.staffId ?? "").trim();
   const pin = body.pin;
   if (!staffId) return c.json({ error: "staff_required" }, 400);
-  // staff_id is a uuid column — a malformed value would 500 on the DB (22P02).
-  // Treat a non-uuid like a bad login (401), not a crash, and skip the DB hit.
   if (!UUID_RE.test(staffId)) return c.json({ error: "bad_pin" }, 401);
   if (!isPin(pin)) return c.json({ error: "pin_invalid" }, 400);
   const DB = c.env.DB;
 
-  // 1) brute-force gate (durable, 60s rolling window; fails OPEN on DB blip)
   try {
     const chk = await DB.prepare(`SELECT allowed, retry_after FROM scm.pin_attempt_check(?, ?)`)
       .bind(staffId, MAX_FAILURES).first<{ allowed: boolean; retry_after: number }>();
     if (chk && chk.allowed === false) {
       return c.json({ error: "too_many_attempts", retryAfter: Number(chk.retry_after) || 60 }, 429);
     }
-  } catch { /* fail open */ }
+  } catch { }
 
-  // 2) look up the PIN hash + the linked Houzs user + the member's position slug
-  //    (for the sales-login gate below). scm.staff.role can't gate — the
-  //    sync_user_to_staff trigger stamps role='sales' on EVERY member (mig 0066),
-  //    so a member's SALES-ness comes from their position (public.positions).
   const row = await DB.prepare(
     `SELECT p.pin_hash, s.user_id, pn.slug AS position_slug
        FROM scm.pos_pins p
@@ -96,39 +61,16 @@ pos.post("/pin-login", async (c) => {
     return c.json({ error: "bad_pin" }, 401);
   }
 
-  // 2.5) Sales-login gate (mirrors 2990's isPinLoginRole). Only a SALES-position
-  //      member may mint a POS session — defense-in-depth over PIN seeding, so a
-  //      non-sales member who somehow holds a PIN (or an admin's stray seed)
-  //      cannot get a tablet session. The picker (/sales-staff) already hides
-  //      non-sales, so a legitimate POS never sends such a staffId.
   if (!row!.position_slug || !row!.position_slug.startsWith("sales")) {
     return c.json({ error: "not_pos_role" }, 403);
   }
 
-  // 3) success → clear the counter, mint a Houzs session for the linked user.
-  //
-  // SESSION_ORIGIN_POS is the anti-tamper hinge and this is its ONLY writer.
-  // It marks the SESSION, not the user: the same person's desktop and mobile
-  // sessions stay origin-less and keep pricing freely, while everything done
-  // with THIS token is held to the server's price by the SO pricing envelope
-  // (scm/routes/mfg-sales-orders.ts isPosTabletCaller). The tablet is not
-  // asked to declare itself and cannot decline to — it is stamped here, on
-  // the way through the PIN gate, by the server.
   try { await DB.prepare(`SELECT scm.pin_attempt_reset(?)`).bind(staffId).run(); } catch {}
   const token = await createSession(c.env, Number(row!.user_id), SESSION_ORIGIN_POS);
   return c.json({ token, userId: Number(row!.user_id), staffId });
 });
 
-// ── PRE-AUTH: salesperson picker for the PIN screen ─────────────────────────
 pos.get("/sales-staff", async (c) => {
-  // The POS sends X-Company-Id (queries.ts) — HONOUR it so a 2990 tablet's PIN
-  // picker shows ONLY company-2 SALES staff, never HOUZS's roster or non-sales
-  // members (the earlier unscoped query leaked both). scm.staff has no
-  // company_id (0083 — shared masters), so company comes from the member's
-  // public.user_companies; the sales filter from the position slug, because the
-  // sync_user_to_staff trigger stamps role='sales' on EVERY member (mig 0066) so
-  // scm.staff.role can't discriminate. A missing/invalid header → empty roster
-  // (fail closed) rather than a cross-company dump.
   const companyId = Number(c.req.header("x-company-id"));
   if (!Number.isInteger(companyId) || companyId <= 0) return c.json({ staff: [] });
   const rows = await c.env.DB.prepare(
@@ -145,7 +87,6 @@ pos.get("/sales-staff", async (c) => {
   return c.json({ staff: rows.results ?? [] });
 });
 
-// helper: resolve the logged-in Houzs user → their scm.staff uuid
 async function callerStaffId(c: Context<{ Bindings: Env; Variables: Vars }>): Promise<string | null> {
   const uid = c.get("user")?.id;
   if (uid == null) return null;
@@ -153,7 +94,6 @@ async function callerStaffId(c: Context<{ Bindings: Env; Variables: Vars }>): Pr
   return s?.id ?? null;
 }
 
-// ── AUTHED: set / change own PIN ────────────────────────────────────────────
 pos.post("/set-pin", auth, async (c) => {
   let body: { pin?: string };
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid_json" }, 400); }
@@ -168,13 +108,6 @@ pos.post("/set-pin", auth, async (c) => {
   return c.json({ ok: true });
 });
 
-// ── ADMIN: set / reset another staff member's PIN ───────────────────────────
-// Keyed by HOUZS USER ID (like the showroom-parking endpoint), because the
-// Members page lists Houzs users; resolve the scm.staff uuid server-side.
-// Gated on users.manage — the same permission the Members page requires. A POS
-// PIN is a login credential, so only a member-admin may set one for someone
-// else. The plaintext PIN is hashed server-side (never stored raw); it travels
-// over TLS exactly like the self-service /set-pin.
 async function staffIdForUser(c: Context<{ Bindings: Env; Variables: Vars }>, userId: number): Promise<string | null> {
   const s = await c.env.DB.prepare(`SELECT id FROM scm.staff WHERE user_id = ?`).bind(userId).first<{ id: string }>();
   return s?.id ?? null;
@@ -185,12 +118,6 @@ pos.post("/admin-set-pin/:userId", auth, requirePermission("users.manage"), asyn
   let body: { pin?: string };
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid_json" }, 400); }
   if (!isPin(body.pin)) return c.json({ error: "pin_invalid" }, 400);
-  // The SALES-position rule, which this door was missing while /api/users/invite
-  // had it. Without it an admin could store a PIN against a non-sales member and
-  // hear nothing: /pin-login then refuses that session with `not_pos_role`, which
-  // the tablet renders as a wrong PIN, so the member is read as forgetful when in
-  // fact the credential can never work. Refuse the write and say which half is
-  // wrong.
   const refusal = posPinWriteRefusal(await readPosPinStatus(c.env, userId));
   if (refusal) return c.json(refusal, 409);
   const written = await setPosPinForUser(c.env, userId, body.pin!);
@@ -198,10 +125,6 @@ pos.post("/admin-set-pin/:userId", auth, requirePermission("users.manage"), asyn
   return c.json({ ok: true });
 });
 
-// ── ADMIN: is this member ready for the tablet, and do they already hold a PIN?
-// The Team profile asks before it offers a PIN box, so an admin can see "PIN set"
-// / "no PIN yet" instead of having to send someone to a tablet to find out.
-// Read-only, users.manage-gated like its two siblings. Never returns the hash.
 pos.get("/admin-pin-status/:userId", auth, requirePermission("users.manage"), async (c) => {
   const userId = Number(c.req.param("userId"));
   if (!Number.isInteger(userId) || userId <= 0) return c.json({ error: "bad_user" }, 400);
@@ -216,7 +139,6 @@ pos.post("/admin-reset-pin/:userId", auth, requirePermission("users.manage"), as
   return c.json({ ok: true, cleared: true });
 });
 
-// ── AUTHED: re-verify PIN for a sensitive action ────────────────────────────
 pos.post("/verify-pin", auth, async (c) => {
   let body: { pin?: string };
   try { body = await c.req.json(); } catch { return c.json({ error: "invalid_json" }, 400); }
@@ -226,53 +148,10 @@ pos.post("/verify-pin", auth, async (c) => {
   const row = await c.env.DB.prepare(`SELECT pin_hash FROM scm.pos_pins WHERE staff_id = ?`)
     .bind(staffId).first<{ pin_hash: string }>();
   const ok = row ? await verifyPassword(body.pin!, row.pin_hash) : false;
-  // Return `valid` for POS parity — 2990's verify-pin returns {valid,...} and the
-  // POS reads body.valid; keep `ok` for any other caller.
   return c.json({ valid: ok, ok });
 });
 
-// ── AUTHED: caller's KPI tiles (personal + showroom) — the POS home dashboard ─
-// Ported from 2990's /pos/sales-stats to the full SalesStatsRow shape. Personal
-// = the caller; Showroom = the caller's showroom mates (or the whole company
-// when the caller has no showroom — admin/owner/coordinator). Period defaults to
-// the current MY calendar month; ?from=&to= (MY YYYY-MM-DD, `to` inclusive)
-// override, sharing the My-orders board window. ?project= / ?venue= narrow both
-// tiles to one roadshow event or one showroom (scm/lib/pos-sales-place.ts).
-//
-// companyContext runs here explicitly: /api/pos is pre-auth (mounted before the
 // global /api/* companyContext, which must stay off pin-login), so without it
-// the scope below would pool BOTH companies' orders.
-//
-// Revenue split (Loo 2026-06-20): Products = goods (mattress/sofa + bedframe +
-// accessories + others) MINUS the item-KPI portion, Service = total − goods
-// (delivery + SERVICE lines), KPI = the item-KPI-flagged add-on amount.
-//
-// KPI was hardcoded 0 here until 2026-08-26, on a comment saying the HR
-// commission machinery had "no Houzs home yet (#19)". That stopped being true
-// when hr.ts and lib/kpi-units.ts were ported — the tables (scm.hr_item_kpi),
-// the loader, the per-unit rule and the admin UI (HrSettings) have all been
-// live for weeks. Only this read was never wired up, so the tile answered RM 0
-// for every salesperson in both companies and no amount of tracing from the POS
-// could find a source, because there wasn't one. It now reads the real flags.
-//
-// An empty scm.hr_item_kpi still yields 0 — correctly, and that is the same
-// answer 2990's own API gives when no flag is active. Zero means "nothing is
-// flagged", not "not implemented".
-// status::text guards the enum (excludes CANCELLED/ON_HOLD safely).
-// ?salesperson targets the Personal card at ANOTHER salesperson. Honoured since
-// 2026-08-19, and gated on canViewAllSales HERE, not on the POS: the board was
-// already filtering by it while this card silently kept answering for the
-// caller, so a director reading "SCARLETT · RM 2,990 · 2 orders" was reading his
-// OWN two orders under her name. A client-side gate is not a permission — the
-// param arrives from a browser, so an ungated read would hand any salesperson a
-// colleague's month. Unknown/unauthorised name => the caller's own figures, the
-// behaviour every caller had before.
-//
-// `showroomScope` says WHICH scope the Showroom card used, because the two are
-// not the same question: staff WITH a showroom get their showroom mates, staff
-// WITHOUT one (director / owner / coordinator) get the whole company. Both used
-// to render under the word "SHOWROOM", so a director saw company-wide figures
-// under a showroom heading and no two people's tiles agreed.
 /** May this caller point the Personal KPI tile at ANOTHER salesperson?
  *
  *  EXPORTED AND PURE so the test EXECUTES it. Its two predecessors both died
@@ -317,26 +196,7 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   ).bind(uid).first<{ id: string; name: string; showroom_id: string | null }>();
   const companyId = (c.get("companyId") as number | undefined) ?? null;
 
-  /* Whose Personal card. Defaults to the caller; a view-all caller may name
-     someone else. TWO corrections against the first version (2026-08-19, found
-     by the reporter within hours):
-     · the gate read canViewAllSales(c), whose director arm needs `houzsUser` —
-       which only scm/middleware/auth.ts stashes. On /api/pos it is never set,
-       so a Sales Director (the exact person the picker is FOR) always failed
-       the gate. Here `user` IS the real Houzs caller, so the check runs
-       directly off it: the flat key, or the director org position.
-     · the lookup matched staff.name; the POS picker sends staff.id
-       (`<option value={s.id}>`). Every lookup missed and fell back to the
-       caller — the label changed, the numbers did not. Matched by id when the
-       param is uuid-shaped (guarded: a malformed value on a uuid column 500s
-       with 22P02 — see the pin-login note above), by name otherwise.
-     A miss still falls back to the caller rather than erroring — the card is a
-     dashboard tile, and a 500 here would blank the whole page. */
   const wantSalesperson = (c.req.query("salesperson") || "").trim();
-  /* Vars types `user` as { id } only; the runtime object is the full session
-     user (services/auth.ts getUserBySession — permissions_set: Set<string>,
-     position_name). Widening cast, not `as never`: the parameter type still
-     checks every property we read. */
   const mayTarget = canTargetSalesperson(
     c.get("user") as Parameters<typeof canTargetSalesperson>[0],
     wantSalesperson,
@@ -349,7 +209,6 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
         .bind(wantSalesperson).first<{ id: string; name: string }>()
     : null;
 
-  // Period (Asia/Kuala_Lumpur = UTC+8). so_date is a DATE → range compares are tz-free.
   const fromYmd = c.req.query("from") || null;
   const toYmd = c.req.query("to") || null;
   const nowMy = new Date(Date.now() + 8 * 3600 * 1000);
@@ -359,7 +218,6 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   const monthLabel = fromYmd
     ? `${fromYmd}${toYmd ? ` – ${toYmd}` : ""}`
     : `${KPI_MONTHS[nowMy.getUTCMonth()]} ${nowMy.getUTCFullYear()}`;
-  // A showroom, or a roadshow event — narrows both tiles (pos-sales-place).
   const place = readSalesPlace(c.req.query("project"), c.req.query("venue"));
 
   const empty = {
@@ -380,9 +238,6 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   // side instead: GET /mfg-sales-orders/mine now returns drafts too, so the
   // board lists the same 28 orders this card counts. Change the two together or
   // they drift apart again.
-  /* `NOT on_hold` since mig 0324. The hold is a MARKER beside the status, so
-     the status test alone stopped being able to see one. Raw SQL rather than a
-     PostgREST predicate here because this whole card is one aggregate query. */
   const conds = ["NOT on_hold", "status::text NOT IN ('CANCELLED','ON_HOLD')", "so_date >= ?"];
   const binds: unknown[] = [monthStart];
   if (toYmd) { conds.push("so_date <= ?"); binds.push(toYmd); }
@@ -395,10 +250,10 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
        FROM scm.mfg_sales_orders
       WHERE ${[...conds, extraWhere].join(" AND ")}`;
 
-  // Showroom scope: the caller's showroom mates, else the whole company.
   let showroomWhere = "true";
   const showroomBinds: unknown[] = [];
   if (me.showroom_id) {
+    // company-scope: scm.staff is a shared master with no company_id; the SO totals are scoped by conds
     const mates = await DB.prepare(`SELECT id FROM scm.staff WHERE showroom_id = ?`)
       .bind(me.showroom_id).all<{ id: string }>();
     const ids = (mates.results ?? []).map((r) => r.id);
@@ -407,11 +262,6 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
     showroomBinds.push(...ids);
   }
 
-  /* Team scope (ticket 2990-0045): everyone in the caller's Team Directory team
-     (same department, same `users.division`). Only for a Title holding the
-     "See team sales" capability (or `*`); everyone else gets no team fields.
-     Not keyed on showroom: 5 of Kris Team's 9 have none. Always the CALLER's
-     team, like the Showroom card. */
   const mayTeam = hasPositionCapability(
     c.get("user") as PositionCapabilityCaller | undefined,
     TEAM_TOTAL_CAPABILITY,
@@ -431,9 +281,6 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   }
   const teamWhere = teamIds.length > 0 ? `salesperson_id IN (${teamIds.map(() => "?").join(",")})` : null;
 
-  /* The picker's list: the Showroom card's orders, one entry per event they are
-     linked to and one per venue of the unlinked rest. Read BEFORE the pick
-     narrows `conds`, so picking one does not empty the list it came from. */
   // company-scope: the same `conds` as aggSql below (company_id = ? at the top
   // of this handler) plus the Showroom card's own scope.
   const placeRows = await DB.prepare(
@@ -443,8 +290,6 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
       GROUP BY project_id, CASE WHEN project_id IS NULL THEN lower(btrim(coalesce(venue, ''))) END`,
   ).bind(...binds, ...showroomBinds).all<Record<string, unknown>>();
   const placeRowList = placeRows.results;
-  /* Event names are labels only: a failed read leaves an event under its id
-     rather than blanking both tiles. */
   let events = new Map<number, FairProjectRow>();
   try {
     events = await loadFairsByIds(
@@ -452,7 +297,7 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
       activeCompanySql(c, "p.company_id"),
       placeRowList.map((r) => Number(r.projectid)).filter(Number.isInteger),
     );
-  } catch { /* labelled by id */ }
+  } catch { }
   const places = salesPlaceFacet(placeRowList, events);
   const placeClause = salesPlaceSql(place);
   if (placeClause) { conds.push(placeClause.sql); binds.push(...placeClause.binds); }
@@ -470,10 +315,6 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
     ? await DB.prepare(aggSql(teamWhere)).bind(...binds, ...teamIds).first<Agg>()
     : null;
 
-  /* The item-KPI portion is per-LINE, so it cannot come out of the header
-     aggregate above — these read the doc numbers the same predicate matched, and
-     kpi-units resolves their lines. Same WHERE, same binds: the two queries
-     cannot describe different order sets. */
   // company-scope: same `conds` as aggSql above — identical WHERE, identical
   // binds, so this cannot read an order the aggregate did not count. Verified
   // 2026-08-26.
@@ -494,8 +335,6 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
         .results.map((r) => r.doc_no)
     : [];
 
-  /* Resolved ONCE for every scope — the doc lists overlap (a team can span
-     showrooms), so one pass over their union. */
   let kpiFlags: Awaited<ReturnType<typeof loadKpiUnitsByDoc>>["flags"] = [];
   let kpiUnitsByDoc: Awaited<ReturnType<typeof loadKpiUnitsByDoc>>["unitsByDoc"] = new Map();
   if (companyId != null && (showroomDocNos.length > 0 || personalDocNos.length > 0 || teamDocNos.length > 0)) {
@@ -508,17 +347,12 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
       kpiFlags = kpi.flags;
       kpiUnitsByDoc = kpi.unitsByDoc;
     } catch (e) {
-      /* Mirrors hr.ts: a KPI read failure must NOT fall through to "no flags".
-         Silently answering 0 is indistinguishable from "nothing is flagged",
-         which is the exact ambiguity this endpoint just spent weeks in. */
       return c.json(
         { error: "kpi_failed", reason: e instanceof Error ? e.message : String(e) },
         500,
       );
     }
   }
-  /* The money split + every clamp lives in lib/pos-kpi-split, where it is
-     tested; this route only supplies the three sums and the count. */
   const card = (r: Agg | null, docNos: string[]) => ({
     ...splitScopeRevenue({
       totalSen: Number(r?.total_sen ?? 0),
@@ -533,22 +367,16 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
 
   return c.json({
     monthLabel, monthStart, monthEnd,
-    /* WHOSE Personal card this is. The POS labels the tile from this, so the
-       name and the number can no longer disagree. */
     staffName: target?.name ?? me.name,
     showroomScope: me.showroom_id ? "showroom" : "company",
     showroomTotal: s.total, showroomCount: s.count,
     showroomProducts: s.products, showroomService: s.service, showroomKpi: s.kpi,
     personalTotal: p.total, personalCount: p.count,
     personalProducts: p.products, personalService: p.service, personalKpi: p.kpi,
-    /* The caller's team. ABSENT (not 0) when they have none: the POS shows its
-       Team card only when `teamTotal` is here. */
     ...(team && t ? {
       teamName: team.name, teamTotal: t.total, teamCount: t.count,
       teamProducts: t.products, teamService: t.service, teamKpi: t.kpi,
     } : {}),
-    /* The pick both tiles were narrowed to (null = every place), and the list
-       to pick from. The POS shows its picker only when `places` is present. */
     place, places,
   });
 });
@@ -594,4 +422,3 @@ pos.post("/exchange-web-session", auth, async (c) => {
 });
 
 export default pos;
-// touch: trigger backend redeploy for #979 SSO endpoint

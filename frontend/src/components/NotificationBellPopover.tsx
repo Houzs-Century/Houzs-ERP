@@ -1,6 +1,3 @@
-/* The bell's popover body, loaded the first time the bell opens (it was the
-   documented next candidate for the always-loaded shell's gzip ceiling:
-   frontend/scripts/check-bundle-size.mjs, INITIAL_JS_GZIP). */
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { cn, relativeTime } from "../lib/utils";
@@ -13,8 +10,6 @@ import { getActiveCompanyId } from "../lib/activeCompany";
 
 type Tab = "all" | "ann" | "sys";
 
-// The tag a system notice wears, from its source column (a tag may carry the
-// thing it is about after a colon — systemNoticeLink reads that part).
 function systemTag(source: string | null | undefined): string {
   switch (String(source ?? "").split(":")[0]) {
     case "pv_approval":
@@ -270,10 +265,6 @@ export default function BellPopover({
   );
 }
 
-/** A system notice's title — a link when the notice names the page it is about
- *  (a payment voucher reminder opens its voucher), plain words otherwise.
- *  Opening it marks it read and closes the bell. Another company's voucher
- *  opens in a new window on that company, never in this tab. */
 function SystemNoticeTitle({ notice, onOpen }: { notice: BannerAnnouncement; onOpen: () => void }) {
   const cls = "text-[12.5px] font-[650] leading-[1.4] text-ink";
   const link = systemNoticeLink(notice.source);
@@ -290,8 +281,6 @@ function SystemNoticeTitle({ notice, onOpen }: { notice: BannerAnnouncement; onO
   return <Link to={link.to} onClick={onOpen} className={linkCls}>{notice.title}</Link>;
 }
 
-/** One-line summary of an activity row. Mirrors the chat system-row
- *  copy, just flattened for the bell. */
 function renderActivityLine(a: NotificationItem): string {
   const who = a.user_name ? `${a.user_name}: ` : "";
   switch (a.action) {

@@ -28,6 +28,7 @@
 // ----------------------------------------------------------------------------
 
 import { customerPartyCode } from './payments';
+import { isAutoCountDepositNote } from './autocount-deposit-note';
 import { chunkIn, paginateAll } from '../scm/lib/paginate-all';
 import { OPEN_SI_STATUSES } from '../scm/lib/open-invoice-states';
 import { recomputeSiPaid, recomputeSiPaidForOrder, stampOrderDeposit } from '../scm/lib/si-order-deposit';
@@ -71,13 +72,9 @@ const SI_COLS = 'id, invoice_number, so_doc_no, debtor_code, debtor_name, invoic
 export type SiOwing = {
   id: string; number: string; soDocNo: string | null; date: string | null; totalSen: number; status: string;
   customer: CustomerKey;
-  /** What it still owes: its total less its receipts, its order's deposit and every credit note knocked off it. */
   owedSen: number;
 };
 
-/** The invoices' customers and what each still owes — the deposit and the credit
-    notes as every screen reads them (stampOrderDeposit). Fails closed: a figure
-    that could not be read is never taken as what the invoice owes. */
 async function owing(sb: Db, companyId: number, rows: Row[]): Promise<Read<Map<string, SiOwing>>> {
   const out = new Map<string, SiOwing>();
   if (rows.length === 0) return { ok: true, value: out };
@@ -123,7 +120,6 @@ export async function customerOpenInvoices(sb: Db, companyId: number, key: Custo
   const open = [...OPEN_SI_STATUSES];
   let found: Row[];
   if (code !== null && UUID.test(code)) {
-    /* A customer id lives on the orders (2990 keeps no debtor codes). */
     const orders = await paginateAll<Row>((from, to) => sb.from('mfg_sales_orders').select('doc_no')
       .eq('company_id', companyId).eq('customer_id', code).order('doc_no').range(from, to));
     if (orders.error) return { ok: false, reason: `orders: ${orders.error.message}` };
@@ -149,10 +145,12 @@ export async function customerOpenInvoices(sb: Db, companyId: number, key: Custo
 }
 
 /** Why a customer note answers a deposit invoice instead of crediting the customer. */
-export type DepositPaper = { kind: 'closes' | 'refund' | 'move'; di: string | null };
+export type DepositPaper = { kind: 'closes' | 'refund' | 'move' | 'autocount'; di: string | null };
 
-/** The customer notes that answer a deposit invoice — a final invoice's
-    close-out, a refund's, a move's — by note id. None of them knocks off. */
+/** The customer notes that answer a deposit — a final invoice's close-out of a
+    deposit invoice, a refund's, a move's, and the note that brings an order's
+    AutoCount deposit onto the customer (acc/autocount-deposits.ts) — by note
+    id. None of them knocks off. */
 export async function depositPapers(sb: Db, companyId: number, notes: readonly Row[]): Promise<Read<Map<string, DepositPaper>>> {
   const out = new Map<string, DepositPaper>();
   const cns = notes.filter((n) => n.kind === 'CN');
@@ -174,6 +172,7 @@ export async function depositPapers(sb: Db, companyId: number, notes: readonly R
     if (n.refund_pv_id) out.set(String(n.id), { kind: 'refund', di });
     else if (n.converted_payment_id) out.set(String(n.id), { kind: 'move', di });
     else if (di) out.set(String(n.id), { kind: 'closes', di });
+    else if (isAutoCountDepositNote(n)) out.set(String(n.id), { kind: 'autocount', di: null });
   }
   return { ok: true, value: out };
 }
@@ -182,6 +181,7 @@ export async function depositPapers(sb: Db, companyId: number, notes: readonly R
 export const depositPaperRefusal = (noteNo: string, paper: DepositPaper): string => {
   if (paper.kind === 'refund') return `${noteNo} takes back a deposit for a refund — that money went back to the customer, so it knocks nothing off.`;
   if (paper.kind === 'move') return `${noteNo} moved a deposit to another order — it knocks nothing off.`;
+  if (paper.kind === 'autocount') return `${noteNo} brings the deposit paid in AutoCount onto the customer — the order's deposit already lowers its invoices, so it knocks nothing off.`;
   return `${noteNo} closes deposit invoice ${paper.di ?? ''} at the final invoice — the order's deposit lowers that invoice, so the note knocks nothing off.`;
 };
 

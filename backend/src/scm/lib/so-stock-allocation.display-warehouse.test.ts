@@ -76,8 +76,6 @@ function fakeSb(tables: Record<string, Row[]>) {
   return { from, tables } as any;
 }
 
-/* Codes and names are the production ones the probe named, so a reader can put
-   this test next to run 34177208009 without a translation step. */
 const SELLING = 'wh-hq';
 const DISPLAY = 'wh-kl-display';
 const SERVICE = 'wh-kl-service';
@@ -146,10 +144,6 @@ describe('display / showroom / service warehouses are never promised to a custom
   });
 
   test('BOUND MODE does not walk past the gate: a C1 bedframe with its OWN received PO at a display warehouse stays PENDING', async () => {
-    /* The bound pass lights off `purchase_order_items.received_qty` and never
-       consults `inventory_balances`, so filtering the pool alone would leave
-       this path wide open — the exact half-applied shape this repo keeps
-       shipping. */
     const sb = world({
       warehouse: DISPLAY, group: 'bedframe', code: 'JAGER-(Q)',
       category: 'BEDFRAME', poItems: [{ qty: 1, received_qty: 1 }],

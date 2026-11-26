@@ -1,22 +1,3 @@
-/* The crew's run of a NON-delivery-order job: Setup / Dismantle (a project),
-   a Service Case leg (pickup, inspection, delivery back), and the manual DP jobs
-   (Supplier pickup, Transfer, Lorry service). A Delivery Order keeps its own
-   chain on scm.delivery_orders (PATCH /delivery-orders-mfg/:id/status|arrival).
-
-   One job is addressed as /:sourceType/:sourceId/:leg — the same identity the
-   delivery board uses for its rows:
-     dp       scm.dp_orders.id      leg = dp job_type
-     project  public.projects.id    leg = SETUP | DISMANTLE
-     assr     public.assr_cases.id  leg = customer_pickup | inspection | delivery
-
-   GET  …               what the crew needs to see for that job + its progress
-   POST …/depart        stamps departed_at (server time) — "On the way"
-   POST …/arrive        stamps arrived_at — "Arrived"
-   POST …/complete      photos (at least one), notes, GPS; stamps completed_at
-                        and files the photos where that job's document keeps them
-
-   Every write is the caller's OWN job unless their delivery scope is 'all'
-   (office). Times are server times; a repeat tap keeps the first one. */
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -59,8 +40,6 @@ export function parseJobParts(rawType: string, sourceId: string, leg: string): {
 }
 
 
-/* The crew share one stop, so the second person to finish is told who finished
-   it and when, not just "already completed". */
 async function alreadyCompleted(c: Ctx, cur: Record<string, unknown> | null) {
   const by = cur?.completed_by == null ? null : (await userNamesById(c, [Number(cur.completed_by)]))[String(cur.completed_by)] || null;
   const at = typeof cur?.completed_at === 'string' ? mytClock(cur.completed_at) : null;
@@ -76,8 +55,6 @@ const tripCrew = (t: Record<string, unknown> | null | undefined): CrewAssignment
   helperIds: [(t?.helper_1_id as string | null) ?? null, (t?.helper_2_id as string | null) ?? null],
 });
 
-/* The job's own row (for the context read and the write-backs) plus whether the
-   caller may act on it, and the trip it rides when there is one. */
 export async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, leg: string): Promise<
   { ok: true; row: Record<string, unknown>; tripId: string | null; companyId: number | null }
   | { ok: false; status: 403 | 404 | 500; error: string; reason: string }
@@ -114,9 +91,6 @@ export async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, 
     ).bind(Number(sourceId)).first<Record<string, unknown>>();
     if (!row) return { ok: false, status: 404, error: 'not_found', reason: 'This project could not be found.' };
     if (scope.mode !== 'all') {
-      // Same canonical crew rule as the board row scope (scalar user id OR a name
-      // in the setup/dismantle crew JSON) — id-only matching 403'd drivers crewed
-      // by name on their own job.
       const me = Number(c.get('houzsUser')?.id);
       const phases = await getUserPhasesOnProject(c.env, Number(sourceId), me, c.get('houzsUser')?.name ?? null);
       if (!phases.includes(leg === 'SETUP' ? 'setup' : 'dismantle')) return notYours;
@@ -132,10 +106,8 @@ export async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, 
       WHERE assr_cases.id = ?${allowedCompaniesSql(c)}`,
   ).bind(Number(sourceId)).first<Record<string, unknown>>();
   if (!row) return { ok: false, status: 404, error: 'not_found', reason: 'This service case could not be found.' };
-  // The case's leg rides the trip its stop was put on by Time Arrangement.
   const { data: stops, error: sErr } = await sb.from('trip_stops').select('trip_id, stop_type').eq('assr_case_id', Number(sourceId));
   if (sErr) return { ok: false, status: 500, error: 'load_failed', reason: sErr.message };
-  // Only THIS leg's stops: a helper on the pickup run must not be able to close the delivery-back leg.
   const tripIds = [...new Set(((stops ?? []) as Array<{ trip_id: string | null; stop_type: string }>)
     .filter((s) => ASSR_LEG_BY_STOP[s.stop_type] === leg).map((s) => s.trip_id).filter(Boolean))] as string[];
   if (scope.mode !== 'all') {
@@ -147,7 +119,6 @@ export async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, 
   return { ok: true, row, tripId: tripIds[0] ?? null, companyId: (row.company_id as number | null) ?? null };
 }
 
-/* What the crew sees for one job, by type. Only what the run needs. */
 async function contextFor(c: Ctx, sourceType: SourceType, leg: string, row: Record<string, unknown>) {
   const sb = c.get('supabase');
   if (sourceType === 'project') {
@@ -181,7 +152,6 @@ async function contextFor(c: Ctx, sourceType: SourceType, leg: string, row: Reco
     contact_name: row.contact_name, contact_phone: row.contact_phone,
     address: [row.address1, row.address2, row.address3, row.address4, row.postcode, row.city].filter(Boolean).join(', '),
     state: row.state, date: row.requested_date, remark: row.remark,
-    // Where "Open document" goes on the desktop panel.
     stock_transfer_id: row.stock_transfer_id, lorry_id: row.lorry_id, work_order_id: row.work_order_id,
   };
   if (leg === 'TRANSFER' && row.stock_transfer_id) {
@@ -214,8 +184,6 @@ async function readProgress(c: Ctx, sourceType: SourceType, sourceId: string, le
   return (data ?? null) as Record<string, unknown> | null;
 }
 
-/* A trip moves PLANNED -> IN_PROGRESS on its first "On the way", so the phone's
-   live location (trip_locations, accepted only while IN_PROGRESS) starts. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client, untyped like every other route helper
 export async function startTripIfPlanned(sb: any, tripId: string | null): Promise<void> {
   if (!tripId) return;
@@ -225,13 +193,6 @@ export async function startTripIfPlanned(sb: any, tripId: string | null): Promis
   if (error) throw new Error(error.message);
 }
 
-/* GET /progress?since=YYYY-MM-DD — every job's progress touched since that day,
-   so the run-sheet and the board can show On the way / Arrived / Done on
-   non-DO rows without one read per row. Times and photo keys only, no party
-   data; the window is capped at 62 days.
-   PAGED: a bare `.limit(5000)` is still cut at PostgREST's 1,000 rows, so past
-   ~22 legs a day over the 45-day window the oldest jobs silently lost their
-   Arrived / Done. `truncated` (over 50,000 legs) is refused, not hidden. */
 export async function loadJobProgressSince(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scm-scoped supabase-js client
   sb: any,
@@ -242,7 +203,6 @@ export async function loadJobProgressSince(
     let q = sb.from('job_progress')
       .select('source_type, source_id, leg, departed_at, arrived_at, completed_at, pod_photo_keys')
       .gte('updated_at', since);
-    // The allowed companies, plus legs whose project / case carries no company (still the caller's run-sheet).
     if (companyIds !== undefined) q = companyIds.length ? q.or(`company_id.in.(${companyIds.join(',')}),company_id.is.null`) : q.is('company_id', null);
     return q.order('id').range(from, to);
   });
@@ -339,7 +299,6 @@ deliveryJobProgress.post('/:sourceType/:sourceId/:leg/complete', async (c) => {
   try {
     const cur = await readProgress(c, job.sourceType, job.sourceId, job.leg);
     if (cur?.completed_at) return await alreadyCompleted(c, cur);
-    // Any crew member's photos for THIS stop (loadJob admitted the caller to it); claiming also stops the reaper.
     const claim = await claimPodPhotos(sb, c, { houzsUserId: houzsUserIdOf(c), stopContext: jobStopContext(job) }, rawKeys);
     if (!claim.ok) return c.json({ error: 'photo_not_accepted', reason: claim.reason }, 400);
     const photoKeys = claim.keys;
@@ -350,10 +309,7 @@ deliveryJobProgress.post('/:sourceType/:sourceId/:leg/complete', async (c) => {
         .upsert({ ...key, company_id: loaded.companyId, trip_id: loaded.tripId, updated_at: now }, { onConflict: 'source_type,source_id,leg', ignoreDuplicates: true });
       if (insErr) return c.json({ error: 'update_failed', reason: insErr.message }, 500);
     }
-    // ONE request wins: the flip from completed_at IS NULL. A double tap or the
-    // helper completing at the same moment gets 409 and runs no side effect.
     const { data: won, error } = await sb.from('job_progress').update({
-      // Completing implies the crew got there; keep any earlier taps.
       departed_at: cur?.departed_at ?? now, departed_by: cur?.departed_by ?? me,
       arrived_at: cur?.arrived_at ?? now, arrived_by: cur?.arrived_by ?? me,
       completed_at: now, completed_by: me, pod_photo_keys: photoKeys,
@@ -376,8 +332,6 @@ deliveryJobProgress.post('/:sourceType/:sourceId/:leg/complete', async (c) => {
         if (dpErr) throw new Error(dpErr.message);
       }
     } catch (e) {
-      // A follow-up failed: un-complete so the crew can simply retry (photo filing
-      // is idempotent and the moves only act from their own step).
       await sb.from('job_progress').update({ completed_at: null, completed_by: null, updated_at: new Date().toISOString() })
         .eq('source_type', key.source_type).eq('source_id', key.source_id).eq('leg', key.leg);
       return c.json({ error: 'update_failed', reason: `The job was not completed: ${(e as Error).message}. Try again.` }, 500);
@@ -388,12 +342,6 @@ deliveryJobProgress.post('/:sourceType/:sourceId/:leg/complete', async (c) => {
   }
 });
 
-/* Service case: the step staff take by hand once the crew has done the leg —
-   and ONLY when the case is still sitting on that step, so a case moved on in
-   the meantime is never pushed somewhere else.
-     customer_pickup  Pickup/Return: pending_customer_pickup -> pending_supplier_pickup
-     inspection       Verify:        pending_inspection     -> qc_issue_result (staff record the result)
-     delivery         Delivery stage -> completed (closing sends the CSAT survey, as a manual close does) */
 async function advanceServiceCase(c: Ctx, caseId: number, leg: string, me: number | null) {
   // Read NOW, not the row loadJob read before the photos were filed.
   // company-scope: the case loadJob already admitted under the caller's company predicate
@@ -412,10 +360,6 @@ async function advanceServiceCase(c: Ctx, caseId: number, leg: string, me: numbe
   }
 }
 
-/* Project: the crew's setup / dismantle photos already show under the
-   "Setup Image" / "Dismantle Image" checklist rows, which nobody ticked; the
-   POD ticks the open one. The project stage is left alone — nothing maintains
-   it and the P&L "completed" view reads it. */
 async function tickProjectImageRow(c: Ctx, projectId: number, leg: string, me: number | null) {
   const like = leg === 'SETUP' ? 'Setup Image%' : 'Dismantle Image%';
   // company-scope: rows of the one project the crew-checked job just completed (loadJob)
@@ -425,10 +369,6 @@ async function tickProjectImageRow(c: Ctx, projectId: number, leg: string, me: n
   for (const r of rows.results ?? []) await setChecklistStatus(c.env, r.id, 'done', me ?? 0);
 }
 
-/* Files POD photos where the job's own document keeps photos (the complete
-   step and a later add both come through here; neither the stage move nor the
-   checklist tick does). Every write is idempotent on the photo key, so a re-run
-   files nothing twice. Throws on a failed write. */
 async function fileJobPhotos(c: Ctx, job: { sourceType: SourceType; sourceId: string; leg: string },
   row: Record<string, unknown>, photoKeys: string[], me: number | null, what: string) {
   if (job.sourceType === 'project') {
@@ -464,7 +404,6 @@ async function fileProjectPhotos(c: Ctx, projectId: number, phase: string, photo
   }
 }
 
-/* A service case's completion attachments + one timeline entry per batch of new photos. */
 async function fileAssrPhotos(c: Ctx, caseId: number, photoKeys: string[], me: number | null, title: string, what: string) {
   // company-scope: callers pass a case already read under the caller's company predicate
   const have = await c.env.DB.prepare(
@@ -479,8 +418,6 @@ async function fileAssrPhotos(c: Ctx, caseId: number, photoKeys: string[], me: n
     me, { category: 'service', source_channel: 'app' });
 }
 
-/* A Delivery Planning project job's photos land on the phase the job belongs to;
-   a job type with no phase on a project keeps them on the job only. */
 const DP_PROJECT_PHASE: Record<string, string> = {
   SETUP: 'setup', DELIVERY: 'setup', DISMANTLE: 'dismantle', PICKUP: 'dismantle', SERVICE: 'service',
 };
@@ -509,9 +446,6 @@ async function fileDpLinkedPhotos(c: Ctx, jobType: string, row: Record<string, u
   }
 }
 
-/* POST …/add-photos — more POD photos on a completed job (the office backing up
-   a crew whose phone died, or a photo taken late). Appends; files them on the
-   document like the original POD; moves nothing. */
 deliveryJobProgress.post('/:sourceType/:sourceId/:leg/add-photos', async (c) => {
   const job = parseJob(c);
   if ('error' in job) return c.json({ error: 'invalid_job', reason: job.error }, 400);
@@ -542,7 +476,6 @@ deliveryJobProgress.post('/:sourceType/:sourceId/:leg/add-photos', async (c) => 
   }
 });
 
-/* GET …/photo/:n — the n-th POD photo of a job the caller may see. */
 deliveryJobProgress.get('/:sourceType/:sourceId/:leg/photo/:n', async (c) => {
   const job = parseJob(c);
   if ('error' in job) return c.json({ error: 'invalid_job', reason: job.error }, 400);
@@ -563,9 +496,6 @@ export async function streamPhoto(c: Ctx, key: string | undefined): Promise<Resp
   return podPhotoResponse(obj);
 }
 
-/* The delivery-run POD of a stock transfer, for the Stock Transfer page (it sits
-   behind scm.warehouse.transfers, not transportation): the Transfer job(s) that
-   carry this transfer and their progress. Record only — moves nothing. */
 export const stockTransferDeliveryPodHandler = async (c: Ctx) => {
   const sb = c.get('supabase');
   const { data: dps, error } = await scopeToAllowedCompanies(
@@ -594,7 +524,6 @@ export const stockTransferDeliveryPhotoHandler = async (c: Ctx) => {
   }
 };
 
-/* Names of the people who tapped each step, keyed by public user id. */
 async function namesFor(c: Ctx, rows: Array<Record<string, unknown>>): Promise<Record<string, string>> {
   return userNamesById(c, rows.flatMap((r) => [r.departed_by, r.arrived_by, r.completed_by]).filter((v) => v != null).map(Number));
 }

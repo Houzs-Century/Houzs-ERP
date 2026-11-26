@@ -1,21 +1,3 @@
-/* The Sales Order grid's labels, its AutoCount default layout, and the words it prints.
- *
- * WHY A MIRROR. The server builds the lines (backend/src/scm/lib/so-list-lines.ts)
- * and the grid renders and exports them. The frontend cannot import from
- * backend/src, so the module is copied byte for byte and this test is the
- * referee. backend/scripts/check-shared-mirrors.mjs sees the pair by basename, so
- * the file must stay at the top level of this directory.
- *
- * WHY THE LABELS ARE PINNED AS LITERALS. They are AutoCount's own captions, read
- * from the live book's saved layouts on 2026-09-15, and the export writes them as
- * the header. A rename that updated both copies at once would still pass
- * byte-identity and would silently stop matching AutoCount.
- *
- * WHY THE STATUS WORD IS RUN AGAINST THE LIST'S OWN FUNCTIONS. The owner's
- * ruling is "the word on screen". The list pill is soRowStatus over
- * soStatusDisplay; this module carries a copy the server can run, so every
- * combination of stored status, delivery state and lifecycle is compared.
- */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';

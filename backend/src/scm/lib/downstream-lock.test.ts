@@ -19,9 +19,6 @@ import {
   soDocNosWithDownstream,
 } from './downstream-lock';
 
-/* Minimal PostgREST stand-in. The lock only ever does
-   .select(cols, {head, count}).eq().neq() and .select().eq(), so the builder
-   collects predicates and answers on await. */
 type Row = Record<string, unknown>;
 function fakeSb(tables: Record<string, Row[]>) {
   const from = (table: string) => {
@@ -76,8 +73,6 @@ describe('downstreamVerdict — the rule itself', () => {
 });
 
 describe('a shipped Sales Order can be neither cancelled nor edited', () => {
-  /* Both refusals come from the SAME call: the SO cancel path and every SO
-     line-mutation path call soHasDownstream and 409 on its result. */
   test('a live Delivery Order locks the SO', async () => {
     const sb = fakeSb({
       delivery_orders: [{ id: 'do-1', so_doc_no: 'HC-SO-1', status: 'DELIVERED' }],
@@ -124,8 +119,6 @@ describe('a received Purchase Order can be neither cancelled nor edited', () => 
     expect(await poHasDownstream(sb, 'po-1')).toBeNull();
   });
 
-  /* Sister review G5: a receipt converted from two POs names only the first in
-     its header; the second PO's lines are on it all the same. */
   test('a live GRN whose header names ANOTHER PO still locks a PO whose line it received', async () => {
     const sb = fakeSb({
       grns: [{ id: 'g1', purchase_order_id: 'po-1', status: 'POSTED' }],
@@ -178,14 +171,10 @@ describe('DO and GRN', () => {
     expect((await doHasDownstream(fakeSb(tables), 'do-a'))?.error).toBe('do_has_downstream');
     expect((await doHasDownstream(fakeSb(tables), 'do-b'))?.error).toBe('do_has_downstream');
 
-    // Once the SI is cancelled, DO-B is free again.
     tables.sales_invoices[0]!.status = 'CANCELLED';
     expect(await doHasDownstream(fakeSb(tables), 'do-b')).toBeNull();
   });
 
-  /* GRN counts off grn_items.invoiced_qty / returned_qty, not a row count over
-     purchase_invoices: recomputeGrnInvoiced already excludes DRAFT and
-     CANCELLED invoices from that number, which a row count would not. */
   test('a GRN line with invoiced_qty > 0 locks the GRN', async () => {
     const sb = fakeSb({ grn_items: [{ grn_id: 'g1', invoiced_qty: 2, returned_qty: 0 }] });
     expect((await grnHasDownstream(sb, 'g1'))?.error).toBe('grn_has_downstream');
@@ -207,11 +196,6 @@ describe('DO and GRN', () => {
   });
 });
 
-/* The swallowed-error class (2026-08-13). These four used to read `count ?? 0`
-   and `data ?? []` off a destructure that dropped `error`, so a query that
-   FAILED arrived at the verdict as "nothing downstream" — the one absence that
-   authorises the cancel this module exists to refuse. A failed read must never
-   read as an absence when the absence is what authorises the write. */
 describe('a read that failed is not an absence', () => {
   const brokenSb = () => ({
     from: () => {
@@ -243,10 +227,6 @@ describe('a read that failed is not an absence', () => {
   });
 });
 
-/* The batch form the SO list uses: same verdict as soHasDownstream, but read
-   off rows already in hand. It cannot fail closed the way the single-document
-   form does — the caller's query either returned rows or it threw — so what
-   matters here is that it agrees on WHICH orders are locked. */
 describe('soDocNosWithDownstream', () => {
   test('an order locks on a DO or an SI, and each is counted once', () => {
     const locked = soDocNosWithDownstream(

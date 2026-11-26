@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// reportParts — what a Finance report uses to sit in the report shell (batch 6
-// §4.3) without being restructured, apart from the shell itself so a report
-// never loads the report list's dependencies:
-//   · <ReportHeaderActions> puts its buttons in the shell's header (they render
-//     where they stand when the report is drawn outside a shell, e.g. a test);
-//   · useReportSubtitle(text) sets the header's grey line (the period);
-//   · <ReportToolbar> is the white card its date range and tools sit in;
-//   · <ReportExports> are Layout · Excel · PDF · Print, drawn from the report's
-//     sheet the way today's exports are (report-sheet-xlsx / report-sheet-pdf):
-//     PDF opens the preview, Print prints that same PDF;
-//   · <InPlaceOfReport> stands in for the report while it is open (the Layout
-//     editor, batch 6 §5.12): the report and its header buttons step aside.
-// ----------------------------------------------------------------------------
 
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -24,7 +10,6 @@ import s from './ReportShell.module.css';
 export type ShellSlots = {
   actionsHost: HTMLElement | null;
   setSubtitle: (text: string | null) => void;
-  /** Where a part that stands in for the report draws, and the switch that sets the report aside. */
   inPlaceHost: HTMLElement | null;
   setInPlace: (on: boolean) => void;
 };
@@ -76,17 +61,11 @@ export function ReportToolbar({ children, label = 'Report tools' }: { children: 
  *  Download and Print); Print prints that same PDF. The builders load on the
  *  press, so a report that never exports never downloads them. */
 export function ReportExports({ sheet, fileBase, onLayout, layoutOn = false, onPdf, onExcel }: {
-  /** The sheet as shown, or null while there is nothing to export. Not read for a
-   *  format the report makes itself (`onExcel`, `onPdf`). */
   sheet?: () => ReportSheet | null;
-  /** The file name without its extension: pnl-2026-10-01-to-2026-10-29. */
   fileBase: string;
   onLayout?: () => void;
   layoutOn?: boolean;
-  /** A report that keeps its own paper (the Corrections' builder): PDF and
-   *  Print call it, with the preview or the print action. */
   onPdf?: (action: 'preview' | 'print') => Promise<void>;
-  /** A report that makes its own workbook (Event Commission asks who it is for first). */
   onExcel?: () => void;
 }) {
   const excel = async () => {
@@ -203,9 +182,7 @@ export type ReportTile = {
   value: ReactNode;
   sub?: ReactNode;
   tone?: ReportTileTone;
-  /** The small square before the label (a bucket's colour). */
   dot?: string;
-  /** A tile that filters what is below it: pressed while it does. */
   onClick?: () => void;
   on?: boolean;
 };

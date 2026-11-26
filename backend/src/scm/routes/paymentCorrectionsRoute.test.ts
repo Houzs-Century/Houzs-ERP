@@ -42,22 +42,14 @@ const sb = fakeSb({
     row('deleted', { action: 'DELETE_PAYMENT', so_doc_no: '2990-SO-2609-002', payment_id: 'pay-2', field_changes: [{ field: 'amountSen', from: 50_000, to: null }, { field: 'ledger', from: 'JE-2609-0040', to: null }], created_at: '2026-09-05T08:00:00Z' }),
     /* An add on the right (docs/bugs/0888). */
     row('added', { action: 'ADD_PAYMENT', so_doc_no: '2990-SO-2609-003', payment_id: 'pay-3', note: 'Balance collected on delivery', field_changes: [{ field: 'paidAt', from: null, to: '2026-09-12' }, { field: 'method', from: null, to: 'cash' }, { field: 'amountSen', from: null, to: 150_000 }, { field: 'ledger', from: null, to: 'JE-2609-0070' }], created_at: '2026-09-12T01:00:00Z' }),
-    /* An untagged correction from before payments were tagged: its recorder is
-       read off the order's own ADD rows. */
     row('untagged', { so_doc_no: '2990-SO-2609-004', payment_id: null, created_at: '2026-09-08T01:00:00Z', field_changes: [{ field: 'amountSen', from: 30_000, to: 30_100 }] }),
-    /* The owner's add from BEFORE the rule: default source, by a name whose role
-       holds the key today. Listed, marked, no reason. */
     row('before-rule', { action: 'ADD_PAYMENT', so_doc_no: '2990-SO-2609-005', payment_id: 'pay-5', source: 'web', note: null, field_changes: [{ field: 'amountSen', from: null, to: 20_000 }], created_at: '2026-09-14T00:30:00Z' }),
-    /* The neighbours that must NOT appear. */
     row('same-day-fix-by-sales', { source: 'web', actor_name_snapshot: 'Rachael' }),
     row('automation-by-holder', { source: 'automation', action: 'ADD_PAYMENT' }),
     row('header-edit', { action: 'UPDATE_HEADER' }),
     row('other-company', { company_id: 2 }),
-    /* The month is Malaysian: 23:59:59 MYT on 31 Aug is August, and 01:30 MYT
-       on 1 Oct (still 30 Sep in UTC) is October. */
     row('last-month', { created_at: '2026-08-31T15:59:59Z' }),
     row('next-month', { created_at: '2026-09-30T17:30:00Z' }),
-    /* The ADD rows the recorder lookups read — these are not in the month. */
     row('add-of-pay-1', { action: 'ADD_PAYMENT', payment_id: 'pay-1', source: 'web', actor_name_snapshot: 'Rachael', note: null, field_changes: [{ field: 'amountSen', from: null, to: 199_000 }], created_at: '2026-08-29T06:00:00Z' }),
     row('add-of-pay-2-scan', { action: 'ADD_PAYMENT', so_doc_no: '2990-SO-2609-002', payment_id: 'pay-2', source: 'automation', actor_name_snapshot: null, note: 'Auto: payment recorded from scanned receipt (background scan job)', field_changes: [{ field: 'amountSen', from: null, to: 50_000 }], created_at: '2026-08-30T06:00:00Z' }),
     row('add-of-so-004', { action: 'ADD_PAYMENT', so_doc_no: '2990-SO-2609-004', payment_id: null, source: 'web', actor_name_snapshot: 'Zack', note: null, field_changes: [{ field: 'amountSen', from: null, to: 30_000 }], created_at: '2026-08-20T06:00:00Z' }),
@@ -84,10 +76,6 @@ const CALLER = {
   user_metadata: { name: 'Chew' }, aud: 'authenticated', created_at: '',
 } as unknown as User;
 
-/* The Houzs DB, as permissionHolders.ts and the route query it: roles (no
-   bind), then users by role, then user_companies by user, then names by id.
-   The Finance role grants the key literally; the Owner role carries only the
-   wildcard and must not count; Chew's own role carries both. */
 type HoldersDb = { roles: Array<{ id: number; permissions: string }>; users: Array<{ id: number; name: string; role_id: number; status: string }>; grants: Array<{ user_id: number; company_id: number }> };
 const HOLDERS: HoldersDb = {
   roles: [
@@ -186,8 +174,6 @@ describe('GET /accounting/payment-corrections', () => {
   });
 
   it('the before-the-rule rows follow the roles that hold the key LITERALLY — a wildcard-only role is not a holder', async () => {
-    /* Same rows, but the only role naming the key is nobody's: Chew's row is
-       on the wildcard alone, so his untagged add is no longer listed. */
     const body = await (await get('?month=2026-09', {
       ...HOLDERS, roles: [{ id: 1, permissions: '["*"]' }, { id: 7, permissions: '["*"]' }, { id: 325, permissions: '["scm.so_payment.amend"]' }, { id: 8, permissions: '["sales.read"]' }],
     })).json() as Report;
@@ -220,8 +206,6 @@ describe('GET /accounting/payment-corrections', () => {
     expect((await get('?month=Sept')).status).toBe(400);
   });
 
-  /* A month with the before-the-rule rows silently missing would be a
-     different document from the one asked for. */
   it('refuses the report when the holders of the key cannot be read', async () => {
     const res = await get('?month=2026-09', new Error('D1 is away'));
     expect(res.status).toBe(500);

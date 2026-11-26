@@ -7,7 +7,6 @@ import { describe, expect, test } from 'vitest';
 import { ReportHead } from './MerchantReportsTop';
 import type { SettlementBatch } from './settlement-queries';
 
-/* 20261105_000458030287527.csv as production holds it. */
 const AEON = {
   id: 367, acquirer_code: 'AEON', file_name: '20261105_000458030287527.csv', period_from: '2026-11-05', period_to: '2026-11-05',
   row_count: 1, gross_sen: 399_000, fee_sen: 4_788, net_sen: 394_212, stated_net_sen: 378_364,

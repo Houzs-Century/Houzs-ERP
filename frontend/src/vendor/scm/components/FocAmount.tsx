@@ -26,13 +26,7 @@ import { isFocLine, type FocLineInput } from '../lib/foc-line';
 
 export type FocAmountProps = {
   line: FocLineInput;
-  /* The money already formatted by the host page, because each page formats in
-     its OWN document currency and this component must not guess which. */
   amount: ReactNode;
-  /* Rendered under the amount when the line is NOT free — the goods receipt
-     prints its allocated freight there. Omitted on a free line: a freebie that
-     carries allocated freight still cost nothing to BUY, which is what the
-     badge claims. */
   sub?: ReactNode;
 };
 

@@ -20,12 +20,7 @@ import {
 
 interface BrandingResponse {
   branding?: unknown;
-  /** Active company the backend resolved for this request ('HOUZS' | '2990').
-   *  Picks the matching default set so a blank 2990 field stays blank instead
-   *  of snapping to a Houzs literal. Absent on a pre-multi-company backend. */
   companyCode?: string | null;
-  /** postgres.js camelCases raw-SQL columns, but dual-read the snake form
-   *  anyway (repo's #1 recurring bug class). */
   company_code?: string | null;
 }
 
@@ -34,9 +29,6 @@ interface BrandingResponse {
 export type BrandingWithCompany = Branding & { companyCode: string };
 
 const BRANDING_KEY = "/api/branding";
-/* 60 min (was 10). Company identity changes a few times a year, Settings
-   invalidates it on save, and the server answers an unchanged copy with a 304
-   (pollEtag), so a longer life only removes requests. */
 const BRANDING_STALE_MS = 60 * 60_000;
 
 function fetchBranding(): Promise<BrandingResponse> {
@@ -98,21 +90,6 @@ export async function ensureBrandingForActiveCompany(): Promise<void> {
  * letterhead.
  */
 export function useBranding(): BrandingWithCompany {
-  // Company identity is effectively static, so cache it well past the 30s
-  // default to keep it out of the per-navigation waterfall. NOT Infinity on
-  // purpose: a bounded staleTime keeps a self-healing net — worst case the
-  // chrome shows old branding for <=60min, never "stuck until reload". Edits
-  // are rare and the editor sees their own change immediately.
-  //
-  // The key is now EXPLICIT, so an edit in Settings that force-refetches via
-  // q.reload() reliably reaches every consumer of this hook. It used to be
-  // derived from `fetcher.toString()`, which minification could break by
-  // aliasing the imported `api` differently per module — two callsites wanting
-  // the same branding could end up on different keys and disagree.
-  //
-  // The tab's company is part of the key (BUG-111): the answer depends on the
-  // X-Company-Id header, so one fetched before this tab adopted its company
-  // must not be served once it has.
   const activeCompanyId = useSyncExternalStore(
     subscribeActiveCompany,
     getActiveCompanySnapshot,
@@ -124,23 +101,13 @@ export function useBranding(): BrandingWithCompany {
 
   const { companyCode, ...branding } = resolveBranding(q.data);
 
-  // Keep the non-React PDF cache in sync once the real value lands.
   useEffect(() => {
     if (q.data) {
       setBrandingCache(branding, companyCode);
-      // Warm the letterhead-logo memo in the background so the first PDF of
-      // the session already has it. Fail-soft + memoized inside — a broken
-      // logo never surfaces here, and repeat mounts don't refetch.
       void ensureBrandingLogoLoaded();
     }
-    // branding is derived from q.data; depend on the raw payload to avoid a new
-    // object identity re-firing the effect every render.
   }, [q.data, branding, companyCode]);
 
-  // Browser-tab title follows the active company. HOUZS keeps the exact
-  // index.html literal (byte-identical single-company behaviour); other
-  // companies get "<short name> ERP". Vendored SCM pages that set their own
-  // document.title win afterwards — this only runs when the company flips.
   useEffect(() => {
     document.title =
       companyCode === HOUZS_COMPANY_CODE

@@ -1,12 +1,3 @@
-// The Upload drawer's render contract (the redesign, batch 3). What a report or
-// an advice MEANS is pinned on the server; what is proved here is that the
-// drawer sends what it was given and says what came back:
-//
-//   • Public Bank is asked which paper it is; nobody else is;
-//   • an advice goes up as base64 under PBB, several one by one, each answered
-//     on its own line, a refusal in the server's own words (§2.14);
-//   • a report's lines are said as the design's piles, and a refused file
-//     stays picked for Try again.
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
@@ -33,7 +24,6 @@ const ACQUIRERS = [acq('MBB'), acq('PBB'), acq('GHL', { autoMatchable: false } a
 
 const csv = (name: string) => {
   const f = new File(['Txn Date,Gross'], name, { type: 'text/csv' });
-  /* jsdom's File carries no .text() — the drawer reads the file with it. */
   Object.defineProperty(f, 'text', { value: () => Promise.resolve('Txn Date,Gross') });
   return f;
 };
@@ -64,7 +54,6 @@ describe('the advice', () => {
     const go = screen.getByRole('button', { name: /Upload advice/ }) as HTMLButtonElement;
     expect(go.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('Payment advice PDF'), { target: { files: [pdf('HOUZSCENTURY_IBG_240826.pdf')] } });
-    /* FileReader hands the drawer its base64 asynchronously. */
     await waitFor(() => expect(go.disabled).toBe(false));
     fireEvent.click(go);
     await waitFor(() => expect(state.advice).toHaveBeenCalledTimes(1));
@@ -96,7 +85,6 @@ describe('the advice', () => {
       .toEqual(['HOUZSCENTURY_IBG_100826.pdf', 'HOUZSCENTURY_IBG_BAD.pdf', 'HOUZSCENTURY_IBG_170826.pdf']);
     expect(await screen.findByText('The advice names no settlement day.')).toBeTruthy();
     expect(screen.getAllByText(/2 settlement days · RM 11,898\.00/)).toHaveLength(2);
-    /* The refused one stays picked, and the button says so. */
     expect(screen.getByRole('button', { name: /Try again \(1\)/ })).toBeTruthy();
   });
 });
@@ -135,8 +123,6 @@ describe('a merchant report', () => {
     expect(screen.queryByRole('button', { name: 'Done' })).toBeNull();
   });
 
-  /* "1,234.50" through Number() was NaN, went up as null and the statement
-     fee total was silently dropped. */
   test('a statement fee typed with a thousands comma goes up as that amount; an unreadable one is refused', async () => {
     const PRO = [acq('MBB', { fee_method: 'prorated-summary' } as Partial<AcquirerSetup>)];
     state.report.mockReset().mockResolvedValue({

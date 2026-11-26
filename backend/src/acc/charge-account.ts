@@ -12,8 +12,6 @@
 import { postJournal, reverseJournal } from './engine';
 import type { postSoPayment } from './payments';
 
-/* Borrowed from the poster rather than spelled out again — a new file's lint
-   ceiling is zero, and a second name for the same client would be worse. */
 type Db = Parameters<typeof postSoPayment>[0];
 
 export const CHARGE_SOURCE = 'SETTLECHARGE';

@@ -37,7 +37,6 @@ export interface AcLineOrderSweepResponse {
   ok: boolean;
   docType: string;
   bookDocuments: number;
-  /** The book read hit its own page ceiling, so the answer is PARTIAL. */
   bookTruncated: boolean;
   total: number;
   byVerdict: Record<string, number>;

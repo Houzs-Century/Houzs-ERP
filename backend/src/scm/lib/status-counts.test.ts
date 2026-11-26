@@ -1,11 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { readStatusCounts, tallyStatusRows } from './status-counts';
 
-/* The whole point of this helper is the difference between "none" and "we could
-   not find out", which `count ?? 0` erased. Each test below is one side of that
-   line — the empty-bucket case is not padding, it is the case that must NOT
-   become an error, and it is what a naive "treat a falsy count as a failure"
-   fix would have broken on every list with an unused status tab. */
 
 describe('readStatusCounts', () => {
   test('an empty bucket is a fact, not a failure', () => {
@@ -28,8 +23,6 @@ describe('readStatusCounts', () => {
   });
 
   test('a missing count with no error is still a failure', () => {
-    // supabase-js leaves `count` null when the Content-Range header it parses
-    // is absent. "The server never told us" is not "the server said none".
     const read = readStatusCounts({ all: { count: null, error: null } });
     expect(read).toEqual({ ok: false, reason: 'all count returned no value' });
   });
@@ -49,12 +42,6 @@ describe('readStatusCounts', () => {
   });
 });
 
-/* The same line, drawn for the OTHER shape: `data ?? []` is `count ?? 0` wearing
-   a different hat. PostgREST and paginateAll both answer a failed read with
-   `{ data: null, error }`, so tallying `res.data ?? []` turns a failure into
-   ZERO ROWS — which is what served the SO list's pills as all-zero beside a full
-   page of orders, and what left the Delivery Agent's DO pipeline reporting a
-   failed bucket as simply absent. */
 
 describe('tallyStatusRows', () => {
   test('a failed read is a failure, NOT an empty tally', () => {
@@ -77,12 +64,6 @@ describe('tallyStatusRows', () => {
   });
 
   test('an ABSENT data property is the same failure as a null one', () => {
-    // The reason `data` is typed `T[] | null | undefined`: every caller reads
-    // through an `sb: any` client, so a response object with no `data` at all
-    // is a state that reaches here. Without the undefined arm of the guard this
-    // falls through to `for (const row of undefined)` — a TypeError, not an
-    // answer — and with the arm but a narrower type, lint calls the arm dead.
-    // This is what says the arm is live.
     const read = tallyStatusRows({ data: undefined, error: null }, () => 1);
     expect(read).toEqual({ ok: false, reason: 'status rows returned no value' });
   });
@@ -98,9 +79,6 @@ describe('tallyStatusRows', () => {
   test('a grouped aggregate tallies by its OWN count, not one per group', () => {
     const read = tallyStatusRows<{ status: string | null; cnt: number }>(
       { data: [{ status: 'CONFIRMED', cnt: 35 }, { status: 'DELIVERED', cnt: 33 }], error: null },
-      // `r.cnt`, not `Number(r.cnt ?? 0)`: the row shape is declared right here,
-      // so the `?? 0` could never fire and only made the assertion look like it
-      // covered a missing count when it does not.
       (r) => r.cnt,
     );
     expect(read).toEqual({ ok: true, byStatus: { CONFIRMED: 35, DELIVERED: 33 } });

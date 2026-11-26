@@ -70,7 +70,6 @@ type Row = {
 type FleetCounts = { lorryCount: number; driverCount: number; helperCount: number };
 const NO_FLEET: FleetCounts = { lorryCount: 0, driverCount: 0, helperCount: 0 };
 
-/** The supplier-master entry a carrier bills as, as the drawer shows it. */
 type SupplierRef = { id: string; code: string; name: string };
 const SUPPLIER_COLS = 'id, code, name';
 
@@ -106,17 +105,12 @@ function rowOut(r: Row, counts: FleetCounts, supplier: SupplierRef | null) {
   };
 }
 
-/* The carrier-link column, whichever casing the pg driver hands back. */
 const carrierIdOf = (r: Record<string, unknown>): string =>
   String((r.threeplCompanyId ?? r.threepl_company_id) ?? '');
 
 type Sb = Variables['supabase'];
 type LinkRefusal = { ok: false; status: 400 | 409 | 500; body: { error: string; reason: string } };
 
-/** The supplier a carrier may be linked to: one in THIS company's supplier
- *  master that no other 3PL company of this company already bills as — two
- *  carriers on one supplier leave carrierFor() picking whichever it meets first.
- *  `carrierId` is the carrier being edited, null for one being created. */
 async function supplierToLink(
   sb: Sb, companyId: number, supplierId: string, carrierId: string | null,
 ): Promise<{ ok: true; supplier: SupplierRef } | LinkRefusal> {
@@ -138,9 +132,6 @@ async function supplierToLink(
   return { ok: true, supplier: supplierRefOf(sup as Record<string, unknown>) };
 }
 
-/** The supplier this carrier is linked to now, or null — read before a patch
- *  that leaves the link alone, so the reply can carry it without a read after
- *  the write (a failure there would report a saved change as not saved). */
 async function currentSupplier(
   sb: Sb, companyId: number, carrierId: string,
 ): Promise<{ ok: true; supplier: SupplierRef | null } | { ok: false; reason: string }> {
@@ -155,7 +146,6 @@ async function currentSupplier(
   return { ok: true, supplier: sup ? supplierRefOf(sup as Record<string, unknown>) : null };
 }
 
-// ── GET / — list this tenant's 3PL companies, with a per-company lorry count.
 threeplCompanies.get('/', async (c) => {
   const sb = c.get('supabase');
   const { data, error } = await paginateAll<Row>((from, to) =>
@@ -165,9 +155,6 @@ threeplCompanies.get('/', async (c) => {
   if (error) return c.json({ error: 'fetch_failed', reason: error.message }, 500);
   const companies = data ?? [];
 
-  // Fleet counts per company — lorries AND crew (mig 0237 linked drivers and
-  // helpers the same way 0210 linked lorries). Three tolerant reads; a failing
-  // one leaves that count at 0 rather than sinking the list.
   const counts = new Map<string, FleetCounts>();
   const bump = (id: string, key: keyof FleetCounts) => {
     if (!id) return;
@@ -176,9 +163,6 @@ threeplCompanies.get('/', async (c) => {
     counts.set(id, cur);
   };
   if (companies.length > 0) {
-    /* The fleet masters are UNIFIED (not company-scoped) but the carrier rows
-       they point at are — so scoping the count read here keeps a tenant from
-       counting another tenant's crew through a shared roster. */
     const [lorryRows, driverRows, helperRows] = await Promise.all([
       scopeToCompany(sb.from('lorries').select('threepl_company_id'), c).not('threepl_company_id', 'is', null),
       scopeToCompany(sb.from('drivers').select('threepl_company_id'), c).not('threepl_company_id', 'is', null),
@@ -189,7 +173,6 @@ threeplCompanies.get('/', async (c) => {
     for (const h of (helperRows.data ?? []) as Array<Record<string, unknown>>) bump(carrierIdOf(h), 'helperCount');
   }
 
-  // The supplier each carrier bills as, from this company's supplier master.
   const supplierIds = [...new Set(companies.map(supplierIdOf).filter((v): v is string => v !== null))];
   const suppliers = new Map<string, SupplierRef>();
   if (supplierIds.length > 0) {
@@ -203,9 +186,6 @@ threeplCompanies.get('/', async (c) => {
   });
 });
 
-// ── GET /:id/fleet — the carrier's own crew and lorries, for the company drawer.
-//    Read-only: the rows are created and edited through /drivers, /helpers and
-//    /lorries, which own the outsource rule (scm/lib/threepl-link.ts).
 threeplCompanies.get('/:id/fleet', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -253,27 +233,21 @@ const companyFields = {
   contactPhone: optionalPhone('Contact phone'),
   registrationNo: z.string().trim().max(60).nullable().optional(),
   officePhone:  optionalPhone('Office phone'),
-  /* Was max(160) and nothing else, so "ops at carrier dot com" saved happily. */
   email:        z.string().trim().max(160).email('That is not a valid email address.').nullable().optional()
                  .or(z.literal('').transform(() => null)),
   address:      z.string().trim().max(500).nullable().optional(),
-  /* Picked off scm.my_localities in the form (postcode back-fills City and
-     State), so Delivery Planning can snapshot them for a TRANSFER to this 3PL. */
   postcode:     z.string().trim().max(12).nullable().optional(),
   city:         z.string().trim().max(120).nullable().optional(),
   state:        z.string().trim().max(120).nullable().optional(),
   notes:        z.string().trim().max(2000).nullable().optional(),
   isActive:     z.boolean().optional(),
-  /* The supplier this carrier bills as; null unlinks. */
   supplierId:   z.string().uuid().nullable().optional(),
 };
 
 const createSchema = z.object(companyFields);
 
-/** Store the E.164 form, not what was typed — see the note above. */
 const asPhone = (v: string | null | undefined): string | null => (v ? normalizePhone(v) : null);
 
-// ── POST / — create a 3PL company. (company_id, name) is UNIQUE -> 409 on dup.
 threeplCompanies.post('/', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -313,10 +287,6 @@ threeplCompanies.post('/', async (c) => {
     updated_by:    user?.id ?? null,
   };
 
-  /* Codes are minted per COMPANY here — unlike drivers/helpers, this table is
-     company-scoped (UNIQUE (company_id, name), and 0242's index is on
-     (company_id, code)). Retry the mint only; a duplicate NAME or SSM is the
-     caller's problem and retrying would spin forever. */
   let data: unknown = null;
   let error: { code?: string; message?: string } | null = null;
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -326,7 +296,7 @@ threeplCompanies.post('/', async (c) => {
     data = res.data; error = res.error;
     if (!error) break;
     if (error.code !== '23505') break;
-    if (!/threepl_companies_code/i.test(error.message ?? '')) break; // name / SSM clash — real, do not retry
+    if (!/threepl_companies_code/i.test(error.message ?? '')) break;
   }
   if (error) {
     if (error.code === '23505') {
@@ -335,28 +305,14 @@ threeplCompanies.post('/', async (c) => {
         ? { error: 'duplicate_registration', reason: 'A 3PL company with that SSM registration number already exists.' }
         : { error: 'duplicate_name', reason: 'A 3PL company with that name already exists.' }, 409);
     }
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   return c.json({ company: rowOut(data as Row, NO_FLEET, supplier) }, 201);
 });
 
-/* The SAME rules as create, with the name optional. Sharing the field map is
-   the point: a format enforced on create and not on edit is enforced nowhere,
-   which is exactly how the driver phone ended up normalised on one path and
-   stored raw on the other. `code` is deliberately absent — it is minted. */
 const patchSchema = z.object({ ...companyFields, name: companyFields.name.optional() });
 
-// ── PATCH /:id — STRICT company scope (a blind-id WHERE would let tenant A edit
-//    tenant B's company by knowing its UUID).
 threeplCompanies.patch('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -377,7 +333,6 @@ threeplCompanies.patch('/:id', async (c) => {
   if (p.email !== undefined)        updates.email = p.email;
   if (p.address !== undefined)      updates.address = p.address;
   if (p.postcode !== undefined) {
-    /* Clearing the postcode is refused; a save that leaves it alone is not. */
     const pcErr = masterPostcodeError(null, p.postcode);
     if (pcErr) return c.json({ error: 'postcode_required', message: pcErr }, 400);
     updates.postcode = p.postcode || null;
@@ -421,17 +376,12 @@ threeplCompanies.patch('/:id', async (c) => {
   return c.json({ company: rowOut(data as Row, NO_FLEET, supplier) });
 });
 
-// ── DELETE /:id — STRICT company scope. Its lorries are DETACHED (the FK is ON
-//    DELETE SET NULL), never deleted — a carrier leaving should not erase lorry
-//    history.
 threeplCompanies.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
 
-  /* A company with a rate card is not deleted: the FK would null the card's
-     carrier and leave a price list that belongs to nobody, shown as own fleet. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: cards, error: cardErr } = await scopeToCompanyId((sb as any).from('delivery_rate_cards').select('id'), co.companyId)
     .eq('carrier_company_id', id).limit(1);

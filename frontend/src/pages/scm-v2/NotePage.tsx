@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// NotePage — a credit or debit note as its own document page in the owner's
-// Claude Design (batch 4 step 6): /scm/supplier-notes/:id under Money out and
-// /scm/credit-notes/:id under Money in. The same note the CN / DN page's
-// pop-out shows (CreditNotes.tsx — useNoteDoc, NoteActions, NoteBody: Print,
-// Edit, Post to ledger, Cancel note, Knock off, files), on a page with Back to
-// where it was opened, Add task, and a trail from its stamps. Posting is
-// unchanged.
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -40,7 +31,6 @@ export function NotePage({ side }: { side: 'AR' | 'AP' }) {
     );
   }
 
-  /* A supplier's or other debtor's note says whether its credit is used (the design's To use / Used). */
   const left = doc.q.data?.leftSen;
   const tag = n.status === 'CANCELLED' ? { text: 'Cancelled', tone: mo.toneCalm }
     : n.status === 'DRAFT' ? { text: 'Draft', tone: mo.toneCalm }
@@ -52,7 +42,6 @@ export function NotePage({ side }: { side: 'AR' | 'AP' }) {
     <div className="space-y-4">
       <PageHeader back
         beforeBack={() => {
-          /* Opened as a document from another page: back to THAT page and its tab. */
           const href = cameFrom ? returnToWorkspaceOpener() : null;
           if (href) { navigate(href); return false; }
           return true;
@@ -74,7 +63,6 @@ export function NotePage({ side }: { side: 'AR' | 'AP' }) {
         </div>
       </section>
 
-      {/* The trail from the note's own stamps (notes write no entity audit). */}
       <section className={styles.card}>
         <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Trail</h2></div>
         <div className={styles.cardBody}>

@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// logisticsColumns — the columns every Logistics cost view shares (owner
-// 2026-11-05): Single month = the four regions across the top and Total; By
-// month = a Total column first, then one per month — or, with "Split each month
-// by region", each month's four regions and its total. A column names the months
-// and regions it adds up (scopeOf); a figure with no region (3PL lines on no DO
-// yet, the in-house cost of a month with no trip) counts in Total columns only.
-// And the sheet Excel / PDF draw from the rows as shown.
-// ----------------------------------------------------------------------------
 
 import type { GridColumn, GridRow } from './reports/FinanceGrid';
 import { cellText } from './reports/FinanceGrid';

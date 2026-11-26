@@ -1,5 +1,3 @@
-// Mail Center left-rail pieces kept out of Inbox.tsx (at its size ceiling):
-// the folder row, "My mailbox" (DEV-03 R3) and "What may I see" (R12).
 import { useState } from "react";
 import { ChevronDown, ChevronRight, Eye, FileText, Inbox as InboxIcon, Send, User as UserIcon } from "lucide-react";
 import { api } from "../../api/client";
@@ -163,7 +161,6 @@ export function VisibilityPanel() {
   );
 }
 
-// ── Folder row ──────────────────────────────────────────────────────────────
 export function FolderItem({
   icon: Icon,
   label,

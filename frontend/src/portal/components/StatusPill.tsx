@@ -1,9 +1,6 @@
 import { cn } from "../../lib/utils";
 import type { PortalStatusColor } from "../types";
 
-// Status colour tokens — server-authoritative (the portal API returns
-// `status_color`). Keeping the mapping here ensures the UI cannot
-// diverge from the business rule if a new stage is added.
 const COLOR_CLASS: Record<PortalStatusColor, string> = {
   grey:   "bg-ink-muted/10 text-ink-secondary border-ink-muted/20",
   blue:   "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/30",

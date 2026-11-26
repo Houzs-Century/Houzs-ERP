@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// Purchase Consignment Order query hooks — a faithful clone of the Purchase
-// Order hooks in suppliers-queries.ts, repointed at the parallel backend route
-// mounted at `/purchase-consignment-orders` (which mirrors `/mfg-purchase-orders`
-// 1:1: same create body, same detail shape, same line item endpoints).
-//
-// Numbering on the backend is `PCO-…`. The request/response types are kept
-// identical to the PO hooks so the cloned PurchaseConsignmentOrderNew /
-// PurchaseConsignmentOrderDetail / PurchaseConsignmentOrders pages can render
-// exactly like the PO ones with only the endpoint + query key swapped.
-//
-// Query key namespace: ['pc-order'] (+ '-detail') so purchase-consignment cache
-// invalidation never collides with the PO cache.
-//
-// ── HOUZS VENDOR NOTES ──────────────────────────────────────────────────────
-//   - All reads/writes route through the vendored authedFetch (→ /api/scm/...),
-//     NOT 2990's supabase REST. The supabase import is dropped (it was unused by
-//     these hooks anyway — every call already went through authedFetch).
-//   - Shared PO row/body types are reused from the vendored suppliers-queries.
-// ----------------------------------------------------------------------------
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
@@ -32,7 +12,6 @@ import { writeFailed } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 
-/* ── List ────────────────────────────────────────────────────────────── */
 export function usePurchaseConsignmentOrders(opts?: { status?: PoStatus; supplierId?: string }) {
   return useQuery({
     queryKey: ['pc-order', 'list', opts?.status ?? 'all', opts?.supplierId ?? 'all'],
@@ -51,7 +30,6 @@ export function usePurchaseConsignmentOrders(opts?: { status?: PoStatus; supplie
   });
 }
 
-/* ── Detail ──────────────────────────────────────────────────────────── */
 export function usePurchaseConsignmentOrderDetail(id: string | null) {
   return useQuery({
     queryKey: ['pc-order-detail', id],
@@ -63,18 +41,6 @@ export function usePurchaseConsignmentOrderDetail(id: string | null) {
   });
 }
 
-/* ── Create ──────────────────────────────────────────────────────────── */
-/* `idempotencyKey` is OPTIONAL and is destructured OUT of the body — the
-   rest-spread would otherwise post it as an order field. Pass one per order
-   intent (see lib/idempotency.ts): the middleware replays the first response —
-   the SAME poNumber — instead of committing the company to the consignment
-   twice. Omitting it is exactly today's behaviour (the middleware no-ops).
-
-   NOT on fix/so-idempotency's list of remaining creates (it named the PC Receive
-   and PC Return but not the ORDER those two hang off), and covered here for the
-   same reason the SO was: the source document is the one that must not double.
-   The omission is itself the pattern — the list was written by reading the
-   files, and this hook lives in a file of its own. */
 export function useCreatePurchaseConsignmentOrder() {
   const qc = useQueryClient();
   return useMutation({
@@ -101,7 +67,6 @@ export function useCreatePurchaseConsignmentOrder() {
   });
 }
 
-/* ── Header update ───────────────────────────────────────────────────── */
 export function useUpdatePurchaseConsignmentOrderHeader() {
   const qc = useQueryClient();
   return useMutation({
@@ -119,7 +84,6 @@ export function useUpdatePurchaseConsignmentOrderHeader() {
   });
 }
 
-/* ── Line items ──────────────────────────────────────────────────────── */
 export function useAddPurchaseConsignmentOrderItem() {
   const qc = useQueryClient();
   return useMutation({

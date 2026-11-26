@@ -22,15 +22,11 @@ export interface OwnDo {
   doId: string;
   doNumber: string | null;
   companyId: number;
-  /** The day it ran: its run date (doRunDate), or its trip's date when a trip stop carries it. */
   runDate: string;
   lorryId: string | null;
   plate: string;
-  /** The Delivery Planning trip whose stop carries it, else null (Last Mile's crew). */
   tripId: string | null;
-  /** Its order's facts (threepl-do-charge.ts doFacts), null when it has no order to read. */
   facts: DeliveryFacts | null;
-  /** The same buyer at the same doorstep: what a per-customer card charges once for. */
   customerKey: string;
 }
 
@@ -41,8 +37,6 @@ export interface OwnTrip {
   tripDate: string;
   lorryId: string | null;
   plate: string | null;
-  /** Every stop; a delivery order stop is priced from its order (an OwnDo), so
-      only the other jobs count here (stopJob). */
   stops: TripStopRow[];
 }
 
@@ -61,14 +55,11 @@ export interface OwnRun {
 export interface PricingCard { id: string; name: string; spec: RateCardSpec }
 
 export interface PricedRun extends OwnRun {
-  /** The other jobs on it, by job. */
   jobs: Partial<Record<Exclude<BillableJobType, 'DELIVERY'>, number>>;
   setCount: number;
   zones: string[];
   card: { id: string; name: string } | null;
-  /** The card's price for the whole trip; null = no card prices this lorry. */
   costSen: number | null;
-  /** The part of costSen the other jobs' prices make up (Setup ... Transfer). */
   otherJobsSen: number | null;
   breakdown: CostBreakdown | null;
 }
@@ -165,8 +156,6 @@ export function runFacts(run: OwnRun, zoneOf: (address: string | null) => string
   };
 }
 
-/** The lines a card prices the other jobs with (their rule is named for the job) —
-    what a trip costs beyond its deliveries. */
 const OTHER_JOB_LINES: ReadonlySet<string> = new Set(Object.keys(JOB_COUNT_FACT));
 
 /** Every trip priced once by its card (`cardFor`; null = no card, no cost). */
@@ -183,8 +172,6 @@ export function priceOwnRuns(
       if (job) jobs[job] = (jobs[job] ?? 0) + 1;
     }
     const card = cardFor(run);
-    /* perTrip: the fixed per-trip outstation fee is charged once, inside the
-       card's min / cap / rounding, as on a 3PL trip. */
     const breakdown = card ? computeDeliveryCost(card.spec, facts, { perTrip: true }) : null;
     const otherJobsSen = breakdown ? breakdown.lines.filter((l) => OTHER_JOB_LINES.has(l.ruleType)).reduce((n, l) => n + l.amountSen, 0) : null;
     return {
@@ -216,7 +203,6 @@ export interface ThreePlDo {
   runDate: string;
   setCount: number;
   billedSen: number;
-  /** What the 3PLs' own cards say for it; null when one of them has no card. */
   expectedSen: number | null;
 }
 
@@ -225,7 +211,6 @@ export interface OwnFleetMonth {
   trips: number;
   dos: number;
   sets: number;
-  /** Trips a card priced, their DOs, their cost, and that cost less the other jobs. */
   pricedTrips: number;
   pricedDos: number;
   costSen: number;
@@ -233,7 +218,6 @@ export interface OwnFleetMonth {
   threePlDos: number;
   threePlSets: number;
   threePlBilledSen: number;
-  /** The 3PLs' own cards over the DOs they price. */
   threePlPricedDos: number;
   threePlBilledPricedSen: number;
   threePlCardSen: number;

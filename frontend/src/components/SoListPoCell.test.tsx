@@ -3,21 +3,7 @@ import { render, screen } from "@testing-library/react";
 import { SoListPoCell } from "./SoSourceChips";
 import { SourcePosRowMobile } from "../mobile/source-chips";
 
-/* The Sales-Order list's "PO No." cell said a document had NO purchase order
- * while the same document's Relationship Map named one. Both goods-source arms
- * behind `source_po_union` need EXECUTION — the shipped arm needs a Delivery
- * Order line, the READY arm needs an open lot that still resolves to a PO — so
- * a CONFIRMED, not-yet-shipped, unallocated order satisfied neither and the
- * cell rendered an em-dash with the real purchase order hidden in its tooltip.
- * Measured on production 2026-08-11: of the 2,723 Houzs Century sales orders
- * at most 53 can light the source arms, while 277 carry a real non-cancelled
- * purchase order on `purchase_order_items.so_item_id`.
- *
- * Desktop and mobile are one product, so both surfaces are asserted here.
- */
 
-// The real payload of HC-SO-011733 (CONFIRMED, all lines PENDING, no DO line,
-// four lines linked to HC-PO-008783 which is RECEIVED via HC-GR-004863).
 const HC_SO_011733 = { source_po_union: [], converted_po_nos: ["HC-PO-008783"], source_po_adj: false };
 
 describe("SoListPoCell (desktop PO No. column)", () => {

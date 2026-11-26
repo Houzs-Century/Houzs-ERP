@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// /maintenance-config — variant config (Bedframe + Sofa + Fabrics) with
-// effective-date versioning.
-//
-// Ported from HOOKKA src/api/routes/maintenance-config.ts. Conventions
-// kept identical so the UI (also ported) can drop in:
-//   GET    /maintenance-config/resolved?scope=master|customer:<id>|supplier:<id>&asOf=YYYY-MM-DD
-//   GET    /maintenance-config/history?scope=...
-//   POST   /maintenance-config/changes  body: { scope, config, effectiveFrom, notes? }
-//   DELETE /maintenance-config/changes/:id
-//
-// scope encoding: 'master', 'customer:<uuid>', or 'supplier:<uuid>'. Stored
-// as TEXT so adding new scope prefixes (e.g. 'showroom:<id>') is an
-// application-layer change only — no migration needed.
-//
-// PR #208 (Commander 2026-05-27) — adds the supplier:<uuid> scope so PO
-// line pricing can resolve surcharges from the supplier's own config
-// instead of the master/selling config. See apps/api/src/lib/po-pricing.ts
-// for the resolver that falls back to 'master' when a supplier has no row.
-// ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
@@ -68,9 +48,6 @@ function parseScope(raw: string | null | undefined): string | null {
     return id ? `customer:${id}` : null;
   }
   if (s.startsWith('supplier:')) {
-    // PR #208 (Commander 2026-05-27) — supplier-scoped pricing config drives
-    // PO line surcharges. Any non-empty suffix is accepted; the resolver
-    // (see lib/po-pricing.ts) falls back to 'master' when no row exists.
     const id = s.slice('supplier:'.length).trim();
     return id ? `supplier:${id}` : null;
   }
@@ -82,25 +59,9 @@ function genId(): string {
   return `mch-${rnd}`;
 }
 
-// Editor-only — maintenance pricing config feeds SO/PO cost. Same role set as
-// the sibling pricing editors (fabric-tier-addon / fabric-library / sofa-combos).
-// NOTE (Houzs port): /api/scm/* is owner-gated upstream and the auth bridge maps
-// every caller to ONE super_admin system-staff row, so this gate always passes
-// today. It is kept for parity with 2990 + the sibling sofa-combos gate, as
-// defence-in-depth that turns real once per-user → scm.staff attribution lands.
-// Houzs-flavoured: scm.staff lookups are dead (the SCM bridge pins every
-// caller to one super_admin row). Both writer routes now gate on the flat
-// permission key `scm.config.write` against the REAL Houzs caller.
 
 type McCtx = Context<{ Bindings: Env; Variables: Variables }>;
 
-// ── GET /resolved ──────────────────────────────────────────────────────
-// Returns the currently-effective config for the given scope (newest row
-// with effective_from <= asOf). asOf defaults to today.
-//
-// Exported (fairReportHandler precedent) so the route test can drive it on a
-// bare Hono app with an injected fake supabase + companyId — the supabaseAuth
-// bridge cannot run in the harness.
 export const resolvedHandler = async (c: McCtx) => {
   const scope = parseScope(c.req.query('scope'));
   if (!scope) return c.json({ error: 'scope_required' }, 400);
@@ -108,16 +69,6 @@ export const resolvedHandler = async (c: McCtx) => {
   const asOfRaw = (c.req.query('asOf') ?? '').trim();
   const asOf = ISO_DATE.test(asOfRaw) ? asOfRaw : todayIso();
 
-  // Shared PER-COMPANY read cache. The ACTIVE company id is a REQUIRED key
-  // segment (alongside the scope + asOf params the query is built from), so
-  // company A's entry can never answer company B. Cache ONLY when the company
-  // is RESOLVED to a real id: an unresolved context (pre-migration /
-  // cold-start) or a restricted-to-no-company caller BYPASSES caching rather
-  // than minting a company-less shared key — never guess the scope. The
-  // family version is bumped by every config writer (POST /changes, DELETE
-  // /changes/:id, compartment rename, compartment photo set/remove). The asOf
-  // segment defaults to today MYT, so cached "today" entries roll naturally
-  // at midnight.
   const companyId = activeCompanyId(c);
   let keyUrl: string | null = null;
   if (typeof companyId === 'number' && Number.isInteger(companyId) && companyId > 0) {
@@ -159,14 +110,10 @@ export const resolvedHandler = async (c: McCtx) => {
     pendingEffectiveFrom: string | null;
   };
   if (!rows?.length) {
-    // A company with no config row yet is a real, cacheable state — without
-    // caching it, every SO-form load for that company re-runs the query.
     payload = { data: null, effectiveFrom: null, hasPendingPriceChange: false, pendingEffectiveFrom: null };
   } else {
     const row = rows[0] as Row;
 
-    // Lookahead for a pending future change so the UI can show "Pricing
-    // updates 2026-06-15" banner above the live config.
     const { data: pending } = await scopeToCompany(
       supabase
         .from('maintenance_config_history')
@@ -197,9 +144,6 @@ export const resolvedHandler = async (c: McCtx) => {
 };
 maintenanceConfig.get('/resolved', resolvedHandler);
 
-// ── GET /history ───────────────────────────────────────────────────────
-// Full append-only history for the scope. Each row carries an isPending
-// flag so the UI can colour future-effective rows differently.
 maintenanceConfig.get('/history', async (c) => {
   const scope = parseScope(c.req.query('scope'));
   if (!scope) return c.json({ error: 'scope_required' }, 400);
@@ -231,13 +175,6 @@ maintenanceConfig.get('/history', async (c) => {
   return c.json({ history: rows });
 });
 
-/* Auto-derive stage 5 (owner Option 1, COST-ONLY): after a supplier-scope config
-   write, raise the MASTER config's cost surcharges (priceSen) to the most
-   expensive supplier — preserving every sellingPriceSen — and append a master
-   row only when the cost actually moved. This replaces the sofa_combo_anchor /
-   is_cost_anchor style manual mirror for the surcharge pools. Best-effort: a
-   failure never fails the caller's own supplier write (read/write errors are
-   bound and thrown internally, then logged). Flag-gated by the caller. */
 async function recomputeMasterConfigCostFromSuppliers(
   supabase: SupabaseClient,
   companyId: number | null | undefined,
@@ -294,12 +231,6 @@ async function recomputeMasterConfigCostFromSuppliers(
   }
 }
 
-// ── POST /changes ──────────────────────────────────────────────────────
-// Append a new effective-dated row. body: { scope, config, effectiveFrom, notes? }
-// Editor-only (Commander 2026-06-18) — pricing config feeds SO/PO cost and was
-// previously writable by ANY authed staff. Now gated app-side to WRITE_ROLES,
-// matching the sibling pricing editors. (RLS defence-in-depth can follow.)
-// Exported for the same bare-app route test as resolvedHandler above.
 export const createChangeHandler = async (c: McCtx) => {
   if (!canWriteScmConfig(c)) {
     return c.json({ error: 'forbidden', reason: 'missing_scm_config_write' }, 403);
@@ -332,9 +263,6 @@ export const createChangeHandler = async (c: McCtx) => {
       company_id: activeCompanyId(c),
       id,
       scope,
-      // Inch-mark hygiene on save (quote-doubling mint, 2026-08-01): a
-      // hand-keyed `1""` in a height pool would flow verbatim into every
-      // document line and ledger key. Write-side only; history untouched.
       config: normalizeConfigInchPools(body.config),
       effective_from: effectiveFrom,
       notes: body.notes ?? null,
@@ -344,30 +272,16 @@ export const createChangeHandler = async (c: McCtx) => {
     .single();
 
   if (error) {
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501' || /permission denied/i.test(error.message)) {
       return c.json({ error: 'forbidden', reason: error.message }, 403);
     }
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
 
-  // Auto-derive stage 5 (flag OFF by default, inert): a supplier-scope write
-  // raises the master config's cost surcharges to the most expensive supplier
-  // (cost-only; selling untouched). Runs before the version bump below so the
-  // one orphan covers both the supplier row and any derived master row.
   if (scope.startsWith('supplier:') && (await autoDeriveEnabled(supabase, activeCompanyId(c)))) {
     await recomputeMasterConfigCostFromSuppliers(supabase, activeCompanyId(c), user.id);
   }
 
-  // A new effective-dated row can change /resolved for ANY (scope, asOf)
-  // pair — orphan the whole family rather than guessing affected keys.
   await bumpConfigVersion(c.env, 'maintcfg');
 
   return c.json(
@@ -443,19 +357,12 @@ export const renameSofaCompartmentHandler = async (c: McCtx) => {
 };
 maintenanceConfig.post('/sofa-compartments/rename', renameSofaCompartmentHandler);
 
-// ── DELETE /changes/:id ────────────────────────────────────────────────
-// Remove a row (typically cancelling a pending future change). Note that
-// the table is "effectively" append-only in spirit, but we allow physical
-// delete for the cancel-pending UX. Past-effective rows should not be
-// deleted in practice — the UI hides the trash icon on those.
 maintenanceConfig.delete('/changes/:id', async (c) => {
   if (!canWriteScmConfig(c)) {
     return c.json({ error: 'forbidden', reason: 'missing_scm_config_write' }, 403);
   }
   const id = c.req.param('id');
   const supabase = c.get('supabase');
-  // Multi-company: a write refuses on an unresolved company rather than
-  // degrading to every company; scope the load and the delete strictly.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
@@ -479,8 +386,6 @@ maintenanceConfig.delete('/changes/:id', async (c) => {
     }
     return c.json({ error: 'delete_failed', reason: error.message }, 500);
   }
-  // Cancelling a (typically pending) row changes /resolved's lookahead and
-  // possibly the live row — orphan the family.
   await bumpConfigVersion(c.env, 'maintcfg');
   return c.body(null, 204);
 });

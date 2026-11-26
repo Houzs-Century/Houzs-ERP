@@ -56,9 +56,6 @@ import { LEDGER_COST_CATEGORIES } from '../../services/projects';
 
 const MAX_RANGE_DAYS = 400;
 const n = (v: unknown): number => { const x = Number(v ?? 0); return Number.isFinite(x) ? x : 0; };
-/* A DATE as YYYY-MM-DD and a stamp as ISO, whichever shape the client hands
-   back: PostgREST sends text, a direct postgres.js read (the read-only dry runs)
-   sends Date objects — and "Fri Oct 02 2026".slice(0, 10) is not a day. */
 const dayOf = (v: unknown): string | null => {
   if (v == null || v === '') return null;
   if (v instanceof Date) return Number.isFinite(v.getTime()) ? v.toISOString().slice(0, 10) : null;
@@ -93,7 +90,6 @@ const FAIR_SQL = `SELECT p.id, p.name, p.brand, p.start_date, p.end_date, p.arch
 const fail = (c: any, what: string, reason: string) =>
   c.json({ error: 'load_failed', message: `The ${what} could not be read — try again.`, reason }, 500);
 
-/** A sales order row as the lib reads it. */
 const commissionSoOf = (s: SoRead, staffName: ReadonlyMap<string, string | null>): CommissionSo => ({
   docNo: s.doc_no, projectId: s.project_id == null ? null : Number(s.project_id), salesperson: s.salesperson_id ? staffName.get(s.salesperson_id) ?? null : null,
   customer: s.debtor_name, status: String(s.status ?? '').toUpperCase(), onHold: s.on_hold === true,
@@ -145,8 +141,6 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   if (partOne.error) return fail(c, 'orders', partOne.error.message);
   const rangeIds = rangeFairs.map((f) => Number(f.id));
 
-  /* 3. Orders of earlier fairs (by fair) / opened earlier (by SO date) that
-     something happened to in the range. */
   const [payIn, chIn, cancelIn] = await Promise.all([
     paginateAll<{ so_doc_no: string }>((lo, hi) =>
       scopeToCompanyId(sb.from('mfg_sales_order_payments').select('so_doc_no').gte('paid_at', from).lte('paid_at', to), companyId).order('so_doc_no').range(lo, hi)),
@@ -162,8 +156,6 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   const touched = [...new Set([
     ...(payIn.data ?? []).map((r) => r.so_doc_no), ...(chIn.data ?? []).map((r) => r.so_doc_no), ...(cancelIn.data ?? []).map((r) => r.doc_no),
   ])].filter((d) => d && !known.has(d));
-  /* By SO date an order with no fair counts too, from NO_FAIR_FROM (the old ones
-     before it stay out); by fair only orders on a fair. */
   const partTwoRead = await chunkIn<SoRead, string>(touched, (batch, lo, hi) => {
     const q = scopeToCompanyId(sb.from('mfg_sales_orders').select(SO_COLS).in('doc_no', batch), companyId);
     return (basis === 'fair' ? q.not('project_id', 'is', null) : q).order('doc_no').range(lo, hi);
@@ -178,8 +170,6 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
     ? partTwoRead.data.filter((s) => s.project_id != null || (dayOf(s.so_date) ?? '') >= NO_FAIR_FROM || changedInRange.has(s.doc_no) || cancelledInRange.has(s.doc_no))
     : partTwoRead.data;
 
-  /* The fairs the rest needs: by fair, the earlier fairs of those orders (started
-     before the range); by SO date, every fair any of the orders is on. */
   const readFairs = async (ids: number[], startedBefore: string | null): Promise<FairRead[]> => {
     if (ids.length === 0) return [];
     const res = await env.DB.prepare(`${FAIR_SQL}
@@ -203,7 +193,6 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
     return fail(c, 'fairs', String((e as Error)?.message ?? e));
   }
 
-  /* 4. Every order's whole history: payments, goods changes, cancellations; and the names. */
   const sos = [...partOne.data, ...partTwo];
   const docs = sos.map((s) => s.doc_no);
   const staffIds = [...new Set(sos.map((s) => s.salesperson_id).filter((v): v is string => !!v))];
@@ -221,12 +210,9 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   ]);
   for (const r of [pays, chs, cancels, staff]) if (r.error) return fail(c, 'order history', r.error.message);
 
-  /* 5. The event page's figures for the range's fairs, and the rate cards. */
   const fairsRead = [...rangeFairs, ...earlierFairs];
   let rates: Awaited<ReturnType<typeof loadCostRates>>;
   try {
-    /* By SO date an order with no fair earns at its own brand's rate: every rate
-       card is read, so its brand is found whatever its case. */
     const cards = basis === 'so_date'
       ? ((await env.DB.prepare('SELECT brand FROM project_cost_rates').bind().all()).results ?? []).map((r: Record<string, unknown>) => String(r.brand ?? ''))
       : [];
@@ -267,7 +253,6 @@ async function liveReport(c: any, companyId: number, from: string, to: string, b
   return { report };
 }
 
-/* ── Closed months ───────────────────────────────────────────────────────── */
 
 type CloseRead = {
   month: string; closed_at: string; closed_by: string | null;
@@ -275,7 +260,6 @@ type CloseRead = {
   carried: Partial<Record<CommissionBasis, ClosedMonthPaid['carried']>> | null;
 };
 type Closed = { month: string; closedAt: string; closedBy: string | null; read: CloseRead | null };
-/** How many closed months back the first open month still settles. */
 const ADJUST_MONTHS_BACK = 12;
 const ym = (v: unknown): string => (dayOf(v) ?? '').slice(0, 7);
 const nextMonth = (month: string): string => {
@@ -297,7 +281,6 @@ const closesMeta = (closes: readonly Closed[]) => ({
   openFrom: closes.length > 0 ? nextMonth(closes[closes.length - 1]!.month) : null,
 });
 
-/* ── Finance's marks ─────────────────────────────────────────────────────── */
 
 type MarkRead = { id: string; so_doc_no: string; kind: string; month: string | null; reason: string | null; marked_by: string | null; marked_at: string };
 const MARK_COLS = 'id, so_doc_no, kind, month, reason, marked_by, marked_at';
@@ -312,7 +295,6 @@ async function readMarks(sb: any, companyId: number): Promise<{ marks: Commissio
   return { marks: (res.data ?? []).map(markOf) };
 }
 
-/* ── Finance's own lines ─────────────────────────────────────────────────── */
 
 type LineRead = { id: string; so_doc_no: string; month: string; goods_sen: number | string; reason: string | null; added_by: string | null; added_at: string };
 const LINE_COLS = 'id, so_doc_no, month, goods_sen, reason, added_by, added_at';
@@ -327,8 +309,6 @@ async function readLines(sb: any, companyId: number): Promise<{ lines: Commissio
   return { lines: (res.data ?? []).map(lineOf) };
 }
 
-/** Finance's lines on their orders' places: the orders, their fairs and the
- *  rate cards are read here — an order with a line need not be on the report. */
 async function manualRowsFor(c: any, companyId: number, basis: CommissionBasis, lines: readonly CommissionManualLine[]): Promise<{ rows: ManualLineRow[] } | { response: Response }> {
   const env = c.env;
   const sb = c.get('supabase');
@@ -346,7 +326,6 @@ async function manualRowsFor(c: any, companyId: number, basis: CommissionBasis, 
          WHERE p.company_id = ? AND p.id IN (${fairIds.map(() => '?').join(', ')})`).bind(companyId, ...fairIds).all();
       fairsRead = (res.results ?? []) as FairRead[];
     }
-    /* An order with no fair earns at its own brand's card, whatever its case: read them all. */
     const cards = ((await env.DB.prepare('SELECT brand FROM project_cost_rates').bind().all()).results ?? []).map((r: Record<string, unknown>) => String(r.brand ?? ''));
     rates = await loadCostRates(env, [...fairsRead.map((f) => f.brand), ...cards]);
   } catch (e) {
@@ -370,7 +349,6 @@ async function manualRowsFor(c: any, companyId: number, basis: CommissionBasis, 
   };
 }
 
-/** What every report needs besides its range: the closed months, the marks and Finance's own lines. */
 type Ctx = { closes: readonly Closed[]; marks: readonly CommissionMark[]; lines: readonly CommissionManualLine[] };
 /** How many months back a chain of 「算下个月」 is followed. */
 const DEFER_CHAIN_MAX = 3;
@@ -380,8 +358,6 @@ const prevMonth = (month: string): string => {
   return d.toISOString().slice(0, 7);
 };
 
-/** The live report with the marks applied, and — for a report of one month (or
- *  of it so far) — what the month before moved to it. */
 async function markedLive(c: any, companyId: number, from: string, to: string, basis: CommissionBasis, ctx: Ctx, depth = 0): Promise<Live> {
   const live = await liveReport(c, companyId, from, to, basis, ctx.marks);
   if ('response' in live) return live;
@@ -394,8 +370,6 @@ async function markedLive(c: any, companyId: number, from: string, to: string, b
     deferredIn = deferredInFrom(before.report, prev);
   }
   const marked = withMarks(live.report, ctx.marks, deferredIn);
-  /* Finance's own lines of the months this range begins — the same rule as the
-     closed months' adjustments (the range holds the month's first day). */
   const mine = ctx.lines.filter((l) => from <= `${l.month}-01` && `${l.month}-01` <= to);
   if (mine.length === 0) return { report: marked };
   const manual = await manualRowsFor(c, companyId, basis, mine);
@@ -403,7 +377,6 @@ async function markedLive(c: any, companyId: number, from: string, to: string, b
   return { report: withManualLines(marked, manual.rows) };
 }
 
-/** One month's report: as closed when it is, else live with the marks. */
 async function monthReport(c: any, companyId: number, month: string, basis: CommissionBasis, ctx: Ctx, depth: number): Promise<Live> {
   if (ctx.closes.some((k) => k.month === month)) {
     const col = basis === 'so_date' ? 'report_so_date' : 'report_fair';
@@ -415,13 +388,10 @@ async function monthReport(c: any, companyId: number, month: string, basis: Comm
   return markedLive(c, companyId, `${month}-01`, monthEnd(`${month}-01`), basis, ctx, depth);
 }
 
-/** The closed months' outstanding adjustments by one basis, each month recalculated now. */
 async function adjustmentsFor(c: any, companyId: number, basis: CommissionBasis, ctx: Ctx): Promise<{ rows: MonthAdjustmentRow[] } | { response: Response }> {
   const { closes } = ctx;
   const live = new Map<string, EventCommissionReport>();
   const recent = closes.slice(-ADJUST_MONTHS_BACK);
-  /* Recalculated WITH the marks: an order marked "not counted" after its month
-     closed drops out here, and the adjustment takes back what was paid. */
   const reads = await Promise.all(recent.map((k) => markedLive(c, companyId, `${k.month}-01`, monthEnd(`${k.month}-01`), basis, ctx)));
   for (let i = 0; i < recent.length; i += 1) {
     const r = reads[i]!;
@@ -455,7 +425,6 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
   const meta = closesMeta(closes);
   const ctx: Ctx = { closes, marks: markRead.marks, lines: lineRead.lines };
 
-  /* A closed month, asked for whole: as it was closed. */
   const exact = closes.find((k) => from === `${k.month}-01` && to === monthEnd(`${k.month}-01`));
   if (exact) {
     const col = basis === 'so_date' ? 'report_so_date' : 'report_fair';
@@ -465,8 +434,6 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
     return c.json({ ...frozen, closed: { month: exact.month, closedAt: exact.closedAt, closedBy: exact.closedBy }, closes: meta });
   }
 
-  /* The first open month pays what changed for the closed months' orders — read
-     beside the range itself rather than after it. */
   const openDay = meta.openFrom ? `${meta.openFrom}-01` : null;
   const carries = openDay != null && from <= openDay && openDay <= to;
   const [live, adj] = await Promise.all([
@@ -482,10 +449,6 @@ export const eventCommissionHandler = async (c: any): Promise<Response> => {
 const actorOf = (c: any): { id?: number | null; name?: string | null; email?: string | null } | null => c.get('houzsUser') ?? null;
 const rmOf = (sen: number) => (sen / 100).toFixed(2);
 
-/* ── POST /commission/close { month: 'YYYY-MM' } ─────────────────────────────
-   Months close in order, each once it has ended (Malaysia). Both bases freeze
-   together, each with the adjustments it carries for the months closed before
-   it — what the next month's adjustments are measured against. */
 export const closeCommissionMonthHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -544,7 +507,6 @@ export const closeCommissionMonthHandler = async (c: any): Promise<Response> => 
   return c.json({ ok: true, month, totals: { fair: reports.fair.totals, so_date: reports.so_date.totals }, closes: closesMeta(after) });
 };
 
-/* ── POST /commission/reopen { month } — the latest closed month only. ─────── */
 export const reopenCommissionMonthHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -560,7 +522,6 @@ export const reopenCommissionMonthHandler = async (c: any): Promise<Response> =>
   if (month !== latest) return c.json({ error: 'not_latest', message: `Only the latest closed month can be reopened — ${monthLabel(latest)}.` }, 409);
   const pf = await assertAuditWritable(sb, { entityType: 'COMMISSION_MONTH', entityId: `${companyId}:${month}`, action: 'REVERSE', companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
-  /* One row per company and month (the unique key): DELETE … RETURNING it. */
   const { data, error } = await scopeToCompanyId(sb.from('event_commission_closes').delete().eq('month', `${month}-01`), companyId).select('month').maybeSingle();
   if (error) return c.json({ error: 'reopen_failed', message: `${monthLabel(month)} could not be reopened — try again.`, reason: error.message }, 500);
   if (!data) return c.json({ error: 'nothing_closed', message: `${monthLabel(month)} is not closed.` }, 409);
@@ -575,7 +536,6 @@ export const reopenCommissionMonthHandler = async (c: any): Promise<Response> =>
 
 const DOC_NO = /^[A-Z0-9][A-Z0-9-]{3,39}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** How the mark reads in the order's History. */
 const markWords = (m: Pick<CommissionMark, 'kind' | 'month'>): string => {
   if (m.kind === 'exclude') return 'Not counted';
   if (m.kind === 'exclude_change') return `Price change of ${monthLabel(m.month ?? '')} not counted`;
@@ -639,7 +599,6 @@ export const markCommissionOrderHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true, mark });
 };
 
-/* POST /commission/marks/undo { id } — the mark taken away; the order counts again. */
 export const unmarkCommissionOrderHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -661,16 +620,10 @@ export const unmarkCommissionOrderHandler = async (c: any): Promise<Response> =>
 
 /* ── Finance's own lines (owner 2026-11-13, 「做」) ──────────────────────────── */
 
-/** A typing slip, not a line: RM 10 million of goods on one order. */
 const MAX_LINE_SEN = 10_000_000_00;
-/** How the line reads in the order's History. */
 const lineWords = (l: Pick<CommissionManualLine, 'month' | 'goodsSen'>): string =>
   `Finance line for ${monthLabel(l.month)}: goods ${l.goodsSen > 0 ? '+' : '-'}${rmOf(Math.abs(l.goodsSen))}`;
 
-/* POST /commission/lines { docNo, month: 'YYYY-MM', goodsSen, reason }
-   An amount of goods on an order for an open month that has begun: more than 0
-   adds commission, less than 0 takes it back, at the order's own rate. The
-   reason is asked for — it is money typed by hand. */
 export const addCommissionLineHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -691,8 +644,6 @@ export const addCommissionLineHandler = async (c: any): Promise<Response> => {
 
   const { data: so, error: soErr } = await scopeToCompanyId(sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo), companyId).maybeSingle();
   if (soErr) return fail(c, 'order', soErr.message);
-  /* Its own code, not `not_found`: the screen swaps that one for "refresh", and a
-     refresh does not help an order number typed wrong. */
   if (!so) return c.json({ error: 'order_not_found', message: `${docNo} is not an order of this company.` }, 404);
   const read = await readCloses(sb, companyId);
   if ('error' in read) return fail(c, 'closed months', read.error);
@@ -714,7 +665,6 @@ export const addCommissionLineHandler = async (c: any): Promise<Response> => {
   return c.json({ ok: true, line });
 };
 
-/* POST /commission/lines/remove { id } — the line taken away, while its month is open. */
 export const removeCommissionLineHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);

@@ -1,16 +1,3 @@
-// ---------------------------------------------------------------------------
-// postcode-from-address.ts — find the postcode written inside an address and
-// take its state / city from scm.my_localities.
-//
-// A supplier like HOOKKA MANUFACTURING keeps "..., 47000 SUNGAI BULOH." in the
-// address text with the postcode / state columns empty, so every job built from
-// it showed Postcode and State as a dash and could not be put in a region.
-//
-// A five-digit number counts only when my_localities knows it as a postcode (a
-// lot number like "12345 Jalan ..." is not one), and two known candidates in one
-// address is ambiguous, so nothing is filled. my_localities is a GLOBAL address
-// master with no company_id, so its reads carry no company predicate.
-// ---------------------------------------------------------------------------
 
 import { chunkIn } from './paginate-all';
 
@@ -104,7 +91,6 @@ export async function localitiesForPostcodes(sb: Sb, postcodes: readonly string[
 }
 
 export interface PostcodeFields {
-  /** The address lines (and anything else the postcode may be written in). */
   lines: ReadonlyArray<string | null | undefined>;
   city: string | null | undefined;
   postcode: string | null | undefined;

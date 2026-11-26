@@ -1,7 +1,3 @@
-/* The live receipt preview on SST & Receipt (layout E4): a sample bill laid
- * out the AutoCount way on 58 or 80 mm paper, from the settings as typed.
- * Pure: settings in, text lines out. The booth app's real ESC/POS layout
- * (step 5) follows the same column rule, 32 columns at 58 mm, 48 at 80 mm. */
 import { receiptHeaderLines, type SstReceiptSettings } from "../../vendor/shared/pos-settings";
 
 export const receiptColumns = (paperWidth: 58 | 80): number => (paperWidth === 80 ? 48 : 32);

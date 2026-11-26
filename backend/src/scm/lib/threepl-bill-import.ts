@@ -45,8 +45,6 @@ import { expectedSen } from './threepl-do-charge';
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped as in every SCM lib */
 type Row = Record<string, any>;
 const str = (v: unknown) => (v == null || v === '' ? null : String(v));
-/** A real calendar day or null — a blank, or a misread "2026-13-45", must not
- *  sink the whole bill. */
 const dayOrNull = (v: string | null): string | null => {
   if (v == null || v.trim() === '' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
   const t = Date.parse(`${v}T00:00:00Z`);
@@ -55,9 +53,7 @@ const dayOrNull = (v: string | null): string | null => {
 
 export type BillDeps = {
   sb: any;
-  /** The paying company — the AP invoice's. */
   companyId: number;
-  /** The companies whose DOs a bill may name. */
   allowedIds: readonly number[];
   bucket?: { get(k: string): Promise<any> };
   apiKey?: string;
@@ -133,9 +129,6 @@ async function loadBillFiles(deps: BillDeps, inv: Row): Promise<{ ok: true; file
   return { ok: true, files, stamp };
 }
 
-/* ── Resolving the printed numbers ───────────────────────────────────────────
-   Every SO / DO number and slip the bill names, read in a handful of queries
-   across the companies the bill may name. */
 type Resolved = { dosByNumber: Map<string, DoCandidate>; dosBySo: Map<string, DoCandidate[]>; soBySlip: Map<string, string[]>; soKnown: Set<string> };
 const DO_COLS = 'id, do_number, do_date, so_doc_no, company_id, debtor_name, status';
 export const doOf = (d: Row): DoCandidate => ({
@@ -152,8 +145,6 @@ async function resolveNumbers(deps: BillDeps, keys: readonly OrderKeys[]): Promi
   const sos = await chunkIn<Row>(soNos, (b, from, to) => scope(sb.from('mfg_sales_orders').select('doc_no, status')).in('doc_no', b).range(from, to));
   if (sos.error) return { ok: false, reason: sos.error.message };
   const soKnown = new Set(sos.data.filter((s) => s.status !== 'CANCELLED').map((s) => String(s.doc_no)));
-  /* A slip is the order's Ref No. — typed by hand, so read the candidates by
-     its digits and keep the orders whose own Ref No. tokens include it. */
   const soBySlip = new Map<string, string[]>();
   for (let i = 0; i < slips.length; i += 8) {
     const batch = slips.slice(i, i + 8);
@@ -185,9 +176,6 @@ async function resolveNumbers(deps: BillDeps, keys: readonly OrderKeys[]): Promi
   return { ok: true, r: { dosByNumber, dosBySo, soBySlip, soKnown } };
 }
 
-/** The DOs one printed order stands for: its DO number when the system has
- *  it, else each order it names (SO number or slip) → that order's DO dated
- *  nearest the line. */
 function resolverFor(r: Resolved) {
   return (k: OrderKeys, lineDate: string | null): DoCandidate[] => {
     const exact = k.doNos.map((n) => r.dosByNumber.get(n)).filter((d): d is DoCandidate => !!d);
@@ -197,12 +185,9 @@ function resolverFor(r: Resolved) {
   };
 }
 
-/** The rate card amount of each DO on one 3PL's card (null without a card),
- *  and each DO's goods value (a bill's shared price is split by it). */
 async function pricer(deps: BillDeps, carrierId: string | null, dos: readonly DoCandidate[]): Promise<{ ok: true; expectedOf: (doId: string) => number | null; goodsOf: (doId: string) => number | null } | { ok: false; reason: string }> {
   const cards = await loadCarrierCards(deps.sb, deps.companyId);
   if (!cards.ok) return cards;
-  /* Orders are zoned by the paying company's map, the one its cards' places sit in. */
   const facts = await loadDoFacts(scopeOf(deps), deps.sb, dos.map((d) => ({ id: d.id, soDocNo: d.soDocNo })), cards.cards.zoneMap);
   if (!facts.ok) return facts;
   const spec = carrierId ? cards.cards.specByCarrier.get(carrierId)?.spec ?? null : null;
@@ -213,8 +198,6 @@ async function pricer(deps: BillDeps, carrierId: string | null, dos: readonly Do
   };
 }
 
-/** The AP invoice's own lines: their amounts and fairs, for the setup /
- *  dismantle a bill line names (preselect). */
 async function apLinesOf(deps: BillDeps, inv: Row): Promise<{ ok: true; rows: Array<{ amountSen: number | null; projectId: number | null }> } | { ok: false; reason: string }> {
   const { data, error } = await scopeToCompanyId(deps.sb.from('ap_invoice_lines').select('amount_sen, project_id'), deps.companyId).eq('invoice_id', String(inv.id));
   if (error) return { ok: false, reason: error.message };
@@ -225,12 +208,10 @@ export type BillReading = {
   carrierId: string | null;
   carriers: Row[];
   lines: MatchedLine[];
-  /** Each line's assignment as the reader sees it. */
   assignments: Assignment[];
   dos: Map<string, DoCandidate>;
   expectedOf: (doId: string) => number | null;
   goodsOf: (doId: string) => number | null;
-  /** DOs another bill or a hand entry already charges on this 3PL. */
   elsewhere: Map<string, { invoiceNo: string | null; billedSen: number }>;
   stamp: FileStamp;
 };
@@ -279,7 +260,6 @@ export async function readBill(deps: BillDeps, bill: ApBill, askedCarrierId: str
 export type KeptLine = {
   lineNo: number; text: string; date: string | null; kind: string; amountSen: number | null;
   printed: string[]; readStatus: string; assignment: Assignment;
-  /** Who put the line where it is, when not the saver (a person's choice kept through a re-read). */
   assignedBy?: string | null; assignedAt?: string | null;
 };
 
@@ -291,9 +271,7 @@ export async function saveBill(deps: BillDeps, bill: ApBill, args: {
   lines: readonly KeptLine[];
   stamp: FileStamp;
   readBy: 'auto' | 'person';
-  /** Who assigned what the reader did not ('auto' for the cron). */
   actor: string;
-  /** DO amounts the person corrected, by DO id. */
   doAmounts?: ReadonlyMap<string, number>;
 }): Promise<{ ok: true; saved: number; skipped: Array<{ doId: string; invoiceNo: string | null }> } | BillFail> {
   const { sb, companyId } = deps;
@@ -307,7 +285,6 @@ export async function saveBill(deps: BillDeps, bill: ApBill, args: {
       line_no: l.lineNo, text: l.text.slice(0, 300), line_date: dayOrNull(l.date), kind: l.kind, amount_sen: l.amountSen,
       printed: l.printed.slice(0, 40), read_status: l.readStatus,
       assign: l.assignment.assign, do_ids: l.assignment.doIds, service_ref: l.assignment.serviceRef, project_id: l.assignment.projectId,
-      /* A line a person took off its DO keeps their name though it waits: a re-read leaves it waiting. */
       assigned_by: l.assignment.assign ? l.assignedBy ?? args.actor : l.assignedBy ?? null,
       assigned_at: l.assignment.assign || l.assignedBy ? l.assignedAt ?? now : null,
       updated_at: now,
@@ -316,7 +293,6 @@ export async function saveBill(deps: BillDeps, bill: ApBill, args: {
   }
   const charges = await rederiveCharges(deps, bill, args.carrierId, args.doAmounts);
   if (!charges.ok) return charges;
-  /* The next bill from this supplier picks this 3PL by itself. */
   const { data: carrier, error: cErr } = await scopeToCompanyId(sb.from('threepl_companies').select('id, supplier_id'), companyId).eq('id', args.carrierId).maybeSingle();
   if (cErr) return fail(500, 'save_failed', cErr.message);
   if (carrier && !str(carrier.supplier_id)) {
@@ -508,8 +484,6 @@ export async function autoReadBill(deps: BillDeps, apInvoiceId: string): Promise
     const { data: prev, error: pErr } = await scopeToCompanyId(deps.sb.from('threepl_bill_reads').select('attempts, threepl_company_id, files_count, files_latest'), deps.companyId)
       .eq('ap_invoice_id', apInvoiceId).maybeSingle();
     if (pErr) return fail(500, 'load_failed', pErr.message);
-    /* The files it failed on are stamped, so a new file is read at once and the
-       same files are tried AUTO_ATTEMPTS times in all. */
     const now = await fileStampOf(deps, bill.inv);
     const logged = await logRead(deps, bill.inv, {
       carrierId: str(prev?.threepl_company_id), readBy: 'auto', error: reading.message, attempts: Number(prev?.attempts ?? 0) + 1,

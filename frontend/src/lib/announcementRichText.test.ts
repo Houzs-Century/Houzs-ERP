@@ -1,11 +1,3 @@
-// The announcement rich-body canonicaliser (lib/announcementRichText.ts).
-//
-// The renderer hands the stored HTML to innerHTML, so the ONLY thing standing
-// between a hostile POST body and every reader's browser is this module. The
-// fixtures below are the contract: what survives, what is folded, what is
-// dropped whole, and that the plain-text shadow keeps list numbering. The
-// backend twin (backend/tests/announcementRichText.test.ts) pins the SAME
-// fixtures so the two copies cannot drift apart silently.
 import { describe, expect, test } from "vitest";
 import {
   hasRichFormatting,
@@ -111,7 +103,6 @@ describe("sanitizeAnnouncementHtml", () => {
     expect(sanitizeAnnouncementHtml("")).toBe("");
   });
 
-  // ---- 2026-09-05 toolbar follow-up: headings, highlight, link, table, image
 
   test("keeps h1 / h2 / mark / a / table / img in canonical form", () => {
     const html =
@@ -133,7 +124,6 @@ describe("sanitizeAnnouncementHtml", () => {
     expect(sanitizeAnnouncementHtml("<a href='mailto:hi@houzs.my'>m</a>")).toBe(
       '<a href="mailto:hi@houzs.my" rel="noopener noreferrer" target="_blank">m</a>',
     );
-    // scheme tricks: javascript:, data:, protocol-relative, whitespace, entities
     for (const bad of [
       "javascript:alert(1)",
       "JAVASCRIPT:alert(1)",
@@ -152,7 +142,6 @@ describe("sanitizeAnnouncementHtml", () => {
     expect(
       sanitizeAnnouncementHtml('<a href="https://a.b">x<a href="https://c.d">y</a>z</a>'),
     ).toBe('<a href="https://a.b" rel="noopener noreferrer" target="_blank">xyz</a>');
-    // a rejected link's close tag does not close a real one around it
     expect(sanitizeAnnouncementHtml('<a href="https://a.b">x<a href="bad">y</a>z</a>')).toBe(
       '<a href="https://a.b" rel="noopener noreferrer" target="_blank">xyz</a>',
     );
@@ -184,11 +173,9 @@ describe("sanitizeAnnouncementHtml", () => {
     ).toBe("<table><tr><th>h</th></tr><tr><td>c</td></tr></table>");
     expect(sanitizeAnnouncementHtml("<tr><td>x</td></tr>")).toBe("x");
     expect(sanitizeAnnouncementHtml("<table><td>x</td></table>")).toBe("<table>x</table>");
-    // unclosed cells and rows are balanced by the next sibling
     expect(sanitizeAnnouncementHtml("<table><tr><td>a<td>b<tr><td>c</table>")).toBe(
       "<table><tr><td>a</td><td>b</td></tr><tr><td>c</td></tr></table>",
     );
-    // a paragraph inside a cell belongs to the cell; a table inside a paragraph closes it
     expect(
       sanitizeAnnouncementHtml("<table><tr><td><p>a</p><p>b</p></td></tr></table>"),
     ).toBe("<table><tr><td><p>a</p><p>b</p></td></tr></table>");

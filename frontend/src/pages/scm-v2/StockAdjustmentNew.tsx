@@ -75,8 +75,6 @@ import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '..
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-// The direction is derived from the sign of qty (see header). Kept as a tiny
-// helper so the row and the Save loop read the same rule.
 type AdjustmentType = 'increase' | 'decrease';
 const directionOf = (qty: number): AdjustmentType => (qty < 0 ? 'decrease' : 'increase');
 
@@ -87,34 +85,17 @@ type LineDraft = {
   _key: string;
   itemCode: string;
   productName: string;
-  // SIGNED: positive = increase, negative = decrease, 0 = invalid.
   qty: number;
   reasonCode: string;
   notes: string;
-  // Variant + batch (sofa / bedframe). itemGroup is the picked SKU's
-  // category, lowercased. variants holds the chosen attribute values (same
-  // keys the GRN / PO store). batchNo is a plain text lot label. On a
-  // DECREASE the picker fills variantKey + batchNo from an existing stock
-  // bucket instead of free entry.
   itemGroup: string;
   variants: Record<string, unknown>;
   batchNo: string;
   variantKey: string;
-  // Which open bucket the DECREASE picker points at, as its stable key. Kept
-  // apart from variantKey/batchNo because the no-variant, no-batch bucket has
-  // both empty: without this, picking it read as picking nothing and that lot
-  // could never be decreased. NO_BUCKET_PICKED ('') = nothing chosen.
   pickedKey: string;
-  // EDIT only — what this line already moved when the form opened (0 / no
-  // bucket on a line added now). The stock it took is available to it again.
   origQty: number;
   origBucketKey: string;
-  // EDIT only — variantKey is the key the saved line is stored under, sent back
-  // as-is so an untouched legacy line never reads as a different bucket.
-  // Cleared the moment its SKU or variants change.
   storedKey: boolean;
-  // INCREASE only — the operator's unit cost in RM. null = let the server fall
-  // back to the bucket's known cost; it refuses (cost_required) when there is none.
   costRm: number | null;
 };
 
@@ -163,14 +144,12 @@ export const lineInput = (it: LineDraft): StockAdjustmentLineInput => {
   return {
     itemCode: it.itemCode.trim(),
     productName: it.productName.trim() || undefined,
-    // SIGNED — the sign IS the direction (see header).
     qty: it.qty,
     reasonCode: it.reasonCode,
     notes: it.notes.trim() || undefined,
     itemGroup: hasVariantGroup || it.storedKey ? it.itemGroup || undefined : undefined,
     variants: !isDecrease && (hasVariantGroup || it.storedKey) ? it.variants : undefined,
     batchNo: it.batchNo.trim() || undefined,
-    // DECREASE: the picked bucket. INCREASE: only a saved line's own key.
     variantKey: isDecrease ? (it.variantKey || undefined) : (it.storedKey ? it.variantKey : undefined),
     unitCostSen: !isDecrease && it.costRm != null && it.costRm > 0 ? Math.round(it.costRm * 100) : undefined,
   };
@@ -178,8 +157,6 @@ export const lineInput = (it: LineDraft): StockAdjustmentLineInput => {
 
 type LineState = { willGoNegative: boolean; needsBucketPick: boolean };
 
-/* Per-category dropdown — a small local copy of the GRN/PO variant picker so a
-   found sofa/bedframe carries the same attributes a real order line needs. */
 const VariantSelect = ({
   label, options, value, onChange,
 }: {
@@ -235,13 +212,6 @@ const FabricSelect = ({
   );
 };
 
-// One adjustment line — the main <tr> holds the five requested columns; a
-// full-width detail <tr> below it holds everything a correct stock write still
-// needs (current/resulting balance, the sofa/bedframe variant editor on an
-// INCREASE, the "Take from" lot picker on a DECREASE, the below-zero warning).
-// Owns its OWN bucket + breakdown queries, the same reason TransferLineRow does:
-// rules of hooks forbid a variable-length loop of hook calls, so each repeated
-// row has to be its own component.
 function AdjustmentLineRow({
   line, warehouseId, allSkus, maint, fabrics, specialsPools, setLine, removeLine, canRemove, reportState, canEnterCost,
 }: {
@@ -254,21 +224,13 @@ function AdjustmentLineRow({
   setLine: (key: string, patch: Partial<LineDraft>) => void;
   removeLine: (key: string) => void;
   canRemove: boolean;
-  // The parent owns Save and needs to know, for EVERY line, whether it's
-  // missing a required DECREASE bucket pick and whether it will go negative
-  // — but only this row has the bucket/breakdown data either verdict depends
-  // on, so it reports up instead of the parent re-deriving it.
   reportState: (key: string, state: LineState) => void;
   canEnterCost: boolean;
 }) {
   const type = directionOf(line.qty);
   const magnitude = Math.abs(line.qty);
 
-  // Open stock buckets for the DECREASE "Take from" picker — only fires once
-  // both warehouse + SKU are set (enabled guard inside the hook).
   const bucketsQ = useInventoryBuckets(line.itemCode || null, warehouseId || null);
-  // EDIT: the bucket a saved write-off took from is pickable again even when it
-  // is now empty, and offers back what this line took out of it.
   const credit = line.origQty < 0 ? -line.origQty : 0;
   const buckets = useMemo(() => {
     const open = (bucketsQ.data ?? []).map((b) => (
@@ -280,13 +242,8 @@ function AdjustmentLineRow({
     }
     return open;
   }, [bucketsQ.data, credit, line.origBucketKey, line.productName, warehouseId]);
-  // Drive the breakdown lookup off the picked code. The hook only fires when
-  // itemCode is non-empty (enabled guard inside the hook).
   const breakdown  = useInventoryProductBreakdown(line.itemCode || null);
 
-  // Current balance @ chosen warehouse. Pulls from showAll=true so even
-  // zero-stock rows appear (commander needs to be able to adjust into
-  // existence, e.g. recount up from 0).
   const currentBalance: number | null = useMemo(() => {
     if (!warehouseId || !line.itemCode) return null;
     const balances = breakdown.data?.balances ?? [];
@@ -297,13 +254,8 @@ function AdjustmentLineRow({
     return row.qty ?? 0;
   }, [warehouseId, line.itemCode, breakdown.data, breakdown.isLoading]);
 
-  // qty is already signed, so the resulting balance is a straight add — less
-  // what this line already moved when it was saved (0 on a new line).
   const resultingBalance: number | null = currentBalance == null ? null : currentBalance + line.qty - line.origQty;
   const willGoNegative = resultingBalance != null && resultingBalance < 0;
-  // DECREASE gate — when there are open lots, the operator must say which one
-  // the stock comes out of (so the right variant/batch is reduced). Mirrors the
-  // single-row Save-time check verbatim, just reported up.
   const needsBucketPick = type === 'decrease' && buckets.length > 0 && line.pickedKey === NO_BUCKET_PICKED;
 
   useEffect(() => {
@@ -311,29 +263,22 @@ function AdjustmentLineRow({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reportState is a stable parent callback (useCallback); including it would re-fire every render for no behavioural change.
   }, [line._key, willGoNegative, needsBucketPick]);
 
-  // SKU picker — when commander types/picks a code that matches an mfg
-  // product, auto-fill product_name (kept editable for catalog-less SKUs).
   const onPickSku = (code: string) => {
     const sku = allSkus.find((p) => p.code === code);
     setLine(line._key, {
       itemCode: code,
       productName: sku?.name ?? '',
-      // Category drives the variant editor below (only sofa / bedframe have one).
       itemGroup: sku?.category ? sku.category.toLowerCase() : '',
-      // Fresh SKU → clear any variant / batch / bucket carried from the last pick.
       variants: {},
       batchNo: '',
       variantKey: '',
       pickedKey: NO_BUCKET_PICKED,
-      // A different SKU: whatever the saved line moved goes back to ITS item,
-      // not this one, and the stored key no longer applies.
       origQty: 0,
       origBucketKey: NO_BUCKET_PICKED,
       storedKey: false,
     });
   };
 
-  // Set one variant value; auto-compute bedframe Total Height = Divan + Leg + Gap.
   const setVariant = (key: string, value: string) =>
     setLine(line._key, {
       storedKey: false,
@@ -346,8 +291,6 @@ function AdjustmentLineRow({
       })(),
     });
 
-  // DECREASE — operator picks which existing lot to take from. Stores the exact
-  // bucket's variant_key + batch_no and caps the magnitude to that bucket.
   const hasVariantGroup = line.itemGroup === 'sofa' || line.itemGroup === 'bedframe';
   const onPickBucket = (key: string) => {
     const b = buckets.find((x) => bucketKey(x) === key);
@@ -356,13 +299,10 @@ function AdjustmentLineRow({
       pickedKey: key,
       variantKey: b.variant_key,
       batchNo: b.batch_no ?? '',
-      // Cap the magnitude down so a decrease can't exceed the chosen lot; keep
-      // it negative (a decrease).
       qty: -Math.min(magnitude || 1, b.qty),
     });
   };
 
-  // Magnitude ceiling for a DECREASE — the picked lot's quantity (null = uncapped).
   const bucketQtyCap = useMemo(() => {
     if (type !== 'decrease' || line.pickedKey === NO_BUCKET_PICKED) return null;
     const b = buckets.find((x) => bucketKey(x) === line.pickedKey);
@@ -374,7 +314,6 @@ function AdjustmentLineRow({
   return (
     <>
       <tr>
-        {/* SKU */}
         <td>
           <input
             type="text"
@@ -392,7 +331,6 @@ function AdjustmentLineRow({
           </datalist>
         </td>
 
-        {/* Product Name — auto-filled, editable for free-text adjustments */}
         <td>
           <input
             type="text"
@@ -404,11 +342,7 @@ function AdjustmentLineRow({
           />
         </td>
 
-        {/* Qty — SIGNED. + increases, − decreases. On a DECREASE capped to the picked lot. */}
         <td className={styles.tableRight}>
-          {/* SIGNED — the only signed numeric field in the system (negative =
-              decrease). Empty / lone "-" reads as 0; a picked-lot decrease is
-              capped to the lot. */}
           <NumberInput
             value={line.qty}
             sign="signed"
@@ -442,7 +376,6 @@ function AdjustmentLineRow({
           )}
         </td>
 
-        {/* Reason — structured, required for audit trail */}
         <td>
           <select
             value={line.reasonCode}
@@ -457,7 +390,6 @@ function AdjustmentLineRow({
           </select>
         </td>
 
-        {/* Note — optional free-text detail */}
         <td>
           <input
             type="text"
@@ -483,13 +415,9 @@ function AdjustmentLineRow({
         </td>
       </tr>
 
-      {/* Detail row — appears once warehouse + SKU are set. Holds the balance
-          hint and, depending on the sign, the INCREASE variant editor or the
-          DECREASE lot picker, plus the below-zero warning. */}
       {showDetail && (
         <tr>
           <td colSpan={6} style={{ background: 'var(--c-paper)', paddingTop: 0 }}>
-            {/* Current / resulting balance */}
             <div style={{
               background: 'var(--c-cream)',
               border: '1px solid var(--line)',
@@ -523,9 +451,6 @@ function AdjustmentLineRow({
               )}
             </div>
 
-            {/* INCREASE — variant editor + batch number for sofa / bedframe. The
-                found stock must carry the same attributes a real order line
-                needs, so it can be matched and allocated later. */}
             {type === 'increase' && hasVariantGroup && maint && (
               <div style={{
                 marginTop: 'var(--space-3)',
@@ -580,8 +505,6 @@ function AdjustmentLineRow({
                     showPrices={false}
                   />
                 </div>
-                {/* Batch Number — required for sofa (so the stock can be allocated
-                    to an order later); optional for bedframe. */}
                 <label className={`${styles.field} ${styles.fieldFull}`} style={{ marginTop: 'var(--space-3)' }}>
                   <span className={styles.fieldLabel}>Batch Number{line.itemGroup === 'sofa' ? ' *' : ''}</span>
                   <input
@@ -600,9 +523,6 @@ function AdjustmentLineRow({
               </div>
             )}
 
-            {/* DECREASE — "Take from" picker. Pick which existing lot the stock
-                comes out of (so the right variant/batch is reduced), instead of
-                free variant entry. */}
             {type === 'decrease' && (
               <div style={{ marginTop: 'var(--space-3)', maxWidth: 480 }}>
                 {bucketsQ.isLoading ? (
@@ -630,7 +550,6 @@ function AdjustmentLineRow({
               </div>
             )}
 
-            {/* Negative balance warning — non-blocking, commander can still save */}
             {willGoNegative && (
               <div style={{
                 marginTop: 'var(--space-3)',
@@ -660,8 +579,6 @@ export const StockAdjustmentNew = () => (
   <FreshMount>{(startNew) => <StockAdjustmentForm onStartNew={startNew} existing={null} />}</FreshMount>
 );
 
-/* /scm/stock-adjustments/:id/edit — the same form, seeded from the saved
-   document. Keyed on updated_at so a reload after another save re-seeds. */
 export const StockAdjustmentEdit = () => {
   const { id = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -678,34 +595,24 @@ export const StockAdjustmentEdit = () => {
   return <StockAdjustmentForm key={docQ.data.updated_at} onStartNew={() => navigate('/scm/stock-adjustments/new')} existing={docQ.data} />;
 };
 
-/* One mount = one document. Once it saves the form LOCKS (no Save button), and
-   another one is a remount via onStartNew — the same shape as StockTransferNew. */
 const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void; existing: StockAdjustmentDoc | null }) => {
   const navigate = useNavigate();
   const create = useStockAdjustment();
   const update = useUpdateStockAdjustment(existing?.id ?? '');
-  /* Off native browser dialogs onto the house dialog system — this screen
-     writes stock, so its warnings must look like the rest of the ERP rather
-     than like OS chrome the operator has learned to dismiss. */
   const askConfirm = useConfirm();
   const notify = useNotify();
   const [saved, setSaved] = useState<{ id: string; adjustmentNo: string } | null>(null);
   const [resultOpen, setResultOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // ── Form state ─────────────────────────────────────────────────────
   const [warehouseId, setWarehouseId] = useState<string>(existing?.warehouse_id ?? '');
   const [notes, setNotes] = useState<string>(existing?.notes ?? '');
   const [lines, setLines] = useState<LineDraft[]>(() => (existing?.lines.length ? existing.lines.map(lineFromDoc) : [blankLine()]));
 
-  // ── Data ───────────────────────────────────────────────────────────
   const warehouses = useWarehouses();
   const allSkus    = useMfgProducts();
-  // Cost ENTRY, so the product-cost cohort, not the finance display switch (backend scm/lib/costing-enabled.ts).
   const canEnterCost = canViewProductCost(useAuth().user);
 
-  // Dropdown pools for the sofa / bedframe variant editor — same sources the
-  // GRN / PO forms use (divan/leg height, gap, seat size; specials by category).
   const maintQ = useMaintenanceConfig('master');
   const maint  = maintQ.data?.data ?? null;
   const fabricsQ = useFabricTrackingsLite();
@@ -726,11 +633,8 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
   }, []);
 
   const addLine = () => setLines((cur) => [...cur, blankLine()]);
-  // Insert adds a line — disabled once saved (form locked).
   useAddLineHotkey(addLine, !saved);
 
-  // Partial, not Record: a line that hasn't reported yet (just added, or its
-  // effect hasn't fired) genuinely has no entry.
   const [lineStateByKey, setLineStateByKey] = useState<Partial<Record<string, LineState>>>({});
   const reportState = useCallback((key: string, state: LineState) => {
     setLineStateByKey((prev) => {
@@ -750,7 +654,6 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
     });
   };
 
-  // A line is valid with a SKU, a non-zero (signed) qty, and a reason.
   const validLines = lines.filter((it) => it.itemCode.trim() && Number.isFinite(it.qty) && it.qty !== 0 && it.reasonCode);
   const blockedLines = validLines.filter((it) => lineStateByKey[it._key]?.needsBucketPick);
   const anyNegative = validLines.some((it) => lineStateByKey[it._key]?.willGoNegative);
@@ -762,11 +665,6 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
       void notify({ title: 'Pick a Warehouse and fill in at least one line (SKU, Qty, Reason) before saving.', tone: 'error' });
       return;
     }
-    // INCREASE gate — sofa / bedframe must carry their variant attributes (and
-    // sofa a batch number) before the found stock can be saved. Same check the
-    // backend runs, walked across every line before anything is sent. A saved
-    // line that is unchanged is left to the backend, which only gates a bucket
-    // the edit actually moves.
     for (const it of validLines) {
       const hasVariantGroup = it.itemGroup === 'sofa' || it.itemGroup === 'bedframe';
       const unchanged = it.storedKey && it.qty === it.origQty;
@@ -778,9 +676,6 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
         }
       }
     }
-    // DECREASE gate — when a line has open lots, the operator must say which
-    // one the stock comes out of. Each row reports this itself (only it has the
-    // bucket data the check needs).
     if (blockedLines.length > 0) {
       void notify({
         title: 'Pick which batch or variant the stock comes out of',
@@ -811,8 +706,6 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
       }
       setResultOpen(true);
     } catch (err) {
-      /* authedFetch already ran the response through humanApiError. The whole
-         document is written in one statement, so a failure moved nothing. */
       void notify({
         title: existing ? `Couldn't save ${existing.adjustment_no}` : "Couldn't save this stock adjustment",
         body: `${err instanceof Error ? err.message : 'Something went wrong.'} No stock was moved and your entries are still on this screen — please try again.`,
@@ -855,7 +748,6 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
         }
       />
 
-      {/* Saved: readable, not editable — there is no Save left to press. */}
       <fieldset disabled={Boolean(saved)} className="space-y-4" style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
 
       <section className={styles.card}>
@@ -866,7 +758,6 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
           <div style={{ display: 'flex', gap: 'var(--space-4)', flexWrap: 'wrap' }}>
             <label className={styles.field} style={{ width: 320, maxWidth: '100%' }}>
               <span className={styles.fieldLabel}>Warehouse *</span>
-              {/* Fixed once saved: every line's stock moved in THIS warehouse. */}
               <select
                 value={warehouseId}
                 onChange={(e) => setWarehouseId(e.target.value)}
@@ -894,7 +785,6 @@ const StockAdjustmentForm = ({ onStartNew, existing }: { onStartNew: () => void;
         </div>
       </section>
 
-      {/* ── Items card ──────────────────────────────────────────────── */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items</h2>

@@ -1,33 +1,3 @@
-// ----------------------------------------------------------------------------
-// DetailListingShell — Task #120 shared L2 (Detail Listing) layout.
-//
-// Used by the module-specific L2 pages (DO / SI / DR).
-// Mirrors the SalesOrderDetailListing structure but extracted as a reusable
-// shell so each module-specific page is mostly column definitions + a hook
-// call, not a 500-line copy-paste.
-//
-// Each module owns:
-//   - Columns (GridColumn<row>[])
-//   - The TanStack Query hook that fetches the rows
-//   - Module-specific KPI tile labels (defaults sensible)
-//   - Identity strings (title, route, storage key)
-//
-// Outstanding filter is wired here: when ?outstanding=1 is in the URL, we
-// filter rows where (balance_sen ?? 0) > 0. Module endpoints compute
-// balance_sen server-side so each module decides what "outstanding"
-// means for its doc type.
-//
-// ── HOUZS VENDOR ADAPTATIONS ───────────────────────────────────────────────
-//   • react-router → react-router-dom.
-//   • flow-queries types → the vendored reports-queries slice.
-//   • pdf-common's fmtDocStamp is inlined (the PDF chain isn't vendored).
-//   • The Preview button's `import('jspdf')` PDF render is REPLACED with the
-//     established jspdf STUB throw — jspdf/jspdf-autotable aren't installed and
-//     the vendoring effort can't `npm install`. The button still renders;
-//     clicking it surfaces the friendly "PDF export not enabled" message via
-//     the page's existing notify() catch. Re-enable by `npm i jspdf
-//     jspdf-autotable` and restoring the source render body.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -48,8 +18,6 @@ import { printPageAs } from '../../lib/printFrame';
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/* Was a hand-inlined copy of pdf-common.fmtDocStamp. Both are now the one
-   rule, so the PDF footer and the screen agree by construction. */
 const fmtDocStamp = (d: Date = new Date()): string => fmtDateTime(d);
 
 const PDF_UNAVAILABLE =
@@ -69,11 +37,8 @@ export type DetailListingKpis = {
 
 export interface DetailListingShellProps<R extends DetailListingRow> {
   title: string;
-  /** Stable localStorage key for the DataGrid layout. */
   storageKey: string;
-  /** Static placeholder for the doc number filter input ("DO-2605-001" etc.) */
   docNoPlaceholder?: string;
-  /** Module-specific KPI tile labels (default: "Total Lines / Unique Docs / Revenue / Cost / Margin / Outstanding"). */
   kpiLabels?: Partial<{
     totalLines: string;
     uniqueDocs: string;
@@ -82,25 +47,15 @@ export interface DetailListingShellProps<R extends DetailListingRow> {
     margin: string;
     outstanding: string;
   }>;
-  /** Hide tiles that don't apply (e.g. a return has no margin). */
   hideKpis?: Partial<{
     cost: boolean;
     margin: boolean;
   }>;
-  /** TanStack Query hook for this module's detail listing. */
   useDetailQuery: (filters: DetailListingFilters) => UseQueryResult<{ rows: R[] }>;
-  /** Columns built per module — passed as a factory so the page can inject
-   *  selection state if needed (mirrors the SO L2 pattern). */
   buildColumns: (state: { checked: Record<string, boolean>; onToggle: (id: string) => void }) => GridColumn<R>[];
-  /** Compute KPI values from the (already outstanding-filtered) row set.
-   *  Default: revenue = sum(total_sen), outstanding = sum(balance_sen)
-   *  deduped by doc_no, no cost/margin. */
   computeKpis?: (rows: R[]) => DetailListingKpis;
 }
 
-// The ONE guarded centi→"<currency> …" formatter — returns "—" for an absent/
-// non-finite amount, never "MYR NaN". Kept under the local name so the shell's
-// callsites are unchanged.
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string =>
   fmtMoneySen(centi, currency);
 
@@ -155,7 +110,6 @@ export function DetailListingShell<R extends DetailListingRow>({
     [hasRunQuery, query.data],
   );
 
-  // Outstanding overlay: keep only rows whose document has balance > 0.
   const rows = useMemo<R[]>(() => {
     if (!outstandingOnly) return rawRows;
     return rawRows.filter((r) => Number(r.balance_sen ?? 0) > 0);
@@ -180,9 +134,6 @@ export function DetailListingShell<R extends DetailListingRow>({
     setHasRunQuery(true);
   };
 
-  /* Print and Preview wait for the inquiry's rows. They used to fire on a
-     60 / 250 ms timer, which on a slow fetch printed an empty or "Loading"
-     sheet. Now the action is parked until the query has settled. */
   const [pendingOutput, setPendingOutput] = useState<'print' | 'preview' | null>(null);
   const queryReady = hasRunQuery && !query.isFetching;
 
@@ -192,12 +143,6 @@ export function DetailListingShell<R extends DetailListingRow>({
   };
   const print = usePrintPreview(runPrint);
 
-  // HOUZS VENDOR STUB — the source renders the listing to a PDF via
-  // `import('jspdf')` + `import('jspdf-autotable')`. Neither is installed and
-  // the vendoring effort can't `npm install`, so Preview surfaces the friendly
-  // "not enabled" message through the same notify() the source error path uses.
-  // The `fmtDocStamp` helper above is kept (it's cheap + used in the real body
-  // when PDFs are re-enabled).
   const generatePreviewPdf = async (data: R[]) => {
     void data; void fmtDocStamp;
     notify({ title: PDF_UNAVAILABLE, tone: 'error' });
@@ -235,10 +180,6 @@ export function DetailListingShell<R extends DetailListingRow>({
   };
 
   return (
-    /* `print-area` is the app's print opt-in (index.css) — without it the
-       global `body * { visibility: hidden }` swallowed this page and Print
-       produced a blank sheet. The action bar carries `no-print` so the
-       toolbar doesn't land on the paper with the rows. */
     <div className={`${styles.page} print-area ${optionsVisible ? '' : styles.optionsHidden}`}>
       <div className={styles.headerRow}>
         <div className={styles.titleBlock}>
@@ -394,8 +335,6 @@ export function DetailListingShell<R extends DetailListingRow>({
           <Printer {...SM_ICON} />
           <span>Print</span>
         </Button>
-        {/* The listing prints the page itself (the source's jspdf export is a
-            vendor stub here), so Print is the dialog's only exit. */}
         <PrintPreviewModal
           open={print.open}
           onClose={print.close}

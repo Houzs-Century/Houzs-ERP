@@ -10,7 +10,6 @@ import type { PdfAction } from './pdf-common';
 import { fmtMoneySen, fmtSenPlain, todayMY } from '../../shared/format';
 import { closeListing, listingDress, openListing, screenTable, type FootCell, type ScreenTableView } from './listing-pdf';
 
-/** What a printed row needs beyond its cells: a voucher not in ringgit prints its own amount too. */
 type Own = { currency?: string | null; total_sen?: number | null };
 export type PaymentListingView = ScreenTableView & { rows: readonly Own[] };
 

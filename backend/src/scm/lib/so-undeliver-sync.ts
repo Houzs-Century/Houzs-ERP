@@ -1,14 +1,3 @@
-// After a delivery order is taken back from Delivered (the revert route), its
-// sales order may still read DELIVERED because that POD is what delivered it
-// (so-delivery-sync advances an SO to DELIVERED on a SIGNED / DELIVERED DO).
-// syncSoDeliveredFromDo does not step it back: the order is still fully
-// covered, so it only ever releases on lost coverage. This does the one
-// missing move — DELIVERED back to SHIPPED — when no live DO of the order still
-// carries delivery evidence (the same evidence so-delivery-sync reads).
-//
-// The daily local sweep (deliver-due-shipped.ts) may deliver the order again
-// by its own rule (delivery date passed and a driver assigned). That is the
-// system's normal rule for an order with no POD, not a relapse.
 import { DO_NOT_DELIVERED_IN_LIST, doHasArrived } from '../shared/do-shipped-states';
 import { advanceSoGeneration } from './so-generation';
 import { recordSoAudit } from './so-audit';

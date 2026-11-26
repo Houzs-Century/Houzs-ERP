@@ -68,24 +68,13 @@ export type PcLineDraft = {
   unitPriceSen: number;
   discountSen?: number;
   deliveryDate?: string;
-  /* Supplier-revised per-line delivery dates (migration 0181). All optional;
-     the supplier pushes the date back. Display-only on consignment (no MRP /
-     outstanding / on-time) — the latest non-empty date is the effective one,
-     computed at READ sites via the shared effectiveDelivery() helper. */
   supplierDeliveryDate2?: string;
   supplierDeliveryDate3?: string;
   supplierDeliveryDate4?: string;
   warehouseId?: string;
-  /* Set when itemCode matches an mfg_product — drives which variant editor
-     renders (sofa / bedframe). Lowercase to match itemGroup. */
   category?: string;
-  /** Variant payload (fabric / gap / divan / leg / seat / total height /
-      specials). Shipped to the API as NewPoItem.variants. */
   variants: Record<string, unknown>;
-  /** true once the operator types into Unit Price — a manual override wins and
-      the parent's supplier-price auto-fill stops touching this line's cost. */
   priceTouched?: boolean;
-  /** Per-line remark — purchase_consignment_order_items.notes. */
   notes?: string;
 };
 
@@ -121,43 +110,24 @@ export const PcLineCard = ({
   index: number;
   line: PcLineDraft;
   currency: string;
-  /** Picked supplier id ('' when none yet). Gates the binding-filtered pickers. */
   supplierId: string;
-  /** Bindings for the picked supplier (empty when no supplier / no bindings). */
   bindings: BindingRow[];
-  /** Full mfg_products catalogue — the picker fallback when a supplier has no
-      bindings (or no supplier is picked yet). */
   allSkus: MfgProductRow[];
-  /** Warehouses for the per-line ship-to override. */
   warehouses: Warehouse[];
-  /** Maintenance config (variant option pools). null until loaded. */
   maint: MaintenanceConfig | null;
-  /** Fabric trackings (variant fabric dropdown). */
   fabrics: FabricLite[];
-  /** Patch arbitrary line fields. */
   onChange: (patch: Partial<PcLineDraft>) => void;
-  /** Adopt a supplier binding (fills code + name + SKU + price + category). */
   onPickBinding: (b: BindingRow) => void;
-  /** Patch one variant key (parent owns the bedframe Total-Height auto-compute). */
   onSetVariant: (k: string, v: unknown) => void;
-  /** Item-first reverse lookup — fired when a code is typed before a supplier is
-      picked. Pass null to clear. */
   onPendingItemPick: (code: string | null) => void;
-  /** Remove this line. */
   onRemove: () => void;
-  /** Read-only when true (locked doc). */
   disabled?: boolean;
-  /** T12 — a line that descends from an upstream doc keeps its identity (code /
-      SKU / description) + variants READ-ONLY; only qty/price/disc/delivery stay
-      editable. Used by PCR for PCO-sourced lines. Defaults off. */
   identityReadOnly?: boolean;
 }) => {
   const l = line;
   const lineTotalSen = Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0));
   const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
   const showVariants = showsVariantEditor(l.category) && Boolean(maint);
-  // The whole card's `disabled` (locked doc) wins over everything; identityLocked
-  // additionally freezes the identity + variant inputs on a sourced line.
   const identityLocked = disabled || identityReadOnly;
   const pickable = pickableBindings(bindings, allSkus);
 
@@ -173,7 +143,6 @@ export const PcLineCard = ({
         gap: 'var(--space-3)',
       }}
     >
-      {/* Card header — Line N · category badge · line total · remove */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
           <span style={{
@@ -222,7 +191,6 @@ export const PcLineCard = ({
         </div>
       </div>
 
-      {/* Identity row — Internal code + Supplier SKU side by side */}
       <div className={styles.formGrid2}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Item Code (Internal)</span>
@@ -301,7 +269,6 @@ export const PcLineCard = ({
         </label>
       </div>
 
-      {/* Description — full width */}
       <label className={styles.field}>
         <span className={styles.fieldLabel}>Description</span>
         <input
@@ -314,7 +281,6 @@ export const PcLineCard = ({
         />
       </label>
 
-      {/* Remarks — full width, same box Create renders. */}
       <label className={styles.field}>
         <span className={styles.fieldLabel}>Remarks</span>
         <input
@@ -327,9 +293,6 @@ export const PcLineCard = ({
         />
       </label>
 
-      {/* Per-category variant editor — the shared PcVariantEditor (never drifts
-          from the rest of the consignment family). A sourced line freezes it by
-          stubbing onChange when identityLocked. */}
       {showVariants && (
         <div style={{
           background: 'var(--c-cream)',
@@ -362,7 +325,6 @@ export const PcLineCard = ({
         </div>
       )}
 
-      {/* Pricing row — Qty · Unit Price · Discount · Delivery · Ship-to */}
       <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Qty</span>
@@ -426,11 +388,6 @@ export const PcLineCard = ({
         </label>
       </div>
 
-      {/* Supplier-revised delivery dates (migration 0181). The supplier pushes
-          the delivery back; the latest non-empty date is the effective one.
-          Display-only on consignment (no MRP / outstanding / on-time). All
-          optional. HOUZS: display-only — Houzs's consignment schema lacks these
-          columns, so the page neither seeds nor persists them. */}
       <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Supplier Date 2</span>

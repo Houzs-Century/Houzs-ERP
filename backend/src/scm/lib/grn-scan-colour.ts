@@ -21,8 +21,6 @@ export function lineColours(variants: unknown): string[] {
   return [...new Set(out)];
 }
 
-/* Word tokens split at letter/digit boundaries, leading zeros dropped, so
-   "COVE-09", "cove 9" and "COVE-009" read as one colour. */
 const tokens = (s: string | null | undefined): string[] => (s ?? '').toUpperCase()
   .replace(/([A-Z])(?=\d)|(\d)(?=[A-Z])/g, '$1$2 ')
   .split(/[^A-Z0-9]+/)

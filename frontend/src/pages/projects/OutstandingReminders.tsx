@@ -65,7 +65,6 @@ const NO_ORGANIZER = "— No organizer —";
 const NO_OWNER = "— Unassigned —";
 const NO_PIC = "— No PIC —";
 
-// ── Pure helpers (exported for the unit test) ─────────────────────────────
 
 /** The group bucket a row falls into for the chosen axis. */
 export function groupLabel(row: OutstandingRow, by: GroupBy): string {
@@ -97,7 +96,6 @@ export function filterRows(
   });
 }
 
-/** Sort rows within a group: overdue first (most overdue first), then by due date, then title. */
 function sortGroupRows(rows: OutstandingRow[]): OutstandingRow[] {
   return [...rows].sort((a, b) => {
     if (a.overdue_days !== b.overdue_days) return b.overdue_days - a.overdue_days;
@@ -129,7 +127,6 @@ export function groupRows(rows: readonly OutstandingRow[], by: GroupBy): Reminde
     });
 }
 
-/** One row rendered as a WhatsApp line. */
 function rowLine(r: OutstandingRow): string {
   const dot = r.overdue_days > 0 ? "🔴" : "🟡";
   const bits = [`${dot} ${r.title} — ${r.name}`];
@@ -165,7 +162,6 @@ export function buildAllMessage(
   return [header, "", ...intersperse(blocks), "", footer].join("\n");
 }
 
-/** Join blocks with a blank line between them. */
 function intersperse(blocks: readonly string[]): string[] {
   const out: string[] = [];
   blocks.forEach((b, i) => {
@@ -184,7 +180,6 @@ export function currentMonthMyt(now: number = Date.now()): string {
 export function monthOptions(now: number = Date.now()): { value: string; label: string }[] {
   const base = new Date(now + 8 * 3_600_000);
   const opts: { value: string; label: string }[] = [];
-  // From 9 months ahead down to 3 months back, so upcoming events lead.
   for (let offset = 9; offset >= -3; offset--) {
     const d = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + offset, 1));
     const value = d.toISOString().slice(0, 7);
@@ -194,7 +189,6 @@ export function monthOptions(now: number = Date.now()): { value: string; label: 
   return opts;
 }
 
-// ── Component ─────────────────────────────────────────────────────────────
 
 export default function OutstandingReminders() {
   const toast = useToast();
@@ -231,13 +225,10 @@ export default function OutstandingReminders() {
     }
   }
 
-  // A specific task the current filter has narrowed to (or null when "All tasks"
-  // is showing) — lets each group header say WHICH task is outstanding.
   const narrowedTask = task === ALL_TASKS ? null : task;
 
   return (
     <div className="space-y-4">
-      {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-3 shadow-stone">
         <FilterSelect
           label="Task"
@@ -284,7 +275,6 @@ export default function OutstandingReminders() {
         </div>
       </div>
 
-      {/* Results */}
       {q.error ? (
         <div className="rounded-xl border border-err/40 bg-err-bg p-6 text-center text-[12px] text-err">
           {q.error}

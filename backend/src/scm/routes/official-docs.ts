@@ -30,12 +30,10 @@ const NO_PERM = { error: "You don't have permission to do that." };
 export const officialDocs = new Hono<{ Bindings: Env; Variables: Variables }>();
 officialDocs.use('*', supabaseAuth);
 
-/* ── GET / ─────────────────────────────────────────────────────────────────── */
 export const listOfficialDocsHandler = async (c: any): Promise<Response> => {
   if (!isRequestFinance(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  /* Open = still owed or waiting to be checked; all=1 adds the checked ones. */
   const states = c.req.query('all') === '1' ? [...OFFICIAL_STATES] : OFFICIAL_STATES.filter((s) => s !== 'CHECKED');
   const sb = c.get('supabase');
   const [pvs, apis] = await Promise.all([
@@ -51,8 +49,6 @@ export const listOfficialDocsHandler = async (c: any): Promise<Response> => {
   const pvRows = ((pvs.data ?? []) as Row[]).filter((v) => v.status !== 'CANCELLED');
   const apiRows = ((apis.data ?? []) as Row[]).filter((i) => i.status !== 'CANCELLED');
 
-  /* The payment request each one answered, and who asked — a voucher Finance
-     made on its own answers none. */
   const byPv = new Map<string, Row>();
   const byApi = new Map<string, Row>();
   if (pvRows.length > 0 || apiRows.length > 0) {
@@ -88,7 +84,6 @@ export const listOfficialDocsHandler = async (c: any): Promise<Response> => {
 };
 officialDocs.get('/', listOfficialDocsHandler);
 
-/* ── POST /:kind/:id — mark owed, checked, or clear ────────────────────────── */
 export const markOfficialDocHandler = async (c: any): Promise<Response> => {
   if (!isRequestFinance(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -98,7 +93,6 @@ export const markOfficialDocHandler = async (c: any): Promise<Response> => {
   let body: Row;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   const state = body.state === null ? null : body.state;
-  /* RECEIVED is the upload's alone: Finance marks owed, checks, or clears. */
   if (state !== null && (!isOfficialState(state) || state === 'RECEIVED')) {
     return c.json({ error: 'bad_state', message: 'Mark it owed, checked, or clear the mark.' }, 400);
   }

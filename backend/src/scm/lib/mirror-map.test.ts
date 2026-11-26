@@ -1,14 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createMirrorMapper, prefixDoc, toPgArray, C2990 } from "./mirror-map";
 
-/* These primitives carry two documented production 500s between them — the
-   text[] coercion (PR #471: an empty JS array reached Postgres as "" and every
-   delivery 500'd with "malformed array literal") and id remapping (the previous
-   mirror rewrote uuids, matched no imported row, and FK-violated). They had no
-   test until they were extracted out of so-mirror.ts for the amendment mirror.
-   Pure functions, so the workers pool is incidental here. */
 
-// information_schema stand-in — the mapper only reads {col, dtype} rows.
 const fakeDB = (cols: Array<{ col: string; dtype: string }>) =>
   ({
     prepare: () => ({ bind: () => ({ all: async () => ({ results: cols }) }) }),
@@ -104,9 +97,6 @@ describe("createMirrorMapper / applyMap", () => {
     expect("hr_only_2990_column" in out).toBe(false);
   });
 
-  /* The real traffic shape: 2990 has no header_changes column, so it is never in
-     the payload. It must STILL be written NULL, or it is absent from the upsert's
-     SET list and a stale value would survive a re-delivery. */
   it("forces a forceCol the source never sends, so the UPDATE clears it too", async () => {
     const out = mapper.applyMap(row, await mapper.tableMap(DB, "so_amendments"));
     expect("header_changes" in out).toBe(true);
@@ -128,9 +118,6 @@ describe("createMirrorMapper / applyMap", () => {
     expect(out.header_changes).toBeNull();
   });
 
-  /* Guards the venue_id contract the SO mirror depends on: a forceCol absent from
-     the DEST table must not be invented as a column, or the INSERT names a column
-     that does not exist and every delivery 500s. */
   it("does not invent a forceCol that the dest table does not have", async () => {
     const m2 = createMirrorMapper({ t: { forceCols: { not_in_dest: null } } });
     const out = m2.applyMap({ id: "x" }, await m2.tableMap(fakeDB([{ col: "id", dtype: "uuid" }]), "t"));
@@ -150,13 +137,6 @@ describe("createMirrorMapper / applyMap", () => {
   });
 });
 
-/* aliasCols — the rename 2990 has not deployed yet.
- *
- * The failure these guard is the quietest one this receiver has: applyMap drops
- * an unknown key with no error, the upsert returns 200, and the value simply
- * stops arriving. The first test PROVES that drop (it is the behaviour, not a
- * bug); the rest prove the alias converts it into a rename exactly when — and
- * only when — the destination column has actually moved. */
 describe("createMirrorMapper / aliasCols (inbound rename, source repo not yet deployed)", () => {
   const db = (cols: string[]) =>
     ({
@@ -182,8 +162,6 @@ describe("createMirrorMapper / aliasCols (inbound rename, source repo not yet de
     expect("internal_expected_dd" in out).toBe(false);
   });
 
-  /* BEFORE the rename both names are the same column, so the alias must not
-     fire — this is the state the SO mirror ships in today. */
   it("does nothing while the OLD name is still a live dest column", async () => {
     const m = createMirrorMapper({ t: { aliasCols: { internal_expected_dd: "internal_expected_dd" } } });
     const map = await m.tableMap(db(["doc_no", "internal_expected_dd"]), "t");
@@ -191,9 +169,6 @@ describe("createMirrorMapper / aliasCols (inbound rename, source repo not yet de
     expect(out.internal_expected_dd).toBe("2026-09-01");
   });
 
-  /* A half-registered alias must not invent a column: the INSERT would name a
-     column the dest table does not have and 500 EVERY delivery — the same
-     forever-wedge the company_id guard exists to prevent. */
   it("does not invent a dest column that does not exist", async () => {
     const m = createMirrorMapper({ t: { aliasCols: { internal_expected_dd: "not_a_column" } } });
     const map = await m.tableMap(db(["doc_no"]), "t");
@@ -202,8 +177,6 @@ describe("createMirrorMapper / aliasCols (inbound rename, source repo not yet de
     expect("internal_expected_dd" in out).toBe(false);
   });
 
-  /* Both spellings in one payload: the source has been deployed and is stating
-     the value under its CURRENT name. The leftover must not overwrite it. */
   it("keeps the new spelling when the payload carries both", async () => {
     const m = createMirrorMapper({ t: { aliasCols: { internal_expected_dd: "processing_date" } } });
     const map = await m.tableMap(db(["doc_no", "processing_date"]), "t");
@@ -223,15 +196,10 @@ describe("createMirrorMapper / aliasCols (inbound rename, source repo not yet de
   });
 });
 
-/* The masters mirror (staff + warehouses) added these three rules. Each one is
-   silent when wrong — no type error, no test failure elsewhere, just a 500 on
-   every delivery or a person quietly unlinked from their own account. */
 describe("createMirrorMapper / shared masters (scm.staff has no company_id)", () => {
   const fakeDB2 = (cols: Array<{ col: string; dtype: string }>) =>
     ({ prepare: () => ({ bind: () => ({ all: async () => ({ results: cols }) }) }) }) as never;
 
-  // scm.staff, as ported: no company_id (0083 — shared masters get none), plus
-  // the user_id link column 0066 adds.
   const staffDB = fakeDB2([
     { col: "id", dtype: "uuid" },
     { col: "staff_code", dtype: "text" },
@@ -258,10 +226,6 @@ describe("createMirrorMapper / shared masters (scm.staff has no company_id)", ()
     active: true,
   };
 
-  /* THE ONE THAT 500s EVERY DELIVERY. An unconditional `out.company_id = 2` names
-     a column scm.staff does not have -> "column company_id of relation staff does
-     not exist" -> the receiver 500s -> 2990 retries forever. That is SO-2607-013's
-     failure shape re-created inside the fix for it. */
   it("does not stamp company_id on a table that has no company_id column", async () => {
     const out = staffMapper.applyMap(staffRow, await staffMapper.tableMap(staffDB, "staff"));
     expect("company_id" in out).toBe(false);
@@ -276,11 +240,6 @@ describe("createMirrorMapper / shared masters (scm.staff has no company_id)", ()
     expect(out.company_id).toBe(C2990);
   });
 
-  /* THE ONE THAT SILENTLY UNLINKS A PERSON. PR #688 relinks 2990's people by
-     SETTING user_id on their existing 2990 row, and the app resolves a person's
-     staff uuid BY user_id (salesScope.ts), never by recomputing the md5. If a
-     mirrored payload ever carried user_id, writing it back would unlink them with
-     no error at all. preserveCols drops it from the INSERT list AND the SET list. */
   it("never writes user_id — #688's relink must survive a re-delivery", async () => {
     const out = staffMapper.applyMap(
       { ...staffRow, user_id: null },
@@ -289,18 +248,11 @@ describe("createMirrorMapper / shared masters (scm.staff has no company_id)", ()
     expect("user_id" in out).toBe(false);
   });
 
-  /* forceCols must take non-null values now, not just null: `active` is the ONLY
-     thing holding 2990's till staff out of Houzs's pickers, because staff has no
-     company_id to scope them out with. */
   it("forces a non-null value (active=false), matching the importer's forceInactive", async () => {
     const out = staffMapper.applyMap(staffRow, await staffMapper.tableMap(staffDB, "staff"));
     expect(out.active).toBe(false);
   });
 
-  /* showrooms is NOT in the importer's 33 tables and 0022 does not seed it, so
-     scm.showrooms is EMPTY. The batch import got away with a dangling showroom_id
-     only because it ran under session_replication_role=replica (FK checks OFF);
-     this receiver runs with them ON. */
   it("forces the dangling-master FKs null (showrooms is empty in Houzs)", async () => {
     const out = staffMapper.applyMap(staffRow, await staffMapper.tableMap(staffDB, "staff"));
     expect(out.showroom_id).toBeNull();
@@ -309,14 +261,6 @@ describe("createMirrorMapper / shared masters (scm.staff has no company_id)", ()
 });
 
 describe("derived *_centi -> *_sen aliases (migration 0305 vs the 2990 drainer)", () => {
-  /* THE INCIDENT THESE PIN (2026-08-19). Migration 0305 renamed every money
-     column (amount_centi -> amount_sen and 29 siblings on the SO trio) while
-     2990 — a separate repository on its own deploy schedule — kept POSTing the
-     old names. applyMap's dest filter dropped them all: the payments upsert
-     died on amount_sen's NOT NULL, retried by 2990's drainer every 10s, and
-     header/item money went NULL silently under a 200. The aliases are DERIVED
-     from the dest schema, so the next rename is covered the day it deploys —
-     nobody has to know this file exists. */
   const mapper = createMirrorMapper({ mfg_sales_order_payments: { prefixCols: ["so_doc_no"] } });
   const DB = fakeDB([
     { col: "id", dtype: "uuid" },
@@ -344,7 +288,7 @@ describe("derived *_centi -> *_sen aliases (migration 0305 vs the 2990 drainer)"
 
   it("explicit config aliases win over a derived pair for the same key", async () => {
     const m2 = createMirrorMapper({
-      t: { aliasCols: { amount_centi: "method" } }, // deliberate override
+      t: { aliasCols: { amount_centi: "method" } },
     });
     const out = m2.applyMap(
       { id: "x", amount_centi: "bank" },
@@ -360,7 +304,7 @@ describe("derived *_centi -> *_sen aliases (migration 0305 vs the 2990 drainer)"
       { id: "x", amount_centi: 5, note: "n" },
       await mapper.tableMap(NO_SEN, "mfg_sales_order_payments_no_sen"),
     );
-    expect("amount_centi" in out).toBe(false); // dropped by the dest filter, as before
-    expect("amount_sen" in out).toBe(false);   // and NOT invented
+    expect("amount_centi" in out).toBe(false);
+    expect("amount_sen" in out).toBe(false);
   });
 });

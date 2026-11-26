@@ -6,9 +6,6 @@ import { api } from "../../api/client";
 import { cn } from "../../lib/utils";
 import { fmtDate, fmtDateTime } from "../../vendor/shared/format";
 
-// Database load for the IT System Health section (DEV-35). Backend:
-// backend/src/routes/systemHealthDatabase.ts. Each metric arrives with its
-// own verdict; a metric that failed to read shows its error, not a zero.
 
 type Verdict = "ok" | "warning" | "critical";
 type Metric<T = object> =

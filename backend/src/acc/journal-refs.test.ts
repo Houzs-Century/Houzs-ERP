@@ -19,7 +19,7 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb({
     { id: 'pay-1', company_id: CO, so_doc_no: '2990-SO-2606-014' },
     { id: 'pay-2', company_id: CO, so_doc_no: '2990-SO-2608-067' },
     { id: 'pay-conv', company_id: CO, so_doc_no: '2990-SO-2608-067', converted_from_so_doc_no: '2990-SO-2607-010' },
-    { id: 'pay-9', company_id: 1, so_doc_no: 'HOUZS-SO-1' },   // another company's
+    { id: 'pay-9', company_id: 1, so_doc_no: 'HOUZS-SO-1' },
   ],
   mfg_sales_orders: [
     { doc_no: '2990-SO-2606-014', company_id: CO, debtor_name: 'Ah Meng' },
@@ -52,7 +52,6 @@ const ENTRIES = [
   { jeNo: 'JE-8', sourceType: 'RCT', sourceDocNo: '2990-OR-2604-001', partyName: 'HOUZS VENTURE', notes: null },
 ];
 
-/* The general ledger's handles, one entry per kind of document. */
 const DOCS = [
   { jeNo: 'D-PI', sourceType: 'PI', sourceDocNo: '2990-PI-2607-001', partyName: 'ARMANI SOFA SDN. BHD.', notes: null },
   { jeNo: 'D-API', sourceType: 'API_REVERSAL', sourceDocNo: '2990-API-2602-001', partyName: 'YSL MANAGEMENT', notes: null },
@@ -77,14 +76,11 @@ describe('resolveJournalRefs', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const at = (je: string) => r.refs.get(je);
-    /* A sales-order payment: the order always, the customer; the receipt number in front when one exists. */
     expect(at('JE-1')).toEqual({ reference: '2990-SO-2606-014', who: 'Ah Meng', doc: '2990-SO-2606-014', doc2: null });
     expect(at('JE-2')).toEqual({ reference: '2990DraftOR-2608-003 · 2990-SO-2608-067', who: 'NG KAH YEE', doc: '2990DraftOR-2608-003', doc2: '2990-SO-2608-067' });
     expect(at('JE-3')).toEqual({ reference: '2990-HPV-2608-017', who: 'LOO WEN WEI', doc: '2990-HPV-2608-017', doc2: null });
     expect(at('JE-4')).toEqual({ reference: 'HLB payout 2026/08/26', who: 'HLB', doc: 'HLB payout 2026/08/26', doc2: 'HLB-77123' });
-    /* A reversal reads as its original. */
     expect(at('JE-5')).toEqual({ reference: '2990-SO-2606-014', who: 'Ah Meng', doc: '2990-SO-2606-014', doc2: null });
-    /* A payment the tables no longer hold keeps its key, and the note stands in for the who. */
     expect(at('JE-6')).toEqual({ reference: 'pay-gone', who: 'a payment the tables no longer hold', doc: 'pay-gone', doc2: null });
     expect(at('JE-7')).toEqual({ reference: null, who: 'Opening balance', doc: null, doc2: null });
     expect(at('JE-8')).toEqual({ reference: '2990-OR-2604-001', who: 'HOUZS VENTURE', doc: '2990-OR-2604-001', doc2: null });
@@ -96,12 +92,10 @@ describe('resolveJournalRefs', () => {
     if (!r.ok) return;
     const at = (je: string) => { const x = r.refs.get(je); return x ? [x.doc, x.doc2, x.who] : null; };
     expect(at('D-PI')).toEqual(['2990-PI-2607-001', 'INV-8891', 'ARMANI SOFA SDN. BHD.']);
-    /* A reversal reads as its original: the AP invoice's own supplier ref. */
     expect(at('D-API')).toEqual(['2990-API-2602-001', '2602/024', 'YSL MANAGEMENT']);
     expect(at('D-SI')).toEqual(['2990-SI-2609-001', '2990-SO-2608-067', 'NG KAH YEE']);
     expect(at('D-DI')).toEqual(['2990-DI-2606-001', '2990-SO-2606-014', 'Ah Meng']);
     expect(at('D-CN')).toEqual(['2990-CN-2609-001', '2990-SO-2608-067', 'NG KAH YEE']);
-    /* A refund voucher: what it refunds is the second handle; the payee is the who. */
     expect(at('D-PVR')).toEqual(['2990-HPV-2606-025', '2990-HRF-2606-001', 'THE CONTS']);
     expect(at('D-SET')).toEqual(['GHL settlement 2026/06/02', '615318040666', 'GHL']);
     expect(at('D-MOVE')).toEqual(['GHL settlement 2026/06/02', '615318040666', 'GHL']);

@@ -67,8 +67,6 @@ function isMissingTable(err: { code?: string; message?: string } | null): boolea
   return err.code === '42P01' || /relation .* does not exist/i.test(err.message ?? '');
 }
 
-// so_scan_samples row for a GR scan (status EXTRACTED, or FAILED with the error
-// blob). document_type='GR' partitions the learning pool. Best-effort.
 async function insertGrnScanSample(
   svc: SupabaseClient,
   args: { imageSha256: string | null; parsed: GrnExtracted | null; errorMsg: string | null; claudeText: string },
@@ -96,10 +94,6 @@ async function insertGrnScanSample(
   }
 }
 
-// Store the delivery-order photo (first uploaded image) under scan-slips/{id} —
-// the SAME key shape + bucket the SO slip proxy serves, so GET /scan-gr/slip-image
-// (and the SO one) can stream it back on the GRN detail. PDFs are not stored
-// (not inline-viewable). Never fails the job.
 async function storeGrnScanImage(
   bucket: R2Bucket | undefined,
   svc: SupabaseClient,
@@ -154,11 +148,6 @@ async function announceDraft(
   });
 }
 
-// ---------------------------------------------------------------------------
-// The GR scan pipeline. Reads the delivery order, matches it to open PO lines,
-// and CONVERTS the confident picks into a DRAFT GRN. Mirrors runScanJob's
-// touch/fail lifecycle. NEVER posts stock; NEVER creates a standalone GRN.
-// ---------------------------------------------------------------------------
 async function runGrnScanJob(
   env: Env,
   job: {
@@ -170,8 +159,6 @@ async function runGrnScanJob(
     uploadedImages: UploadedImage[];
     firstBuffer: ArrayBuffer | null;
     imageKeys: string[];
-    // A check-first scan (scan-gr-check.ts): keep the read for the operator to
-    // check and edit instead of minting the draft.
     review: boolean;
   },
 ): Promise<void> {
@@ -193,8 +180,6 @@ async function runGrnScanJob(
       body: `${plainMsg}`,
     });
   };
-  // A NEEDS-REVIEW outcome: no document created (safe), slip retained, operator
-  // told to receive by hand. Terminal 'done' (persists; not a red failure card).
   const needsReview = async (note: string): Promise<void> => {
     await touch({ status: 'done', error: note });
     await postGrScanNotice(env, {
@@ -212,8 +197,6 @@ async function runGrnScanJob(
 
     const fewShot = await loadGrnFewShot(svc);
     const usage = { env, feature: 'scan_gr', model: CLAUDE_MODEL, companyId: job.companyId, userId: job.houzsUserId, waitUntil: null };
-    // Reading page by page restarts the stale-job clock first, so the reaper
-    // does not re-run a long delivery order still being read.
     const call = await readDeliveryOrder(job.fileBlocks, job.firstBuffer,
       (blocks) => callClaudeGrExtract(apiKey, blocks, fewShot, usage), () => touch({ status: 'running' }));
     const parsed = call.parsed;
@@ -226,8 +209,6 @@ async function runGrnScanJob(
     await storeGrnScanImage(env.SO_ITEM_PHOTOS, svc, sampleId, job.uploadedImages);
 
     if (call.failed) {
-      // A failed call is not an unreadable paper: fail, so Read again is offered
-      // and the empty result is never kept (or reused for the same file).
       console.error('[scan-gr] read call failed:', job.id, call.errorMsg);
       return await fail(NOTE_READ_FAILED);
     }
@@ -254,11 +235,6 @@ async function runGrnScanJob(
   }
 }
 
-// ---------------------------------------------------------------------------
-// POST /scan-gr/enqueue — persist photos + a document_type='GR' job row, respond
-// FAST, run the pipeline off the queue (waitUntil fallback when unbound). Same
-// multipart contract as /scan-so/enqueue (repeated `file` field).
-// ---------------------------------------------------------------------------
 scanGr.post('/enqueue', async (c) => {
   /* company-scope: the scan_jobs row is stamped with the active company on
      insert (company_id: activeCompanyId(c) below); the later by-id reads/writes
@@ -281,8 +257,6 @@ scanGr.post('/enqueue', async (c) => {
   const houzsUserId = houzsUser?.id != null && Number.isFinite(Number(houzsUser.id)) ? Number(houzsUser.id) : null;
 
   const svc = serviceClient(c.env);
-  // Attribute the receipt to whoever scanned it (their own scm.staff row),
-  // falling back to the SCM bridge id when unresolved — same as the SO scanner.
   const uploaderStaffId = (await resolveCallerStaffId(svc, houzsUserId)) ?? user.id;
 
   const { data: jobRow, error: jobErr } = await svc
@@ -308,8 +282,6 @@ scanGr.post('/enqueue', async (c) => {
     return c.json({ error: 'enqueue_failed', reason: 'Could not queue the scan. Please try again.' }, 500);
   }
 
-  // Persist uploaded photos to R2 before responding (durability). The pipeline
-  // runs off the in-memory buffers, so a failed put never blocks the job.
   const imageKeys: string[] = [];
   if (c.env.SO_ITEM_PHOTOS) {
     for (let i = 0; i < allFiles.length; i += 1) {
@@ -326,8 +298,6 @@ scanGr.post('/enqueue', async (c) => {
     }
   }
 
-  // Hand to the Cloudflare Queue; the consumer rebuilds everything from the row
-  // + R2 photos. FALLBACK to waitUntil when SCAN_QUEUE is unbound (test runtime).
   if (c.env.SCAN_QUEUE) {
     try {
       await c.env.SCAN_QUEUE.send({ jobId });
@@ -346,14 +316,12 @@ scanGr.post('/enqueue', async (c) => {
       imageKeys,
       review: false,
     });
-    try { c.executionCtx.waitUntil(pipeline); } catch { /* non-Workers runtime (tests) */ }
+    try { c.executionCtx.waitUntil(pipeline); } catch { }
   }
 
   return c.json({ job_id: jobId, status: 'queued' }, 202);
 });
 
-// Rebuild the reaper/queue file inputs, run the GR pipeline. Shared by the queue
-// consumer and the stale-job reaper.
 export async function runGrnJobFromRow(
   env: Env,
   id: string,
@@ -377,11 +345,6 @@ export async function runGrnJobFromRow(
   return 'ran';
 }
 
-// ---------------------------------------------------------------------------
-// Cloudflare Queue consumer for GR jobs — called from scan-so's
-// processScanQueueMessage when it reads document_type='GR'. Idempotent: a 'done'
-// row acks without re-running (a redelivery must not create a 2nd GRN).
-// ---------------------------------------------------------------------------
 export async function processGrnScanQueueMessage(env: Env, jobId: string): Promise<void> {
   const id = String(jobId ?? '');
   if (!id) return;
@@ -406,9 +369,6 @@ export async function processGrnScanQueueMessage(env: Env, jobId: string): Promi
   }
 }
 
-// Stale-job reaper for GR jobs, scoped to document_type='GR' so it and the SO
-// reaper never touch each other's rows. One automatic re-run (retry_count 0->1),
-// then terminal error — same policy as the SO reaper.
 export async function reapStaleGrnScanJobs(
   env: Env,
   svc: SupabaseClient,
@@ -460,8 +420,6 @@ export async function reapStaleGrnScanJobs(
 
 const JOB_SELECT = 'id, status, salesperson, so_doc_no, linked_doc_no, document_type, error, sample_id, duplicate_of, image_keys, created_at, updated_at';
 
-// The scan card links straight to the draft, which the app opens by id; the job
-// row only keeps the GRN number, so resolve the ids here (company-scoped).
 async function withGrnIds(svc: SupabaseClient, c: CompanyScopeCtx, jobs: Array<Record<string, unknown>>): Promise<Array<Record<string, unknown>>> {
   const numbers = [...new Set(jobs.map((j) => j.linkedDocNo).filter((n): n is string => typeof n === 'string' && n !== ''))];
   if (numbers.length === 0) return jobs.map((j) => ({ ...j, linkedDocId: null }));
@@ -471,10 +429,9 @@ async function withGrnIds(svc: SupabaseClient, c: CompanyScopeCtx, jobs: Array<R
   return jobs.map((j) => ({ ...j, linkedDocId: idOf.get(j.linkedDocNo as string) ?? null }));
 }
 
-// GET /scan-gr/jobs — latest 20 GR jobs for the active company.
 scanGr.get('/jobs', async (c) => {
   const svc = serviceClient(c.env);
-  await reapStaleGrnScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { /* tests */ } });
+  await reapStaleGrnScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { } });
   const { data, error } = await svc
     .from('scan_jobs')
     .select(JOB_SELECT)
@@ -490,12 +447,11 @@ scanGr.get('/jobs', async (c) => {
   return c.json({ success: true, data: { jobs } });
 });
 
-// GET /scan-gr/jobs/:id — poll one GR job.
 scanGr.get('/jobs/:id', async (c) => {
   const id = (c.req.param('id') ?? '').trim();
   if (!id) return c.json({ error: 'bad_request', reason: 'Missing job id.' }, 400);
   const svc = serviceClient(c.env);
-  await reapStaleGrnScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { /* tests */ } });
+  await reapStaleGrnScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { } });
   // company-scope: by-id read scoped to the caller's active company, so one
   // company cannot poll another's scan job (the list read below is scoped the
   // same way). scan_jobs.company_id is NOT NULL (mig 0083, HOUZS default 0091).
@@ -511,8 +467,6 @@ scanGr.get('/jobs/:id', async (c) => {
   return c.json({ success: true, data: { job } });
 });
 
-// The finished GR job and its stored read, for teaching codes. Company-scoped
-// by-id read, like GET /jobs/:id.
 async function loadTeachableJob(svc: SupabaseClient, c: CompanyScopeCtx, id: string): Promise<
   | { ok: true; job: { id: string; linkedDocNo: string | null; uploaderStaffId: string; houzsUserId: number | null; companyId: number }; parsed: GrnExtracted }
   | { ok: false; status: 400 | 404 | 409; reason: string }
@@ -549,9 +503,6 @@ scanGr.get('/jobs/:id/codes', async (c) => {
   return c.json({ success: true, data: { supplierKnown: true, ...options } });
 });
 
-// POST /scan-gr/jobs/:id/codes {pairs: [{printedCode, poItemId}]} — remember
-// which of our items each printed code is, for this supplier. A scan that made
-// no draft yet is matched again from its stored read (no new OCR call).
 scanGr.post('/jobs/:id/codes', async (c) => {
   let body: { pairs?: Array<{ printedCode?: unknown; poItemId?: unknown }> };
   try { body = await c.req.json(); } catch { return c.json({ error: 'bad_request', reason: 'Invalid request.' }, 400); }
@@ -563,9 +514,6 @@ scanGr.post('/jobs/:id/codes', async (c) => {
   if (ctx.supplierId === null) return c.json({ error: 'supplier_unknown', reason: 'We could not tell which supplier this delivery order is from.' }, 409);
   const options = buildTeachOptions(loaded.parsed.lines.map(toScanned), ctx.match, ctx.openLines, ctx.supplierId);
 
-  // Only codes this delivery order printed, only onto lines it was offered:
-  // the offer is company- and supplier-scoped, so a caller-supplied id cannot
-  // reach another company's or supplier's item.
   const printed = new Set(options.rows.map((r) => r.printedCode));
   const lineById = new Map(options.poLines.map((l) => [l.poItemId, l]));
   const pairs: Array<{ printedCode: string; itemCode: string }> = [];
@@ -603,7 +551,6 @@ scanGr.post('/jobs/:id/codes', async (c) => {
   return c.json({ success: true, data: { saved: pairs.length, draft: redrafted } });
 });
 
-// POST /scan-gr/jobs/clear-failed — delete this company's terminal error GR rows.
 scanGr.post('/jobs/clear-failed', async (c) => {
   const svc = serviceClient(c.env);
   const { error } = await svc
@@ -617,9 +564,6 @@ scanGr.post('/jobs/clear-failed', async (c) => {
   return c.json({ success: true });
 });
 
-// GET /scan-gr/slip-image?key=scan-slips/<sampleId> — serve the stored delivery
-// order photo on the GRN detail. Same R2 proxy + prefix guard as the SO route,
-// under the GR permission so procurement users can view it.
 scanGr.get('/slip-image', async (c) => {
   const key = c.req.query('key') ?? '';
   if (!key.startsWith('scan-slips/')) return c.json({ error: 'bad_request', reason: 'key must start with scan-slips/' }, 400);

@@ -1,8 +1,3 @@
-// A read confirms itself the way a handheld scanner does: a buzz and a short
-// tone, so the storekeeper can keep their eyes on the pile instead of the
-// screen. Both are best-effort — iOS Safari has no navigator.vibrate and an
-// AudioContext can be refused — and neither may ever throw into the scan loop.
-// After Hookka's ScanSheet (hookka-erp-testing#528).
 
 type AudioCtor = typeof AudioContext;
 let audio: AudioContext | null = null;
@@ -11,7 +6,6 @@ async function wake(ctx: AudioContext): Promise<void> {
   try {
     await ctx.resume();
   } catch {
-    /* a refused resume only loses the tone; the buzz still confirms the read */
   }
 }
 
@@ -40,11 +34,9 @@ export function scanHitFeedback(): void {
   try {
     if (typeof navigator.vibrate === 'function') navigator.vibrate(60);
   } catch {
-    /* not supported here */
   }
   try {
     beep();
   } catch {
-    /* audio refused here */
   }
 }

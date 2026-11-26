@@ -1,16 +1,3 @@
-// DocumentLinesExpansion — shared inline per-line breakdown rendered under a
-// document row when the DataTable chevron is toggled. It is the DRY twin of the
-// SO list's SoLinesExpansion (frontend/src/pages/scm-v2/MfgSalesOrdersListV2.tsx):
-// Group pill + item CODE/variant identity + Qty + Amount. The SO/DO list keeps
-// its own richer variant (Stock pill + Incoming PO/ETA columns) because those
-// fields ride the SO detail payload; the six purchase/sales document lists that
-// consume THIS component do not carry per-line MRP coverage, so they render the
-// four columns their existing detail hooks actually return.
-//
-// Each caller owns its own detail hook and field quirks (which column is Qty,
-// which is the line amount, how the code resolves) and maps its raw items into
-// DocumentDrillLine[] before handing them here — this component is purely
-// presentational so no list's field mapping leaks into another's.
 
 import { useState, type ReactNode } from "react";
 import { type CoverageState, coveragePlaceholder } from "./coverage-state";
@@ -19,10 +6,6 @@ import { ItemGroupPill } from "../vendor/scm/lib/category-badges";
 import type { OriginAssignment } from "../vendor/scm/lib/flow-queries";
 import { cn, formatDate } from "../lib/utils";
 
-// A single normalised drill line. Callers resolve `code` (e.g. item_code ||
-// item_code), `qty` (ordered / received / returned as the document means) and
-// `amountSen` (line_total_sen / total_sen) themselves; `itemGroup` +
-// `variants` feed the same live buildVariantSummary the detail drawers use.
 export type DocumentDrillLine = {
   itemGroup: string | null;
   code: string | null;
@@ -31,9 +14,6 @@ export type DocumentDrillLine = {
   variants: Record<string, unknown> | null;
   qty: number;
   amountSen: number;
-  // The REAL origin Sales Order(s) this line was raised from, matched by SKU
-  // (purchase docs only). Empty / absent → the Assigned SO + delivery cells show
-  // a dash, exactly like the SO detail's Stock / Incoming PO columns.
   assignedSos?: OriginAssignment[];
   // Does a STORED so_item_id back this line's SKU, or is the Assigned SO above
   // only an MRP allocation? The two used to render identically apart from a
@@ -42,37 +22,13 @@ export type DocumentDrillLine = {
   // it gone (2026-08-01); the distinction now lives in the chip's tooltip and in
   // the dashed-vs-solid tone, so the resolution is unchanged — only the caption.
   sourceLinked?: boolean;
-  // PR-3 (2026-08-07): the stored-origin "bought for" SO(s) for this SKU —
-  // the PARALLEL provenance slot of the coverage wire, rendered as muted chips
-  // BESIDE the precedence chips above, deduped by soDocNo (when stored origin
-  // won the precedence the slots are identical and nothing extra renders).
-  // Absent (older backend) → exactly today's rendering.
   provenance?: OriginAssignment[];
-  // SALES docs (DO / SI): the source PO(s) the shipped/invoiced goods actually
-  // came from — the durable batch_no = source-PO hard link, not a guess. Empty /
-  // absent → the Source PO cell shows a dash (plain FIFO / pre-batch stock).
   sourcePos?: string[];
-  // SALES docs: the line shipped (at least partly) from a PO-less stock
-  // ADJUSTMENT lot (free gift / add-back). Renders a "STOCK ADJ" chip so the
-  // cell is explained rather than blank.
   sourceAdj?: boolean;
-  // DO: 'worked_out' when the Source PO above was re-derived from stock records
-  // (an older DO with no stamp) rather than locked when the line shipped.
   sourceState?: 'locked' | 'worked_out' | null;
-  // PURCHASE docs (PO / GRN / PI): the Delivery Order(s) that have shipped this
-  // line's goods (batch_no = this PO) with the qty shipped per DO. Empty / absent
-  // → the Delivered cell shows a dash (nothing delivered against this line yet).
-  // soDocNo (2026-08-02) pairs each DO with its Assigned-SO row in the per-SO
-  // sub-table — a DO belongs to ONE Sales Order (delivery_orders.so_doc_no).
   deliveredDos?: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
 };
 
-// Permissive superset of the per-line fields the six document detail hooks
-// return. Each list's items are cast to this in its wrapper (the same shape the
-// SI/DR detail drawers already cast to inline), so a wrapper never has to
-// import that list's exact item type — it just reads the fields it means and
-// picks its own Qty / amount source. Every field is optional; a document that
-// omits one falls through to the `??` defaults in the wrapper.
 export type DrillItemFields = {
   item_group?: string | null;
   item_code?: string | null;
@@ -83,9 +39,6 @@ export type DrillItemFields = {
   variants?: Record<string, unknown> | null;
   qty?: number | null;
   received_qty?: number | null;
-  // GRN detail lines report the received/landed quantity here, NOT in
-  // qty/received_qty (which the GRN GET does not select). Reading the latter
-  // rendered 0 on every GRN line in the list quick-view / row-drill.
   qty_accepted?: number | null;
   qty_received?: number | null;
   qty_returned?: number | null;
@@ -95,7 +48,6 @@ export type DrillItemFields = {
   amount_sen?: number | null;
 };
 
-// Shared centi → RM string, same helper the lists use.
 const fmtRm = (centi: number): string => fmtSen(centi);
 
 /* ── Three visual identities for a cross-document assignment chip ──────────
@@ -128,9 +80,6 @@ export const assignmentTitle = (a: OriginAssignment, sourceLinked?: boolean): st
     case "anchored":
       return "Delivered — this line's goods shipped against this Sales Order (anchored history)";
     default:
-      /* sourceLinked === false: the chip is locked by an older payload but no
-         stored so_item_id backs it — say so (2026-07-29 guess-read-as-binding
-         protection), still muted, still not execution. */
       return sourceLinked === false
         ? "This Sales Order is an MRP allocation — no stored link on the purchase order line"
         : `Bought for ${a.soDocNo} — procurement provenance, not the live assignment.`;
@@ -150,16 +99,6 @@ export const assignmentTone = (a: OriginAssignment): string => {
   }
 };
 
-/* PR-3 (2026-08-07): the coverage wire now carries a PARALLEL `provenance`
-   slot (the layer-(b) stored-origin SOs) beside the precedence winner. This
-   picks the EXTRA "bought for" chips to render after the execution chips:
-   provenance SOs NOT already shown (dedupe by soDocNo — when stored origin won
-   the precedence the two slots are identical and nothing extra renders). Each
-   survivor is normalised to the provenance identity (locked, 'linked') so it
-   can only ever wear the muted dress and the "Bought for" words — never
-   "Locked", never execution. The interesting case this exists for: the
-   floating allocator re-assigned (dashed chips) while stored links remain →
-   both truths sit side by side. */
 export const provenanceExtras = (
   provenance: OriginAssignment[] | undefined | null,
   shownSoDocNos: Iterable<string>,
@@ -174,25 +113,11 @@ export const provenanceExtras = (
     .map((p) => ({ ...p, locked: true, source: "linked" as const }));
 };
 
-/* A Source-PO chip is the batch_no the ledger stored, which is the source PO's
-   `po_number` VERBATIM — nothing here adds, strips or normalises a prefix, and
-   nothing may start to. Doc numbers are namespaced PER COMPANY
-   (scm/lib/companyScope.ts `companyDocPrefix`): the base company HOUZS mints
-   BARE numbers (`PO-2607-002`) and every other company prefixes with its code
-   (`2990-PO-2607-002`). So the two forms are two namespaces that can BOTH hold
-   the same tail — "unifying" them by stamping `2990-` on a bare number would
-   name a DIFFERENT, possibly real, document on the batch→lot→COGS trail. Owner
-   asked why the column looks inconsistent (2026-08-01); the honest answer is a
-   tooltip, not a rewrite. */
 export const sourcePoTitle = (poNo: string): string =>
   /^\d+-/.test(poNo)
     ? `Source purchase order ${poNo} — the "${poNo.split("-")[0]}-" prefix is the company that raised it.`
     : `Source purchase order ${poNo} — no company prefix, so it was raised under the base company (Houzs).`;
 
-/* "STOCK ADJ" — goods that entered stock through a positive ADJUSTMENT (free
-   gift / cancel add-back), which is legitimately PO-less BY DESIGN. The owner's
-   rule is that a READY / delivered line must never show a blank source, so
-   these lines say what they are instead of a dash. */
 export function StockAdjChip() {
   return (
     <span
@@ -204,9 +129,6 @@ export function StockAdjChip() {
   );
 }
 
-/* An unstamped (older) DO line: its Source PO / Rack was worked out from the
-   stock records at read time, not locked when it shipped, so a later stock
-   repair can change it. Locked lines carry no tag. */
 export function WorkedOutTag() {
   return (
     <span
@@ -304,12 +226,6 @@ export function ChipOverflow({ chips, limit = 4 }: { chips: ReactNode[]; limit?:
 export const showDeliveredQty = (qty: number, chipCount: number): boolean =>
   chipCount > 1 || qty > 1;
 
-// Column widths are driven by which optional columns are on, so the template is
-// built at RUNTIME and applied via an inline style — a dynamically-joined
-// `grid-cols-[...]` class would never be seen by Tailwind's JIT scanner.
-// `paired` (2026-08-02): Assigned SO + SO Delivery Date + Delivered collapse
-// into ONE per-SO sub-table column (owner's pillow case — three parallel
-// UNALIGNED stacks made "which SO has shipped" unreadable).
 function buildGrid(opts: { assign: boolean; delivered: boolean; sourcePo: boolean; paired: boolean }): {
   cols: string;
   minW: number;
@@ -375,13 +291,6 @@ export function buildPairedSoRows(
 const isAccessoryLine = (group: string | null | undefined): boolean =>
   String(group ?? "").trim().toLowerCase() === "accessory";
 
-/* …but NOT a blank cell. An empty assignment column reads as "this stock is
-   unassigned", and a document that quietly under-states its own linkage is the
-   exact ambiguity behind the duplicate-delivery incident
-   (docs/unlinked-line-duplicate-coe.md). The counts stay; only the list goes.
-   The underlying links are untouched — they are what the remaining-qty ceiling
-   counts — and the movement-by-movement trail is on Stock Movement, which
-   records the source document for every IN and OUT. */
 function AccessoryAssignmentSummary({
   assigned,
   delivered,
@@ -393,8 +302,6 @@ function AccessoryAssignmentSummary({
 }) {
   const orders = new Set(assigned.map((a) => a.soDocNo)).size;
   const dos = new Set(delivered.map((d) => d.doNo)).size;
-  /* BEFORE the empty answer, never after: an unresolved read must not render as
-     "no order wanted these goods" (coverage-state.tsx). */
   if (orders === 0 && dos === 0) return coveragePlaceholder(coverage) ?? <StockTag />;
   return (
     <span
@@ -422,11 +329,6 @@ function PairedSoCell({
   delivered: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
   coverage: CoverageState;
   sourceLinked?: boolean;
-  /* PR-3: the parallel stored-origin slot. Extra "bought for" chips render as
-     one trailing muted row — chip + delivery date, NO status pill (DELIVERED /
-     PENDING is an execution verdict and provenance is not the live
-     assignment). Deduped against every SO already shown (assignments AND
-     orphan delivered rows). */
   provenance?: OriginAssignment[];
   onOpenSo?: (soDocNo: string) => void;
   onOpenDo?: (doNo: string) => void;
@@ -443,7 +345,6 @@ function PairedSoCell({
         const soTitle = !a
           ? "This Delivery Order's Sales Order is not among this line's assignments — shown so the shipment stays visible."
           : assignmentTitle(a, sourceLinked);
-        /* An orphan delivered-DO row is anchored history (goods shipped). */
         const soTone = !a
           ? "border border-border-subtle bg-surface-2 text-accent-ink"
           : assignmentTone(a);
@@ -554,30 +455,17 @@ export function DocumentLinesExpansion({
   onOpenDo,
 }: {
   isLoading: boolean;
-  /* REQUIRED, and required is the point (coverage-state.tsx). The columns below
-     are filled by a SECOND query; a caller that says nothing about it used to
-     render "STOCK" — a confident wrong answer — for as long as that query took.
-     A surface with nothing extra to fetch passes "ready" and says so. */
   coverage: CoverageState;
   isError?: boolean;
   errorMessage?: string | null;
   lines: DocumentDrillLine[];
   emptyLabel?: string;
-  // Purchase docs (PO / GRN / PI): render the Assigned SO + SO Delivery Date
-  // columns from each line's `assignedSos`. onOpenSo makes the SO chip clickable
-  // (desktop deep-link); omit it for a display-only surface.
   showAssignment?: boolean;
-  // Purchase docs (PO / GRN / PI): render a Delivered column from each line's
-  // `deliveredDos` — the DO(s) that shipped this line's goods.
   showDelivered?: boolean;
-  // Sales docs (DO / SI): render a Source PO column from each line's `sourcePos`.
   showSourcePo?: boolean;
   onOpenSo?: (soDocNo: string) => void;
   onOpenDo?: (doNo: string) => void;
 }) {
-  /* Paired mode (2026-08-02): a purchase doc showing BOTH assignments and
-     deliveries renders them as one per-SO sub-table — never three unaligned
-     stacks. */
   const paired = showAssignment && showDelivered;
   const { cols: gridCols, minW: minWpx } = buildGrid({
     assign: showAssignment,
@@ -626,10 +514,6 @@ export function DocumentLinesExpansion({
           {showSourcePo && <span>Source PO</span>}
         </div>
         {lines.map((l, i) => {
-          // Item CODE first, then the variant subtitle; live variant summary
-          // wins over the stored description2 (which can be stale on older rows
-          // with no variants blob) — the same shared order-line rule the detail
-          // drawers already apply.
           const { primary, secondary } = orderLineIdentity({
             code: l.code ?? undefined,
             description: l.description ?? undefined,
@@ -640,12 +524,7 @@ export function DocumentLinesExpansion({
           const assigned = l.assignedSos ?? [];
           const delivered = l.deliveredDos ?? [];
           const sourcePos = l.sourcePos ?? [];
-          /* PR-3: extra "bought for" chips for the FLAT assignment cell —
-             provenance SOs the precedence chips do not already show. (The
-             paired cell dedupes for itself, against its orphan rows too.) */
           const provExtra = provenanceExtras(l.provenance, assigned.map((a) => a.soDocNo));
-          /* Purchase docs only. On a sales document (DO / SI) the assignment IS
-             the document, so there is nothing to collapse. */
           const accessory = isAccessoryLine(l.itemGroup);
           return (
             <div
@@ -695,8 +574,6 @@ export function DocumentLinesExpansion({
                   <span className="flex min-w-0 flex-wrap gap-1">
                   {assigned.length > 0 ? (
                     assigned.map((a) => {
-                      // One of the three identities (see the helper trio above):
-                      // anchored solid, provenance muted, floating dashed + "~".
                       const floating = assignmentTreatment(a) === "floating";
                       const title = assignmentTitle(a, l.sourceLinked);
                       const base =
@@ -723,8 +600,6 @@ export function DocumentLinesExpansion({
                   ) : provExtra.length === 0 ? (
                     coveragePlaceholder(coverage) ?? <StockTag />
                   ) : null}
-                  {/* PR-3: the muted "bought for" chips, side by side with the
-                      precedence chips above (no "~", never "Locked"). */}
                   {provExtra.map((a) => {
                     const base = "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
                     return onOpenSo ? (
@@ -746,8 +621,6 @@ export function DocumentLinesExpansion({
                   </span>
                 </span>
               )}
-              {/* SO Delivery Date — one date per assignment, so it grows at the
-                  same rate as the assignment list and has to collapse with it. */}
               {!paired && showAssignment && (
                 <span className="flex min-w-0 flex-col gap-0.5">
                   {accessory ? (
@@ -837,21 +710,6 @@ export function DocumentLinesExpansion({
   );
 }
 
-// ---------------------------------------------------------------------------
-// AssignedSoCell — the COLLAPSED header-row "Assigned SO" summary, shared by the
-// PO / GRN / PI / DO lists. It is the one-line twin of the drill-down's per-line
-// Assigned-SO cell above and renders the same three identities (helper trio):
-// anchored delivered chips solid, stored-provenance chips muted, floating MRP
-// chips dashed with a trailing "~". LIST cells
-// render the first few chips + an in-place "+N" toggle (ChipOverflow — owner
-// 2026-08-01 scale ruling, superseding the 2026-07-31 "no collapse" rule for
-// LIST cells; drill-downs still render every chip). The primary assignment's
-// delivery date rides inline. `sourceLinked === false` is threaded into the
-// tooltip so the guess-vs-binding distinction (2026-07-29 incident) survives
-// even in the compact column. Since PR-3 the cell ALSO renders the parallel
-// provenance slot ("bought for" SOs not already among the precedence chips) —
-// muted, after the execution chips, under the same overflow rule.
-// ---------------------------------------------------------------------------
 export function AssignedSoCell({
   assignments,
   sourceLinked,
@@ -861,15 +719,8 @@ export function AssignedSoCell({
 }: {
   assignments: OriginAssignment[] | undefined | null;
   sourceLinked?: boolean;
-  /* PR-3: the parallel stored-origin slot (`assigned_so_provenance` on list
-     rows). Extra "bought for" chips render muted AFTER the precedence chips,
-     deduped by soDocNo; the same in-place "+N" overflow rule covers the union.
-     Absent (older backend) → exactly today's cell. */
   provenance?: OriginAssignment[] | null;
   onOpenSo?: (soDocNo: string) => void;
-  /* "stock" (purchase docs, 2026-08-02): an empty cell means surplus stock, so
-     it reads "STOCK" instead of a bare dash — no open demand is not missing
-     data. Sales surfaces keep the dash (an ad-hoc DO simply has no SO). */
   emptyMeans?: "dash" | "stock";
 }) {
   const list = assignments ?? [];
@@ -878,11 +729,6 @@ export function AssignedSoCell({
     return emptyMeans === "stock" ? <StockTag /> : <span className="text-[12px] text-ink-muted">—</span>;
   }
   const base = "rounded px-1.5 py-0.5 font-docno text-[11px] font-semibold";
-  // Each SO carries its OWN delivery date inline; the chip + its date form one
-  // wrapping unit. ChipOverflow applies the list-cell "+N" rule. Provenance
-  // chips pass NO sourceLinked into the tooltip helper — the "no stored link"
-  // wording can never be true of a chip that exists because a stored origin
-  // names it.
   const chipOf = (a: OriginAssignment, provSlot: boolean) => {
     const label = (
       <>

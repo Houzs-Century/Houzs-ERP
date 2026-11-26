@@ -43,9 +43,6 @@
 /** Silhouette bbox within the art, as fractions (0..1) of its width/height. */
 export type ArtBbox = { l: number; t: number; r: number; b: number };
 
-/* POS's fallback, used when a measurement cannot be made. It tiles roughly,
-   which is what POS chose over `objectFit: contain` — that rendered the
-   silhouette tiny with gaps. */
 export const ART_BBOX_FALLBACK: ArtBbox = { l: 0.1, t: 0.2, r: 0.9, b: 0.8 };
 
 const BUNDLED_PREFIX = 'sofa-modules/';
@@ -123,11 +120,6 @@ export function measureArtBbox(img: HTMLImageElement | ImageBitmap): ArtBbox {
 /** One compartment's art, cropped to its silhouette and ready for addImage. */
 export type CompartmentArt = { dataUrl: string; format: 'PNG'; rot: number };
 
-/* Rendered pixel size of the LONG edge of a cropped module. The sofa plan on a
-   PO is ~55mm wide for the whole arrangement, so one module is often under
-   20mm; 512 there is ~650dpi, which survives the same zooming the item photos
-   were raised for (2026-08-28). Kept below the item photos' 1536 because a
-   sofa plan carries up to six of these and they are line art, not detail. */
 export const ART_PX = 512;
 
 /**
@@ -160,10 +152,6 @@ export async function loadCompartmentArt(url: string, rot = 0): Promise<Compartm
     const cw = Math.max(1, Math.round(sw * scale));
     const ch = Math.max(1, Math.round(sh * scale));
 
-    /* Rotation is baked in so the caller can place a plain axis-aligned rect —
-       POS rotates the DOM box; jsPDF has no equivalent it can rely on. A 90/270
-       turn swaps the canvas dimensions, which is why the footprint the caller
-       draws into is the ROTATED one. */
     const quarter = ((Math.round(rot / 90) % 4) + 4) % 4;
     const swap = quarter === 1 || quarter === 3;
     const canvas = document.createElement('canvas');

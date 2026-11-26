@@ -13,7 +13,6 @@ export type PiReviewLine = {
   grnNumber: string | null;
   qty: number;
   suggested: boolean;
-  // Tied by the AI: the row says "AI match, please check". Older copies carry no flag.
   ai?: boolean;
   read: { itemCode: string | null; description: string | null; qty: number; unitPrice: number | null; lineTotal: number | null } | null;
 };
@@ -27,13 +26,10 @@ export type PiReview = {
   poNo: string | null;
   notes: string | null;
   taxNote: string | null;
-  // Copies read before 2026-11-10 carry no tier.
   lineTier?: 'invoice_po' | 'whole_receipt' | null;
   lines: PiReviewLine[];
 };
 
-/* Mirrors the backend's pi-scan-match docRefsOf: "EX-HC-PO-2609-151" (HOOKKA
-   INV-2610-097) is an exchange, a replacement for HC-PO-2609-151. */
 const EXCHANGE_MARK = /^(?:EXCH|EX)(?:\s*-\s*|\s+)(?=[A-Z0-9])/i;
 
 /** The PO refs printed, without an exchange mark, and those the invoice marks as exchange. */
@@ -148,8 +144,6 @@ export function piAmounts(review: PiReview, lines: ReadonlyMap<string, BillLine>
     return r?.unitPrice != null ? Math.round(r.unitPrice * 100 * l.qty) : null;
   };
   const sum = (vs: Array<number | null>): number | null => {
-    /* A row printed with no price is a free gift (Diglant's GWP pillow): it adds nothing,
-       it does not leave the invoice without an amount. */
     const priced = vs.filter((v): v is number => v != null);
     return priced.length > 0 ? priced.reduce((a, v) => a + v, 0) : null;
   };

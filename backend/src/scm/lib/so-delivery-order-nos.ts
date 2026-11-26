@@ -15,11 +15,6 @@
 /** The Delivery Order columns this needs. Cancelled rows must already be
  *  excluded by the query — this does not re-filter on status. */
 export type DeliveryOrderNoRow = {
-  /** The delivery order's own id. Needed because a PDF is fetched by ADDRESS:
-   *  `GET /delivery-orders-mfg/:id` is `.eq('id', id)`, so the NUMBER this file
-   *  is named for cannot fetch the document it names. The Sales Order list's
-   *  right-click "Print Delivery Order" is what needs it, and the select that
-   *  feeds this was already in flight — one more column, no extra round trip. */
   id?: string | null;
   so_doc_no: string | null;
   do_number: string | null;
@@ -30,16 +25,6 @@ export type DeliveryOrderNoRow = {
 /** A delivery order as a caller needs it to both NAME and FETCH one. */
 export type DeliveryOrderRef = { id: string; docNo: string };
 
-/**
- * The grouping + ordering, once. Both exported views read it, so "which DOs, in
- * what order" is decided in exactly one place.
- *
- * `do_date` is the sort key with `created_at` as the fallback (an imported DO
- * can carry no date); the document number breaks ties, because several DOs on
- * one order commonly share a date and an unstable order would reshuffle the
- * cell on every reload. Rows with no `so_doc_no` or no `do_number` are dropped:
- * an unnumbered draft is not a delivery the customer can be told about.
- */
 function groupedBySalesOrder(rows: DeliveryOrderNoRow[]): Map<string, Array<{ id: string | null; no: string }>> {
   const bySo = new Map<string, Array<{ id: string | null; no: string; sortKey: string }>>();
   for (const r of rows) {

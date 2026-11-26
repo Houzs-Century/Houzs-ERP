@@ -27,7 +27,6 @@ import { addMonthsYm, type CashLeg } from './cashflow-pnl-forecast';
 
 /** The facility's tenor when Finance has set none (D3: two months). */
 export const DEFAULT_TENOR_DAYS = 60;
-/** How many recent repayments set the default rate. */
 const RATE_SAMPLE = 6;
 
 /** A liability account named TRADE FINANCE that is not a bank account itself. */
@@ -100,11 +99,9 @@ const ticked = (off: Off, ym: string, id: string): boolean => !(off[ym] ?? []).i
 export type TfPlanInput = {
   currentYm: string;
   facility: { code: string; name: string; lender: string };
-  /** Where the interest is booked; none = no interest leg. */
   interest: { code: string; name: string } | null;
   tenorDays: number;
   rateBp: number;
-  /** The draws owed today. */
   open: readonly OpenDraw[];
   dues: Dues;
   off: Off;

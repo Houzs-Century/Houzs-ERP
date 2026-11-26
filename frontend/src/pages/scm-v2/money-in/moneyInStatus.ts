@@ -1,12 +1,3 @@
-// The words and tones Money in's lists put in their tags (the owner's Claude
-// Design, batch 5). ONE home, so a status reads and looks the same on every
-// Money-in page — CI's duplicated-decisions gate fires on a second copy. This
-// holds Outstanding's and Not yet billed's today; the other Money-in pages
-// bring theirs here as they are rebuilt.
-//
-// The four tones are the design's: late (red), warn (brass), info (petrol) and
-// calm (grey). The WORD of a stored status always comes from status-pill's
-// statusLabel, so the confirm rung reads "Submitted" here as everywhere else.
 
 import { fmtDate } from '../../../vendor/shared/format';
 import { humaniseStatusKey, statusLabel } from '../../../vendor/scm/lib/status-pill';
@@ -59,10 +50,6 @@ export function unbilledAgeTone(days: number): TagTone {
   return days >= 91 ? 'late' : days >= 31 ? 'warn' : 'calm';
 }
 
-/* ── The Money-in documents (batch 5 §2–§8) ──────────────────────────────────
-   Each document's status in the design's words, read from the columns its
-   own table already has. Written as switches, not lookup tables, so no second
-   copy of a stored-status list exists beside the ERP's own. */
 
 /** The sand tint of a document still open (the design's OPEN_BG): open sales
  *  invoices and debtor bills, debtors with money outstanding. */
@@ -107,8 +94,6 @@ export function debtorBillTag(b: { status: string; total_sen: number; received_s
  *  order's deposit applied and the credit notes knocked off it, as the
  *  outstanding figure does. */
 export function salesInvoiceTag(si: { outstandingSen: number; paidSen: number; dueDate: string | null; status?: string | null }, today: string): Tag {
-  /* Finance lists the live invoices only; a page opened on a cancelled or a
-     draft one says so first (statusLabel's own word). */
   const stored = String(si.status ?? '').toUpperCase();
   if (stored === 'CANCELLED') return { text: statusLabel('si', stored), tone: 'late' };
   if (stored === 'DRAFT') return { text: statusLabel('si', stored), tone: 'warn' };

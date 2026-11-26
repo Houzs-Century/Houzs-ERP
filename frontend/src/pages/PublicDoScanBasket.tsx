@@ -47,27 +47,11 @@ import { statusLabel } from "../vendor/scm/lib/status-pill";
 import { doScanLadderOrder, doScanStep, type DoScanStep } from "../vendor/shared/do-scan-ladder";
 import { correlatedFetch } from "../lib/requestCorrelation";
 
-/* THE RUNGS A PILE MAY BE FOR, walked out of the ladder rather than typed. Add a
-   rung to the ladder and it appears here; there is no second list to forget.
-   LOADED is dropped for the reason in the header — a paper whose next step is
-   LOADED cannot start or join a pile. */
 const BATCH_STEPS: DoScanStep[] = doScanLadderOrder()
   .map((from) => doScanStep(from, false))
   .filter((s): s is DoScanStep => s !== null)
   .filter((s) => s.status !== "LOADED");
 
-/* THE TWO SHAPES THIS BASKET CAN READ, and it must read both: papers printed
-   before 2026-08-27 carry a 64-hex token, papers printed after carry the
-   10-character one that let the code shrink to 14mm. Accepting only the new
-   shape would have made every sheet already on a lorry unscannable, which is a
-   worse failure than the one the change was for.
-
-   Kept in step with the server's own gate by `public-do-scan-token-shape.test`,
-   which reads both files: a regex here that drifts from
-   `DO_SCAN_TOKEN_RE` is a token the page drops before the server ever sees it.
-
-   Matched on the PATH, not the origin, so a sheet printed under an old domain
-   still scans. */
 const TOKEN_IN_URL = /\/d\/([0-9a-hjkmnp-tv-z]{10}|[0-9a-f]{64})(?![0-9a-z])/i;
 
 type Line = {
@@ -113,22 +97,13 @@ export function PublicDoScanBasket() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ tone: "ok" | "warn"; text: string } | null>(null);
   const [rejected, setRejected] = useState<string | null>(null);
-  /* The tokens already in the basket, as a ref rather than state: the decode
-     loop fires from a callback that must see the CURRENT set, and a state
-     snapshot captured at subscribe time would let the same paper in twice. */
   const seen = useRef<Set<string>>(new Set());
-  /* THE RUNG THIS BASKET IS FOR, taken from the first paper that got in. Null
-     until then. A ref as well as state because the decode callback has to test
-     it synchronously, before a re-render. */
   const lockedRef = useRef<DoScanStep | null>(null);
   const [locked, setLocked] = useState<DoScanStep | null>(null);
 
   const addToken = useCallback(async (token: string) => {
     if (seen.current.has(token)) return;
     seen.current.add(token);
-    /* The line appears IMMEDIATELY, before the lookup answers. A storekeeper
-       moving down a pile needs to see the count go up as fast as they scan;
-       waiting for a round trip makes it feel like the scan missed. */
     setLines((prev) => [...prev, { token, doNumber: null, status: null, step: null, blockReason: null }]);
     try {
       const res = await correlatedFetch("/api/public/do-scan/batch/lookup", {
@@ -140,10 +115,6 @@ export function PublicDoScanBasket() {
       const found = body.lines?.[0];
       if (!found) return;
 
-      /* UNDO THE OPTIMISTIC LINE when the paper may not join. The line went in
-         before the lookup answered so the count keeps up with the operator's
-         hands; a refusal has to take it back out, or the basket would show a
-         document it is not going to move. */
       const reject = (why: string) => {
         seen.current.delete(token);
         setLines((prev) => prev.filter((l) => l.token !== token));
@@ -151,17 +122,11 @@ export function PublicDoScanBasket() {
       };
 
       if (!found.step) {
-        /* Held, cancelled, or already finished. It has a sentence of its own
-           from the ladder — the operator reads that, not a generic refusal. */
         reject(
           `${found.doNumber ?? "That delivery order"} was not added. ${found.blockReason ?? "It has no next step."}`,
         );
         return;
       }
-      /* THE RUNG THAT DEDUCTS STOCK CANNOT BE PILED. A delivery order still at
-         DRAFT has LOADED as its next step, and that rung confirms the document
-         and takes the goods out of the warehouse — a decision that belongs to
-         one document at a time, not to whatever happened to be in a hand. */
       if (!BATCH_STEPS.some((b) => b.status === found.step!.status)) {
         reject(
           `${found.doNumber ?? "That delivery order"} was not added — confirming a delivery order takes it out of `
@@ -178,8 +143,6 @@ export function PublicDoScanBasket() {
         return;
       }
       if (!lock) {
-        /* FIRST PAPER IN SETS THE RUNG. Held in a ref as well as state because
-           the next decode may arrive before React has re-rendered. */
         const first: DoScanStep = { ...found.step } as DoScanStep;
         lockedRef.current = first;
         setLocked(first);
@@ -201,10 +164,6 @@ export function PublicDoScanBasket() {
     (value: string) => {
       const m = TOKEN_IN_URL.exec(value);
       if (!m) {
-        /* NAMED, NEVER IGNORED. A paper whose QR points at the logged-in page
-           decodes perfectly and cannot be used here, and an operator who scans
-           it repeatedly with nothing happening will decide the scanner is
-           broken. */
         setRejected(
           "That code is not a delivery order this page can read. It may have been printed before the QR was changed — ask the office to reprint it.",
         );
@@ -218,9 +177,6 @@ export function PublicDoScanBasket() {
 
   const scanner = useQrScanner(onDecoded);
 
-  /* EMPTYING THE BASKET RELEASES THE RUNG. Otherwise a storekeeper who cleared
-     a pile of Loaded papers could not then start a pile of In Transit ones
-     without reloading the page — the lock would outlive the pile it was for. */
   const releaseIfEmpty = (remaining: number) => {
     if (remaining === 0) {
       lockedRef.current = null;
@@ -263,9 +219,6 @@ export function PublicDoScanBasket() {
         setNotice({ tone: "warn", text: body.message ?? "That did not go through. Try again." });
         return;
       }
-      /* THE LINES ARE REPLACED BY WHAT THE SERVER SAID HAPPENED, one per paper.
-         An operator told "8 of 11 recorded" without being told WHICH three has
-         to re-scan the whole pile to find out. */
       if (body.lines) {
         setLines((prev) =>
           prev.map((l) => {
@@ -315,8 +268,6 @@ export function PublicDoScanBasket() {
 
       {scanner.scanning ? (
         <div className="space-y-2">
-          {/* playsInline keeps iOS from taking the video full-screen, which
-              would hide the running count the operator is watching. */}
           <video ref={scanner.videoRef} playsInline muted className="w-full rounded-md bg-black" />
           <div className="flex gap-2">
             <button
@@ -403,10 +354,6 @@ export function PublicDoScanBasket() {
 
       {lines.length > 0 && (
         <>
-          {/* ONE BUTTON, because the pile is uniform by construction — the
-              first paper set the rung and nothing on a different one was let
-              in. There is nothing to choose, so there is no wrong thing to
-              press. Its words come from the ladder, never from here. */}
           {locked && (
             <>
               <button
@@ -418,9 +365,6 @@ export function PublicDoScanBasket() {
                 {busy ? <Loader2 size={18} className="animate-spin" /> : <PackageCheck size={18} />}
                 {locked.label} ({lines.length})
               </button>
-              {/* The line the rung carries with it. For the delivered rung this
-                  is the sentence naming the signature, photo and location this
-                  scan does NOT capture (bug 0481). */}
               <p className="text-xs text-ink-secondary">{locked.note}</p>
             </>
           )}

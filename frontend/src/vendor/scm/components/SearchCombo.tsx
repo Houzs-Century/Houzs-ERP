@@ -91,15 +91,11 @@ export function SearchCombo({
 }) {
   const chosen = useMemo(() => options.find((o) => o.value === value) ?? null, [options, value]);
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState<string | null>(null); // null = showing the chosen label
+  const [query, setQuery] = useState<string | null>(null);
   const [highlight, setHighlight] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  /* Measured at open (layout effect: before paint, so the panel never
-     flashes on the wrong side) and KEPT true while open — a scroll in any
-     ancestor (capture phase) or a resize moves the input, and a fixed
-     panel must follow it. */
   const [pos, setPos] = useState<PanelPos | null>(null);
   useLayoutEffect(() => {
     if (!open) { setPos(null); return; }
@@ -127,7 +123,6 @@ export function SearchCombo({
     });
   }, [options, query]);
 
-  /* Reset the highlight whenever the list changes shape. */
   useEffect(() => { setHighlight(0); }, [query, open]);
 
   /* Round 4 (owner 2026-09-06: SUPPLIER 选的时候我希望可以按往下选): ↓ moved
@@ -138,7 +133,6 @@ export function SearchCombo({
   useEffect(() => {
     if (!open) return;
     const el = listRef.current?.querySelector<HTMLElement>(`[data-hit="${highlight}"]`);
-    /* jsdom has no scrollIntoView; the typing says every element does. */
     if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
   }, [highlight, open]);
 
@@ -152,7 +146,6 @@ export function SearchCombo({
     setOpen(false);
   };
 
-  /* Group headers interleaved into the flat hit list for rendering. */
   const rows = useMemo(() => {
     const out: Array<{ t: 'head'; label: string } | { t: 'opt'; o: ComboOption; i: number }> = [];
     let lastGroup: string | undefined;
@@ -168,7 +161,6 @@ export function SearchCombo({
       ref={wrapRef}
       style={{ position: 'relative', ...(fill ? { display: 'block', width: '100%' } : {}) }}
       onBlur={(e) => {
-        /* Focus leaving the whole widget (not moving into the list). */
         if (!wrapRef.current?.contains(e.relatedTarget as Node | null)) close(true);
       }}
     >
@@ -191,7 +183,6 @@ export function SearchCombo({
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown') {
             e.preventDefault();
-            /* A closed panel opens ON the first option; an open one steps down. */
             if (!open) { setOpen(true); setHighlight(0); }
             else setHighlight((h) => Math.min(h + 1, hits.length - 1));
           }
@@ -204,9 +195,6 @@ export function SearchCombo({
         <div
           ref={listRef}
           role="listbox"
-          /* preventDefault on the CONTAINER too: grabbing the panel's own
-             scrollbar must not steal focus from the input — a blur here
-             closes the panel mid-scroll. */
           onMouseDown={(e) => { e.preventDefault(); }}
           style={{
             position: 'fixed', zIndex: 1000, left: pos.left, width: pos.width,
@@ -232,15 +220,11 @@ export function SearchCombo({
               role="option"
               data-hit={r.i}
               aria-selected={r.o.value === value}
-              /* mousedown, not click: click fires after blur has already
-                 closed the list and restored the label. */
               onMouseDown={(e) => { e.preventDefault(); pick(r.o.value); }}
               onMouseEnter={() => setHighlight(r.i)}
               title={r.o.label}
               style={{
                 padding: '6px 12px', cursor: 'pointer',
-                /* One option, one line — a wrapped label reads as two rows
-                   and the panel is wide enough now (Round 3, see PANEL_MIN_W). */
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                 background: r.i === highlight ? 'var(--c-cream, #f5f1ea)' : 'transparent',
                 fontWeight: r.o.value === value ? 600 : 400,

@@ -18,23 +18,6 @@ import { readLastReport } from "../pages/scm-v2/reports/lastReport";
 import { Avatar } from "./Avatar";
 import { cn } from "../lib/utils";
 
-/**
- * Mobile bottom navigation. Hidden on lg+. Five slots:
- *
- *   [ Home ] [ Points ] [ Menu* ] [ Inbox ] [ Profile ]
- *
- * The four side tabs are universal — accessible to every role — so the
- * rail never collapses to two slots for a restricted user. Anything
- * gated lives behind the centre Menu disc.
- *
- * The middle "Menu" tab is a raised brass circle that protrudes above
- * the rail and opens a bottom-sheet modal with every other
- * destination. Distinct visual so it reads as the "all-things"
- * affordance, not just another tab.
- *
- * The Profile tab renders the user's avatar instead of an icon so they
- * see themselves in the rail.
- */
 interface Tab {
   to: string;
   label: string;
@@ -58,7 +41,7 @@ export function MobileTabBar() {
   ];
   const rightTabs: Tab[] = [
     { to: "/notifications", label: "Inbox", icon: Bell },
-    { to: "/profile", label: "Profile", icon: LayoutDashboard /* unused — Profile renders avatar */ },
+    { to: "/profile", label: "Profile", icon: LayoutDashboard },
   ];
 
   return (
@@ -67,10 +50,6 @@ export function MobileTabBar() {
         aria-label="Mobile navigation"
         className={cn(
           "fixed left-3 right-3 z-30 lg:hidden",
-          // Float the rail above the canvas with a small inset and shadow,
-          // sitting just above iOS safe-area instead of sticking to the
-          // device edge. Reads as a pill, matches the floating-FAB visual
-          // language used elsewhere in the app.
           "bottom-[calc(env(safe-area-inset-bottom)+0.5rem)]",
           "rounded-2xl border border-border bg-surface/95 backdrop-blur-md shadow-slab"
         )}
@@ -80,10 +59,6 @@ export function MobileTabBar() {
             <BottomTab key={tab.to} tab={tab} />
           ))}
 
-          {/* Centre — raised brass disc that opens the Menu modal.
-              48 px disc (h-12 w-12) protrudes 8 px above the floating
-              pill — leaves room for the active-tab indicator on
-              neighbours and avoids cramping at 320 px portrait. */}
           <div className="flex flex-1 items-end justify-center">
             <button
               onClick={() => setMenuOpen(true)}
@@ -114,7 +89,6 @@ export function MobileTabBar() {
   );
 }
 
-// ── Profile tab — renders the user's avatar in place of an icon ────
 
 function ProfileTab() {
   const { user } = useAuth();
@@ -156,7 +130,6 @@ function ProfileTab() {
   );
 }
 
-// ── Single tab (non-centre) ──────────────────────────────────
 
 function BottomTab({ tab }: { tab: Tab }) {
   return (
@@ -195,24 +168,12 @@ function BottomTab({ tab }: { tab: Tab }) {
   );
 }
 
-// ── Menu modal ────────────────────────────────────────────────
-// Bottom-sheet that mirrors the desktop Sidebar's full nav tree.
-// Both render from the same NAV_TABS registry so they never drift —
-// add a route in Sidebar.tsx and it appears here automatically.
-// Permission-filtered. Click → navigate + close. Backdrop / X to
-// dismiss.
 
 function MenuModal({ onClose }: { onClose: () => void }) {
   const { can, pageAccess, user } = useAuth();
   const navigate = useNavigate();
   const notifs = useNotifications();
 
-  // Identical gate logic to the desktop Sidebar (shared ./navFilter). This
-  // used to be a hand-copied subset that ignored pageAccess / pageAccessFull /
-  // requireFinanceViewer and the sales gates, so pageAccess-only items
-  // (Projects, System Health) and hideForSales items leaked into this menu and
-  // bounced the user to <Forbidden> on tap — the "render-then-deny" the
-  // "off, not hide" rule forbids. Sharing the filter makes drift impossible.
   const filterTab = makeNavFilter({ user, can, pageAccess });
 
   const visibleTabs = NAV_TABS.map(filterTab).filter(
@@ -224,8 +185,6 @@ function MenuModal({ onClose }: { onClose: () => void }) {
     onClose();
   }
 
-  /** A collapsed group (Finance › Reports): one card, to the member opened
-   *  last or the first the reader may open — the desktop rail's rule. */
   function renderCollapsed(t: NavTab) {
     const to = collapsedEntryTo(t.children ?? [], readLastReport());
     return to ? renderCard({ ...t, children: undefined, to }) : null;
@@ -274,21 +233,15 @@ function MenuModal({ onClose }: { onClose: () => void }) {
     );
   }
 
-  // Inbox is a fixed extra entry — surfaces unread notifications with
-  // a live badge. Not in NAV_TABS because the sidebar exposes the bell
-  // via NotificationBell instead. Skip when projects.read is denied
-  // (same gate as before).
   const showInbox = can("projects.read");
 
   const node = (
     <div className="fixed inset-0 z-50 flex flex-col justify-end lg:hidden">
-      {/* Backdrop */}
       <button
         aria-label="Close menu"
         onClick={onClose}
         className="absolute inset-0 bg-ink/40 backdrop-blur-sm animate-fade-in"
       />
-      {/* Sheet */}
       <div
         role="dialog"
         aria-label="Menu"
@@ -298,12 +251,10 @@ function MenuModal({ onClose }: { onClose: () => void }) {
           "animate-rise flex flex-col",
         )}
       >
-        {/* Drag handle */}
         <div className="pointer-events-none flex justify-center pt-2">
           <span className="h-1 w-10 rounded-full bg-border-strong/60" />
         </div>
 
-        {/* Header */}
         <div className="flex items-center justify-between gap-2 px-4 pt-2 pb-3">
           <div>
             <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-accent">
@@ -322,8 +273,6 @@ function MenuModal({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        {/* Scrollable grid — taller nav trees overflow inside the sheet
-            so the sheet itself never grows past 85vh. */}
         <div className="thin-scroll grid grid-cols-2 gap-2 overflow-y-auto px-3 pb-3">
           {showInbox &&
             renderCard(
@@ -336,8 +285,6 @@ function MenuModal({ onClose }: { onClose: () => void }) {
             )}
 
           {visibleTabs.map((t) => {
-            // Group: spans the full row with a section header, then
-            // its leaf children render as cards beneath.
             if (t.children && t.children.length > 0) {
               return (
                 <div
@@ -346,9 +293,6 @@ function MenuModal({ onClose }: { onClose: () => void }) {
                 >
                   {renderGroupHeader(t.label, t.icon)}
                   {t.children.map((k) =>
-                    // A collapsed group (Finance › Reports) is ONE card, as on
-                    // the desktop rail. A sub-group (e.g. Supply Chain →
-                    // Procurement): its own section header + leaf cards.
                     k.collapsed ? (
                       renderCollapsed(k)
                     ) : k.children && k.children.length > 0 ? (
@@ -366,7 +310,6 @@ function MenuModal({ onClose }: { onClose: () => void }) {
                 </div>
               );
             }
-            // Leaf — single card.
             return renderCard(t);
           })}
 
@@ -377,7 +320,6 @@ function MenuModal({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        {/* Compliance footer with brand line */}
         <div className="flex items-center gap-2 border-t border-border bg-bg/40 px-4 py-2.5">
           <ShieldCheck size={11} className="text-accent" />
           <span className="font-mono text-[9.5px] uppercase tracking-brand text-ink-muted">

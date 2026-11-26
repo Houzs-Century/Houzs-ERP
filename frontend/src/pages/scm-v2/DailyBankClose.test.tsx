@@ -1,8 +1,3 @@
-// The Daily Bank's Daily close (the owner's Claude Design redesign, batch 3):
-// what each bucket settles by, the cash count that must come first, the note
-// that says what confirming will do, the counts saved before the close, and a
-// closed or future day read-only. The hooks are mocked at the module seam; the
-// posting itself is pinned in backend acc/daily-close.test.ts.
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';

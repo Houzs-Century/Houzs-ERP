@@ -1,8 +1,3 @@
-// Unit tests for soConvertedPoNumbers — the SO doc_no → system PO numbers
-// resolver behind the Sales Orders list "PO No." column. Route-level coverage
-// isn't possible in this harness (scm rides Supabase Postgres, the harness
-// rebuilds only the D1 side), so these pin the pure resolution rules through a
-// minimal fake PostgREST client (same shape as dropship-batch.test.ts).
 import { describe, expect, test } from 'vitest';
 import { soConvertedPoNumbers, soConvertedPos, soLineBoundPoNumbers } from './so-converted-po';
 
@@ -53,9 +48,9 @@ describe('soConvertedPoNumbers', () => {
     const sb = fakeSb({
       mfg_sales_order_items: [soItem('si-1', 'SO-1'), soItem('si-2', 'SO-1'), soItem('si-3', 'SO-1')],
       purchase_order_items: [
-        poItem('si-1', 'po-2'),   // PO-2607-014
-        poItem('si-2', 'po-1'),   // PO-2607-013
-        poItem('si-3', 'po-1'),   // same PO again — must de-dupe
+        poItem('si-1', 'po-2'),
+        poItem('si-2', 'po-1'),
+        poItem('si-3', 'po-1'),
       ],
       purchase_orders: [
         po('po-1', 'PO-2607-013', 'SUBMITTED'),
@@ -63,7 +58,6 @@ describe('soConvertedPoNumbers', () => {
       ],
     });
     const out = await soConvertedPoNumbers(sb, ['SO-1'], null);
-    // numeric-aware sort keeps 013 before 014, and the duplicate collapses.
     expect(out.get('SO-1')).toEqual(['PO-2607-013', 'PO-2607-014']);
   });
 
@@ -77,7 +71,6 @@ describe('soConvertedPoNumbers', () => {
       ],
     });
     const out = await soConvertedPoNumbers(sb, ['SO-1'], null);
-    // CANCELLED is misleading (no live conversion); DRAFT is a real raised PO.
     expect(out.get('SO-1')).toEqual(['PO-2607-002']);
   });
 
@@ -132,8 +125,8 @@ describe('soConvertedPoNumbers', () => {
     const sb = fakeSb({
       purchase_order_items: [
         poItem('si-1', 'po-2'),
-        poItem('si-1', 'po-1'),    // same line, a second PO
-        poItem('si-1', 'po-dead'), // cancelled -> dropped
+        poItem('si-1', 'po-1'),
+        poItem('si-1', 'po-dead'),
         poItem('si-2', 'po-1'),
       ],
       purchase_orders: [
@@ -148,8 +141,6 @@ describe('soConvertedPoNumbers', () => {
   });
 
   test("the owner's case: a line resolves to its OWN PO, never another line's PO", async () => {
-    // 010095 is raised against ANOTHER SO's line; it must not appear on this one,
-    // even though the goods physically shipped from its batch (that lives on the DO).
     const sb = fakeSb({
       purchase_order_items: [
         poItem('hilton-013160', 'po-own'),
@@ -168,11 +159,8 @@ describe('soConvertedPoNumbers', () => {
   test('BUG-72: bound PO carries the MRP ETA rule — line revised date, else header; none once received', async () => {
     const sb = fakeSb({
       purchase_order_items: [
-        // line date revised later than the original -> the revision wins
         { so_item_id: 'si-1', purchase_order_id: 'po-1', qty: 2, received_qty: 0, delivery_date: '2026-10-10', supplier_delivery_date_2: '2026-10-20' },
-        // no line date -> the header's expected_at (and its revision)
         { so_item_id: 'si-2', purchase_order_id: 'po-2', qty: 1, received_qty: 0, delivery_date: null },
-        // fully received -> PO still shown, no ETA
         { so_item_id: 'si-3', purchase_order_id: 'po-1', qty: 1, received_qty: 1, delivery_date: '2026-10-10' },
       ],
       purchase_orders: [
@@ -195,9 +183,6 @@ describe('soConvertedPoNumbers', () => {
   });
 
   test('a company id puts company_id = <id> on the three reads', async () => {
-    // Both companies carry an "SO-1" whose line raised a PO. With company 2
-    // named, only company 2's line, PO line and PO may answer — a row of
-    // company 1 leaking through any ONE of the three reads adds a PO-1-*.
     const sb = fakeSb({
       mfg_sales_order_items: [
         { id: 'si-a', doc_no: 'SO-1', company_id: 1 },

@@ -17,10 +17,8 @@ import { isForeignPv, pvListTotal, ringgitSenOfPv, type PvMoneyRow } from './pv-
 
 export type PvListView = ScreenTableView & { rows: readonly PvMoneyRow[] };
 
-/** The row's next-step buttons: a screen's door, not a line on paper. */
 const SCREEN_ONLY = new Set(['next_step']);
 const AMOUNT_KEY = 'total_sen';
-/** The grid's Date leaves as ISO text; on paper it reads as the screen shows it. */
 const DATE_KEYS = new Set(['voucher_date']);
 
 /** The table exactly as printed: pure, so a test reads the cells and the total without a PDF. */
@@ -31,7 +29,6 @@ export function pvListTable(view: PvListView): {
   const pick = <V>(cells: readonly V[]): V[] => keep.map((i) => cells[i] as V);
   const keys = pick(view.keys);
   const amountAt = keys.indexOf(AMOUNT_KEY);
-  /* The Amount in ringgit: the screen's cell is in the voucher's own currency. */
   const matrix = {
     header: pick(view.matrix.header).map((h, c) => (c === amountAt ? 'Amount (RM)' : h)),
     formats: pick(view.matrix.formats).map((f, c) => (c === amountAt ? 'money' : DATE_KEYS.has(keys[c] ?? '') ? 'date' : f)),

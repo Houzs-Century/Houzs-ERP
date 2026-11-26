@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-readiness-category — put mfg_products.category onto ReadinessLine.
-//
-// isServiceLine (scm/shared/service-sku.ts) calls `category` its STRONGEST
-// signal: item_group is free text a POS can save as 'others', and the SVC-
-// prefix only covers seeded codes. Until 2026-08-16 ReadinessLine had no field
-// for it, so no caller could pass it — and a delivery fee shaped like an
-// accessory counted as a short accessory that held its SO out of READY_TO_SHIP.
-//
-// Every rollup caller resolves it through HERE. The SO list, the Delivery
-// Planning board, the delivery agent and the manual stock toggle must classify
-// one line identically or they disagree about the same SO on four screens, and
-// each of them had already grown its own copy of this chunked catalog read.
-// ----------------------------------------------------------------------------
 
 import { chunkIn } from './paginate-all';
 import type { ReadinessLine } from './so-readiness';

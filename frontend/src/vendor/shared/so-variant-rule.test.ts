@@ -50,21 +50,6 @@ describe('missingConfirmVariantAxes', () => {
   });
 });
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   THE SOFA-MIX PAIR. Two client checks for ONE server rule, and which one a
-   surface uses is decided by which server path it is standing in front of:
-
-     a NEW-order form  -> the server create path asks a FLAT question
-                          -> hasSofaMixConflict
-     a DETAIL page     -> the server line paths ask a DIFFERENTIAL one
-                          (backend/src/scm/lib/main-mix.ts, mainMixIntroduced)
-                          -> sofaMixIntroduced
-
-   Getting that backwards is not a cosmetic mismatch. A flat check in front of a
-   differential gate refuses saves the server would have accepted, and the order
-   it refuses is precisely the one written before the rule existed — which the
-   server deliberately grandfathers and the operator has no way to un-mix.
-   ───────────────────────────────────────────────────────────────────────────── */
 describe('hasSofaMixConflict — the FLAT form, for the New-order surfaces', () => {
   it('refuses a sofa beside a bedframe or a mattress', () => {
     expect(hasSofaMixConflict(['sofa', 'bedframe'])).toBe(true);
@@ -91,9 +76,6 @@ describe('sofaMixIntroduced — the DIFFERENTIAL form, for the Detail surfaces',
     expect(sofaMixIntroduced(['bedframe'], ['sofa'])).toBe(false);
   });
 
-  /* THE GRANDFATHERING. An order that already mixes must stay editable, or the
-     client locks the operator out of a document the server would let them
-     save. */
   it('an ALREADY-MIXED order stays saveable — including edits that touch nothing relevant', () => {
     expect(sofaMixIntroduced(['sofa', 'bedframe'], ['sofa', 'bedframe'])).toBe(false);
     expect(sofaMixIntroduced(['sofa', 'bedframe'], ['sofa', 'bedframe', 'service'])).toBe(false);
@@ -101,7 +83,6 @@ describe('sofaMixIntroduced — the DIFFERENTIAL form, for the Detail surfaces',
   });
 
   it('and the flat form is exactly what would have refused those saves', () => {
-    // The regression this pair exists to stop, stated as an assertion.
     expect(hasSofaMixConflict(['sofa', 'bedframe'])).toBe(true);
     expect(sofaMixIntroduced(['sofa', 'bedframe'], ['sofa', 'bedframe'])).toBe(false);
   });

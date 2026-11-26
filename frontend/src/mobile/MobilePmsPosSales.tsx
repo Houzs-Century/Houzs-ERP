@@ -1,8 +1,3 @@
-// The Houzs POS bills of this event, inside the mobile project's Sales panel —
-// the phone half of pages/projects/ProjectPosSalesSection.tsx (layout E9).
-// Same read (GET /api/project-pos-sales/:projectId), same labels
-// (lib/projectPosSales.ts), the panel's own compact styling. Read-only on the
-// phone: Export and Total Sales stay on the desktop page.
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -22,8 +17,6 @@ const LABEL: React.CSSProperties = {
   fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)",
 };
 const MUTED: React.CSSProperties = { fontSize: 12, color: "var(--hz-c-ink-soft)" };
-/* The pill's tint per status word; a function, not a map, so the desktop's
-   Tailwind map stays the only literal of the vocabulary's presentation. */
 function pillStyle(status: PosReceiptStatus): React.CSSProperties {
   if (status === "VOID") return { background: "var(--hz-dk-err-bg, #f9dede)", color: "#9b2c2c" };
   if (status === "RETURN") return { background: "var(--hz-dk-surface-2, #dbeefb)", color: "#0b6b8f" };
@@ -44,8 +37,6 @@ export function MobilePmsPosSales({ query }: { query: ReturnType<typeof useMobil
   const { data, isPending, error } = query;
   const rows = data?.data ?? [];
   const t = data?.totals;
-  /* Off, not hide: nothing to say for an event that is neither Cash & Carry
-     nor has any synced bill. */
   if (data && !data.pos_enabled && data.all_count === 0) return null;
 
   return (

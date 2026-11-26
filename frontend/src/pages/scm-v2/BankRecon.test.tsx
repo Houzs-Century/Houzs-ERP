@@ -23,8 +23,6 @@ const OWED: SettlementBatch = {
   confirmed_count: 4, open_count: 0,
   status: 'OPEN', uploaded_by: null, created_at: '',
 };
-/* Reconciled by nobody yet — the money can still be recorded, but the screen
-   has to say the fees are not in the books. */
 const SETTLED: SettlementBatch = {
   ...OWED, id: 2, acquirer_code: 'MBB', file_name: 'mbb-aug.csv',
   net_sen: 227700, received_sen: 227700, outstanding_sen: 0, receipt_count: 1,
@@ -69,10 +67,6 @@ vi.mock('./settlement-queries', () => ({
   ] }, isLoading: false }),
 }));
 
-/* Layer 4 owns the first tab now; this file is about the money views, so the
-   bank-statement screen is stubbed rather than exercised here. Its own contract
-   is BankStatementTab.test.tsx — and the payment-advice tab likewise has its
-   own file, PayoutAdviceTab.test.tsx. */
 vi.mock('./BankMonthTab', () => ({ BankMonthTab: () => <div>by month tab</div> }));
 vi.mock('./BankStatementTab', () => ({ BankStatementTab: () => <div>bank statement tab</div> }));
 
@@ -97,8 +91,6 @@ describe('the view switch', () => {
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Statements', 'Files', 'Money to come in', 'Still with the merchants']);
   });
 
-  /* The redesign: the page is "Bank statements", opening on the months, and the
-     view lives in the address so To do and Daily Bank can link straight in. */
   test('opens on the statements, and on the view the address asks for', () => {
     const first = render(<MemoryRouter><BankRecon /></MemoryRouter>);
     expect(screen.getByText('Bank statements')).toBeTruthy();
@@ -113,14 +105,12 @@ describe('the view switch', () => {
 describe('the statements waiting for money', () => {
   test('lists what is still owed, and hides the settled ones until asked', () => {
     draw();
-    /* The headline total and the one owed statement's line — same number, so
-       both must be on screen. */
     expect(screen.getAllByText('RM 4,227.87')).toHaveLength(2);
     /* The money columns, once each — what he came here to check (owner:
        我应该是需要核对 net 的数据罢了哦). */
-    expect(screen.getByText('Net It Should Pay')).toBeTruthy(); // headers read as Title Case
-    expect(screen.getByText('RM 7,046.45')).toBeTruthy();       // the net
-    expect(screen.getByText('RM 2,818.58')).toBeTruthy();       // received
+    expect(screen.getByText('Net It Should Pay')).toBeTruthy();
+    expect(screen.getByText('RM 7,046.45')).toBeTruthy();
+    expect(screen.getByText('RM 2,818.58')).toBeTruthy();
     expect(screen.getByText('hlb-aug.csv')).toBeTruthy();
     expect(screen.queryByText('mbb-aug.csv')).toBeNull();
 
@@ -129,8 +119,6 @@ describe('the statements waiting for money', () => {
     expect(screen.getByText('all in')).toBeTruthy();
   });
 
-  /* A report that is not reconciled is NOT here — and the screen says so by
-     name, so "where did AEON go" is never a question. */
   test('a report that is not reconciled yet is kept off this screen, and named', () => {
     draw();
     expect(screen.queryByText('aeon-aug.csv')).toBeNull();
@@ -142,27 +130,20 @@ describe('the statements waiting for money', () => {
 
   test('a statement shows its credits, takes another, and can undo one', () => {
     draw();
-    /* The button says what pressing it is FOR while money is outstanding. */
     fireEvent.click(screen.getByText('Record the money'));
     expect(screen.getByText(/RM 4,227.87 still to come of RM 7,046.45/)).toBeTruthy();
     expect(screen.getByText('JE-2608-0017')).toBeTruthy();
     expect(screen.getByText('Ah Chew')).toBeTruthy();
 
     const post = screen.getByText('Money received') as HTMLButtonElement;
-    expect(post.disabled).toBe(true);            // no date, nothing to post
-    /* Typed the way the operator types it — DateField reads dd/mm/yyyy and
-       hands the parent ISO. */
+    expect(post.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('Money arrived in the bank on'), { target: { value: '2026/08/19' } });
     fireEvent.click(screen.getByText('Money received'));
-    /* Amount blank = the rest of it; nobody retypes a number the statement
-       already knows. */
     expect(receivedMutate).toHaveBeenCalledWith(
       { batchId: 1, receivedOn: '2026-08-19' },
       expect.anything(),
     );
 
-    /* "3,500.00" went through Number() as NaN, reached the server as null and
-       journaled the whole outstanding. A thousands comma is what people type. */
     fireEvent.change(screen.getByLabelText('Amount of this credit'), { target: { value: '3,500.00' } });
     fireEvent.click(screen.getByText('Money received'));
     expect(receivedMutate).toHaveBeenLastCalledWith(
@@ -170,7 +151,6 @@ describe('the statements waiting for money', () => {
       expect.anything(),
     );
 
-    /* Unreadable is refused on screen, never sent as "the rest of it". */
     const before = receivedMutate.mock.calls.length;
     fireEvent.change(screen.getByLabelText('Amount of this credit'), { target: { value: '3.500,00' } });
     fireEvent.click(screen.getByText('Money received'));
@@ -189,20 +169,15 @@ describe('the statements waiting for money', () => {
   });
 });
 
-/* The owner's own words: he needs to see that a customer HAS paid while the
-   money has not arrived or been reconciled — in DETAIL, not as a balance. */
 describe('paid, not yet in the bank', () => {
   test('names the document, the age, who keyed it in and where the money is', () => {
     draw();
     fireEvent.click(screen.getByText('Still with the merchants'));
 
-    expect(screen.getByText('RM 6,944.00')).toBeTruthy();          // sitting with acquirers
-    expect(screen.getByText('SO-2608-040')).toBeTruthy();          // named to the document
+    expect(screen.getByText('RM 6,944.00')).toBeTruthy();
+    expect(screen.getByText('SO-2608-040')).toBeTruthy();
     expect(screen.getByText('On a statement, waiting to be confirmed')).toBeTruthy();
-    // GHL's line, and the one keyed in without a bank — no report has either.
     expect(screen.getAllByText('The acquirer has not reported it yet')).toHaveLength(2);
-    /* Three states, three different jobs: chase the acquirer, finish the
-       reconciling, or wait for a payout that is already agreed. */
     expect(screen.getByText('Reconciled — the payout has not arrived')).toBeTruthy();
     expect(screen.getByText('Siti at the KL till')).toBeTruthy();
   });
@@ -211,7 +186,6 @@ describe('paid, not yet in the bank', () => {
     draw();
     fireEvent.click(screen.getByText('Still with the merchants'));
     expect(screen.getByText('over 30 days')).toBeTruthy();
-    // 46 days on GHL — the number the operator is meant to chase.
     expect(screen.getByText('46')).toBeTruthy();
   });
 
@@ -221,7 +195,7 @@ describe('paid, not yet in the bank', () => {
   test('money keyed in without a bank sits on the list once, under 未标', () => {
     draw();
     fireEvent.click(screen.getByText('Still with the merchants'));
-    expect(screen.getAllByText('Untagged')).toHaveLength(2); // the ageing row and the line
+    expect(screen.getAllByText('Untagged')).toHaveLength(2);
     expect(screen.getByText('SO-2606-013')).toBeTruthy();
     expect(screen.getByText('4 payments')).toBeTruthy();
   });
@@ -240,13 +214,10 @@ describe('a statement waiting for money shows what it is waiting FOR', () => {
     expect(screen.queryByText('663554')).toBeNull();
     expect(screen.queryByText('SO-2608-020')).toBeNull();
 
-    /* And one press away when the net does NOT match and he needs to see what
-       the report is made of. */
     fireEvent.click(screen.getByLabelText('Transactions in hlb-aug.csv'));
     const row = screen.getByText('663554').closest('tr') as HTMLElement;
     const cells = [...row.querySelectorAll('td')].map((td) => td.textContent);
-    expect(cells).toContain('RM 1,773.00');   // the net the acquirer will pay
-    /* The fee and the gross belong to step 1 and are NOT repeated here. */
+    expect(cells).toContain('RM 1,773.00');
     expect(cells).not.toContain('RM 27.00');
     expect(cells).not.toContain('RM 1,800.00');
     expect(cells).toContain('SO-2608-020');

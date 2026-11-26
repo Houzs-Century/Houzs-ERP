@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// SupplierDetail — full-page route at /suppliers/:id.
-//
-// HOOKKA-fidelity port (see hookka-erp/src/pages/suppliers/detail.tsx):
-//   1. Header: back button + Building2 icon + code · name + status pill
-//   2. Supplier Info card: Contact / Email / Phone / Payment terms / Address
-//   3. 3 KPI tiles: On-Time Rate (%) / Defect Rate (%) / Avg Lead Days
-//        - tone classes: green ≥90 / amber ≥75 / red below (only for OTR + DR)
-//   4. SKU Mappings table with "+ Add SKU Mapping" button + edit / delete
-//      icons per row. Double-click row to edit. Star toggles main supplier.
-//   5. Last 10 POs table: PO no, status, ordered/received qty, total,
-//      expected vs actual delivery, delta chip (on-time / N d late / early).
-//
-// Wires:
-//   GET  /suppliers/:id              → supplier + bindings
-//   GET  /suppliers/:id/scorecard    → KPIs + last10POs
-//   POST /suppliers/:id/bindings     → add SKU mapping
-//   PATCH /suppliers/:id/bindings/:bindingId → edit + toggle main
-//   DELETE /suppliers/:id/bindings/:bindingId
-// ----------------------------------------------------------------------------
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
@@ -26,9 +6,6 @@ import {
   TrendingUp, Package, Plus, Pencil, Trash2, Star, X, Save, Search,
   Tag, ChevronDown, ChevronRight, Download, Upload, Anchor,
 } from 'lucide-react';
-// Products wave un-stubbed these: the REAL MaintenanceTab (+ MaintenanceSection)
-// is exported from the vendored Products page, and the REAL supplier-scoped
-// SofaComboTab from the vendored components. (Was ./SupplierDetailStubs.)
 import { MaintenanceTab, type MaintenanceSection } from './Products';
 import { SofaComboTab } from '../../vendor/scm/components/SofaComboTab';
 import { SupplierLeadTimes } from './SupplierLeadTimes';
@@ -62,6 +39,7 @@ import {
   type BedframePriceMatrix,
 } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel, type MfgCategory, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
+import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 /* A refused write must SAY so. The five grid cells below fire-and-forget, and
    useUpdateBinding carries no onError (unlike useDeleteBinding and
@@ -109,12 +87,6 @@ import { masterNeedsPostcode, masterPostcodeError } from '../../vendor/shared/ma
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-/* CROSS-COMPANY MISS — when the supplier lives in another company the user is
-   allowed to see, the backend answers { error: 'in_other_company', companyId,
-   companyCode, message } instead of a bare not_found, so we can offer to switch
-   rather than paint the alarming "could no longer be found" (owner ask,
-   2026-07-24; backend detailMissResponse). The raw JSON is stashed on err.body
-   by the SCM fetch layer (authed-fetch). */
 type OtherCompanyMiss = { companyId: number; companyCode: string | null; message: string };
 function readOtherCompanyMiss(err: unknown): OtherCompanyMiss | null {
   const body = (err as { body?: unknown } | null)?.body;
@@ -134,22 +106,14 @@ function readOtherCompanyMiss(err: unknown): OtherCompanyMiss | null {
   }
 }
 
-/* KPI tone — the StatCard tone vocabulary (was .kpiValueOk / Warn / Bad). */
 type KpiTone = 'default' | 'success' | 'warning' | 'error';
 
-/* Back link — the shared toolbar-link treatment used by the other reskinned
-   scm-v2 detail pages (WarehouseRacks / SalesOrderDetail). Replaces .backBtn. */
 const BACK_LINK_CLASS =
   'inline-flex h-9 w-fit items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary';
 
-/* Count / category badge riding inside a tab button. One static treatment for
-   both tab states — a light pill reads on the surface tab and on the petrol
-   active tab alike. */
 const TAB_COUNT_CLASS =
   'ml-1.5 inline-flex items-center rounded-full bg-surface-2 px-1.5 text-[10px] font-semibold text-ink-secondary';
 
-/* Status pill — design-system tones (was the bespoke .statusPill + .statusActive
-   / .statusInactive / .statusBlocked block in the module.css). */
 const STATUS_PILL_BASE =
   'inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider';
 
@@ -167,18 +131,7 @@ const fmtCurrency = (centi: number, currency: Currency): string => {
   return currency === 'MYR' ? `RM ${v}` : `${v} ${currency}`;
 };
 
-/* Display dates + RM totals use the shared `fmtDateOrDash` / `fmtSen`
-   (Commander 2026-06-18 — one canonical format system-wide). The old local
-   fmtDate/fmtRm helpers were exact equivalents and have been retired. The
-   currency-aware `fmtCurrency` above stays — it renders non-MYR binding prices
-   (RMB/USD/SGD) which `fmtSen` (MYR-only) cannot. */
 
-/* ────────────────────────────────────────────────────────────────────────
-   usePersistedOpen — collapsible-panel state persisted per panel in
-   localStorage. '1' = open, '0' = collapsed; absent = defaultOpen.
-   Used by the Supplier Info card, the SKU Mappings card and each per-
-   category SKU group so commander's collapse choices survive reloads.
-   ──────────────────────────────────────────────────────────────────────── */
 function usePersistedOpen(storageKey: string, defaultOpen = true): [boolean, () => void] {
   const [open, setOpen] = useState<boolean>(() => {
     if (typeof window === 'undefined') return defaultOpen;
@@ -189,7 +142,7 @@ function usePersistedOpen(storageKey: string, defaultOpen = true): [boolean, () 
   });
   const toggle = useCallback(() => {
     setOpen((v) => {
-      try { window.localStorage.setItem(storageKey, v ? '0' : '1'); } catch { /* quota */ }
+      try { window.localStorage.setItem(storageKey, v ? '0' : '1'); } catch { }
       return !v;
     });
   }, [storageKey]);
@@ -210,18 +163,6 @@ function deliveryDelta(expected: string | null, received: string | null): Delive
   return { label: `${diffDays}d late`, tone: 'late' };
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   PR #208 — Supplier category + per-supplier maintenance config.
-
-   `SupplierCategory` is the canonical set commander asked for: SOFA /
-   BEDFRAME / MATTRESS / ACCESSORY / SERVICE / MIXED. The MIXED slot covers
-   fabric / hardware / multi-category resellers — surfaces every Maintenance
-   tab so commander can edit any surcharge that might apply.
-
-   `MAINTENANCE_SECTIONS_FOR_CATEGORY` filters the Pricing tab's left rail.
-   Sofa supplier → Sofa + Common (Fabrics). Bedframe supplier → Bedframe +
-   Common. Mattress supplier → Products Maintenance only (size pool). Etc.
-   ════════════════════════════════════════════════════════════════════════ */
 
 const SUPPLIER_CATEGORIES = ['SOFA', 'BEDFRAME', 'MATTRESS', 'ACCESSORY', 'SERVICE', 'MIXED'] as const;
 type SupplierCategory = typeof SUPPLIER_CATEGORIES[number];
@@ -254,8 +195,6 @@ function deriveGatingCategory(text: string | null | undefined): SupplierCategory
   return isSupplierCategory(up) ? up : 'MIXED';
 }
 
-/** Section allow-list per supplier category. Returns undefined when the
- *  category is MIXED or null — show every section (default behaviour). */
 function maintenanceSectionsForCategory(
   cat: SupplierCategory | null,
 ): MaintenanceSection[] | undefined {
@@ -270,8 +209,6 @@ function maintenanceSectionsForCategory(
   }
 }
 
-/** MfgCategory mapping for the Model picker filter — sofa Models hidden
- *  from bedframe suppliers, etc. MIXED returns null (no filter). */
 function mfgCategoryFromSupplierCategory(
   cat: SupplierCategory | null,
 ): MfgCategory | null {
@@ -297,25 +234,11 @@ export const SupplierDetail = () => {
   const bindings = detail.data?.bindings ?? [];
   const score = scorecard.data;
 
-  // Top-level tabs on the SupplierDetail page:
-  //   Overview      — KPIs + recent PO history (the supplier scorecard).
-  //   SKU Pricing   — the supplier's SKU mappings + per-SKU price matrix.
-  //   Maintenance   — supplier-scoped MaintenanceTab (surcharges), same UI as
-  //                   Products, filtered by the supplier's category.
-  //   Combo Pricing — supplier-scoped Sofa Combo deals (feeds PO auto-pricing
-  //                   in a later phase).
   const [activeTab, setActiveTab] = useState<SupplierDetailTab>('overview');
   const supplierCategory: SupplierCategory | null = deriveGatingCategory(supplier?.category);
-  /* Commander 2026-05-29 — surface the Products config tabs on the supplier,
-     scoped to what the supplier actually supplies:
-       • Combo Pricing  → SOFA suppliers (sofa module-set deals)
-       • Fabric Converter → SOFA + BEDFRAME (fabric/colour pool)
-     MIXED / unknown shows both. (Maintenance is the existing Pricing tab.) */
   const showCombo  = supplierCategory == null || supplierCategory === 'SOFA' || supplierCategory === 'MIXED';
   const showFabric = supplierCategory == null || supplierCategory === 'SOFA' || supplierCategory === 'BEDFRAME' || supplierCategory === 'MIXED';
 
-  // KPI tone selection — same thresholds as HOOKKA. Now StatCard tones
-  // (success / warning / error) rather than the retired .kpiValue* classes.
   const otrTone = useMemo<KpiTone>(() => {
     const v = score?.onTimeRate ?? 0;
     if (v >= 90) return 'success';
@@ -330,10 +253,6 @@ export const SupplierDetail = () => {
     return 'error';
   }, [score]);
 
-  // SKU dialog state — modal for create / edit.
-  //   'closed'      — nothing open
-  //   'multi'       — multi-select picker from Products (batch-add bindings)
-  //   'edit:row'    — edit one existing binding
   const [skuDialog, setSkuDialog] = useState<
     { mode: 'closed' } | { mode: 'multi' } | { mode: 'edit'; binding: BindingRow }
   >({ mode: 'closed' });
@@ -384,7 +303,6 @@ export const SupplierDetail = () => {
 
   return (
     <div>
-      {/* ── Header (shared PageHeader — full-bleed, design-system) ── */}
       <PageHeader back
         eyebrow="Supplier"
         title={`${supplier.code} — ${supplier.name}`}
@@ -403,7 +321,6 @@ export const SupplierDetail = () => {
       />
 
       <div className="space-y-4">
-      {/* ── Supplier Info ──────────────────────────────────────────── */}
       <SupplierInfoCard
         supplier={supplier}
         editing={editingInfo}
@@ -411,7 +328,6 @@ export const SupplierDetail = () => {
         onClose={() => setEditingInfo(false)}
       />
 
-      {/* ── Tab strip: Overview / SKU Pricing / Maintenance / Combo ── */}
       <div
         role="tablist"
         className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-surface p-1 shadow-stone"
@@ -450,9 +366,6 @@ export const SupplierDetail = () => {
             Combo Pricing
           </SupplierTabButton>
         )}
-        {/* Commander 2026-05-29 — Fabric Converter tab ported from PR #312.
-            Gated to SOFA / BEDFRAME / MIXED suppliers (showFabric), since the
-            fabric master only drives sofa + bedframe pricing. */}
         {showFabric && (
           <SupplierTabButton
             active={activeTab === 'fabric'}
@@ -505,13 +418,9 @@ export const SupplierDetail = () => {
           </div>
         </section>
       )}
-      {/* Commander 2026-05-29 — Fabric Converter render case from PR #312.
-          FabricTracking renders its own page header, so mount it bare (no
-          card wrapper) to avoid a doubled "Fabric Converter" title. */}
       {activeTab === 'fabric' && showFabric && <FabricTracking />}
       </div>
 
-      {/* ── SKU dialogs (modals) ──────────────────────────────────── */}
       {skuDialog.mode === 'multi' && (
         <ModelSkuPickerDialog
           supplierId={id!}
@@ -531,16 +440,6 @@ export const SupplierDetail = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Tab pill + the four SupplierDetail panels.
-
-   Overview     — KPI tiles + recent PO history (the supplier scorecard).
-   SKU Pricing  — SKU mappings + per-SKU price matrix (SupplierSkuPricingPanel).
-   Maintenance  — shared MaintenanceTab (surcharges) scoped to this supplier,
-                  with a section allow-list derived from the category.
-   Combo Pricing — supplier-scoped Sofa Combo deals (SofaComboTab), feeding PO
-                  auto-pricing in a later phase.
-   ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierTabButton = ({
   active,
@@ -578,7 +477,6 @@ const SupplierOverviewPanel = ({
 }) => {
   return (
   <>
-    {/* ── KPI tiles (shared StatCard — no icon slot) ─────────────── */}
     <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <StatCard
           label="On-Time Rate"
@@ -603,7 +501,6 @@ const SupplierOverviewPanel = ({
         />
       </section>
 
-    {/* ── Last 10 POs ───────────────────────────────────────────── */}
     <section className={styles.card}>
       <header className={styles.cardHeader}>
         <h2 className={styles.cardTitle}>
@@ -618,14 +515,6 @@ const SupplierOverviewPanel = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   SupplierSkuPricingPanel — the SKU Mappings card + per-SKU price matrix.
-
-   Split out of the old Overview panel into its own "SKU Pricing" tab. Keeps
-   the per-supplier CSV round-trip, the Product-Maintenance-shaped grouping,
-   and the SKU dialog wiring (the dialogs live at the page root and are driven
-   via setSkuDialog).
-   ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierSkuPricingPanel = ({
   id,
@@ -634,8 +523,6 @@ const SupplierSkuPricingPanel = ({
   setSkuDialog,
 }: {
   id: string;
-  /** PR — Commander 2026-05-28: passed through to the Export filename
-   *  (`supplier-{code}-bindings-{date}.csv`). */
   supplierCode: string;
   bindings: BindingRow[];
   setSkuDialog: (s: { mode: 'closed' } | { mode: 'multi' } | { mode: 'edit'; binding: BindingRow }) => void;
@@ -671,7 +558,6 @@ const SupplierSkuPricingPanel = ({
      Needs a new supplier_material_binding_prices child table (or JSONB
      price_tiers column on supplier_material_bindings) — out of scope for
      this PR per task brief. */
-  // fresh: a compartment SKU made a minute ago must show in the unmapped notice.
   const products = useMfgProducts({ fresh: true });
 
   const CATEGORY_ORDER: readonly string[] = [
@@ -697,9 +583,6 @@ const SupplierSkuPricingPanel = ({
     const productByCode = new Map<string, MfgProductRow>(
       (products.data ?? []).map((p) => [p.code, p]),
     );
-    /* Classify each binding's underlying mfg_product into one of the
-       Product Maintenance sub-sections. Anything we can't look up (no
-       cache hit — fabric / raw / orphan code) lands in OTHERS. */
     const classify = (p: MfgProductRow | undefined): string => {
       if (!p) return 'OTHERS';
       switch (p.category) {
@@ -718,15 +601,12 @@ const SupplierSkuPricingPanel = ({
       arr.push(b);
       buckets.set(key, arr);
     }
-    // Stable order — buckets with no bindings are omitted.
     return CATEGORY_ORDER
       .filter((c) => buckets.has(c))
       .map((c) => [c, buckets.get(c)!] as const);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- CATEGORY_ORDER is a fixed display order, not a reactive value
   }, [bindings, products.data]);
 
-  /* Collapsible panel — click the SKU Mappings header bar to fold every
-     category group away. Persisted per panel in localStorage. */
   const [open, toggleOpen] = usePersistedOpen('panel-supplier-sku-mappings');
 
   return (
@@ -752,18 +632,8 @@ const SupplierSkuPricingPanel = ({
                 : `(${byCategory.length} categories · ${bindings.length} codes)`}
           </span>
         </h2>
-        {/* stopPropagation so the toolbar buttons don't toggle the collapse. */}
         <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', gap: 'var(--space-2)' }}>
-          {/* PR — Commander 2026-05-27: one-click cleanup for the legacy
-              literal-"5539" rows from before the per-SKU auto-suffix fix.
-              Surfaces a count + button when ≥2 bindings share an ambiguous
-              (no '-') supplier_sku. */}
           <AutoSuffixButton supplierId={id} bindings={bindings} />
-          {/* PR — Commander 2026-05-28: per-supplier CSV round-trip.
-              Export = one row per binding (with per-category price-matrix
-              columns expanded); Import = update-in-place against
-              internal_code matches (unknown codes skip — won't auto-create
-              bindings to avoid wiring N missing SKUs by accident). */}
           <Button
             variant="secondary"
             onClick={() => exportBindingsCsv(bindings, supplierCode, sofaHeights, products.data ?? [])}
@@ -824,10 +694,6 @@ const SupplierSkuPricingPanel = ({
   );
 };
 
-// SupplierPricingPanel — the "Maintenance" tab. Mounts the shared
-// MaintenanceTab (surcharge config) scoped to this supplier. Always shown (no
-// category gate) — a supplier can supply multiple categories, so we surface the
-// Bedframe + Sofa + Common surcharge pools by default.
 const SupplierPricingPanel = ({
   supplierId,
   supplierName,
@@ -837,9 +703,6 @@ const SupplierPricingPanel = ({
   supplierName: string;
   supplierCategory: SupplierCategory | null;
 }) => {
-  // A supplier can supply multiple categories (e.g. Hookka = bedframe + sofa),
-  // so there is no single category to gate on. When no specific category is
-  // set, show the Bedframe + Sofa + Common surcharge pools by default.
   const sectionFilter: MaintenanceSection[] =
     maintenanceSectionsForCategory(supplierCategory) ?? ['Bedframe', 'Sofa', 'Common'];
   return (
@@ -880,8 +743,6 @@ const InfoCell = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
-// CategorySection — collapsible wrapper for one category's SKU mappings.
-// Open/closed state is persisted per panel (usePersistedOpen).
 
 const CategorySection = ({
   label,
@@ -892,12 +753,7 @@ const CategorySection = ({
   count: number;
   children: React.ReactNode;
 }) => {
-  /* Collapse state now persists per panel in localStorage (owner request
-     2026-06-12 — same treatment as the Supplier Info / SKU Mappings bars). */
   const [open, toggleOpen] = usePersistedOpen(`panel-skumap-${label}`);
-  /* PR — Commander 2026-05-27: switched from inline-style fs-12/700 eyebrow
-     to the .subGroupHead class (fs-9/700 letter-spacing 0.12em). Matches the
-     other card eyebrows on this page. */
   return (
     <div style={{ borderTop: '1px solid #d6d9d2' }}>
       <button
@@ -932,8 +788,6 @@ const CategorySection = ({
 
 export type SkuGroupKind = 'sofa' | 'bedframe' | 'mattress' | 'other';
 
-/** Map a CATEGORY_ORDER key (set inside SupplierOverviewPanel) to the
- *  column layout this table should render. New buckets default to 'other'. */
 function groupKindFromCategory(category: string): SkuGroupKind {
   switch (category) {
     case 'SOFA_COMPARTMENTS':
@@ -957,13 +811,7 @@ const SkuMappingsTable = ({
 }: {
   supplierId: string;
   bindings: BindingRow[];
-  /** PR — Commander 2026-05-27: which column layout to render. Derived from
-   *  the parent group label so Sofa Compartments / Bedframe Sizes / etc.
-   *  match the Products Maintenance shape. */
   groupKind: SkuGroupKind;
-  /** Unique localStorage key for the DataGrid column-layout persistence —
-   *  one per category section so e.g. Accessories and Services keep
-   *  independent layouts. */
   storageKey: string;
   onEdit: (b: BindingRow) => void;
 }) => {
@@ -995,7 +843,6 @@ const SkuMappingsTable = ({
       />
     );
   }
-  // Mattress / Accessory / Service / Other — single Unit Price column.
   return (
     <DefaultSkuMappingsTable
       supplierId={supplierId}
@@ -1028,7 +875,6 @@ const CellStop = ({ children }: { children: React.ReactNode }) => (
 
 const bindingRowKey = (b: BindingRow) => b.id;
 
-/** Leading columns shared by all three binding grids. */
 function bindingHeadColumns(
   supplierId: string,
   update: ReturnType<typeof useUpdateBinding>,
@@ -1065,8 +911,6 @@ function bindingHeadColumns(
   ];
 }
 
-/** Trailing columns shared by all three binding grids — lead / MOQ / price-
- *  matrix indicator / cost-anchor toggle / main-supplier star / row actions. */
 function bindingTailColumns(
   supplierId: string,
   update: ReturnType<typeof useUpdateBinding>,
@@ -1143,10 +987,6 @@ function bindingTailColumns(
   ];
 }
 
-/* ────────────────────────────────────────────────────────────────────────
-   Default (mattress / accessory / service / other) — single Unit Price col.
-   Unchanged from the pre-matrix layout.
-   ──────────────────────────────────────────────────────────────────────── */
 
 const DefaultSkuMappingsTable = ({
   supplierId,
@@ -1197,18 +1037,6 @@ const DefaultSkuMappingsTable = ({
   );
 };
 
-/* ────────────────────────────────────────────────────────────────────────
-   Sofa SKU mappings — seat-height matrix × P1/P2/P3 tier toggle.
-
-   PR — Commander 2026-05-27. Mirrors the Products SOFA tab: pick a tier
-   chip (P1/P2/P3 — default P2) and edit one cell per seat-height. Each cell
-   PATCHes a deeply-merged copy of binding.price_matrix.
-
-   Seat-heights come from the maintenance config (`master` scope, sofaSizes
-   section). Falls back to the hardcoded HOOKKA defaults [24..35] if the
-   config request hasn't resolved yet — keeps the table renderable in cold-
-   start cases.
-   ──────────────────────────────────────────────────────────────────────── */
 
 const SOFA_TIER_CHIPS: { value: 'P1' | 'P2' | 'P3' | 'P4'; label: string }[] = [
   { value: 'P1', label: 'P1' },
@@ -1240,9 +1068,6 @@ const SofaSkuMappingsTable = ({
   const setAnchor = useSetCostAnchor();
   const [selectedTier, setSelectedTier] = useState<'P1' | 'P2' | 'P3' | 'P4'>('P2');
 
-  // Read seat-heights from the master maintenance config (Products Maintenance
-  // → Sofa Compartments). Same source the Products page reads from, so the
-  // two tables stay in lock-step when commander edits the size pool.
   const config = useMaintenanceConfig('master');
   const heights = useMemo(
     () => (config.data?.data?.sofaSizes
@@ -1283,10 +1108,6 @@ const SofaSkuMappingsTable = ({
 
   return (
     <div>
-      {/* Tier toggle row — same look as the Products SOFA tab.
-          PR — Commander 2026-05-27: shrink the eyebrow + the help text + the
-          chip cluster so the tier toggle doesn't dominate the SKU mappings
-          table for sofa suppliers. */}
       <div
         style={{
           display: 'flex',
@@ -1341,12 +1162,6 @@ const SofaSkuMappingsTable = ({
   );
 };
 
-/* ────────────────────────────────────────────────────────────────────────
-   Bedframe SKU mappings — Price 1 + Price 2 columns (fabric tiers).
-
-   PR — Commander 2026-05-27. Mirrors the Products BEDFRAME tab: two price
-   columns. Cells read/write `price_matrix.P1` / `price_matrix.P2` (centi).
-   ──────────────────────────────────────────────────────────────────────── */
 
 const BedframeSkuMappingsTable = ({
   supplierId,
@@ -1407,11 +1222,6 @@ const BedframeSkuMappingsTable = ({
   );
 };
 
-/* ────────────────────────────────────────────────────────────────────────
-   Shared row cells — main-star toggle + (edit / delete) icon group. Extracted
-   so the three table variants (sofa / bedframe / default) share the same
-   right-hand-side affordances without duplicating the JSX.
-   ──────────────────────────────────────────────────────────────────────── */
 
 const MainStarCell = ({
   binding,
@@ -1446,25 +1256,8 @@ const MainStarCell = ({
   </>
 );
 
-/* ────────────────────────────────────────────────────────────────────────
-   AnchorCell — the ⚓ "Cost anchor" toggle (migration 0177).
-
-   Marks THIS binding as the cost anchor for its item_code: while anchored,
-   editing either side's cost (this binding's unit_price_sen / price_matrix,
-   or the linked mfg_products base_price_sen / price1_sen) mirrors onto the
-   other, so Product-Maintenance cost == this supplier's cost. Setting the
-   anchor clears it on any other binding for the same product (one per code,
-   server-enforced) and pushes the binding's current cost onto the product
-   (initial sync) — so we confirm before turning it ON (it writes product cost).
-   Clearing just drops the flag (no sync), so no confirm.
-
-   SOFA bindings can be anchored but cost sync is SKIPPED server-side (a single
-   SKU cost vs a per-height grid is ambiguous). We surface that in the tooltip
-   so the toggle isn't silently a no-op for sofa cost. */
 const looksLikeSofaMatrix = (m: PriceMatrix | null): boolean => {
   if (!m || typeof m !== 'object') return false;
-  // Sofa matrix nests tier objects under height keys ({ "24": { P1,.. } });
-  // bedframe is flat ({ P1, P2 }). Any object-valued cell ⇒ sofa-shaped.
   return Object.values(m as Record<string, unknown>).some(
     (v) => v !== null && typeof v === 'object',
   );
@@ -1481,8 +1274,6 @@ const AnchorCell = ({
 }) => {
   const askConfirm = useConfirm();
   const anchored = binding.is_cost_anchor;
-  // Anchor is meaningful only for our own SKUs (mfg_product). Fabric / raw
-  // bindings have no mfg_products cost row to mirror — hide the toggle.
   if (binding.material_kind !== 'mfg_product') {
     return <span className={styles.muted}>—</span>;
   }
@@ -1502,7 +1293,6 @@ const AnchorCell = ({
         onClick={async (e) => {
           e.stopPropagation();
           if (!anchored) {
-            // Turning ON pushes this binding's cost onto the product — confirm.
             const ok = await askConfirm({
               title: `Anchor ${binding.item_code} to this supplier’s cost?`,
               body:
@@ -1574,13 +1364,6 @@ const RowActionsCell = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Inline editors — supplier_sku + unit_price cells on SkuMappingsTable
-   (Commander 2026-05-27). Pattern mirrors the Supplier Info card inline
-   edits: local draft state, blur or Enter to commit via useUpdateBinding,
-   Escape to revert. Both use the same authedFetch + react-query invalidate
-   that the rest of this page relies on.
-   ════════════════════════════════════════════════════════════════════════ */
 
 const InlineSupplierSku = ({
   binding, supplierId, update,
@@ -1590,9 +1373,6 @@ const InlineSupplierSku = ({
   update: ReturnType<typeof useUpdateBinding>;
 }) => {
   const [draft, setDraft] = useState(binding.supplier_sku);
-  // Re-sync if the server cache returns a new value (e.g. the AutoSuffix
-  // batch updates this row while it's mounted). Without this the local
-  // draft would stick to the stale value.
   const [committed, setCommitted] = useState(binding.supplier_sku);
   if (committed !== binding.supplier_sku) {
     setCommitted(binding.supplier_sku);
@@ -1626,8 +1406,6 @@ const InlineUnitPrice = ({
   supplierId: string;
   update: ReturnType<typeof useUpdateBinding>;
 }) => {
-  // Commander 2026-05-29 — shared MoneyInput: free typing, clear & retype,
-  // and no clobbering from background refetches (see MoneyInput.tsx).
   return (
     <MoneyInput
       valueSen={binding.unit_price_sen}
@@ -1641,20 +1419,7 @@ const InlineUnitPrice = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   InlineSofaMatrixCell / InlineBedframeMatrixCell — per-category cost cells
-   (Commander 2026-05-27). Same edit ergonomics as InlineUnitPrice (draft in
-   RM string, commit on blur or Enter, Esc reverts) but the commit path is a
-   deep-merged PATCH against binding.price_matrix.
 
-   We intentionally treat the matrix as a sparse object: clearing a cell sets
-   the value to undefined, which `removeMatrixCell` strips out so the row's
-   JSON doesn't accumulate `null`s. NULL of the entire object means "fall
-   back to unit_price_sen or 0" downstream (see SO line pricing).
-   ════════════════════════════════════════════════════════════════════════ */
-
-/** Read sen value from a sofa matrix cell. Tolerant of empty / missing
- *  branches so the UI can keep rendering during a partial fill-in. */
 function readSofaCell(
   matrix: PriceMatrix | null,
   height: string,
@@ -1668,7 +1433,6 @@ function readSofaCell(
   return typeof v === 'number' ? v : null;
 }
 
-/** Read sen value from a bedframe matrix cell. */
 function readBedframeCell(
   matrix: PriceMatrix | null,
   tier: 'P1' | 'P2',
@@ -1679,8 +1443,6 @@ function readBedframeCell(
   return typeof v === 'number' ? v : null;
 }
 
-/** Deep-merge a new sofa cell into the existing matrix and prune any branch
- *  that ends up empty. Pure — returns a new object. */
 function setSofaCell(
   matrix: PriceMatrix | null,
   height: string,
@@ -1700,7 +1462,6 @@ function setSofaCell(
   return Object.keys(next).length === 0 ? null : next;
 }
 
-/** Deep-merge a new bedframe price into the existing matrix. */
 function setBedframeCell(
   matrix: PriceMatrix | null,
   tier: 'P1' | 'P2',
@@ -1715,8 +1476,6 @@ function setBedframeCell(
   return Object.keys(next).length === 0 ? null : next;
 }
 
-/** Compact RM input shared by the sofa + bedframe matrix cells. Stays
- *  visually consistent with InlineUnitPrice but allows blank (= clear). */
 const MatrixPriceInput = ({
   valueSen,
   currency,
@@ -1728,7 +1487,6 @@ const MatrixPriceInput = ({
   onCommit: (v: number | null) => void;
   placeholder?: string;
 }) => {
-  // Commander 2026-05-29 — shared MoneyInput; blank clears the cell.
   return (
     <MoneyInput
       valueSen={valueSen}
@@ -1791,17 +1549,6 @@ const InlineBedframeMatrixCell = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   AutoSuffixButton — one-click migration of legacy bindings that store the
-   bare Model-level supplier code (e.g. "5539") into every SKU's
-   supplier_sku column. Computes the per-SKU suffix via composeSupplierSku
-   and PATCHes each row.
-
-   Heuristic for "ambiguous": ≥2 bindings share the same supplier_sku that
-   contains no '-'. Single-SKU suppliers using a dash-less code (e.g. a
-   custom service item "FREIGHT") are NOT touched — they're legitimately
-   meant to be the same string.
-   ════════════════════════════════════════════════════════════════════════ */
 
 const AutoSuffixButton = ({
   supplierId, bindings,
@@ -1811,8 +1558,6 @@ const AutoSuffixButton = ({
   const [running, setRunning] = useState(false);
   const askConfirm = useConfirm();
 
-  // Group bindings by supplier_sku → bindings[]. Anything with ≥2 entries
-  // and a dash-less key is a candidate.
   const candidates = useMemo(() => {
     const byKey = new Map<string, BindingRow[]>();
     for (const b of bindings) {
@@ -1844,7 +1589,6 @@ const AutoSuffixButton = ({
         if (!p) continue;
         const next = composeSupplierSku(b.supplier_sku, p);
         if (next === b.supplier_sku) continue;
-        // Sequential to keep server load + audit log linear.
         await update.mutateAsync({ supplierId, bindingId: b.id, supplierSku: next });
       }
     } finally {
@@ -1863,7 +1607,6 @@ const AutoSuffixButton = ({
   );
 };
 
-// Last 10 POs table.
 
 type LastPo = {
   id: string;
@@ -1905,7 +1648,6 @@ const LastTenPOsTable = ({ rows }: { rows: LastPo[] }) => (
   />
 );
 
-// SKU form modal — create or edit a supplier_material_binding.
 
 type SkuDraft = {
   materialKind: MaterialKind;
@@ -1934,8 +1676,6 @@ const SkuFormDialog = ({
   const create = useCreateBinding();
   const update = useUpdateBinding();
   const notify = useNotify();
-  // Auto-derives supplier_sku from the typed internal code (create flow only,
-  // never overwriting a value the user typed) — see the useEffect below.
   const products = useMfgProducts();
 
   const [draft, setDraft] = useState<SkuDraft>(() =>
@@ -1970,16 +1710,12 @@ const SkuFormDialog = ({
         },
   );
 
-  // Null when the code isn't a known internal SKU, so autofill no-ops for
-  // free-text material codes (raw / fabric / one-off accessory).
   const findProductByCode = (code: string): MfgProductRow | null => {
     if (!code.trim()) return null;
     const wanted = code.trim().toUpperCase();
     return (products.data ?? []).find((p) => (p.code ?? '').toUpperCase() === wanted) ?? null;
   };
 
-  // Create flow only: fill supplier_sku from the resolved product when the
-  // field is still empty; editing an existing binding leaves it alone.
   const supplierSkuRef = useRef(draft.supplierSku);
   supplierSkuRef.current = draft.supplierSku;
   useEffect(() => {
@@ -1992,15 +1728,12 @@ const SkuFormDialog = ({
     if (!next || next === supplierSkuRef.current) return;
     setDraft((s) => ({
       ...s,
-      // Seed a blank description from the resolved product too.
       materialName: s.materialName.trim() || (p.name ?? s.materialName),
       supplierSku: next,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft.itemCode, draft.materialKind, products.data, editing]);
 
-  // Live preview of what composeSupplierSku() will derive from the typed code,
-  // so the auto-filled Supplier SKU isn't a silent surprise.
   const skuPreview = useMemo(() => {
     if (draft.materialKind !== 'mfg_product') return null;
     const code = draft.itemCode.trim();
@@ -2009,7 +1742,6 @@ const SkuFormDialog = ({
     if (!p) return null;
     const composed = composeSupplierSku(code, p);
     if (!composed) return null;
-    // Has the operator typed a Supplier SKU that differs from the auto-rule?
     const current = draft.supplierSku.trim();
     const overridden = current.length > 0 && current !== composed;
     return { composed, overridden, current };
@@ -2021,8 +1753,6 @@ const SkuFormDialog = ({
       notify({ title: 'Internal code, description and supplier SKU are required.', tone: 'error' });
       return;
     }
-    // Keep the dialog open on a failed save and surface the error, so the
-    // draft is never lost (onClose fires on success only).
     const onError = (err: unknown) => notify({
       title: 'Save failed',
       body: err instanceof Error ? err.message : 'Something went wrong.',
@@ -2116,7 +1846,6 @@ const SkuFormDialog = ({
                 value={draft.acItemCode} onChange={(e) => set('acItemCode', e.target.value)} />
             </label>
 
-            {/* Preview of the auto-derived Supplier SKU; flags an override. */}
             {skuPreview && (
               <div
                 className={styles.formGridFull}
@@ -2214,12 +1943,6 @@ const SkuFormDialog = ({
   );
 };
 
-// ── B1 — effective-dated supplier price timeline for a binding ───────────────
-// The binding's unit cost by date (via the reusable EffectiveDatedHistory) plus
-// a "schedule a future price" form. Append-only: scheduling never rewrites the
-// past. A row becomes the binding's current cost on its date (the nightly apply
-// job, or at once when dated today or earlier), which then moves the derived
-// product cost.
 const BindingPriceTimeline = ({ supplierId, binding }: { supplierId: string; binding: BindingRow }) => {
   const history = useBindingPriceHistory(supplierId, binding.id);
   const schedule = useScheduleBindingPrice();
@@ -2285,7 +2008,6 @@ const BindingPriceTimeline = ({ supplierId, binding }: { supplierId: string; bin
   );
 };
 
-// Supplier Info card with inline edit (all fields).
 
 const SupplierInfoCard = ({
   supplier,
@@ -2307,15 +2029,13 @@ const SupplierInfoCard = ({
   // Owner spec 2026-06-12 — maintained Supply Category pool, for rendering
   // the stored comma-joined list with canonical casing.
   const categoryPool = useSupplierCategoryPool();
-  /* PR #40 — full master record form (Commander 2026-05-26 AutoCount parity) */
   const [form, setForm] = useState({
-    code: supplier.code,                                     // Credit Account
-    name: supplier.name,                                     // Company Name
-    supplierType: supplier.supplier_type ?? '',              // 'Matrix', etc
-    category: supplier.category ?? '',                       // 'Bedframe', 'Fabric', ...
+    code: supplier.code,
+    name: supplier.name,
+    supplierType: supplier.supplier_type ?? '',
+    category: supplier.category ?? '',
     tinNumber: supplier.tin_number ?? '',
     businessRegNo: supplier.business_reg_no ?? '',
-    /* Mig 0028 — AutoCount creditor-export parity */
     registrationNo: supplier.registration_no ?? '',
     exemptionNo: supplier.exemption_no ?? '',
     natureOfBusiness: supplier.nature_of_business ?? '',
@@ -2331,7 +2051,6 @@ const SupplierInfoCard = ({
     website: supplier.website ?? '',
     whatsappNumber: supplier.whatsapp_number ?? '',
     paymentTerms: supplier.payment_terms ?? '',
-    /* Supplier currency — MYR/RMB/CNY/USD/SGD; flows to PO + PI pricing once set. */
     currency: supplier.currency,
     address: supplier.address ?? '',
     address1: supplier.address1 ?? '',
@@ -2360,9 +2079,6 @@ const SupplierInfoCard = ({
     });
   };
 
-  /* Collapsible panel — click the header bar to fold the whole info grid
-     away (chevron flips). Persisted per panel in localStorage. Entering
-     edit mode force-expands so the form is never hidden mid-edit. */
   const [open, toggleOpen] = usePersistedOpen('panel-supplier-info');
   const bodyVisible = open || editing;
 
@@ -2381,8 +2097,6 @@ const SupplierInfoCard = ({
             : <ChevronRight {...SM_ICON} style={{ color: 'var(--hz-c-ink-muted)' }} />}
           Supplier Info
         </h2>
-        {/* stopPropagation so the Edit / Save / Cancel buttons don't also
-            toggle the collapse state. */}
         <span onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', gap: 'var(--space-2)' }}>
           {!editing ? (
             <Button variant="secondary" onClick={onEdit}>
@@ -2415,7 +2129,6 @@ const SupplierInfoCard = ({
               <>
                 <InfoCell label="TIN Number" value={supplier.tin_number ?? '—'} />
                 <InfoCell label="Business Reg No" value={supplier.business_reg_no ?? '—'} />
-                {/* Mig 0028 — AutoCount creditor-export parity. */}
                 <InfoCell label="Registration No." value={supplier.registration_no ?? '—'} />
                 <InfoCell label="Exemption No." value={supplier.exemption_no ?? '—'} />
               </>
@@ -2427,11 +2140,7 @@ const SupplierInfoCard = ({
             {/* Owner 2026-11-09 — the PO email copies Email 2 / Email 3 (Cc). */}
             <InfoCell label="Email 2" value={supplier.email2 ?? '—'} />
             <InfoCell label="Email 3" value={supplier.email3 ?? '—'} />
-            {/* Task #91 — formatPhone() displays stored E.164 as the pretty
-                Malaysian convention. Fax intentionally left raw (rarely MY-
-                formatted), as does an empty value which renders as "—". */}
             <InfoCell label="Phone" value={supplier.phone ? formatPhone(supplier.phone) : '—'} />
-            {/* Mig 0028 — secondary phone. */}
             <InfoCell label="Phone 2" value={supplier.phone2 ? formatPhone(supplier.phone2) : '—'} />
             <InfoCell label="Mobile" value={supplier.mobile ? formatPhone(supplier.mobile) : '—'} />
             <InfoCell label="Fax" value={supplier.fax ?? '—'} />
@@ -2459,7 +2168,6 @@ const SupplierInfoCard = ({
           </div>
         ) : (
           <div className={styles.formGrid}>
-            {/* Identity */}
             <EditField label={isFinance ? 'Credit Account *' : 'Credit Account (Finance changes it)'} value={form.code} onChange={(v) => setF('code', v)} disabled={!isFinance} />
             <EditField label="Company Name *" value={form.name} onChange={(v) => setF('name', v)} />
             <EditField label="Supplier Type" value={form.supplierType} onChange={(v) => setF('supplierType', v)} placeholder="Matrix / Distributor / Maker" />
@@ -2478,34 +2186,25 @@ const SupplierInfoCard = ({
               <>
                 <EditField label="TIN Number" value={form.tinNumber} onChange={(v) => setF('tinNumber', v)} />
                 <EditField label="Business Reg No" value={form.businessRegNo} onChange={(v) => setF('businessRegNo', v)} />
-                {/* Mig 0028 — AutoCount creditor-export parity. */}
                 <EditField label="Registration No." value={form.registrationNo} onChange={(v) => setF('registrationNo', v)} />
                 <EditField label="Exemption No." value={form.exemptionNo} onChange={(v) => setF('exemptionNo', v)} />
               </>
             )}
             <EditField label="Nature of Business" value={form.natureOfBusiness} onChange={(v) => setF('natureOfBusiness', v)} />
-            {/* Contact */}
             <EditField label="Contact Person" value={form.contactPerson} onChange={(v) => setF('contactPerson', v)} />
             <EditField label="Attention" value={form.attention} onChange={(v) => setF('attention', v)} />
             <EditField label="Email" value={form.email} onChange={(v) => setF('email', v)} />
             <EditField label="Email 2" value={form.email2} onChange={(v) => setF('email2', v)} />
             <EditField label="Email 3" value={form.email3} onChange={(v) => setF('email3', v)} />
-            {/* Task #91 — phone/mobile/WhatsApp use the unified phone field so
-                they normalize to E.164 on blur. Fax stays plain (non-MY format,
-                edge case). */}
             <PhoneEditField label="Phone" value={form.phone} onChange={(v) => setF('phone', v)} />
-            {/* Mig 0028 — secondary phone, same E.164 normalization. */}
             <PhoneEditField label="Phone 2" value={form.phone2} onChange={(v) => setF('phone2', v)} />
             <PhoneEditField label="Mobile" value={form.mobile} onChange={(v) => setF('mobile', v)} />
             <EditField label="Fax" value={form.fax} onChange={(v) => setF('fax', v)} />
             <PhoneEditField label="WhatsApp" value={form.whatsappNumber} onChange={(v) => setF('whatsappNumber', v)} />
             <EditField label="Website" value={form.website} onChange={(v) => setF('website', v)} />
-            {/* Commercial */}
             <PickListField label="Payment Terms" options={PAYMENT_TERMS} other={PAYMENT_TERMS_CUSTOM} value={form.paymentTerms}
               onChange={(v) => setF('paymentTerms', v)} pickLabel="— Pick term —" typePlaceholder="Type custom term" upper={false}
               classes={{ field: styles.field, label: styles.fieldLabel, select: styles.fieldSelect, selectWrap: styles.selectWrap, chevron: styles.selectChevron, input: styles.fieldInput }} />
-            {/* Supplier currency — fixed MYR/RMB/CNY/USD/SGD enum (order canonical,
-                NOT sorted). Flows to PO + PI pricing once set. */}
             <CurrencyEditSelect value={form.currency} onChange={(v) => setF('currency', v)} />
             <EditField label="Business Nature" value={form.businessNature} onChange={(v) => setF('businessNature', v)} />
             {/* Address — Country + State cascade (PR #47), plus Postcode
@@ -2527,7 +2226,6 @@ const SupplierInfoCard = ({
             />
             <CountrySelect value={form.country} onChange={(v) => {
               setF('country', v);
-              // Reset state if country changes (states are country-specific)
               if (v !== form.country) { setF('state', ''); setF('city', ''); setF('postcode', ''); }
             }} />
             <label className={styles.field}>
@@ -2585,8 +2283,6 @@ const EditField = ({
   </label>
 );
 
-/* Task #91 — Phone variant of EditField. Wraps PhoneInput with the same
-   label/field styling so it slots into the supplier grid without disruption. */
 const PhoneEditField = ({
   label, value, onChange,
 }: {
@@ -2598,40 +2294,10 @@ const PhoneEditField = ({
   </label>
 );
 
-/* ════════════════════════════════════════════════════════════════════════
-   ModelSkuPickerDialog — supplier-mapping-by-model (Commander 2026-05-27).
 
-   The original per-SKU multi-select picker (kept below as the legacy
-   MultiSkuPickerDialog and reachable via "Advanced (per-SKU)") made commander
-   tick every size + handedness variant under a Model one by one
-   (BOOQIT-1A(LHF), -1A(RHF), -1B(LHF) …) and type a supplier code N times.
-   New default flow:
-
-     Step 1  Pick Model(s)  ─ filter by category, multi-select Models. Each
-                              row shows: model_code · name · #SKUs · binding
-                              status ("not mapped" / "mixed N/T" / "all").
-     Step 2  Fill code      ─ ONE row per Model. Supplier code, unit price,
-                              lead time, MOQ, main toggle. Same values fan
-                              out across every ACTIVE SKU under that Model.
-     Save                   ─ Per Model, expand the picked supplier-code
-                              over every ACTIVE SKU under that model_id and
-                              POST them via the existing /bindings/batch
-                              endpoint (which de-dupes against bindings
-                              already present for this supplier).
-
-   No schema change. supplier_material_bindings stays per-SKU; this is purely
-   a write-path convenience over the existing storage. The retreat hatch is
-   the Advanced toggle which restores the per-SKU picker for the rare case
-   where one Model genuinely needs different supplier codes per size variant.
-   ════════════════════════════════════════════════════════════════════════ */
-
-const MODEL_CATEGORY_CHIPS: { value: 'all' | MfgCategory; label: string }[] = [
+const useCategoryChips = (): { value: 'all' | MfgCategory; label: string }[] => [
   { value: 'all', label: 'All' },
-  { value: 'BEDFRAME', label: 'Bedframe' },
-  { value: 'SOFA', label: 'Sofa' },
-  { value: 'MATTRESS', label: 'Mattress' },
-  { value: 'ACCESSORY', label: 'Accessory' },
-  { value: 'SERVICE', label: 'Service' },
+  ...useProductCategories().active.map((c) => ({ value: c.code, label: c.name })),
 ];
 
 type ModelDraft = {
@@ -2639,17 +2305,9 @@ type ModelDraft = {
   modelCode: string;
   modelName: string;
   category: MfgCategory;
-  /** PR — Commander 2026-05-27: full SKU rows (not just codes) so the
-      preview / save path can derive a per-SKU `supplier_sku` suffix via
-      composeSupplierSku(). Previously held string[] which lost size_code /
-      category context. */
   skus: MfgProductRow[];
-  alreadyBoundCodes: string[]; // subset of sku codes already bound for this supplier
+  alreadyBoundCodes: string[];
   supplierCode: string;
-  // PR — Commander follow-up to PR #206: free-text description the supplier
-  // uses for that model line (e.g. "Foam B grade, 6-week lead"). Persisted
-  // into supplier_material_bindings.notes for every SKU fanned out from
-  // this Model. Same value applied across the batch.
   description: string;
   unitPriceSen: number;
   leadTimeDays: number;
@@ -2657,7 +2315,6 @@ type ModelDraft = {
   isMainSupplier: boolean;
 };
 
-/** Build the "status" badge text for a Model: not mapped / mixed N/T / all. */
 function bindingStatus(skuCount: number, boundCount: number): {
   tone: 'none' | 'mixed' | 'all';
   label: string;
@@ -2675,28 +2332,19 @@ const ModelSkuPickerDialog = ({
 }: {
   supplierId: string;
   existingBindings: BindingRow[];
-  /** PR #208 — pre-filter the Model picker to the supplier's category so
-   *  e.g. sofa Models don't appear for a bedframe supplier. Null/MIXED =
-   *  no filter (the chip row defaults to "All"). */
   supplierCategory: SupplierCategory | null;
   onClose: () => void;
 }) => {
   const batch = useCreateBindingsBatch();
   const notify = useNotify();
   const [step, setStep] = useState<1 | 2>(1);
-  // PR #208 — seed the category chip from the supplier's category. Commander
-  // can still flip to "All" if they need to bind a Model from another category
-  // (rare — flagged by the chip row staying visible).
   const initialCategory: 'all' | MfgCategory =
     mfgCategoryFromSupplierCategory(supplierCategory) ?? 'all';
   const [category, setCategory] = useState<'all' | MfgCategory>(initialCategory);
+  const MODEL_CATEGORY_CHIPS = useCategoryChips();
   const [search, setSearch] = useState('');
   const [advanced, setAdvanced] = useState(false);
 
-  // We fetch BOTH Models (for the picker) and ALL active SKUs (so we can
-  // group SKUs by model_id client-side and compute "already bound" status
-  // per Model without N round-trips). Both queries are short-listed —
-  // 2990's catalogue has < a few hundred Models / SKUs.
   const modelsQ = useProductModels(
     category === 'all' ? undefined : { category },
   );
@@ -2704,9 +2352,6 @@ const ModelSkuPickerDialog = ({
     category === 'all' ? undefined : { category },
   );
 
-  /* Index SKUs by model_id so we can compute count + already-bound per Model
-     in a single pass. Orphan SKUs (model_id NULL) are intentionally ignored
-     here — they're only reachable via the Advanced (per-SKU) toggle. */
   const skusByModel = useMemo(() => {
     const map = new Map<string, MfgProductRow[]>();
     for (const p of productsQ.data ?? []) {
@@ -2723,11 +2368,7 @@ const ModelSkuPickerDialog = ({
     [existingBindings],
   );
 
-  /* Filtered Model rows with their pre-computed counts + binding status. */
   const modelRows = useMemo(() => {
-    // Show inactive Models too (purchaser 2026-06: "price info did not show
-    // item active or no"). They render dimmed + "Inactive" and are not
-    // pickable (you don't map prices on a deactivated item) — but visible.
     const out: { model: ProductModelRow; skus: MfgProductRow[]; boundCount: number }[] = [];
     for (const m of modelsQ.data ?? []) {
       const skus = skusByModel.get(m.id) ?? [];
@@ -2745,10 +2386,6 @@ const ModelSkuPickerDialog = ({
 
   const [pickedIds, setPickedIds] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Record<string, ModelDraft>>({});
-  // PR — Commander 2026-05-27 follow-up: per-Model SKU-preview expander so
-  // commander can see exactly which internal SKU codes are about to be
-  // bulk-mapped under one supplier code before pressing Save. Collapsed by
-  // default to keep step 2 scannable for a 5+ Model batch.
   const [expandedSkuPreview, setExpandedSkuPreview] = useState<Set<string>>(new Set());
   const toggleSkuPreview = (modelId: string) => {
     setExpandedSkuPreview((s) => {
@@ -2775,8 +2412,6 @@ const ModelSkuPickerDialog = ({
       const row = modelRows.find((r) => r.model.id === id);
       if (!row) continue;
       const existing = drafts[id];
-      // Seed unitPrice from the average base_price_sen of the Model's SKUs
-      // (decent default for commander; he can edit it).
       const prices = row.skus
         .map((s) => s.base_price_sen ?? 0)
         .filter((v) => v > 0);
@@ -2812,18 +2447,9 @@ const ModelSkuPickerDialog = ({
     const list: NewBinding[] = [];
     for (const d of Object.values(drafts)) {
       const code = d.supplierCode.trim();
-      // Skip Models with no supplier code (commander left the field empty —
-      // safer than auto-defaulting to the internal code which produces N
-      // misleading rows).
       if (!code) continue;
       for (const sku of d.skus) {
-        // Skip SKUs already bound for this supplier; the batch endpoint also
-        // de-dupes server-side but pre-filtering keeps the inserted/skipped
-        // counts accurate for the toast.
         if (d.alreadyBoundCodes.includes(sku.code)) continue;
-        // PR — Commander 2026-05-27: per-SKU supplier_sku auto-suffix.
-        // composeSupplierSku("5539", sofaSku) → "5539-1A(LHF)" etc., instead
-        // of writing the literal model-level code into every binding row.
         const supplierSku = composeSupplierSku(code, sku);
         list.push({
           materialKind: 'mfg_product' as MaterialKind,
@@ -2835,9 +2461,6 @@ const ModelSkuPickerDialog = ({
           leadTimeDays: d.leadTimeDays,
           moq: d.moq,
           isMainSupplier: d.isMainSupplier,
-          // PR — description fans out across every SKU under this Model.
-          // Empty string → undefined so we don't overwrite an existing null
-          // with "".
           notes: d.description.trim() || undefined,
         });
       }
@@ -2854,7 +2477,6 @@ const ModelSkuPickerDialog = ({
         }
         onClose();
       },
-      // Staff #7 — keep the dialog open + show the error on a failed bind.
       onError: (err: unknown) => notify({
         title: 'Binding failed',
         body: err instanceof Error ? err.message : 'Something went wrong.',
@@ -2863,9 +2485,6 @@ const ModelSkuPickerDialog = ({
     });
   };
 
-  // The Advanced toggle swaps in the legacy per-SKU picker, kept verbatim
-  // below so it's still available when one Model needs different supplier
-  // codes per size variant.
   if (advanced) {
     return (
       <MultiSkuPickerDialog
@@ -3087,9 +2706,6 @@ const ModelSkuPickerDialog = ({
                       const expanded = expandedSkuPreview.has(d.modelId);
                       const skusToMap = d.skus.filter((s) => !d.alreadyBoundCodes.includes(s.code));
                       const toMap = skusToMap.map((s) => s.code);
-                      // PR — Commander 2026-05-27: compute the per-SKU
-                      // supplier_sku preview so commander sees
-                      // "BOOQIT-1A(LHF) → 5539-1A(LHF)" before Save.
                       const previewMap = d.supplierCode.trim()
                         ? Object.fromEntries(
                             skusToMap.map((s) => [s.code, composeSupplierSku(d.supplierCode, s)]),
@@ -3101,10 +2717,6 @@ const ModelSkuPickerDialog = ({
                             <td>
                               <div className={styles.codeCell}>{d.modelCode}</div>
                               <div className={styles.muted}>{d.modelName}</div>
-                              {/* PR — SKU preview expander. Click "N SKUs" to
-                                  see exactly which internal codes get fanned
-                                  out under this supplier mapping. Collapsed
-                                  by default so step 2 stays scannable. */}
                               <button
                                 type="button"
                                 onClick={() => toggleSkuPreview(d.modelId)}
@@ -3133,11 +2745,6 @@ const ModelSkuPickerDialog = ({
                                 placeholder="Their code for the whole Model"
                                 style={smallInputStyle}
                               />
-                              {/* #5 — live code preview (mirrors the New Models
-                                  bulk form's "Will create →" banner). Shows the
-                                  per-SKU supplier_sku composeSupplierSku() will
-                                  generate as the code is typed, without needing
-                                  to expand the SKU list below. */}
                               {previewMap && toMap.length > 0 && (
                                 <div style={{
                                   marginTop: 4, fontSize: 'var(--fs-11)', color: 'var(--hz-c-ink-muted)',
@@ -3236,14 +2843,6 @@ const ModelSkuPickerDialog = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Multi-SKU Picker — pick N products from mfg_products, then fill in
-   supplier_sku / price / lead time / moq for each, batch-create.
-
-   Legacy: kept available via "Advanced (per-SKU)" toggle in
-   ModelSkuPickerDialog. Use when one Model needs different supplier codes
-   per size variant. Default flow is the Model-first picker above.
-   ════════════════════════════════════════════════════════════════════════ */
 
 type MultiDraft = {
   itemCode: string;
@@ -3255,19 +2854,7 @@ type MultiDraft = {
   isMainSupplier: boolean;
 };
 
-const CATEGORY_CHIPS: { value: 'all' | MfgCategory; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'BEDFRAME', label: 'Bedframe' },
-  { value: 'SOFA', label: 'Sofa' },
-  { value: 'MATTRESS', label: 'Mattress' },
-  { value: 'ACCESSORY', label: 'Accessory' },
-  { value: 'SERVICE', label: 'Service' },
-];
 
-/* Perf cap (parity with MobileSkuPicker / SalesOrderNewFromProducts #342) —
-   never paint more than this many catalogue rows at once; the full active
-   catalogue (~1141 SKUs) as clickable <tr> froze the modal on open + per
-   keystroke. A hint below tells the operator to narrow when rows are hidden. */
 const MULTI_PICKER_RENDER_CAP = 60;
 
 const MultiSkuPickerDialog = ({
@@ -3285,10 +2872,8 @@ const MultiSkuPickerDialog = ({
   const notify = useNotify();
   const [step, setStep] = useState<1 | 2>(1);
   const [category, setCategory] = useState<'all' | MfgCategory>('all');
+  const CATEGORY_CHIPS = useCategoryChips();
   const [search, setSearch] = useState(initialSearch);
-  /* Perf (parity with MobileSkuPicker / #342) — DEBOUNCE the search before it
-     drives the server query, so a fast typist doesn't fire one
-     /mfg-products?search=… request + full re-render per keystroke. */
   const debouncedSearch = useDebouncedValue(search, 250);
   /* Server-typeahead gate (owner #1 scaling pain, 2026-07-14) — the "All / no
      search" read used to pull the WHOLE ~1141-SKU catalog. It is now bounded:
@@ -3577,15 +3162,6 @@ const MultiSkuPickerDialog = ({
   );
 };
 
-/* SKU-preview chip strip shared by ModelSkuPickerDialog (SupplierDetail) and
-   ModularAssignSupplierDialog (ProductModels). Renders the SKUs about to be
-   bulk-mapped as monospaced pills + the ones being skipped as struck-through
-   pills. Pure presentational — no state.
-
-   PR — Commander 2026-05-27: optional `previewMap` shows the COMPUTED
-   per-SKU `supplier_sku` next to the internal code so commander sees the
-   final string before Save (e.g. `BOOQIT-1A(LHF) → 5539-1A(LHF)`). Falls
-   back to the bare internal code for callers that don't pass a map. */
 export function SkuPreviewStrip({
   toMap, alreadyBound, previewMap,
 }: {
@@ -3681,21 +3257,7 @@ const smallInputStyle: React.CSSProperties = {
   outline: 'none',
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Address pickers — Country / City / Postcode.
 
-   State picker moved out to the shared `StatePicker` component
-   (frontend/src/vendor/scm/components/StatePicker.tsx). Task #102 made it one
-   consistent selector — states grouped by country (MY first) with type-to-search,
-   no "Others" toggle, no free-text escape. All three pickers here read
-   exclusively from scm.my_localities — no `(legacy)` fallback options, no
-   free-text fallback for empty lists. A value that isn't in the seeded set must
-   be added via the Localities Maintenance UI first.
-   ════════════════════════════════════════════════════════════════════════ */
-
-/* CountrySelect — dropdown of every country present in scm.my_localities.
-   Disabled (not free-text) when the dataset is empty so operators can't
-   type a raw country string that no state / postcode dropdown will match. */
 const CountrySelect = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => {
   const localities = useLocalities();
   const list = useMemo(
@@ -3721,9 +3283,6 @@ const CountrySelect = ({ value, onChange }: { value: string; onChange: (v: strin
   );
 };
 
-/* CitySelect — dropdown from scm.my_localities filtered by state. Disabled
-   when no state is picked yet, or the state has no seeded cities. No
-   free-text fallback — same rule as the State picker. */
 const CitySelect = ({
   state, value, onChange,
 }: { state: string; value: string; onChange: (v: string) => void }) => {
@@ -3752,12 +3311,6 @@ const CitySelect = ({
   );
 };
 
-/* Supplier currency picker (edit mode). Fixed MYR/RMB/CNY/USD/SGD enum — order
-   is canonical, NOT alphabetically sorted. Once saved, supplier.currency flows to
-   PurchaseOrderNew + the PI pages. CNY was added 2026-09-07 alongside the DB
-   enum: a supplier the book bills in yuan must be settable to the code the book
-   uses, and a set that disagreed with VALID_CURRENCIES is what the
-   duplicated-decision gate refuses. */
 const CURRENCY_OPTIONS: readonly Currency[] = ['MYR', 'RMB', 'CNY', 'USD', 'SGD'];
 
 const CurrencyEditSelect = ({ value, onChange }: { value: Currency; onChange: (v: Currency) => void }) => (

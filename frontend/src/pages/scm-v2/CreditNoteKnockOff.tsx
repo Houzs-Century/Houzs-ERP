@@ -45,7 +45,6 @@ const samePick = (a: KnockOffPick, b: KnockOffPick): boolean => {
   return x.length === pickTargets(b).length && x.every((t) => b[t.id]?.amountSen === t.amountSen);
 };
 
-/** What the table says, by whose documents it holds: a supplier's invoices, an other debtor's bills. */
 const WORDS = {
   supplier: {
     holder: 'supplier', doc: 'Invoice', table: "Knock off the supplier's invoices",
@@ -61,7 +60,6 @@ const WORDS = {
     planned: 'tick the bills this credit comes off — done when the note posts',
     posted: 'tick to knock a bill off, untick to give it back — like a receipt',
   },
-  /* A customer's sales invoices (2026-11-03) — the design's words. */
   customer: {
     holder: 'customer', doc: 'Invoice', table: "Knock off against the customer's invoices",
     pick: 'Type the sales order or the customer to list their open invoices.', loading: "Loading the customer's invoices…", failed: 'The invoices did not load',
@@ -92,11 +90,8 @@ const errText = (e: unknown): string => (e instanceof Error && e.message ? e.mes
     customer's invoice says what it is For — its order and its total. */
 export function KnockOffTable({ rows, creditSen, pick, onChange, disabled = false, who = 'supplier', title }: {
   rows: KnockOffRow[]; creditSen: number; pick: KnockOffPick; onChange: (next: KnockOffPick) => void; disabled?: boolean; who?: KnockOffWho;
-  /** The table's name when the customer is known (customerWords). */
   title?: string;
 }) {
-  /* A typed figure the row cannot take is pulled back to what it can; the
-     field is drawn again so it shows the figure kept, not the one typed. */
   const [redraw, setRedraw] = useState(0);
   const w = WORDS[who];
   const withRef = who === 'supplier';
@@ -125,8 +120,6 @@ export function KnockOffTable({ rows, creditSen, pick, onChange, disabled = fals
         <tbody>
           {rows.map((r) => {
             const mine = pick[r.id]?.amountSen ?? 0;
-            /* The most this row can take: what it owes before this note, and
-               what the credit has left once the other rows are counted. */
             const max = Math.max(0, Math.min(r.owedSen, creditSen - (taken - mine)));
             return (
               <tr key={r.id}>
@@ -243,8 +236,6 @@ export function FormKnockOff({ who, partyId, by, partyName, noteId, totalSen, pi
   );
 }
 
-/** The value once it has stopped changing for `ms` — a sales order is read when
-    its number is typed, not at every key. 0 passes it straight through. */
 function useSettled(value: string, ms: number): string {
   const [settled, setSettled] = useState(value);
   useEffect(() => {
@@ -260,6 +251,7 @@ export const depositPaperLine = (paper: CreditNoteDetail['depositPaper'], closed
   if (!paper) return null;
   if (paper.kind === 'refund') return 'It takes back a deposit for a refund — that money went back to the customer, so it knocks nothing off.';
   if (paper.kind === 'move') return 'It moved a deposit to another order — it knocks nothing off.';
+  if (paper.kind === 'autocount') return `It brings the deposit paid in AutoCount onto the customer${closedInvoice ? ` at invoice ${closedInvoice.number}` : ''} — the order's deposit already lowers that invoice, so it knocks nothing off.`;
   return `It closes deposit invoice ${paper.di ?? ''}${closedInvoice ? ` at the final invoice ${closedInvoice.number}` : ''} — the order's deposit lowers that invoice, so it knocks nothing off.`;
 };
 

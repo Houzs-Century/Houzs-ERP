@@ -1,14 +1,3 @@
-// What this file pins: the two REAL bank exports in hand are read correctly by
-// config alone, with no bank named in the code; a signed amount comes out of
-// three different shapes (indicator column, separate debit/credit, plain
-// signed) and never loses its direction; and a file the reader cannot make
-// sense of is REFUSED with a reason naming the column it wanted and what the
-// file has instead (§2.14) — never parsed into zero silent lines.
-//
-// The Maybank fixtures below are copied from
-// `Bank Statement/MBB - ACCOUNTACTIVITYREPORT_564418610346.csv`, pipe for pipe:
-// its 22 columns, its 20260801 dates, its 000000000171000 amounts and its CR/DR
-// column. If Maybank changes the export, this file is where it shows.
 
 import { describe, it, expect } from 'vitest';
 import { parseBankStatement, movementFingerprint, type BankParseConfig } from './bank-parse';
@@ -31,8 +20,6 @@ const hlbCsvCfg = (over: Partial<BankParseConfig> = {}): BankParseConfig => ({
   ...over,
 });
 
-/* The monthly statement: a title row, every cell wrapped as ="…", an opening
-   row, the balance printed only on a day's LAST line. */
 const HLB_MONTHLY = L(
   'HLB PRIMEBIZ CURRENT ACCOUNT - 23600602788,',
   'Date,Transaction Description,Cheque No.,Ref. No.,Deposit,Withdrawal,Balance',
@@ -52,20 +39,14 @@ describe('the Hong Leong monthly statement', () => {
     ]);
     expect(r.lines[0]!.description).toBe('CIB Instant Transfer at DIO');
     expect(r.lines[0]!.reference).toBe('Rent ABC PROPERTY SDN BHD 20260505HLBBMYKL010OCB74428488');
-    /* Read from "Balance from previous statement", not derived from the day's
-       one printed balance — that line is the day's LAST, after both movements. */
     expect(r.openingBalanceSen).toBe(93837);
     expect(r.closingBalanceSen).toBe(5692665);
-    /* The opening row is counted, not posted. */
     expect(r.skippedLines).toBe(1);
     expect(r.periodFrom).toBe('2026-05-05');
     expect(r.periodTo).toBe('2026-05-08');
   });
 });
 
-/* The any-day "Transaction Details" export: an eleven-row preamble carrying the
-   opening ("Prior Day Balance"), thousands separators, three narrative columns,
-   and the rows NEWEST FIRST. */
 const HLB_ANYDAY = L(
   'Transaction Details,,,,,,,,,',
   ',,,,,,,,,,',
@@ -88,19 +69,13 @@ describe('the Hong Leong any-day export', () => {
     const r = parseBankStatement(hlbCsvCfg(), HLB_ANYDAY);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    /* The file ran newest first, top row latest: reversed whole, so the day's
-       rows come out in the order they happened (the top row of a day is its
-       LAST movement — its balance is the day's closing). */
     expect(r.lines.map((l) => [l.bookedOn, l.amountSen])).toEqual([
       ['2026-08-03', 143300], ['2026-08-04', 149900], ['2026-08-05', -773512], ['2026-08-05', 8000000],
     ]);
     expect(r.lines[0]!.reference).toBe('RACHEL NG Fund transfer');
     expect(r.lines[2]!.reference).toBe('CAT SUPPLIES SDN BHD Meta Claim PV-000088');
-    /* Hong Leong splits "MERCHANT" across two columns; joined with a space it
-       arrives as "MERCHAN T", which the recognition rule tolerates. */
     expect(r.lines[1]!.reference).toBe('00005992284 MERCHAN T 20260803');
     expect(r.openingBalanceSen).toBe(3142526);
-    /* Closing = the newest row's balance, not the one printed last in the file. */
     expect(r.closingBalanceSen).toBe(8708037);
     expect(r.periodFrom).toBe('2026-08-03');
     expect(r.periodTo).toBe('2026-08-05');
@@ -144,7 +119,6 @@ describe("a movement's fingerprint — the same transaction however the bank pri
   });
 });
 
-/* ── The Maybank current account: pipe, integer sen, CR/DR ──────────────── */
 
 const MBB_HEAD = 'BATCH DATE|ACCOUNT NO.|PROD TYPE|EFFECT DATE|EFFECT TIME|BRANCH|TELLER|CODE|SOURCE CODE|AMOUNT|AMOUNT IND|TRX DESCRIPTION|TRX REFERENCE|STD REF IND|STD REF1|STD REF2|STD REF3|FILLER1|FILLER2|FILLER3|FILLER4|FILLER5';
 const mbbRow = (date: string, sen: string, ind: string, desc: string, ref: string) =>
@@ -172,8 +146,6 @@ describe('the Maybank account activity export', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.lines).toHaveLength(2);
-    /* 000000000171000 is RM 1,710.00 — integer sen. Read as a decimal it would
-       be RM 171,000,000, which is the whole reason amountFormat exists. */
     expect(r.lines[0]!.amountSen).toBe(171000);
     expect(r.lines[0]!.bookedOn).toBe('2026-08-01');
     expect(r.lines[0]!.description).toBe('LAU LEE YEN *');
@@ -183,9 +155,6 @@ describe('the Maybank account activity export', () => {
     expect(r.periodTo).toBe('2026-08-03');
   });
 
-  /* The DR/CARD SALES pair the format doc flagged: Maybank's DEBIT card
-     settlement credits the GROSS and takes its fee back as a separate charge
-     on the same reference. Both legs have to survive with their signs. */
   it('keeps the direction of a DR charge that shares its reference with a credit', () => {
     const r = parseBankStatement(mbbCfg(), L(
       MBB_HEAD,
@@ -200,9 +169,6 @@ describe('the Maybank account activity export', () => {
     expect(r.netSen).toBe(87106);
   });
 
-  /* The real file ends with a 32-character checksum on a line of its own. It
-     is not a transaction and must not become one — nor may it be silently
-     dropped, or a file truncated mid-table would look complete. */
   it('counts a trailer it cannot date instead of failing or posting it', () => {
     const r = parseBankStatement(mbbCfg(), L(
       MBB_HEAD,
@@ -227,7 +193,6 @@ describe('the Maybank account activity export', () => {
   });
 });
 
-/* ── A printed statement: comma, decimals, debit and credit apart ───────── */
 
 const HLB_HEAD = 'Date,Description,Reference,Debit,Credit,Balance';
 
@@ -253,10 +218,6 @@ describe('a statement with debit and credit in separate columns', () => {
     expect(r.lines[0]!.reference).toBe('00005992235 MERCHANT 20260616');
   });
 
-  /* Both ends of the period, and the opening is DERIVED — the file prints the
-     balance AFTER each line, so the number a reconciliation starts from is the
-     first balance less the first movement. Asking the operator for it instead
-     would be asking him to reconcile before he can reconcile. */
   it('reports the closing balance and works the opening back out', () => {
     const r = parseBankStatement(hlbCfg(), L(
       HLB_HEAD,
@@ -267,7 +228,6 @@ describe('a statement with debit and credit in separate columns', () => {
     if (!r.ok) return;
     expect(r.closingBalanceSen).toBe(5606165);
     expect(r.openingBalanceSen).toBe(5726165 - 726165);
-    /* And the two ends agree with the movements between them. */
     expect(r.openingBalanceSen! + r.netSen).toBe(r.closingBalanceSen);
   });
 
@@ -281,7 +241,6 @@ describe('a statement with debit and credit in separate columns', () => {
   });
 });
 
-/* ── Refusals: every one names what it wanted and what it got ────────────── */
 
 describe('a file the reader cannot make sense of', () => {
   it('names both headings it looked for, and what the file actually has', () => {
@@ -313,9 +272,6 @@ describe('a file the reader cannot make sense of', () => {
     expect(r.reason).toMatch(/Date, Description, Nett Value/);
   });
 
-  /* The disease this whole guard exists for: a heading row that parses and a
-     table under it that does not, reported as a clean empty statement. A file
-     that prints neither a movement nor a balance proves nothing. */
   it('refuses a heading with nothing readable under it', () => {
     const r = parseBankStatement(hlbCfg(), L(HLB_HEAD, 'Some memo,,,,,', 'Page 1 of 3,,,,,'));
     expect(r.ok).toBe(false);
@@ -363,8 +319,6 @@ describe('a statement with no transactions', () => {
     expect(r.outSen).toBe(0);
   });
 
-  /* Without a month there is nothing to file it under — and the refusal says
-     what to do, not just what went wrong. */
   it('asks for the year and month when none was given', () => {
     const r = parseBankStatement(cfg(), EMPTY);
     expect(r.ok).toBe(false);
@@ -374,7 +328,6 @@ describe('a statement with no transactions', () => {
     expect(r.reason).toMatch(/year and month/i);
   });
 
-  /* A file with no movement AND no balance proves nothing about any month. */
   it('still refuses a file that prints no balance either', () => {
     const r = parseBankStatement(cfg({ statementMonth: '2026-03' }), L(
       'Date,Transaction Description,Cheque No.,Ref. No.,Deposit,Withdrawal,Balance',
@@ -386,7 +339,6 @@ describe('a statement with no transactions', () => {
   });
 });
 
-/* ── The header is not always line 1 ─────────────────────────────────────── */
 
 describe('a bank that prints something before its table', () => {
   it('finds the heading row under the account header', () => {
@@ -403,8 +355,6 @@ describe('a bank that prints something before its table', () => {
     expect(r.lines[0]!.lineNo).toBe(5);
   });
 
-  /* A statement whose dates carry no year is dated by the operator's answer,
-     never by a guess (§2.5) — the same rule the acquirer side already obeys. */
   it('dates a year-less statement from the month it is told, and refuses without one', () => {
     const file = L(HLB_HEAD, '18-Jun,CA Credit Advice,REF1,,"7,261.65","57,261.65"');
     const dated = parseBankStatement(hlbCfg({ statementMonth: '2026-06' }), file);

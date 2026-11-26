@@ -20,8 +20,6 @@ const { apiGet, apiPost, activeCo } = vi.hoisted(() => ({
   activeCo: { value: null as number | null },
 }));
 
-// The company this tab works in — a reminder about another company's voucher
-// opens in a new window on that company.
 vi.mock("../lib/activeCompany", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/activeCompany")>()),
   getActiveCompanyId: () => activeCo.value,
@@ -35,9 +33,6 @@ vi.mock("../auth/AuthContext", () => ({
   useAuth: () => ({ user: { id: 505 } }),
 }));
 
-// The human slice rides the shared banner hook, which keeps its ack memo in
-// localStorage under an identity-scoped key; no identity here keeps it inert
-// so only the SYSTEM half is under test.
 vi.mock("../lib/storageIdentity", () => ({ identityStorageKey: () => null }));
 
 const SYSTEM_PAYLOAD = {
@@ -63,8 +58,6 @@ const SYSTEM_PAYLOAD = {
   ackedIds: ["ann-acked"],
 };
 
-// Project-activity half of the bell — pinned to a known unread count so the
-// combined badge is deterministic. The system half is what's under test.
 vi.mock("../hooks/useNotifications", () => ({
   useNotifications: () => ({
     feed: [],
@@ -87,8 +80,6 @@ vi.mock("react-router-dom", () => ({
 
 vi.mock("./Avatar", () => ({ Avatar: () => null }));
 
-/* The popover body is lazy-loaded on the first open: wait for it, or a test
-   passes only when an earlier one already loaded the chunk. */
 async function openBell() {
   fireEvent.click(screen.getByRole("button", { name: /Notifications/ }));
   await screen.findByRole("tab", { name: /System/ });
@@ -109,8 +100,6 @@ describe("NotificationBell — system notices section", () => {
   beforeEach(() => {
     apiGet.mockReset();
     apiPost.mockReset();
-    // Route by slice: the SYSTEM slice carries the two notices; the HUMAN
-    // slice (the Announcements tab, read through the shared hook) is empty.
     apiGet.mockImplementation((url: string) =>
       url.includes("scope=system")
         ? Promise.resolve(SYSTEM_PAYLOAD)
@@ -126,7 +115,6 @@ describe("NotificationBell — system notices section", () => {
   it("asks for the BELL slice, lists un-acked system notices, and counts them into the badge", async () => {
     renderBell();
 
-    // 3 project unread + 1 un-acked system notice = 4 on the pill.
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Notifications · 4 unread" }),
@@ -135,12 +123,9 @@ describe("NotificationBell — system notices section", () => {
     expect(apiGet).toHaveBeenCalledWith("/api/announcements/banner?scope=system");
 
     await openBell();
-    // One unread entry point: tabs split announcements from system notices,
-    // and a system row wears its source as the tag.
     expect(screen.getByRole("tab", { name: /System/ })).toBeTruthy();
     expect(screen.getByText("Service case")).toBeTruthy();
     expect(screen.getByText("New service case ASSR/HC/2608/001")).toBeTruthy();
-    // The acked notice is settled — it must not resurface in the bell.
     expect(screen.queryByText("Sales order saved")).toBeNull();
   });
 
@@ -158,9 +143,7 @@ describe("NotificationBell — system notices section", () => {
     await waitFor(() =>
       expect(apiPost).toHaveBeenCalledWith("/api/announcements/ann-case/ack"),
     );
-    // Row gone at once (locally settled, not a poll later)...
     expect(screen.queryByText("New service case ASSR/HC/2608/001")).toBeNull();
-    // ...and the badge falls back to the project count alone.
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: "Notifications · 3 unread" }),

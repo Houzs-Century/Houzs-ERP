@@ -21,17 +21,12 @@ export type PreloadableLazy<T extends ComponentType<any>> = LazyExoticComponent<
   preload: () => Promise<unknown>;
 };
 
-/* In-flight page-chunk loads (render or preload). Read by whenPageChunksSettled
-   so the speculative idle prefetch waits for the landing page instead of racing
-   it for bandwidth. */
 let inFlight = 0;
 const settledWaiters: Array<() => void> = [];
 
 function settle(): void {
   inFlight -= 1;
   if (inFlight > 0) return;
-  // A macrotask, not a microtask: the chunk that just arrived renders, and that
-  // render can start the next lazy load (a nested route). Give it the chance.
   setTimeout(() => {
     if (inFlight > 0) return;
     for (const resolve of settledWaiters.splice(0)) resolve();
@@ -78,7 +73,6 @@ export function whenPageChunksSettled(maxWaitMs = 20_000): Promise<void> {
  *  vite:preloadError listener. This only keeps the speculative copy from
  *  surfacing as an unhandled rejection. */
 export function headStartFailed(_error: unknown): void {
-  // Intentionally nothing; see above.
 }
 
 type WithPreload = { preload?: unknown };
@@ -104,7 +98,6 @@ export function preloadElementChunks(node: ReactNode, depth = 0): void {
     try {
       void (preload as () => Promise<unknown>)().catch(headStartFailed);
     } catch {
-      // A preload is only ever a head start; the render path owns the real load.
     }
   }
   preloadElementChunks((node.props as { children?: ReactNode }).children, depth + 1);

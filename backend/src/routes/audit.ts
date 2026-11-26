@@ -2,12 +2,8 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { requirePermission } from "../middleware/auth";
 
-// Read-only view over the audit_events ledger (writes happen via
-// services/audit.ts at the mutation sites). Owner/admin only — the trail
-// exposes who changed roles, permissions, finance and user access.
 const app = new Hono<{ Bindings: Env }>();
 
-// Allow-list of sort keys -> columns (keeps sort_by from injecting SQL).
 const SORT_MAP: Record<string, string> = {
   created_at: "created_at",
   action: "action",
@@ -29,7 +25,7 @@ app.get("/", requirePermission("settings.manage"), async (c) => {
   const binds: unknown[] = [];
   if (action) {
     where.push("action LIKE ?");
-    binds.push(`${action}%`); // prefix match: "role." catches role.update etc.
+    binds.push(`${action}%`);
   }
   if (entityType) {
     where.push("entity_type = ?");

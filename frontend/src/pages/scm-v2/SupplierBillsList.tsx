@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// SupplierBillsList — Money out › Supplier bills in the owner's Claude Design
-// (batch 4, step 5). The AP bills raised here, Procurement's purchase invoices
-// and the suppliers' credit notes on ONE table: kind tabs with counts, the
-// supplier filter (all trade creditors · 400, all other creditors · 405, or one
-// supplier), the search, status chips with counts, a sand tint on whatever is
-// still open, ticks with a running total, the row's next step as its button
-// and everything else under ⋯ (or a right-click).
-//
-// The page (ApInvoices.tsx) owns the pop-outs, the forms and every post; this
-// file only shows the rows and says which step was asked for. Printing posts
-// nothing, so it lives here (step 8): the ticks print as one document in list
-// order, With files puts each paper's stored files after it, and a row prints
-// alone from its Print link or its ⋯ (useSupplierBillsPrint.ts).
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -36,19 +21,16 @@ import mo from './MoneyOut.module.css';
 export type BillAction = 'open' | 'post' | 'edit' | 'copy' | 'cancel' | 'makeVoucher' | 'plan';
 
 type Props = {
-  /** The AP bills and purchase invoices; null until the list has loaded. */
   apRows: ApListRow[] | null;
   apLoading: boolean;
   apError: string | null;
   can: { create: boolean; post: boolean; cancel: boolean };
   onAct: (action: BillAction, row: BillRow) => void;
-  /** Print listing: exactly the rows on screen, with the filter in words. */
   onPrintListing: (rows: BillRow[], showing: string) => void;
 };
 
 const KIND_TABS: BillKindTab[] = ['ALL', 'API', 'PI', 'SCN'];
 const TONE: Record<BillTone, string> = { calm: mo.toneCalm, warn: mo.toneWarn, info: mo.toneInfo, late: mo.toneLate };
-/* The design's sand: a posted bill still owed, a credit note not used yet. */
 const OPEN_BG = 'var(--hz-dk-warning-bg, #fcf7ec)';
 
 type MenuItem = { label: string; onClick: () => void; danger?: boolean; divider?: boolean };
@@ -59,13 +41,10 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
   const [chip, setChip] = useState<BillChip>('all');
   const [pick, setPick] = useState('all');
   const [q, setQ] = useState('');
-  /* The books' opening credits (AutoCount's supplier payments not knocked off
-     at 31/08) on their own chip under Credit notes, as on the CN / DN page. */
   const [openingOnly, setOpeningOnly] = useState(false);
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [shown, setShown] = useState<BillRow[] | null>(null);
   const [menu, setMenu] = useState<{ row: BillRow; x: number; y: number } | null>(null);
-  /* Files or not is the operator's call per batch — on by default, as on Payment vouchers. */
   const [withFiles, setWithFiles] = useState(true);
   const prints = useSupplierBillsPrint();
   const printRows = (rows: BillRow[], files: boolean, action: PdfAction = 'print') => { void prints.print(rows.map(billPrintDocOf), files, action); };
@@ -79,7 +58,6 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
     ...(noteRows ?? []).map(fromNote),
   ], [apRows, noteRows, openingOnly]);
 
-  /* The supplier filter: everyone, a control, or one supplier on the list. */
   const supplierOptions = useMemo(() => {
     const seen = new Map<string, string>();
     for (const r of allRows) if (r.supplierId && r.supplierName) seen.set(r.supplierId, `${r.supplierCode ? `${r.supplierCode} · ` : ''}${r.supplierName}`);
@@ -105,8 +83,6 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
   };
 
   const tickedRows = allRows.filter((r) => ticked.has(r.key));
-  /* The rows on screen after the table's own filters, in the order shown: the
-     ticked ones among them are what Print and Save as PDF send. */
   const onScreen = shown ?? visible;
   const printTargets = onScreen.filter((r) => ticked.has(r.key));
   const onScreenKeys = new Set(onScreen.map((r) => r.key));
@@ -120,15 +96,12 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
     q.trim() ? `search “${q.trim()}”` : '',
   ].filter(Boolean).join(' · ');
 
-  /* ⋯ and right-click: the design's menu, with what this ERP can do today. */
   const menuOf = (r: BillRow): MenuItem[] => {
     const life = lifeOf(r.status);
     const items: MenuItem[] = [{ label: 'Open', onClick: () => onAct('open', r) }];
     if (can.create && r.kind !== 'PI' && life !== 'cancelled' && (r.kind === 'API' || life === 'draft')) items.push({ label: 'Edit', onClick: () => onAct('edit', r) });
     if (can.post && life === 'draft') items.push({ label: r.kind === 'SCN' ? 'Post to ledger' : 'Post', onClick: () => onAct('post', r) });
-    /* When we plan to pay it (step 7): a posted bill still owed. */
     if (can.create && r.kind !== 'SCN' && life === 'posted' && isOpen(r)) items.push({ label: 'Plan date', onClick: () => onAct('plan', r) });
-    /* Printed in place (step 8): the paper alone, or with its stored files — a purchase invoice keeps none here. */
     items.push({ label: '', onClick: () => undefined, divider: true }, { label: 'Print', onClick: () => printRows([r], false) });
     if (r.kind !== 'PI') items.push({ label: 'Print + files', onClick: () => printRows([r], true) });
     if (can.create && r.kind === 'API') items.push({ label: 'Copy as new', onClick: () => onAct('copy', r) });
@@ -138,7 +111,6 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
     return items;
   };
 
-  /* The row's next step (the design's rowAct), ⋯ last. */
   const rowButtons = (r: BillRow) => {
     const life = lifeOf(r.status);
     let primary: ReactNode = null;
@@ -155,7 +127,6 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
           </button>
         );
     } else {
-      /* Paid, used or cancelled — the design's Print link (step 8); its files ride ⋯ Print + files. */
       primary = (
         <button type="button" className={mo.actLink} disabled={prints.printing}
           onClick={(e) => { e.stopPropagation(); printRows([r], false); }}>Print</button>
@@ -205,12 +176,10 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
         : <span className={lifeOf(r.status) === 'posted' && isOpen(r) && daysLate(r.due, today) > 0 ? mo.dueLate : undefined}>{fmtDateOrDash(r.due)}</span>),
       getValue: (r) => r.due, exportFormat: 'date',
     },
-    /* When we plan to pay it (step 7) — shown on what is still owed. */
     { key: 'planned', label: 'Planned', render: (r) => (r.planned ? fmtDateOrDash(r.planned) : '—'), getValue: (r) => r.planned, exportFormat: 'date' },
     {
       key: 'total', label: 'Total', align: 'right', render: (r) => <span className={mo.money}>{fmtSen(r.totalSen)}</span>,
       getValue: (r) => r.totalSen, exportValue: (r) => r.totalSen / 100, exportFormat: 'money',
-      /* A credit note takes off what we owe; a cancelled paper is never owed, so it adds nothing. */
       total: (rows) => totalByCurrency(rows, (r) => (lifeOf(r.status) === 'cancelled' ? null : signedSen(r))),
     },
     {
@@ -276,8 +245,6 @@ export function SupplierBillsList({ apRows, apLoading, apError, can, onAct, onPr
           <span className={mo.money}>· {tickedSum < 0 ? '−' : ''}{fmtSen(Math.abs(tickedSum))}</span>
           {hiddenTicked > 0 && <span className={mo.hint}>· {hiddenTicked} hidden by a filter, left out</span>}
           <span className={mo.grow} />
-          {/* The ticked papers as ONE document, in list order (step 8); With
-              files puts each one's stored files right after it. */}
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
             <input type="checkbox" checked={withFiles} onChange={(e) => setWithFiles(e.target.checked)}
               aria-label="Include each document's attached files" style={{ width: 14, height: 14, accentColor: '#16695f' }} />

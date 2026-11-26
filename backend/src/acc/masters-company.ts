@@ -51,9 +51,6 @@ export const ACC_MASTERS_FALLBACK_COMPANY_ID = 1;
  */
 export function accMastersCompanyId(companyId: number | null | undefined, where: string): number {
   if (companyId != null) return Number(companyId);
-  /* Loud on every substitution. This used to be silent, which is why an entry
-     validated against another company's chart looked exactly like one validated
-     against its own. eslint-disable-next-line no-console */
   // eslint-disable-next-line no-console
   console.error(
     `[acc/masters] ${where}: entry carries NO company_id — reading company ${ACC_MASTERS_FALLBACK_COMPANY_ID}'s masters. ` +

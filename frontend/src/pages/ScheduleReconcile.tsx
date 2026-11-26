@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// Schedule Reconcile (Roadshow PMS Agent — Job A). Upload an organizer's latest
-// schedule photo; it's OCR'd (Claude vision) and diffed against that organizer's
-// projects. Each row is MATCH / DATE_CHANGED / NEW / MISSING. For a moved event
-// you apply the new dates to the project in one click; MISSING (a live project
-// the schedule dropped) is flagged as a possible postpone/cancel for you to check.
-// ----------------------------------------------------------------------------
 
 import { useState } from "react";
 import { api } from "../api/client";

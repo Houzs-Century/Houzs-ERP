@@ -23,9 +23,6 @@
 
 export const SCM_LIST_RETURN_KEY = "houzs.scmListReturn.v1";
 
-/** The sidebar-level section a /scm path belongs to: /scm/<section>[/...] →
- *  "/scm/<section>". Query + trailing id segments are ignored, so a list URL
- *  and its document details map to the same key. */
 function sectionOf(pathname: string): string {
   const bare = (pathname || "").split("?")[0].split("#")[0];
   const segs = bare.split("/").filter(Boolean);
@@ -33,9 +30,6 @@ function sectionOf(pathname: string): string {
   return bare;
 }
 
-/** Is this a LIST url (a section root, /scm/<section>) rather than a detail
- *  (/scm/<section>/<id>) or an action child (/new, /maintenance, …)? Only list
- *  URLs are worth remembering as a return target. */
 function isListPath(pathname: string): boolean {
   const bare = (pathname || "").split("?")[0].split("#")[0];
   const segs = bare.split("/").filter(Boolean);
@@ -50,8 +44,6 @@ function readMap(): Record<string, string> {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-      // Same-origin path only — a stored value is fed to navigate(); reject
-      // "//host" (protocol-relative) and anything not rooted at "/".
       if (typeof v === "string" && /^\/(?!\/)/.test(v)) out[k] = v;
     }
     return out;
@@ -70,7 +62,6 @@ export function rememberScmListReturn(pathname: string, search: string): void {
     map[sectionOf(pathname)] = `${pathname}${search || ""}`;
     sessionStorage.setItem(SCM_LIST_RETURN_KEY, JSON.stringify(map));
   } catch {
-    // storage disabled (private mode) — Back simply falls back to the bare list
   }
 }
 
@@ -93,7 +84,6 @@ export function rememberScmListFocus(listPath: string, rowKey: string): void {
     map[sectionOf(listPath)] = rowKey;
     sessionStorage.setItem(SCM_LIST_FOCUS_KEY, JSON.stringify(map));
   } catch {
-    // storage disabled: the list simply opens at the top
   }
 }
 

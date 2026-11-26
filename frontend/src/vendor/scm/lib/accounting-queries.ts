@@ -1,9 +1,3 @@
-// Vendored SLICE of apps/backend/src/lib/flow-queries.ts — the Accounting
-// surface (chart of accounts, journal entries, GL, balances, AR/AP aging) the
-// Accounting page reads. Copied verbatim; all reads go through the vendored
-// authedFetch (→ /api/scm/accounting…). The source module's verified-save /
-// supabase / serviceNotify imports are NOT needed here and are left out. The
-// `baseQuery` factory is inlined (the source defines it once at module scope).
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -12,7 +6,6 @@ import { writeFailedAs } from './mutation-error';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import type { DebtorPartyColumns, DebtorPartyValues } from './debtor-party';
 
-// baseQuery is a custom-hook factory — only ever called from use* hooks below.
 // eslint-disable-next-line react-hooks/rules-of-hooks
 const baseQuery = <T>(key: string[], path: string) => useQuery({
   queryKey: key,
@@ -27,24 +20,14 @@ export type Account = {
   account_name: string;
   account_type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE';
   parent_code: string | null;
-  /** The AutoCount section (CAPITAL / CURRENT ASSETS / COST OF GOODS SOLD…)
-      the account hangs under — decides the type; the owner moves it on the
-      chart page. NULL only on a row older than the sections migration. */
   section?: string | null;
   is_active: boolean;
-  /** True for the money set (bank / cash / e-wallet — what Daily Bank shows).
-      The PV "Paid From" picker offers only these. */
   acc_money?: boolean | null;
   /** AutoCount's special-account column (0347). SDC/SCC/SBS are CONTROL
       accounts — pickers hide them, the server refuses them (由模块自动过账). */
   special_type?: string | null;
 };
 
-/* The CONTROL specials — AR (SDC), AP + customer deposits (SCC), stock (SBS).
-   ONE frontend home on purpose; the server's whyNotPostable in
-   backend/src/scm/routes/accounting-chart.ts is the enforcing rule (a browser
-   cannot import the Worker's), and this one only decides what the pickers and
-   the Chart page SHOW. */
 export const isControlSpecial = (special: string | null | undefined): boolean =>
   special === 'SDC' || special === 'SCC' || special === 'SBS';
 /* 父户不记账, one home for the screens (docs/bugs/0693). A header is any
@@ -64,17 +47,11 @@ export const leafAccounts = (all: Account[]): Account[] => {
     non-special account is refused there, not hidden here. */
 export const postableAccounts = (all: Account[]): Account[] =>
   leafAccounts(all).filter((a) => !isControlSpecial(a.special_type));
-/* The section vocabulary in render order — served by the API (its one home
-   is backend lib/account-sections.ts), never copied here. */
 export type AccountSection = { section: string; type: Account['account_type'] };
 export const useAccounts = () => baseQuery<{ accounts: Account[]; sections?: AccountSection[] }>(
   ['accounts'], `/accounting/accounts`,
 );
 
-/* Which account plays which part for the ACTIVE company (resolveRoles server-
-   side: overrides first, seeded defaults where nothing is set). BANK_PAY_DEFAULT
-   pre-fills the PV "Paid From" (BANK_DEFAULT, where money is received, when
-   unset); AP is the control account an AP Payment debits. */
 export type AccountRoles = { roles: Record<string, string>; overridden: Record<string, string> };
 export const useAccountRoles = () => baseQuery<AccountRoles>(
   ['account-roles'], `/accounting/roles`,
@@ -277,9 +254,6 @@ export const useAccountBalances = (asOf?: string) => baseQuery<{ balances: Accou
 /* AR / AP Aging moved to aging-queries.ts (owner 2026-10-02: the formal debtor
    and creditor aging replaced the per-invoice lists). */
 
-/* ── The Chart of Accounts maintenance surface (roadmap A, 2026-09-03) ──────
-   The owner's selective sharing: one union across the granted companies, a
-   tick per company per code, and the accountant's xlsx upserted whole. */
 export type ChartCompany = { id: number; code: string };
 export type ChartRow = {
   code: string;
@@ -323,8 +297,6 @@ export const useChartTick = () => {
 
 export type ChartImportRow = {
   code: string; name: string; accountType: string;
-  /** The heading the row sat under in the file when it is a known section; the
-      server derives the type from it and shelves a null by type. */
   section?: string | null;
   parentCode: string | null; accMoney: boolean; specialType?: string | null; shared: boolean;
 };
@@ -350,7 +322,6 @@ export const useChartCreate = () => {
   return useMutation({
     mutationFn: (body: {
       code: string; name: string;
-      /** The section decides the type; accountType alone lands on that type's default shelf. */
       section?: string; accountType?: string;
       parentCode?: string | null; accMoney?: boolean; specialType?: string | null;
       /** SFA only: the SAD twin created in the same call (固定资产带折旧). */
@@ -394,16 +365,12 @@ export const useChartUpdate = () => {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['chart-union'] });
       void qc.invalidateQueries({ queryKey: ['accounts'] });
-      /* A Logistics row moves money between the logistics reports' rows. */
       void qc.invalidateQueries({ queryKey: ['acc-events', 'logistics'] });
       void qc.invalidateQueries({ queryKey: ['acc-events', 'logistics-pnl'] });
     },
   });
 };
 
-/* Only a NEVER-used code deletes; anything referenced comes back as a 409
-   naming the holdouts — the page shows that sentence and offers the tick
-   column instead. */
 export const useChartDelete = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -436,11 +403,8 @@ export type DebtorBillLine = { id: string; line_no: number; description: string 
 export type DebtorBill = {
   id: string; bill_number: string; bill_date: string;
   total_sen: number; received_sen: number; status: string; notes: string | null;
-  /** 'DN' for a debit note to the debtor (2026-10-28) — prints as DEBIT NOTE. */
   doc_kind?: 'INV' | 'DN';
-  /** The bill's lines (2026-09-06) — Edit and Copy start from them. */
   lines?: DebtorBillLine[];
-  /** When it was raised — the bill page's trail. */
   created_at?: string | null;
 };
 export type DebtorReceipt = {
@@ -461,9 +425,6 @@ export const useDebtorDetail = (id: string | null) => useQuery({
   enabled: !!id,
 });
 
-/* A bill or a receipt changes what the AR Invoices page shows (2026-09-29 —
-   the bill is raised there, the receipt on the Receipts page), so the debtor
-   side's mutations refresh that list and its bill pop-out too. */
 const invalidateDebtors = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['other-debtors'] });
   void qc.invalidateQueries({ queryKey: ['other-debtor-detail'] });
@@ -490,11 +451,9 @@ export const useUpdateDebtor = () => {
 export const useCreateDebtorBill = () => {
   const qc = useQueryClient();
   return useMutation({
-    /* `idempotencyKey`: one per opened form (lib/idempotency.ts), so a double press posts one bill. */
     mutationFn: ({ debtorId, idempotencyKey, ...body }: {
       debtorId: string; idempotencyKey: string | null; billDate?: string; notes?: string;
       lines: Array<{ description?: string; creditAccountCode?: string; amountSen: number }>;
-      /** 'DN': a debit note to the debtor — a bill of its own kind, series {co}ODN- (2026-10-28). */
       docKind?: 'INV' | 'DN';
     }) => authedFetch<{ ok: boolean; bill: { id?: string; billNumber: string; totalSen: number } }>(
       `/other-debtors/${debtorId}/bills`, idempotentInit(idempotencyKey ?? undefined, { method: 'POST', body: JSON.stringify(body) }),
@@ -529,7 +488,6 @@ export const useCancelDebtorBill = () => {
 export const useCreateDebtorReceipt = () => {
   const qc = useQueryClient();
   return useMutation({
-    /* `idempotencyKey`: one per opened form (lib/idempotency.ts), so a double press books one receipt. */
     mutationFn: ({ debtorId, idempotencyKey, ...body }: {
       debtorId: string; idempotencyKey: string | null; receiptDate?: string; bankAccountCode: string; notes?: string; postNow?: boolean;
       allocations: Array<{ billId: string; amountSen: number }>;
@@ -554,7 +512,6 @@ export const useUpdateDebtorReceipt = () => {
     onSuccess: () => { invalidateDebtors(qc); void qc.invalidateQueries({ queryKey: ['receipts'] }); },
   });
 };
-/* One hook, five doors — the receipt's four-layer actions mirror the PV's. */
 export const useDebtorReceiptAction = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -583,15 +540,11 @@ export const useVoidDebtorReceipt = () => {
 export type ReceiptRow = {
   kind: 'GENERAL' | 'DEBTOR' | 'CUSTOMER';
   id: string; number: string; date: string; payer: string;
-  /** DEBTOR rows: the debtor's account code (for the search). */
   payerCode?: string | null;
   moneyAccount: string; totalSen: number; status: string;
   debtorId?: string; notes?: string | null;
-  /** CUSTOMER rows: the order's raw reference pair (resolve with soRefOfCamelStamp). */
   soRef?: string | null; soCustomerSoNo?: string | null;
-  /** GENERAL rows: the first line's description — what the money was for (batch 5 §2.3 c1). */
   firstLine?: string | null;
-  /** DEBTOR rows: the four layers' marks, and the bills the receipt knocks off (c1). */
   submittedAt?: string | null; checkedAt?: string | null; approvedAt?: string | null;
   bills?: Array<{ billId: string; no: string | null; amountSen: number }>;
 };
@@ -607,7 +560,6 @@ export const useReceipts = (month?: string, kind?: ReceiptRow['kind']) => {
 export const useCreateReceipt = () => {
   const qc = useQueryClient();
   return useMutation({
-    /* `idempotencyKey`: one per opened form (lib/idempotency.ts), so a double press books one receipt. */
     mutationFn: ({ idempotencyKey, ...body }: {
       idempotencyKey: string | null; payerName: string; receiptDate?: string; bankAccountCode: string; notes?: string;
       lines: Array<{ description?: string; creditAccountCode: string; amountSen: number }>;

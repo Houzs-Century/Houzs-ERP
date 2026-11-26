@@ -82,7 +82,6 @@ async function departmentExists(db: Db, id: number | null): Promise<boolean> {
   return (await db.select({ id: departments.id }).from(departments).where(eq(departments.id, id)).limit(1)).length > 0;
 }
 
-/* ── working hours ─────────────────────────────────────────────────────── */
 
 hrLabor.get("/working-hours", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -90,8 +89,6 @@ hrLabor.get("/working-hours", async (c) => {
   const r = range(c);
   if (typeof r === "string") return c.json({ error: "bad_range", message: r }, 400);
   const db = getDb(c.env);
-  // A pinned confirmer (hr-confirmer-scope) sees only their own employees' hours;
-  // an unrestricted reader gets null and the grid stays company-wide.
   const scope = scopedEmployeeIds(c.get("user").id);
   const scopeIds = scope ? [...scope] : null;
   const [employees, depts, days, entries, cfgFor, shift] = await Promise.all([
@@ -129,7 +126,6 @@ hrLabor.get("/working-hours", async (c) => {
       const sr = shift.rulesFor(d.work_date, d.employee_id);
       const rules = shift.hasGroup(d.employee_id) ? sr : rulesForEmployeeHours(sr, hoursPerDay.get(d.employee_id) ?? 9);
       const punchHours = inMin != null && outMin != null ? punchDayHours(inMin, outMin, rules, cfg.brokenPunchCreditsFullDay).hours : null;
-      // Lateness for the month grid; the clock-out does not affect it, so an open day still reads late.
       const lateMin = inMin != null ? punchLateMinutes(inMin, outMin ?? inMin, rules) : 0;
       return {
         attendanceId: d.id,
@@ -173,8 +169,6 @@ hrLabor.post("/working-hours", async (c) => {
   if (!emp) return c.json({ error: "not_found_in_company", message: "That employee isn't in the company you're working in." }, 404);
   if (!(await departmentExists(db, input.departmentId))) return c.json({ error: "validation_failed", message: "That department no longer exists." }, 400);
   const by = c.get("user").id;
-  /* Hookka's resolveOrCreateAttendance: hours belong to an attendance day, so
-     logging hours for a day nobody punched makes it a PRESENT day. */
   let att = (
     await db
       .select({ id: hr_attendance.id })
@@ -241,14 +235,11 @@ hrLabor.delete("/working-hours/:id", async (c) => {
     .where(and(eq(hr_working_hours.company_id, co.companyId), eq(hr_working_hours.id, id)))
     .returning({ employee_id: hr_working_hours.employee_id, work_date: hr_working_hours.work_date, hours: hr_working_hours.hours, source: hr_working_hours.source });
   if (!done.length) return c.json({ error: "not_found_in_company" }, 404);
-  /* Removing the last row of a punched day would let the next sync write it
-     back from the punch; that is the "undo my edit" a user expects. */
   await redockDay(db, co.companyId, done[0].employee_id, done[0].work_date);
   await audit(c, { action: "hr.working_hours.delete", entityType: "hr_employee", entityId: done[0].employee_id, summary: `${done[0].work_date}: removed ${done[0].hours}h`, meta: done[0] });
   return c.json({ ok: true });
 });
 
-/* ── labor cost ────────────────────────────────────────────────────────── */
 
 hrLabor.get("/labor-cost", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -302,7 +293,6 @@ hrLabor.get("/labor-cost", async (c) => {
   return c.json({ ...r, ...result, canManage: canManage(c) });
 });
 
-/* ── short-hour docks ──────────────────────────────────────────────────── */
 
 hrLabor.get("/hour-deductions", async (c) => {
   const co = requireActiveCompanyId(c);

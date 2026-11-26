@@ -1,27 +1,3 @@
-// ---------------------------------------------------------------------------
-// capacity-pack.ts — pack same-zone orders into lorry-day trips under per-lorry
-// capacity ceilings. PURE, unit-tested. Fleet Module A1.
-//
-// Given the region's pending orders (each already carrying its ZONE, SET count
-// and REVENUE — see zone-classify.ts + set-count.ts) and the depot's lorries
-// (each with its capacity ceilings), propose a DELIVERY DATE per order by
-// filling lorry-days:
-//
-//   - CLUSTER BY ZONE. Klang Valley zones mix freely on one trip (one combined
-//     pool); every other zone runs DEDICATED trips.
-//   - FIRST-CEILING-WINS. A lorry-day is full when it reaches EITHER its set
-//     ceiling OR its revenue ceiling, whichever the lorry's active layer uses
-//     and whichever is hit first. SETS layer => sets only; REVENUE => revenue
-//     only; BOTH => whichever binds first.
-//   - FAR REGIONS ACCUMULATE. A dedicated far-zone lorry that is not filled to a
-//     ceiling is proposed but FLAGGED partial=true, so the owner can choose to
-//     wait for a full load rather than send a half-empty lorry on a long haul.
-//   - Days advance from a start date; each day every lorry is available again.
-//
-// This produces a REVERSIBLE PROPOSAL (grouped day -> group -> lorry with fill
-// vs ceiling). It writes NOTHING and it is NOT a scheduler — the owner reviews
-// it and the established schedule write-path persists the accepted dates.
-// ---------------------------------------------------------------------------
 
 export type CapacityLayer = 'SETS' | 'REVENUE' | 'BOTH';
 
@@ -30,28 +6,22 @@ export interface PackOrder {
   zone: string;
   sets: number;
   revenueSen: number;
-  /** False => the order has no counted furniture; it packs by revenue only. */
   hasFurniture: boolean;
 }
 
 export interface PackLorry {
   id: string;
   plate: string;
-  /** Per-lorry max sets; null => use config.defaultMaxSets. */
   maxSets: number | null;
-  /** Per-lorry max revenue (centi); null => use config.defaultMaxRevenueSen. */
   maxRevenueSen: number | null;
   layer: CapacityLayer;
 }
 
 export interface PackConfig {
-  /** First proposed delivery date, YYYY-MM-DD. */
   startDate: string;
-  /** Zones that MIX on one trip (Klang Valley). Everything else is dedicated. */
   klangValleyZones: readonly string[];
   defaultMaxSets: number;
   defaultMaxRevenueSen: number;
-  /** Cap on how many days forward the packer will span (safety bound). */
   maxDays?: number;
 }
 
@@ -63,16 +33,13 @@ export interface PackedLorry {
   ceilingSets: number | null;
   ceilingRevenueSen: number | null;
   layer: CapacityLayer;
-  /** A far-zone lorry below its ceiling — a not-yet-full dedicated trip. */
   partial: boolean;
-  /** A single order alone exceeded the ceiling but must still ship. */
   overCeiling: boolean;
   orders: string[];
 }
 
 export interface PackedDay {
   date: string;
-  /** 'KLANG_VALLEY' for the mixed pool, else the zone code. */
   group: string;
   lorries: PackedLorry[];
 }
@@ -91,7 +58,6 @@ export interface PackProposal {
 export interface PackResult {
   proposals: PackProposal[];
   days: PackedDay[];
-  /** Orders that could not be placed (no lorries, etc.), with a reason. */
   unassigned: { ref: string; zone: string; reason: string }[];
 }
 
@@ -123,7 +89,6 @@ function ceilingsFor(lorry: PackLorry, cfg: PackConfig): Ceilings {
   }
 }
 
-/** Would adding this order to the running lorry stay within BOTH active ceilings? */
 function fits(
   runningSets: number,
   runningRev: number,
@@ -135,11 +100,6 @@ function fits(
   return true;
 }
 
-/**
- * Pack one group's orders into consecutive lorry-days. Mutates nothing outside.
- * Greedy: fill lorry 1 to a ceiling, then lorry 2, ... then next day. A single
- * order too big for an empty lorry ships alone, flagged overCeiling.
- */
 function packGroup(
   group: string,
   orders: PackOrder[],
@@ -173,12 +133,9 @@ function packGroup(
         orders: [],
       };
 
-      // Fill this lorry until the next order won't fit (first-ceiling-wins).
       while (queue.length > 0) {
         const next = queue[0];
         if (packed.orders.length === 0 && !fits(0, 0, next, ceil)) {
-          // A single order bigger than an empty lorry's ceiling: it must ship,
-          // so it takes this lorry alone and is flagged.
           packed.overCeiling = true;
           packed.orders.push(next.ref);
           packed.sets += next.sets;
@@ -197,7 +154,6 @@ function packGroup(
 
       if (packed.orders.length === 0) continue;
 
-      // A far-zone lorry below its ceiling is a not-yet-full dedicated trip.
       if (isFar && !packed.overCeiling) {
         const setFull = ceil.sets != null && packed.sets >= ceil.sets;
         const revFull = ceil.revenueSen != null && packed.revenueSen >= ceil.revenueSen;
@@ -207,8 +163,6 @@ function packGroup(
     }
 
     if (dayLorries.length > 0) days.push({ date, group, lorries: dayLorries });
-    // No lorries could take anything (empty fleet) — stop to avoid an infinite
-    // loop; remaining orders fall through to `unassigned` in the caller.
     if (dayLorries.length === 0) break;
     dayIndex += 1;
   }
@@ -251,7 +205,6 @@ export function packProposals(input: {
     };
   }
 
-  // Bucket orders: one KV pool + one bucket per far zone. Preserve input order.
   const kvOrders: PackOrder[] = [];
   const farByZone = new Map<string, PackOrder[]>();
   for (const o of orders) {
@@ -276,7 +229,6 @@ export function packProposals(input: {
     }
   }
 
-  // Far zones in a stable order for a deterministic result.
   for (const zone of [...farByZone.keys()].sort()) {
     const zoneOrders = farByZone.get(zone)!;
     const r = packGroup(zone, zoneOrders, [...lorries], config, true);

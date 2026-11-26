@@ -14,9 +14,6 @@ import {
   type GrantMap,
 } from "./rolesPermissionModel";
 
-// A small catalogue that captures the three real shapes: a clean CRUD resource
-// (Service Cases), a single-key resource (Activity Log), and a heterogeneous one
-// (Projects) whose one-off grants don't fit a tidy verb grid.
 const CATALOG: PermissionDef[] = [
   { key: "service_cases.read", resource: "Service Cases", verb: "read", label: "View service cases", description: "" },
   { key: "service_cases.create", resource: "Service Cases", verb: "create", label: "Log service cases", description: "" },
@@ -34,7 +31,7 @@ describe("stemOf", () => {
   it("strips a trailing verb, leaves other keys intact", () => {
     expect(stemOf("service_cases.read", "read")).toBe("service_cases");
     expect(stemOf("projects.write", "write")).toBe("projects");
-    expect(stemOf("projects.chat", "write")).toBe("projects.chat"); // doesn't end in the verb
+    expect(stemOf("projects.chat", "write")).toBe("projects.chat");
     expect(stemOf("projects.approve", "manage")).toBe("projects.approve");
   });
 });
@@ -78,8 +75,7 @@ describe("buildModules", () => {
       write: "projects.write",
       manage: "projects.manage",
     });
-    expect(core.keyByVerb.create).toBeUndefined(); // renders N/A
-    // An "approve"-style grant lands in the MANAGE column, as its own row.
+    expect(core.keyByVerb.create).toBeUndefined();
     expect(pj.rows[2].keyByVerb.manage).toBe("projects.approve");
     expect(pj.rows[1].label).toBe("Post project chat");
   });
@@ -102,11 +98,11 @@ describe("isLockedRole", () => {
 });
 
 describe("activeIds — system-role guard #1", () => {
-  const locked = new Set([1]); // role 1 is a system role
+  const locked = new Set([1]);
 
   it("uses the single selection when fewer than two are checked", () => {
     expect(activeIds(5, [], locked)).toEqual([5]);
-    expect(activeIds(5, [7], locked)).toEqual([5]); // one checkbox is not bulk
+    expect(activeIds(5, [7], locked)).toEqual([5]);
   });
 
   it("uses the checked set once two or more are checked", () => {
@@ -114,8 +110,8 @@ describe("activeIds — system-role guard #1", () => {
   });
 
   it("filters system roles out of the write target", () => {
-    expect(activeIds(1, [], locked)).toEqual([]); // selecting a system role alone -> no target
-    expect(activeIds(9, [1, 2, 3], locked)).toEqual([2, 3]); // bulk drops the system role
+    expect(activeIds(1, [], locked)).toEqual([]);
+    expect(activeIds(9, [1, 2, 3], locked)).toEqual([2, 3]);
   });
 });
 
@@ -124,8 +120,8 @@ describe("setPerm / setPerms — guard #2 (skip locked) + immutability", () => {
     const grants: GrantMap = { 1: new Set(), 2: new Set() };
     const next = setPerm(grants, [1, 2], "projects.read", true, new Set([1]));
     expect([...next[2]]).toEqual(["projects.read"]);
-    expect(next[1].size).toBe(0); // locked role untouched
-    expect(grants[2].size).toBe(0); // original not mutated
+    expect(next[1].size).toBe(0);
+    expect(grants[2].size).toBe(0);
   });
 
   it("removes a key when toggled off", () => {
@@ -162,7 +158,7 @@ describe("cellState", () => {
 describe("moduleCounts", () => {
   it("sums grants and totals across the active roles", () => {
     const mods = buildModules(CATALOG);
-    const sc = mods.find((m) => m.id === "Service Cases")!; // 4 keys
+    const sc = mods.find((m) => m.id === "Service Cases")!;
     const grants: GrantMap = {
       2: new Set(["service_cases.read"]),
       3: new Set(["service_cases.read", "service_cases.write"]),
@@ -198,7 +194,6 @@ describe("approve verb (added on main)", () => {
       { key: "announcements.approve", resource: "Announcements", verb: "approve", label: "Approve announcements", description: "" },
     ]);
     const ann = mods.find((m) => m.id === "Announcements")!;
-    // Both keys share the "announcements" stem, so one row carries read + approve.
     expect(ann.rows).toHaveLength(1);
     expect(ann.rows[0].keyByVerb).toEqual({
       read: "announcements.read",

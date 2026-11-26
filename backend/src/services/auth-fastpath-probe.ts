@@ -33,31 +33,16 @@
 export type AuthFastPath = "pass" | "session-db" | "unknown";
 
 export type CacheFamilyReading = {
-  /** The TTL the entry is written with. */
   ttl_seconds: number;
-  /** How often the browser asks for it. A TTL at or below this means a lone
-   *  user misses EVERY time — the failure the banner already paid for. */
   client_poll_seconds: number;
-  /** hit / miss for THIS request; `bypass` when no key could be built. */
   state: "hit" | "miss" | "bypass";
-  /** True when the TTL cannot outlive the poll, so misses are structural rather
-   *  than incidental. A reader should fix this before reading the hit rate. */
   ttl_shorter_than_poll: boolean;
 };
 
 export type AuthFastPathReading = {
   session_pass: {
     configured: boolean;
-    /** What THIS request actually did. `unknown` means the middleware did not
-     *  record it — never read that as either answer. */
     this_request: AuthFastPath;
-    /** Did the BROWSER send a pass at all? Observed off the request headers, so
-     *  `unknown` above stops being a dead end: no header means the client has
-     *  none to send (it expired, or was never absorbed) and the DB path is the
-     *  only thing that could have run; a header present with `unknown` means we
-     *  lost the record, which is a different bug entirely.
-     *
-     *  Presence ONLY — never the value, never a prefix, never a length. */
     client_sent_pass: boolean;
   };
   config_cache: Record<string, CacheFamilyReading>;
@@ -85,16 +70,6 @@ export function readingFor(
     return "Signed sessions are ON but THIS request still went to the database for authorization — "
       + "so the fast path is configured and not being taken. That is the thing to chase, not the caches.";
   }
-  /* UNKNOWN IS CHECKED BEFORE THE CACHES, and the order is the whole fix. It
-     used to sit BELOW, so `unknown` + a short TTL printed "Authorization took
-     the fast path" — a claim about the one thing the probe had just said it
-     could not see. The owner read the card saying "Not reported" beside a
-     sentence saying "took the fast path" (2026-09-02) and the probe built to
-     stop unevidenced claims had made one.
-
-     My own test missed it because it exercised `unknown` with a HEALTHY cache,
-     so this combination never ran: a branch covered on one arm only. Both arms
-     are asserted now. */
   if (thisRequest === "unknown") {
     const tail = structural.length
       ? ` Separately, ${structural.join(" and ")} keep(s) its cached copy for less time `
@@ -127,23 +102,11 @@ export function cacheFamilyReading(
     ttl_seconds: ttlSeconds,
     client_poll_seconds: clientPollSeconds,
     state,
-    /* `<=`, not `<`: a TTL EQUAL to the poll expires exactly as the next poll
-       arrives, which is the measured 874-984ms case, not a near miss. */
     ttl_shorter_than_poll: ttlSeconds <= clientPollSeconds,
   };
 }
 
-/* THE BROWSER'S POLL INTERVALS, in the one place a reader compares them with a
-   TTL. They are frontend constants, so they are MIRRORED here and pinned by
-   `backend/tests/authFastPathProbe.test.ts`, which reads the hooks' source and
-   fails when either moves. That test is the point: `configCache.ts` still says
-   the banner poll is 60s and reasons "300s (5 polls)" from it, while
-   useAnnouncementBanner.ts has carried 180_000 for some time — 300/180 is 1.67
-   polls, not 5. CLAUDE.md: a number in a comment is a fact with an expiry date,
-   so this one is made self-checking instead of re-typed. */
 export const CLIENT_POLL_SECONDS = {
-  /** usePresence.ts HEARTBEAT_MS */
   presence: 60,
-  /** components/useAnnouncementBanner.ts POLL_MS */
   banner: 180,
 } as const;

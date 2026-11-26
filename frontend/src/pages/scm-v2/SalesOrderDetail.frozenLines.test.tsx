@@ -16,7 +16,6 @@ const { detail } = vi.hoisted(() => ({ detail: vi.fn() }));
 
 vi.mock("../../vendor/scm/lib/sales-order-queries", async (orig) => ({
   ...(await orig<typeof import("../../vendor/scm/lib/sales-order-queries")>()),
-  /* The server kept the override reason: the page unlocks (fix/failed-save-looks-ok). */
   useOverrideSoLock: () => ({ mutate: (_v: unknown, o?: { onSuccess?: () => void }) => o?.onSuccess?.(), isPending: false }),
   useMfgSalesOrderDetail: detail,
   useSalesOrderAuditLog: () => ({ data: [], isLoading: false, isError: false }),
@@ -60,7 +59,6 @@ const header = {
   currency: "MYR", local_total_sen: 350000, balance_sen: 0, discount_sen: 0, line_count: 2, version: 3,
   processing_date: null, customer_delivery_date: "2026-09-20", phone: "+60123456789", email: "a@b.c",
   address1: "1 Jalan", customer_state: "Selangor", city: "Shah Alam", postcode: "40000",
-  /* One live DO carries ONE of the three bedframes. */
   has_children: true, downstream_fully_frozen: false,
 };
 

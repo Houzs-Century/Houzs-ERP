@@ -1,17 +1,3 @@
-/**
- * The privacy policy — the live URL the iOS App Store submission points at
- * (https://erp.houzscentury.com/privacy).
- *
- * A PUBLIC SPA surface, not a static file, and that is a lesson, not a
- * preference: Cloudflare Pages 308-canonicalises every `*.html` asset to its
- * extensionless URL, directory indexes resolve the same way, and with the
- * `/* -> index.html` SPA rewrite in `_redirects` neither form ever reaches the
- * visitor — verified live twice on 2026-08-06 (BUG-HISTORY). Inside the SPA it
- * rides the same public-surface mechanism as /track.
- *
- * Content rule: whatever the app starts collecting must appear here AND in the
- * App Privacy answers in App Store Connect — the two must never disagree.
- */
 
 const ROWS: Array<[string, string]> = [
   [

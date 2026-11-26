@@ -1,22 +1,3 @@
-/* The amendment notice exists because an approval used to sit in a queue that
- * nothing pointed at. Three things have to hold for it to be worth having, and
- * each of them fails silently — which is why they are pinned here rather than
- * left to a read of the file.
- *
- *  1. IT REACHES THE DESK THAT CAN SIGN. The lane decides the permission key,
- *     and the notice audience is derived from that key. If this table ever
- *     drifts from the one the GATE reads (scm/shared/amendment-lane.ts), the
- *     notice goes to people who then cannot act on it — a bug that looks like
- *     working software from every angle except the one that matters.
- *
- *  2. IT DOES NOT REACH EVERYONE. Owner and IT Admin carry the '*' wildcard, so
- *     a literal "who can approve this" read would put the owner on every
- *     amendment ever raised. A channel that pings you about work that is not
- *     yours is a channel you turn off, and then the real notice is lost too.
- *
- *  3. IT DOES NOT CROSS COMPANIES. Houzs and 2990 share this table; a 2990
- *     amendment must not land on a Houzs-only desk.
- */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { Env } from '../types';
 
@@ -35,10 +16,6 @@ vi.mock('./personalNotice', () => ({
   },
 }));
 
-/* Reporting chain, shaped like the real one: the purchasing desk (41) reports
-   to 40, who reports to 39, who reports to the owner account 38. Every other id
-   stands alone. Prod's chain is exactly this deep — Purchaser -> Nico -> Lim ->
-   HOUZS CENTURY — which is why the top-two trim matters at all. */
 vi.mock('./orgScope', () => ({
   uplineUserIds: async (_env: unknown, id: number) =>
     id === 41 ? [41, 40, 39, 38] : [id],
@@ -109,13 +86,9 @@ beforeEach(() => { posted.length = 0; });
 
 describe('amendment notice audience', () => {
   it('routes each lane to the SAME key its approval gate checks', async () => {
-    // Not a tautology: amendmentNotify holds its own copy (a Houzs-side service
-    // must not import the SCM bundle), and a copy is exactly what drifts.
     await notifySoAmendmentRaised(fakeEnv(), {
       amendmentNo: 'SO-1/A1', soDocNo: 'SO-1', lane: 'LINES', companyId: 1,
     });
-    // 41 holds approve_lines and reports to 40 — both notified. 43 (delivery),
-    // 44 (wildcard) and the two chain-top levels (39, 38) are not.
     expect(posted[0].userIds.sort()).toEqual([40, 41]);
 
     posted.length = 0;
@@ -125,7 +98,6 @@ describe('amendment notice audience', () => {
     expect(posted[0].userIds).toEqual([43]);
 
     posted.length = 0;
-    // A 2990 PRICE lane reaches the price approver (46), not the purchaser (41/42).
     await notifySoAmendmentRaised(fakeEnv(), {
       amendmentNo: '2990-SO-1/A3', soDocNo: '2990-SO-1', lane: 'PRICE', companyId: 2,
     });
@@ -138,7 +110,6 @@ describe('amendment notice audience', () => {
     });
     expect(posted[0].userIds).toEqual([46]);
 
-    // And the two tables agree, key for key.
     expect(LANE_APPROVE_KEY.LINES).toBe('scm.amendment.approve_lines');
     expect(LANE_APPROVE_KEY.DELIVERY).toBe('scm.amendment.approve_delivery');
     expect(LANE_APPROVE_KEY.PRICE).toBe('scm.amendment.approve_price');
@@ -149,20 +120,14 @@ describe('amendment notice audience', () => {
     const ids = await usersHoldingPermission(fakeEnv(), 'scm.amendment.approve_lines');
     expect(ids).not.toContain(44);
     expect(ids).toContain(41);
-    // …nor a disabled account.
     expect(ids).not.toContain(45);
   });
 
   it('drops a user granted only the OTHER company, keeps one with no grants', async () => {
-    // Company 1: 42 is 2990-only and must not hear about a Houzs amendment.
     expect(await usersHoldingPermission(fakeEnv(), 'scm.amendment.approve_lines', { companyId: 1 }))
       .toEqual([41]);
-    // Company 2: both purchasers are granted it.
     expect((await usersHoldingPermission(fakeEnv(), 'scm.amendment.approve_lines', { companyId: 2 })).sort())
       .toEqual([41, 42]);
-    // 43 holds ZERO grant rows — the single-company / pre-activation shape,
-    // where companyContext never consults the table. Filtering them out would
-    // silence the delivery lane entirely on a one-company install.
     expect(await usersHoldingPermission(fakeEnv(), 'scm.amendment.approve_delivery', { companyId: 1 }))
       .toEqual([43]);
   });
@@ -173,19 +138,18 @@ describe('amendment notice audience', () => {
       soDocNo: 'SO-9',
       lane: 'LINES',
       companyId: 1,
-      requesterUserId: 40,        // also sits in the approver upline
+      requesterUserId: 40,
       salespersonUserId: 77,
       requesterName: 'Ivy',
       reason: 'customer changed the fabric',
     });
     const approver = posted.find((p) => p.title.includes('needs approval'))!;
-    expect(approver.userIds).toEqual([41]);      // 40 raised it — excluded
+    expect(approver.userIds).toEqual([41]);
     const sales = posted.find((p) => p.title.includes('your Sales Order'))!;
     expect(sales.userIds).toEqual([77]);
     expect(sales.body).toContain('by Ivy');
     expect(sales.body).toContain('customer changed the fabric');
     expect(new Set(posted.map((p) => p.source))).toEqual(new Set(['so_amendment']));
-    // No flag, no "wrong desk" card — the other lane hears nothing.
     expect(posted.some((p) => p.title.includes('wrong desk'))).toBe(false);
   });
 
@@ -207,7 +171,7 @@ describe('amendment notice audience', () => {
       byAdmin: false,
     });
     const todo = posted.find((p) => p.title.includes('needs approval'))!;
-    expect(todo.userIds).toEqual([43]);                  // the DELIVERY desk, not the LINES one
+    expect(todo.userIds).toEqual([43]);
     expect(todo.body).toContain('Purchaser Pat (product lines approver) passed amendment SO-12757/A1 on Sales Order SO-12757 to you as not theirs to approve: ');
     expect(todo.body).toContain('transport charge, Logistic approves these');
     expect(todo.body).toContain('waiting for delivery / customer info approval');
@@ -245,23 +209,16 @@ describe('amendment notice audience', () => {
   });
 
   it('leaves the top two levels of the reporting chain out of the audience', async () => {
-    /* THE REGRESSION THIS EXISTS FOR. The wildcard exclusion was supposed to
-       keep the owner off every amendment; the upline expansion put them back,
-       and six days of prod data showed every single approver audience reading
-       [1, 4, 5, …]. Trimming by DEPTH, not by naming ids, so it survives the
-       org chart moving. */
     await notifySoAmendmentRaised(fakeEnv(), {
       amendmentNo: 'SO-7/A1', soDocNo: 'SO-7', lane: 'LINES', companyId: 1,
     });
     const audience = posted[0].userIds;
-    expect(audience.sort()).toEqual([40, 41]);   // desk + its manager
-    expect(audience).not.toContain(39);          // …and not the two above them
+    expect(audience.sort()).toEqual([40, 41]);
+    expect(audience).not.toContain(39);
     expect(audience).not.toContain(38);
   });
 
   it('still reaches an approver who reports straight to the top', async () => {
-    // 43's chain is [43] alone — trimming two levels off a one-link chain must
-    // never empty it. The person who has to sign always hears about it.
     await notifySoAmendmentRaised(fakeEnv(), {
       amendmentNo: 'SO-8/A1', soDocNo: 'SO-8', lane: 'DELIVERY', companyId: null,
     });

@@ -22,7 +22,6 @@ describe("gridLayoutToTableLayout", () => {
   });
 
   it("shows every defaultHidden column the grid user did not hide", () => {
-    // DataGrid drops the defaultHidden flags once its hidden list is non-empty.
     expect(gridLayoutToTableLayout(grid({ hidden: ["customer", "agent"] }), facts)).toMatchObject({
       hidden: ["customer", "agent"], shown: ["remark"],
     });

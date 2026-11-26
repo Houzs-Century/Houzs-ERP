@@ -1,7 +1,3 @@
-// Saving a Model's allowed options auto-creates the SKU for each newly ticked
-// sofa compartment (PATCH /product-models/:id). The SO/PO picker reads the
-// ['mfg-products'] catalogue with a 5-minute staleTime, so the save must
-// invalidate it or the new code cannot be found on a new SO (BUG-41).
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { expect, test, vi } from 'vitest';

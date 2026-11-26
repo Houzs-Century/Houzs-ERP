@@ -6,12 +6,6 @@ import {
   type ShowroomCandidate, venueNameForHalfWrittenPair } from './venue-binding';
 import { todayMyt } from './my-time';
 
-/* ---------------------------------------------------------------------------
- * The venue decides which fair's P&L a sale lands in and whose commission it
- * pays. These tests are the specification of that decision — every owner rule
- * from 2026-07-19 has a case here, including the ones that assert the resolver
- * REFUSES to answer.
- * ------------------------------------------------------------------------- */
 
 const project = (o: Partial<PmsCandidate> & { projectId: number }): PmsCandidate => ({
   projectName: `Project ${o.projectId}`,
@@ -38,9 +32,6 @@ describe('resolveVenueBinding — the owner\'s resolution order', () => {
     expect(r.source).toBe('PMS');
     expect(r.venueName).toBe('MITEC Hall 5');
     expect(r.projectId).toBe(7);
-    /* The showroom binding still EXISTS — it just lost. The owner explicitly
-       refused to make the two mutually exclusive, because a showroom rep sent to
-       an exhibition is normal and frequent. */
     expect(r.showroomWarehouseId).toBeNull();
   });
 
@@ -57,9 +48,6 @@ describe('resolveVenueBinding — the owner\'s resolution order', () => {
   });
 
   it('2b. ZERO project assignments anywhere is the NORMAL steady state, not a degraded one', () => {
-    /* Production reality: project_sales_attendees is empty and is expected to
-       stay that way. Showroom parking is the primary path — it must produce a
-       complete, confident answer with no PMS data in the system at all. */
     const r = resolveVenueBinding({
       soDate: '2026-07-19',
       pmsCandidates: [],
@@ -83,15 +71,10 @@ describe('resolveVenueBinding — the owner\'s resolution order', () => {
     expect(r.venueName).toBeNull();
     expect(r.source).toBeNull();
     expect(r.projectId).toBeNull();
-    /* Explicitly NOT '' — an empty string is a value that flows into a report as
-       a real (blank) venue; null is the absence of one. */
     expect(r.venueName).not.toBe('');
   });
 
   it('3b. a showroom with no venue_name resolves to nothing, NOT to its warehouse name', () => {
-    /* "KL-SHOWROOM" is a stock code. Falling back to it would put a warehouse
-       code into exhibition P&L, which is the `?? <something>` failure mode this
-       whole design exists to avoid. */
     const r = resolveVenueBinding({
       soDate: '2026-07-19',
       pmsCandidates: [],
@@ -123,8 +106,6 @@ describe('resolveVenueBinding — the project PERIOD, by the ORDER\'s date', () 
   it('resolves a BACKDATED order against the fair running on the order\'s date', () => {
     const june = project({ projectId: 1, venue: 'June Fair', startDate: '2026-06-01', endDate: '2026-06-30' });
     const july = project({ projectId: 2, venue: 'July Fair', startDate: '2026-07-01', endDate: '2026-07-31' });
-    /* A slip written in June, keyed in in July, must pay June's fair. Resolving
-       by "today" would silently re-attribute last month's sales. */
     expect(resolveVenueBinding({ soDate: '2026-06-15', pmsCandidates: [june, july], showroom: null }).venueName)
       .toBe('June Fair');
     expect(resolveVenueBinding({ soDate: '2026-07-15', pmsCandidates: [june, july], showroom: null }).venueName)
@@ -132,9 +113,6 @@ describe('resolveVenueBinding — the project PERIOD, by the ORDER\'s date', () 
   });
 
   it('an ENDED project no longer claims orders — it falls back to the showroom', () => {
-    /* This is the behaviour CHANGE vs the old `start_date <= soDate` rule, which
-       had no end_date test at all: a fair that ended in March claimed every
-       order forever, for anyone ever assigned to it. */
     const r = resolveVenueBinding({
       soDate: '2026-07-19',
       pmsCandidates: [project({ projectId: 1, venue: 'March Fair', startDate: '2026-03-01', endDate: '2026-03-05' })],
@@ -171,8 +149,6 @@ describe('resolveVenueBinding — the project PERIOD, by the ORDER\'s date', () 
   });
 
   it('an UNDATED project (no start_date) has no period and claims nothing', () => {
-    /* Treating a null start as "always" would let one undated project swallow
-       every order the rep ever writes. */
     const r = resolveVenueBinding({
       soDate: '2026-07-19',
       pmsCandidates: [project({ projectId: 1, venue: 'Undated', startDate: null, endDate: null })],
@@ -188,11 +164,6 @@ describe('resolveVenueBinding — the project PERIOD, by the ORDER\'s date', () 
 });
 
 describe('resolveVenueBinding — MYT midnight boundary', () => {
-  /* The values the resolver compares are MYT calendar dates, so the boundary
-     risk lives in how the CALLER derives "today" — todayMyt() (+8h, then slice).
-     These pin that contract at the exact instant it would break: 16:00Z is
-     00:00 the NEXT day in Malaysia. A UTC-derived default would hand the
-     resolver the previous day and attribute the order to yesterday's fair. */
   const at = (iso: string) => {
     const realNow = Date.now;
     try {
@@ -212,10 +183,8 @@ describe('resolveVenueBinding — MYT midnight boundary', () => {
     const dayOne = project({ projectId: 1, venue: 'Day One Fair', startDate: '2026-07-19', endDate: '2026-07-19' });
     const dayTwo = project({ projectId: 2, venue: 'Day Two Fair', startDate: '2026-07-20', endDate: '2026-07-20' });
     const candidates = [dayOne, dayTwo];
-    // 23:59 MYT on the 19th (15:59Z) — still Day One.
     expect(resolveVenueBinding({ soDate: at('2026-07-19T15:59:59Z'), pmsCandidates: candidates, showroom: null }).venueName)
       .toBe('Day One Fair');
-    // 00:00 MYT on the 20th (16:00Z) — Day Two. A UTC slice would still say the 19th.
     expect(resolveVenueBinding({ soDate: at('2026-07-19T16:00:00Z'), pmsCandidates: candidates, showroom: null }).venueName)
       .toBe('Day Two Fair');
   });
@@ -244,9 +213,6 @@ describe('resolveVenueBinding — overlapping projects tie-break (deterministic)
   });
 
   it('identical periods: the LOWEST id wins, and the answer is STABLE under input order', () => {
-    /* Arbitrary, and documented as arbitrary. The point is only that the same
-       rep on the same day cannot get two different venues on two identical
-       orders because the planner returned rows in a different order. */
     const a = project({ projectId: 4, venue: 'Alpha', startDate: '2026-07-01', endDate: '2026-07-31' });
     const b = project({ projectId: 9, venue: 'Beta', startDate: '2026-07-01', endDate: '2026-07-31' });
     expect(resolveVenueBinding({ soDate: '2026-07-19', pmsCandidates: [a, b], showroom: null }).venueName).toBe('Alpha');
@@ -276,9 +242,6 @@ describe('canAutoResolveVenue — a human\'s pick survives a re-resolve', () => 
   });
 
   it('the override is what the SO edit path must persist: MANUAL beats any resolution', () => {
-    /* End-to-end shape of the guarantee: the resolver would say "MITEC Hall 5",
-       the operator typed "Setia SPICE Arena" because that is where they are
-       standing, and no later pass may quietly put MITEC back. */
     const resolved = resolveVenueBinding({
       soDate: '2026-07-19',
       pmsCandidates: [project({ projectId: 7, venue: 'MITEC Hall 5' })],
@@ -326,8 +289,6 @@ describe('venueNameForHalfWrittenPair', () => {
   });
 
   it('says UNRESOLVED when the read FAILS, never "no name"', async () => {
-    /* The distinction this type exists for. A caller handed a blank here would
-       write it, which is the deletion the whole rule is against. */
     const r = await venueNameForHalfWrittenPair(
       reader({ data: null, error: { message: 'connection reset' } }), '', 'v-1');
     expect(r.kind).toBe('unresolved');

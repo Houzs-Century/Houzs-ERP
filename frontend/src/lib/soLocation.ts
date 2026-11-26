@@ -1,12 +1,3 @@
-/* The SO Location column, resolved once for desktop and mobile.
-
-   `sales_location` is free text with no FK — it is a snapshot taken at create
-   time and rows exist holding a CITY ("Johor Bahru") instead of a warehouse,
-   which matches no warehouse downstream. `warehouse_name` is the real relation,
-   read from the SO's primary line `warehouse_id`. Mobile already preferred it
-   and desktop did not, so one SO rendered two different locations. Prefer the
-   relation everywhere, and tell the caller when it fell back so a guess is
-   never styled like a fact. */
 
 export type SoLocationSource = {
   warehouse_name?: string | null;
@@ -15,7 +6,6 @@ export type SoLocationSource = {
 
 export type SoLocation = {
   label: string | null;
-  /* false = the label is unverified free text, not a resolved warehouse. */
   isWarehouse: boolean;
 };
 

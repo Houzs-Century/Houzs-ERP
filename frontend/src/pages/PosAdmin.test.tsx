@@ -1,7 +1,3 @@
-/* The POS Admin page renders every tab on an empty company and on one with
-   data, without a live backend: the reads are mocked at the hook layer. Pinned
-   so a tab that throws on empty data, or on a row shape, is caught here and
-   not at the owner's first click. */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, test, vi } from "vitest";
@@ -85,7 +81,6 @@ describe("PosAdmin", () => {
     const d = mount("terminals");
     expect(screen.getAllByText("T01").length).toBeGreaterThan(0);
     expect(screen.getByText("RM 123.45")).toBeTruthy();
-    /* a device that lost T01 asks for it back: the request and its Approve button show above the list */
     expect(screen.getByText(/"POS Laptop" lost this terminal and asks to be reconnected/)).toBeTruthy();
     expect(screen.getByText("Approve")).toBeTruthy();
     d.unmount();

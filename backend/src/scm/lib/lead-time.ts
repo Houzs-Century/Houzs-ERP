@@ -59,7 +59,6 @@
 // make the agent unexplainable.
 // ----------------------------------------------------------------------------
 
-import { MFG_PRODUCT_CATEGORIES, mfgCategoryLabel } from '../shared/product-categories';
 
 /** A lead-time category is a product category code, lowercased ('sofa',
     'dining', 'fabric_accessory', …), or 'others'. The list is open: a category
@@ -73,27 +72,20 @@ export interface LeadCategoryOption { key: LeadCategory; label: string }
 type ItemGroupRow = { code: string; name: string | null; is_active: boolean | null };
 
 /**
- * The categories a lead time can be set for, in display order: the product
- * categories this build knows, then any the registry (scm.acc_item_groups) has
- * gained since, then Others. Service is left out (a service line raises no PO);
+ * The categories a lead time can be set for, in display order: the registry's
+ * groups (scm.acc_item_groups, the one category list) by name, then Others. Service is left out (a service line raises no PO);
  * a registry group switched off is left out too. Pure: the caller reads the
  * registry.
  */
 export function leadCategoryOptions(registry: ItemGroupRow[]): LeadCategoryOption[] {
   const reg = new Map(registry.map((r) => [r.code.toUpperCase(), r]));
-  const codes = [...MFG_PRODUCT_CATEGORIES as readonly string[]];
-  for (const r of [...reg.values()].sort((a, b) => (a.name ?? a.code).localeCompare(b.name ?? b.code))) {
-    if (!codes.includes(r.code.toUpperCase())) codes.push(r.code.toUpperCase());
-  }
   const out: LeadCategoryOption[] = [];
-  for (const code of codes) {
-    const row = reg.get(code);
-    // Others is added once, last, below: the registry has its own OTHERS group,
-    // and listing it too showed two rows for one stored key (2990-0063).
-    if (code === 'SERVICE' || code === OTHERS_LEAD_CATEGORY.toUpperCase() || row?.is_active === false) continue;
+  for (const row of [...reg.values()].sort((a, b) => (a.name ?? a.code).localeCompare(b.name ?? b.code))) {
+    const code = row.code.toUpperCase();
+    if (code === 'SERVICE' || code === OTHERS_LEAD_CATEGORY.toUpperCase() || row.is_active === false) continue;
     const key = code.toLowerCase();
     if (!LEAD_CATEGORY_RE.test(key)) continue;
-    out.push({ key, label: row?.name?.trim() || mfgCategoryLabel(code) });
+    out.push({ key, label: row.name?.trim() || code });
   }
   out.push({ key: OTHERS_LEAD_CATEGORY, label: 'Others' });
   return out;
@@ -116,9 +108,6 @@ export async function loadLeadCategoryOptions(
 export const isSettableLeadCategory = (options: LeadCategoryOption[], key: string): boolean =>
   key === 'service' || options.some((o) => o.key === key);
 
-/* Where a line looks for its number, first hit wins: its own category, then
-   for a Sofa Accessory the sofa's (it is ordered on the sofa's PO, owner
-   2026-09-14), then Others (2990-0063). No category at all reads nothing (0). */
 const leadChainOf = (category: string | null): string[] => {
   const cat = (category ?? '').toLowerCase();
   if (!cat) return [];
@@ -148,9 +137,7 @@ export const NO_OVERRIDES: LeadOverrides = { bySupplierCat: new Map() };
     what ships first: with no buffers this resolver returns exactly the base,
     i.e. byte-for-byte the behaviour of the two copies it replaces. */
 export interface LeadBuffers {
-  /** by supplier CODE (not id) — the code is what survives a supplier re-key. */
   supplierBufferDays: Record<string, number>;
-  /** by 2-digit calendar month of the customer delivery date: '01'..'12'. */
   seasonBufferDays: Record<string, number>;
 }
 
@@ -158,16 +145,9 @@ export const NO_BUFFERS: LeadBuffers = { supplierBufferDays: {}, seasonBufferDay
 
 export interface LeadTimeInput {
   warehouseId: string | null;
-  /** The SO/PO line's item_group. Matched lowercase; anything outside the five
-      categories simply misses and contributes 0 — same as the code replaced. */
   category: string | null;
-  /** The line's supplier id (uuid). Drives the manual per-supplier OVERRIDE
-      lookup. Omit (or null) to skip the override — the base then applies. */
   supplierId?: string | null;
-  /** Optional. Omit (or pass null) to skip the supplier layer entirely. */
   supplierCode?: string | null;
-  /** The customer delivery date (ISO YYYY-MM-DD). Drives the season lookup.
-      Omit to skip the season layer. */
   deliveryDate?: string | null;
 }
 
@@ -247,21 +227,10 @@ export async function loadSupplierCategoryOverrides(
   return { bySupplierCat };
 }
 
-/**
- * base only — the owner's manual number.
- * Cascade, unchanged from both originals: (warehouse, category) -> (NULL,
- * category) -> 0. A missing warehouse skips straight to the global bucket.
- */
 function baseLeadDays(base: LeadTimeBase, warehouseId: string | null, cat: string): number | undefined {
   return (warehouseId ? base.byWhCat.get(`${warehouseId}|${cat}`) : undefined) ?? base.byCat.get(cat);
 }
 
-/**
- * The owner's manual per-supplier override for this line, or undefined when
- * none. Undefined (not 0) on a miss so the caller's `?? base` falls through; an
- * explicit 0 the owner set is a real value and WINS over the base (0 ?? base is
- * 0). A line with no supplier skips the override entirely.
- */
 function overrideLeadDays(
   overrides: LeadOverrides,
   supplierId: string | null | undefined,
@@ -271,9 +240,6 @@ function overrideLeadDays(
   return overrides.bySupplierCat.get(`${supplierId}|${cat}`);
 }
 
-/** A non-negative whole number, or 0. Buffers are safety margin: a negative
-    would pull the PO date LATER than the customer's date, which is never the
-    intent and would silently ship the order late. Reject rather than trust. */
 function safeBuffer(v: unknown): number {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return 0;
@@ -313,8 +279,6 @@ export function resolveLeadDays(
   return { base: b, supplier, season, total: b + supplier + season };
 }
 
-/** '2026-12-04' -> '12'. Null for anything unparseable — the season layer then
-    contributes 0 rather than guessing a month. */
 function monthOf(dateStr: string | null | undefined): string | null {
   const s = (dateStr ?? '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;

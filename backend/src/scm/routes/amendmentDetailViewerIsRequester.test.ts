@@ -1,13 +1,3 @@
-/* GET /so-amendments/:id and GET /po-amendments/:id say whether the CALLER
- * raised the amendment.
- *
- * requested_by is a scm.staff uuid and the browser's scm-auth bridge has no
- * staff id, so the detail pages' own "did I raise this?" compare was always
- * false: the requester never saw Withdraw, only approvers did. 2026-10-05,
- * HC-SO-011143/A1: Syu could not withdraw the phantom pillow request BUG-53
- * had raised in her name, and the Owner had to. The server resolves the
- * caller's staff row the same way PATCH /:id/withdraw does.
- */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -51,7 +41,6 @@ function app(houzsUserId: number) {
   const a = new Hono<{ Bindings: Env; Variables: Variables }>();
   a.use('*', async (c, next) => {
     c.set('companyId', 1);
-    /* The route's supabaseAuth derives houzsUser from the session `user`. */
     c.set('user', {
       id: houzsUserId, email: 'caller@houzs.test', name: 'Caller', permissions: ['*'], permissions_set: new Set(['*']),
     } as unknown as User);

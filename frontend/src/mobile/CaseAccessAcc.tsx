@@ -7,7 +7,6 @@ const INK = "#11140f";
 const TEAL_DK = "#0c3f39";
 const BROWN = "#a16a2e";
 
-/** Access rows arrive snake_case from our SQL; the PG driver may camelCase them, so read both. */
 type AccessRow = { user_id?: number; userId?: number; user_name?: string | null; userName?: string | null };
 
 /**

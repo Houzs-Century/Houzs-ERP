@@ -18,30 +18,6 @@ import systemHealthServices from "./systemHealthServices";
 import systemHealthDatabase from "./systemHealthDatabase";
 import systemHealthJobs from "./systemHealthJobs";
 
-// ---------------------------------------------------------------------------
-// /api/admin/health — System Health, "real data" phase 1. Every route needs the
-// IT pages gate (`it.view`, services/itAccess.ts); the owner-only routes below
-// additionally need `*`.
-//
-// Ported from Hookka ERP's /admin/health, trimmed to what Houzs can show
-// WITHOUT Cloudflare Analytics Engine (Houzs has no AE binding). The
-// latency-percentile / slow-SQL / front-end-RUM panels Hookka feeds from AE
-// are deferred to a phase 2 that would stand up an AE dataset + query token.
-//
-// What this serves with REAL data today:
-//   GET /live        — a live DB ping (the true request-path latency, so the
-//                      Hyperdrive cold-start stall is visible), KV reachability,
-//                      and headcount + audit counts.
-//   GET /audit-feed  — recent business mutations from audit_events, plus a
-//                      by-action / by-resource rollup, and a sensitive-action
-//                      filter (the closest real-data stand-in for Hookka's
-//                      security panel, which needs auth events Houzs doesn't
-//                      capture yet).
-//
-// Every query is wrapped so a DB stall surfaces as { ok:false } in the JSON
-// instead of throwing — the health page must stay readable even when the
-// thing it monitors is unhealthy.
-// ---------------------------------------------------------------------------
 const app = new Hono<{ Bindings: Env }>();
 app.use("*", requireItPages());
 app.route("/", systemHealthLogins);
@@ -49,8 +25,6 @@ app.route("/", systemHealthServices);
 app.route("/", systemHealthDatabase);
 app.route("/", systemHealthJobs);
 
-// Sensitive-action matcher (SQL): security-relevant mutations worth a
-// dedicated eye. Kept in one place so /live counts and /audit-feed agree.
 const SENSITIVE_SQL =
   "(action LIKE 'user.disable%' OR action LIKE 'user.delete%' OR action LIKE 'user.reset_password%' OR action LIKE 'role.%' OR action LIKE 'user.totp%' OR action = 'finance.update')";
 
@@ -66,9 +40,6 @@ function cutoffIso(range: string | undefined): string {
 }
 
 app.get("/live", async (c) => {
-  // DB ping FIRST so it captures any cold-connection establishment cost —
-  // this is the headline number the operator watches for the "Failed to
-  // fetch" cold-start stall.
   const db: { ok: boolean; latency_ms: number; error?: string } = {
     ok: false,
     latency_ms: 0,
@@ -83,8 +54,6 @@ app.get("/live", async (c) => {
     db.error = e?.message || "DB ping failed";
   }
 
-  // KV reachability — a cheap GET of a probe key (null is fine; we time the
-  // round-trip, not the value). Optional binding, so guard it.
   const kv = { bound: !!c.env.SESSION_CACHE, ok: false, latency_ms: 0 };
   if (c.env.SESSION_CACHE) {
     const k0 = Date.now();
@@ -97,10 +66,6 @@ app.get("/live", async (c) => {
     }
   }
 
-  // R2 reachability — a cheap HEAD/GET of a probe key on the SCM slip/photo
-  // bucket (null object is fine; we time the round-trip). SO_ITEM_PHOTOS is the
-  // always-bound SCM bucket. Without this the page shows green while R2 (slip
-  // photos, SO-item photos) is unreachable.
   const r2 = { bound: !!c.env.SO_ITEM_PHOTOS, ok: false, latency_ms: 0 };
   if (c.env.SO_ITEM_PHOTOS) {
     const r0 = Date.now();
@@ -113,45 +78,13 @@ app.get("/live", async (c) => {
     }
   }
 
-  // Anthropic key presence — the SO-slip OCR /extract 503s when this secret is
-  // unset (a recurring cutover gap). Presence-only; we never call the API here.
   const anthropic = { configured: !!c.env.ANTHROPIC_API_KEY };
 
-  // Signed sessions — the ONE secret that decides whether every API request pays
-  // for two joined authorization reads. Unset, `tryPassAuth` is a no-op and
-  // `getUserBySession` runs a six-table join plus a four-branch UNION on the
-  // shared connection pool BEFORE any route body, which is what makes cheap
-  // endpoints (/api/presence, /api/branding) take about a second under load.
-  //
-  // PRESENCE ONLY, and computed through `sessionSigningSecret` rather than a
-  // truthiness test on the raw secret: that helper also rejects a key under 16
-  // characters, so a placeholder reads as OFF here exactly as it behaves at
-  // runtime. The value itself never leaves the worker.
-  //
-  // CONFIGURED IS NOT FIRING, and reporting only the first is what `0593` cost:
-  // the feature shipped, read as working from the source, and was inert for ~95%
-  // of every session's life. `authPath` is what the middleware OBSERVED doing on
-  // this very request (services/auth-fastpath-probe.ts).
   const sessionSigningConfigured = sessionSigningSecret(c.env) !== null;
   const thisRequestPath: AuthFastPath = c.get("authPath") ?? "unknown";
-  /* LEFT AT EXACTLY `{ configured }`. systemHealthSessionSigning.test.ts
-     deep-equals this object across three secret states, and that strictness is
-     the point — it exists to stop the panel reading On for a placeholder. The
-     new fact belongs in `authFastPath` below, not smuggled in here; both read
-     the same const, so they cannot disagree. */
   const sessionSigning = { configured: sessionSigningConfigured };
-  /* PRESENCE of the header, never its value — so `unknown` above is not a dead
-     end: no header means the browser has none to send, which is a different
-     finding from having sent one and losing the record. */
   const clientSentPass = (c.req.header("X-Session-Pass") || "").length > 0;
 
-  /* THE OTHER 90%. /api/presence and /api/announcements/banner are ~90% of every
-     slow request in production (697 of 761 occurrences over three days,
-     2026-09-02), and both cache — so the question is whether the caches HIT.
-     Presence rides the edge tier and can be asked directly for this caller's
-     scope; the banner is keyed per USER and per version, so it is reported by
-     its SETTING rather than probed, which is stated in the payload rather than
-     dressed as a measurement. */
   const presenceScopeKey = (() => {
     const cos = allowedCompanyIds(c);
     return cos === undefined
@@ -169,9 +102,6 @@ app.get("/live", async (c) => {
     presence: cacheFamilyReading(
       CONFIG_CACHE_TTL_SECONDS.presence, CLIENT_POLL_SECONDS.presence, presenceState,
     ),
-    /* NOT PROBED — the banner key carries the user id and the family version, so
-       a lookup here would answer about a key nobody polls. `bypass` says "not
-       measured", never "missing". */
     banner: cacheFamilyReading(
       CONFIG_CACHE_TTL_SECONDS.banner, CLIENT_POLL_SECONDS.banner, "bypass",
     ),
@@ -182,9 +112,6 @@ app.get("/live", async (c) => {
     reading: readingFor(sessionSigningConfigured, thisRequestPath, configCache, clientSentPass),
   };
 
-  // SCM-route liveness — the page must not show green while the SCM stack is
-  // 500ing. Probe ONE bounded SCM read straight through PostgREST (suppliers,
-  // head+count, zero rows) so a scm-schema / Supabase outage surfaces here.
   const scm = { configured: isSupabaseConfigured(c.env), ok: false, latency_ms: 0, error: undefined as string | undefined };
   if (scm.configured) {
     const s0 = Date.now();
@@ -200,8 +127,6 @@ app.get("/live", async (c) => {
     }
   }
 
-  // Counts — reuse the (now-warm) connection. Each wrapped so one failure
-  // doesn't blank the rest of the payload.
   const counts = {
     users_active: 0,
     users_invited: 0,
@@ -251,9 +176,6 @@ app.get("/live", async (c) => {
   }
 
   return c.json({
-    // Overall green requires DB up AND the SCM stack reachable (when configured)
-    // AND R2 reachable (when bound) — so the page can't show green while SCM is
-    // 500ing or slip-photo storage is down.
     ok: db.ok && (!scm.configured || scm.ok) && (!r2.bound || r2.ok),
     time: new Date().toISOString(),
     db,
@@ -261,8 +183,6 @@ app.get("/live", async (c) => {
     r2,
     anthropic,
     sessionSigning,
-    /* WHETHER IT IS FIRING, and whether the two endpoints that are ~90% of every
-       slow request are actually hitting their caches — auth-fastpath-probe.ts. */
     authFastPath,
     scm,
     counts,
@@ -270,61 +190,15 @@ app.get("/live", async (c) => {
 });
 
 
-// ---------------------------------------------------------------------------
-// GET /rest-page-ceiling — HOW MANY ROWS DOES THE POSTGREST EDGE ACTUALLY HAND
-// BACK? Read-only: every call below is a GET of ONE narrow column, and the
-// response carries counts only — never a row, a doc_no or a name.
-//
-// WHY THIS LIVES IN THE WORKER AND NOT IN A SCRIPT. The number is a property of
-// the REST edge, and only the Worker can ask it: `db/supabase.ts:66` builds the
-// real `createClient(url, serviceKey)` and every `sb.from(...)` in the SCM
-// module is a PostgREST call, but those two credentials exist ONLY as Worker
-// secrets. They are deliberately NOT GitHub secrets (public repo, readable by
-// non-admin collaborators, and the service-role key bypasses RLS on a database
-// two tenants share), so `probe-mrp-read-ceiling.mjs`'s REST half could never
-// run from Actions — runs 31941352447 and 31942066593 both printed
-// "SKIPPED — SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set". Rewriting it
-// over DATABASE_URL would have measured Postgres, which is not the thing in
-// question. So it is asked from the process that already holds the credentials
-// and already issues the exact request.
-//
-// WHAT IT SETTLES. `lib/paginate-all.ts`'s header asserts a 1000-row cap; that
-// assertion was never measured, and 52 files page against `PAGE`. Two failures
-// are possible and this separates them:
-//   · ceiling >= PAGE — paginateAll's short-page stop is sound.
-//   · ceiling <  PAGE — page one comes back short, the loop stops on it, and
-//     EVERY paged read in the tree truncates silently.
-// It imports the real `PAGE` rather than restating 1000, so the verdict cannot
-// agree with itself by construction.
-//
-// HOW TO READ IT. `returned` vs `contentRangeTotal` is the whole answer: the
-// total is what the filter matches, `returned` is what arrived. A gap is rows
-// dropped with no error. A probe is only informative when the table holds MORE
-// rows than were requested — otherwise the read ran out of table, not out of
-// ceiling, and it is reported `inconclusive` rather than counted as evidence.
-// ---------------------------------------------------------------------------
 
-/* CANDIDATE TABLES, probed head-only first so the ladder runs against whichever
-   actually holds enough rows to be informative. A fixed table cannot do that
-   job across environments: production's `mfg_sales_order_items` carries ~13.9k
-   rows, but on staging that same table holds 67 (run 32281490702) while
-   `mfg_products` holds 1,326 — so a hardcoded target answers on one stack and
-   returns "inconclusive" on the other. All are SCM master/among-largest tables
-   and all are read as `select=id` alone. This is a fixed allow-list, never a
-   caller-supplied table name: the gate is `*`, but a table name off the wire
-   would still be an arbitrary-read primitive. */
 const CEILING_CANDIDATES = [
   "mfg_sales_order_items",
   "mfg_products",
   "mfg_sales_orders",
   "purchase_order_items",
 ] as const;
-/* Straddles the asserted 1000 on both sides so the ceiling is LOCATED rather
-   than assumed. PAGE+1 is the one that matters: at exactly PAGE, a cap and a
-   table that happens to stop there are indistinguishable. */
 const CEILING_LIMITS = [500, 1000, 1001, 5000] as const;
 
-/** Error text without an `any`: a thrown value is `unknown` until proven. */
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
 }
@@ -354,10 +228,6 @@ app.get("/rest-page-ceiling", requirePermission("*"), async (c) => {
   const sb = getSupabaseService(c.env);
   const probes: CeilingProbe[] = [];
 
-  /* STEP 1 — size the candidates, head-only (`head: true` sends the count
-     request and returns ZERO rows), then probe the biggest. A ladder is only
-     evidence about a ceiling when the table can outrun the limit being asked
-     for, so the target is chosen by measurement rather than assumed. */
   const sizes: { table: string; total: number | null; error?: string }[] = [];
   for (const table of CEILING_CANDIDATES) {
     try {
@@ -397,9 +267,6 @@ app.get("/rest-page-ceiling", requirePermission("*"), async (c) => {
       }
       const returned = data.length;
       const total = typeof count === "number" ? count : null;
-      /* "The table ran out" and "the edge capped" are the same observation
-         unless the total exceeds what was asked for. Only the latter is
-         evidence about a ceiling. */
       const inconclusive = total == null ? true : total <= requested;
       probes.push({
         requested,
@@ -418,10 +285,6 @@ app.get("/rest-page-ceiling", requirePermission("*"), async (c) => {
     }
   }
 
-  /* paginateAll's FIRST WINDOW, issued in its own shape rather than inferred
-     from the `.limit()` probes above. `.range(a,b)` is a Range header, not a
-     `limit=` parameter, and the second-order question is specifically about
-     what THIS call returns — so it is measured, not reasoned about. */
   let firstWindow: CeilingProbe = {
     requested: PAGINATE_ALL_PAGE, returned: null, contentRangeTotal: null,
     short: null, cappedByEdge: null, inconclusive: null,
@@ -449,20 +312,11 @@ app.get("/rest-page-ceiling", requirePermission("*"), async (c) => {
     firstWindow.error = errText(e, "range probe failed");
   }
 
-  /* THE CEILING. The most rows the edge was ever willing to hand back — taken
-     from the probes that actually pushed past the table's own size, because a
-     read that ran out of rows says nothing about a cap. `null` when no probe
-     was conclusive, and that is reported as UNKNOWN rather than smoothed into
-     a number. */
   const conclusive = probes.filter((p) => p.inconclusive === false && p.returned != null);
   const ceiling = conclusive.length
     ? Math.max(...conclusive.map((p) => p.returned as number))
     : null;
 
-  /* THE SECOND-ORDER VERDICT. paginateAll stops on the first page shorter than
-     PAGE, so a ceiling BELOW PAGE makes page one look final. Decided from the
-     measured first window where that is conclusive — the direct observation —
-     and from `ceiling` otherwise. */
   let paginateAll: { page: number; verdict: string; basis: string };
   if (firstWindow.inconclusive === false && firstWindow.returned != null) {
     paginateAll = {
@@ -486,12 +340,6 @@ app.get("/rest-page-ceiling", requirePermission("*"), async (c) => {
     };
   }
 
-  /* DOES THE CAP GENERALISE? PostgREST's row cap is server configuration
-     (`db-max-rows`), not a per-table property — but that is a claim about how
-     PostgREST is built, and this endpoint exists because claims of that shape
-     went unchecked for weeks. So ask the SAME decisive limit (PAGE+1) of every
-     OTHER candidate big enough to answer, and let the payload show whether the
-     number repeats across tables instead of asserting that it must. */
   const crossTable: CeilingProbe[] = [];
   for (const s2 of sizes) {
     if (s2.table === CEILING_TABLE) continue;
@@ -533,8 +381,6 @@ app.get("/rest-page-ceiling", requirePermission("*"), async (c) => {
     crossTable,
     paginateAllFirstWindow: firstWindow,
     paginateAll,
-    /* WHAT THIS MEASUREMENT CANNOT SEE. Stated in the payload, not just in a
-       comment, because the number gets quoted and the caveats get dropped. */
     scopeNotes: [
       `The ladder is direct evidence about ONE table (${CEILING_TABLE}, chosen as the largest countable candidate) read as a single narrow column through getSupabaseService — the same client the SCM module uses.`,
       `Generalisation is measured, not asserted: \`crossTable\` re-asks the decisive ${PAGINATE_ALL_PAGE + 1} of every other candidate holding more than ${PAGINATE_ALL_PAGE} rows. ${crossTable.length} such table(s) were available here. PostgREST's cap is server-level \`db-max-rows\` rather than per-table, so agreement across tables is expected — but where crossTable is empty, only the one table is actually evidenced.`,
@@ -574,13 +420,6 @@ app.get("/audit-feed", async (c) => {
       .bind(cutoff)
       .all();
 
-    // The public.audit_events feed is blind to SCM business mutations, which
-    // are written to scm.mfg_so_audit_log over PostgREST (supabase-js), not the
-    // public schema. Pull recent SCM SO-audit rows too and normalize them into
-    // the same shape so the operator sees ONE merged who-changed-what feed.
-    // Best-effort + bounded: a Supabase stall must not blank the core feed, and
-    // the sensitive-only filter intentionally hides these (no security-action
-    // taxonomy here) so the sensitive view stays a pure public.audit_events cut.
     const coreRows = (rows.results ?? []) as any[];
     let scmRows: any[] = [];
     if (!sensitiveOnly && isSupabaseConfigured(c.env)) {
@@ -595,8 +434,6 @@ app.get("/audit-feed", async (c) => {
           .order("created_at", { ascending: false })
           .limit(limit);
         scmRows = ((scm as any[]) ?? []).map((r) => ({
-          // Prefix the uuid so it can't collide with public.audit_events' numeric
-          // ids in the frontend's row key.
           id: `scm:${r.id}`,
           created_at: r.created_at,
           actor_id: r.actor_id ?? null,
@@ -609,11 +446,9 @@ app.get("/audit-feed", async (c) => {
             [r.so_doc_no, r.status_snapshot].filter(Boolean).join(" "),
         }));
       } catch {
-        // Swallow — the SCM merge is additive; never fail the core feed on it.
       }
     }
 
-    // Merge by timestamp (desc), then cap to the requested limit.
     const merged = [...coreRows, ...scmRows]
       .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
       .slice(0, limit);
@@ -634,16 +469,6 @@ app.get("/audit-feed", async (c) => {
   }
 });
 
-// GET /ledger — "Inventory ledger integrity" health check. Runs the same
-// read-only SCM reconcile sweep as /api/scm/inventory/reconcile and reports it
-// as a single OK/WARN indicator: status "ok" (green) when 0 silent partial
-// stock-writes are found, "warn" (red) with the count when any document moved
-// stock on paper but has zero matching inventory_movements rows.
-//
-// SCM lives in the `scm` Postgres schema reached over PostgREST (supabase-js),
-// separate from this route's D1/public-schema c.env.DB — so we build the
-// scm-scoped service client here, the same one the SCM routes use. Read-only +
-// bounded; wrapped so a Supabase stall surfaces as ok:false, never throws.
 app.get("/ledger", requirePermission("*"), async (c) => {
   if (!isSupabaseConfigured(c.env)) {
     return c.json({
@@ -658,11 +483,6 @@ app.get("/ledger", requirePermission("*"), async (c) => {
   }
   try {
     const sb = getSupabaseService(c.env);
-    /* null = ALL COMPANIES, on purpose. This is the cross-company integrity
-       count; the per-company report is the operator-facing /reconcile route.
-       Written out rather than omitted so the two modes are distinguishable at
-       the call site — an omitted argument reads the same whether the author
-       meant "every company" or never knew there was a choice. */
     const { asOf, issueCount, issues } = await reconcileLedger(sb, null);
     return c.json({
       check: "inventory_ledger_integrity",
@@ -671,8 +491,6 @@ app.get("/ledger", requirePermission("*"), async (c) => {
       status: issueCount === 0 ? "ok" : "warn",
       configured: true,
       issueCount,
-      // Cap the inline list so an extreme backlog can't bloat the health JSON;
-      // the operator drills into /api/scm/inventory/reconcile for the full set.
       issues: issues.slice(0, 50),
       asOf,
     });
@@ -689,26 +507,7 @@ app.get("/ledger", requirePermission("*"), async (c) => {
   }
 });
 
-// ── AutoCount migration reconciliation ─────────────────────────────
-// The daily 02:00 cron refreshes the PO mirrors and the ac_snapshot_* staging
-// tables unattended. These three routes exist because the migration cleanup is
-// an interactive job: somebody is sitting there asking "is it clean yet?" and
-// cannot wait until 02:00 to find out. Owner-only (`*`) — they wipe-and-reload
-// mirrors Finance reads.
 
-// One number per question, so "is the data clean yet?" stops being a matter of
-// opinion. Every count is a diff between what AutoCount has and what the ERP
-// has; clean = all of them zero.
-//
-// mirror_po_outstanding_lines is a plain COUNT(*), NOT a count of
-// is_outstanding = 1. The middleware's /getOutstanding filters to
-// "Qty - TransferedQty > 0", so every row in `purchase_orders` is outstanding
-// by construction and the pull leaves that legacy column NULL — the predicate
-// would report 0 on a perfectly good pull, which is precisely the silent zero
-// this endpoint exists to stop.
-//
-// No "--" comments inside the SQL: d1-compat splits statements and a line
-// comment swallows what follows it.
 app.get("/autocount/reconcile", requirePermission("*"), async (c) => {
   // company-scope: owner-only (`*`) whole-system reconciliation. It returns COUNTs only, no row and no id, and compares the AutoCount snapshot against every mirror; a company predicate would make the diff wrong, not safer.
   try {
@@ -741,9 +540,6 @@ app.get("/autocount/reconcile", requirePermission("*"), async (c) => {
     return c.json({
       check: "autocount_migration_reconcile",
       label: "AutoCount migration reconciliation",
-      // Without a snapshot there is no denominator, so the honest answer is
-      // "unknown" — never "ok". That distinction is the entire point of this
-      // endpoint: a silent zero used to read as "clean".
       status: snapshotSo === 0 ? "unknown" : "ok",
       snapshotTaken: snapshotSo > 0,
       counts: row ?? {},
@@ -759,8 +555,6 @@ app.get("/autocount/reconcile", requirePermission("*"), async (c) => {
   }
 });
 
-// Refresh both PO mirrors now. Docs first, then lines — the doc pull is what
-// Finance reads, so it gets the fresher data if the second call fails.
 app.post("/autocount/po-pull", requirePermission("*"), async (c) => {
   try {
     const { runPOPull, runPODocsPull } = await import("../services/po");
@@ -768,35 +562,12 @@ app.post("/autocount/po-pull", requirePermission("*"), async (c) => {
     const lines = await runPOPull(c.env, "MANUAL");
     return c.json({ docs, lines });
   } catch {
-    // Plain-language rule: never surface raw exception text to the user.
     return c.json({ error: "Couldn't reach AutoCount to refresh purchase orders. Try again shortly." }, 502);
   }
 });
 
-/* Refresh the SALES-ORDER mirror. The PO twin above has existed for a while; this
-   one did not, and its absence is why a stale mirror could only be fixed by
-   waiting.
-
-   `?mode=all` is the point. The incremental path asks AutoCount getSince(
-   pull_checkpoint), so an order whose LAST MODIFIED date precedes the mirror's
-   earliest checkpoint is never offered and never arrives — no amount of waiting
-   collects it. `all` goes through getAll and, per services/pull.ts:29, does NOT
-   touch the checkpoint, so a backfill cannot disturb the incremental pull that
-   is working. Default stays `filtered` so a mis-click is the cheap one.
-
-   Proved necessary 2026-08-19: SO-005263 exists in AutoCount, a salesperson
-   could not raise a Service Case against it, and the mirror held 3281 rows with
-   no trace of that number or its digits while the checkpoint was CURRENT.
-
-   Idempotent: the INSERT is ON CONFLICT(doc_no) DO UPDATE, so re-running
-   refreshes rows rather than duplicating them. */
 app.post("/autocount/so-pull", requirePermission("*"), async (c) => {
   const mode = c.req.query("mode") === "all" ? "all" : "filtered";
-  /* `?since=YYYY-MM-DD` is the BACKFILL, and it is the one that works. `mode=all`
-     calls getAll() and against ~13,000 orders it killed the Worker outright —
-     measured 2026-08-19: 39 seconds, then `Worker exceeded resource limits`. So a
-     backlog is collected in WINDOWS, and `since` neither reads nor advances the
-     checkpoint, which is what makes it safe to run beside the live pull. */
   const sinceRaw = (c.req.query("since") ?? "").trim();
   if (sinceRaw && !/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/.test(sinceRaw)) {
     return c.json({ error: "since must look like 2026-01-31 or 2026-01-31 00:00:00" }, 400);
@@ -811,8 +582,6 @@ app.post("/autocount/so-pull", requirePermission("*"), async (c) => {
   }
 });
 
-// Rebuild the unfiltered staging snapshot. Writes only ac_snapshot_*, so this
-// is the safe one to re-run whenever a fresh denominator is wanted.
 app.post("/autocount/snapshot", requirePermission("*"), async (c) => {
   try {
     const { runSOSnapshot, runPOSnapshot } = await import("../services/acSnapshot");
@@ -820,7 +589,6 @@ app.post("/autocount/snapshot", requirePermission("*"), async (c) => {
     const po = await runPOSnapshot(c.env, "MANUAL");
     return c.json({ so, po });
   } catch {
-    // Plain-language rule: never surface raw exception text to the user.
     return c.json({ error: "Couldn't reach AutoCount to build the snapshot. Try again shortly." }, 502);
   }
 });
@@ -865,10 +633,6 @@ app.post("/autocount/snapshot", requirePermission("*"), async (c) => {
 // `error code: 502` was reported as AutoCount refusing a document.
 // ---------------------------------------------------------------------------
 
-/* No URL may reach the caller. `AC_SYNC_URL` is a Worker secret, and a transport
-   failure's message is written by the fetch implementation — it can legitimately
-   quote the address it failed to reach. Applied to every string this route
-   passes through from anywhere other than its own source. */
 export function stripUrls(s: string): string {
   return s.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "[address removed]");
 }
@@ -882,9 +646,6 @@ type HostBuildVerdict =
   | "HOST_DID_NOT_ANSWER"
   | "HOST_ERROR";
 
-/* One sentence per verdict, in the words the owner's rule asks for: what it
-   means for the business first, and what to do about it. Kept beside the
-   verdict rather than in the reader's head — this payload gets pasted. */
 const HOST_BUILD_MEANING: Record<HostBuildVerdict, string> = {
   REPORTED:
     "The office AutoCount machine answered and named the build it is running. Compare builtAt against the date of the last change to the service.",
@@ -925,9 +686,6 @@ app.get("/autocount/host-build", requirePermission("*"), async (c) => {
   const res = await callAcService(c.env, "health", {});
   const latencyMs = Date.now() - t0;
 
-  /* The service's OWN JSON. `callAcService` parses it on the failure path too
-     and leaves `{}` when the body was not JSON at all — which is the signal
-     that separates the service speaking from the tunnel speaking. */
   const body: Record<string, unknown> = res.body ?? {};
   const sent = (k: string) => Object.prototype.hasOwnProperty.call(body, k);
   const text = (k: string): string | null => {
@@ -940,18 +698,12 @@ app.get("/autocount/host-build", requirePermission("*"), async (c) => {
 
   let verdict: HostBuildVerdict;
   if (res.ok) {
-    /* ABSENT AND NULL ARE DIFFERENT ANSWERS, and the C# is written so they stay
-       different: it sets both keys to null rather than omitting them when its
-       own reflection fails. So a payload with NEITHER key is an exe built before
-       the fields existed — the honest reading of a missing key, and the one this
-       endpoint exists to make sayable. */
     if (!sent("builtAt") && !sent("mvid")) verdict = "BUILD_NOT_REPORTED";
     else if (builtAt == null && mvid == null) verdict = "BUILD_UNREADABLE";
     else verdict = "REPORTED";
   } else if (res.status === 401) {
     verdict = "HOST_REFUSED_OUR_KEY";
   } else if (res.status === 503 && sent("error")) {
-    // The one place the service answers 503 is its fail-closed no-key check.
     verdict = "HOST_HAS_NO_KEY";
   } else if (res.status === 0 || ((res.status === 502 || res.status === 503 || res.status === 504) && !sent("error"))) {
     verdict = "HOST_DID_NOT_ANSWER";
@@ -967,26 +719,15 @@ app.get("/autocount/host-build", requirePermission("*"), async (c) => {
     configured: true,
     verdict,
     meaning: HOST_BUILD_MEANING[verdict],
-    /* 0 when the host was never reached — `callAcService`'s own convention for
-       a transport failure, kept rather than translated. */
     hostStatus: res.status,
     latencyMs,
     builtAt,
     mvid,
-    /* The rest of what the service says about itself. `book` is substituted at
-       BUILD time from the same value that builds its connection line, so a build
-       pointed at a test book cannot announce the live one. */
     book: text("book"),
     service: text("service"),
-    /* Names only, no values: a field a newer host sends that this route does not
-       read yet is worth seeing, and blind-forwarding a host-controlled payload
-       into an admin response is not. */
     otherKeys: Object.keys(body).filter(
       (k) => !["ok", "book", "service", "builtAt", "mvid", "error"].includes(k),
     ),
-    /* The service's own words when it refused, stripped of any address. Null
-       when it answered, so an operator never reads a stale error beside a
-       healthy build. */
     hostError: res.error ? stripUrls(res.error) : null,
     howToCompare:
       "builtAt is the exe's file timestamp on the host. Run "

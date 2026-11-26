@@ -38,10 +38,7 @@ const stop = (stop_no: number, do_id: string | null, do_status: string | null) =
 describe('loadingOrder — the sheet is the reverse of the route', () => {
   it('puts the LAST delivery first, because it is loaded deepest', () => {
     const out = loadingOrder([stop(1, 'a', null), stop(2, 'b', null), stop(3, 'c', null)]);
-    // Numbered 1,2,3 by LOADING order...
     expect(out.map((s) => s.load_no)).toEqual([1, 2, 3]);
-    // ...over the stops taken in DESCENDING delivery order. Flip the function
-    // to ascending and this line is what fails.
     expect(out.map((s) => s.stop.stop_no)).toEqual([3, 2, 1]);
     expect(out[0].stop.stop_no).toBe(3);
     expect(out[0].stop.stop_no).not.toBe(1);
@@ -78,7 +75,6 @@ describe('rollupDeliveryStatus — the owner ladder over the member delivery ord
     expect(rollupLabel(rollupDeliveryStatus([stop(1, 'a', 'LOADED')]))).toBe('Confirmed 1/1');
     expect(rollupLabel(rollupDeliveryStatus([stop(1, 'a', 'IN_TRANSIT')]))).toBe('In Transit 1/1');
     expect(rollupLabel(rollupDeliveryStatus([stop(1, 'a', 'DELIVERED')]))).toBe('Delivered 1/1');
-    // SIGNED and INVOICED are past the ladder's last rung and read as Delivered.
     expect(rollupLabel(rollupDeliveryStatus([stop(1, 'a', 'SIGNED')]))).toBe('Delivered 1/1');
     expect(rollupLabel(rollupDeliveryStatus([stop(1, 'a', 'INVOICED')]))).toBe('Delivered 1/1');
   });
@@ -90,7 +86,6 @@ describe('rollupDeliveryStatus — the owner ladder over the member delivery ord
 
   it('REFUSES over nothing rather than printing a confident zero', () => {
     expect(rollupDeliveryStatus([])).toBeNull();
-    // A stop whose delivery order the company predicate filtered out.
     expect(rollupDeliveryStatus([stop(1, 'a', null)])).toBeNull();
     expect(rollupLabel(null)).toBeNull();
   });
@@ -98,7 +93,6 @@ describe('rollupDeliveryStatus — the owner ladder over the member delivery ord
   it('keeps cancelled delivery orders out of the ladder, and says how many there were', () => {
     const r = rollupDeliveryStatus([stop(1, 'a', 'CANCELLED'), stop(2, 'b', 'LOADED')]);
     expect(r).toEqual({ label: 'Confirmed', reached: 1, total: 1, cancelled: 1 });
-    // Every member cancelled is still nothing to roll up.
     expect(rollupDeliveryStatus([stop(1, 'a', 'CANCELLED')])).toBeNull();
   });
 
@@ -136,7 +130,6 @@ describe('fmtM3', () => {
   it('is NULL when nothing carried a figure — never "0.00 m³"', () => {
     expect(fmtM3(null)).toBeNull();
     expect(fmtM3(undefined)).toBeNull();
-    // A real, stored zero is still a figure and prints as one.
     expect(fmtM3(0)).toBe('0.00 m³');
   });
 });

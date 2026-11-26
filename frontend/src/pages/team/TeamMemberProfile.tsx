@@ -26,10 +26,6 @@ import type { TeamMember, Department, Position, Role } from "../../types";
 import { empCode, statusBadgeProps, divisionOf, roleOptions, Eyebrow, SegmentedTabs, FIELD_SELECT_CLS } from "./teamShared";
 import { isExternalPosition, EXTERNAL_POSITION_MESSAGE } from "../../lib/externalPosition";
 
-/* Member Profile — design handoff screen 02. Right-side drawer opened from a
- * Directory row: identity card fixed left, editable Assignment + read-only
- * Permissions + Activity Log right. Assignment edits are inline (selects),
- * saved in one PATCH. */
 
 type ProfileTab = "details" | "permissions" | "activity";
 
@@ -82,18 +78,10 @@ export function TeamMemberProfile({
   const [tab, setTab] = useState<ProfileTab>("details");
   const [saving, setSaving] = useState(false);
 
-  /* Account access. Restored after the profile redesign dropped the old edit
-     panel's "Set password" field and reset-link button. A driver who forgets
-     their password has no office email they reliably check, so an admin needs to
-     hand them a new one directly. Gated on `canManage`, which the Directory sets
-     to full-admin only (`canManage && !salesDirScoped`) — exactly the users.manage
-     tier the backend PATCH password gate enforces, so a Sales Director never sees
-     this and could not use it if they did. */
   const [newPw, setNewPw] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [pwBusy, setPwBusy] = useState<null | "set" | "link" | "require">(null);
 
-  // Assignment draft — starts from the live row, saved as one PATCH diff.
   const [draft, setDraft] = useState(() => ({
     name: member.name ?? "",
     department_id: member.department_id,
@@ -118,10 +106,6 @@ export function TeamMemberProfile({
   const role = roles.find((r) => r.id === member.role_id) ?? null;
   const status = statusBadgeProps(member.status);
 
-  /* POS Access. The 2990 tablet needs a 6-digit PIN, and the combination that
-     calls for one — 2990's Home + a Sales title — is decided by the two fields
-     directly above this card, so the DRAFT drives whether it shows and the
-     SAVED row drives whether the PIN endpoints will accept a write. */
   const draftPositionSlug =
     positions.find((p) => p.id === draft.position_id)?.slug ?? null;
   const savedPositionSlug =
@@ -136,9 +120,6 @@ export function TeamMemberProfile({
     companies,
     positionSlug: savedPositionSlug,
   });
-  /* Set by a save that turned POS eligibility ON — the card then opens its own
-     entry box, which is what makes the PIN impossible to miss the first time a
-     salesperson is given 2990 access. */
   const [pinPrompt, setPinPrompt] = useState(false);
 
   const deptPositions = useMemo(
@@ -189,8 +170,6 @@ export function TeamMemberProfile({
         patch.company_ids = draft.company_ids;
       await api.patch(`/api/users/${member.id}`, patch);
       toast.success("Assignment saved");
-      // Eligibility that was NOT there before this save is the moment an admin
-      // needs the PIN box — anything else would leave it to them to remember.
       if (showPosPin && !posPinSaved) setPinPrompt(true);
       onChanged();
     } catch (e) {
@@ -200,10 +179,6 @@ export function TeamMemberProfile({
     }
   }
 
-  // Set a new password directly (PATCH {password}) — the member signs in with it
-  // at once. Separate from the Assignment Save because it is a sensitive, one-off
-  // action, not part of a role/department edit. Min 12 mirrors the backend
-  // strength check; the final word is the server's.
   async function setNewPassword() {
     const pw = newPw.trim();
     if (pw.length < 12) {
@@ -229,9 +204,6 @@ export function TeamMemberProfile({
     }
   }
 
-  // The gentler alternative — email a one-time link and let them choose their own
-  // password. Same endpoint the old panel used; the link is never surfaced to the
-  // admin, and nothing on the account changes until the member clicks it.
   async function sendResetLink() {
     if (
       !(await dialog.confirm(
@@ -345,7 +317,6 @@ export function TeamMemberProfile({
       }
     >
       <div className="grid gap-5 p-5" style={{ gridTemplateColumns: "272px 1fr" }}>
-        {/* ── Identity card ── */}
         <div className="flex flex-col gap-4">
           <div className="rounded-lg border border-border bg-surface p-5 shadow-stone">
             <div className="flex items-center gap-3">
@@ -357,9 +328,6 @@ export function TeamMemberProfile({
               />
               <div className="min-w-0">
                 {canManage ? (
-                  // Editable in place — folded into the same draft/Save as Assignment,
-                  // so renaming a member needs no separate panel. Empty falls back to
-                  // the email as the display name (member.name || member.email).
                   <input
                     aria-label="Name"
                     value={draft.name}
@@ -428,7 +396,6 @@ export function TeamMemberProfile({
           )}
         </div>
 
-        {/* ── Right column: sub-tabs + panels ── */}
         <div className="flex min-w-0 flex-col gap-4">
           <SegmentedTabs<ProfileTab>
             value={tab}

@@ -1,7 +1,3 @@
-// POST /payment-vouchers/extract — the bill reader behind 📷 Scan bills (PV and
-// AP invoice alike). Moved out of payment-vouchers.ts unchanged on 2026-09-30,
-// when that file reached its 2000-line ceiling; payment-vouchers.ts still
-// registers the route and re-exports the handler.
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { activeCompanySql, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
@@ -65,7 +61,6 @@ export const extractBillsHandler = async (c: any) => {
     }) : null;
   })));
   timer.mark('upload');
-  /* Suppliers once for the whole batch — matching is per bill, in code. */
   const sb = c.get('supabase');
   const { data: supRaw, error: supErr } = await scopeToCompany(
     sb.from('suppliers').select('id, code, name').eq('status', 'ACTIVE'), c,
@@ -73,18 +68,12 @@ export const extractBillsHandler = async (c: any) => {
   if (supErr) return c.json({ error: 'load_failed', reason: supErr.message }, 500);
   const suppliers = (supRaw ?? []) as Array<{ id: string; code: string | null; name: string }>;
 
-  /* Vendor memory (0341), once for the batch — what the operator saved the
-     last time each vendor was paid. Small by construction: one row per
-     distinct vendor per company. */
   const { data: memRaw, error: memErr } = await scopeToCompany(
     sb.from('acc_vendor_memory').select('vendor_key, payee_name, debit_account_code, purpose, times_seen'), c,
   );
   if (memErr) return c.json({ error: 'load_failed', reason: memErr.message }, 500);
   type MemRow = { vendor_key: string; payee_name: string | null; debit_account_code: string | null; purpose: string | null; times_seen: number };
   const memByKey = new Map(((memRaw ?? []) as MemRow[]).map((m) => [m.vendor_key, m]));
-  /* The printed name first; the MATCHED supplier's name second — a bill
-     reading "TENAGA NASIONAL" still finds the habit saved under "TNB" when
-     both normalize onto the supplier the matcher agreed on. */
   const memoryFor = (vendorName: string | null, matchedName: string | null): MemRow | null => {
     for (const raw of [vendorName, matchedName]) {
       if (!raw) continue;
@@ -95,7 +84,6 @@ export const extractBillsHandler = async (c: any) => {
   };
 
   timer.mark('prep');
-  /* Bills are read together, four at a time: serial reads were the batch's whole wait. */
   const read: Array<Awaited<ReturnType<typeof extractOneBill>>> = new Array(bills.length);
   let nextBill = 0;
   await Promise.all(Array.from({ length: Math.min(4, bills.length) }, async () => {
@@ -106,7 +94,7 @@ export const extractBillsHandler = async (c: any) => {
       read[i] = await extractOneBill(apiKey, files, requestAiTag(c, 'bill_extract', BILL_MODEL));
     }
   }));
-  await kept; // originals are kept alongside the reads; keepScanFile never throws
+  await kept;
   timer.mark('model');
 
   /* The events the bills could be for (owner 2026-09-30: ocr 要有办法 detect
@@ -176,8 +164,6 @@ export function billsRefusal(bills: unknown[]): { error: string; message: string
   return null;
 }
 
-/* The same read on the scan queue (lib/ai-read-jobs.ts): one job per bill, so
-   the page shows each bill queued, reading, read or failed. */
 const pvGate: AiReadGate = (c) => hasHouzsPerm(c, 'scm.payment_voucher.create');
 const oneJobPerBill: AiReadSplit = async (c) => {
   let body: { fromRequest?: unknown; bills?: unknown };
@@ -228,8 +214,6 @@ export async function requestBill(c: any, requestId: string): Promise<{ files: A
     .select('file_key, file_name, mime, sort_no').eq('request_id', id), c).order('sort_no');
   let { data: rows, error: fErr } = await filesOf(requestId);
   if (fErr) return { resp: c.json({ error: 'load_failed', reason: fErr.message }, 500) };
-  /* A balance with nothing of its own reads the bill of the request it was
-     raised from (payment-request item 2: no second upload). */
   if ((rows ?? []).length === 0 && req.parent_request_id) {
     ({ data: rows, error: fErr } = await filesOf(String(req.parent_request_id)));
     if (fErr) return { resp: c.json({ error: 'load_failed', reason: fErr.message }, 500) };

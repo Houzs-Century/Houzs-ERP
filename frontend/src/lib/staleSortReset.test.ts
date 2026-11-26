@@ -16,9 +16,6 @@ describe("clearStaleTableSorts", () => {
   });
 
   it("leaves real preferences alone", () => {
-    // Column layout, widths and the mobile view choice are things the user
-    // actually chose. Wiping those to fix a sort bug would be taking something
-    // away to fix something else.
     localStorage.setItem("dt:sort:orders", JSON.stringify({ key: "a", dir: "asc" }));
     localStorage.setItem("dt:hidden:orders", JSON.stringify(["status"]));
     localStorage.setItem("dt:widths:orders", JSON.stringify({ name: 200 }));
@@ -33,8 +30,6 @@ describe("clearStaleTableSorts", () => {
     localStorage.setItem("dt:sort:orders", JSON.stringify({ key: "a", dir: "asc" }));
     expect(clearStaleTableSorts()).toBe(1);
 
-    // The user deliberately sorts something later. A second sweep would be the
-    // app overriding a person, not cleaning up a bug.
     localStorage.setItem("dt:sort:orders", JSON.stringify({ key: "b", dir: "desc" }));
     expect(clearStaleTableSorts()).toBe(0);
     expect(localStorage.getItem("dt:sort:orders")).not.toBeNull();
@@ -45,8 +40,6 @@ describe("clearStaleTableSorts", () => {
   });
 
   it("removes ALL of them, not every other one", () => {
-    // Deleting while iterating by index shifts the remaining keys down and
-    // silently skips half. Ten keys is enough for that to show.
     for (let i = 0; i < 10; i += 1) {
       localStorage.setItem(`dt:sort:table-${i}`, JSON.stringify({ key: "a", dir: "asc" }));
     }

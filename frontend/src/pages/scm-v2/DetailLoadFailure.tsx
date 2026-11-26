@@ -1,6 +1,3 @@
-/* The banner a document detail page shows when it has no record to render.
-   A real 404 says "not found"; any other failure says it could not load, gives
-   the reason, and offers Retry (lib/loadFailure.ts says why the two differ). */
 
 import { RefreshCw } from 'lucide-react';
 import { Button } from '../../components/Button';
@@ -13,9 +10,7 @@ export function DetailLoadFailure({
   onRetry,
   retrying,
 }: {
-  /** Sentence-case document name, e.g. "Purchase order". */
   noun: string;
-  /** The detail query's error, or null when it succeeded with no record. */
   error: unknown;
   onRetry: () => void;
   retrying: boolean;

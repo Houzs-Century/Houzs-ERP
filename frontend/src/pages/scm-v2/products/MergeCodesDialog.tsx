@@ -5,11 +5,6 @@ import { Modal } from '../../../vendor/scm/components/Modal';
 import { authedFetch } from '../../../vendor/scm/lib/authed-fetch';
 import { movedText } from './mergeWords';
 
-/* Merge duplicate SKU codes into one kept code (POST /mfg-products/merge/*).
-   Check plans and writes nothing; Merge sends back the phrase Check returned,
-   so the server refuses if anything changed in between. A dropped code's Model
-   that is left with no active code is folded into the kept code's Model in the
-   same Merge; Check says which, and the result says what happened. */
 
 type ModelFold = { from: string | null; into: string; fold: boolean; codes: number; reason: string | null };
 

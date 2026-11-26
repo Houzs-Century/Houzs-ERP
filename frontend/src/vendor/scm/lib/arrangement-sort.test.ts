@@ -73,7 +73,6 @@ describe('arrangementQueueCompare — new date → state → postcode → time �
         row({ so_doc_no: 'A', customer_state: 'Selangor', postcode: '47100', customer_delivery_date: '2026-08-01' }),
         row({ so_doc_no: 'B', customer_state: 'Kuala Lumpur', postcode: '50000', customer_delivery_date: '2026-08-03' }),
       ]);
-      // Oldest promise wins even though its state sorts LAST alphabetically.
       expect(out.map((r) => r.so_doc_no)).toEqual(['A', 'B', 'C']);
     });
 
@@ -89,7 +88,6 @@ describe('arrangementQueueCompare — new date → state → postcode → time �
 
     it('when either row HAS a new date, the established order stands (state before old date)', () => {
       const out = sorted([
-        // Same non-null NEW date: state decides, NOT the old date.
         row({ so_doc_no: 'B', amended_delivery_date: '2026-08-12', customer_state: 'Selangor', customer_delivery_date: '2026-08-01' }),
         row({ so_doc_no: 'A', amended_delivery_date: '2026-08-12', customer_state: 'Kuala Lumpur', customer_delivery_date: '2026-08-05' }),
       ]);

@@ -10,7 +10,6 @@ import { useActiveTripLocations, type TripLocation } from "./trip-locations-quer
 import { useLorryPositions, type LorryPosition } from "./lorries-queries";
 
 export type VehiclePosition = {
-  /** Stable marker key: the lorry when known, else the run. */
   key: string;
   lorryId: string | null;
   tripId: string;
@@ -40,7 +39,6 @@ export function vehiclePositionsFrom(locations: TripLocation[], runs: RunOfLorry
   }
   const out = new Map<string, VehiclePosition>();
   for (const run of runs) {
-    // Tracker fixes are latest-only: valid for today's running runs, never a past day's.
     const t = isToday && run.status.toUpperCase() === "IN_PROGRESS" && run.lorry ? trackerByLorry.get(run.lorry.id) ?? null : null;
     const p = newest.get(run.id) ?? null;
     const fresh = t != null && now - Date.parse(t.recorded_at) <= TRACKER_FRESH_MS;

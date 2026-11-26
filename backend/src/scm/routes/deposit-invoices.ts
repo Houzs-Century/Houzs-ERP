@@ -151,7 +151,6 @@ export const depositInvoiceSheetsHandler = async (c: Ctx): Promise<Response> => 
 
   const orderOf = new Map(orders.data.map((o) => [String(o.doc_no), o]));
   const payOf = new Map(pays.data.map((p) => [String(p.id), p]));
-  /* A payment's place on its order: its day, then when it was keyed, then its id. */
   const place = (p: Row): string => `${String(p.paid_at ?? '').slice(0, 10)}|${String(p.created_at ?? '')}|${String(p.id)}`;
   const byId = new Map(numbered.rows.map((r) => [String(r.id), r]));
   const sheets = ids.flatMap((id) => {
@@ -213,8 +212,6 @@ export const saveDepositInvoiceSettingsHandler = async (c: Ctx): Promise<Respons
   let body: { enabled?: unknown; fromDate?: unknown };
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (typeof body.enabled !== 'boolean') return c.json({ error: 'invalid_body', message: 'enabled must be true or false.' }, 400);
-  /* The start is a calendar DAY — a payment's paid_at is compared to it as
-     text, so anything but YYYY-MM-DD would compare wrongly and silently. */
   const fromDate = dateOrNull(body.fromDate);
   if (fromDate != null && !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) return c.json({ error: 'bad_from_date', message: 'The start date must be a calendar day (YYYY-MM-DD).' }, 400);
   if (body.enabled && fromDate == null) return c.json({ error: 'from_date_required', message: 'Pick the day deposit invoices start from before switching them on.' }, 400);
@@ -276,7 +273,6 @@ depositInvoices.get('/settings', depositInvoiceSettingsHandler);
 depositInvoices.post('/settings', saveDepositInvoiceSettingsHandler);
 depositInvoices.post('/issue-missing', issueMissingDepositInvoicesHandler);
 depositInvoices.post('/invoice-delivered', invoiceDeliveredOrdersHandler);
-/* Before '/:id', or 'sheets' reads as an invoice id. */
 depositInvoices.get('/sheets', depositInvoiceSheetsHandler);
 depositInvoices.get('/:id', depositInvoiceDetailHandler);
 depositInvoices.post('/:id/cancel', cancelDepositInvoiceHandler);

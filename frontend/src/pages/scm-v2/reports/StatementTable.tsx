@@ -1,21 +1,3 @@
-// ----------------------------------------------------------------------------
-// StatementTable — a Finance statement drawn the owner's way (Claude Design,
-// batch 6 §4.1): the account column frozen while the figures scroll sideways
-// and as wide as its longest name on one line; each period column sized to its
-// figures with its % right beside the amount under one header (a small "%"
-// caption); a thin rule between periods; the Total column tinted with a
-// stronger rule after it. A header edge drags to resize — the account column
-// alone, Total alone, every period column together — and a double-click puts
-// it back; the widths are remembered per view, and "Reset column widths" under
-// the table puts them all back. Exports keep their own widths.
-//
-// Rows wear their kind: a category 600, an account 400, a subtotal with a rule,
-// a calculated row shaded, a strong row (gross profit, total assets) shaded
-// darker and bold, the final total petrol-pale with a rule above and a double
-// rule below. An account's name opens its lines for the whole period right
-// under its row, a figure opens that column's; again closes them; several rows
-// may be open. The lines carry "Open in General ledger ›".
-// ----------------------------------------------------------------------------
 
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
@@ -29,7 +11,6 @@ import { useStatementWidths, type WidthGroup } from './statementWidths';
 import s from './Statement.module.css';
 
 const DASH = '-';
-/** The whole span, as a drill target: an account's name. */
 const ALL = '*';
 
 /** An account line's name without the code printed before it. */
@@ -58,47 +39,26 @@ export function codesUnder(lines: StatementLine[], i: number): string[] {
 }
 
 export type StatementTableProps = {
-  /** Whose widths these are: 'single', 'compare', 'month', 'cf-total', 'cf-month', 'tb'. */
   widthsKey: string;
-  /** The first header cell. */
   head: string;
   columns: StatementColumn[];
-  /** Every line (the fold rule reads them) and the ones shown at the level. */
   lines: StatementLine[];
   shown: StatementLine[];
   level: Level;
   tree: ReportTree;
   showPct: boolean;
   fmt?: (sen: number) => string;
-  /** The line the statement ends on — the final total's dress. */
   finalId?: string;
-  /** Lines in the strong dress (gross profit, total assets). */
   strongIds?: ReadonlySet<string>;
-  /** A category's figure: where its accounts open (the General ledger). */
   onCategoryFigure?: (codes: string[], column: StatementColumn) => void;
-  /** A note row under a line (the closing stock under cost of sales). */
   noteAfter?: (line: StatementLine) => ReactNode;
-  /** The grey line under the table. */
   note?: ReactNode;
-  /** Open lines close when this changes (the dates, the view). */
   drillKey: string;
   ariaLabel: string;
-  /** Which rows open lines under them: an account's (its ledger lines, by
-   *  default), or every row with figures — a category too (the Cash flow's
-   *  entries behind a figure). */
   drillRows?: 'accounts' | 'figures';
-  /** What opens under a row instead of an account's ledger lines: the column
-   *  pressed (null = the whole span), the close, and the width to span. */
   renderLines?: (line: StatementLine, column: StatementColumn | null, close: () => void, colSpan: number) => ReactNode;
-  /** Whether a figure opens what is behind it (every figure that could, by default) — the
-   *  Cash Flow's Settlement and Deposit figures are a month's shares, so only a figure
-   *  across the month (`across`) opens. */
   figureOpens?: (line: StatementLine, column: StatementColumn, across: boolean) => boolean;
-  /** An account row opens elsewhere (the Trial balance's drawer): its name and a
-   *  double-click on the row call this; nothing opens under the row. */
   onOpenRow?: (line: StatementLine) => void;
-  /** Accounts print as the owner's AccountCell — the code on one line, the name
-   *  below (the Trial balance) — instead of the code before the name. */
   accountCell?: boolean;
 };
 
@@ -108,7 +68,6 @@ export function StatementTable({
   figureOpens, onOpenRow, accountCell = false,
 }: StatementTableProps) {
   const w = useStatementWidths(widthsKey);
-  /* Which rows have their lines open, and on which column (ALL = the whole span). */
   const [drill, setDrill] = useState<Record<string, string>>({});
   useEffect(() => { setDrill({}); }, [drillKey]);
   const toggleDrill = (id: string, key: string) => setDrill((d) => {
@@ -117,7 +76,6 @@ export function StatementTable({
     return next;
   });
 
-  /* The lines open under a row as wide as the box shows, wherever it is scrolled. */
   const wrapRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState<number | null>(null);
   useEffect(() => {
@@ -132,9 +90,6 @@ export function StatementTable({
   const groupOf = (c: StatementColumn): WidthGroup => (c.kind === 'total' ? 'total' : 'period');
   const widthOf = (g: WidthGroup) => (w.widths[g] ? { width: `${w.widths[g]}px` } : undefined);
   const lastPeriod = columns.length - 1;
-  /* Columns under a shared heading (the Cash Flow's Settlement | Deposit under each month):
-     the headings get a row of their own above the columns' names; a rule follows a
-     heading's last column, none runs between its columns. */
   const grouped = columns.some((c) => c.group);
   const sameGroup = (a: StatementColumn | undefined, b: StatementColumn | undefined): boolean =>
     Boolean(a?.group && b?.group && a.group.key === b.group.key);
@@ -154,7 +109,6 @@ export function StatementTable({
     while (sameGroup(columns[ci], columns[ci + n])) n += 1;
     return n;
   };
-  /* A column's name where a figure says it: "Oct 2026 Settlement", or the month alone across both. */
   const columnName = (c: StatementColumn, across: boolean): string =>
     (c.group ? (across ? c.group.label : `${c.group.label} ${c.label}`) : c.label);
 
@@ -258,12 +212,9 @@ export function StatementTable({
             {totalsBelow(shown, lines, level, tree.open).map((l) => {
               const i = l.totalOf || l.bare ? lines.findIndex((x) => x.id === (l.totalOf ?? l.id)) : lines.indexOf(l);
               const sub = Boolean(l.totalOf);
-              /* A group's Total line opens what its figure covers, under itself, as the group would. */
               const own = sub ? lines[i]! : l;
               const folder = !sub && (l.kind === 'category' || l.kind === 'unassigned') && foldsChildren(lines, i);
               const open = folder && folderOpen(l, level, tree.open);
-              /* An account row opens its lines by its name; in 'figures' mode any row
-                 with figures opens what is behind a figure (a category's: every row under it). */
               const account = l.kind === 'row' && (drillRows === 'figures' || Boolean(l.code));
               const opensElsewhere = Boolean(onOpenRow) && account;
               const drillable = !onOpenRow && !l.bare && (account || (drillRows === 'figures' && (sub || l.kind === 'category' || l.kind === 'unassigned' || l.drill === true)));
@@ -271,8 +222,6 @@ export function StatementTable({
               const drillCol = drilled && drilled !== ALL ? columns.find((c) => c.key === drilled) : undefined;
               const depthPad = 12 + 16 * Math.max(0, l.depth - 1);
               const name = nameOf(l);
-              /* A cell running across columns covers the ones after it; an open group's bare
-                 title (its figures moved below) and a block title print every column empty. */
               const spans = l.kind === 'block' || l.bare ? undefined : l.spans;
               const covered = coveredBy(columns, spans);
               return (
@@ -305,12 +254,10 @@ export function StatementTable({
                     {columns.map((c, ci) => {
                       if (covered.has(ci)) return null;
                       const across = Math.min(Math.max(1, spans?.[c.key] ?? 1), columns.length - ci);
-                      /* A block title is a band of its own: no month band runs through it. */
                       const cls = [
                         s.cell, c.kind === 'total' ? s.colTotal : '', rules(ci + across - 1), across > 1 ? s.cellAcross : '',
                         c.group ? s.cellPart : '', banded(c) && l.kind !== 'block' ? s.band : '',
                       ].join(' ');
-                      /* An open group's figures print on its Total line below (totalsBelow). */
                       if (l.kind === 'block' || l.bare) return <td key={c.key} className={cls} />;
                       const cell = l.cells[c.key];
                       /* Under a heading a nil share stays blank (owner 2026-11-10: the dashes made the

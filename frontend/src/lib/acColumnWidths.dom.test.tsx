@@ -1,18 +1,9 @@
-// What a person actually experiences at the address box, in a real DOM.
-//
-// acColumnWidths.test.ts asserts the RULES; this asserts the BEHAVIOUR through a
-// rendered <input> driven by user-event — the 41st keystroke does not land, and
-// a pasted address that is too long breaks at a word and continues on line 2.
-// The repo's standing rule is that a UI change is verified by observing it, and
-// this is the observation that does not need the whole sales-order page (which
-// needs a router, a query client and a session) to make it.
 import { describe, expect, test } from 'vitest';
 import { useState } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ADDRESS_LINE_MAX, addressLineProps } from './acColumnWidths';
 
-/** The two address boxes as the sales-order forms wire them, and nothing else. */
 function AddressPair() {
   const [line1, setLine1] = useState('');
   const [line2, setLine2] = useState('');
@@ -55,9 +46,6 @@ describe('the address box, as a person meets it', () => {
     line1().focus();
     await user.paste(pasted);
     expect(line1().value.length).toBeLessThanOrEqual(ADDRESS_LINE_MAX);
-    /* THE WHOLE POINT: put the two boxes back together and the address is
-       exactly what was on the clipboard. A browser left to its own maxLength
-       would have kept the first 40 characters and dropped the rest. */
     expect(`${line1().value} ${line2().value}`).toBe(pasted);
   });
 

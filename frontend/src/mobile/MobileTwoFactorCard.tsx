@@ -2,31 +2,6 @@ import { useState } from "react";
 import { useTotpEnrollment } from "../lib/totpEnrollment";
 import { useToast } from "../hooks/useToast";
 
-/* ---------------------------------------------------------------------------
- * MobileTwoFactorCard — the phone's two-factor surface, on the Password &
- * security sub-screen of MobileProfile.
- *
- * It owns MARKUP ONLY. Every endpoint call and every transition comes from the
- * shared `useTotpEnrollment` hook, which the desktop TwoFactorSection drives
- * too — see `lib/totpEnrollment.ts` for why an auth flow must not exist twice.
- *
- * THE DISABLE GATE IS THE DESKTOP'S GATE. Desktop asks for a current 6-digit
- * code (or a backup code) in the in-app prompt dialog (hooks/useDialog) and
- * posts it to /api/totp/disable. Here it is an inline field instead of a
- * dialog — a browser prompt is unusable inside an installed PWA / native shell
- * and several webviews suppress it entirely, which would have left the DISABLE
- * path as unreachable on the phone as it was before. The REQUIREMENT is identical and unrelaxed: a code
- * must be typed, it travels to the server, and the server verifies it. Revealing
- * the field posts nothing. There is no code-less path off this card.
- *
- * BACKUP CODES ARE SHOWN ONCE, SO THEY DO NOT LEAVE BY ACCIDENT. On enrolling
- * they take over the whole viewport as a fixed overlay: the sub-screen's back
- * button is physically covered, so the ordinary way a phone user loses a
- * one-time screen — a stray back-tap — cannot happen. Only "I've saved them"
- * dismisses them. They live in the hook's state and are never written to
- * storage, so an orientation change or a re-render keeps them, and closing the
- * tab loses them exactly as it does on the desktop.
- * ------------------------------------------------------------------------- */
 
 const card: React.CSSProperties = {
   background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 14, padding: 14,
@@ -77,8 +52,6 @@ export function MobileTwoFactorCard() {
 
   return (
     <>
-      {/* ONE-TIME BACKUP CODES — a fixed overlay, deliberately covering the
-          back button until acknowledged. */}
       {totp.backupCodes && (
         <div
           role="dialog"
@@ -130,8 +103,6 @@ export function MobileTwoFactorCard() {
           1Password).
         </div>
 
-        {/* A failed status read says so. It must NOT render as "Not enabled" —
-            that would offer to enrol an account that already has 2FA on. */}
         {totp.statusError && !totp.status && (
           <div style={errText}>
             {totp.statusError} Pull down to retry — your existing setting is unchanged.

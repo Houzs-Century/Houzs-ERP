@@ -1,5 +1,3 @@
-// BUG-97: the SKU Pricing tab lists the codes a mapped Model gained, and maps
-// only the ones ticked, through the existing /bindings/batch endpoint.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';

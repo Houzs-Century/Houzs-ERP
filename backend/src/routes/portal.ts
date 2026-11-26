@@ -4,25 +4,11 @@ import { customerStatusFor } from "../services/caseTracking";
 import { assrAttachmentKey, saveAttachment, ALL_STAGES } from "../services/assr";
 import { checkRateLimit } from "../middleware/rateLimit";
 
-// Customer portal API. All routes are gated by the `caseTrack`
-// middleware (see src/index.ts), which resolves the bearer token to
-// exactly one case. Every query is therefore already scoped — there's
-// no way one token leaks data from another case.
-//
-// Every response here is a hand-picked whitelist. We never spread a
-// row of an internal table into the response; any new fields the
-// customer should see get added here deliberately.
 
 const app = new Hono<{ Bindings: Env }>();
 
-// ── GET /case ───────────────────────────────────────────────
-// Full case detail for this token. Strips every internal field
-// (supplier, cost, action_remark, addresses, approval, PO no, SLA
-// flags, assigned officer, etc.).
 app.get("/case", async (c) => {
   const { assr_id, source: viewer } = c.get("trackedCase");
-  // Staff-issued customer links behave exactly like customer ones;
-  // only 'sales' tokens unlock the salesperson variant.
   const isSales = viewer === "sales";
 
   const cs = await c.env.DB.prepare(
@@ -55,12 +41,6 @@ app.get("/case", async (c) => {
     .bind(assr_id)
     .all();
 
-  // Timeline: only safe events. We surface stage transitions (no
-  // note), the customer's own posts, case creation, satisfaction
-  // survey submissions, AND staff notes that were explicitly flagged
-  // for the customer (category = 'customer', written via the staff
-  // POST /:id/notes with category="customer"). Internal/purchasing
-  // notes stay hidden.
   const activityRaw = await c.env.DB.prepare(
     `SELECT id, action, from_value, to_value, note, source, category, created_at
        FROM assr_activity
@@ -72,8 +52,6 @@ app.get("/case", async (c) => {
   const timeline = (activityRaw.results ?? [])
     .filter((a: any) => {
       if (a.source === "customer") return true;
-      // Sales-authored entries stay off the customer's page — the
-      // salesperson may be asking the team internal-ish questions.
       if (a.source === "sales") return isSales;
       if (a.action === "stage_change") return true;
       if (a.action === "created") return true;
@@ -114,8 +92,6 @@ app.get("/case", async (c) => {
       return base;
     });
 
-  // Salesperson variant: the real 9-stage progress with entry dates.
-  // Customers keep the simplified 5-step tracker (client-side).
   let stages: any[] | undefined;
   if (isSales) {
     const hist = await c.env.DB.prepare(
@@ -143,9 +119,7 @@ app.get("/case", async (c) => {
     case: {
       id: cs.id,
       assr_no: cs.assr_no,
-      customer_name: cs.customer_name,   // safe to echo back for confirmation
-      // SO / Ref numbers are for the salesperson (they cross-reference
-      // their own orders by these) — never sent to customer tokens.
+      customer_name: cs.customer_name,
       doc_no: isSales ? cs.doc_no : undefined,
       ref_no: isSales ? cs.ref_no : undefined,
       complained_date: cs.complained_date,
@@ -166,13 +140,9 @@ app.get("/case", async (c) => {
   });
 });
 
-// ── POST /case/comments ────────────────────────────────────
-// Staff-issued customer links post as the customer (the staff token
-// is USED by the customer); sales tokens post as sales.
 app.post("/case/comments", async (c) => {
   const { assr_id, source } = c.get("trackedCase");
   const asSales = source === "sales";
-  // Spam brake — a stolen/shared link can't flood the timeline.
   const limited = await checkRateLimit(c, "portal_comment", `${assr_id}:${source}`, 20, 3600);
   if (limited) return limited;
   const body = await c.req.json<{ text?: string }>().catch(() => ({} as { text?: string }));
@@ -190,16 +160,13 @@ app.post("/case/comments", async (c) => {
   return c.json({ ok: true });
 });
 
-// ── PUT /case/attachments ──────────────────────────────────
 const ALLOWED_EXT = new Set(["jpg", "jpeg", "png", "webp"]);
-const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_SIZE = 10 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_CASE = 20;
 
 app.put("/case/attachments", async (c) => {
   const { assr_id, source } = c.get("trackedCase");
   const asSales = source === "sales";
-  // Upload brake — the 20-per-case cap already bounds storage; this
-  // bounds the churn rate (upload/archive cycling around the cap).
   const limited = await checkRateLimit(c, "portal_upload", `${assr_id}:${source}`, 15, 3600);
   if (limited) return limited;
 
@@ -232,7 +199,6 @@ app.put("/case/attachments", async (c) => {
   await c.env.POD_BUCKET.put(key, buf, { httpMetadata: { contentType } });
   const attId = await saveAttachment(c.env, assr_id, key, fileName, contentType, "evidence", null);
 
-  // Mark as posted by the portal side (customer or sales).
   await c.env.DB.prepare(
     `UPDATE assr_attachments
         SET source = ?, visible_to_customer = 1
@@ -241,7 +207,6 @@ app.put("/case/attachments", async (c) => {
     .bind(asSales ? "sales" : "customer", attId)
     .run();
 
-  // Activity log entry.
   await c.env.DB.prepare(
     `INSERT INTO assr_activity
        (assr_id, action, from_value, to_value, note, customer_id, source, user_id)
@@ -253,8 +218,6 @@ app.put("/case/attachments", async (c) => {
   return c.json({ id: attId }, 201);
 });
 
-// ── GET /case/attachments/:attId ───────────────────────────
-// Re-checks ownership + visibility on every request (never cache).
 app.get("/case/attachments/:attId", async (c) => {
   const { assr_id } = c.get("trackedCase");
   const attId = parseInt(c.req.param("attId"), 10);
@@ -282,11 +245,6 @@ app.get("/case/attachments/:attId", async (c) => {
   });
 });
 
-// ── Portal self-archive (own content only) ─────────────────
-// The viewer can retract their own comment or their own photo —
-// customer tokens retract customer content, sales tokens retract
-// sales content. Anything authored by staff (or the other party)
-// is off-limits from the portal side.
 
 app.post("/case/comments/:actId/archive", async (c) => {
   const { assr_id, source } = c.get("trackedCase");

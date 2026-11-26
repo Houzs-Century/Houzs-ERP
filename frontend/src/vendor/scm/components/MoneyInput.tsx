@@ -34,7 +34,6 @@ import styles from './MoneyInput.module.css';
 /** At rest: 1,800.00 — the books' own spelling. */
 export const fmtMoneyAtRest = (sen: number | null | undefined): string =>
   sen == null ? '' : (sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-/** While editing: 1800.00 — no separators under the caret. */
 const plain = (sen: number | null | undefined): string =>
   sen == null ? '' : (sen / 100).toFixed(2);
 
@@ -46,7 +45,6 @@ export const MoneyInput = ({
   placeholder = '—',
   className,
   title,
-  // Bare mode (form fields): render just the input, no wrapper / no currency.
   bare = false,
   inputClassName,
   style,
@@ -57,34 +55,24 @@ export const MoneyInput = ({
   onKeyDown,
 }: {
   valueSen: number | null;
-  /** Called with the new sen value (or null when cleared, if allowBlank). */
   onCommit: (sen: number | null) => void;
   currency?: string;
   allowBlank?: boolean;
   placeholder?: string;
   className?: string;
   title?: string;
-  /** Render only the <input> (no span wrapper / currency prefix). */
   bare?: boolean;
-  /** Class applied to the <input> in bare mode (e.g. styles.fieldInput). */
   inputClassName?: string;
   style?: CSSProperties;
   align?: 'left' | 'right';
-  /** Select-all on focus so a default like "0.00" is overwritten in one go.
-      Default on: with the caret left before a resting 0, typing 5000 read as
-      50000 (RM 50,000). */
   selectOnFocus?: boolean;
   disabled?: boolean;
   'aria-label'?: string;
-  /** Runs after the field's own keys (Enter commits, Esc reverts) — a line
-      editor uses it to hop to the next line. */
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }) => {
   const [draft, setDraft] = useState(() => fmtMoneyAtRest(valueSen));
   const focused = useRef(false);
 
-  // Re-sync from upstream ONLY when the user isn't actively editing — so a
-  // background refetch / auto-fill never overwrites in-progress typing.
   useEffect(() => {
     if (!focused.current) setDraft(fmtMoneyAtRest(valueSen));
   }, [valueSen]);
@@ -99,7 +87,7 @@ export const MoneyInput = ({
     const next = Math.round(Number(t) * 100);
     if (!Number.isFinite(next) || next < 0) { setDraft(fmtMoneyAtRest(valueSen)); return; }
     if (next !== valueSen) onCommit(next);
-    setDraft(fmtMoneyAtRest(next)); // normalise (e.g. "550" → "550.00", "1800" → "1,800.00")
+    setDraft(fmtMoneyAtRest(next));
   };
 
   const inputEl = (
@@ -115,8 +103,6 @@ export const MoneyInput = ({
       title={title ?? 'Click to edit · Enter to save · Esc to cancel'}
       onFocus={(e) => {
         focused.current = true;
-        /* The separators leave with the focus: editing "1,800.00" in place
-           must not fight the caret over a comma. */
         setDraft(plain(valueSen));
         if (selectOnFocus) {
           const el = e.currentTarget;
@@ -125,7 +111,6 @@ export const MoneyInput = ({
       }}
       onChange={(e) => {
         const v = e.target.value.replace(/,/g, '');
-        // empty, or digits with up to 2 decimals — lets you clear & retype.
         if (v === '' || /^\d*\.?\d{0,2}$/.test(v)) setDraft(v);
       }}
       onBlur={() => { focused.current = false; commit(); }}

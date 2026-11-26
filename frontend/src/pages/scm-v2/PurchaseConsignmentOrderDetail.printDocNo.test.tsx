@@ -1,8 +1,3 @@
-/**
- * PCO Print PDF carries the document number (DEV-57). The PCO record stores it
- * as pc_number; the shared PO generator prints po_number, so the exported PDF
- * showed no number (reported on 2990-PCR-2610-001).
- */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -27,8 +22,6 @@ const PCO = {
   notes: 'Deliver before noon',
   total_sen: 0,
 };
-/* Stable references: the page's effects key on these, so a fresh object per
-   render loops them. */
 const DETAIL = { data: { purchaseOrder: PCO, items: [] }, isPending: false, isError: false };
 const SUPPLIER_DETAIL = { data: { supplier: null, bindings: [] } };
 const EMPTY = { data: [] };

@@ -58,10 +58,6 @@ function seedPageLevels(pages: PageLite[], stored: Record<string, string> | unde
   return out;
 }
 
-// Module-column width (px): a device-local UI preference kept in localStorage
-// through the shared useLocalStorage hook (the app's one storage surface, so no
-// new direct storage caller). Clamped so a drag can never collapse the column
-// or push the level picker off-screen.
 const COL_KEY = "roleMatrix:moduleColPx";
 const MIN_COL = 200;
 const MAX_COL = 640;
@@ -98,8 +94,6 @@ export function RoleMatrixTab() {
   }, [pageQ.data]);
 
   const [selected, setSelected] = useState<number | null>(null);
-  // Staged is an OVERLAY — only roles the owner has actually touched. Reads fall
-  // back to the baseline, so the matrix is correct from the first render.
   const [pageStaged, setPageStaged] = useState<Map<number, PageLevels>>(new Map());
   const [permStaged, setPermStaged] = useState<Map<number, Set<string>>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -109,7 +103,6 @@ export function RoleMatrixTab() {
   const [moduleCol, setModuleCol] = useLocalStorage<number>(COL_KEY, DEFAULT_COL, undefined, sanitizeCol);
   const resizeFrom = useRef<{ x: number; w: number } | null>(null);
 
-  // The whole-matrix snapshot for Excel export/import (all roles, current state).
   const snapshot = useMemo(
     () => snapshotFromApi(roleList, pages, permsQ.data?.permissions ?? [], pageQ.data?.roles ?? []),
     [roleList, pages, permsQ.data, pageQ.data],
@@ -121,10 +114,6 @@ export function RoleMatrixTab() {
     );
   }
 
-  // Baselines are DERIVED from the server data (not seeded via an effect), so
-  // they are populated in the very render the modules first appear — there is no
-  // window where the matrix shows but the baseline is empty, which previously
-  // made an early click register nothing (dirtyIds skipped a role with no base).
   const pageBase = useMemo(() => {
     const m = new Map<number, PageLevels>();
     const pa = pageQ.data;
@@ -142,10 +131,6 @@ export function RoleMatrixTab() {
   const pagesFor = (id: number): PageLevels => pageStaged.get(id) ?? pageBase.get(id) ?? {};
   const permsFor = (id: number): Set<string> => permStaged.get(id) ?? permBase.get(id) ?? new Set<string>();
 
-  // Resolve the selected role deterministically: the explicit pick, else the
-  // first role. Deriving it (rather than setting it from an effect) means there
-  // is no render where the matrix is shown with no role selected — a click in
-  // that window would otherwise no-op against a null id.
   const selectedId = selected ?? roleList.at(0)?.id ?? null;
   const role = selectedId != null ? roleList.find((r) => r.id === selectedId) ?? null : null;
   const locked = role ? isLockedRole(role) : false;
@@ -188,10 +173,6 @@ export function RoleMatrixTab() {
     updateRole(selectedId, nextPages, nextPerms);
   }
 
-  // Drag to resize the Module column. Listeners live on window so the pointer
-  // can leave the handle mid-drag; the start width is captured in a ref so the
-  // move handler never reads a stale `moduleCol`. useLocalStorage persists each
-  // width change, so the last position is remembered with no explicit save.
   function onResizeMove(e: MouseEvent) {
     const from = resizeFrom.current;
     if (!from) return;
@@ -245,7 +226,6 @@ export function RoleMatrixTab() {
         }
       }
       toast.success("Page access saved. Members see it on their next request.");
-      // Drop the overlay so the reloaded server data becomes the new baseline.
       setPageStaged(new Map());
       setPermStaged(new Map());
       rolesQ.reload();
@@ -257,11 +237,6 @@ export function RoleMatrixTab() {
     }
   }
 
-  // Search narrows the list. A module stays when its own name/key matches (then
-  // all its sub-pages are available on expand), or, failing that, when one of
-  // its sub-pages matches (then only the matching sub-pages show, module forced
-  // open). CJK is unaffected by toLowerCase, so one lowercased compare covers
-  // both the Chinese and English labels.
   const q = query.trim().toLowerCase();
   const visibleModules = useMemo(() => {
     if (!q) return modules.map((m) => ({ m, subset: null as PageLite[] | null }));
@@ -296,8 +271,6 @@ export function RoleMatrixTab() {
   const systemRoles = roleList.filter((r) => r.is_system);
   const customRoles = roleList.filter((r) => !r.is_system);
 
-  // One template string drives the header and every row, so the column boundary
-  // stays aligned as the width is dragged.
   const gridTemplate = `${moduleCol}px minmax(210px, 1fr)`;
 
   return (

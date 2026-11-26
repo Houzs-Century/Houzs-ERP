@@ -1,19 +1,6 @@
-// Tests for atomic inter-warehouse stock transfer (audit finding R3).
-//
-// Two layers, matching how the fix is split:
-//   1. buildTransferPayload — PRODUCTION code (the pure payload the route feeds
-//      to the RPC). Tested directly.
-//   2. The atomic OUT+IN transaction itself runs in PL/pgSQL
-//      (scm.fn_stock_transfer_apply, migration 0192). This repo's vitest harness
-//      rebuilds only the D1 side and cannot execute the scm Supabase-Postgres
-//      layer (same limitation the oversell/dropship tests note), so the
-//      transactional CONTRACT is locked here by a faithful in-memory FIFO model
-//      the SQL is written against — driving the exact scenario the task calls
-//      out: the IN failing after the OUT, asserting the source stock is restored.
 import { describe, expect, test } from 'vitest';
 import { buildTransferPayload, type TransferLinePayload } from './stock-transfer-atomic';
 
-// ── 1. buildTransferPayload (production) ────────────────────────────────────
 describe('buildTransferPayload', () => {
   const line = (o: Partial<{ item_code: string; product_name: string | null; variant_key: string | null; qty: number }> & { item_code: string; qty: number }) => ({
     product_name: null,
@@ -37,8 +24,8 @@ describe('buildTransferPayload', () => {
 
   test('carries the resolved batch only for the matching code::variant bucket', () => {
     const batches = new Map<string, string | null>([
-      ['A::red', 'PO-1001'], // single batch -> carried
-      ['B::', null],         // ambiguous/plain -> not carried
+      ['A::red', 'PO-1001'],
+      ['B::', null],
     ]);
     const out = buildTransferPayload(
       [line({ item_code: 'A', variant_key: 'red', qty: 1 }), line({ item_code: 'B', qty: 1 })],
@@ -49,15 +36,6 @@ describe('buildTransferPayload', () => {
   });
 });
 
-// ── 2. Atomic OUT+IN contract (mirror of scm.fn_stock_transfer_apply) ────────
-//
-// A minimal FIFO store standing in for inventory_lots + the AFTER-INSERT trigger:
-//   OUT  -> consume the source bucket's lots FIFO (oldest first), returning the
-//           consumed total cost (what the trigger stamps on the OUT movement).
-//   IN   -> open a dest lot at unit = round(consumedTotal / qty) (the carried
-//           FIFO basis), exactly what the DB function reads back and applies.
-// The DB function wraps every line in ONE transaction; the model mirrors that by
-// snapshotting and restoring on any throw. This is the contract the SQL ports.
 type Lot = { warehouse_id: string; item_code: string; variant_key: string; qty_remaining: number; unit_cost_sen: number; received_at: number };
 
 function consumeFifo(lots: Lot[], wh: string, code: string, variant: string, qty: number): number {
@@ -73,9 +51,6 @@ function consumeFifo(lots: Lot[], wh: string, code: string, variant: string, qty
   return total;
 }
 
-/** Faithful mirror of fn_stock_transfer_apply: all lines' OUT+IN, atomic. If
- *  `failInOnLineIndex` is set, the IN for that line throws AFTER its OUT has
- *  consumed the source — the exact non-atomic window the fix closes. */
 function applyStockTransfer(
   lots: Lot[],
   fromWh: string,
@@ -97,7 +72,6 @@ function applyStockTransfer(
     });
     return { lots: working, moved };
   } catch (e) {
-    // Postgres rolls the whole call back; the model restores the pre-call snapshot.
     return { lots: snapshot, moved: 0 };
   }
 }
@@ -118,19 +92,18 @@ describe('atomic stock transfer — the fn_stock_transfer_apply contract', () =>
   test('happy path: source decremented, dest opened, FIFO cost carried over', () => {
     const { lots, moved } = applyStockTransfer(seed(), 'A', 'B', [pl({ item_code: 'SKU1', qty: 8 })]);
     expect(moved).toBe(1);
-    // 8 units consumed FIFO: 6@500 + 2@700 = 4400 sen -> IN unit = round(4400/8) = 550.
-    expect(onHand(lots, 'A', 'SKU1')).toBe(2);   // source: 10 - 8
-    expect(onHand(lots, 'B', 'SKU1')).toBe(8);   // dest: +8
-    expect(lotValue(lots, 'B', 'SKU1')).toBe(8 * 550); // cost carried, not invented/lost
+    expect(onHand(lots, 'A', 'SKU1')).toBe(2);
+    expect(onHand(lots, 'B', 'SKU1')).toBe(8);
+    expect(lotValue(lots, 'B', 'SKU1')).toBe(8 * 550);
   });
 
   test('IN fails after OUT: WHOLE transfer rolls back, source stock restored', () => {
     const before = seed();
     const { lots, moved } = applyStockTransfer(before, 'A', 'B', [pl({ item_code: 'SKU1', qty: 8 })], { failInOnLineIndex: 0 });
     expect(moved).toBe(0);
-    expect(onHand(lots, 'A', 'SKU1')).toBe(10);  // source fully restored (not 2)
-    expect(onHand(lots, 'B', 'SKU1')).toBe(0);   // nothing created at dest
-    expect(lotValue(lots, 'A', 'SKU1')).toBe(6 * 500 + 4 * 700); // cost basis intact
+    expect(onHand(lots, 'A', 'SKU1')).toBe(10);
+    expect(onHand(lots, 'B', 'SKU1')).toBe(0);
+    expect(lotValue(lots, 'A', 'SKU1')).toBe(6 * 500 + 4 * 700);
   });
 
   test('multi-line: a later line failing leaves EARLIER lines un-moved too (all-or-nothing)', () => {
@@ -141,10 +114,10 @@ describe('atomic stock transfer — the fn_stock_transfer_apply contract', () =>
     const { lots, moved } = applyStockTransfer(
       before, 'A', 'B',
       [pl({ item_code: 'SKU1', qty: 3 }), pl({ item_code: 'SKU2', qty: 2 })],
-      { failInOnLineIndex: 1 }, // second line's IN fails
+      { failInOnLineIndex: 1 },
     );
     expect(moved).toBe(0);
-    expect(onHand(lots, 'A', 'SKU1')).toBe(5);   // first line NOT left half-moved
+    expect(onHand(lots, 'A', 'SKU1')).toBe(5);
     expect(onHand(lots, 'B', 'SKU1')).toBe(0);
     expect(onHand(lots, 'A', 'SKU2')).toBe(5);
   });

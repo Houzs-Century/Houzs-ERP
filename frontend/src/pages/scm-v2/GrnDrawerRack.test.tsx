@@ -1,5 +1,3 @@
-/* Sim, 2026-10-20: the Goods Receipt side panel shows each line's rack and lets
- * it be picked there, without opening the full page and pressing Edit. */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

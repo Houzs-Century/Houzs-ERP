@@ -1,8 +1,3 @@
-/**
- * PWA wiring — service worker registration + installable / online
- * state observable. Pure logic, no UI; the install banner reads
- * from this and renders itself.
- */
 
 let deferredPrompt: any = null;
 const installListeners = new Set<(canInstall: boolean) => void>();
@@ -19,16 +14,12 @@ const onlineListeners = new Set<(online: boolean) => void>();
 let updateAvailable = false;
 const updateListeners = new Set<(available: boolean) => void>();
 function notifyUpdate() {
-  if (updateAvailable) return; // latch — a build only gets newer, never older
+  if (updateAvailable) return;
   updateAvailable = true;
   for (const fn of updateListeners) fn(true);
 }
 
 export function registerPwa() {
-  // DEV: never run a service worker. On localhost the SW caches the vite
-  // module graph cache-first, so edits "don't show" after a refresh until the
-  // SW + caches are cleared by hand. Tear down any SW a previous prod/PWA visit
-  // left registered, and wipe its caches.
   if (import.meta.env.DEV) {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker
@@ -43,34 +34,20 @@ export function registerPwa() {
         .catch(() => {});
     }
   } else if ("serviceWorker" in navigator) {
-    // PROD: register the SW (secure-context only; localhost is exempt but dev
-    // is handled above).
-    //
-    // A controller already present at load means a PRIOR build is running: a
-    // later controllerchange is then a version SWAP, not the first-ever
-    // install — that is our "new build is live" signal.
     const hadControllerAtLoad = !!navigator.serviceWorker.controller;
 
     window.addEventListener("load", () => {
       navigator.serviceWorker
         .register("/sw.js")
         .then((reg) => {
-          // Best-effort update check on each load.
           reg.update().catch(() => {});
 
-          // A tab left open for hours never re-checks on its own. Re-run the
-          // update probe when the tab regains focus and on a slow interval so
-          // a deploy that lands mid-session is still noticed.
           const recheck = () => reg.update().catch(() => {});
           document.addEventListener("visibilitychange", () => {
             if (document.visibilityState === "visible") recheck();
           });
           setInterval(recheck, 60_000);
 
-          // Backup signal: a new worker reaching "installed" while one already
-          // controls the page is a waiting update. sw.js calls skipWaiting so
-          // this usually rolls straight into controllerchange below, but on
-          // browsers that defer activation this still surfaces it.
           reg.addEventListener("updatefound", () => {
             const installing = reg.installing;
             if (!installing) return;
@@ -86,18 +63,11 @@ export function registerPwa() {
         });
     });
 
-    // Primary signal: sw.js does skipWaiting() + clients.claim(), so a fresh
-    // build takes control and fires controllerchange. Guarded by
-    // hadControllerAtLoad so the first-ever registration (no prior controller)
-    // is not mistaken for an update.
     navigator.serviceWorker.addEventListener("controllerchange", () => {
       if (hadControllerAtLoad) notifyUpdate();
     });
   }
 
-  // Capture the install prompt so we can replay it from a button.
-  // Browsers fire `beforeinstallprompt` exactly once, so caching the
-  // event is required if the user dismisses or delays.
   window.addEventListener("beforeinstallprompt", (e: any) => {
     e.preventDefault();
     deferredPrompt = e;
@@ -122,7 +92,6 @@ function notifyOnline(online: boolean) {
 
 export function onInstallAvailability(fn: (canInstall: boolean) => void): () => void {
   installListeners.add(fn);
-  // Fire synchronously with current state.
   fn(deferredPrompt != null);
   return () => installListeners.delete(fn);
 }
@@ -157,7 +126,6 @@ export async function promptInstall(): Promise<"accepted" | "dismissed" | "unava
 export function isStandalone(): boolean {
   return (
     window.matchMedia?.("(display-mode: standalone)").matches ||
-    // iOS-specific
     (window.navigator as any).standalone === true
   );
 }
@@ -168,10 +136,7 @@ export function isStandalone(): boolean {
 export function isIosInstallable(): boolean {
   const ua = window.navigator.userAgent;
   const isIos = /iphone|ipad|ipod/i.test(ua) ||
-    // iPadOS 13+ reports as Mac; disambiguate by touch
     (/macintosh/i.test(ua) && "ontouchend" in document);
-  // Exclude in-app webviews / Chrome-iOS (CriOS) / Firefox-iOS (FxiOS) where
-  // the Share→A2HS flow differs or is unavailable.
   const isSafari = /safari/i.test(ua) && !/crios|fxios|edgios/i.test(ua);
   return isIos && isSafari && !isStandalone();
 }

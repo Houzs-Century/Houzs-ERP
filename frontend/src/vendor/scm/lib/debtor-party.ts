@@ -9,7 +9,6 @@ import { addressLineTwoView } from '../../shared/address-two-lines';
 
 /** The columns scm.acc_debtors gained (migration 20260921T1600), as the API returns them. */
 export type DebtorPartyColumns = {
-  /** The account code, AutoCount style: 305-A001 (migration 20261105T1900). Screens and prints only — never on a journal line. */
   code: string | null;
   tin_number: string | null; business_reg_no: string | null; contact_person: string | null; attention: string | null;
   email: string | null; phone2: string | null; mobile: string | null; whatsapp_number: string | null; fax: string | null;

@@ -36,7 +36,6 @@ export const updatePaymentVoucherTextHandler = async (c: any) => {
   const allowed = pvCanEditText(before as PvApprovalShape);
   if (!allowed.ok) return c.json({ error: allowed.error, message: allowed.message }, 409);
 
-  /* Every named line is read and checked before anything is written. */
   const { data: lineRows, error: lineErr } = await sb.from('payment_voucher_lines').select('id, description').eq('pv_id', id);
   if (lineErr) return c.json({ error: 'load_failed', reason: lineErr.message }, 500);
   const stored = new Map(((lineRows ?? []) as Array<{ id: string; description: string | null }>).map((l) => [String(l.id), l]));
@@ -50,8 +49,6 @@ export const updatePaymentVoucherTextHandler = async (c: any) => {
   }
   const notesTo = body.notes === undefined ? undefined : words(body.notes);
   const notesChange = notesTo === undefined ? null : fieldChange('notes', (before.notes as string | null) ?? null, notesTo);
-  /* The bank: only the fields the body names, each trimmed, a blank one cleared;
-     the trail spells them as the whole edit does (payToBankName, …). */
   const payTo = payToUpdates(body);
   const bank = PAY_TO_AUDIT_FIELDS
     .filter(([, col]) => col in payTo)
@@ -64,8 +61,6 @@ export const updatePaymentVoucherTextHandler = async (c: any) => {
   const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_VOUCHER', entityId: id, action: 'UPDATE', companyId: co.companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  /* Guarded on the row itself: an approval landing in between has written the
-     journal with the old words, and then the words stay. */
   const { data: saved, error: saveErr } = await scopeToCompanyId(sb.from('payment_vouchers')
     .update({ ...(notesChange ? { notes: notesTo } : {}), ...bankWrites, updated_at: new Date().toISOString() })
     .eq('id', id).eq('status', 'DRAFT').is('approved_at', null), co.companyId).select(HEADER).maybeSingle();

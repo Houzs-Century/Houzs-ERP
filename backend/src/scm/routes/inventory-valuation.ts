@@ -26,10 +26,6 @@ export const inventoryValuationHandler = async (c: any): Promise<Response> => {
   const br = await stockBreakdownAsOf(sb, co.companyId, asOf);
   if (!br.ok) return c.json({ error: 'load_failed', reason: br.reason }, 500);
 
-  /* Names and categories from the product master, fetched once for the codes
-     the replay actually produced. A code the master no longer carries still
-     shows — the value existed on that day, and hiding it would make the
-     category subtotals disagree with the total. */
   const codes = [...br.items.keys()];
   const nameOf = new Map<string, { name: string | null; category: string | null }>();
   for (let i = 0; i < codes.length; i += 200) {
@@ -56,9 +52,6 @@ export const inventoryValuationHandler = async (c: any): Promise<Response> => {
         value_sen: v.valueSen,
       };
     })
-    /* A row that came and went entirely before the date nets to zero — noise
-       on a photograph. Rows with zero qty but residual value (or the reverse)
-       STAY: they are exactly the costing questions worth seeing. */
     .filter((r) => r.qty !== 0 || r.value_sen !== 0)
     .sort((a, b) => a.item_code.localeCompare(b.item_code));
 

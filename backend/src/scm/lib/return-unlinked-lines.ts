@@ -1,39 +1,3 @@
-// ----------------------------------------------------------------------------
-// return-unlinked-lines — the same back door, on the two RETURN chains.
-//
-// The delivery side (do-unlinked-so-lines) and the receiving side
-// (grn-unlinked-po-lines) were closed on 2026-08-04 after one Sales Order
-// shipped twice. Both returns have the identical shape and neither had a guard:
-//
-//   scm.delivery_returns.delivery_order_id   names a DO
-//   scm.delivery_return_items.do_item_id     is NULLABLE
-//
-//   scm.purchase_returns.grn_id              names a GRN
-//   scm.purchase_return_items.grn_item_id    is NULLABLE
-//
-// A return line with a null link still MOVES THE STOCK — a Delivery Return
-// brings goods back IN, a Purchase Return sends them OUT — but it counts toward
-// no parent line, so the remaining pools those chains are governed by
-// (`delivered - returned` for DR, `qty_accepted - returned_qty` for
-// PR) never see it. The same goods can therefore be returned twice.
-//
-// A production scan on 2026-08-04 found ZERO rows of this shape on both chains,
-// so this is preventative rather than corrective. That is the reason to add it
-// now: the cost of the guard is one query on a path that is already doing
-// several, and the cost of NOT having it was three weeks of a double deduction
-// nobody could see.
-//
-// THE RULE IS THE SAME NARROW ONE, and deliberately so — one definition of "the
-// same item", one shape of refusal across all four chains:
-//
-//   header names no parent            -> nothing to bypass, allowed
-//   item is NOT on the named parent   -> genuinely ad-hoc, allowed
-//   item IS on the named parent       -> REFUSED: link it
-//
-// A goodwill item added to a return, or a part the original document never
-// contained, still passes. What is refused is returning what the parent document
-// contains while recording that it does not.
-// ----------------------------------------------------------------------------
 
 import {
   findUnlinkedSoItemLines,
@@ -94,11 +58,6 @@ export async function readGrnMaterialCodes(
   const ids = [...new Set(grnIds.map((x) => String(x ?? '').trim()).filter(Boolean))];
   const codeToReceipt = new Map<string, string>();
   if (ids.length === 0) return { codeToReceipt, error: null };
-  /* The receipt NUMBER rides the same read. Without it the refusal named the
-     receipt by raw uuid — the operator was told which invoice was wrong but not
-     which document to go and look at, and no client sends `grnNumber` on create.
-     The `grn:grns!inner (…)` embed is the form this router already uses at the
-     over-invoice guard, so it is not a new shape. */
   const { data, error } = await sb
     .from('grn_items')
     .select('item_code, grn_id, grn:grns!inner ( grn_number )')
@@ -108,9 +67,6 @@ export async function readGrnMaterialCodes(
     item_code: string | null; grn_id: string | null;
     grn?: { grn_number?: string | null } | Array<{ grn_number?: string | null }> | null;
   };
-  /* Sorted by receipt number so a code carried by two of the covered notes always
-     names the SAME one — a refusal that alternated between two receipts run to run
-     would read as a flaky guard. */
   const rows = ((data ?? []) as Row[]).slice().sort((a, b) => {
     const na = (Array.isArray(a.grn) ? a.grn[0] : a.grn)?.grn_number ?? '';
     const nb = (Array.isArray(b.grn) ? b.grn[0] : b.grn)?.grn_number ?? '';
@@ -150,14 +106,6 @@ export function grnMaterialCodesOf(
   });
 }
 
-/**
- * Shared driver. `codesOf` supplies the parent document's item codes; the rest
- * is the same predicate all four chains use.
- *
- * `parentLabel` is cosmetic — it only has to be non-empty for the predicate to
- * engage, so the id is an acceptable last resort. It must never fall back to
- * empty, or a missing parent would silently read as "allowed".
- */
 async function findUnlinked(
   parentId: string | null | undefined,
   parentLabel: string | null | undefined,
@@ -165,7 +113,6 @@ async function findUnlinked(
   codesOf: () => Promise<ParentCodes>,
 ): Promise<UnlinkedScan<UnlinkedReturnOffender>> {
   if (!String(parentId ?? '').trim()) return { ok: true, offenders: [] };
-  // nothing unlinked — skip the read
   if (!lines.some((l) => !l.soItemId)) return { ok: true, offenders: [] };
   const label = String(parentLabel ?? '').trim() || String(parentId);
   const codes = await codesOf();
@@ -240,31 +187,22 @@ export function findUnlinkedPrLines(
  * silently. `{ ok: false }` means the caller must refuse the write, not proceed.
  */
 export type PiUnlinkedVerdict =
-  /** The check could not be performed. The caller must NOT write. */
   | { ok: false; reason: string }
   | { ok: true; offenders: UnlinkedReturnOffender[] };
 
 export async function findUnlinkedPiLines(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
-  /** Every receipt this invoice covers: the header ref plus the ones its linked
-   *  lines descend from. Nulls and duplicates are fine — they are dropped. */
   grnIds: Array<string | null | undefined>,
   lines: UnlinkedCandidate[],
 ): Promise<PiUnlinkedVerdict> {
   const ids = [...new Set(grnIds.map((x) => String(x ?? '').trim()).filter(Boolean))];
-  // The header names no receipt -> there is nothing to bypass. Same carve-out as
-  // all five siblings, and the reason a PI-native invoice still works.
   if (ids.length === 0) return { ok: true, offenders: [] };
-  // Nothing unlinked -> the cap already sees every line. Skip the read.
   if (!lines.some((l) => !l.soItemId)) return { ok: true, offenders: [] };
 
   const { codeToReceipt, error } = await readGrnMaterialCodes(sb, ids);
   if (error) return { ok: false, reason: error };
 
-  /* The PREDICATE is the shared one — one definition of "the same item" across all
-     six chains. It is applied per receipt so each offender names the receipt that
-     actually carries its material, which is the document the operator has to open. */
   const offenders: UnlinkedReturnOffender[] = [];
   const byReceipt = new Map<string, Set<string>>();
   for (const [code, receipt] of codeToReceipt) {
@@ -275,7 +213,7 @@ export async function findUnlinkedPiLines(
   const claimed = new Set<string>();
   for (const [receipt, codes] of byReceipt) {
     for (const o of findUnlinkedSoItemLines(receipt, lines, codes)) {
-      if (claimed.has(o.lineRef)) continue;   // already named by an earlier receipt
+      if (claimed.has(o.lineRef)) continue;
       claimed.add(o.lineRef);
       offenders.push({ lineRef: o.lineRef, itemCode: o.itemCode, qty: o.qty, parentNo: receipt });
     }
@@ -358,17 +296,9 @@ export function unlinkedInvoiceResponse(offenders: UnlinkedReturnOffender[]) {
   };
 }
 
-/* Non-null string dedupe. It came across with coveredGrnIds rather than being
-   imported back out of the router: this module is the guard's home and a lib
-   that reaches into a route for a two-line helper is a cycle waiting to be
-   written. The router keeps its own `uniq` for its ten other call sites. */
 const uniqIds = (xs: Array<string | null | undefined>) =>
   [...new Set(xs.filter((x): x is string => !!x))];
 
-/* MOVED HERE 2026-08-20, from routes/purchase-invoices.ts. It computes the very
-   receipt set findUnlinkedPiLines below consumes, and every one of its three
-   CALL SITES stays in the router where the per-handler proof in
-   return-unlinked-lines.test.ts can still see it. */
 /* ── coveredGrnIds — EVERY receipt a purchase invoice bills ──────────────────
    The header's `grn_id` is only the PRIMARY ref. `/from-grn-items` says so where
    it stamps it — "PRIMARY note ref … the line-level grn_item_id is the
@@ -386,11 +316,8 @@ export async function coveredGrnIds(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   args: {
-    /** The header's primary ref, when there is one. */
     headerGrnId?: string | null;
-    /** Walk this invoice's OWN lines for the receipts they descend from. */
     piId?: string | null;
-    /** Receipt LINE ids from the request body (a create has no invoice yet). */
     grnItemIds?: Array<string | null | undefined>;
   },
 ): Promise<{ ids: string[]; error: string | null }> {

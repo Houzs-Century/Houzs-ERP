@@ -1,12 +1,3 @@
-/* The Cash Flow's Orders & bills column, the rules (step 4 of the forecast
-   port; the door is backend/tests/cashFlowForecast.test.ts). Pinned: a
-   supplier's money not tied to a bill pays its oldest bills first, so its
-   newest are the owed ones; a bill is paid on its plan, else its due date,
-   else its month and the supplier's term; the current month as at its 1st —
-   what fell in it, and what was late on its own row; the later months from
-   today's orders and bills, as far as they reach and a year at most; an order
-   with no delivery date in no month, by the year ordered; the Forecast P&L's
-   other lines less the bills already counted. Made-up names and figures. */
 import { describe, expect, test } from 'vitest';
 import type { AgingRow } from './aging';
 import type { CashLeg } from './cashflow-pnl-forecast';
@@ -87,7 +78,6 @@ describe('the Orders & bills column', () => {
       },
     });
     expect(r.months).toEqual(['2026-11', '2026-12', '2027-01']);
-    /* SO-9 and PI-6 fall in the current month by today's papers: that month is as at its 1st. */
     expect(brief(r.legs)).toEqual(['2026-12 out 400-0000 900 PI-4', '2027-01 in 300-0000:BAL:ORD 400 SO-5']);
     expect(r.undated).toEqual([{ year: '2025', orders: 1, sen: 70 }, { year: '2026', orders: 1, sen: 100 }]);
     expect(r.beyond).toEqual({ orders: 1, orderSen: 500, bills: 1, billSen: 10 });

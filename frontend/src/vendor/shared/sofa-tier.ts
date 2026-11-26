@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// sofa-tier — recognise a sofa price TIER from free text on a CSV import.
-//
-// A sofa carries prices per (size × tier), tier ∈ PRICE_1 | PRICE_2 | PRICE_3 | PRICE_4.
-// The SKU export writes the canonical `PRICE_2`, but an operator may hand-edit
-// the price_tier column to "P2", "Price 2", or "2". This maps the common forms
-// to the canonical tier and returns null for anything it can't recognise — so
-// the importer can REJECT a mislabelled row instead of silently filing its
-// prices under the wrong tier (or dropping them). Pure — shared by the backend
-// import dialog and the API batch-import gate so both speak the same rule.
-// ----------------------------------------------------------------------------
 
 import type { SofaPriceTier } from './sofa-combo-pricing';
 

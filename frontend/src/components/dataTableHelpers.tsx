@@ -1,20 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { SortState } from "./dataTableTypes";
 
-// Resize / pin tuning. MIN_COL_WIDTH is the floor a drag can shrink a
-// column to. DEFAULT_COL_WIDTH is the assumed width when computing a
-// pinned column's sticky-left offset and the column has no user width and
-// no px-parseable `width` default (e.g. a "%" width or none at all).
 export const MIN_COL_WIDTH = 64;
 export const DEFAULT_COL_WIDTH = 160;
 
-// Row windowing: past this many FLAT rows, render only the slice scrolled into
-// view (see the effect in the component). Kept a no-op for grouped/expandable
-// tables and short lists, so existing pages render byte-identically. Threshold
-// mirrors the SCM DataGrid's (25) with a little headroom.
 export const VIRTUAL_ROW_THRESHOLD = 30;
 export const VIRTUAL_OVERSCAN = 12;
-export const ROW_HEIGHT_ESTIMATE = 33; // px; corrected at runtime by measuring a real row
+export const ROW_HEIGHT_ESTIMATE = 33;
 export function sanitizeStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((item): item is string => typeof item === "string" && item.length > 0))]
@@ -44,12 +36,6 @@ export function sanitizeColumnWidths(value: unknown): Record<string, number> {
   return widths;
 }
 
-// Keep a pointer-anchored context menu inside the viewport: one opened near the
-// bottom or right edge hung off-screen, and any page scroll dismisses these
-// menus, so the clipped tail was unreachable. Measured after render, re-clamped
-// on resize; the raw anchor shows for the frame before that, so nothing jumps.
-// NOT the funnel popover — that goes through lib/anchoredPanel, which also
-// decides which SIDE to open on.
 export function useViewportClampedPos(
   anchor: { x: number; y: number } | null,
   ref: React.RefObject<HTMLDivElement | null>,
@@ -123,7 +109,6 @@ export function DebouncedSearchInput({
     onPendingChange?.(draft !== value);
   }, [draft, value, onPendingChange]);
 
-  // DOWN-sync: adopt an externally-driven change, ignore our own echo.
   useEffect(() => {
     if (value !== lastSentRef.current) {
       lastSentRef.current = value;
@@ -131,7 +116,6 @@ export function DebouncedSearchInput({
     }
   }, [value]);
 
-  // UP-sync: debounced.
   useEffect(() => {
     if (draft === lastSentRef.current) return;
     if (delayMs <= 0) {
@@ -151,11 +135,6 @@ export function DebouncedSearchInput({
     };
   }, [draft, delayMs]);
 
-  /* Cancels the pending timer as well as sending. Without the cancel, blurring
-     100ms into a 250ms window fired onChange twice with the same value — the
-     flush, then the timer that was still armed. Harmless for a search box, but
-     it is a duplicate request per blur, which is the exact thing this component
-     exists to stop. */
   const flush = () => {
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current);
@@ -185,10 +164,6 @@ export function DebouncedSearchInput({
   );
 }
 
-// Parse a column's `width` CSS string into a pixel number when possible.
-// "120px" → 120, "120" → 120. Non-px units ("20%", "8rem") and undefined
-// return null so the caller falls back to DEFAULT_COL_WIDTH for offset math
-// (the inline width style still passes the original string through for those).
 export function parsePxWidth(width: string | undefined): number | null {
   if (!width) return null;
   const m = /^(\d+(?:\.\d+)?)(px)?$/.exec(width.trim());

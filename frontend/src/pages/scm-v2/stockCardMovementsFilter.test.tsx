@@ -1,9 +1,3 @@
-/* The Stock Card MOVEMENTS filter row, mounted on the real page (owner
- * 2026-09-18). The pure predicate is covered in stockMovementFilter.test.ts;
- * this asserts the wiring the operator actually touches — the Type chips, the
- * Source-doc box, the "Showing X of N" count and the Clear control — by
- * rendering StockCard with a small ledger and only its data hooks faked.
- */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -71,8 +65,6 @@ describe("Stock Card movements filter", () => {
     mount();
     fireEvent.click(screen.getByRole("button", { name: "OUT" }));
     expect(screen.getByText("Showing 1 of 3")).toBeTruthy();
-    // Source-doc numbers are unique to the movement rows, so their presence maps
-    // one-to-one to which rows survived the filter.
     expect(screen.getByText("HC-DO-0007")).toBeTruthy();
     expect(screen.queryByText("HC-GRN-0001")).toBeNull();
   });

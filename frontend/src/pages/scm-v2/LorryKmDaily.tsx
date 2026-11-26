@@ -1,5 +1,3 @@
-// Km per lorry per Malaysia day from the GPS trackers (GET /lorries/km-daily).
-// Blank cell = no fixes that day. Each cell opens that lorry's page on that day.
 import { Link, useSearchParams } from 'react-router-dom';
 import { todayMY } from '../../vendor/shared/format';
 import { useLorryKmDaily } from '../../vendor/scm/lib/lorries-queries';

@@ -63,7 +63,6 @@ describe('validatePing — recorded_at handling', () => {
   it('accepts a past device clock (stale is fine) but rejects a far-future one', () => {
     expect(validatePing({ lat: 1, lng: 2, recorded_at: NOW - 3_600_000 }, { now: NOW }).ok).toBe(true);
     expect(validatePing({ lat: 1, lng: 2, recorded_at: NOW + 3_600_000 }, { now: NOW }).ok).toBe(false);
-    // Within the allowed skew window is fine.
     expect(validatePing({ lat: 1, lng: 2, recorded_at: NOW + 60_000 }, { now: NOW }).ok).toBe(true);
   });
 });
@@ -98,7 +97,6 @@ describe('PING_ACCEPTED_STATUSES', () => {
 });
 
 describe('latestPerDriver — newest row per trip/driver', () => {
-  // Input is newest-first (the query orders recorded_at DESC).
   const rows = [
     { trip_id: 'T1', driver_id: 'D1', lat: 3.20, lng: 101.70, accuracy_m: 8, recorded_at: '2026-07-25T10:00:00Z', received_at: '2026-07-25T10:00:01Z' },
     { trip_id: 'T1', driver_id: 'D1', lat: 3.19, lng: 101.69, accuracy_m: 9, recorded_at: '2026-07-25T09:59:30Z', received_at: '2026-07-25T09:59:31Z' },

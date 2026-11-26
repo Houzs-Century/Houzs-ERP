@@ -46,14 +46,11 @@ export type Payees = { ga: boolean; operation: boolean; logistics: boolean; setu
 /** One month's charges, each in sen, on the month's base. */
 export type MonthCharges = {
   month: string;
-  /** The selling department's sales excluding service — what every rate is of. */
   baseSen: number;
   ga: number;
   operation: number;
-  /** The part of Operation's 7% it passes on to Logistics. */
   logistics: number;
   setupDismantle: number;
-  /** Performance only: merchandise in place of the terminal charges. */
   merchandise: number;
 };
 

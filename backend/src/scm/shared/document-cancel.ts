@@ -60,12 +60,12 @@ export const asksToCancel = (status: unknown): boolean =>
   String(status ?? '').trim().toUpperCase() === 'CANCELLED';
 
 export type CancelRequestStatus =
-  | 'REQUESTED'    // raised, waiting for the first signature
-  | 'L1_APPROVED'  // level 1 signed, waiting for level 2 (Sales Order only)
-  | 'APPROVED'     // every signature is on it — the cancel may now run
-  | 'EXECUTED'     // the document was cancelled (stamped by the cancel guard)
-  | 'REJECTED'     // an approver refused it
-  | 'WITHDRAWN';   // the requester pulled it back
+  | 'REQUESTED'
+  | 'L1_APPROVED'
+  | 'APPROVED'
+  | 'EXECUTED'
+  | 'REJECTED'
+  | 'WITHDRAWN';
 
 /** A request that still blocks a second one and still shows on the document. */
 export const OPEN_CANCEL_STATUSES: readonly CancelRequestStatus[] = ['REQUESTED', 'L1_APPROVED', 'APPROVED'];
@@ -138,7 +138,6 @@ export function signaturesGiven(docType: CancelDocType, status: string | null | 
   return 0;
 }
 
-/* ── The reason ──────────────────────────────────────────────────────────── */
 
 export const MIN_REASON_CHARS = 5;
 export const MAX_REASON_CHARS = 1000;
@@ -172,7 +171,6 @@ export function readRemark(v: unknown): { ok: true; remark: string | null } | { 
   return { ok: true, remark: text || null };
 }
 
-/* ── Can this document be asked about at all?────────────────────────────── */
 
 /** A DRAFT is discarded, not cancelled (the SO deletes it; the PO's draft cancel
  *  commits nothing to anyone) — so a draft needs no approval and no request. A
@@ -203,12 +201,9 @@ export function cancelRequestRefusal(docType: CancelDocType, docStatus: string |
   return null;
 }
 
-/* ── Who may do what to an open request ──────────────────────────────────── */
 
 export type Signer = {
-  /** public.users.id of the REAL caller. */
   userId: number | null | undefined;
-  /** `hasHouzsPerm(c, key)` — true for the `*` wildcard too. */
   holds: (perm: string) => boolean;
 };
 
@@ -280,7 +275,6 @@ export function holdsAnyApproveKey(docType: string, signer: Pick<Signer, 'holds'
   return approveKeysFor(docType).some((k) => signer.holds(k));
 }
 
-/* ── The gate in front of the cancel itself ──────────────────────────────── */
 
 /** Why the existing cancel route may not run yet. `open` is the document's open
  *  request, or null when there is none. Null answer = the cancel may proceed.

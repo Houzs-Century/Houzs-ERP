@@ -34,12 +34,6 @@ export const localities = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 localities.use("*", supabaseAuth);
 
-/* Validator for the GET below, derived from the bytes actually served. It has
-   to be content-derived: my_localities has no updated_at, and a row COUNT alone
-   would miss a PATCH (rename a city, count unchanged) and hand the editor a
-   stale 304. Weak (`W/`) on purpose — Cloudflare downgrades a strong ETag to
-   weak when it compresses, so the browser would echo `W/"…"` and a strong
-   compare would never match: the 304 would silently never fire. */
 async function bodyEtag(body: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
   return `W/"${Array.from(new Uint8Array(digest).slice(0, 16))
@@ -47,23 +41,15 @@ async function bodyEtag(body: string): Promise<string> {
     .join("")}"`;
 }
 
-/* If-None-Match is a comma-separated LIST, and either side may carry the W/
-   prefix (see above) — compare on the bare tag. */
 function etagMatches(header: string | undefined, etag: string): boolean {
   if (!header) return false;
   const bare = etag.replace(/^W\//, "");
   return header.split(",").some((t) => t.trim().replace(/^W\//, "") === bare);
 }
 
-// GET / — list all rows (the state→city→postcode cascade source). Degrades to
-// [] when the table is missing or empty.
 localities.get("/", async (c) => {
   const sb = c.get("supabase");
-  // PostgREST caps a single response at max-rows (1000), so `.limit(20000)` was
-  // silently truncating the MY dataset to the first 1000 (≈7 states). Page
-  // through with .range() (each request ≤1000) and concatenate the lot.
   const PAGE = 1000;
-  // Fan-out ceiling, carried over from the earlier serial walk.
   const MAX_ROWS = 50000;
 
   const selectPage = (from: number, opts?: { count: "exact" }) =>
@@ -73,15 +59,9 @@ localities.get("/", async (c) => {
       .order("state", { ascending: true })
       .order("city", { ascending: true })
       .order("postcode", { ascending: true })
-      // Tiebreaker makes the sort TOTAL. (state, city, postcode) is not unique —
-      // SO Maintenance seeds '—/—/—' placeholder rows per country/state — and
-      // Postgres does not promise a stable sort across separate LIMIT/OFFSET
-      // windows, so without this paging can repeat one row and drop another.
       .order("id", { ascending: true })
       .range(from, from + PAGE - 1);
 
-  // Page 1 carries the exact total too, so pages 2..N fan out CONCURRENTLY —
-  // the serial walk paid a full round-trip per 1000 rows.
   const first = await selectPage(0, { count: "exact" });
   if (first.error) {
     if (/relation .* does not exist/i.test(first.error.message)) return c.json({ localities: [] });
@@ -98,19 +78,15 @@ localities.get("/", async (c) => {
       data.push(...((chunk.data ?? []) as Record<string, unknown>[]));
     }
   } else if (data.length === PAGE) {
-    // No Content-Range count came back — walk serially rather than guess the
-    // page span. A short read here is INVISIBLE (the cascade just quietly loses
-    // states), so never infer the end from anything but a short page.
     for (let from = PAGE; from <= MAX_ROWS; from += PAGE) {
       const chunk = await selectPage(from);
       if (chunk.error) return c.json({ error: "load_failed", reason: chunk.error.message }, 500);
       const rows = (chunk.data ?? []) as Record<string, unknown>[];
       data.push(...rows);
-      if (rows.length < PAGE) break; // last page
+      if (rows.length < PAGE) break;
     }
   }
 
-  // Dual-read camelCase ?? snake_case — cover the PostgREST casing either way.
   const localitiesRows = data.map((r: Record<string, unknown>) => ({
     id: r.id,
     postcode: r.postcode,
@@ -121,14 +97,6 @@ localities.get("/", async (c) => {
     warehouseId: r.warehouseId ?? r.warehouse_id ?? null,
   }));
 
-  /* ~925 KB of near-static reference data re-sent on every cold page load
-     (useLocalities holds it 24h in-memory, so this is a per-page-load cost, not
-     a per-click one). Revalidate rather than expire: `no-cache` re-asks every
-     time and a 304 costs only the round-trip, whereas ANY max-age would let the
-     POST/PATCH/DELETE mutations' invalidateQueries(['my_localities']) refetch
-     be answered from the browser's own still-fresh entry — hiding the editor's
-     own edit from them. The tag is derived from the rows we just read, so an
-     edit always re-tags and a 304 can never be stale. */
   const body = JSON.stringify({ localities: localitiesRows });
   const etag = await bodyEtag(body);
   const validators = { "cache-control": "private, no-cache", etag };
@@ -141,7 +109,6 @@ const createSchema = z.object({
   stateCode: z.string().trim().min(1),
   city: z.string().trim().min(1),
   postcode: z.string().trim().min(1),
-  /* Task #121 — optional, defaults to Malaysia. */
   country: z.string().trim().min(1).optional(),
 });
 
@@ -151,23 +118,10 @@ const updateSchema = z.object({
   city: z.string().trim().min(1).optional(),
   postcode: z.string().trim().min(1).optional(),
   country: z.string().trim().min(1).optional(),
-  /* Commander 2026-05-27 — city-level warehouse override.
-     '' or null explicitly clears the override (falls back to state-level). */
   warehouseId: z.union([z.string().uuid(), z.literal(""), z.null()]).optional(),
 });
 
-// POST / — create a new row.
 localities.post("/", async (c) => {
-  /* GATED. These three writes had NO permission check at all - the file did
-     not import houzs-perms, and localities is in SCM_UNGUARDED_PREFIXES
-     (lib/scm-areas.ts) so no area guard runs over it either. Anyone who passed
-     requireScmAccess - a Sales Executive with view-only on orders included -
-     could edit or delete rows of the shared 5,870-row Malaysian postcode master
-     and repoint warehouse_id, the city-level delivery-routing override. It has
-     no company_id (see the header), so a change hits BOTH companies at once.
-     Every sibling on the same ungated umbrella already gates its writes:
-     currencies.ts:76 (scm.currency.manage), categories.ts (canWriteScmConfig
-     x7), staff.ts:433 (users.manage). */
   if (!canWriteScmConfig(c)) {
     return c.json({ error: "You don't have permission to change address data." }, 403);
   }
@@ -193,9 +147,6 @@ localities.post("/", async (c) => {
     .select("id, state, state_code, city, postcode, country")
     .single();
   if (error) {
-    /* mig 20260911T1730 added UNIQUE(country,state,city,postcode). A re-add of
-       an existing locality from the maintenance UI is a 409, not a raw 500 —
-       the row the editor is trying to create is already there. */
     if (error.code === "23505") {
       return c.json({ error: "duplicate", reason: "This locality already exists." }, 409);
     }
@@ -204,7 +155,6 @@ localities.post("/", async (c) => {
   return c.json({ locality: data });
 });
 
-// PATCH /:id — update a row.
 localities.patch("/:id", async (c) => {
   if (!canWriteScmConfig(c)) {
     return c.json({ error: "You don't have permission to change address data." }, 403);
@@ -231,7 +181,6 @@ localities.patch("/:id", async (c) => {
   if (parsed.data.city) patch.city = parsed.data.city;
   if (parsed.data.postcode) patch.postcode = parsed.data.postcode;
   if (parsed.data.country) patch.country = parsed.data.country;
-  /* warehouseId: empty string or null clears the override; uuid sets it. */
   if (parsed.data.warehouseId !== undefined) {
     patch.warehouse_id =
       parsed.data.warehouseId === "" || parsed.data.warehouseId === null
@@ -252,7 +201,6 @@ localities.patch("/:id", async (c) => {
   return c.json({ locality: data });
 });
 
-// DELETE /:id — drop a row.
 localities.delete("/:id", async (c) => {
   if (!canWriteScmConfig(c)) {
     return c.json({ error: "You don't have permission to change address data." }, 403);

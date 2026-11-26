@@ -1,6 +1,3 @@
-// Self-check's "Official receipts" row (batch 6 §3; once ReceiptBackfillCard):
-// the count, the numbers per month, the run behind an inline confirm, the run
-// in batches, the result; a failed read says so.
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -86,7 +83,6 @@ describe('the Official receipts row', () => {
     expect(screen.getByText('Clean')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Create/ })).toBeNull();
     cleanup();
-    /* A 403 is a decision, not a blip: no retry, so the row answers at once. */
     authedFetch.mockRejectedValue(Object.assign(new Error('forbidden'), { status: 403 }));
     draw();
     await waitFor(() => expect(screen.getByText(/not checked — the read failed/)).toBeTruthy());

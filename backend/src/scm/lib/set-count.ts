@@ -1,26 +1,3 @@
-// ---------------------------------------------------------------------------
-// set-count.ts — derive an order's "SET COUNT" for capacity packing. PURE,
-// unit-tested. Fleet Module A1.
-//
-// The owner's primary capacity unit is the SET: a bed set = one frame + one
-// mattress. Ten sets fill a lorry (the default ceiling). This module turns an
-// SO's line items into that count so the packer can fill lorries by sets, with a
-// revenue fallback for orders that carry no counted furniture (accessories /
-// service only).
-//
-// The rule, deliberately simple and defensible:
-//   - A frame pairs with a mattress into ONE set. N frames + N mattresses = N
-//     sets. An unpaired frame OR an unpaired mattress still occupies a slot, so
-//     the counted beds = MAX(totalFrameQty, totalMattressQty).
-//   - A sofa is its own bulky slot: + totalSofaQty.
-//   - Accessories / service / others do NOT count toward the set ceiling — an
-//     order made only of those has hasFurniture=false and the packer uses its
-//     revenue instead.
-//
-// Category comes in already resolved (BEDFRAME / MATTRESS / SOFA / ...), exactly
-// as delivery-planning.ts resolves it (mfg_products.category -> normCategory,
-// with the line's item_group as the fallback). Cancelled lines are excluded.
-// ---------------------------------------------------------------------------
 
 export type SetLineCategory =
   | 'BEDFRAME'
@@ -32,16 +9,12 @@ export type SetLineCategory =
 
 export interface SetLine {
   category: SetLineCategory | string;
-  /** Ordered quantity for the line. Non-finite / missing counts as 0. */
   qty?: number | string | null;
   cancelled?: boolean | null;
 }
 
 export interface SetCountResult {
-  /** The capacity unit count: max(frames, mattresses) + sofas. */
   sets: number;
-  /** True when the order carries ANY counted furniture (frame/mattress/sofa).
-   *  False => the packer falls back to the revenue ceiling for this order. */
   hasFurniture: boolean;
   frames: number;
   mattresses: number;
@@ -51,7 +24,6 @@ export interface SetCountResult {
 function qtyOf(v: number | string | null | undefined): number {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return 0;
-  // Furniture ships in whole units; round to the nearest whole to be safe.
   return Math.round(n);
 }
 

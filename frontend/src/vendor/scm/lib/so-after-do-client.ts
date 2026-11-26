@@ -1,10 +1,3 @@
-/* ----------------------------------------------------------------------------
-   so-after-do-client — the SO editor's side of shared/so-after-do-edit.ts
-   (DEV-32): when the "Edit SO after DO" mode is on, which fields and lines it
-   reopens, and what each save request carries so the server takes the after-DO
-   road. The server re-checks every one of these; this only decides what the
-   screen offers.
-   -------------------------------------------------------------------------- */
 
 import { LOCKED_STATUSES, soDownstreamHardLocked, soItemFrozen } from './so-detail-gates';
 import {
@@ -19,9 +12,7 @@ export type AfterDoHeader = {
 };
 
 export type AfterDoMode = {
-  /** The permission holds, the order has an open DO, and (on a SHIPPED+ order) Override is on. */
   on: boolean;
-  /** The customer details may change too: no DO of the order is invoiced or returned. */
   headerOpen: boolean;
   targets: AfterDoTarget[];
   openTargets: AfterDoTarget[];

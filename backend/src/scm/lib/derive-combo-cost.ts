@@ -19,8 +19,6 @@ export type SupplierComboCost = {
   prices_by_height: Record<string, number | null> | null;
 };
 
-/** The dearest cell in a cost grid (the ranking scalar — whole set still comes
- *  from ONE supplier, this only decides which). 0 when the grid is empty. */
 function dearestCell(grid: Record<string, number | null> | null | undefined): number {
   let max = 0;
   for (const v of Object.values(grid ?? {})) {

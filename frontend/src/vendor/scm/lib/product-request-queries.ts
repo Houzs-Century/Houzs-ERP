@@ -27,9 +27,7 @@ export type ProductRequestStatus = 'REQUESTED' | 'APPROVED' | 'REJECTED' | 'WITH
 export type ProductRequestLine = {
   id: string;
   line_no: number;
-  /** An existing SKU's code — picked by the requester, or built by the Purchaser from a new Model. */
   item_code: string | null;
-  /** The Model the catalogue does not have yet, by the requester's name for it. */
   proposed_model_name: string | null;
   model_id: string | null;
   category: string;
@@ -65,9 +63,7 @@ export type ProductRequest = {
   created_at: string;
   updated_at: string;
   lines: ProductRequestLine[];
-  /** The PC Order raised from it, when one was. */
   pco: { id: string; pcNumber: string; status: string; expectedAt: string | null } | null;
-  /** The Purchase Order raised from it instead, when one was. */
   po: { id: string; poNumber: string; status: string; expectedAt: string | null } | null;
   deliveryLocation: { id: string; code: string; name: string } | null;
   supplier: { id: string; code: string; name: string } | null;

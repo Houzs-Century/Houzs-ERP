@@ -1,8 +1,3 @@
-/* 2026-11-13, Hookka DO-2611-037 (25 sets over 3 pages, handwritten racks): the
-   read call failed with Anthropic 503 and the scan came back as an empty row,
-   "We could not read any lines", which every re-upload then reused. A failed
-   call must fail (Read again), a cut answer must keep its lines and say it is
-   partial, and a multi-page DO stays ONE read with every page's lines. */
 import { PDFDocument } from 'pdf-lib';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {

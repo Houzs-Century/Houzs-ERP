@@ -59,7 +59,7 @@ describe('checkCrOverRemaining — the write-time guard', () => {
 
 describe('the two pickers', () => {
   it('returnable-note-lines pages + scopes + binds the live-returns read', () => {
-    const at = CR.indexOf('Already-returned per note line');
+    const at = CR.indexOf('const { data: relRows, error: relErr } = await paginateAll');
     expect(at).toBeGreaterThan(-1);
     const seg = CR.slice(at, at + 900);
     expect(seg).toContain('paginateAll');
@@ -68,7 +68,7 @@ describe('the two pickers', () => {
   });
 
   it('deliverable-order-lines pages + scopes + binds the live-notes read', () => {
-    const at = CN.indexOf('Already-delivered per CO line');
+    const at = CN.indexOf('const { data: noteRows, error: noteErr } = await paginateAll');
     expect(at).toBeGreaterThan(-1);
     const seg = CN.slice(at, at + 900);
     expect(seg).toContain('paginateAll');

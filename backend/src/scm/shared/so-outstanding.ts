@@ -1,39 +1,9 @@
-// ----------------------------------------------------------------------------
-// so-outstanding — WHAT A SALES ORDER STILL OWES, computed in ONE place.
-//
-// WHY THIS FILE EXISTS. This repo's recurring write-back defect is a fact the
-// ERP keeps in two columns where the reader picks the wrong one — it has cost
-// three incidents (`supplier_sku`, the stock location, the salesperson; see
-// docs/autocount-writeback-golive-coe.md section 2). The outstanding balance is
-// the same shape with THREE candidates, and the obvious one is the wrong one:
-//
-//   scm.mfg_sales_orders.balance_sen   NOT the balance. `recomputeTotals`
-//       writes `balance_sen = local_total_sen = total_revenue_sen =
-//       grandTotal` on every edit (mfg-sales-orders.ts), so it never reflects a
-//       payment. It LOOKS right because the cutover really did land AutoCount's
-//       UDF_BALANCE in it (check-migration-fidelity.mjs:95), and the first edit
-//       of any order overwrote that with the gross total.
-//   the view's balance_sen_live      local_total − SUM(payments). Right for
-//       the SO list, the mobile list and delivery planning, and it MISSES the
-//       legacy header deposit that never reached the ledger.
-//   this function                      what the SO detail page and the
-//       customer-facing print show, which is the number a human has actually
-//       agreed with the customer.
-//
-// The rule itself is not new — it is `GET /mfg-sales-orders/:docNo`'s, lifted
-// out so the write-back cannot compute a different one. A second
-// implementation of a money rule is how the two worlds disagree quietly.
-// ----------------------------------------------------------------------------
 
 /** The three reads the rule needs, in sen. */
 export interface SoPaidInputs {
-  /** `scm.mfg_sales_orders.total_revenue_sen`. */
   totalRevenueSen: number;
-  /** `scm.mfg_sales_orders.deposit_sen` — the LEGACY header deposit. */
   headerDepositSen: number;
-  /** SUM of `scm.mfg_sales_order_payments.amount_sen` for this document. */
   ledgerPaidSen: number;
-  /** Any of those payment rows carries `is_deposit`. */
   depositInLedger: boolean;
 }
 
@@ -50,12 +20,6 @@ export interface SoPaidInputs {
  * choice explicit at each call site rather than inherited.
  */
 export interface SoBalanceInputs extends SoPaidInputs {
-  /**
-   * `scm.mfg_sales_orders.local_total_sen` — the order total the ERP prints,
-   * and the ONLY total an AutoCount-imported order has (the cutover importer's
-   * header column list carries `local_total_sen` and not `total_revenue_sen`;
-   * `import-ac-outstanding-so.mjs`'s `HCOLS`).
-   */
   localTotalSen: number;
 }
 

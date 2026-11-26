@@ -28,8 +28,8 @@ describe('doLinePatchFromSoLine — the DO line mirror of an SO line', () => {
   test('line_total / line_cost / margin are derived and clamped from qty, price, discount, cost', () => {
     const p = doLinePatchFromSoLine(base);
     expect(p.qty).toBe(2);
-    expect(p.line_total_sen).toBe(2 * 100000 - 5000); // 195000
-    expect(p.line_cost_sen).toBe(2 * 40000); // 80000
+    expect(p.line_total_sen).toBe(2 * 100000 - 5000);
+    expect(p.line_cost_sen).toBe(2 * 40000);
     expect(p.line_margin_sen).toBe(195000 - 80000);
   });
 

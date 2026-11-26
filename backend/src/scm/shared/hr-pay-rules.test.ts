@@ -1,5 +1,3 @@
-// HR pay rules: effective-dated resolution, the per-field fallback on stored
-// rows, the save checks, and the rate arithmetic the payroll phase prices with.
 import { describe, expect, test } from "vitest";
 import {
   DEFAULT_PAY_RULES,

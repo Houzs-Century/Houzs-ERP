@@ -76,7 +76,6 @@ describe('the lines', () => {
       cells: { total: { amountSen: 60_000, pct: null }, '2026-10:S': { amountSen: 60_000, pct: null } },
       spans: { '2026-10:S': 2, '2026-09:S': 2 },
     });
-    /* The surplus is not split: one figure across the month. */
     expect(out[3]!.spans).toEqual({ '2026-10:S': 2, '2026-09:S': 2 });
   });
 });

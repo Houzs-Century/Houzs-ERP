@@ -50,9 +50,6 @@ export const PaymentBackdateRequests = () => {
   const q = useBackdateInbox(scope);
   const { run, busy } = useBackdateDecisions();
   const myId = Number(useHouzsAuth().user?.id);
-  /* The row the drawer shows, by id: the drawer reads the row as the inbox
-     currently has it, so a decision taken from the Actions column shows in the
-     open drawer rather than a copy taken at click time. */
   const [quickId, setQuickId] = useState<string | null>(null);
 
   const columns = useMemo<GridColumn<BackdateRequestRow>[]>(() => [

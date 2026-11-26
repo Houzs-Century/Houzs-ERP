@@ -2,13 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "../lib/utils";
 
 interface Props {
-  /** Raw text to render. */
   text: string | null | undefined;
-  /** Line count to clamp at when collapsed. Defaults to 2. */
   lines?: number;
-  /** Wrap classes for the outer block. */
   className?: string;
-  /** Optional placeholder when text is empty. Defaults to "—". */
   emptyLabel?: string;
 }
 
@@ -42,10 +38,6 @@ export function ExpandableText({
   const [overflow, setOverflow] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  // Re-measure on mount, on text change, and whenever the box resizes.
-  // scrollHeight > clientHeight + 1 px is the canonical "is it
-  // clipped?" test; the +1 forgives sub-pixel rounding in some
-  // browsers.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || expanded) return;
@@ -82,8 +74,6 @@ export function ExpandableText({
         <button
           type="button"
           onClick={(e) => {
-            // Don't bubble — most call sites wrap this in a clickable
-            // row / link, and the user almost always means the toggle.
             e.preventDefault();
             e.stopPropagation();
             setExpanded((x) => !x);

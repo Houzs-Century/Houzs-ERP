@@ -18,7 +18,6 @@ vi.mock('../../vendor/scm/lib/official-doc-queries', async (importOriginal) => (
   useOfficialDocs: () => ({ data: { rows }, isLoading: false, isError: false, error: null }),
   useMarkOfficialDoc: () => ({ mutate: markOfficial, isPending: false }),
 }));
-/* The remark is asked in the in-app prompt (the SCM shell's provider in the app). */
 const promptFn = vi.fn(async (): Promise<string | null> => 'Ask MITEC for the tax invoice');
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ usePrompt: () => promptFn, useConfirm: () => async () => true }));
 
@@ -39,7 +38,6 @@ describe('Official invoices owed', () => {
     await waitFor(() => expect(markOfficial).toHaveBeenCalledWith({ kind: 'PV', id: 'pv-1', state: 'OWED', note: 'Ask MITEC for the tax invoice' }));
     expect(promptFn).toHaveBeenCalledWith(expect.objectContaining({ input: expect.objectContaining({ label: 'Remark — what to follow up (optional)' }) }));
     unmount();
-    /* A remark already there: offered to change, shown in the prompt; Cancel marks nothing. */
     rows = [row({ request: null, note: 'Proforma only' })];
     markOfficial.mockClear();
     promptFn.mockResolvedValueOnce(null);
@@ -60,15 +58,11 @@ describe('Official invoices owed', () => {
     const views = within(screen.getByRole('group', { name: 'Official invoices' }));
     expect(views.getByRole('button', { name: 'Owed (2)' }).getAttribute('aria-pressed')).toBe('true');
     expect(views.getByRole('button', { name: 'To check (1)' })).toBeTruthy();
-    /* All counts only once its own read (the checked ones too) is loaded. */
     expect(views.getByRole('button', { name: 'All' })).toBeTruthy();
-    /* The paying document's number opens it: a voucher, or an AP bill on Supplier bills. */
     expect(screen.getByText('HC-PV-2610-001').getAttribute('href')).toBe('/scm/payment-vouchers/pv-1');
     expect(screen.getByText('HC-API-2610-001').getAttribute('href')).toBe('/scm/ap-invoices/api-1');
     expect(screen.queryByText('HC-PV-2610-002')).toBeNull();
-    /* The state as a tag, in English. */
     expect(screen.getAllByText('Owed')).toHaveLength(2 + 1);
-    /* Asked by the requester (their request one click away), or by Finance itself. */
     expect(screen.getByText('James Seow')).toBeTruthy();
     expect(screen.getByText('HC-PRQ-2610-001').getAttribute('href')).toBe('/scm/payment-requests?open=r1');
     expect(screen.getByText('Finance')).toBeTruthy();
@@ -94,7 +88,6 @@ describe('Official invoices owed', () => {
         </Routes>
       </MemoryRouter>,
     );
-    /* A double-click on the marks is not one on the row. */
     fireEvent.doubleClick(screen.getByText('Add a remark'));
     expect(screen.queryByTestId('where')).toBeNull();
     fireEvent.doubleClick(screen.getByText('MLE EVENTS SDN BHD').closest('tr') as HTMLElement);

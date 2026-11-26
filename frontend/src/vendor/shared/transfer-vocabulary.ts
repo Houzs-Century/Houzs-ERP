@@ -111,21 +111,6 @@ export const transferToLabel = (destination: TransferDoc): string =>
 export const transferFromLabel = (source: TransferDoc): string =>
   `Transfer from ${TRANSFER_DOC[source]}`;
 
-/* ── The SHORT form (added 2026-08-18; the rule had none) ───────────────────
-   A lineage COLUMN is 110-160px wide and its cell holds a document number.
-   "Transfer From (SO)" fits; "Transfer from Sales Order" does not, and that
-   gap is precisely why fifteen headers were hand-written instead of generated.
-
-   Using the abbreviation HERE does not contradict the full-name rule above —
-   it obeys its stated reason. That rule sends abbreviations to "where an
-   abbreviation identifies something": document numbers. A lineage column IS a
-   column of document numbers, so the header names which kind of number it
-   holds. A button, which names an ACTION, still gets the full name.
-
-   Written out rather than derived by upper-casing the key, because three of
-   them are not their key: `pco` heads a column of consignment ORDER numbers
-   and `pcr` a column of RECEIVE numbers, which is what those screens already
-   said in words before this table existed. */
 export const TRANSFER_DOC_SHORT = {
   so:  'SO',
   po:  'PO',
@@ -151,32 +136,7 @@ export const transferFromColumnLabel = (source: TransferDoc): string =>
 export const transferToColumnLabel = (destination: TransferDoc): string =>
   `Transfer To (${TRANSFER_DOC_SHORT[destination]})`;
 
-/* WHAT THESE ARE NOT FOR, because the next person will reach for them here and
-   be wrong. Three columns survive the 2026-08-18 unification still reading
-   "Source PO", and they are correct:
 
-     frontend/src/pages/scm-v2/SalesInvoicesListV2.tsx      (source_pos)
-     frontend/src/pages/scm-v2/MfgDeliveryOrdersListV2.tsx  (source_pos)
-     frontend/src/mobile/source-chips.tsx                   (SourcePosRowMobile)
-
-   They name the purchase order the GOODS came from — resolved from batch_no on
-   the stock ledger, GRN-healed, and capable of reading "STOCK ADJ" when the
-   stock entered through a PO-less adjustment. That is a physical fact about
-   inventory, not a document transfer: a Sales Invoice is never transferred
-   FROM a Purchase Order, and SalesInvoicesListV2's own comment says so ("an SI
-   is born FROM a Sales Order, so 'Assigned SO' is wrong here"). Titling them
-   "Transfer From (PO)" would assert a lineage that does not exist and cannot be
-   clicked through. Different relationship, different words — on purpose. */
-
-/* ── The PROVENANCE NOTE ────────────────────────────────────────────────────
-   `<Transfer from Sales Order>: <doc no>, <doc no>` written into
-   `purchase_orders.notes` by the MRP shortage->PO raise
-   (backend/src/scm/routes/mfg-purchase-orders.ts).
-
-   The label is `transferFromLabel(source)` — the SAME sentence the button
-   says — so the operator reads the same words on the screen that raised the PO
-   and in the note the PO carries. It is not a sixteenth variant; it is the
-   rule, applied to a third surface. */
 
 /** The label the writer stamps today, for `source`. */
 export const provenanceNoteLabel = (source: TransferDoc): string =>
@@ -190,31 +150,14 @@ export const provenanceNote = (
   source: TransferDoc,
   docNos: readonly string[],
 ): string => {
-  // String() rather than a bare .trim(): the sole caller spreads a Set built
-  // from database rows, so a null slipping through the `string[]` type would
-  // otherwise throw here and fail the whole PO raise rather than the one token.
   const list = [...new Set(docNos.map((d) => String(d).trim()).filter(Boolean))];
   return `${provenanceNoteLabel(source)}: ${list.join(', ')}`;
 };
 
-/* EVERY label a stored provenance note may carry, current first.
- *
- * THE LEGACY ENTRIES ARE LOAD-BEARING AND PERMANENT. `From SOs:` was the
- * writer's wording from the MRP raise's first day until 2026-08-18, and
- * `From SO:` has been accepted by every reader since — the singular was never
- * written by the raise, but readers have always taken it, and a human editing
- * a note by hand can still produce it. Production rows carry both. Removing
- * either spelling from this list does not throw; it makes the PO Relationship
- * Map's Sales Order node go blank and the printed PO's "Your Ref No." go empty
- * for those rows, with nothing logged. Total loss, no error.
- *
- * Ordered LONGEST FIRST so the alternation cannot half-match: on
- * "From SOs: X", a "From SO" branch tried first would consume "From SO", find
- * "s" where it needs ":", and fail. */
 export const PROVENANCE_NOTE_LABELS: readonly string[] = [
-  provenanceNoteLabel('so'), // current, since 2026-08-18
-  'From SOs',                // legacy — the raise's wording until 2026-08-18
-  'From SO',                 // legacy — singular; readers have always taken it
+  provenanceNoteLabel('so'),
+  'From SOs',
+  'From SO',
 ]
   .slice()
   .sort((a, b) => b.length - a.length);
@@ -290,12 +233,9 @@ export const relabelProvenanceNote = (
   const m = provenanceNoteRe().exec(trimmed);
   if (!m) return original;
 
-  // The label is everything the match consumed before the captured list, minus
-  // its trailing ":" and separator run. Locate it in the ORIGINAL string:
-  // trim() only strips the ends, so the leading run's length is the offset.
   const leading = original.length - original.trimStart().length;
   const matchStart = leading + m.index;
-  const head = m[0].slice(0, m[0].length - m[1]!.length); // "  From SOs:   "
+  const head = m[0].slice(0, m[0].length - m[1]!.length);
   const colon = head.lastIndexOf(':');
   const labelStart = matchStart + (head.length - head.trimStart().length);
   const labelEnd = matchStart + colon;

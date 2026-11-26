@@ -21,7 +21,6 @@ const sb = Object.assign(
       warehouse_id: 'wh-1', notes: 'original', currency: 'MYR', exchange_rate: 1,
       allocation_method: 'value',
     }],
-    // A line already invoiced downstream → grnHasDownstream() is true.
     grn_items: [{ id: 'li-1', company_id: 1, grn_id: 'grn-1', invoiced_qty: 3, returned_qty: 0 }],
     entity_audit_log: [],
     app_config: [],

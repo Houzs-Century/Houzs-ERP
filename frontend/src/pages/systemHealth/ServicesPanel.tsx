@@ -4,8 +4,6 @@ import { useQuery } from "../../hooks/useQuery";
 import { api } from "../../api/client";
 import { cn, relativeTime } from "../../lib/utils";
 
-// Outside services (DEV-35): one row per service from GET /api/admin/health/services.
-// The verdicts are computed server-side (backend/src/services/serviceHealth.ts).
 
 export type ServiceStatus = "ok" | "warning" | "critical" | "not_tracked" | "not_tracked_yet" | "unknown";
 

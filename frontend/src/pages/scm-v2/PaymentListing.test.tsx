@@ -61,7 +61,6 @@ describe('the Payment listing', () => {
     /* What the bills say, not the remark with its bill number; no Purpose column (owner 2026-11-09). */
     expect(within(row).queryByText(/BILL 77/)).toBeNull();
     expect(screen.queryByRole('columnheader', { name: /^Purpose/ })).toBeNull();
-    /* RMB 1,000 at 0.65 leaves the bank as RM 650; its own amount stands under it. */
     const foreign = screen.getByText('HC-HPV-2611-002').closest('tr')!;
     expect(within(foreign).getByText('650.00')).toBeTruthy();
     expect(within(foreign).getByText(/RMB/)).toBeTruthy();

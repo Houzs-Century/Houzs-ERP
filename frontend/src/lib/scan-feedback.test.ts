@@ -1,5 +1,3 @@
-// The read confirmation must never break a scan: on a phone with neither
-// vibration nor audio it does nothing, and it never throws into the loop.
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });

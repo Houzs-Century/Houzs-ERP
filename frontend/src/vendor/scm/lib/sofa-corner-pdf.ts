@@ -40,13 +40,10 @@ import {
   type Rot,
 } from '@2990s/shared';
 
-/* POS's palette, byte-for-byte — the two surfaces must not drift into two
-   slightly different creams. */
 const SOFA_SEAT: [number, number, number] = [0xF0, 0xE6, 0xD6];
 const SOFA_BAND: [number, number, number] = [0xD9, 0xC2, 0xA0];
 const SOFA_ARM: [number, number, number] = [0xB8, 0x99, 0x72];
 const SOFA_INK: [number, number, number] = [0x2C, 0x2C, 0x2A];
-/** Module-art body height; every inset below is a fraction of it. POS's. */
 const ART_BODY_UNITS = 70;
 
 /** 1B / 2B are the WIDE-ARM ("bench") variants — a soft rounded bench cushion
@@ -66,7 +63,6 @@ export interface CornerGeo {
   chaiseBench: boolean;
 }
 
-/** Un-rotate a screen-frame vector back to the sofa's natural frame. */
 const unrotateVec = (dx: number, dy: number, rot: number): { x: number; y: number } => {
   const r = ((rot % 360) + 360) % 360;
   if (r === 90) return { x: dy, y: -dx };
@@ -95,8 +91,6 @@ export const cornerCompositeFromCells = (
   const oneM = findModule(one.moduleId);
   if (!cnrM || !twoM || !oneM) return null;
 
-  /* The joined corner is REDRAWN from geometry, so only the bar's and the
-     chaise's rotations matter — the corner piece's own is irrelevant. */
   const groupRot = two.rot;
   const chaiseRel = (((one.rot - groupRot) % 360) + 360) % 360;
   if (chaiseRel !== 90 && chaiseRel !== 270) return null;
@@ -111,12 +105,11 @@ export const cornerCompositeFromCells = (
   const ch = ctr(bbH);
   const armN = unrotateVec(ca.x - cc.x, ca.y - cc.y, groupRot);
   const chaN = unrotateVec(ch.x - cc.x, ch.y - cc.y, groupRot);
-  // Not a clean top-bar + down-leg L.
   if (chaN.y <= 0 || Math.abs(armN.x) < 1) return null;
 
   const cnrFp = moduleFootprint(cnrM, 0, depth);
   const twoW = moduleFootprint(twoM, 0, depth).w;
-  const legLen = moduleFootprint(oneM, 0, depth).w; // seat width → chaise leg length
+  const legLen = moduleFootprint(oneM, 0, depth).w;
   const bb = cellsBbox(cells, depth);
   if (!bb) return null;
 
@@ -151,7 +144,6 @@ type Doc = {
   setLineDashPattern?: (pattern: number[], phase: number) => unknown;
 };
 
-/** A quadratic Bézier as jsPDF's relative cubic segment (6 numbers). */
 const quadRel = (
   from: [number, number], ctrl: [number, number], to: [number, number],
 ): number[] => {
@@ -191,9 +183,6 @@ export function drawCornerSofa(
   const benchThick = 20 * u;
   const benchInset = 2 * u;
   const benchRx = 5 * u;
-  /* Stroke widths are in mm and must NOT be scaled by the sofa's cm scale —
-     POS's are in SVG user units because its viewBox scales with the box. A
-     hairline that scaled would vanish on a small plan. */
   const swOuter = 0.35;
   const swInner = 0.2;
   const swDash = 0.15;
@@ -201,9 +190,6 @@ export function drawCornerSofa(
   const colW = cornerW;
   const left = orientation === 'left';
 
-  /* ── The L outline. Convex corners rounded, the inner bend sharp. ────────
-     Written as POS writes it — corner-by-corner in the same order — so the two
-     can be compared line for line. */
   const P = (cx: number, cy: number): [number, number] => [PX(cx), PY(cy)];
   const segs: number[][] = [];
   let cur: [number, number];
@@ -244,14 +230,11 @@ export function drawCornerSofa(
   doc.setLineWidth(swOuter);
   doc.lines(segs, start[0], start[1], [1, 1], 'FD', true);
 
-  /* ── Backrest band: the top edge AND the outer side edge — the corner wraps
-        two edges, which is the whole point of a corner piece. */
   doc.setFillColor(...SOFA_BAND);
   doc.setLineWidth(swInner);
   doc.rect(PX(0), PY(0), W * sx, bandH * sy, 'FD');
   doc.rect(left ? PX(0) : PX(W - bandH), PY(0), bandH * sx, H * sy, 'FD');
 
-  /* ── The two ends: a hard arm (1A/2A) or a wide rounded bench (1B/2B). */
   const endEl = (ex: number, ey: number, ew: number, eh: number, bench: boolean) => {
     if (bench) {
       doc.setFillColor(...SOFA_BAND);
@@ -275,7 +258,6 @@ export function drawCornerSofa(
     endEl(W - colW, H - chThick, colW, chThick, chaiseBench);
   }
 
-  /* ── Module boundaries (solid): corner|long-arm and corner|chaise. */
   doc.setDrawColor(...SOFA_INK);
   doc.setLineWidth(swInner);
   if (left) {
@@ -286,9 +268,6 @@ export function drawCornerSofa(
     doc.line(PX(W - colW), PY(T), PX(W), PY(T));
   }
 
-  /* ── Cushion seams (dashed) within the long arm. The dash is restored to
-        solid afterwards: jsPDF's dash pattern is document state, and leaving it
-        set would dash the next document's table rules. */
   const twoWmm = W - cornerW;
   doc.setLineWidth(swDash);
   doc.setLineDashPattern?.([2 * u * sx, 2 * u * sx], 0);

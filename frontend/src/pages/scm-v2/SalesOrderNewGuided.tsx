@@ -1,25 +1,3 @@
-// ----------------------------------------------------------------------------
-// SalesOrderNewGuided — showroom-floor 6-step sofa configurator at
-// /scm/sales-orders/new/guided.
-//
-// Parallel entry alongside the existing power form (/scm/sales-orders/new).
-// Designed for the in-showroom flow where a sales rep walks a walk-in
-// customer through "pick model → pick modules → pick fabric tier → confirm",
-// then enriches the SO (OCR / Payments / Address / etc.) on the Detail page.
-//
-// Constraints (owner-confirmed):
-//   · Single source of truth — POST goes through the SAME useCreateMfgSalesOrder
-//     hook the power form uses, hitting POST /mfg-sales-orders.
-//   · No OCR / Payments / Address / Copy-from in the wizard — those stay on the
-//     power form. The wizard creates the SO header + sofa lines, then redirects
-//     to the SO Detail so the operator can add payments etc. there.
-//   · Step 5 "Add-ons" is intentionally a pass-through in v1 (PWP picker lives
-//     on the SO Detail; not duplicated here).
-//
-// Pricing in the wizard preview is BEST-EFFORT (sum of per-SKU base_price_sen
-// × qty). The server-side combo-pricing engine re-prices on POST — the wizard
-// shows an indicative subtotal, not the authoritative number.
-// ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { expandSofaPieceItems } from "../../vendor/scm/lib/sofa-piece-lines";
@@ -40,9 +18,6 @@ import {
 import { Button } from "../../components/Button";
 import { authedFetch, type SaveProblem } from "../../vendor/scm/lib/authed-fetch";
 
-// authedFetch surfaces backend errors as Error objects whose `.message` already
-// contains the human-readable string errMsg() built (status + body). We
-// just unwrap to a string for display.
 const errMsg = (e: unknown): string =>
   e instanceof Error ? e.message : typeof e === "string" ? e : "Unknown error";
 import {
@@ -64,7 +39,6 @@ import { PhoneInput } from "../../vendor/scm/components/PhoneInput";
 import { FormTouchScope } from "../../components/FormTouchScope";
 import { useFormTouched, useLeaveGuard } from "../../hooks/useLeaveGuard";
 
-// ── Types ────────────────────────────────────────────────────────────────────
 
 type Tier = "PRICE_1" | "PRICE_2" | "PRICE_3" | "PRICE_4";
 
@@ -118,10 +92,8 @@ const TIER_LABELS: Record<Tier, { short: string; long: string }> = {
   PRICE_4: { short: "Tier 4", long: "PRICE_4 · full leather (sofa)" },
 };
 
-// Guarded centi→"RM …" — "—" for an absent/non-finite amount, never "RM NaN".
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
-// ── Hooks (wizard-local) ────────────────────────────────────────────────────
 
 const useSofaModels = () =>
   useQuery({
@@ -143,21 +115,13 @@ const useSofaSkus = () =>
     staleTime: 5 * 60_000,
   });
 
-// ── Page ────────────────────────────────────────────────────────────────────
 
 export function SalesOrderNewGuided() {
   const navigate = useNavigate();
   const { touched: formTouched, markTouched } = useFormTouched();
   const { allowLeave } = useLeaveGuard(formTouched, null);
   const create = useCreateMfgSalesOrder();
-  /* One key for the one order this page is open to raise (lib/idempotency.ts).
-     This is a route-level form that navigates to the SO detail on success, so
-     the MOUNT is exactly one order — same rule as mobile MobileNewSO, one logic
-     layer. Minted once by useState's lazy init: stable across re-renders and
-     across a re-press after a stalled submit (the retry replays the first
-     order's docNo), fresh on the next mount so a genuinely new order is new. */
   const idemKey = useIdempotencyKey();
-  /* Active company — feeds the shared stock-location guard below. */
   const branding = useBranding();
 
   const [step, setStep] = useState<number>(0);
@@ -165,7 +129,6 @@ export function SalesOrderNewGuided() {
   const [postError, setPostError] = useState<string | null>(null);
   const notify = useNotify();
 
-  // Draft state
   const [customer, setCustomer] = useState<Customer>({
     name: "",
     phone: "",
@@ -173,12 +136,10 @@ export function SalesOrderNewGuided() {
     debtorCode: null,
   });
   const [modelId, setModelId] = useState<string | null>(null);
-  // qty per SKU code (0 = not in the build)
   const [moduleQty, setModuleQty] = useState<Record<string, number>>({});
   const [tier, setTier] = useState<Tier>("PRICE_1");
   const [note, setNote] = useState<string>("");
 
-  // Data
   const modelsQ = useSofaModels();
   const skusQ = useSofaSkus();
   const skusForModel = useMemo<MfgProduct[]>(() => {
@@ -192,7 +153,6 @@ export function SalesOrderNewGuided() {
     return modelsQ.data.find((m) => m.id === modelId) ?? null;
   }, [modelId, modelsQ.data]);
 
-  // Derived
   const moduleEntries = useMemo(
     () =>
       Object.entries(moduleQty).filter(([, qty]) => qty > 0) as Array<
@@ -232,12 +192,11 @@ export function SalesOrderNewGuided() {
     void notify({ title: saveProblemsTitle(blockingProblems.length), body: <SaveProblemsList problems={blockingProblems} />, tone: "error" });
   };
 
-  // Validation per step
   const stepValid = (s: number): boolean => {
     if (s === 0) return customer.name.trim().length > 0 && customer.phone.trim().length > 0;
     if (s === 1) return Boolean(modelId);
     if (s === 2) return moduleEntries.length > 0;
-    return true; // tier / add-ons / review always valid
+    return true;
   };
 
   const goNext = () => {
@@ -253,16 +212,12 @@ export function SalesOrderNewGuided() {
     setStep((s) => Math.max(s - 1, 0));
   };
 
-  // Reset module qty when model changes
   useEffect(() => {
     setModuleQty({});
   }, [modelId]);
 
   const onSubmit = async () => {
     setPostError(null);
-    // Build the items payload: one line per module PIECE (sofa-piece-lines.ts),
-    // so a module picked x2 goes out as two lines. The backend's sofa-build /
-    // combo-pricing engine takes over from here.
     const items = expandSofaPieceItems(moduleEntries.map(([code, qty]) => {
       const sku = skusQ.data?.find((s) => s.code === code);
       const unitPriceSen = sku?.sell_price_sen ?? sku?.base_price_sen ?? 0;
@@ -310,7 +265,6 @@ export function SalesOrderNewGuided() {
       debtorCode: customer.debtorCode || null,
       note: note.trim() || null,
       items,
-      // Dates intentionally omitted — server permits header-first.
       /* Owner 2026-08-08 — CONFIRMING now requires every sofa line's Seat
          Height + Fabrics (and a venue + salesperson). The wizard deliberately
          collects none of those — its model is "assemble the build, enrich on
@@ -326,8 +280,6 @@ export function SalesOrderNewGuided() {
       allowLeave();
       navigate(`/scm/sales-orders/${res.docNo}`);
     } catch (e) {
-      /* A server aggregated refusal (422 validation_failed) shows every reason
-         in the same popup; anything else falls back to the inline banner. */
       await notifySaveProblems(notify, e, () => setPostError(errMsg(e)), errMsg(e));
     }
   };
@@ -335,7 +287,6 @@ export function SalesOrderNewGuided() {
   return (
     <FormTouchScope onTouch={markTouched}>
     <div className="space-y-4 py-4 sm:py-6">
-      {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <button
@@ -366,22 +317,18 @@ export function SalesOrderNewGuided() {
         </button>
       </div>
 
-      {/* Stepper */}
       <SoStepper currentStep={step} stepValid={stepValid} onJump={(i) => i <= step && setStep(i)} />
 
-      {/* Validation banner (S5 state) */}
       {showValidation && !stepValid(step) && (
         <ValidationBlock step={step} customer={customer} modelId={modelId} moduleEntries={moduleEntries} />
       )}
 
-      {/* POST error */}
       {postError && (
         <div className="rounded-md border border-err/40 bg-err/5 p-3 text-[12px] text-err">
           Couldn't create the sales order: {postError}
         </div>
       )}
 
-      {/* Body: step content + right summary (stacks on mobile) */}
       <div className="grid gap-4 lg:grid-cols-[1fr_290px]">
         <div className="min-w-0">
           {step === 0 && (
@@ -443,8 +390,6 @@ export function SalesOrderNewGuided() {
         />
       </div>
 
-      {/* Mobile sticky footer — visible only on small screens; the desktop
-          summary panel handles back/next on lg+. */}
       <MobileFooter
         subtotalSen={subtotalSen}
         modulePcs={modulePcs}
@@ -462,7 +407,6 @@ export function SalesOrderNewGuided() {
   );
 }
 
-// ── Stepper ─────────────────────────────────────────────────────────────────
 
 function SoStepper({
   currentStep,
@@ -475,7 +419,6 @@ function SoStepper({
 }) {
   return (
     <>
-      {/* Desktop / tablet horizontal stepper */}
       <ol className="hidden flex-wrap items-center gap-0 rounded-xl border border-border bg-surface px-4 py-3 shadow-stone sm:flex">
         {STEPS.map((label, i) => {
           const isActive = i === currentStep;
@@ -526,7 +469,6 @@ function SoStepper({
           );
         })}
       </ol>
-      {/* Mobile compact bar */}
       <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface px-4 py-3 shadow-stone sm:hidden">
         <div className="flex items-center gap-1">
           {STEPS.map((_, i) => (
@@ -548,7 +490,6 @@ function SoStepper({
   );
 }
 
-// ── Step 0 · Customer ───────────────────────────────────────────────────────
 
 function StepCustomer({
   customer,
@@ -674,7 +615,6 @@ function StepCustomer({
   );
 }
 
-// ── Step 1 · Model ──────────────────────────────────────────────────────────
 
 function StepModel({
   models,
@@ -758,7 +698,6 @@ function StepModel({
   );
 }
 
-// ── Step 2 · Modules (the hero step) ────────────────────────────────────────
 
 function StepModules({
   model,
@@ -812,7 +751,6 @@ function StepModules({
         re-prices any matching combo on save.
       </p>
 
-      {/* Top-view preview */}
       <SofaTopView selected={selectedSkus} />
 
       {loading && (
@@ -856,12 +794,6 @@ function StepModules({
                     onClick={() => toggle(sku.code)}
                     className="min-w-0 flex-1 text-left"
                   >
-                    {/* Description ONCE, code NOT displayed — the shared rule
-                        (vendor/shared/line-identity.ts) and the picker precedent
-                        (Commander 2026-05-27). The code still BINDS:
-                        toggle(sku.code) on this very button. SIZE_LABEL is kept
-                        and is not a duplicate — it appears nowhere else on the
-                        tile — so its line renders whenever it exists. */}
                     {(() => {
                       const { primary, secondary } = lineIdentity({
                         code: sku.code,
@@ -930,21 +862,14 @@ function StepModules({
 }
 
 function SofaTopView({ selected }: { selected: MfgProduct[] }) {
-  // Render one colored block per qty unit. Petrol shades for regular modules;
-  // brass-bright for any module whose code/name hints at "recliner" so the eye
-  // can pick out the special pieces (matches the design's recliner accent).
   const blocks = selected.flatMap((sku) => {
-    const qty = sku.sell_price_sen ?? sku.base_price_sen ? 1 : 1; // dummy; replaced below
+    const qty = sku.sell_price_sen ?? sku.base_price_sen ? 1 : 1;
     void qty;
-    return Array.from({ length: 1 }).map(() => sku); // we want one block per qty in caller — use flat below
+    return Array.from({ length: 1 }).map(() => sku);
   });
   void blocks;
-  // The above is unused — we instead expand directly:
   const expanded: MfgProduct[] = [];
   for (const sku of selected) {
-    // We don't have qty here; selected is the unique SKU list. Caller would have
-    // to thread qty in for accurate stacking. For v1 the preview shows ONE block
-    // per selected module — it's a visual cue, not an accounting tool.
     expanded.push(sku);
   }
   const colorFor = (sku: MfgProduct, i: number): string => {
@@ -976,7 +901,6 @@ function SofaTopView({ selected }: { selected: MfgProduct[] }) {
   );
 }
 
-// ── Step 3 · Fabric tier ────────────────────────────────────────────────────
 
 function StepFabric({ tier, setTier }: { tier: Tier; setTier: (t: Tier) => void }) {
   return (
@@ -1028,7 +952,6 @@ function StepFabric({ tier, setTier }: { tier: Tier; setTier: (t: Tier) => void 
   );
 }
 
-// ── Step 4 · Add-ons (intentional pass-through) ─────────────────────────────
 
 function StepAddons() {
   return (
@@ -1052,7 +975,6 @@ function StepAddons() {
   );
 }
 
-// ── Step 5 · Review ─────────────────────────────────────────────────────────
 
 function StepReview({
   customer,
@@ -1184,7 +1106,6 @@ function ReviewRow({ label, value }: { label: string; value: React.ReactNode }) 
   );
 }
 
-// ── Live summary side panel (desktop) ───────────────────────────────────────
 
 function SoLiveSummary({
   customer,
@@ -1286,7 +1207,6 @@ function SummaryRow({ label, value }: { label: string; value: React.ReactNode })
   );
 }
 
-// ── Mobile sticky footer ────────────────────────────────────────────────────
 
 function MobileFooter({
   subtotalSen,
@@ -1354,7 +1274,6 @@ function MobileFooter({
   );
 }
 
-// ── Validation block (S5 state) ─────────────────────────────────────────────
 
 function ValidationBlock({
   step,
@@ -1394,7 +1313,6 @@ function ValidationBlock({
   );
 }
 
-// ── Reusable field label ────────────────────────────────────────────────────
 
 function FieldLabel({
   label,

@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// invoicesModel — the rows of Money in › Invoices (the owner's Claude Design,
-// batch 5 §3): the sales invoices (read from Sales), the deposit invoices (one
-// per customer payment before the final invoice) and the other debtors' bills
-// and debit notes, as ONE kind of row; the kind segments, the status chips,
-// the search, and what each row says in the design's words. Pure — the page
-// brings the reads and the steps.
-// ----------------------------------------------------------------------------
 
 import type { ArListRow } from '../../../vendor/scm/lib/ar-invoice-queries';
 import type { DepositInvoice } from '../../../vendor/scm/lib/deposit-invoice-queries';
@@ -26,20 +18,15 @@ export type InvoiceItem = {
   id: string;
   no: string;
   date: string;
-  /** The customer, or the other debtor. */
   billTo: string;
-  /** The party as the filter groups it (`C:<code>` a customer, `D:<id>` a debtor). */
   partyKey: string | null;
-  /** The order, or the bill's description. */
   forText: string;
   forHref: string | null;
   totalSen: number;
-  /** What is still owed — null on a deposit invoice (it is money received, not owed). */
   outstandingSen: number | null;
   status: Exclude<InvoiceChip, 'any'>;
   cancelled: boolean;
   tag: Tag;
-  /** An other debtor's debit note (a bill of its own kind). */
   debitNote: boolean;
   journal: string | null;
   closedBy: string | null;

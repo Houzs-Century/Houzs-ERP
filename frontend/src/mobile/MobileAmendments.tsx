@@ -57,8 +57,6 @@ import "./mobile.css";
 // is collapsed via amendmentBucketOf, a cancellation's own via cancelBucketOf.
 const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
-// Simplified status TONE → mobile .b-* badge class (info=Requested,
-// success=Approved, danger=Rejected). Mirrors MobileModuleList's TONE_BADGE_CLASS.
 const TONE_BADGE_CLASS: Record<StatusTone, string> = {
   neutral: "b-grey",
   info: "b-brand",
@@ -68,16 +66,11 @@ const TONE_BADGE_CLASS: Record<StatusTone, string> = {
   pending: "b-amber",
 };
 
-/* The phone badge stays the ONE-WORD bucket. A cancellation's precise state
-   ("waiting for level-2 approval (1 of 2)") is a sentence — as a badge beside
-   the order number it wrapped the number onto three lines at 375px, so the
-   sentence goes in the card body and the badge keeps the word. */
 function StatusBadge({ row }: { row: AmendmentQueueRow }) {
   const { label, tone } = simplifiedAmendmentPill(row.bucket);
   return <span className={`badge ${TONE_BADGE_CLASS[tone]}`}>{label}</span>;
 }
 
-// Who signs it — the desktop queue's Approver badge, same word and colour.
 function ApproverBadge({ row }: { row: AmendmentQueueRow }) {
   return (
     <span className="badge" style={{ background: row.approverTone.bg, color: row.approverTone.fg }} data-approver={row.approverKey}>
@@ -101,11 +94,7 @@ export function MobileAmendments({
 }) {
   const [chip, setChip] = useState<string>("all");
   const { data, isLoading, error } = useAmendments();
-  /* 'all' so the Approved / Rejected chips are true of cancellations too. A
-     caller who may not read the cancellation inbox simply gets none of these
-     rows — this read never fails the amendments list. */
   const cancels = useCancelRequests("all");
-  // requested_by is a bare scm.staff uuid — same roster resolve as desktop.
   const { actorNameOf } = useStaffLookup();
   const { user, can } = useHouzsAuth();
   const viewer = useMemo(() => ({ userId: user?.id ?? null, can }), [user?.id, can]);
@@ -164,9 +153,6 @@ export function MobileAmendments({
     );
   };
 
-  /* A cancellation card is a DIV, not the amendment card's <button>: it carries
-     its own approve / reject buttons, and a button inside a button is invalid
-     markup that swallows the taps. Tapping the card body still opens the SO. */
   const cancelCard = (r: AmendmentQueueRow, row: CancelRequestRow) => (
     <div key={r.key} className="amd" style={{ textAlign: "left" }}>
       <div onClick={() => onOpen(row.doc_key)}>{body(r)}</div>

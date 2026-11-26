@@ -1,9 +1,3 @@
-// The ERP -> AutoCount write-back outbox: what gets queued, what does not, and
-// what the drain does with it.
-//
-// Two properties matter more than the rest and are pinned first:
-//   • the toggle ships OFF, and OFF means nothing is queued at all;
-//   • a failure to queue can never fail a user's save.
 import { describe, expect, test, beforeEach, vi } from 'vitest';
 import {
   enqueueAcOp,
@@ -19,23 +13,11 @@ import {
   type AcOutboxRow,
 } from './autocount-outbox';
 import { resetWritebackFlagCache } from './autocount-writeback-flag';
-/* Asked of the real classifier rather than restated as "pending is fine": the
-   whole claim under test is that a note on a sent-able row does NOT make the
-   page count it as stuck, and that is this function's answer, not this file's. */
 import { acNeedsAttention } from './autocount-outbox-status';
-/* The fake used to live here. It moved when autocount-requeue.test.ts needed
-   the same one — two copies of a fake drift, and this one earns its keep by
-   answering 42703 for a column the table does not have. */
 import { fakeSb, type Row } from './fake-postgrest';
 
-/* The salesperson every SO fixture below is attributed to. Seeded by default
-   because a sales order that names nobody is REFUSED since 2026-08-13 — a blank
-   Agent is FK_SO_SalesAgent — and the confirm gate already forbids that shape
-   on any order that reaches the write-back. A test that wants the refusal says
-   so by passing `salesperson_id: null`, not by leaving the roster out. */
 const SALESPERSON = { id: 'staff-1', name: 'Nurul Hidayah' };
 
-/** app_config seeded to whatever the test needs the toggle to say. */
 const withFlag = (value: string | null, extra: Record<string, Row[]> = {}, missing: Record<string, string[]> = {}) =>
   fakeSb({
     app_config: value == null ? [] : [{ key: 'scm.autocount_writeback', value }],
@@ -46,12 +28,6 @@ const withFlag = (value: string | null, extra: Record<string, Row[]> = {}, missi
 
 const outbox = (sb: { tables: Record<string, Row[]> }) => sb.tables.autocount_outbox ?? [];
 
-/* REAL cutover codes, not invented ones. Since D10 the composer resolves every
-   ERP code against autocount-erp-mapping-1561.csv and REFUSES what it cannot
-   find, so a fixture SKU that the account book has never heard of no longer
-   tests the flow — it tests the refusal. These four are rows of the real map:
-   the ERP code on the left is what scm holds, the AC code on the right is what
-   the licensed book calls it, and both map 1:1 so no supplier is needed. */
 const ERP_A = 'AKEMI APEX MATT (SP)';
 const AC_A = 'AK-APEX MATT (SP)';
 const ERP_B = 'AKEMI ARISTOI MATT (SP)';
@@ -96,12 +72,6 @@ describe('the runtime toggle', () => {
   });
 
   test('a value nobody can parse leaves the push OFF, it does not turn it on', async () => {
-    /* THE SHARED-PARSER TRAP. This flag reuses parseFreezeValue so the two
-       switches speak one dialect — but the write FREEZE fails closed by
-       resolving an unreadable value to 'all', and inheriting that here would
-       mean a typo in this row starts pushing every company's documents into a
-       LIVE licensed AutoCount book. Opposite safe direction, same parser:
-       readWritebackScope maps `malformed` to 'off'. */
     for (const raw of ['yes', 'houzs', 'on', '1;2', 'company 1']) {
       resetWritebackFlagCache();
       const sb = withFlag(raw);
@@ -113,11 +83,6 @@ describe('the runtime toggle', () => {
   });
 
   test('a freeze value pasted into this row turns the push OFF, not on', async () => {
-    /* 'scm.write_freeze' and 'scm.autocount_writeback' are adjacent keys in the
-       same table sharing one grammar, so pasting one row's value into the other
-       is a live operator error, not a hypothetical. '1 - scm.sales.orders' is a
-       FREEZE instruction; this switch has no per-module meaning, so rather than
-       reading it as "company 1 on" it declines to act on it at all. */
     for (const raw of ['1 - scm.sales.orders', 'all - scm.procurement.po', 'true-ish']) {
       resetWritebackFlagCache();
       const sb = withFlag(raw);
@@ -146,8 +111,6 @@ describe('the six flows each queue their operation', () => {
     phone: '012', ref: 'R', po_doc_no: null, linked_ac_docno: null,
   };
   const soItem = { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'Mattress', qty: 2, unit_price_sen: 12345 };
-  /* scm.purchase_orders as it ACTUALLY is: supplier_id, not a creditor code or
-     name, and no agent or ref at all. The creditor is one join away. */
   const po = {
     id: 'po-1', po_number: 'HC-PO-9', po_date: '2026-08-10',
     supplier_id: 'sup-1', notes: 'a note', linked_ac_docno: null,
@@ -185,17 +148,12 @@ describe('the six flows each queue their operation', () => {
       purchase_order_items: [{ purchase_order_id: 'po-1', item_code: ERP_A, description: 'D', qty: 3, unit_price_sen: 5000, warehouse_id: 'wh-1' }],
       warehouses: [{ id: 'wh-1', code: 'KL', name: 'KL WAREHOUSE' }],
     }, {
-      /* The four columns the composer used to ask purchase_orders for and that
-         it has never had. Naming them here is what makes this test fail if one
-         comes back: PostgREST answers 42703 and the whole PO flow goes silent. */
       purchase_orders: ['creditor_code', 'creditor_name', 'agent', 'ref'],
     });
     expect((await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' })).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.op).toBe('create_po');
     expect(row.doc_no).toBe('HC-PO-9');
-    /* AcSyncService assigns CreditorCode unconditionally (AcSyncService.cs:199)
-       and a purchase order with a blank creditor cannot be saved. */
     expect(row.payload.body.CreditorCode).toBe('400-H004');
     expect(row.payload.body.CreditorName).toBe('Supplier');
     expect(row.payload.body.Description).toBe('a note');
@@ -215,8 +173,6 @@ describe('the six flows each queue their operation', () => {
     expect(row.op).toBe('edit');
     expect(row.doc_no).toBe('HC-PO-9');
     expect(row.payload.body.Header).toEqual({ CreditorName: 'Supplier', Description: 'a note' });
-    /* /edit applies only the header keys it is GIVEN (AcSyncService.cs:369), so
-       an absent Ref leaves AutoCount's alone; a null Ref would blank it. */
     expect(Object.keys(row.payload.body.Header)).not.toContain('Ref');
     expect(row.payload.body.Lines).toHaveLength(1);
   });
@@ -240,18 +196,11 @@ describe('the six flows each queue their operation', () => {
     const [row] = outbox(sb);
     expect(row.op).toBe(op);
     expect(row.doc_type).toBe(docType);
-    /* No DtlKeys: AutoCount's own book decides which lines are still
-       outstanding — see the note in enqueueConvert. */
     expect(row.payload.body.DtlKeys).toBeUndefined();
     expect(row.payload.fromDoc.table).toBe(fromTable);
     expect(row.payload.writeback.table).toBe(toTable);
   });
 
-  /* A read that FAILS is not a document with nothing on it. PostgREST answers a
-     column it does not have with 42703 and a NULL body; `data ?? []` then turns
-     that failure into an empty line list and the write-back pushes a header with
-     no Details into a live account book. Nothing on the AutoCount side can tell
-     that apart from an order the operator really did leave empty. */
   describe('a failed read is never an empty document', () => {
     const noDtlKey = { mfg_sales_order_items: ['linked_ac_dtlkey'], purchase_order_items: ['linked_ac_dtlkey'] };
 
@@ -265,7 +214,6 @@ describe('the six flows each queue their operation', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0].status).toBe('skipped');
       expect(rows[0].last_error).toContain('42703');
-      // The point of the whole exercise: no document with an empty line list.
       expect(rows.some((r) => Array.isArray(r.payload?.body?.Details))).toBe(false);
     });
 
@@ -336,8 +284,6 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
   });
 
   test('cancelling a DO whose SO->DO conversion is still queued skips the conversion', async () => {
-    /* A DO has no create of its own — the conversion is what would bring it
-       into AutoCount, so that is the row a cancel has to catch. */
     const sb = withFlag('1');
     await enqueueConvert(sb as never, {
       companyId: 1,
@@ -387,8 +333,6 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(true);
 
     const rows = outbox(sb);
-    /* One row, still the create — an edit queued BEHIND a stale create would
-       push the pre-edit order into the live book and then correct it. */
     expect(rows).toHaveLength(1);
     expect(rows[0].op).toBe('create_so');
     expect(rows[0].payload.body.Details[0].Description).toBe('after');
@@ -408,15 +352,9 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
     expect(row.op).toBe('edit');
     expect(row.payload.body.Lines[0].DtlKey).toBe(4242);
     expect(row.payload.body.Lines[1].DtlKey).toBe(4243);
-    /* Successive edits are separate intents and must both be applied, so an
-       edit never carries a dedupe key. */
     expect(row.dedupe_key).toBeNull();
   });
 
-  /* The guard, end to end through the enqueue path. A document AutoCount has,
-     holding a line with no DtlKey, must produce NO pending edit — and must not
-     vanish either: a refusal nobody can see reads exactly like a write-back
-     that quietly stopped working. */
   test('an edit whose line has no DtlKey is REFUSED and recorded as skipped, not queued', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so, linked_ac_docno: 'SO-000021' }],
@@ -432,15 +370,10 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
     expect(rows[0].status).toBe('skipped');
     expect(rows[0].op).toBe('edit');
     expect(rows[0].last_error).toContain('refused, nothing sent');
-    /* Named by its KeylessLineError, not by an ItemCode refusal that happens to
-       quote the same row. Both codes resolve cleanly, so the ONLY thing that can
-       stop this edit is the missing DtlKey — and the message says so in
-       AutoCount's own vocabulary, which is what the operator has to look up. */
     expect(rows[0].last_error).toContain('KeylessLineError');
     expect(rows[0].last_error).toContain('DtlKey');
     expect(rows[0].last_error).toContain(AC_B);
     expect(rows[0].last_error).not.toContain('no single AutoCount ItemCode');
-    /* Nothing pending means nothing will ever be POSTed for this save. */
     expect(rows.filter((r: Row) => r.status === 'pending')).toHaveLength(0);
   });
 
@@ -453,9 +386,6 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
 
 
 
-/* ── LINE REMOVAL IS A RETIREMENT ────────────────────────────────────────────
-   /edit applies only the lines it is GIVEN, so a line the ERP removed and did
-   not mention stays live, outstanding and transferable in the account book. */
 describe('a removed line is retired in AutoCount, never just left out', () => {
   const soHeader = {
     doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, salesperson_id: 'staff-1', sales_location: 'KL',
@@ -500,8 +430,6 @@ describe('a removed line is retired in AutoCount, never just left out', () => {
     expect(lines).toHaveLength(2);
     const retired = lines.find((l) => l.DtlKey === 7002);
     expect(retired?.Retire).toBe(true);
-    /* No quantity on a retired line: AcSyncService zeroes it, and sending the
-       ERP number would be inert today and wrong the day it stops being. */
     expect(retired?.Qty).toBeUndefined();
   });
 
@@ -549,10 +477,6 @@ describe('a removed line is retired in AutoCount, never just left out', () => {
   });
 });
 
-/* A document naming a master the account book does not have does not fail
-   politely - it fails on a FOREIGN KEY and takes the whole document with it.
-   The live book proved the shape on 2026-08-11 by answering FK_SODTL_Location
-   to a create whose lines carried no stock location. */
 describe('the masters a document names are opened BEFORE the document is sent', () => {
   const env = { AC_SYNC_URL: 'http://ac.local:8900', AC_SYNC_KEY: 'k' } as never;
   const jsonRes = (status: number, body: unknown) =>
@@ -610,14 +534,10 @@ describe('the masters a document names are opened BEFORE the document is sent', 
       DocNo: 'HC-SO-9', Details: [{ ItemCode: 'NEW-SKU' }],
     }), fetchImpl);
     expect(outcome).not.toBe('sent');
-    /* The create was never attempted. */
     expect(calls.filter((c) => c.includes('/create-so'))).toHaveLength(0);
     expect(outbox(sb)[0].last_error).toContain('masters not opened');
   });
 
-  /* /ensure-masters read `!= null` off the creditor and threw the CompanyName
-     away, so 400-H004 resolving to HAO HUA FURNITURE looked like a right code.
-     It REPORTS and never refuses (guide 7e1) — both halves are asserted. */
   test('a creditor the book holds under ANOTHER name is reported, document still goes', async () => {
     const sb = withFlag('1', { autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }] });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -646,13 +566,6 @@ describe('the masters a document names are opened BEFORE the document is sent', 
   });
 });
 
-/* THE GO-LIVE FAILURE, 2026-08-13. Two re-queued sales orders retried four
-   times each and the live book answered `Foreign Key Error (Constraint
-   Name=FK_SO_SalesAgent)`. The composer read `mfg_sales_orders.agent` and
-   nothing else; no SO form sends `body.agent`, so the column was empty on every
-   order created since the cutover; and `mastersOf` only asks for an agent when
-   the payload names one, so /ensure-masters opened nothing and the create died
-   on the foreign key. The ERP's real salesperson lives one column along. */
 describe('the salesperson reaches AutoCount even when `agent` is empty', () => {
   const so = {
     doc_no: 'HC-SO-9', so_date: '2026-08-10', debtor_name: 'ACME',
@@ -671,10 +584,6 @@ describe('the salesperson reaches AutoCount even when `agent` is empty', () => {
     expect(outbox(sb)[0].payload.body.Agent).toBe('Nurul Hidayah');
   });
 
-  /* The causal step the incident turned on. /ensure-masters creates the agent
-     under EXACTLY the string in the payload, and it is skipped entirely when
-     the payload names none — so a document that carries an agent is also a
-     document whose agent gets opened. */
   test('and /ensure-masters is therefore asked to open that agent', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...soItem }],
@@ -692,10 +601,6 @@ describe('the salesperson reaches AutoCount even when `agent` is empty', () => {
     expect(outbox(sb)[0].payload.body.Agent).toBe('KRIS');
   });
 
-  /* An EDIT is not refused for this — the account book already holds a value
-     and /edit applies only the keys it is GIVEN, so omitting Agent leaves the
-     book's own. But when the ERP DOES know the salesperson, the edit says so:
-     that is D8's rule, now reading both columns. */
   test('an edit sends the fallback too, and omits Agent when neither source answers', async () => {
     const linked = { ...so, linked_ac_docno: 'SO-000021' };
     const keyed = { ...soItem, linked_ac_dtlkey: 991 };
@@ -715,11 +620,6 @@ describe('the salesperson reaches AutoCount even when `agent` is empty', () => {
     expect(outbox(without)[0].payload.body.Header).not.toHaveProperty('Agent');
   });
 
-  /* THE BOTH-EMPTY CASE. Sending "" is what caused the incident, and the
-     document cannot land either way — FK_SO_SalesAgent is deterministic. So the
-     create is refused into a `skipped` row an operator can read and the
-     re-queue tool can retry, instead of four silent 500s in a log on the
-     AutoCount host. */
   test('neither source: nothing is queued, and the refusal is written down', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so, salesperson_id: null }],
@@ -730,14 +630,9 @@ describe('the salesperson reaches AutoCount even when `agent` is empty', () => {
     expect(row.status).toBe('skipped');
     expect(row.last_error).toContain('refused, nothing sent (MissingAgentError)');
     expect(row.last_error).toContain('FK_SO_SalesAgent');
-    /* Never `pending`: the drain would take an empty body straight to the
-       account book. */
     expect(outbox(sb).filter((r) => r.status === 'pending')).toHaveLength(0);
   });
 
-  /* A staff table the ERP cannot read is not an order with no salesperson.
-     Saying so would send the operator after a salesperson that is already
-     there. */
   test('an unreadable staff row is a compose failure, not a missing salesperson', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...soItem }],
@@ -750,11 +645,6 @@ describe('the salesperson reaches AutoCount even when `agent` is empty', () => {
   });
 });
 
-/* D8: a create sent the salesperson, the sales location, the document date and
-   the three UDFs; an edit sent none of them, so changing any one on a live
-   order never reached AutoCount. The account book takes all of them on /edit -
-   they are in AcSyncService.Edit's allow-list and it calls ApplyUdf - so this
-   was the ERP declining to speak, not AutoCount refusing to listen. */
 describe('an edit carries the fields a create carries', () => {
   const so = {
     doc_no: 'HC-SO-9', so_date: '2026-08-10', debtor_name: 'ACME', agent: 'KAR JIUN',
@@ -796,12 +686,6 @@ describe('an edit carries the fields a create carries', () => {
   });
 });
 
-/* Adding a line to a document AutoCount already has. A keyless line means two
-   opposite things - just added, or never backfilled - and guessing "added"
-   appends a SECOND COPY of a line the account book already holds, permanently
-   on a purchase order. So the ERP is told, by the route that did the adding,
-   and only believed when the rest of the document proves the backfill is
-   complete. */
 describe('a line the ERP just added is declared, never inferred', () => {
   const so = {
     doc_no: 'HC-SO-9', so_date: null, debtor_name: 'ACME', agent: null, salesperson_id: 'staff-1', sales_location: 'KL',
@@ -885,9 +769,6 @@ describe('a line the ERP just added is declared, never inferred', () => {
       expect(outbox(sb)[0]).toMatchObject({ doc_no: 'HC-PO-9', last_error: expect.stringContaining('refused, nothing sent') });
     });
 
-    /* A new detail with no Location dies on FK_PODTL_Location, and the document
-       saves in ONE call — so it would take the edited lines down with it. The
-       document's own warehouse stands in. */
     test('a new line with no warehouse of its own inherits the document\'s', async () => {
       const sb = withFlag('1', {
         purchase_orders: [{ ...poDoc }], suppliers: [{ ...sup }],
@@ -900,12 +781,6 @@ describe('a line the ERP just added is declared, never inferred', () => {
       expect(lines.find((l) => l.ItemCode === AC_B)?.Location).toBe('KL');
     });
 
-    /* When neither the line nor the document has one, the key is OMITTED and
-       AutoCount applies its own default. Not a refusal: the evidence that a
-       missing Location is fatal comes from the CREATE path, which assigns the
-       key unconditionally, and the edit path is ContainsKey-gated — a different
-       mechanism. Refusing here on the create's evidence would start rejecting
-       sales-order edits the book has accepted since 2026-08-11. */
     test('and when neither the line nor the document has one, the key is omitted rather than guessed', async () => {
       const sb = withFlag('1', {
         purchase_orders: [{ ...poDoc, purchase_location_id: null }], suppliers: [{ ...sup }],
@@ -918,10 +793,6 @@ describe('a line the ERP just added is declared, never inferred', () => {
       expect(lines.find((l) => l.ItemCode === AC_B)).not.toHaveProperty('Location');
     });
 
-    /* The regression that would be invisible: the stand-in must reach the NEW
-       line only. An existing line with no location omits the key so the account
-       book keeps the value it owns — sending the document default there would
-       silently relocate somebody else's stock. */
     test('an EXISTING line with no location still sends no Location key', async () => {
       const sb = withFlag('1', {
         purchase_orders: [{ ...poDoc }], suppliers: [{ ...sup }],
@@ -936,10 +807,6 @@ describe('a line the ERP just added is declared, never inferred', () => {
   });
 });
 
-/* The ERP numbers its own documents, on every type. A create always sent its
-   DocNo and AutoCount took it; a conversion sent none, so AutoCount
-   auto-numbered the DO, the GRN, the invoice and the purchase invoice - four of
-   the six types carrying a number nobody here would recognise. */
 describe('every document the ERP creates carries the ERP number', () => {
   const env = { AC_SYNC_URL: 'http://ac.local:8900', AC_SYNC_KEY: 'k' } as never;
 
@@ -960,8 +827,6 @@ describe('every document the ERP creates carries the ERP number', () => {
     })).queued).toBe(true);
     const body = outbox(sb)[0].payload.body as Record<string, unknown>;
     expect(body.DocNo).toBe('DO-2608-004');
-    /* The PARENT travels separately and is resolved at drain — confusing the
-       two would ask AutoCount to number the child after the sales order. */
     expect(body.FromDocNo).toBeUndefined();
     expect(outbox(sb)[0].payload.fromDoc).toBeTruthy();
   });
@@ -980,11 +845,6 @@ describe('every document the ERP creates carries the ERP number', () => {
   });
 });
 
-/* A PURCHASE agent is a different master from a sales one - a different table
-   (dbo.PurchaseAgent) behind a different foreign key (FK_PO_PurchaseAgent).
-   Opening OTHERS as a SALES agent does nothing for a purchase order naming it,
-   and /create-po is refused with the whole document. Proved on the live book
-   2026-08-12, after ensure-masters had already reported agent:OTHERS existing. */
 describe('the agent a PO names goes to the PURCHASE agent master, not the sales one', () => {
   test('a purchase payload sends PurchaseAgents and no sales Agents', () => {
     const m = mastersOf({
@@ -1011,9 +871,6 @@ describe('the agent a PO names goes to the PURCHASE agent master, not the sales 
   });
 });
 
-/* A purchase order NAMES a creditor, and CreatePo applies CreditorCode
-   unconditionally - so a supplier the account book does not have fails the same
-   foreign key a missing item does, and takes the whole PO with it. */
 describe('a purchase order opens its supplier too', () => {
   test('mastersOf names the creditor a PO payload carries', () => {
     const m = mastersOf({
@@ -1047,17 +904,10 @@ describe('a document opens every master it names — warehouse and dropdowns too
       SalesLocation: 'KL',
       Details: [{ ItemCode: 'A', Location: 'PG' }, { ItemCode: 'B', Location: 'KL' }],
     }) as { Locations: Array<Record<string, unknown>> };
-    /* Deduped, and the header's counts too. */
     expect(m.Locations.map((l) => l.Location).sort()).toEqual(['KL', 'PG']);
   });
 
   test('the PURCHASE header\'s warehouse too, not only the sales header\'s', () => {
-    /* The service applies PurchaseLocation through Set(), which SWALLOWS —
-       both copies, `CreatePo`'s (AcSyncService.cs:935) and `PurchaseHeader`'s
-       (:2457) — so a warehouse code dbo.Location does not
-       have would leave the purchase order looking saved and carrying no
-       location at all — the silent half of the failure the owner reported on
-       2026-08-19. Opening the master is what makes the value land. */
     const m = mastersOf({
       PurchaseLocation: 'PG',
       Details: [{ ItemCode: 'A', Location: 'PG' }],
@@ -1090,7 +940,6 @@ describe('a document opens every master it names — warehouse and dropdowns too
       { List: 'BRANDING', Value: 'HOUZS' },
       { List: 'VENUE', Value: 'SOME NEW MALL' },
     ]);
-    /* ToPONo is a free-text UDF, not a dropdown — it has no option list to open. */
     expect(m.UdfOptions.find((o) => o.List === 'ToPONo')).toBeUndefined();
   });
 
@@ -1100,20 +949,6 @@ describe('a document opens every master it names — warehouse and dropdowns too
   });
 });
 
-/* Regression: HC-SO-2608-001, 2026-08-13. The first real sales order saved
-   after the write-back was switched on was refused —
-
-     refused, nothing sent (ItemCodeError): line 1 — ERP item code '9028-1S'
-     maps to 2 AutoCount items and the document names no supplier to choose
-     between them
-
-   — and the documented remedy, a supplier SKU binding, could not be applied.
-   bindingsFor was handed the RAW line codes ('9028-1A(LHF)', '9028-2A(RHF)')
-   while resolveAcItemCode looked the binding up by the collapsed base code
-   ('9028-1S'), so the map never contained the key that was asked for. Four
-   sofa models in the cutover map are ambiguous this way (9028, 9058, 5152,
-   5080); until this, every sales order containing one of them was refused
-   with no possible fix. */
 describe('a sofa resolves through the binding recorded for its model', () => {
   const sofaSo = {
     doc_no: 'HC-SO-SOFA', so_date: '2026-08-13', debtor_name: 'LIM',
@@ -1122,9 +957,6 @@ describe('a sofa resolves through the binding recorded for its model', () => {
     address1: null, address2: null, address3: null, address4: null,
     phone: null, ref: null, po_doc_no: null, linked_ac_docno: null,
   };
-  /* Two compartments of one build, exactly as the ERP stores them: the price
-     sits on the first row and the same Desc2 on both, which is what lets D9
-     fold them into a single line carrying '9028-1S'. */
   const compartments = ['1A(LHF)', '2A(RHF)'].map((comp, i) => ({
     doc_no: 'HC-SO-SOFA',
     item_code: `9028-${comp}`,
@@ -1137,10 +969,6 @@ describe('a sofa resolves through the binding recorded for its model', () => {
   }));
 
   test('with NO binding at all it now sends, one line per compartment', async () => {
-    /* This refused outright until 2026-08-13: 9028-1S is two brand items in the
-       cutover map and a sales order names no creditor. A create no longer folds
-       the build, so each compartment goes in under its own code and
-       /ensure-masters opens them on first use. */
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...sofaSo }],
       mfg_sales_order_items: compartments.map((l) => ({ ...l })),
@@ -1157,13 +985,6 @@ describe('a sofa resolves through the binding recorded for its model', () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...sofaSo }],
       mfg_sales_order_items: compartments.map((l) => ({ ...l })),
-      /* The row an operator can actually create: the ERP model code on the
-         left, the account book's item on the right. Before the fix this row
-         existed and changed nothing, because the query never asked for it. */
-      /* Keyed by the code the line actually carries. Before 2026-08-13 the
-         resolver was handed a synthesised '9028-1S' that no ERP line held, and
-         bindingsFor queried the raw codes — so the two never met and the
-         override could not fire for any sofa. */
       supplier_material_bindings: [{
         company_id: 1, item_code: '9028-1A(LHF)', material_kind: 'mfg_product',
         supplier_id: 'sup-amn', supplier_sku: 'AMN-SF9028 SOFA', is_main_supplier: true,
@@ -1173,35 +994,15 @@ describe('a sofa resolves through the binding recorded for its model', () => {
     const [row] = outbox(sb);
     expect(row.status).not.toBe('skipped');
     expect(row.op).toBe('create_so');
-    /* The bound line takes the AutoCount code the binding named; the other
-       keeps its own. */
     expect(row.payload.body.Details.map((d: { ItemCode: string }) => d.ItemCode))
       .toEqual(['AMN-SF9028 SOFA', '9028-2A(RHF)']);
   });
 });
 
-/* The fake, in the shape the enqueue helpers are typed for. Named once so a
-   test that needs it does not spend another `as never` — the lint rule that
-   bans those exists because a cast is how a wrong type gets past the compiler
-   that was about to help (3PL lorry types, BUG-HISTORY 2026-08-02). The older
-   blocks above still carry theirs; this is the shape new ones should use. */
 type FakeClient = Parameters<typeof enqueueSoCreate>[0];
 const client = (sb: unknown): FakeClient => sb as FakeClient;
 
-/* ── THE FIELD-ALIGNMENT AUDIT, 2026-08-14 ───────────────────────────────────
-   docs/autocount-field-alignment-audit.md. One bug class in eight places: the
-   ERP holds a value in one column, the composer reads another, and nothing
-   opens it on the AutoCount side. These tests are the END-TO-END half — the
-   composer's own are in services/autocount-writeback.test.ts — because most of
-   the defect was in the SELECT LIST, and a column list is only exercised by a
-   read. `fakeSb` fails a query that asks for a column the table does not have,
-   the same 42703 PostgREST answers, so a phantom column here is a red test
-   rather than a silent zero. */
 describe('the columns the write-back reads are the columns the ERP writes', () => {
-  /* An ERP-created sales order, in the shape production actually holds:
-     `branding` NULL on the header and set on the LINE, the customer reference
-     in `customer_so_no`, the address in city / postcode / customer_state, and a
-     venue no 7-entry map was ever going to know. */
   const so = {
     doc_no: 'HC-SO-A', so_date: '2026-08-10', debtor_name: 'ACME', company_id: 1,
     agent: null, salesperson_id: 'staff-1',
@@ -1235,9 +1036,6 @@ describe('the columns the write-back reads are the columns the ERP writes', () =
     expect(body.SalesLocation).toBe('KL');
   });
 
-  /* THE HALF THAT MAKES THE PASS-THROUGH SAFE. A venue the book has never held
-     is only writable because /ensure-masters appends it to the VENUE list
-     first, and mastersOf is what asks. */
   test('and the venue it passed through is one /ensure-masters is asked to open', async () => {
     const sb = seeded();
     await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-A' });
@@ -1249,9 +1047,6 @@ describe('the columns the write-back reads are the columns the ERP writes', () =
     expect(m.Locations).toEqual([{ Location: 'KL' }]);
   });
 
-  /* 21 of 115 unpushed orders had a blank sales_location on 2026-08-14, and a
-     blank reaches AcSyncService as "" — FK_SO_SalesLocation, whole document
-     lost. The lines already name a warehouse the document is opening anyway. */
   test('an order with no sales location takes one from its lines rather than failing the FK', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so, sales_location: null }],
@@ -1264,10 +1059,6 @@ describe('the columns the write-back reads are the columns the ERP writes', () =
     expect(outbox(sb)[0].status).not.toBe('skipped');
   });
 
-  /* Finding 10. The function's own doc comment said "A NULL VALUE IS OMITTED,
-     NEVER SENT" while eight keys were emitted as `x ?? null` regardless —
-     `ref` is blank on 112 of 115 unpushed orders and address3/address4 on 94,
-     so an edit blanked whatever the account book held in them. */
   test('an edit omits every header field the ERP has nothing for, instead of blanking the book', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{
@@ -1320,10 +1111,6 @@ describe('the three fields the extract carries and the write-back did not send',
     phone: '012-1111111', emergency_contact_phone: '019-2222222',
     ref: null, po_doc_no: null, customer_po: null, customer_so_no: null,
     processing_date: null,
-    /* recomputeTotals writes local_total_sen = balance_sen =
-       total_revenue_sen = grandTotal on every edit. Only the third is read
-       here, and `balance_sen` is deliberately seeded to the GROSS total so a
-       composer that read it would be caught by the assertions below. */
     total_revenue_sen: 500_00, balance_sen: 500_00, deposit_sen: 0,
     linked_ac_docno: null,
   };
@@ -1338,13 +1125,7 @@ describe('the three fields the extract carries and the write-back did not send',
       ...extra,
     });
 
-  // ── UDF_BALANCE — 2,339 of the extract's 13,015 headers carry a non-zero one
   describe('BALANCE — the outstanding amount, from the payments ledger and NOT from balance_sen', () => {
-    /* THE TRAP THIS TEST EXISTS FOR. `mfg_sales_orders.balance_sen` is the
-       column the cutover's own UDF_BALANCE landed in
-       (check-migration-fidelity.mjs:95), which makes it look like the answer —
-       and recomputeTotals overwrites it with the GROSS total on every edit, so
-       it is 500.00 here while the customer owes 200.00. */
     test('a create sends total minus the payments ledger, not the stored balance_sen', async () => {
       const sb = seed({}, {}, {
         mfg_sales_order_payments: [
@@ -1357,8 +1138,6 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(udf.BALANCE).toBe('200.00');
     });
 
-    /* The legacy half of the same rule (`soPaidSen`): a deposit that never
-       reached the ledger still counts, and one that DID must not count twice. */
     test('a legacy header deposit counts once — and only when the ledger has no is_deposit row', async () => {
       const legacy = seed({ deposit_sen: 150_00 }, {}, {
         mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_sen: 50_00, is_deposit: false }],
@@ -1375,9 +1154,6 @@ describe('the three fields the extract carries and the write-back did not send',
         .toBe('350.00');
     });
 
-    /* ZERO IS A VALUE. `udf()` drops a falsy entry, so a settled order has to
-       arrive as the string "0.00" — otherwise the account book keeps showing a
-       debt that has been paid, which is the staleness this field removes. */
     test('a fully paid order sends 0.00 rather than dropping the key', async () => {
       const sb = seed({}, {}, {
         mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_sen: 500_00, is_deposit: true }],
@@ -1396,9 +1172,6 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(h.UDF.BALANCE).toBe('100.00');
     });
 
-    /* A DOCUMENT WITH NO VALUE SENDS NO KEY. Zero is "nothing outstanding" and
-       would declare a real debt settled in a licensed ledger, so an order with
-       no `total_revenue_sen` says nothing and the book keeps its own. */
     test('an order with no total sends no BALANCE at all', async () => {
       const sb = seed({ total_revenue_sen: null, linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 });
       await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
@@ -1437,7 +1210,6 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(header(sb)).toHaveProperty('Ref', null);
     });
 
-    /* Touched and still HAS a value is an ordinary change, not a clear. */
     test('a touched field that still has a value sends the value', async () => {
       const sb = linked({ ref: 'PO-778' });
       await enqueueEdit(client(sb), {
@@ -1446,9 +1218,6 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(header(sb)).toHaveProperty('Ref', 'PO-778');
     });
 
-    /* THE FOREIGN KEYS ARE NOT CLEARABLE, and this is the case that would lose
-       a document rather than a field: a blank Agent is FK_SO_SalesAgent, not an
-       empty string. Same for the stock location. */
     test('the salesperson and the stock location are never nulled, even when touched', async () => {
       const sb = linked();
       await enqueueEdit(client(sb), {
@@ -1463,9 +1232,6 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(h.DebtorName).not.toBeNull();
     });
 
-    /* The address is ONE package: soInvoiceAddress folds five ERP columns into
-       four lines, so clearing one re-shuffles the rest and there is no
-       field-by-field answer. Touching any of them sends all four. */
     test('touching any address column sends all four InvAddr keys', async () => {
       const sb = linked({ address2: null, address3: null, address4: null });
       await enqueueEdit(client(sb), {
@@ -1477,8 +1243,6 @@ describe('the three fields the extract carries and the write-back did not send',
       }
     });
 
-    /* A UDF clears with an empty string, not a null: ApplyUdf writes
-       `kv.Value == null ? "" : ...` either way, and "" is what the book stores. */
     test('a cleared processing date empties the PDate UDF', async () => {
       const sb = linked({ processing_date: null });
       await enqueueEdit(client(sb), {
@@ -1506,14 +1270,6 @@ describe('the three fields the extract carries and the write-back did not send',
     });
   });
 
-  /* ── PAYEMENT — the account sheet and approval code the cutover took OUT of
-     this same field. import-ac-outstanding-so.mjs:16 filled
-     mfg_sales_order_payments.account_sheet and .approval_code from
-     SO.UDF_PAYEMENT, and nothing ever wrote it back. The FORMAT is proven in
-     autocountPaymentUdf.roundtrip.test.ts against the cutover's own parser;
-     these two are the WIRING, which is the half that keeps getting missed —
-     the composer carried BALANCE correctly for two days while no payment path
-     ever asked it to. */
   describe('PAYEMENT — the payment references go back into the field they came from', () => {
     test('a create carries the account sheet and approval code', async () => {
       const sb = seed({}, {}, {
@@ -1528,7 +1284,7 @@ describe('the three fields the extract carries and the write-back did not send',
     });
 
     test('an EDIT carries it too, so a reference typed after the create reaches the book', async () => {
-      const sb = seed({ linked_ac_docno: 'HC-SO-B' }, { linked_ac_dtlkey: 991 }, {   // ERP-numbered: a carried-over order's text is the office's (0934)
+      const sb = seed({ linked_ac_docno: 'HC-SO-B' }, { linked_ac_dtlkey: 991 }, {
         mfg_sales_order_payments: [
           { so_doc_no: 'HC-SO-B', amount_sen: 400_00, is_deposit: true, account_sheet: 'Cash', approval_code: null, paid_at: '2026-08-01', id: 'p1' },
         ],
@@ -1538,9 +1294,6 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(h.UDF.PAYEMENT).toBe('(Cash/)');
     });
 
-    /* OMITTED, NOT BLANKED. An order whose payments carry no reference — every
-       cash sale — must leave the book's own text alone: `Str` turns a
-       present-null into "" and would erase what the cutover put there. */
     test('payments with no references send no PAYEMENT key', async () => {
       const sb = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 }, {
         mfg_sales_order_payments: [
@@ -1553,7 +1306,6 @@ describe('the three fields the extract carries and the write-back did not send',
     });
   });
 
-  // ── DeliverPhone1 — 120 of the extract's 13,015 headers carry one
   describe('DeliverPhone1 — the DELIVERY contact, which is not the customer\'s phone', () => {
     /* Two contacts, two columns (owner 2026-08-15). The pairing is the
        cutover's own, read backwards: import-ac-outstanding-so.mjs:302 took
@@ -1575,10 +1327,6 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(h.DeliverPhone1).toBe('019-2222222');
     });
 
-    /* No second contact is the normal case — 12,895 of the 13,015 extracted
-       headers. On an edit the key is omitted so the book keeps its own; on a
-       create the service's own Or() reuses Phone, which is exactly the rule the
-       cutover applied when it kept DeliverPhone1 only where it DIFFERED. */
     test('no second contact sends no key on an edit, and null on a create', async () => {
       const edit = seed({ emergency_contact_phone: null, linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 });
       await enqueueEdit(client(edit), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
@@ -1637,7 +1385,6 @@ describe('the three fields the extract carries and the write-back did not send',
     });
   });
 
-  // ── DeliveryDate — 11,886 of the extract's 60,939 lines carry a BLANK
   describe('the line delivery date, including the BLANK the book itself holds', () => {
     test('a create sends the ERP line date', async () => {
       const sb = seed({}, { line_delivery_date: '2026-09-01' });
@@ -1646,10 +1393,6 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(d.DeliveryDate).toBe('2026-09-01');
     });
 
-    /* THE OWNER'S REPORT. With no key at all AutoCount fills its own default —
-       the document date — on a line the ERP has no date for. The key is now
-       sent PRESENT-AND-NULL, which the service's ContainsKey guard turns into a
-       real blank, and a blank is what the cutover left on 11,886 lines. */
     test('a create with no ERP date sends the key as an explicit null, not as an omission', async () => {
       const sb = seed();
       await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' });
@@ -1658,9 +1401,6 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(d.DeliveryDate).toBeNull();
     });
 
-    /* The create/edit asymmetry, same as Location one level down: on a line the
-       book already holds, a blank would ERASE a date an operator may have set
-       in AutoCount itself. */
     test('an EDIT omits the key when the ERP has none, and sends it when it does', async () => {
       const blank = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 });
       await enqueueEdit(client(blank), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
@@ -1673,7 +1413,6 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(withDate.DeliveryDate).toBe('2026-09-05');
     });
 
-    /* A PURCHASE order keeps the same fact under a different column name. */
     test('a purchase order reads purchase_order_items.delivery_date', async () => {
       const sb = withFlag('1', {
         purchase_orders: [{
@@ -1694,12 +1433,6 @@ describe('the three fields the extract carries and the write-back did not send',
   });
 });
 
-/* Finding 11. `dispatchOne` calls mastersOf for `edit` as well as the two
-   creates, but an edit payload keeps its header one level down —
-   {DocType, DocNo, Header{…, UDF{…}}, Lines[]} — so every top-level read
-   missed it and only the line items were ever opened. Harmless only while the
-   edit sent nothing the book did not hold; the pass-through above ends that,
-   which is why this landed in the same pull request. */
 describe("mastersOf can see an EDIT payload's header, not just its lines", () => {
   const editBody = (over: Record<string, unknown> = {}) => ({
     DocType: 'SO', DocNo: 'SO-000021',
@@ -1723,10 +1456,6 @@ describe("mastersOf can see an EDIT payload's header, not just its lines", () =>
     expect(m.UdfOptions).toContainEqual({ List: 'BRANDING', Value: 'CARRESS' });
   });
 
-  /* A PURCHASE edit carries no CreditorCode at all — composePoState sends only
-     CreditorName and Description — so the sales/purchase discriminator has to
-     fall back to DocType. Opening an agent in the wrong table reads as success
-     and refuses the document anyway (the 2026-08-12 finding). */
   test("a PO edit's agent goes to the PURCHASE agent master, with no CreditorCode to say so", () => {
     const m = mastersOf({
       DocType: 'PO', DocNo: 'PO-000021',
@@ -1747,10 +1476,6 @@ describe("mastersOf can see an EDIT payload's header, not just its lines", () =>
   });
 });
 
-/* Finding 2. `scm.purchase_orders` has no agent column at all, so readPoHeader
-   sent null for every one of the 60 unpushed purchase orders — and CreatePo
-   assigns po.Agent unconditionally while Str turns a present-null into "",
-   which is FK_PO_PurchaseAgent. Omitting the key would not have helped. */
 describe('every purchase order names a purchase agent (FK_PO_PurchaseAgent)', () => {
   const seeded = () => withFlag('1', {
     purchase_orders: [{
@@ -1781,15 +1506,9 @@ describe('every purchase order names a purchase agent (FK_PO_PurchaseAgent)', ()
     expect(m.Agents).toEqual([]);
   });
 
-  /* Finding 4. CreditorCode is assigned DIRECTLY by CreatePo — not through
-     Set — so a supplier with no code is FK_PO_Creditor and the whole document
-     is lost. Zero purchase orders are in that shape today; the refusal is what
-     stops the first one being a mystery 500 in the host's log. */
   test('a supplier with no code lands a SKIPPED row naming the constraint', async () => {
     const sb = seeded();
     sb.tables.suppliers[0].code = null;
-    /* false = "nothing was queued for AutoCount", the same answer every other
-       refusal gives its caller; the visible half is the skipped row. */
     expect((await enqueuePoCreate(client(sb), { companyId: 1, poId: 'po-1' })).queued).toBe(false);
     const [row] = outbox(sb);
     expect(row.status).toBe('skipped');
@@ -1798,12 +1517,6 @@ describe('every purchase order names a purchase agent (FK_PO_PurchaseAgent)', ()
   });
 });
 
-/* Finding 13, the half that can destroy a value. Every caller of
-   enqueueConvert omits `ref` and `docDate`, so the body was always
-   {DocNo, DocDate: null, Ref: null} — and SalesHeader / PurchaseHeader apply
-   `Set(() => doc.Ref = Str(p, "Ref"))` unconditionally, so "" was written over
-   whatever the transfer had put there. Passing the ERP's own reference at the
-   six call sites is the other half and is still open. */
 describe("a conversion says nothing rather than blanking the target's reference", () => {
   const seeded = () => withFlag('1', {
     delivery_orders: [{ id: 'do-1', do_number: 'HC-DO-1', linked_ac_docno: null }],
@@ -1836,19 +1549,6 @@ describe("a conversion says nothing rather than blanking the target's reference"
     expect(body.DocDate).toBe('2026-08-14');
   });
 
-  /* ── AND THE ABSENCE IS SAID OUT LOUD ─────────────────────────────────────
-     The two tests above prove the safe half — a value the ERP does not have is
-     OMITTED, never sent as a blank, because a blank is a foreign key error on a
-     master field and a destroyed value on a text one. On its own that half is
-     just a quieter version of the same bug: the delivery order still reaches
-     the account book with no reference and nobody is any the wiser.
-
-     So the omission is reported, on the row the operator already reads, at the
-     moment they save. NOT a new status and NOT a second channel: `last_error`
-     is returned for every state by the outbox page
-     (routes/autocount-outbox.ts:238) and `acNeedsAttention` branches on the
-     STATUS, so a `pending` row carrying one of these is visible without being
-     counted as something stuck. */
   test('what the document is going WITHOUT is on the row, and does not read as a failure', async () => {
     const sb = seeded();
     await enqueueConvert(client(sb), {
@@ -1859,13 +1559,9 @@ describe("a conversion says nothing rather than blanking the target's reference"
     const row = outbox(sb)[0];
     expect(row.status).toBe('pending');
     expect(acNeedsAttention(row.status, row.last_error)).toBe(false);
-    /* Named, one by one. "Some fields are missing" would be the sentence that
-       sends an operator to look through six screens. */
     expect(row.last_error).toContain('DocDate');
     expect(row.last_error).toContain('Ref');
     expect(row.last_error).toContain('the ERP document has none');
-    /* Durable too: the drain CLEARS last_error on success, and the book still
-       holds the blank afterwards. */
     expect(row.payload.notCarried).toEqual(expect.arrayContaining([
       expect.stringContaining('DocDate'),
       expect.stringContaining('Ref'),
@@ -1896,14 +1592,8 @@ describe("a conversion says nothing rather than blanking the target's reference"
     expect(body.Note).toBe('Back gate');
   });
 
-  /* THE TRANSFER IS WORTH MORE THAN ITS HEADER. enqueueConvert runs after the
-     route has already committed the operator's document, so a header read that
-     fails must cost the header fields and never the conversion — the shipment
-     exists either way, and one that is not queued is one nobody can find. */
   test('a header read that fails still queues the transfer, and says why it is bare', async () => {
     const sb = withFlag('1', {
-      /* No delivery_orders row at all: the document the conversion produced
-         cannot be read back. */
       delivery_orders: [],
     });
     expect((await enqueueConvert(client(sb), {
@@ -1918,16 +1608,6 @@ describe("a conversion says nothing rather than blanking the target's reference"
   });
 });
 
-/* ── THE REFUSAL COMES BACK OUT OF THE REQUEST ──────────────────────────────
-   The worst shape on the list is the one where the operator believes the
-   document is in the accounts: the compose refuses, a `skipped` row is filed
-   into a queue behind its own permission key, and Save answers 201. The row is
-   what an ENGINEER reads and it has not changed. What is new is that the same
-   refusal is now RETURNED to the caller that is holding the operator's
-   response — no second read, no second opinion, the composer's own throw.
-
-   These fail on origin/main @839fcaed0 for the plainest possible reason: there
-   was nothing to return. */
 describe('an enqueue that refuses says so to the operator, not only to the queue', () => {
   const po = {
     id: 'po-1', po_number: 'HC-PO-9', po_date: '2026-08-10',
@@ -1948,17 +1628,13 @@ describe('an enqueue that refuses says so to the operator, not only to the queue
     });
     const out = await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' });
     expect(out.queued).toBe(false);
-    // the engineer's half, unchanged
     const rows = outbox(sb);
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe('skipped');
     expect(String(rows[0].last_error)).toContain('MissingCreditorError');
-    // the operator's half, which did not exist
     expect(out.problems).toHaveLength(1);
     expect(out.problems[0].message).toContain('has NOT reached the accounts');
     expect(out.problems[0].message).toContain('Ask accounts');
-    /* And it names no document number, customer or amount — these sentences are
-       read by a person, but they are also the shape a log line copies. */
     expect(out.problems[0].message).not.toContain('HC-PO-9');
   });
 

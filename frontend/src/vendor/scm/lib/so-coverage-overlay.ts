@@ -22,22 +22,12 @@ import type { SoLineCoverage } from './sales-order-queries';
 /** The fields the overlay writes. A caller's line type only has to be
  *  assignable to this — nothing else about it is known or touched. */
 export type CoverageOverlayFields = {
-  /** Optional on purpose: a line shape that does not carry an id cannot match a
-   *  coverage row, and "no match" is already the leave-it-untouched answer. A
-   *  required id would instead force every caller to widen its own line type. */
   id?: string;
   stock_state?: 'stock' | 'po' | 'shortage' | null;
   coverage_po?: string | null;
   coverage_eta?: string | null;
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: 'po' | 'adjustment' }>;
   stock_status?: string | null;
-  /** THE FIELD THE PILL ACTUALLY READS. `soLineStockPill` opens with
-   *  `l.stock_status_effective ?? (…fallback…)`, and the base detail payload
-   *  ALWAYS populates it — `effectiveLineStockStatus` returns one of three
-   *  strings and never null — so the `??` always short-circuits and the
-   *  fallback branch that reads `stock_status` is dead on these two surfaces.
-   *  Absent from this type, the overlay could not write it and the healed
-   *  verdict was fetched over the wire and discarded. */
   stock_status_effective?: string | null;
   /** The non-selling-warehouse refusal note (owner ruling 2026-09-08). Carried
    *  through the overlay for the same reason `stock_status_effective` is: the
@@ -69,15 +59,8 @@ export function overlaySoLineCoverage<T extends CoverageOverlayFields>(
       coverage_po: cov.coverage_po,
       coverage_eta: cov.coverage_eta,
       ready_source_pos: cov.ready_source_pos,
-      /* BOTH, on purpose. `stock_status_effective` is what the pill reads and
-         is the fix; `stock_status` stays written because SalesOrderDetailV2's
-         Stock column sorts and exports on `stock_state ?? stock_status`, and
-         dropping it there would silently re-stale that column instead. */
       stock_status_effective: cov.stock_status_effective ?? l.stock_status_effective,
       stock_status: cov.stock_status_effective ?? l.stock_status,
-      /* `!== undefined`, not `??`: null is the coverage endpoint SAYING the line
-         is fine, and must be able to clear a stale note. Only an absent field
-         (an older backend) leaves the detail's own value standing. */
       non_selling_warehouse: cov.non_selling_warehouse !== undefined
         ? cov.non_selling_warehouse
         : l.non_selling_warehouse,

@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// A supplier bill's planned payment date (the owner's Claude Design, Money out
-// batch 4 step 7; table scm.acc_bill_plans, mig 20261103T0700). Finance plans
-// when it will pay a bill — beside the supplier's due date, never instead of
-// it: Overdue still counts by the due date. The calendar and Daily Bank's
-// upcoming payments read the plan, else the due date. Posts nothing.
-//
-// PUT /ap-invoices/plans {kind: 'API' | 'PI', id, plannedOn: 'YYYY-MM-DD' | null}
-// — the keys that raise bills may plan them (owner question e7's default).
-// ----------------------------------------------------------------------------
 
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';

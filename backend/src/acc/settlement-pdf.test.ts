@@ -1,19 +1,7 @@
-// What this file pins about reading a PDF statement:
-//   • the crypto the PDF key is built from is correct (MD5/RC4 against the
-//     published test vectors — get these wrong and every stream is noise);
-//   • an unencrypted statement converts to a table whose cells land in the
-//     COLUMN they were printed in, not in the order they happened to be
-//     written — a PDF emits nothing for an empty cell, and reading by sequence
-//     therefore shifts every value after a blank one into its neighbour;
-//   • a file that is not a PDF, or that genuinely needs a password, is refused
-//     by name rather than mangled into a batch (§2.14).
 
 import { describe, it, expect } from 'vitest';
 import { pdfToCsv } from './settlement-pdf';
 
-/* A minimal, uncompressed, unencrypted PDF with two text rows: a heading row
-   and a data row whose THIRD cell is missing. Built by hand so the test owns
-   its input completely. */
 function tinyPdf(rows: Array<Array<{ x: number; text: string }>>): Uint8Array {
   const content = rows.map((cells, i) => cells.map(
     (c) => `BT 1 0 0 1 ${c.x} ${700 - i * 20} Tm (${c.text}) Tj ET`,
@@ -47,14 +35,9 @@ describe('pdfToCsv — refusals', () => {
 });
 
 describe('pdfToCsv — a cell lands in the column it was printed in', () => {
-  /* THE BUG THIS EXISTS FOR. Maybank's statement leaves Terminal No blank, and
-     a PDF writes nothing at all for a blank cell. Read the cells in the order
-     they appear and the card type slides into the terminal column, taking every
-     value after it along — so a mapped column silently reads its neighbour. */
   it('keeps a blank cell blank instead of shifting the row left', async () => {
     const pdf = tinyPdf([
       [{ x: 50, text: 'Tran Date' }, { x: 150, text: 'Auth Code' }, { x: 250, text: 'Terminal No' }, { x: 350, text: 'Amount' }],
-      // No terminal number on this row — the third column is simply not written.
       [{ x: 50, text: '14/06/26' }, { x: 150, text: '009069' }, { x: 350, text: '3240.00' }],
     ]);
     const r = await pdfToCsv(pdf);

@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// Fair Report Fill (Roadshow PMS Agent — Job B). Upload the owner's FAIR REPORT
-// (.xlsx, one worksheet per event). We read it in the browser with SheetJS, send
-// each sheet's rows to /projects/fair-report/match (the unit-tested parser
-// aggregates revenue + product-COGS + salesperson and matches candidate projects
-// by brand+venue), then the owner picks the project per event and applies —
-// which writes the finance lines (skipping any category already present).
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from "react";
 import { read, utils } from "../lib/xlsx-runtime";
@@ -37,7 +29,7 @@ export function FairReportFill() {
   const [error, setError] = useState("");
   const [rows, setRows] = useState<MatchRow[]>([]);
   const [projectCount, setProjectCount] = useState(0);
-  const [picked, setPicked] = useState<Record<number, number>>({}); // event idx -> project id
+  const [picked, setPicked] = useState<Record<number, number>>({});
   const [results, setResults] = useState<Record<number, ApplyResult>>({});
   const [applying, setApplying] = useState<Record<number, boolean>>({});
 
@@ -57,7 +49,6 @@ export function FairReportFill() {
       );
       setRows(res.events ?? []);
       setProjectCount(res.projectCount ?? 0);
-      // Default-pick the first candidate for each matched event.
       const pk: Record<number, number> = {};
       (res.events ?? []).forEach((r, i) => { if (r.candidates[0]) pk[i] = r.candidates[0].id; });
       setPicked(pk);
@@ -124,7 +115,6 @@ export function FairReportFill() {
                 </div>
               </div>
 
-              {/* Finance lines + salespeople */}
               <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginTop: 8, fontSize: 12 }}>
                 <div>
                   {r.financeLines.map((l) => (
@@ -140,7 +130,6 @@ export function FairReportFill() {
                 )}
               </div>
 
-              {/* Match + apply */}
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10 }}>
                 {r.candidates.length ? (
                   <>

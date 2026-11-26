@@ -42,8 +42,6 @@ export const PAYMENT_BACKDATE_APPROVALS_KEY = ["scm", "payment-backdate-approval
    voucher and AP invoice writes that answer or re-open a request. */
 export const PAYMENT_REQUESTS_WAITING_KEY = ["payment-requests", "waiting-count"] as const;
 const PAYMENT_REQUESTS_WAITING_PATH = "/api/scm/payment-requests/waiting-count";
-/* IT Support: the person's requests IT has answered since they last opened them.
-   Opening one marks it seen on the hub, so the request screens refresh this key. */
 export const IT_SUPPORT_UNREAD_KEY = ["it-support", "unread-count"] as const;
 /* Orders with no fair link (owner 2026-10-19: 「先做 Fair links to settle 菜单」).
    Under the page's own query key prefix ['fair-pending'], so settling an order
@@ -58,8 +56,6 @@ const FINANCE_TODO_COUNT_PATH = "/api/scm/accounting/todo/count";
    write (vendor/scm/lib/product-request-queries.ts) moves the badge. */
 export const PRODUCT_REQUEST_APPROVALS_KEY = ["product-requests", "pending-count"] as const;
 const IT_SUPPORT_UNREAD_PATH = "/api/it-support/unread-count";
-/* Meetings: invites, changes and cancellations not yet seen (hub notifications).
-   Opening My meetings marks them read, and that screen refreshes this key. */
 export const MEETINGS_UNREAD_KEY = ["meetings", "unread-count"] as const;
 
 interface PendingCountResponse {
@@ -92,7 +88,6 @@ export const BADGE_POLL_MS = 60_000;
 /** The combined read — GET /api/badge-counts (backend routes/badgeCounts.ts). */
 export const BADGE_COUNTS_KEY = ["badge-counts"] as const;
 
-/** Each source's own key and endpoint. The key is what writers invalidate. */
 const SOURCES: Record<ApprovalBadgeSource, { key: readonly string[]; path: string }> = {
   "amendment-approvals": { key: AMENDMENT_APPROVALS_KEY, path: "/api/scm/so-amendments/pending-count" },
   "po-amendment-approvals": { key: PO_AMENDMENT_APPROVALS_KEY, path: "/api/scm/po-amendments/pending-count" },
@@ -110,27 +105,16 @@ const SOURCES: Record<ApprovalBadgeSource, { key: readonly string[]; path: strin
   "stock-take-approvals": { key: ["scm", "stock-take-approvals"], path: "/api/scm/stock-takes/pending-count" },
 };
 
-/** Sidebar order; also the order of the combined request's `sources`. */
 const SOURCE_ORDER = Object.keys(SOURCES) as ApprovalBadgeSource[];
 
 interface BadgeCountsResponse {
   counts?: Partial<Record<ApprovalBadgeSource, number | null>>;
 }
 
-/**
- * One count, under its own key. Returns 0 while loading and 0 on any failure —
- * a decoration on the chrome must never become an error state, and a badge
- * showing a stale-but-plausible number is worse than no badge.
- *
- * `pollMs`: this key's own visible-only poll, or `false` when the sidebar's
- * combined read keeps it fresh. Either way the key stays a live query, so a
- * writer that invalidates it re-reads just this count at once.
- */
 function usePendingCount(
   source: ApprovalBadgeSource,
   enabled: boolean,
   pollMs: number | false,
-  /** A page that reminds about the count reads it fresh on arrival (0 = on every mount). */
   staleTime: number = 2 * BADGE_POLL_MS,
 ): number {
   const { key, path } = SOURCES[source];
@@ -139,8 +123,6 @@ function usePendingCount(
     queryFn: () => api.get<PendingCountResponse>(path),
     enabled,
     staleTime,
-    // Silent by design: a failed poll leaves `data` undefined, which reads as
-    // "no badge", not "0 waiting". The sidebar says nothing rather than lying.
     retry: false,
   });
   useVisiblePoll(key, pollMs, enabled);
@@ -172,29 +154,20 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
   const enabled = !!user?.id;
   const itConnected = useItSupportConnected();
 
-  /* Who is polled for what. Each gate is the one the count had on its own. */
   const wanted: Record<ApprovalBadgeSource, boolean> = {
     "amendment-approvals": enabled,
     "po-amendment-approvals": enabled,
-    /* Only an admin can have a non-zero count, so nobody else is polled. */
     "payment-backdate-approvals":
       enabled && (can("scm.payment.backdate") || can("scm.payment.backdate.approve")),
-    /* Finance answers requests; nobody else is polled (the server says 0 to them anyway). */
     "payment-requests-waiting": enabled && can("scm.payment_voucher.create"),
-    /* Everyone reports to IT; nobody is polled where the hub is not connected. */
     "it-support-replies": enabled && itConnected,
-    /* SCM staff only — the same permission the entry asks for. The count is the
-       page's own list, company-scoped by the server. */
     "fair-links-to-settle": enabled && can("scm.access"),
     "product-request-approvals": enabled && can("scm.product_request.approve"),
-    /* Finance only — the people who work its To do. */
     "finance-todo": enabled && (can("scm.payment_voucher.create") || can("scm.payment_voucher.post")),
     /* Owner 2026-11-21: a customer email waiting on me (assigned to me, or in my
        own mailbox) shows on Mail Center. */
     "mail-waiting": enabled && can("mail_center.read"),
-    /* Every signed-in user books rooms; the row (and so the count) exists only where the hub is connected. */
     "meetings-unread": enabled && itConnected,
-    /* Only a stock-take supervisor can approve an over-limit count, so only they are polled. */
     "stock-take-approvals": enabled && can("scm.stock_take.supervise"),
   };
   const sources = SOURCE_ORDER.filter((s) => wanted[s]);
@@ -208,9 +181,7 @@ export function useApprovalBadgeCounts(): Record<ApprovalBadgeSource, number> {
       const res = await api.get<BadgeCountsResponse>(`/api/badge-counts?sources=${sourcesParam}`);
       for (const s of sources) {
         const n = res.counts?.[s];
-        if (typeof n !== "number") continue; // that count failed: keep what is shown
-        /* A count re-read on its own after this request left (a writer's
-           invalidation) is newer than this answer; do not put the old number back. */
+        if (typeof n !== "number") continue;
         const own = qc.getQueryState(SOURCES[s].key);
         if (own && own.dataUpdatedAt > startedAt) continue;
         qc.setQueryData(SOURCES[s].key, { count: n });
@@ -302,7 +273,6 @@ export function useRefreshItSupportUnread(): () => void {
     here moves the badge too. 0 for anyone but Finance. */
 export function usePaymentRequestsWaiting(): number {
   const { user, can } = useAuth();
-  /* No poll of its own: the sidebar beside this page keeps the key fresh. */
   return usePendingCount("payment-requests-waiting", !!user?.id && can("scm.payment_voucher.create"), false, 0);
 }
 

@@ -26,7 +26,6 @@ const row = (o: Record<string, unknown> = {}) => ({
 });
 
 const uploaded = (key: string): PendingSlipRow => ({ r2_key: key, status: 'uploaded' });
-/** A hand-keyed row as the plan sees it. */
 const keyed = (o: { uploadSessionId?: string | null } = {}) => ({ method: 'cash' as const, ...o });
 const converted = () => ({ method: 'converted' as const });
 
@@ -45,8 +44,6 @@ describe('the create payments[] schema', () => {
   });
 
   it('rejects an EMPTY-STRING session rather than treating it as slip-less', () => {
-    /* '' is a client forgetting to omit the field. Accepting it would make the
-       resolution step hunt for a session nobody claimed. */
     expect(soCreatePaymentSchema.safeParse(row({ uploadSessionId: '' })).success).toBe(false);
   });
 
@@ -100,8 +97,6 @@ describe('a slip that IS supplied still attaches, positionally', () => {
   });
 
   it('keeps the pairing right in a MIXED create (this is the money detail)', () => {
-    /* slipKeys is consumed by index against posPayments. Get the alignment
-       wrong and a payment is booked with another payment's proof. */
     const plan = planCreatePaymentSlips(
       [converted(), keyed({ uploadSessionId: 'sess-b' }), converted(), keyed({ uploadSessionId: 'sess-d' })],
       new Map([['sess-b', uploaded('key-b')], ['sess-d', uploaded('key-d')]]),
@@ -149,8 +144,6 @@ describe('a slip that is CLAIMED but not real is still refused', () => {
   });
 
   it('refuses the WHOLE create, not just the bad row', () => {
-    /* All-or-nothing: the caller runs this before the header insert, so a
-       create is never left with half its proofs missing. */
     const plan = planCreatePaymentSlips(
       [keyed({ uploadSessionId: 'good' }), keyed({ uploadSessionId: 'ghost' })],
       new Map([['good', uploaded('key-good')]]),

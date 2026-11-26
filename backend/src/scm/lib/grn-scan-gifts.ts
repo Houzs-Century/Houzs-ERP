@@ -1,12 +1,3 @@
-// ---------------------------------------------------------------------------
-// grn-scan-gifts — free gifts a supplier puts on the delivery order that are on
-// no PO (DIGLANT's "GWP Pillow" with the mattresses). Sim, 2026-10-20: receive
-// them into stock at RM0. A gift's printed code is taught once on the scan card
-// to a product of our catalogue (scm.supplier_scan_codes, like any taught code);
-// from then on each scanned draft gets it as a line with no PO link, RM0,
-// acknowledged as a free gift. No PO link means it never reaches AutoCount
-// (autocount-convert-lines carries source-linked lines only).
-// ---------------------------------------------------------------------------
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { recomputeGrnTotals } from '../routes/grns';

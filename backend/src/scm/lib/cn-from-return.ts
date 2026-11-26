@@ -26,12 +26,9 @@ export type PricedReturnLine = {
   itemCode: string | null;
   description: string | null;
   qtyReturned: number;
-  /** Units already on a live (draft or posted) credit note. */
   creditedQty: number;
   remainingQty: number;
-  /** Per-unit credit off the invoice, unrounded; null = this line was never invoiced. */
   unitSen: number | null;
-  /** The invoices that billed the line's delivery-order line. */
   invoiceIds: string[];
 };
 

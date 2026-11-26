@@ -1,11 +1,3 @@
-/**
- * Supplier portal auth — proposal §6.3.
- *
- * Mirrors customer portal's caseTrack middleware (middleware/caseTrack.ts)
- * but reads from the supplier-token table. A valid bearer token
- * resolves to exactly one case (and one supplier creditor), which the
- * downstream routes read via c.get("supplierScope").
- */
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../types";
 import { resolveSupplierToken, type SupplierPortalScope } from "../services/supplierPortal";

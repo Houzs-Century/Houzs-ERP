@@ -149,16 +149,7 @@ export const ownColourAccessory = (itemCode: string | undefined): boolean =>
 export type CascadeLine = {
   category: string;
   variants: Record<string, unknown>;
-  /** The line is already SAVED on the order (the edit views). A saved line is
-   *  only ever FORCED by a master that moves during this session, never FILLED:
-   *  its blank key is what the order actually holds, and filling it on open
-   *  rewrote a line nobody touched. BUG-53 (HC-SO-011143, 2026-10-03): opening
-   *  the order to add a storage charge filled the sofa's colourLabel onto the
-   *  untouched SQUARE PILLOW beside its own MODENZA-04, and the amendment raised
-   *  a Purchaser approval for a colour change the rep never made. Absent = a
-   *  new line, which fills as before. */
   persisted?: boolean;
-  /** The line's SKU, read only by `ownColourAccessory`. */
   itemCode?: string;
 };
 
@@ -166,11 +157,7 @@ export type CascadeLine = {
 export type MasterVariantSnapshot = Readonly<Record<string, Record<string, unknown>>>;
 
 export type CascadeResult = {
-  /** One entry per input line, in order. The SAME object reference as the
-   *  input's `variants` when that line must not change, so a caller can bail
-   *  out of `setState` with `===` and never loop. */
   variants: Record<string, unknown>[];
-  /** Feed back in as `previousMasters` on the next run. */
   masters: MasterVariantSnapshot;
 };
 
@@ -239,11 +226,6 @@ export function seedFollowerVariants(
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(masterVariants)) {
     if (NEVER_INHERITED_KEYS.includes(k)) continue;
-    /* Special orders are build-scoped, and at SEED time a fresh follower has no
-       buildKey yet, so we cannot tell whether it is the same sofa as the master.
-       Leave them out of the seed and let the live cascade fill them a tick later
-       once the follower's own build is known — that keeps a NEW sofa's specials
-       from being pre-copied off a DIFFERENT sofa's master. */
     if (SPECIAL_ORDER_KEYS.includes(k)) continue;
     out[k] = v;
   }
@@ -270,10 +252,6 @@ export function followerVariants(
   previousMaster: Record<string, unknown> | undefined,
   fillBlanks: boolean,
 ): Record<string, unknown> {
-  /* Fabric COLOUR is scoped to one physical sofa. When the master and this
-     follower each carry a buildKey and they DIFFER, they are two different
-     sofas: the category master's fabric identity must not cross into this one.
-     Every other axis (seat size, leg height, gap...) stays category-wide. */
   const masterBk = buildKeyOf(master);
   const followerBk = buildKeyOf(follower);
   const differentSofa = masterBk !== '' && followerBk !== '' && masterBk !== followerBk;
@@ -282,9 +260,6 @@ export function followerVariants(
   let changed = false;
   for (const [k, masterVal] of Object.entries(master)) {
     if (NEVER_INHERITED_KEYS.includes(k)) continue;
-    /* Fabric identity AND the structured special orders are scoped to ONE
-       physical sofa: they cross between the compartments of one build (same or
-       absent buildKey) but never between two different sofas on one order. */
     if (differentSofa && (FABRIC_IDENTITY_KEYS.includes(k) || SPECIAL_ORDER_KEYS.includes(k))) continue;
     if (isBlank(masterVal)) continue;
     const masterMoved = previousMaster !== undefined && previousMaster[k] !== masterVal;
@@ -347,15 +322,10 @@ export function cascadeMasterVariants(
     masterIdx[l.category] = idx;
   });
 
-  /* Whether the sofa cascade is active on this surface — a fabric-follower
-     accessory only takes the sofa's colour when the sofa itself is cascading. */
   const sofaCascading = cascadeCategories === null || cascadeCategories.has(SOFA_CATEGORY);
 
   const variants = lines.map((l, idx) => {
     if (!l.category) return l.variants;
-    /* A sofa accessory follows the SOFA master's colour/fabric only (owner
-       2026-09-22), independent of the same-category cascade below. No sofa on the
-       order, or the surface is not cascading sofas -> leave it untouched. */
     if (FABRIC_FOLLOWER_CATEGORIES.has(l.category)) {
       if (ownColourAccessory(l.itemCode)) return l.variants;
       if (!sofaCascading || !(SOFA_CATEGORY in masterIdx)) return l.variants;

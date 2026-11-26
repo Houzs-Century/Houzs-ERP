@@ -60,8 +60,6 @@ export function areaTemplate(cardRules: readonly RateRule[], unit: string): Pric
 
 const RULE_ORDER: readonly string[] = ['POSITIONAL_TIER', 'OVERAGE', 'SOFA_BRACKET', ...FLAT_ORDER];
 
-/** The box a price nobody templated stands for — an area priced for a 4th set
- *  the card's own ladder stops short of still gets a column. */
 const boxOf = (r: RateRule, unit: string): PriceBox => {
   if (r.ruleType === 'POSITIONAL_TIER') {
     const label = `${ordinal(r.tierPosition ?? 1)} ${unit}`;

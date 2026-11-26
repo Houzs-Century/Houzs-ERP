@@ -12,8 +12,6 @@ import {
   statusOf,
 } from "./assr-case-fields";
 
-/* These were unreachable until they were lifted out of MobileServiceCase.tsx —
-   the whole point of the extraction, beside the size ceiling. */
 
 describe("get — the dual-read the Postgres driver forces on us", () => {
   it("prefers the first key that has a value", () => {
@@ -22,9 +20,6 @@ describe("get — the dual-read the Postgres driver forces on us", () => {
   });
 
   it("treats an EMPTY STRING as absent, not as a value", () => {
-    // A blank column is not an answer. Reading '' as present is how a screen
-    // renders a confident empty field instead of falling through to the
-    // snake_case sibling that actually holds the data.
     expect(get({ assrNo: "", assr_no: "B" }, "assrNo", "assr_no")).toBe("B");
     expect(get({ a: null, b: undefined, c: "x" }, "a", "b", "c")).toBe("x");
   });
@@ -51,7 +46,6 @@ describe("row readers", () => {
   it("normalises stage / status / priority to strings", () => {
     expect(stageOf({})).toBe("");
     expect(statusOf({ status: "open" })).toBe("open");
-    // Priority defaults to normal and is always lower-cased.
     expect(priorityOf({})).toBe("normal");
     expect(priorityOf({ priority: "URGENT" })).toBe("urgent");
   });

@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// assr/stages — the CANONICAL service-case (ASSR) stage pipeline + the
-// resolution-routing rule. NO React, no query client, no I/O.
-//
-// This is the single source of truth for the 7-stage workflow and, crucially,
-// for the ONE rule that used to drift between desktop and mobile: when a case
-// is resolved in-house (own field service / return visit) the two
-// supplier-only stages — Supplier Pickup and Item Ready — drop out of the
-// pipeline entirely. Desktop enforced this via getActiveStages; mobile did
-// not, so internal-resolution cases on mobile mis-routed INTO those stages and
-// showed the wrong progress denominator. Both surfaces now share this file.
-//
-// Stage vocabulary since mig 0110 (Item Pickup retired; the customer-side
-// collection lives inside the Supplier stage) / mig 0105 (Pending Inspection
-// folded into Verification).
-// ----------------------------------------------------------------------------
 
 import { ASSR_STAGE_LABEL } from "../assr-stage-labels";
 import { ASSR_SUB_STATUSES, assrSubStatusLabelOf, type AssrSubStatusDef } from "../assr-sub-statuses";
@@ -26,17 +10,12 @@ export type AssrStageKey =
   | "pending_item_ready"
   | "pending_delivery_service"
   | "completed"
-  // voided = terminal alt-outcome; NOT in ASSR_STAGES (never a funnel dot).
   | "voided";
 
 export interface AssrStageDef {
-  /** SQL enum value. */
   key: AssrStageKey;
-  /** Chip-short label. */
   short: string;
-  /** Card / badge label. */
   long: string;
-  /** Responsible role (drives the "next-stage owner" hint on the advance sheet). */
   owner: string;
   /** One-line caption under the funnel dot on the desktop detail (Nick
    *  2026-07-23: 在 stage funnel 每个 stage 加上 description). Desktop is the
@@ -47,16 +26,8 @@ export interface AssrStageDef {
   desc: string;
 }
 
-/* `long` is READ from the shared stage-label table, never retyped. This table
-   owns the ORDER and the short/owner columns; it does not own the words. The
-   two questions came apart the day `voided` arrived: it is not a funnel step,
-   so it correctly has no row here — and because the words lived here, mobile
-   had to bolt a literal "Voided — Not Valid" on top of this table while the
-   customer portal's own copy printed the raw slug. */
 export const ASSR_STAGES: AssrStageDef[] = [
   { key: "pending_review",           short: "Review",      long: ASSR_STAGE_LABEL.pending_review,           owner: "Service Admin", desc: "New case — first review" },
-  // Order change (Nico 2026-08-11): Solution comes BEFORE Verification —
-  // decide the fix first, then inspect/verify.
   { key: "pending_solution",         short: "Solution",    long: ASSR_STAGE_LABEL.pending_solution,         owner: "Service Admin", desc: "Decide fix & assign supplier" },
   { key: "under_verification",       short: "Verify",      long: ASSR_STAGE_LABEL.under_verification,       owner: "Service Admin", desc: "Inspect & verify the issue" },
   { key: "pending_supplier_pickup",  short: "Pickup",      long: ASSR_STAGE_LABEL.pending_supplier_pickup,  owner: "Service Admin", desc: "Customer pickup · supplier pickup · supplier return" },

@@ -81,16 +81,6 @@ const errText = (e: unknown): string => (e instanceof Error ? e.message : "Somet
 /** Editable row state — every extracted value is a starting point, not a fact. */
 export type RowState = ExtractedLine & { drop: boolean };
 
-/** Editing qty / unit price / discount CLEARS the printed amount.
- *
- *  The printed figure wins by default because the vendor's rounding is theirs
- *  (see workOrderLineSen, services/fleet-status.ts). But the moment the
- *  operator corrects one of ITS INPUTS they are overriding the document, and
- *  keeping the old printed total would freeze the line at a number they just
- *  disagreed with — correct a misread RM5,600 to RM6,500 and nothing moves.
- *
- *  Dropping / renaming / re-sectioning a line does NOT override it: none of
- *  those change what the line costs. */
 const OVERRIDES_PRINTED: ReadonlyArray<keyof RowState> = ["qty", "unitPriceSen", "discountPct"];
 
 export function applyRowEdit(row: RowState, patch: Partial<RowState>): RowState {
@@ -104,7 +94,6 @@ export function applyRowEdit(row: RowState, patch: Partial<RowState>): RowState 
 
 export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
   vehicleId: string;
-  /** The lorry this drawer is open on, for the plate cross-check. */
   plate: string | null;
   onDone: () => void;
   onCancel: () => void;
@@ -120,7 +109,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
   const [err, setErr] = useState<string | null>(null);
   const [res, setRes] = useState<ExtractResponse | null>(null);
 
-  // Header, editable after extraction.
   const [docNo, setDocNo] = useState("");
   const [docKind, setDocKind] = useState<"QUOTATION" | "INVOICE">("QUOTATION");
   const [docDate, setDocDate] = useState("");
@@ -133,7 +121,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
   const [workshopList, setWorkshopList] = useState<Workshop[]>([]);
   const [creatingWorkshop, setCreatingWorkshop] = useState(false);
   const [newWorkshopName, setNewWorkshopName] = useState("");
-  /* Rename the linked workshop (PATCH /workshops/:id). Its code never changes. */
   const [renameTo, setRenameTo] = useState<string | null>(null);
 
   const loadWorkshops = async () => {
@@ -159,8 +146,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
     void loadWorkshops();
   };
 
-  /* Also reachable from an OCR review: the reconciliation banner tells you a
-     line was missed, and before this there was no way to put it back. */
   const addRow = (section: "PART" | "LABOUR") => setRows((prev) => [...prev, blankRow(section)]);
   const removeRow = (i: number) => setRows((prev) => prev.filter((_, idx) => idx !== i));
 
@@ -168,8 +153,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
     if (!file || reading) return;
     setReading(true); setErr(null); setRes(null);
     try {
-      /* api.uploadFile allows 120s — the reader's own ceiling is 110s, so a
-         slow document surfaces the reader's message, not a client timeout. */
       const r = await api.uploadFile<ExtractResponse>("/api/scm/scan-lorry-invoice/extract", file);
       setRes(r);
       setDocNo(r.document.docNo ?? "");
@@ -179,9 +162,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
       setProblem(r.document.docNo ? `Workshop ${r.document.docKind === "INVOICE" ? "invoice" : "quotation"} ${r.document.docNo}` : "Workshop repair");
       setRows(r.lines.map((l) => ({ ...l, drop: false })));
 
-      /* Pre-select the workshop only on an UNAMBIGUOUS match — SSM first,
-         then an exact name. A fuzzy guess here silently attributes a repair
-         to the wrong vendor, and the operator would have no reason to look. */
       const list = await loadWorkshops();
       const ssm = r.document.workshopRegistrationNo?.trim();
       const nm = r.document.workshopName?.trim().toUpperCase();
@@ -201,9 +181,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
   const keptTotal = kept.reduce((s, r) => s + r.lineSen, 0);
   const printed = res?.totals.printedTotalSen ?? null;
 
-  /* Recomputed from the CURRENT rows, not the response — the operator may have
-     dropped or edited a line, and a banner that still describes the original
-     extraction would be worse than none. */
   const liveReconcile: boolean | null = printed == null ? null : Math.abs(keptTotal - printed) <= Math.max(1, kept.length);
 
   const plateMismatch = useMemo(() => {
@@ -266,15 +243,10 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
         [docKind === "INVOICE" ? "invoiceNo" : "quotationNo"]: docNo.trim() || undefined,
         advisor: advisor.trim() || undefined,
         documentDate: docDate || undefined,
-        /* labour rides the LINES, so the header scalar must stay 0 or the
-           total counts it twice (the route 409s if it is not). */
         labourSen: 0,
         /* The kept original links to this work order (HC-0006 T7). */
         scanFileKey: res?.scanFileKey ?? undefined,
       });
-      /* Sequential on purpose: the LABOUR guard reads the header, and the
-         error that matters ("line 7 was rejected") is unreadable if six
-         requests fail at once. */
       for (const r of kept) {
         await api.post(`/api/fleet-maintenance/work-orders/${wo.id}/parts`, {
           section: r.section,
@@ -292,7 +264,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
     } catch (e) { setErr(errText(e)); } finally { setSaving(false); }
   };
 
-  // ── Upload state ──────────────────────────────────────────────────────────
   if (!res && !manual) {
     return (
       <div className="rounded-lg border border-border bg-surface p-3">
@@ -322,7 +293,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
   const d = res?.document ?? null;
   const lowConfidence = d?.confidence != null && d.confidence < 0.6;
 
-  // ── Review state ──────────────────────────────────────────────────────────
   return (
     <div className="space-y-3 rounded-lg border border-border bg-surface p-3">
       <div className="flex items-start justify-between gap-3">
@@ -337,7 +307,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
         </button>
       </div>
 
-      {/* The three checks, most alarming first. */}
       {plateMismatch && (
         <Banner tone="crit" icon={<AlertTriangle size={14} />}>
           This document is for <strong>{plateMismatch.doc}</strong>, but you are on <strong>{plateMismatch.lorry}</strong>.
@@ -374,7 +343,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
         </Banner>
       )}
 
-      {/* Workshop */}
       <div className="rounded-md border border-border bg-surface-2/30 p-2.5">
         <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Workshop</div>
         {d && (
@@ -413,8 +381,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
           </div>
         )}
         {!res && !workshopId && (
-          /* With no document there is nothing to read a workshop OUT of, so the
-             only way to link one that is not on file yet is to name it here. */
           <div className="mt-2 flex flex-wrap items-end gap-2">
             <div>
               <label className={LABEL}>New workshop</label>
@@ -432,7 +398,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
         )}
       </div>
 
-      {/* Header */}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <div>
           <label className={LABEL}>Document</label>
@@ -459,7 +424,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
         <input className={FIELD} value={problem} onChange={(e) => setProblem(e.target.value)} />
       </div>
 
-      {/* Lines */}
       <div className="overflow-x-auto rounded-md border border-border">
         <table className="w-full min-w-[860px] text-[11.5px]">
           <thead>
@@ -487,8 +451,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
                 {idx.map(([r, i]) => (
                   <tr key={i} className={cn("border-t border-border", r.drop && "opacity-40")}>
                     <td className="px-2 py-1">
-                      {/* Typed by hand, so there is no extraction to compare
-                          against — a wrong line is deleted, not struck out. */}
                       {res ? (
                         <input type="checkbox" checked={!r.drop} onChange={(e) => setRow(i, { drop: !e.target.checked })} />
                       ) : (
@@ -534,8 +496,6 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
         </table>
       </div>
 
-      {/* A missed line used to be unrecoverable: the reconciliation banner told
-          you one was short and then offered no way to put it back. */}
       <div className="flex flex-wrap gap-2">
         <Button variant="secondary" onClick={() => addRow("PART")}>Add a part line</Button>
         <Button variant="secondary" onClick={() => addRow("LABOUR")}>Add a labour line</Button>

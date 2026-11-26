@@ -374,8 +374,6 @@ export function canonicaliseSoHeaderChanges<T>(
   const out: Record<string, T> = {};
   for (const [k, v] of Object.entries(changes)) {
     const target = Object.prototype.hasOwnProperty.call(aliases, k) ? aliases[k] : k;
-    /* Same key twice (legacy + current both present): the current spelling
-       wins. `k === target` is the no-alias case and must always assign. */
     if (target !== k && Object.prototype.hasOwnProperty.call(changes, target)) continue;
     out[target] = v;
   }
@@ -416,14 +414,9 @@ export const SO_DATE_PAIR_REFUSAL = {
 } as const;
 
 export type SoDatePairFacts = {
-  /** The Processing Date this write LEAVES on the row (YYYY-MM-DD) or null. */
   nextProc: string | null;
-  /** The Delivery Date this write LEAVES on the row (YYYY-MM-DD) or null. */
   nextDeliv: string | null;
-  /** The Processing Date as STORED before this write. Pass null on a create —
-   *  every date there is new, so nothing can be grandfathered. */
   origProc: string | null;
-  /** The Delivery Date as STORED before this write. Null on a create. */
   origDeliv: string | null;
 };
 
@@ -487,20 +480,13 @@ export function soDatePairRefusal(
   return unchanged ? null : SO_DATE_PAIR_REFUSAL;
 }
 
-/* THE LINE HALF OF THE PAIR (BUG-39, Sim 2026-09-30: 「no proceed date will be
-   no any delivery date」). soDatePairRefusal guards the header; a line date was
-   free, so an order with no Processing Date could still carry a delivery date
-   on its lines and read as dated demand. Only a date being SET is refused —
-   clearing one is always allowed. */
 export const SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL = {
   error: 'line_delivery_needs_processing_date',
   reason: 'Set the Processing Date first — a line cannot carry a Delivery Date while the order has none.',
 } as const;
 
 export function soLineDateRefusal(i: {
-  /** The order's Processing Date after this write. */
   processingDate: unknown;
-  /** The line delivery dates this write sets. */
   lineDeliveryDates: readonly unknown[];
 }): typeof SO_LINE_DATE_NEEDS_PROCESSING_REFUSAL | null {
   const present = (v: unknown): boolean => String(v ?? '').trim() !== '';
@@ -532,10 +518,7 @@ export function soLineDateRefusal(i: {
  */
 export function soDatePairCascadeColumns(i: {
   procCleared: boolean;
-  /** true when the request itself already names customer_delivery_date — then
-   *  the caller's own value wins and there is nothing to cascade. */
   delivInPatch: boolean;
-  /** The stored Delivery Date; nothing to clear when it is already null. */
   origDeliv: string | null;
 }): readonly string[] {
   if (!i.procCleared || i.delivInPatch) return [];

@@ -31,10 +31,8 @@ export type DecidedBankLine = {
   description: string;
   reference: string | null;
   amountSen: number;
-  /** The live decision: PAYOUT*, QR or OTHER. */
   kind: string;
   acquirerCode: string | null;
-  /** The decider's own sentence for it. */
   note: string | null;
 };
 
@@ -47,7 +45,6 @@ export type UnmatchedBankLine = {
   accountCode: string;
   bankName: string | null;
   bookedOn: string;
-  /** YYYY-MM — the month Bank statements opens it in. */
   month: string;
   description: string;
   reference: string | null;
@@ -55,10 +52,7 @@ export type UnmatchedBankLine = {
   what: BankLineWhat;
   kind: string;
   acquirerCode: string | null;
-  /** Why it is still open, in one sentence: the decider's own for card and QR
-      money, the entries it could be for a transfer. */
   note: string | null;
-  /** TRANSFER: how many same-amount entries no bank line holds, and the first few. */
   entryCount: number;
   entries: EntryOffer[];
   ageDays: number;

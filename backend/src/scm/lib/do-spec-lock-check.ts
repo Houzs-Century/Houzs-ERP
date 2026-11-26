@@ -1,7 +1,3 @@
-// The server half of shared/do-spec-lock.ts: does this line PATCH change the spec
-// of a line on a shipped DO? Compares the stock bucket the line shipped under with
-// the one the request would put it in, so a request that merely re-sends the same
-// spec (the edit form sends the whole line) is not refused.
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { DO_SPEC_LOCKED_ERROR, DO_SPEC_LOCKED_MESSAGE, doSpecLocked } from '../shared/do-spec-lock';
 

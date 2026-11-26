@@ -1,13 +1,3 @@
-// /special-addons — Special Add-ons CRUD (Chairman 2026-06-02). Read by any
-// staff (POS configurator + Modular need it); written by admin/super_admin/
-// coordinator/sales_director (server check + RLS, migration 0133).
-//
-// A special add-on = a per-Model product add-on priced on top of the product
-// (selling surcharge + 0..N follow-up choice groups), shown as an SO line
-// description — NOT a SKU. `code` is the stable key reused by the per-Model gate
-// (allowed_options.specials) + the SO line (variants.specials). Pricing itself is
-// enforced server-side in mfg-sales-orders (later PR); this route is just the
-// master editor backing the "Special Add-ons" tab.
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
@@ -25,19 +15,13 @@ export const specialAddons = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 specialAddons.use('*', supabaseAuth);
 
-// Houzs-flavoured: gate via canWriteScmConfig (flat `scm.config.write` OR the position policy canWriteConfig flag, see houzs-perms.ts) against
-// the REAL caller (the 2990 staff_role lookup is dead in Houzs — the SCM
-// bridge pins every caller to one super_admin row).
 
 const CATEGORY = z.enum(['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE']);
 
-// A single pickable choice inside a follow-up question. extraSen may be negative
-// (a deduction) — matches the table's no-CHECK-on-sign design (Chairman C).
 const choiceSchema = z.object({
   label:    z.string().min(1),
   extraSen: z.number().int().default(0),
 });
-// One follow-up question (e.g. "Thickness" → 10" / 8"). 0..N per add-on.
 const groupSchema = z.object({
   label:    z.string().min(1),
   required: z.boolean().default(true),
@@ -50,7 +34,7 @@ const groupSchema = z.object({
 // pricing compares them exactly; one price per compartment.
 const compartmentPricesSchema = z.array(z.object({
   compartment:     z.string().trim().min(1).transform((code) => normalizeCompartmentCode(code)),
-  sellingPriceSen: z.number().int(),   // may be negative, like the base
+  sellingPriceSen: z.number().int(),
 })).refine(
   (rows) => new Set(rows.map((r) => r.compartment)).size === rows.length,
   { message: 'each compartment can have one price only' },
@@ -61,8 +45,8 @@ const createSchema = z.object({
   label:             z.string().min(1),
   soDescription:     z.string().default(''),
   categories:        z.array(CATEGORY).default([]),
-  sellingPriceSen:   z.number().int().default(0),   // may be negative
-  costPriceSen:      z.number().int().default(0),    // may be negative
+  sellingPriceSen:   z.number().int().default(0),
+  costPriceSen:      z.number().int().default(0),
   optionGroups:      z.array(groupSchema).default([]),
   compartmentPrices: compartmentPricesSchema.default([]),
   active:            z.boolean().default(true),
@@ -107,7 +91,6 @@ const toApi = (r: AddonRow) => ({
 const SELECT =
   'id, code, label, so_description, categories, selling_price_sen, cost_price_sen, option_groups, compartment_prices, active, sort_order, created_at, updated_at';
 
-// Editors-only guard — Houzs flat-key permission.
 async function requireWrite(c: AppCtx) {
   if (!canWriteScmConfig(c)) {
     return { ok: false as const, res: c.json({ error: 'forbidden', reason: 'missing_scm_config_write' }, 403) };
@@ -147,10 +130,6 @@ specialAddons.get('/', async (c) => {
     supabase.from('special_addons').select(SELECT),
     c,
   )
-    // sort_order is the MANUAL position and stays the higher rule (owner
-    // 2026-08-12). Alphabetical is the tie-break, not a replacement: rows the
-    // owner has not deliberately positioned share a sort_order and were
-    // previously left in insertion order, which is what made the list unreadable.
     .order('sort_order', { ascending: true })
     .order('label', { ascending: true })
     .order('created_at', { ascending: true });
@@ -158,7 +137,6 @@ specialAddons.get('/', async (c) => {
   return c.json({ addons: (data as AddonRow[]).map(toApi) });
 });
 
-// POST — create. Editors only. 23505 (unique code) → 409.
 specialAddons.post('/', async (c) => {
   const gate = await requireWrite(c);
   if (!gate.ok) return gate.res;
@@ -196,7 +174,6 @@ specialAddons.post('/', async (c) => {
   return c.json({ addon: toApi(data as AddonRow) }, 201);
 });
 
-// PATCH /:id — update. Editors only.
 specialAddons.patch('/:id', async (c) => {
   const gate = await requireWrite(c);
   if (!gate.ok) return gate.res;
@@ -222,8 +199,6 @@ specialAddons.patch('/:id', async (c) => {
   if (parsed.data.sortOrder       !== undefined) patch.sort_order        = parsed.data.sortOrder;
 
   const supabase = c.get('supabase');
-  // Multi-company: scope the write to the active company so a blind id from
-  // another company matches nothing (reported as not-found, not mutated).
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data, error } = await scopeToCompanyId(supabase.from('special_addons').update(patch).eq('id', id), co.companyId).select(SELECT).maybeSingle();
@@ -235,14 +210,11 @@ specialAddons.patch('/:id', async (c) => {
   return c.json({ addon: toApi(data as AddonRow) });
 });
 
-// DELETE /:id — editors only.
 specialAddons.delete('/:id', async (c) => {
   const gate = await requireWrite(c);
   if (!gate.ok) return gate.res;
   const id = c.req.param('id');
   const supabase = c.get('supabase');
-  // Multi-company: scope the delete; select reports whether a row in THIS
-  // company was actually removed.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data, error } = await scopeToCompanyId(supabase.from('special_addons').delete().eq('id', id), co.companyId).select('id').maybeSingle();
@@ -271,9 +243,6 @@ function genHistId(): string {
   return `sah-${rnd}`;
 }
 
-// One snapshot entry = the full API shape of an add-on, so the history blob is a
-// self-contained record of the set at that effective date (mirrors the maintenance
-// config blob). soDescription/sortOrder default like the table columns.
 const snapshotEntrySchema = z.object({
   code:            z.string().min(1),
   label:           z.string().min(1),
@@ -282,7 +251,6 @@ const snapshotEntrySchema = z.object({
   sellingPriceSen: z.number().int().default(0),
   costPriceSen:    z.number().int().default(0),
   optionGroups:    z.array(groupSchema).default([]),
-  // NO default: an entry without it keeps the live value (see the apply step).
   compartmentPrices: compartmentPricesSchema.optional(),
   active:          z.boolean().default(true),
   sortOrder:       z.number().int().default(0),
@@ -303,8 +271,6 @@ type HistoryRow = {
   created_by: string | null;
 };
 
-// GET /history — full append-only version log. Each row carries isPending so the
-// UI can colour future-effective snapshots (same convention as maintenance-config).
 specialAddons.get('/history', async (c) => {
   const supabase = c.get('supabase');
   const { data, error } = await scopeToCompany(
@@ -330,8 +296,6 @@ specialAddons.get('/history', async (c) => {
   return c.json({ history });
 });
 
-// POST /save — append an effective-dated snapshot + apply it onto the live table.
-// Editors only.
 specialAddons.post('/save', async (c) => {
   const gate = await requireWrite(c);
   if (!gate.ok) return gate.res;
@@ -344,8 +308,6 @@ specialAddons.post('/save', async (c) => {
   }
   const { effectiveFrom, notes, addons } = parsed.data;
 
-  // Guard duplicate codes inside one save (the unique constraint would catch it
-  // on apply, but a clear 400 beats a half-applied upsert).
   const codes = addons.map((a) => a.code);
   if (new Set(codes).size !== codes.length) {
     return c.json({ error: 'duplicate_code', reason: 'the same add-on code appears twice in this save' }, 400);
@@ -354,16 +316,9 @@ specialAddons.post('/save', async (c) => {
   const supabase = c.get('supabase');
   const userId = gate.userId;
 
-  // The apply step below upserts ON CONFLICT (company_id, code) — the constraint
-  // migration 0087 put there. An unresolved company would send company_id NULL,
-  // which never conflicts, so every save would INSERT a second copy of every
-  // add-on instead of updating it. Refuse instead, matching PATCH and DELETE.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  // 0) An entry that does not carry compartmentPrices keeps the live ones. The
-  //    ERP Specials panel versions the whole set, and a save from a panel that
-  //    predates the field must not wipe what the 2990 POS priced by compartment.
   let fullAddons = addons;
   if (addons.some((a) => a.compartmentPrices === undefined)) {
     const { data: liveRows, error: liveReadErr } = await scopeToCompanyId(
@@ -374,7 +329,6 @@ specialAddons.post('/save', async (c) => {
     fullAddons = addons.map((a) => ({ ...a, compartmentPrices: a.compartmentPrices ?? liveByCode.get(a.code) ?? [] }));
   }
 
-  // 1) Append the version-log snapshot (audit + apply-source).
   const histId = genHistId();
   const { data: hist, error: histErr } = await supabase
     .from('special_addons_history')
@@ -383,9 +337,6 @@ specialAddons.post('/save', async (c) => {
     .single();
   if (histErr) return c.json({ error: 'history_insert_failed', reason: histErr.message }, 500);
 
-  // 2) Apply the snapshot onto the LIVE special_addons table (what SO costing
-  //    reads). Upsert by code; codes NOT in the snapshot are deactivated (never
-  //    deleted) so existing orders keep resolving the value.
   const nowIso = new Date().toISOString();
   const cid = activeCompanyId(c);
   const upsertRows = fullAddons.map((a) => ({
@@ -406,27 +357,14 @@ specialAddons.post('/save', async (c) => {
   if (upsertRows.length > 0) {
     const { error: upErr } = await supabase
       .from('special_addons')
-      // 0087 dropped special_addons_code_unique and added
-      // special_addons_company_code_unique UNIQUE (company_id, code). ON CONFLICT
-      // must name the constraint that EXISTS or Postgres raises 42P10, which is
-      // what made every Save return 500.
       .upsert(upsertRows, { onConflict: 'company_id,code' });
     if (upErr) {
-      /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-         Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-         0061 enabled RLS on every scm table with NO policies, and the SCM client is
-         the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-         getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-         42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-         permission check and do NOT treat it as scoping: the only boundary is this
-         route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
       if (upErr.code === '42501' || /permission denied/i.test(upErr.message)) {
         return c.json({ error: 'forbidden', reason: upErr.message }, 403);
       }
       return c.json({ error: 'apply_failed', reason: upErr.message }, 500);
     }
   }
-  // Deactivate any live code the snapshot dropped (retire, don't delete).
   {
     const { data: live, error: liveErr } = await scopeToCompany(supabase.from('special_addons').select('id, code'), c);
     if (liveErr) return c.json({ error: 'apply_failed', reason: liveErr.message }, 500);

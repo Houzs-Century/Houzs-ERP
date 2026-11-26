@@ -1,9 +1,3 @@
-// ----------------------------------------------------------------------------
-// Lorry Live Map (DEV-42) — where every tracked lorry is now. Positions come from
-// the Velocity (Kinesis) trackers, stored every 5 min by the backend cron
-// (scm/lib/velocity-poll.ts), not from driver phones, so it works without trips.
-// Reuses the trip map component; one pin per lorry, amber when the fix is old.
-// ----------------------------------------------------------------------------
 
 import { fmtTime } from '@2990s/shared';
 import { Link } from 'react-router-dom';
@@ -16,7 +10,6 @@ import { useLorryRoadTracks } from '../../vendor/scm/lib/lorry-road-track';
 import { todayMY } from '../../vendor/shared/format';
 import { useLorryKmCost, useLorryPositions, type LorryKmCost, type LorryPosition } from '../../vendor/scm/lib/lorries-queries';
 
-/* Three missed polls = stale. */
 const STALE_MS = 15 * 60_000;
 
 function ago(iso: string): string {
@@ -28,8 +21,6 @@ function ago(iso: string): string {
 
 const isStale = (p: LorryPosition) => Date.now() - Date.parse(p.recorded_at) > STALE_MS;
 
-/* Km from today's Velocity fixes (Malaysia day) x the lorry's RM/km. No rate =
-   no cost shown: unknown is not zero. The rate is set on the Fleet page. */
 function KmCostCells({ kc }: { kc: LorryKmCost | undefined }) {
   return (
     <>
@@ -49,7 +40,6 @@ export function LorryLiveMap({ embedded }: { embedded: boolean }) {
   const positions = q.data ?? [];
   const kmCost = new Map((useLorryKmCost().data ?? []).map((k) => [k.lorry_id, k]));
   const mapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
-  /* Each lorry's path today along the roads; a lorry whose path has not loaded shows its pin only. */
   const roads = useLorryRoadTracks(mapsKey ? positions.map((p) => p.lorry_id) : [], todayMY());
   const roadsKey = roads.map((r) => r.dataUpdatedAt).join(',');
   const trails: LiveTrail[] = useMemo(

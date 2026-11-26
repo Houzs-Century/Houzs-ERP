@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-detail-gates — PURE status / date / amount gate logic for the Sales-Order
-// DETAIL flow. NO React, no query client, no I/O. The desktop SalesOrderDetail
-// page and the MobileSODetail screen both consume these so a gating fix lands
-// ONCE instead of drifting between two hand-rolled copies.
-//
-// Everything here is derived from the header the /mfg-sales-orders/:docNo GET
-// returns (+ the payments ledger for the balance). Status comparisons are
-// case-insensitive (the column stores UPPERCASE; some call sites already
-// upper-cased, some did not).
-// ----------------------------------------------------------------------------
 
 import { todayMyt } from './dates';
 /* The per-line downstream freeze (owner 2026-09-15). isLocked's `hasChildren`
@@ -17,22 +6,14 @@ import { todayMyt } from './dates';
    (`soItemFrozen(item)`). */
 export { soDownstreamHardLocked, soItemFrozen } from '../../shared/so-line-freeze';
 
-/* Terminal / downstream-carrying statuses — once the SO reaches one of these
-   its header + line items are no longer ours to edit (SHIPPED onward once goods
-   leave, plus CANCELLED). Mirrors the desktop `lockedStatuses`. */
 export const LOCKED_STATUSES: readonly string[] = [
   'SHIPPED', 'DELIVERED', 'INVOICED', 'CLOSED', 'CANCELLED',
 ];
 
-/* In-flight statuses a Cancel is still offered on — never once SHIPPED+ /
-   INVOICED / CLOSED (those carry downstream docs). Mirrors the desktop
-   `cancellableStatuses`. */
 export const CANCELLABLE_STATUSES: readonly string[] = [
   'CONFIRMED', 'IN_PRODUCTION', 'READY_TO_SHIP',
 ];
 
-/* Minimal structural header the gates read — every field optional/nullable so
-   both the desktop and mobile SoHeader types satisfy it without coupling. */
 export type SoDetailGateHeader = {
   status?: string | null;
   has_children?: boolean | null;
@@ -49,18 +30,7 @@ export type SoDetailGateHeader = {
      so the gate degrades to the date rule alone. */
   po_locked?: boolean | null;
   amendment_eligible?: boolean | null;
-  /* Server-computed: this order was carried across from AutoCount at the 2026-08
-     cutover AND the migrated-order lock is currently on for this company
-     (backend/src/scm/lib/migrated-so-lock.ts). It arrives as ALREADY-DECIDED
-     rather than as the raw `linked_ac_docno`, because the answer depends on an
-     app_config switch and on the caller's bypass — neither of which the browser
-     can see. The endpoint that refuses the write computes it with the SAME
-     function, so the button and the API cannot disagree.
-     Absent (a cached pre-deploy payload) reads as false, which is the pre-2026-09
-     behaviour exactly. */
   migrated_readonly?: boolean | null;
-  /* The sentence to show the operator. Server-authored so it can be changed by
-     an operator through scm.app_config.description without a deploy. */
   migrated_readonly_reason?: string | null;
   balance_sen?: number | null;
   paid_sen_total?: number | null;
@@ -70,10 +40,6 @@ export type SoDetailGateHeader = {
 
 const upper = (s: string | null | undefined): string => (s ?? '').toUpperCase();
 
-/* isLocked — the SO header/lines are frozen when the status is terminal
-   (SHIPPED+/CANCELLED, unless an explicit unlock override is active) OR every
-   line is already on a live DO/SI (`downstreamLocked` = soDownstreamHardLocked;
-   never overridable — the child must be cancelled first). */
 export function isLocked(
   status: string | null | undefined,
   downstreamLocked: boolean,
@@ -101,9 +67,6 @@ export function migratedReadonly(header: SoDetailGateHeader | null | undefined):
   return header?.migrated_readonly === true;
 }
 
-/* The sentence to render next to a disabled control. Never empty when
-   migratedReadonly() is true — the server always sends one, and this is the
-   fallback for a payload that somehow arrives without it. */
 export const MIGRATED_READONLY_FALLBACK =
   'This order came from AutoCount and is view-only for now. New orders save normally.';
 
@@ -153,10 +116,6 @@ export function migratedReadonlyReason(header: SoDetailGateHeader | null | undef
    there is no state where po_locked is true and the date exemptions should win.
    Mirrors the backend pair soProcessingLocked || soPoLocked. */
 export function procLockActive(
-  /* `status` is REQUIRED here and optional on SoDetailGateHeader, which the
-     money helpers below also take. Narrowing it at the one gate that DECIDES on
-     it is what makes "a caller without a status cannot ask this question" a
-     compile error rather than a comment. */
   header: SoDetailGateHeader & { status: string | null },
 ): boolean {
   if (header.po_locked === true) return true;
@@ -167,12 +126,6 @@ export function procLockActive(
   return status !== 'DRAFT' && status !== 'CANCELLED';
 }
 
-/* amendmentEligible — the SO is processing-locked (already PO'd) but still
-   editable via the amendment flow, so a line change must go out as an amendment
-   request rather than a direct edit. Only meaningful while the SO is NOT
-   hard-locked (terminal status / downstream child) — a SHIPPED/terminal SO is
-   never amendment-eligible. Mirrors the desktop
-   `Boolean(header.amendment_eligible) && !isLocked`. */
 export function amendmentEligible(header: SoDetailGateHeader, locked: boolean): boolean {
   return Boolean(header.amendment_eligible) && !locked;
 }

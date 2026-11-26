@@ -25,24 +25,11 @@
 import type { SofaPriceTier } from './sofa-combo-pricing';
 
 export type SofaQuickPreset = {
-  /** Stable key — used as preset_id on sofa combo rules. Never rename
-      after a combo rule has referenced it. Commander adds new entries
-      with brand-new ids. */
   id: string;
-  /** User-facing label shown on the Quick Presets chip + Quick Pick card. */
   label: string;
-  /** Canonical compartment codes in left-to-right order — e.g.
-      ['1A(LHF)','2A(RHF)']. Drives the New Combo composer prefill, the
-      POS Configurator Customize preview, and Combo Rule pricing. */
   modules: string[];
-  /** Display order; ascending. Falls back to array index when missing. */
   sortOrder?: number;
-  /** Toggle to hide a preset without deleting it (keeps history clean
-      when commander wants to retire a layout). Defaults to true. */
   active?: boolean;
-  /** Optional default tier (PRICE_1 / PRICE_2 / PRICE_3) — applied when
-      operation creates a new Sofa Combo rule using this preset. Omit
-      to leave the tier picker on "— Any —". */
   defaultTier?: SofaPriceTier;
 };
 

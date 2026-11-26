@@ -46,12 +46,10 @@ const SORTS: ReadonlyArray<{ value: SortKey; label: string }> = [
   { value: 'sales', label: 'Sales' },
   { value: 'gpPct', label: 'Margin' },
 ];
-/** A row as the table ranks it: its place, and its gross profit with the gifts in or out. */
 type Ranked = ProductProfitRow & { rank: number; gp: number };
 
 export const ProductProfitTab = () => {
   const r = useReportRange();
-  /* Whole months of the shared range: a part month widens to its first and last days. */
   const from = r.usable ? monthStart(r.from) : monthStart(r.today);
   const to = r.usable ? monthEnd(r.to) : monthEnd(r.today);
   const partMonths = r.usable && (r.from !== from || r.to !== to);
@@ -75,7 +73,6 @@ export const ProductProfitTab = () => {
     if (next.has(c)) next.delete(c); else next.add(c);
     return next;
   });
-  /* What is on screen: the months the report read, else the months asked for. */
   const shownFrom = d?.from ?? from;
   const shownTo = d?.to ?? to;
   const monthText = profitPeriod(shownFrom, shownTo);
@@ -205,7 +202,6 @@ export const ProductProfitTab = () => {
             <ReportMessage>{`Nothing sold in ${monthText}${cats.size === 0 ? '' : ` (${viewLabel(v)})`}.`}</ReportMessage>
           ) : (
             <>
-              {/* One block: the ranking on the left fills the height of the two cards on the right. */}
               <div className={s.charts} role="group" aria-label="Charts">
                 <section className={`${s.card} ${s.rankCard}`}>
                   <h3 className={s.cardTitle}>{ranking.title} · top {ranking.bars.length} <span className={s.cardSub}>(bar end: {ranking.end})</span></h3>

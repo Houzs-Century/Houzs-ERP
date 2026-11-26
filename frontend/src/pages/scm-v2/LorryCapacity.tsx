@@ -1,27 +1,3 @@
-// ----------------------------------------------------------------------------
-// Lorry Capacity — STAGE 5B (final) of the Delivery / TMS module.
-//
-// The fleet performance dashboard. For a date range (Last / This / Next month,
-// or a Custom from–to) and a fleet filter (All / In-house / Outsourced) it shows
-// a summary metric-card row + a per-lorry metric table replicating the owner's
-// Houzs "Lorry Capacity" page: Work Days · Repair Days (editable) · Available
-// Days · Utilisation · Total Trips · Delivery Days · Deliveries · Orders/Trip ·
-// Setup/Dismantle · Pickups · Services · Delivery Revenue · Revenue/Order ·
-// Revenue/Trip. The header reports the working-day count (Mon–Sat) in range.
-//
-// All metrics + the working-day count are computed server-side (GET
-// /lorry-capacity); this page renders them and drives the two inline edits:
-// the In-house checkbox (PATCH …/in-house) and the Repair Days number (PUT
-// …/repair-days, which writes a single dashboard-managed maintenance window for
-// the queried range). Range + fleet live in the URL (useSearchParams) so a
-// link / refresh keeps the view.
-//
-// Style: app design system (2026-07-16 reskin) — shared <PageHeader>, <StatCard>
-// KPI tiles and Tailwind "Ink & Petrol" tokens; only the dense metric table
-// keeps a CSS module. Utilisation is tinted (low → red-ish, healthy → green-ish),
-// like Houzs. Money is integer cents from the API → fmtSen for the RM display.
-// Every number is rounded.
-// ----------------------------------------------------------------------------
 
 import { dailyTotalsByLorry, diffPct, fmtDrive, fmtKm, roadTotalsByLorry, useRoadDaily, useRoadFigures } from '../../vendor/scm/lib/lorry-routes-queries';
 import { LorryRoadDaily } from './LorryRoadDaily';
@@ -47,12 +23,9 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './LorryCapacity.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
 
-/* Custom-range date field — the design-system input slab. */
 const DATE_INPUT =
   'h-[30px] rounded-md border border-border bg-surface px-2 text-[12px] text-ink outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20';
 
-/* Segmented control — the FilterPills / ViewToggle slab from the reference
-   list pages (PurchaseOrdersListV2). Replaces the bespoke `.segment` pill. */
 function SegmentedControl<T extends string>({
   options, value, onChange, label,
 }: {
@@ -87,10 +60,6 @@ function SegmentedControl<T extends string>({
   );
 }
 
-/* ── Range presets ──────────────────────────────────────────────────────────
-   Compute a {from,to} ISO range (YYYY-MM-DD, UTC-anchored so it matches the
-   server's calendar-day math) for a named preset. 'custom' is driven by the URL
-   from/to params directly. */
 type RangePreset = 'last' | 'this' | 'next' | 'custom';
 
 function isoUTC(y: number, mZeroBased: number, d: number): string {
@@ -102,7 +71,7 @@ function monthRange(offset: number): { from: string; to: string } {
   const today = todayMyt();
   const y = Number(today.slice(0, 4));
   const m = Number(today.slice(5, 7)) - 1 + offset;
-  return { from: isoUTC(y, m, 1), to: isoUTC(y, m + 1, 0) };  // day 0 of next month = last day of this
+  return { from: isoUTC(y, m, 1), to: isoUTC(y, m + 1, 0) };
 }
 function rangeForPreset(preset: RangePreset, custom: { from: string; to: string }): { from: string; to: string } {
   if (preset === 'last') return monthRange(-1);
@@ -124,7 +93,6 @@ const FLEET_TABS: Array<{ key: FleetFilter; label: string }> = [
   { key: 'outsourced', label: 'Outsourced' },
 ];
 
-/* Display helpers — all null-safe ("—"). */
 const dash = '—';
 function numOrDash(n: number | null | undefined, dp = 0): string {
   if (n == null || !Number.isFinite(n)) return dash;
@@ -139,7 +107,6 @@ function centiOrDash(centi: number | null | undefined): string {
   return fmtSen(centi);
 }
 
-/* Utilisation tint class — low (<60%) red, mid (<90%) burnt, else green. */
 function utilClass(frac: number | null): string {
   if (frac == null) return styles.utilMid!;
   if (frac < 0.6) return styles.utilLow!;
@@ -172,10 +139,8 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
   /* Road distance and driving time, home and back, from the Last Mile runs (owner 2026-11-08). */
   const road = useRoadFigures(from, to, null);
   const roadBy = useMemo(() => roadTotalsByLorry(road.data ?? []), [road.data]);
-  /* GPS km, Drive time and On-site time per lorry-day, worked out on the server. */
   const daily = useRoadDaily(from, to);
   const dailyBy = useMemo(() => dailyTotalsByLorry(daily.data?.days ?? []), [daily.data]);
-  /* On-time rate per lorry, worked out on the server (the Deliveries view's on-time KPI). */
   const onTime = useOnTime(from, to, null);
   const onTimeBy = useMemo(() => new Map((onTime.data?.byLorry ?? []).filter((g) => g.lorryId).map((g) => [g.lorryId as string, g])), [onTime.data]);
   const plateById = useMemo(() => new Map((data?.lorries ?? []).map((l) => [l.lorry_id, l.plate])), [data]);
@@ -290,7 +255,6 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
       </div>
 
 
-      {/* Summary metric tiles */}
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
         <StatCard label="Lorries" value={numOrDash(totals.lorries)} />
         <StatCard label="Total Trips" value={tripsText(totals.total_trips)} />
@@ -302,7 +266,6 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
         <StatCard label="Revenue/Trip" value={centiOrDash(totals.revenue_per_trip_sen)} />
       </div>
 
-      {/* Running cost is never shown as a number that is too small: the server says why it is missing. */}
       {data?.km_incomplete && (
         <p role="status" className="mb-3 text-sm text-amber-700 dark:text-amber-300">Running cost not shown: {data.km_incomplete}</p>
       )}
@@ -338,9 +301,6 @@ export const LorryCapacity = ({ period, overviewLorries }: { period: { from: str
   );
 };
 
-/* Repair Days cell — locally controlled so typing doesn't thrash the query;
-   commits on blur / Enter only when the value changed (same contract as the
-   old hand-rolled row). */
 const RepairDaysCell = ({
   lorry, onSetRepair,
 }: {
@@ -348,7 +308,6 @@ const RepairDaysCell = ({
   onSetRepair: (days: number) => void;
 }) => {
   const [repair, setRepair] = useState(String(lorry.repair_days));
-  // Keep the local field in sync if the server value changes (range / fleet flip).
   useEffect(() => { setRepair(String(lorry.repair_days)); }, [lorry.repair_days]);
 
   const commitRepair = () => {

@@ -14,19 +14,10 @@ import type { TeamMember, Department, Position, Role } from "../../types";
 import { buildDeptNodes, inCompany, statusBadgeProps } from "./teamShared";
 import { TeamMemberProfile } from "./TeamMemberProfile";
 
-/* Org Chart — design handoff screen 04. Companies as lanes: Owner card on
- * top, departments as dark collapsible pills, an expanded department lays
- * its people out by team (users.division) in columns, grouped by position.
- * Cards drag between team columns / onto department pills to reassign.
- *
- * Stripe rule (from the handoff): the 4px pill stripe is bg-primary ONLY for
- * an expanded department, bg-err for a department with a real structural flag
- * (no derived lead), and neutral bg-border-strong otherwise — never one
- * colour per department. */
 
 type CompanyOpt = { id: number; code: string; name: string };
 
-const GENERAL = " general"; // sentinel column for members with no division
+const GENERAL = " general";
 
 /* Owner rule (2026-08-21, matching the handoff spec): outsourced/contractor
  * people never appear on the org chart — it represents direct organizational
@@ -176,7 +167,6 @@ export function TeamOrgChartV2() {
 
   return (
     <div>
-      {/* ── Toolbar ── */}
       <div className="mb-4 flex items-center justify-end gap-2">
         <Button
           variant="secondary"
@@ -240,7 +230,6 @@ export function TeamOrgChartV2() {
           const laneTotal = lane.laneUsers.length;
           return (
             <div key={lane.company.id} className="org-print-scale pb-8">
-              {/* Lane header */}
               <div className="flex items-center gap-3">
                 <span className="font-mono text-[11px] uppercase tracking-wider text-ink">
                   {lane.company.name}
@@ -249,7 +238,6 @@ export function TeamOrgChartV2() {
                 <div className="h-px flex-1 bg-border" />
               </div>
 
-              {/* Owner card */}
               {lane.owner && (
                 <>
                   <div className="mt-4 flex justify-center">
@@ -292,7 +280,6 @@ export function TeamOrgChartV2() {
                 </>
               )}
 
-              {/* Department pills */}
               <div className={cn("flex flex-wrap items-start justify-center gap-x-3", !lane.owner && "mt-4")}>
                 {lane.nodes.map((n) => {
                   const key = `${lane.company.id}:${n.dept.id}`;
@@ -352,7 +339,6 @@ export function TeamOrgChartV2() {
                 )}
               </div>
 
-              {/* Expanded department panels */}
               {lane.nodes
                 .filter((n) => expanded.has(`${lane.company.id}:${n.dept.id}`))
                 .map((n) => {

@@ -1,5 +1,3 @@
-// Play a lorry's day back fix by fix (lorry page history). The playhead is null until
-// the user plays or drags; a new day (resetKey) starts over.
 import { useEffect, useState } from "react";
 import { fmtTime } from "../../vendor/shared/format";
 import { BTN_SEC } from "./FleetUi";
@@ -15,6 +13,7 @@ export function useDayPlayback<F extends PlayFix>(fixes: F[], resetKey: string) 
   useEffect(() => { setIdx(null); setPlaying(false); }, [resetKey]);
   useEffect(() => {
     if (!playing) return;
+    // eslint-disable-next-line houzs/no-imperative-timers -- playback animation step, not a poller; cleared in cleanup
     const t = setInterval(() => setIdx((i) => {
       const next = Math.min((i ?? -1) + 1, last);
       if (next >= last) setPlaying(false);

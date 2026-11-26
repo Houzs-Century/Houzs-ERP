@@ -64,7 +64,6 @@ describe('From an AP invoice', () => {
     const onSaved = mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Read the bill' }));
     await screen.findByText('HC-DO-2610-004');
-    /* 2990's DO, its company shown; the one already on another bill cannot be kept. */
     expect(screen.getByText('2990-DO-2610-001')).toBeTruthy();
     expect((screen.getByLabelText('Keep HC-DO-2609-154') as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText('MANUAL-1 · RM 40.00')).toBeTruthy();
@@ -76,7 +75,6 @@ describe('From an AP invoice', () => {
     expect(screen.getByText('To check')).toBeTruthy();
     expect(screen.getByText(/The bill reads RM 2,168\.00/)).toBeTruthy();
 
-    /* The person drops the 2990 DO and corrects a misread amount. */
     fireEvent.click(screen.getByLabelText('Keep 2990-DO-2610-001'));
     fireEvent.change(screen.getByLabelText('Billed for HC-DO-2610-004'), { target: { value: '210' } });
     const save = screen.getByRole('button', { name: /^Save 1 DO/ });
@@ -87,7 +85,6 @@ describe('From an AP invoice', () => {
     expect(confirm[0]).toBe('/threepl-do-charges/from-ap/api-9/confirm');
     const sent = JSON.parse(confirm[1].body);
     expect(sent.rows).toEqual([{ doId: 'do-1', billedSen: 21_000, note: 'HC-API-2610-009: 6/10-SO-013216' }]);
-    /* Every line goes with it, with where it goes. */
     expect(sent.lines.map((l: { text: string; assign: string | null; doIds: string[]; projectId: number | null }) => [l.text, l.assign, l.doIds, l.projectId])).toEqual([
       ['6/10-SO-013216', 'do', ['do-1'], null],
       ['DISMANTLE SETIA SPICE (2 TRIPS)', 'event', [], 345],

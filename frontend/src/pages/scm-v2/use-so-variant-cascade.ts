@@ -34,7 +34,6 @@ import { cascadeStagedDeliveryDate, type StagedAddLine } from './so-add-lines';
 
 export function useSoVariantCascade(args: {
   isEditing: boolean;
-  /** Persisted line ids in RENDER order (the `items` array's order). */
   orderedIds: readonly string[];
   editingDrafts: Record<string, SoLineDraft>;
   addingDrafts: StagedAddLine[];
@@ -47,17 +46,11 @@ export function useSoVariantCascade(args: {
     setEditingDrafts, setAddingDrafts,
   } = args;
 
-  // Holds the master variants as of the previous run, so "the master's latest
-  // change wins" means something (a key the master JUST moved is forced onto the
-  // followers; a key it did not is only used to fill a blank). Reset when the
-  // edit session ends so a re-open starts clean.
   const masterSnapshotRef = useRef<MasterVariantSnapshot>({});
 
   useEffect(() => {
     if (!isEditing) { masterSnapshotRef.current = {}; return; }
 
-    // The cascade sees ONE ordered list: persisted lines first (render order),
-    // then the staged adds. The first line of a category is its master.
     const editIds = orderedIds.filter((id) => id in editingDrafts);
     const lines = [
       ...editIds.map((id) => ({
@@ -79,11 +72,6 @@ export function useSoVariantCascade(args: {
     );
     masterSnapshotRef.current = masters;
 
-    /* Write the persisted-line results back, skipping frozen lines (locked) and
-       any line whose variants object is unchanged (=== the input ref). "Did
-       anything move" is read off the RESULT by reference, not a flag a callback
-       mutates — the repo's pattern (so-add-lines.ts), which control-flow analysis
-       can follow and React can `===`-bail on. */
     setEditingDrafts((prev) => {
       const next: Record<string, SoLineDraft> = { ...prev };
       editIds.forEach((id, i) => {
@@ -94,7 +82,6 @@ export function useSoVariantCascade(args: {
       return editIds.some((id) => next[id] !== prev[id]) ? next : prev;
     });
 
-    // Then the staged adds (never frozen — they are not yet persisted).
     setAddingDrafts((prev) => {
       const next = prev.map((row, j) => {
         const v = variants[editIds.length + j]!;
@@ -102,8 +89,6 @@ export function useSoVariantCascade(args: {
       });
       return next.some((row, j) => row !== prev[j]) ? next : prev;
     });
-    // editingDrafts / addingDrafts identity change is what re-runs this; frozenIds
-    // and the setters are stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, orderedIds, editingDrafts, addingDrafts]);
 }

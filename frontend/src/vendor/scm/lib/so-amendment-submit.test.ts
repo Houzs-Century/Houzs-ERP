@@ -1,6 +1,3 @@
-// The rule both surfaces got wrong in opposite directions — see the module
-// header. These execute the decision rather than pinning source text, so a
-// future edit to the branch order fails here rather than in production.
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -24,8 +21,6 @@ describe('planAmendmentSubmit', () => {
     expect(plan()).toBe('NOTHING');
   });
 
-  /* THE DEFECT. Desktop discarded this edit; mobile saved it and called it a
-     failure. Both because the old check asked only about the amendment half. */
   it('only FREE fields moved -> DIRECT_ONLY, never an error', () => {
     expect(plan({ hasDirectHeaderChanges: true })).toBe('DIRECT_ONLY');
   });
@@ -38,8 +33,6 @@ describe('planAmendmentSubmit', () => {
     expect(plan({ hasFrozenHeaderChanges: true })).toBe('AMENDMENT');
   });
 
-  /* The direct half rides along with an amendment; it must not downgrade the
-     plan. Desktop already saved both in this case — that part was correct. */
   it('FREE + frozen together -> AMENDMENT, not DIRECT_ONLY', () => {
     expect(plan({ hasFrozenHeaderChanges: true, hasDirectHeaderChanges: true })).toBe('AMENDMENT');
   });
@@ -48,8 +41,6 @@ describe('planAmendmentSubmit', () => {
     expect(plan({ hasLineChanges: true, hasDirectHeaderChanges: true })).toBe('AMENDMENT');
   });
 
-  /* Mobile stages payments in this same submit. A payment-only edit used to be
-     refused "No changes to submit" and could never be booked from that screen. */
   it('a staged payment alone -> DIRECT_ONLY, not NOTHING', () => {
     expect(plan({ hasStagedPayments: true })).toBe('DIRECT_ONLY');
   });
@@ -88,8 +79,6 @@ describe('amendmentSubmittedNotice', () => {
       .toBe('Waiting for Logistic — one signature applies it to the order.');
   });
 
-  /* A laneless row is the legacy single-gate shape; it must still say something
-     true rather than "Waiting for  —". */
   it('a laneless amendment falls back to the plain message', () => {
     expect(amendmentSubmittedNotice('AMENDMENT', { amendments: [{ amendment_no: 'A1' }] }).body)
       .toBe('It now needs approval before the order is revised.');
@@ -122,8 +111,6 @@ describe('amendmentSubmittedNotice', () => {
     expect(n.body).toContain('A1 → Purchaser');
   });
 
-  /* The apply can be refused (the row is then REQUESTED, exactly where it sat
-     before this existed). The notice must not claim it applied. */
   it('falls back to the waiting message when the apply did not land', () => {
     expect(amendmentSubmittedNotice('AMENDMENT', {
       amendments: [{ lane: 'DELIVERY' }], autoApplied: 0,
@@ -137,17 +124,10 @@ describe('amendmentSubmittedNotice', () => {
 });
 
 describe('operator copy', () => {
-  /* 2026-07-27 moved the address block into the CONTROLLED set. Both banners
-     kept saying it saved straight away. Pin the correction so a re-word cannot
-     quietly reinstate the promise the server stopped honouring. */
   it('the banner does not promise that addresses save straight away', () => {
     expect(AMENDMENT_MODE_BANNER).not.toMatch(/address(es)? .{0,24}save straight away/i);
   });
 
-  /* 2026-08-21 moved customer name / phone / email into the CONTROLLED set
-     (so-field-policy). The banner kept promising they "save straight away"
-     for three weeks — the operator on HC-SO-013497 read that, and the server
-     409'd. Pin both halves: what rides the amendment, and what still saves. */
   it('the banner does not promise that name / phone / email save straight away', () => {
     expect(AMENDMENT_MODE_BANNER).not.toMatch(/(name|phone|email)[^.]{0,40}save straight away/i);
   });

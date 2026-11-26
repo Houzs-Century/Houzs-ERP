@@ -1,25 +1,3 @@
-/**
- * D9 — the sofa shape mismatch, tested against the REAL Desc2 corpus.
- *
- * The ERP models a sofa build as one line per compartment; AutoCount holds ONE
- * line per sofa with the build written into Desc2 as free text. Collapsing the
- * former into the latter is a reconstruction, and a reconstruction that is
- * merely plausible is the worst possible outcome: a side-swapped sofa reads
- * perfectly in the account book and ships the wrong furniture.
- *
- * So these tests are not "does it work". They are:
- *   1. ECHO is byte-exact on every build the cutover actually decomposed.
- *   2. Where the composer must reconstruct, the output either decodes back to
- *      exactly the ERP's compartments or is REFUSED. Never a third outcome.
- *   3. The gate catches every case the composer gets wrong — measured, with the
- *      count printed, not asserted away.
- *
- * The corpus is compiled from the committed AutoCount exports by
- * scripts/gen-sofa-desc2-corpus.mjs (the suite runs in workerd, which has no
- * fs). It carries INPUT ONLY — real ItemCodes and real Desc2 — so the decoder
- * and the collapse under test are the real ones and nothing is asserted against
- * a baked-in expectation.
- */
 import { describe, expect, it } from 'vitest';
 import { parseSofa } from '../../scripts/lib/parse-sofa.mjs';
 import {
@@ -41,20 +19,6 @@ const up = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase(
 const sameSeq = (a: string[], b: string[]) =>
   a.length === b.length && a.every((v, i) => up(v) === up(b[i]));
 
-/**
- * The population any collapse can apply to: AutoCount lines whose Desc2 the
- * shared decoder turns into a confident compartment list, which is what the
- * cutover importer decomposes into per-compartment ERP rows. Anything else
- * became a placeholder on the base model and never had compartments to fold
- * back up.
- *
- * The importer additionally requires every compartment SKU to exist in
- * scm.products. That table is unreachable from workerd, and the one committed
- * file that looks like it (minted-sofa-skus-2026-08.json) is a single batch's
- * DELTA — it holds zero 9028-* compartments, and gating on it silently shrinks
- * this corpus from 551 builds to 43. Left out deliberately: it narrows the
- * population without making any assertion below weaker.
- */
 function decoded(row: AcSofaCorpusRow) {
   const ps = parseSofa(row.desc2, row.model, row.recl);
   const codes = ps.pieces.map((c) => `${row.model}-${c}`);
@@ -62,18 +26,10 @@ function decoded(row: AcSofaCorpusRow) {
   return { ps, codes, ok };
 }
 
-/** The compartment rows the importer would have written for this build. */
-/** Any non-null value; only its SAMENESS across a build matters. */
 const CORPUS_DTLKEY = 4242;
 
 function erpRows(row: AcSofaCorpusRow, pieces: string[], ps: ReturnType<typeof parseSofa>): CollapsibleLine[] {
   return pieces.map((comp, i) => ({
-    /* ONE SHARED KEY, because every corpus row IS one line in the account book —
-       that is what makes it a corpus row. Since 2026-08-13 the shared key is
-       what tells collapseSofaLines this build is folded there; compartments
-       with distinct keys, or with none, are left as separate lines so a NEW
-       order sends one AutoCount line per ERP line. A fixture with no key would
-       be describing a document the book has never seen. */
     linked_ac_dtlkey: CORPUS_DTLKEY,
     item_code: `${row.model}-${comp}`,
     item_group: 'sofa',
@@ -91,7 +47,6 @@ const DECODABLE = CORPUS.filter((c) => c.ok);
 
 describe('the corpus itself', () => {
   it('is present and is real AutoCount text', () => {
-    // A generator that stops resolving must fail LOUD, not pass on [].
     expect(AC_SOFA_CORPUS_ROWS).toBeGreaterThan(400);
     expect(AC_SOFA_CORPUS.length).toBe(AC_SOFA_CORPUS_ROWS);
     expect(DECODABLE.length).toBeGreaterThan(400);
@@ -105,13 +60,6 @@ describe('the corpus itself', () => {
 });
 
 describe('ECHO — the stored Desc2 is the faithful answer when the build is unchanged', () => {
-  /**
-   * Verbatim means verbatim, with ONE documented exception: surrounding
-   * whitespace. 99 of the 658 real Desc2 values carry a leading space or a
-   * trailing newline, the decoder discards it before reading anything, and
-   * keeping it would make an otherwise 100-character build overflow AutoCount's
-   * field. Nothing INSIDE the text may change.
-   */
   it('reproduces the AutoCount text character-for-character on every decomposed build', () => {
     const wrong: string[] = [];
     let echoed = 0;
@@ -136,7 +84,6 @@ describe('ECHO — the stored Desc2 is the faithful answer when the build is unc
 
   it('the only difference from the account book text is surrounding whitespace', () => {
     const padded = AC_SOFA_CORPUS.filter((r) => r.desc2 !== r.desc2.trim());
-    // If this ever hits zero the assertion above has quietly stopped meaning anything.
     expect(padded.length).toBeGreaterThan(50);
     for (const row of padded) {
       const { ps, ok } = decoded(row);
@@ -156,7 +103,6 @@ describe('ECHO — the stored Desc2 is the faithful answer when the build is unc
       expect(res.lines).toHaveLength(1);
       expect(res.lines[0].item_code).toBe(`${row.model}-1S`);
       expect(res.lines[0].sourceIndexes).toEqual(rows.map((_, i) => i));
-      // the importer put the price on the FIRST compartment and zero on the rest
       expect(res.lines[0].unit_price_sen).toBe(123400);
       expect(res.lines[0].qty).toBe(row.qty || 1);
     }
@@ -179,11 +125,6 @@ describe('ECHO — the stored Desc2 is the faithful answer when the build is unc
 });
 
 describe('COMPOSE — reconstruction is imperfect, and the gate is what makes that safe', () => {
-  /**
-   * The honest measurement. For every real build, ask the composer to spell the
-   * compartment list from scratch and read the result back with the SAME
-   * decoder. Three outcomes are possible and only two are acceptable.
-   */
   it('never produces text that decodes to a DIFFERENT sofa without the gate catching it', () => {
     let exact = 0;
     let refusedByComposer = 0;
@@ -197,7 +138,6 @@ describe('COMPOSE — reconstruction is imperfect, and the gate is what makes th
       const again = parseSofa(composed, row.model, row.recl);
       if (sameSeq(again.pieces, ps.pieces)) { exact += 1; continue; }
       misdecoded.push(`${row.docNo}/${row.dtlKey}: [${ps.pieces}] -> "${composed}" -> [${again.pieces}]`);
-      // THE LOAD-BEARING CLAIM: whatever the composer gets wrong, the gate refuses.
       if (decodesTo(composed, row.model, ps.pieces, attrs).ok) {
         missedByGate.push(`${row.docNo}/${row.dtlKey}: "${composed}" decodes to [${again.pieces}]`);
       }
@@ -211,30 +151,9 @@ describe('COMPOSE — reconstruction is imperfect, and the gate is what makes th
       + (misdecoded.length ? `\n[D9 compose] wrong: ${misdecoded.join(' | ')}` : ''),
     );
     expect(missedByGate).toEqual([]);
-    /* The composer is KNOWN to be imperfect and that is the design: the gate,
-       not the composer, is what stands between a reconstruction and the account
-       book. If this ever reaches zero the gate has stopped being exercised by
-       real data and the assertion above proves nothing. */
     expect(misdecoded.length).toBeGreaterThan(0);
   });
 
-  /**
-   * THE GATE MUST BE WIRED, NOT MERELY PRESENT. The measurement above calls
-   * composeSofaDesc2 and decodesTo directly, so it proves the gate FUNCTION
-   * works — it passes just as happily if collapseSofaLines never calls it.
-   * Removing the gate from collapseRun left that test green, which is exactly
-   * the failure mode the whole module is built against.
-   *
-   * So drive the real corpus through the REAL entry point on the compose path.
-   * Compose only runs when the stored Desc2 no longer decodes to the
-   * compartments the ERP holds — i.e. after an operator edits the build, which
-   * is the D9 edit case and the only way a reconstruction ever reaches the
-   * account book. That is simulated here by editing the compartment list while
-   * leaving the imported Desc2 stale, exactly as a real edit does.
-   *
-   * Reversing the pieces is the deliberate stressor: it inverts handedness, and
-   * a side-swapped sofa is the corrupting outcome that reads perfectly.
-   */
   it('every line collapseSofaLines EMITS decodes back to the build it was given', () => {
     let composed = 0;
     let refused = 0;
@@ -244,7 +163,6 @@ describe('COMPOSE — reconstruction is imperfect, and the gate is what makes th
       if (ps.pieces.length < 2) continue;
       const edits: string[][] = [[...ps.pieces].reverse(), ps.pieces.slice(0, -1)];
       for (const pieces of edits) {
-        // the ORIGINAL Desc2 is left on the rows: stale, as a real edit leaves it
         const res = collapseSofaLines(erpRows(row, pieces, ps));
         refused += res.refusals.length;
         for (const line of res.lines) {
@@ -266,9 +184,7 @@ describe('COMPOSE — reconstruction is imperfect, and the gate is what makes th
       `[D9 wired] ${composed} edited builds composed and emitted, ${refused} refused, `
       + `${corrupt.length} emitted a line decoding to a DIFFERENT sofa.`,
     );
-    // Nothing that reaches the account book may decode to another sofa.
     expect(corrupt).toEqual([]);
-    // Both paths must be live, or this asserts over an empty set.
     expect(composed).toBeGreaterThan(0);
     expect(refused).toBeGreaterThan(0);
   });
@@ -278,7 +194,6 @@ describe('COMPOSE — reconstruction is imperfect, and the gate is what makes th
     const good = composeSofaDesc2(two, { size: '28', colour: 'BEIGE' });
     expect(good).not.toBeNull();
     expect(decodesTo(good!, '9028', two, { size: '28', colour: 'BEIGE' }).ok).toBe(true);
-    // the same text measured against a build it is not
     const bad = decodesTo(good!, '9028', ['1A(LHF)', 'CNR', '2A(RHF)'], null);
     expect(bad.ok).toBe(false);
     expect('why' in bad && bad.why).toContain('the ERP holds');
@@ -293,13 +208,6 @@ describe('COMPOSE — reconstruction is imperfect, and the gate is what makes th
 });
 
 describe('the two corrections that a naive inverse gets wrong', () => {
-  /**
-   * A bare digit decodes left-then-right BY POSITION, so an armed pair written
-   * "1 + 1" always comes back left-arm-first. A build that is physically
-   * right-arm-first therefore round-trips as a MIRRORED sofa — the same money,
-   * the same fabric, the wrong furniture. This is the exact failure the naive
-   * inverse shipped, and it is why armed ends must be spelled nEL / nER.
-   */
   it('an armed pair keeps its handedness (1ER + 1EL does not come back swapped)', () => {
     const rightFirst = ['1A(RHF)', '1A(LHF)'];
     const naive = '1 + 1 (28")';
@@ -319,13 +227,6 @@ describe('the two corrections that a naive inverse gets wrong', () => {
     expect(parseSofa(composed!, '9028', false).pieces).toEqual(solo);
   });
 
-  /**
-   * A BARE DIGIT IS NOT A SEAT. "1 (28\")" and "2 (28\")" decode to NOTHING —
-   * so the bare-digit spelling turned every single-seat build into a guaranteed
-   * refusal. And a solo 3S has no spelling at all: "3" decodes to nothing and
-   * "3S" decodes to the TWO-piece [2A(LHF), 1A(RHF)], which is precisely the
-   * plausible-but-wrong answer that must never reach the account book.
-   */
   it('a solo seat is spelled 1S / 2S, because a bare digit decodes to nothing', () => {
     expect(parseSofa('1 (28")', '9028', false).pieces).toEqual([]);
     expect(parseSofa('2 (28")', '9028', false).pieces).toEqual([]);
@@ -339,11 +240,6 @@ describe('the two corrections that a naive inverse gets wrong', () => {
   });
 
   it('a SIZED 3S is refused — by the gate now, not by withholding the token', () => {
-    /* CHANGED 2026-09-10, and the measurement that used to justify withholding
-       the token is what makes proposing it safe. `3S (28")` decodes to a
-       DIFFERENT sofa, so the round trip refuses it — which is where every other
-       spelling in this file is judged. Withholding it refused the sizeless case
-       too, and that is the case a real 3S build has. */
     expect(parseSofa('3S (28")', '9028', false).pieces).toEqual(['2A(LHF)', '1A(RHF)']);
     const sized = composeSofaDesc2(['3S'], { size: '28' });
     expect(sized).toBe('3S (28")');
@@ -354,8 +250,6 @@ describe('the two corrections that a naive inverse gets wrong', () => {
     const bare = composeSofaDesc2(['3S'], { size: null });
     expect(bare).toBe('3S');
     expect(decodesTo(bare as string, '9028', ['3S'], { size: null }).ok).toBe(true);
-    /* HC-SO-001472's build, refused for the sized case's reason since the day
-       the token was withheld. */
     const three = composeSofaDesc2(['3S', '1S', '2S'], { size: null });
     expect(decodesTo(three as string, '00913', ['3S', '1S', '2S'], { size: null }).ok).toBe(true);
   });
@@ -374,22 +268,9 @@ describe('the two corrections that a naive inverse gets wrong', () => {
   });
 });
 
-/**
- * THE ECHO MUST NOT OUTLIVE THE EDIT.
- *
- * Echo is safe only while the stored text is still TRUE of the row. The
- * compartment list is not the whole build: a fabric colour, a seat height and a
- * special order all live beside it and all get edited. Echoing on a piece-list
- * match alone sends AutoCount the sofa this one USED to be — a stale line in a
- * licensed account book, with the ERP showing the new value, nothing refused,
- * and no marker anywhere that the edit was dropped. That is the exact shape of
- * failure the write-back exists to make impossible.
- */
 describe('ECHO stops being the answer the moment the row disagrees with it', () => {
   const pair = (over: Partial<CollapsibleLine>, d2 = '1EL + 1ER (28") / COL: BEIGE'): CollapsibleLine[] =>
     ['9028-1A(LHF)', '9028-1A(RHF)'].map((code, i) => ({
-      /* One shared key — these pairs stand for a build the book already holds
-         as a single line, which is the only shape that folds. */
       linked_ac_dtlkey: CORPUS_DTLKEY,
       item_code: code, item_group: 'sofa', description: `SOFA 9028 ${code}`,
       description2: d2, qty: 1, unit_price_sen: i === 0 ? 500000 : 0,
@@ -409,7 +290,6 @@ describe('ECHO stops being the answer the moment the row disagrees with it', () 
     const res = collapseSofaLines(pair({ variants: { seatHeight: '28', colourLabel: 'GREY', specials: [] } }));
     const text = res.lines.map((l) => String(l.description2)).join(' ');
     expect(text).not.toContain('BEIGE');
-    // and it is not silently dropped either: either the new colour, or a refusal
     if (res.lines.length) {
       expect(res.lines[0].via).toBe('compose');
       expect(text).toContain('GREY');
@@ -438,12 +318,6 @@ describe('ECHO stops being the answer the moment the row disagrees with it', () 
     }
   });
 
-  /**
-   * The same claim over the REAL corpus rather than one hand-built build: change
-   * the colour on every decomposed build and count what still carries the old
-   * one. The population is the measurement — if it collapses to nothing, the
-   * assertion has quietly stopped meaning anything.
-   */
   it('no build in the corpus echoes a colour the ERP no longer holds', () => {
     const stale: string[] = [];
     let checked = 0;
@@ -479,9 +353,6 @@ describe('ECHO stops being the answer the moment the row disagrees with it', () 
 describe('REFUSAL is the designed outcome, never a plausible guess', () => {
   const build = (over: Partial<CollapsibleLine>[]): CollapsibleLine[] =>
     over.map((o) => ({
-      /* Shared key: these are builds the book holds as one line, the only shape
-         that folds and therefore the only shape that can be refused for a bad
-         Desc2. Without it they are simply left alone. */
       linked_ac_dtlkey: CORPUS_DTLKEY,
       item_code: '9028-1S', item_group: 'sofa', description: 'SOFA 9028',
       description2: '1 (28") / COL: BEIGE', qty: 1, unit_price_sen: 0, ...o,
@@ -498,15 +369,6 @@ describe('REFUSAL is the designed outcome, never a plausible guess', () => {
   });
 
   it('refuses rather than truncating a Desc2 longer than AutoCount holds', () => {
-    /* CHANGED 2026-09-10 and the change is deliberate. This used a 101-character
-       run of X, which the decoder puts on the SPECIALS axis — so the owner's
-       pointer rung now fits it and the document goes, carrying the build read
-       off the ITEM CODES (which is where the pieces come from, not from this
-       text) plus a sentence saying the specification is in the ERP.
-
-       The property this test exists for is unchanged: nothing is ever
-       TRUNCATED. It is asked here of the case the pointer cannot reach — length
-       in the COLOUR, which is part of the specification and never replaced. */
     const long = `COL: ${'X'.repeat(AC_DESC2_MAX)}Y`;
     const res = collapseSofaLines(build([{ item_code: '9028-1S', description2: long }]));
     expect(res.lines).toHaveLength(0);
@@ -515,8 +377,6 @@ describe('REFUSAL is the designed outcome, never a plausible guess', () => {
   });
 
   it('an unreadable Desc2 travels as the build plus a pointer, not as itself', () => {
-    /* The case the rewrite above gave up, kept as its own test so the new
-       behaviour is asserted rather than merely no longer failing. */
     const long = `${'X'.repeat(AC_DESC2_MAX)}Y`;
     const res = collapseSofaLines(build([{ item_code: '9028-1S', description2: long }]));
     expect(res.refusals).toEqual([]);
@@ -527,7 +387,6 @@ describe('REFUSAL is the designed outcome, never a plausible guess', () => {
   });
 
   it('refuses a compartment list it cannot spell, quoting what the stored text decodes to', () => {
-    // A corner cannot stand alone: 'C' on its own is not a build.
     const res = collapseSofaLines(build([
       { item_code: '9028-CNR', description2: '1 + 1 (28")' },
     ]));
@@ -581,8 +440,6 @@ describe('grouping — where one sofa ends and the next begins', () => {
     const a = '1 + 1 (28")';
     const b = '2 + 2 (30")';
     const res = collapseSofaLines([
-      /* Two builds the book holds as two lines, so two keys — and each build's
-         own pair shares one. */
       { linked_ac_dtlkey: 11, item_code: '9028-1A(LHF)', item_group: 'sofa', description: 'S', description2: a, qty: 1, unit_price_sen: 100 },
       { linked_ac_dtlkey: 11, item_code: '9028-1A(RHF)', item_group: 'sofa', description: 'S', description2: a, qty: 1, unit_price_sen: 0 },
       { linked_ac_dtlkey: 22, item_code: '9028-2A(LHF)', item_group: 'sofa', description: 'S', description2: b, qty: 1, unit_price_sen: 200 },
@@ -596,7 +453,6 @@ describe('grouping — where one sofa ends and the next begins', () => {
 
   it('emits N identical lines for an EXACT repeat, and refuses a ragged run', () => {
     const d2 = '1 + 1 (28")';
-    /* Folded in the book, hence one key across the run. */
     const mk = (code: string) => ({
       linked_ac_dtlkey: CORPUS_DTLKEY,
       item_code: code, item_group: 'sofa', description: 'S', description2: d2,
@@ -609,8 +465,6 @@ describe('grouping — where one sofa ends and the next begins', () => {
     expect(twice.lines).toHaveLength(2);
 
     const ragged = collapseSofaLines([mk('9028-1A(LHF)'), mk('9028-1A(RHF)'), mk('9028-1A(LHF)')]);
-    // three compartments are not a whole number of "1 + 1" builds; compose is
-    // then asked to spell [1A(LHF), 1A(RHF), 1A(LHF)] and refuses.
     expect(ragged.lines).toHaveLength(0);
     expect(ragged.refusals).toHaveLength(1);
   });
@@ -629,14 +483,6 @@ describe('line identity — one AutoCount line has ONE DtlKey', () => {
   });
 
   it('two compartments with DIFFERENT keys are two lines there, and stay two', () => {
-    /* Was "drops to null when they disagree". Since 2026-08-13 distinct keys are
-       how a NEW order looks: it sends one AutoCount line per ERP line, and each
-       comes back with its own key. Folding them would merge two real lines in a
-       licensed ledger, so they are left alone and each keeps the key that
-       addresses it. The corruption case this test used to guard — a build the
-       book holds FOLDED whose ERP rows disagree — is the MIXED case below, where
-       some compartments have a key and some do not; that still folds to a null
-       key so the caller refuses and asks for a backfill. */
     const res = collapseSofaLines([mk('9028-1A(LHF)', 4242), mk('9028-1A(RHF)', 9999)]);
     expect(res.lines).toHaveLength(2);
     expect(res.lines.map((l) => Number(l.linked_ac_dtlkey))).toEqual([4242, 9999]);
@@ -668,19 +514,6 @@ describe('splitSofaCode', () => {
     expect(splitSofaCode('9028-1S')).toEqual({ model: '9028', compartment: '1S' });
   });
 
-  /**
-   * THE HOLE THIS CLOSES. collapseSofaLines folds a line when the code parses as
-   * a compartment AND item_group is 'sofa' OR NULL. The null branch exists
-   * because a hand-built line may not carry a group at all — but it means a
-   * NON-sofa product whose code happened to end in '-2S' would be folded into
-   * somebody's sofa build and vanish from the document.
-   *
-   * Measured against the whole cutover map: of 1561 ERP codes, 84 parse as a
-   * compartment and ALL 84 are category SOFA. Zero bedframes, mattresses or
-   * accessories collide with the compartment vocabulary. Asserted rather than
-   * noted, because the day a supplier opens "SLAT-2S" the null branch stops
-   * being safe and this is what says so.
-   */
   it('no NON-sofa item in the cutover map parses as a compartment', () => {
     const offenders: string[] = [];
     let compartmentLike = 0;
@@ -726,9 +559,6 @@ describe('folding follows the shape AutoCount already holds, not the item code',
   });
 
   it('DISTINCT keys — already two lines there — are left as two', () => {
-    /* The case that broke the first version of this rule: a new order gets its
-       keys back from the create, so its very first edit must not fold two real
-       book lines into one. */
     const res = collapseSofaLines([
       comp('9028-1A(LHF)', { linked_ac_dtlkey: 81, unit_price_sen: 399000 }),
       comp('9028-2A(RHF)', { linked_ac_dtlkey: 82 }),
@@ -739,10 +569,6 @@ describe('folding follows the shape AutoCount already holds, not the item code',
   });
 
   it('MIXED keys still fold, so the keyless-line refusal can stop the document', () => {
-    /* Some compartments keyed means the book DOES hold it folded and the ERP's
-       record is incomplete. Emitting them separately would append duplicates of
-       a line already in a licensed ledger, so this keeps the old treatment:
-       fold, key resolves to null, the caller refuses and asks for a backfill. */
     const res = collapseSofaLines([
       comp('9028-1A(LHF)', { linked_ac_dtlkey: 90, unit_price_sen: 399000 }),
       comp('9028-2A(RHF)'),
@@ -752,20 +578,6 @@ describe('folding follows the shape AutoCount already holds, not the item code',
   });
 });
 
-// ----------------------------------------------------------------------------
-// A DEAD FABRIC ROW'S OBITUARY IS NOT PART OF THE BUILD.
-//
-// The fabric library renumbered itself on 2026-08-11 and left every old row in
-// place with `[superseded by X on 2026-08-11]` written into the row's own LABEL.
-// buildVariantSummary has stripped that since the day it was found; this
-// renderer did not, and it is the one a sofa goes through — so HC-SO-008460
-// (112), HC-SO-012513 (113) and HC-SO-012629 (117) stayed refused against a
-// field that holds 100, all three by the same 39 characters of bookkeeping.
-//
-// Two more were refused by the other half of the same fault: the composed text
-// lost the brackets while the EXPECTATION still carried them, so the round trip
-// failed on a colour that had not changed (HC-SO-004725, HC-SO-007958).
-// ----------------------------------------------------------------------------
 describe('a superseded colour travels as its live name', () => {
   const OBITUARY = 'BO315-3 [superseded by BO315-03 on 2026-08-11]';
   const sofa = (over: Partial<CollapsibleLine> = {}): CollapsibleLine[] => ([
@@ -796,8 +608,6 @@ describe('a superseded colour travels as its live name', () => {
   });
 
   it('the obituary is what put it over — 39 characters of bookkeeping', () => {
-    /* Measured rather than asserted from memory: the same build with the note
-       still in it is over the column, and that is the whole defect. */
     const withNote = `LR + 2EL / COL: ${OBITUARY} / BOTTOM USE UMBRELLA FABRIC / Nylon Fabric`;
     expect(withNote.length).toBeGreaterThan(AC_DESC2_MAX);
     const res = collapseSofaLines(sofa());
@@ -805,9 +615,6 @@ describe('a superseded colour travels as its live name', () => {
   });
 
   it('the ROUND TRIP passes, because the expectation uses the live name too', () => {
-    /* The half that a shorter string alone would not have fixed. `colour` is
-       handed to composeSofaDesc2 AND to decodesTo; stripping it in only one of
-       them trades a length refusal for a colour-mismatch refusal. */
     const res = collapseSofaLines(sofa());
     expect(res.refusals).toEqual([]);
     expect(res.lines[0].via).toBe('compose');
@@ -823,26 +630,9 @@ describe('a superseded colour travels as its live name', () => {
   });
 });
 
-// ----------------------------------------------------------------------------
-// THE LENGTH GATE BELONGS TO THE TEXT THAT IS ACTUALLY SENT.
-//
-// The stored `description2` is the ERP's own line summary, written by the
-// importer or by buildVariantSummary. It is NOT what goes to AutoCount for a
-// sofa — the composed build is — and yet the gate sat at the top of collapseRun
-// and refused the whole document on it. HC-SO-013339 is refused today at 107
-// stored characters without the composer ever being asked.
-//
-// This does not promise that every such document then goes: the composed text
-// has its own gate, and a long specification is long whichever renderer writes
-// it. What it removes is the refusal that never consulted the text being sent.
-// ----------------------------------------------------------------------------
 describe('over-long STORED text does not refuse a document the composer can spell', () => {
   const STORED = 'BO315-03 BEIGE / SEAT 35 / LEG DEFAULT / SPECIAL: Use 9028 ArmRest/L Shape 188CM/Bottom use Umbrella Fabric';
 
-  /* The variants are the ERP's CURRENT state and the stored text is what the
-     line was imported with. They differ here on purpose — that is the whole
-     case: an edited line whose imported summary is long and whose actual build
-     spells short. */
   const sofa = (): CollapsibleLine[] => ([
     {
       item_code: '8030-L(RHF)', item_group: 'sofa', description: 'SOFA 8030 L(RHF)',
@@ -869,9 +659,6 @@ describe('over-long STORED text does not refuse a document the composer can spel
   });
 
   it('and it never ECHOES an over-long stored string', () => {
-    /* The gate did not go away, it moved to the branch that sends this text.
-       An echo of 107 characters would be refused by AutoCount for the whole
-       document, which is the outcome the gate exists to prevent. */
     const res = collapseSofaLines(sofa());
     expect(String(res.lines[0].description2)).not.toBe(STORED);
   });
@@ -913,7 +700,6 @@ describe('a special order that will not fit points at the ERP', () => {
     const text = String(res.lines[0].description2);
     expect(text.length).toBeLessThanOrEqual(AC_DESC2_MAX);
     expect(text).toContain('Special Order: Refer to ERP');
-    /* The half that must NOT be lost. */
     expect(text).toContain('LR + 2EL');
     expect(text).toContain('BO315-03 BEIGE');
     expect(text).toContain('(35")');
@@ -934,10 +720,6 @@ describe('a special order that will not fit points at the ERP', () => {
   });
 
   it('the gate asks whether the POINTER is there, not whether it decodes back', () => {
-    /* parseSofa reads specials from a fixed vocabulary — nylon, wooden arm,
-       recliner — because it was written to decode the account book's own text.
-       It will never read the pointer back as a special, so comparing it through
-       sameSpecials would refuse every document this rung exists to rescue. */
     expect(decodesTo(
       'LR + 2EL (35") / COL: BEIGE / Special Order: Refer to ERP',
       '9028', ['L(RHF)', '2A(LHF)'],
@@ -946,9 +728,6 @@ describe('a special order that will not fit points at the ERP', () => {
   });
 
   it('and it REFUSES when the pointer is not in the text', () => {
-    /* The guard that keeps the rule above from being a blank cheque: a caller
-       claiming the specials were pointed at the ERP must actually have said so
-       in the text it is about to send. */
     const v = decodesTo(
       'LR + 2EL (35") / COL: BEIGE',
       '9028', ['L(RHF)', '2A(LHF)'],
@@ -958,8 +737,6 @@ describe('a special order that will not fit points at the ERP', () => {
   });
 
   it('still refuses when the length is in the COLOUR, not the special order', () => {
-    /* The pointer costs the special order and nothing else, so it cannot rescue
-       a document whose build or colour is itself over the column. */
     const res = collapseSofaLines(sofa(TOO_LONG).map((l) => ({
       ...l,
       variants: { seatHeight: 35, colourLabel: `BEIGE ${'X'.repeat(110)}`, specials: TOO_LONG },
@@ -993,10 +770,6 @@ describe('a special order that BLOCKS a sofa points at the ERP too', () => {
   ]);
 
   it('a special carrying a forbidden character no longer blames the pieces', () => {
-    /* composeSofaDesc2 refuses a special containing `+` or `/` — it would look
-       like a second structure segment — and the refusal used to read "cannot
-       spell [2A(LHF), STOOL]", naming the pieces and blaming them.
-       HC-SO-001526 and HC-SO-001445 are that. */
     const res = collapseSofaLines(sofa(['NO BACK CUSHION / TBC']));
     expect(res.refusals).toEqual([]);
     expect(String(res.lines[0].description2)).toContain('Special Order: Refer to ERP');
@@ -1004,9 +777,6 @@ describe('a special order that BLOCKS a sofa points at the ERP too', () => {
   });
 
   it('a special the decoder has never heard of no longer fails the round trip', () => {
-    /* `ALL` (HC-SO-008302) and `DAYBED` (HC-SO-004716): the decoder reads
-       specials from a fixed vocabulary, so these never come back and the gate
-       refused a build that was otherwise perfect. */
     const res = collapseSofaLines(sofa(['BOTTOM FULLY COVERED BY FABRIC', 'ALL']));
     expect(res.refusals).toEqual([]);
     expect(String(res.lines[0].description2)).toContain('Special Order: Refer to ERP');
@@ -1020,8 +790,6 @@ describe('a special order that BLOCKS a sofa points at the ERP too', () => {
   });
 
   it('the refusal reported is what is wrong with the DOCUMENT, not with a rewrite of it', () => {
-    /* Both attempts fail when the pieces are the problem, and the sentence a
-       person reads must then be about the pieces. */
     const res = collapseSofaLines([
       {
         item_code: '5526-CNR', item_group: 'sofa', description: 'SOFA 5526 CNR',
@@ -1034,18 +802,6 @@ describe('a special order that BLOCKS a sofa points at the ERP too', () => {
   });
 });
 
-// ----------------------------------------------------------------------------
-// THE BOOK ALREADY SAYS WHICH ERP LINES ARE ONE LINE.
-//
-// A sofa is ONE line in AutoCount and several here, and every piece carries that
-// one line's DtlKey. The runs are formed by ADJACENCY, which is right until
-// something interrupts a sofa — HC-SO-001526 holds `1EL` and `2ER` of one sofa
-// with ANOTHER sofa's two lines between them, so each end was collapsed alone,
-// and `1EL` by itself decodes to a single seat rather than a left arm.
-//
-// Measured on production 2026-09-10: HC-SO-001255, HC-SO-001526, HC-SO-002315,
-// HC-SO-004716 and HC-SO-012016 are all this shape.
-// ----------------------------------------------------------------------------
 describe('a sofa interrupted by another sofa is still ONE build', () => {
   const piece = (
     code: string, key: number | null, d2: string, over: Partial<CollapsibleLine> = {},
@@ -1055,7 +811,6 @@ describe('a sofa interrupted by another sofa is still ONE build', () => {
     variants: { seatHeight: 35, colourLabel: 'BEIGE', specials: [] }, ...over,
   });
 
-  /* HC-SO-001526's shape: two ends of one sofa with a second sofa between. */
   const D2_A = '1EL + 2ER (35")';
   const D2_B = '2EL + STOOL (35")';
   const interleaved = (): CollapsibleLine[] => ([
@@ -1068,29 +823,20 @@ describe('a sofa interrupted by another sofa is still ONE build', () => {
   it('gathers the two ends into one line instead of refusing both', () => {
     const res = collapseSofaLines(interleaved());
     expect(res.refusals).toEqual([]);
-    /* Two book lines out of four ERP lines — one per DtlKey. */
     expect(res.lines).toHaveLength(2);
     expect(res.lines.map((l) => Number(l.linked_ac_dtlkey))).toEqual([102956, 102957]);
   });
 
   it('emits the gathered build at the position of its FIRST piece', () => {
-    /* The document's line order is what a person reads; a sofa must not jump
-       to the end of the document because its pieces were scattered. */
     const res = collapseSofaLines(interleaved());
     expect(res.lines[0].sourceIndexes).toEqual([0, 3]);
     expect(res.lines[1].sourceIndexes).toEqual([1, 2]);
   });
 
   it("writes the BOOK'S order, never the mirror the ERP rows happen to be in", () => {
-    /* THE HAZARD THIS TEST EXISTS FOR. The ERP's line order here is
-       [2A(RHF), 1A(LHF)]; the book holds `1EL + 2ER`. Composing from the row
-       order round-trips perfectly and writes `2ER + 1EL` — the MIRROR of the
-       sofa the book records, which nothing downstream would catch. */
     const res = collapseSofaLines(interleaved());
     expect(String(res.lines[0].description2)).toContain('1EL + 2ER');
     expect(String(res.lines[0].description2)).not.toContain('2ER + 1EL');
-    /* The colour still comes from the ERP — the arrangement is the only thing
-       the book is authoritative for. */
     expect(String(res.lines[0].description2)).toContain('BEIGE');
   });
 
@@ -1106,8 +852,6 @@ describe('a sofa interrupted by another sofa is still ONE build', () => {
   });
 
   it('leaves a sofa the adjacency rule already handles alone', () => {
-    /* The guard that keeps this change to the documents that are broken: a
-       contiguous run is not gathered, so nothing that works today moves. */
     const contiguous = [
       piece('5526-2A(RHF)', 102956, D2_A, { unit_price_sen: 399000 }),
       piece('5526-1A(LHF)', 102956, D2_A),
@@ -1120,15 +864,11 @@ describe('a sofa interrupted by another sofa is still ONE build', () => {
   });
 
   it('does not gather two DIFFERENT models that happen to share a key', () => {
-    /* A key is the book's line and two models cannot be one build. Gathering
-       them would hide a data fault behind a composed line. */
     const res = collapseSofaLines([
       piece('5526-2A(RHF)', 102956, D2_A, { unit_price_sen: 399000 }),
       piece('9028-1S', 102957, '1S (35")'),
       piece('3068-1A(LHF)', 102956, D2_A),
     ]);
-    /* Nothing is gathered, so the two 102956 lines take the adjacency path and
-       are judged on their own — which is a refusal, loudly, not a silent merge. */
     expect(res.lines.every((l) => (l.sourceIndexes ?? []).length === 1)).toBe(true);
   });
 

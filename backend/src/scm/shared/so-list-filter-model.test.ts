@@ -84,16 +84,16 @@ describe('wire format', () => {
 
 describe('validation — the server refuses exactly these', () => {
   const bad = [
-    'createdBy:is:not-a-uuid',        // a person must be a staff uuid
-    'createdBy:me:someone',           // "me" carries no value
-    'salesperson:contains:x',         // operator not offered for the field
-    'name:contains:',                 // empty text
+    'createdBy:is:not-a-uuid',
+    'createdBy:me:someone',
+    'salesperson:contains:x',
+    'name:contains:',
     'name:contains:   ',
-    `name:contains:${'x'.repeat(81)}`, // over the length cap
-    'docNo:between:~',                // both ends empty
-    'docNo:between:HC-SO-1;DROP~',    // outside the doc-number alphabet
-    'deliveryDate:between:2026-02-30~', // not a calendar date
-    'deliveryDate:between:2026-09-30~2026-09-01', // reversed
+    `name:contains:${'x'.repeat(81)}`,
+    'docNo:between:~',
+    'docNo:between:HC-SO-1;DROP~',
+    'deliveryDate:between:2026-02-30~',
+    'deliveryDate:between:2026-09-30~2026-09-01',
     'deliveryDate:on:30/09/2026',
     'deliveryDate:preset:fortnight',
     'balance:gt:1e5',
@@ -124,7 +124,6 @@ describe('validation — the server refuses exactly these', () => {
 
 describe('dates', () => {
   it("today is Kuala Lumpur's date, not UTC's", () => {
-    // 2026-09-14 17:30 UTC is already 2026-09-15 01:30 in KL.
     expect(soTodayYmd(new Date('2026-09-14T17:30:00Z'))).toBe('2026-09-15');
     expect(soTodayYmd(new Date('2026-09-14T15:59:00Z'))).toBe('2026-09-14');
   });
@@ -146,7 +145,6 @@ describe('dates', () => {
     expect(soDatePresetRange('this_month', t)).toEqual({ from: '2026-09-01', to: '2026-09-30' });
     expect(soDatePresetRange('last_month', t)).toEqual({ from: '2026-08-01', to: '2026-08-31' });
     expect(soDatePresetRange('next_month', t)).toEqual({ from: '2026-10-01', to: '2026-10-31' });
-    // A Sunday still belongs to the week that began the Monday before.
     expect(soDatePresetRange('this_week', '2026-09-20')).toEqual({ from: '2026-09-14', to: '2026-09-20' });
     expect(soDatePresetRange('last_month', '2026-01-15')).toEqual({ from: '2025-12-01', to: '2025-12-31' });
   });

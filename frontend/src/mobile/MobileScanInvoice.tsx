@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// MobileScanInvoice — the phone's supplier-invoice scanner. The PI sibling of
-// MobileScan (the SO slip scanner) and the mobile half of the desktop
-// ScanInvoiceModal: desktop and mobile are one product, so both surface the
-// same capability.
-//
-// Snap / choose a supplier invoice -> POST /scan-pi/enqueue (background) -> the
-// Worker reads it, matches our OPEN Goods Receipt(s) and CONVERTS them into a
-// DRAFT Purchase Invoice. Nothing is posted; a needs-review outcome (no PI) is
-// shown plainly when the invoice can't be matched. The phone can leave the
-// screen the moment the upload lands — this list polls for progress.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from "react";
 import { compressAllForOcr } from "../vendor/shared/image-compress";
@@ -56,7 +44,7 @@ export function MobileScanInvoice({
     try {
       const compressed = await compressAllForOcr(files);
       await enqueuePiScan(compressed);
-      try { setJobs(await fetchPiScanJobs()); } catch { /* poll catches up */ }
+      try { setJobs(await fetchPiScanJobs()); } catch { }
     } catch (e) {
       setError((e as Error).message || "Couldn't upload the invoice — try again.");
     } finally {
@@ -65,7 +53,7 @@ export function MobileScanInvoice({
   };
 
   const onClear = async () => {
-    try { await clearFailedPiScans(); setJobs(await fetchPiScanJobs()); } catch { /* best-effort */ }
+    try { await clearFailedPiScans(); setJobs(await fetchPiScanJobs()); } catch { }
   };
 
   const visible = jobs.filter((j) => isPiTodayTs(piJobTs(j.createdAt)));

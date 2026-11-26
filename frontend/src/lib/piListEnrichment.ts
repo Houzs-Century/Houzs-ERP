@@ -28,14 +28,6 @@ export type EnrichablePiRow = {
   delivered_dos?: DeliveredDo[];
 };
 
-/* C16 GUARD (Hookka frontend bug class: "a field that heals on one surface via
-   enrichment but stays stored-only elsewhere"). This is the SINGLE source of
-   truth for WHICH PI-list row fields the deferred MRP enrichment heals. Its
-   backend twin is `PI_LIST_MRP_ENRICHMENT_KEYS`
-   (`backend/src/scm/lib/pi-assigned-sos.ts`), which pins the endpoint's returned
-   shape to the same set; `piListEnrichment.test.ts` asserts the two are equal, so
-   a future dev who adds a new MRP-derived field to the PI list on only one side
-   fails CI with the drifting key named. */
 export const PI_MRP_DERIVED_LIST_FIELDS = [
   'assigned_sos',
   'assigned_so_linked',

@@ -1,25 +1,3 @@
-/**
- * SKU Master "Merge codes": many catalogue codes into one kept code, picked one
- * by one. The screen face of backend/scripts/merge-duplicate-skus.mjs - the
- * same planner (duplicate-sku-merge-plan.mjs) and the same writer
- * (duplicate-sku-merge-run.mjs), so the rules and refusals are one copy.
- *
- *   POST /api/scm/mfg-products/merge/plan   { keep, drops }           -> plan, writes nothing
- *   POST /api/scm/mfg-products/merge/apply  { keep, drops, confirm }  -> writes
- *
- * A dropped code's Model that the merge leaves with no ACTIVE code folds into the
- * kept code's Model in the same request (lib/sku-merge-model-fold.ts); /plan
- * shows which, /apply reports each fold or the reason it was not made.
- *
- * `confirm` is the phrase /plan returned. It carries the counts that plan
- * measured, so an apply over a world that changed since is refused.
- *
- * Modular "Merge models": many Product Models into one kept Model, one group at a
- * time, on the planner and writer of backend/scripts/merge-duplicate-models.mjs.
- *
- *   POST /api/scm/mfg-products/merge/models/plan   { keep, drops }           -> plan, writes nothing
- *   POST /api/scm/mfg-products/merge/models/apply  { keep, drops, confirm }  -> writes
- */
 import { Hono } from 'hono';
 import type { Env, Variables } from '../env';
 import { getSql, resolveDatabaseUrl } from '../../db/pg';
@@ -42,7 +20,6 @@ mfgProductMerge.use('*', requireHouzsPerm(MERGE_PERMISSION));
 
 type MergeBody = { keep: string; drops: string[] };
 
-/** A body that is not JSON becomes null, which parseMergeBody refuses with a 400. */
 function jsonOrNull(text: string): unknown {
   try { return JSON.parse(text); } catch { return null; }
 }
@@ -68,7 +45,6 @@ async function planFor(sql: any, co: number, pairs: Array<{ drop: string; keep: 
   return { world, plan };
 }
 
-/** The Model fold's reads and writes on this request's connection; the re-read gets a fresh one. */
 function foldIo(sql: ReturnType<typeof getSql>, fresh: () => ReturnType<typeof getSql>, audit: { actorId: number | null; actorEmail: string | null; requestId: string | null }): FoldIo {
   return {
     readFoldInputs: (w) => readFoldInputs(sql, w),
@@ -136,12 +112,10 @@ mfgProductMerge.post('/apply', async (c) => {
   const houzsUser = c.get('houzsUser');
   const audit = { actorId: houzsUser?.id ?? null, actorEmail: houzsUser?.email ?? null, requestId: null };
   const { committed, problems, rekeyed } = await applyMerge(sql, { co, plan, world, cascade: PRODUCT_CODE_CASCADE, audit });
-  /* A fresh client: the writes' connection is not the one that re-reads. */
   problems.push(...await verifyMerge(getSql(resolveDatabaseUrl(c.env)), { co, committed, world }));
   /* SO allocation is a projection keyed on the code; re-keyed lines and stock
      need it recomputed (docs/bugs/0675). The cron drains this within minutes. */
   if (committed.length > 0) await enqueueStockAllocationRecompute(c.get('supabase'), 'scm.sku.merge');
-  /* The SKU merge above has committed and stands whatever the folds do. */
   const fresh = () => getSql(resolveDatabaseUrl(c.env));
   const { folds: modelFolds, problems: foldProblems } = await foldModelsAfterSkuMerge(foldIo(sql, fresh, audit), co, committed.map((p) => ({ drop: p.drop, keep: p.keep })));
   problems.push(...foldProblems);
@@ -210,7 +184,6 @@ mfgProductMerge.post('/models/apply', async (c) => {
   const { committed, problems, rekeyed } = await applyMerge(sql, { co, plan: skuPlan, world: skuWorld, cascade: PRODUCT_CODE_CASCADE, audit });
   const due = skuPlan.pairs.filter((p: any) => p.rekey.length > 0 || p.retire).length;
   if (committed.length < due) return c.json({ error: `The Model was not merged: ${problems.join(' ')}`, code: 'sku_merge_failed' }, 500);
-  /* The undo of the Model writes, on record before they run. */
   await recordModelMergeAudit(sql, {
     audit, modelId: plan.keptModelId, summary: `Merging Models ${parsed.pairs.map((p) => `"${p.drop}"`).join(', ')} into "${plan.label}"`,
     undo: { company_id: co, moves: plan.moves, inactiveMoves: plan.inactiveMoves, folded: plan.foldModels, addSizes: plan.addSizes, activateKept: plan.activateKept, fills: plan.fills.map((f: any) => ({ code: f.code, field: f.field, from: f.from })) },

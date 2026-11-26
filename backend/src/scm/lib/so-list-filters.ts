@@ -1,9 +1,3 @@
-// Filter/paging helpers for the Sales Orders list (GET /api/scm/mfg-sales-orders).
-//
-// Both bugs here produced the SAME production symptom on 2026-08-18: the SO list
-// showing "No sales orders yet" for a company that has 2,726 orders, while the
-// network layer carried a 500 { error: 'load_failed', reason: 'Requested range
-// not satisfiable' } that the grid swallowed (a C15-class masking).
 
 /**
  * The effective `status` filter for a list request, or `undefined` for "no

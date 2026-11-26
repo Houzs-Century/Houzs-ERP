@@ -28,9 +28,9 @@ describe('session-revocation — the cancelled-passes board', () => {
   test('revokeUser voids passes issued BEFORE it, honours those issued after', async () => {
     const env = fakeEnv();
     await revokeUser(env, 42, NOW);
-    expect(await passIsRevoked(env, 42, null, NOW - 1000)).toBe(true);  // old pass → void
-    expect(await passIsRevoked(env, 42, null, NOW + 1000)).toBe(false); // fresh login → ok
-    expect(await passIsRevoked(env, 99, null, NOW - 1000)).toBe(false); // other user untouched
+    expect(await passIsRevoked(env, 42, null, NOW - 1000)).toBe(true);
+    expect(await passIsRevoked(env, 42, null, NOW + 1000)).toBe(false);
+    expect(await passIsRevoked(env, 99, null, NOW - 1000)).toBe(false);
   });
 
   test('revokeSession voids ONE device, keyed by sid', async () => {
@@ -38,8 +38,8 @@ describe('session-revocation — the cancelled-passes board', () => {
     const deviceA = await sidFor('device-A-token');
     const deviceB = await sidFor('device-B-token');
     await revokeSession(env, deviceA, NOW);
-    expect(await passIsRevoked(env, 42, deviceA, NOW - 1000)).toBe(true);  // logged-out device
-    expect(await passIsRevoked(env, 42, deviceB, NOW - 1000)).toBe(false); // same user, other device
+    expect(await passIsRevoked(env, 42, deviceA, NOW - 1000)).toBe(true);
+    expect(await passIsRevoked(env, 42, deviceB, NOW - 1000)).toBe(false);
   });
 
   test('no KV bound → fails OPEN (pass honoured, DB fallback is the net)', async () => {

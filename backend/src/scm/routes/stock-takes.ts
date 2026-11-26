@@ -73,7 +73,6 @@ import { applyStockTakeRacks } from '../lib/stock-take-racks';
 export const stockTakes = new Hono<{ Bindings: Env; Variables: Variables }>();
 stockTakes.use('*', supabaseAuth);
 
-/** The supervisor key (services/permissions.ts). Owner + IT Admin pass via "*". */
 const SUPERVISE_PERM = 'scm.stock_take.supervise';
 
 const HEADER =
@@ -88,11 +87,6 @@ const LINE =
 const VALID_STATUS = new Set(['OPEN', 'PENDING_APPROVAL', 'POSTED', 'CANCELLED']);
 const VALID_SCOPE  = new Set(['ALL', 'CATEGORY', 'CODE_PREFIX', 'NONZERO']);
 
-/* The caller's REAL scm.staff uuid (mig-0066 bridge), or null when the bridge
-   has no row for them. NEVER c.get('user').id — inside /api/scm/* that is the
-   pinned system staff row for every caller (see scm/middleware/auth.ts), which
-   is exactly how stock movements came to read "Performed by: Unknown user"
-   (the roster scopes the system row out, so its uuid resolves to nobody). */
 const callerStaffIdOf = async (sb: any, c: any): Promise<string | null> => {
   try {
     return await resolveCallerStaffId(sb, c.get('houzsUser')?.id ?? null);
@@ -101,11 +95,6 @@ const callerStaffIdOf = async (sb: any, c: any): Promise<string | null> => {
   }
 };
 
-/* Runs ONLY on the zero-rows path of a scoped conditional flip, so it cannot
-   disturb the happy path or the flip's single-flight role. It separates the two
-   reasons that flip can match nothing — the take is not in the expected status
-   (409, unchanged) versus it is not this company's at all (404). Without it the
-   cross-company refusal would masquerade as a state error. */
 async function notOpenOrNotOurs(
   sb: any, id: string, companyId: number, expected: string,
 ): Promise<{ body: Record<string, unknown>; status: 404 | 409 }> {
@@ -125,19 +114,11 @@ const nextTakeNo = async (sb: any, c: any): Promise<string> => {
   return mintMonthlyDocNo(sb, 'stock_takes', 'take_no', `${p}STK-${yymm}`);
 };
 
-// ── Resolve in-scope SKUs PER (item_code, variant_key) + current on-hand ──
-// Migration 0183 (#15): the count sheet is variant-grained. Scope (ALL /
-// CATEGORY / CODE_PREFIX) is resolved against v_inventory_all_skus (which carries
-// category + every SKU incl. zero-stock); the per-variant on-hand comes from
-// inventory_balances. An attributed SKU (sofa/bedframe/mattress) yields one line
-// per real variant bucket; a plain SKU yields a single '' line; a SKU that has
-// never moved yields one '' line at qty 0 so it still appears to be counted.
 type ScopedSku = {
   item_code: string; product_name: string | null;
   variant_key: string; variant_label: string | null; qty: number;
 };
 
-// Humanise a variant_key ("fabriccode=bf-16|gap=16|legheight=2") for display.
 const labelFromVariantKey = (vk: string): string | null => {
   if (!vk) return null;
   return vk.split('|').map((p) => p.replace('=', ' ')).join(' · ');
@@ -152,26 +133,6 @@ const fetchScopedSkus = async (
   c: any,
 ): Promise<{ rows: ScopedSku[]; error?: string }> => {
   const dropZero = scopeType === 'NONZERO' || nonzeroOnly;
-  // 1) Scope → the set of item_codes (+ names) at this warehouse.
-  /* ⚠️ CORRECTED 2026-08-18. This read used to carry: "v_inventory_all_skus
-     intentionally aggregates across companies and has NO company_id column (see
-     inventory.ts) — item codes are per-company, and the balances read below
-     is company-scoped, so the snapshot stays isolated."
-
-     The view DOES have company_id. Migration 0156 rebuilt it precisely because
-     it was a "CONFIRMED live leak", appending `w.company_id` as the last column
-     specifically "so the route can .eq('company_id', <active>) it", and adding
-     `p.company_id = w.company_id` to its WHERE. So the column existed and was
-     put there for this. The rest of the old note was also doing work it could
-     not do: a scoped BALANCES read cannot isolate a SKU LIST — a zero-stock SKU
-     has no balance row at all, which is exactly the row this view exists to
-     serve, and the ALL / CATEGORY / CODE_PREFIX scopes are built from this list.
-
-     The warehouse is now proved to be the active company's at the call site, so
-     this is belt-and-braces rather than the only boundary — but it is one line
-     and the view was rebuilt to accept it. */
-  /* Paged: a whole warehouse is 2,000+ SKUs, past PostgREST's row cap, and an
-     unpaged read silently dropped the tail of the alphabet from the sheet. */
   const { data: skuData, error: skuErr } = await paginateAll((pFrom, pTo) => {
     let q = scopeToCompany(sb.from('v_inventory_all_skus')
       .select('item_code, product_name, category')
@@ -189,7 +150,6 @@ const fetchScopedSkus = async (
   const nameByCode = new Map(skus.map((s) => [s.item_code, s.product_name] as const));
   const codes = [...nameByCode.keys()];
 
-  // 2) Per-variant on-hand for those codes at this warehouse (chunk the .in()).
   const balByCode = new Map<string, Array<{ variant_key: string; product_name: string | null; qty: number }>>();
   for (let i = 0; i < codes.length; i += 200) {
     const chunk = codes.slice(i, i + 200);
@@ -209,10 +169,6 @@ const fetchScopedSkus = async (
     }
   }
 
-  // 3) One line per (code, variant). No balance row at all → a single '' line @0.
-  //    NONZERO scope (phase 1): only buckets whose system qty is actually ≠ 0
-  //    make the sheet — no synthetic zero lines, no zero buckets. This is what
-  //    shrinks a 344-line full-warehouse sheet to the handful that hold stock.
   const rows: ScopedSku[] = [];
   for (const code of codes) {
     const name = nameByCode.get(code) ?? null;
@@ -237,7 +193,6 @@ const fetchScopedSkus = async (
   return { rows };
 };
 
-// ── List ──────────────────────────────────────────────────────────────
 stockTakes.get('/', async (c) => {
   const sb = c.get('supabase');
   const status      = c.req.query('status');
@@ -245,34 +200,26 @@ stockTakes.get('/', async (c) => {
   const dateFrom    = c.req.query('dateFrom');
   const dateTo      = c.req.query('dateTo');
 
-  // Page through so PostgREST's default 1000-row cap can't silently truncate
-  // the stock-take list (filters below only narrow the set).
   const { data, error } = await paginateAll((pFrom, pTo) => {
     let q = sb.from('stock_takes')
       .select(`${HEADER}, warehouse:warehouses(id, code, name)`)
       .order('take_date', { ascending: false })
       .order('created_at', { ascending: false });
     if (status && VALID_STATUS.has(status)) q = q.eq('status', status);
-    /* The approvals inbox "All" scope: every take that was ever submitted for
-       approval, whatever its status now (pending, or the POSTED/OPEN it became). */
     if (c.req.query('submitted') === 'true') q = q.not('submitted_at', 'is', null);
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
     if (dateFrom)    q = q.gte('take_date', dateFrom);
     if (dateTo)      q = q.lte('take_date', dateTo);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
+    q = scopeToCompany(q, c);
     return q.range(pFrom, pTo);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  // line_count + variance_total — cheap follow-up sum at pilot scale.
   const rows = (data as unknown as Array<Record<string, unknown>>) ?? [];
   const ids  = rows.map((r) => r.id as string);
   const countByTake    = new Map<string, number>();
   const varianceByTake = new Map<string, number>();
   if (ids.length > 0) {
-    // chunkIn — a full-warehouse stock-take has one line per SKU, so lines
-    // across the listed takes can exceed the 1000-row cap (and ids can exceed
-    // 1000 too); batch + page so line_count + variance_total aren't understated.
     const { data: lineRows } = await chunkIn<{ stock_take_id: string; variance: number | null; counted_qty: number | null }>(ids, (batch, pFrom, pTo) => sb
       .from('stock_take_lines')
       .select('stock_take_id, variance, counted_qty')
@@ -283,7 +230,6 @@ stockTakes.get('/', async (c) => {
     }>) ?? [];
     for (const l of list) {
       countByTake.set(l.stock_take_id, (countByTake.get(l.stock_take_id) ?? 0) + 1);
-      // Only count variance from lines that were actually counted.
       if (l.counted_qty != null && l.variance != null) {
         varianceByTake.set(
           l.stock_take_id,
@@ -293,11 +239,6 @@ stockTakes.get('/', async (c) => {
     }
   }
 
-  /* BLIND takes (phase 1): variance_total = counted − system, so exposing it
-     while a blind take is still OPEN would hand the counter the very number
-     the blind flag hides. Stripped HERE (server-side) for non-supervisors —
-     the standing owner rule is one shared logic layer, so the decision must
-     not be a frontend column toggle. */
   const canSupervise = hasHouzsPerm(c, SUPERVISE_PERM);
   const takes = rows.map((r) => {
     const blindActive = r.blind === true && r.status === 'OPEN' && !canSupervise;
@@ -311,16 +252,11 @@ stockTakes.get('/', async (c) => {
   return c.json({ takes });
 });
 
-/* Every counter on a take. assignee_staff_ids is the list (mig 20261006T1500);
-   a row written before it, or by a reader that only knows the single column,
-   falls back to assignee_staff_id. */
 const assigneesOf = (t: { assignee_staff_id?: string | null; assignee_staff_ids?: string[] | null }): string[] =>
   t.assignee_staff_ids && t.assignee_staff_ids.length > 0
     ? t.assignee_staff_ids
     : t.assignee_staff_id ? [t.assignee_staff_id] : [];
 
-/* Validates a requested assignee list: 1..10 distinct scm.staff ids. The staff
-   check is deliberately NOT company-filtered (see createStockTakeHandler). */
 export const readAssignees = async (
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
   sb: any, body: Record<string, unknown>,
@@ -400,12 +336,6 @@ const lineLotFacts = async (
   return { costByKey, posByKey };
 };
 
-// ── Pending-approval count (sidebar badge; 0 for non-supervisors) ──────
-// The approvals inbox's red count. Registered before /:id so "pending-count" is
-// never read as a take id. Mirrors the backdate request badge: a supervise-key
-// holder gets the live count of PENDING_APPROVAL takes in their company; anyone
-// else gets 0, so no badge shows.
-/* Exported for the vitest harness, as the sibling handlers are. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
 export const pendingApprovalCountHandler = async (c: any) => {
   if (!hasHouzsPerm(c, SUPERVISE_PERM)) return c.json({ count: 0 });
@@ -420,10 +350,6 @@ export const pendingApprovalCountHandler = async (c: any) => {
 };
 stockTakes.get('/pending-count', pendingApprovalCountHandler);
 
-// ── Detail ────────────────────────────────────────────────────────────
-/* Exported for the vitest harness (precedent: postStockTakeHandler below —
-   the supabaseAuth bridge cannot run there, so tests mount the handler on a
-   bare Hono app with a fake PostgREST client). */
 export const getStockTakeDetailHandler = async (c: any) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
@@ -432,9 +358,6 @@ export const getStockTakeDetailHandler = async (c: any) => {
     scopeToCompany(sb.from('stock_takes')
       .select(`${HEADER}, warehouse:warehouses(id, code, name)`)
       .eq('id', id), c).maybeSingle(),
-    /* PRINT ORDER: the PDF numbers rows in this order and the sheet reader
-       (stock-take-sheet-read.ts) matches a row's # against it — a tie on
-       item_code must not be left to the planner. */
     sb.from('stock_take_lines').select(LINE).eq('stock_take_id', id)
       .order('item_code').order('variant_key').order('id'),
   ]);
@@ -447,17 +370,10 @@ export const getStockTakeDetailHandler = async (c: any) => {
     assignee_staff_ids: string[] | null; warehouse_id: string;
   };
 
-  /* Viewer facts, decided ONCE here so desktop (and any later mobile surface)
-     consume identical booleans instead of re-deriving permissions client-side
-     — the divergence the capabilities idiom exists to prevent. */
   const canSupervise = hasHouzsPerm(c, SUPERVISE_PERM);
   const callerStaffId = await callerStaffIdOf(sb, c);
   const blindActive = take.blind === true && take.status === 'OPEN' && !canSupervise;
 
-  /* BLIND: strip system_qty AND variance from the wire, not just the UI. The
-     stored variance column equals counted − system, so leaving either field in
-     the payload would un-blind the count via devtools. Post-POSTED (or
-     CANCELLED) reads reveal everything — the count is settled. */
   const rawLines = (linesRes.data ?? []) as Array<Record<string, unknown>>;
   /* The RM a variance is worth (owner 2026-10-06: shown to everyone). The same
      best-known unit cost the post uses to value a variance and to cost a found
@@ -491,9 +407,6 @@ export const getStockTakeDetailHandler = async (c: any) => {
       .select('item_code, product_name, variant_key, qty, unit_cost_sen')
       .eq('source_doc_type', 'STOCK_TAKE')
       .eq('source_doc_id', id);
-    /* Bind the error rather than discard it (audit:swallowed-reads): this is a
-       display-only enhancement, so a failed read degrades to "no adjustments
-       shown" — never an empty list mistaken for "this take booked nothing". */
     if (movsErr) {
       // eslint-disable-next-line no-console
       console.error('[stock-takes] adjustments read failed:', (movsErr as { message?: unknown }).message ?? movsErr);
@@ -527,9 +440,6 @@ export const getStockTakeDetailHandler = async (c: any) => {
 };
 stockTakes.get('/:id', getStockTakeDetailHandler);
 
-// ── Create OPEN + snapshot scope ──────────────────────────────────────
-// body: { warehouseId, assigneeStaffId, takeDate?, scopeType, scopeValue?,
-//         notes?, blind? }
 export const createStockTakeHandler = async (c: any) => {
   /* company-scope: two by-id statements here, both correct.
        · the ROLLBACK delete targets the header this handler inserted moments
@@ -551,21 +461,11 @@ export const createStockTakeHandler = async (c: any) => {
   const warehouseId = body.warehouseId as string | undefined;
   if (!warehouseId) return c.json({ error: 'warehouse_required' }, 400);
 
-  /* THE WAREHOUSE IS A BODY FIELD. Nothing above proves it is ours, and this
-     handler goes on to snapshot every SKU at it and write a stock_takes header
-     against it — whose POST then writes ADJUSTMENT movements into it. See
-     lib/ref-in-company.ts; this is the call site that primitive was missing.
-     Before fetchScopedSkus, so a foreign warehouse id cannot be used to read a
-     SKU list either. */
   const whCo = requireActiveCompanyId(c);
   if (!whCo.ok) return c.json(whCo.refusal, 409);
   const whCheck = await assertWarehouseInCompany(sb, warehouseId, whCo.companyId);
   if (!whCheck.ok) return c.json(whCheck.body, whCheck.status);
 
-  /* Phase 1: a take has a PERSON RESPONSIBLE from the moment it exists.
-     Required — an unowned count sheet is exactly the accountability gap this
-     phase closes. Validated against scm.staff so a typo'd uuid answers 400
-     here rather than an FK 500 at insert. */
   /* Two or three people count together (owner 2026-10-06): a LIST of
      assignees, kept as a record of who counted. assigneeStaffId (one) is still
      accepted from an older client. */
@@ -581,7 +481,6 @@ export const createStockTakeHandler = async (c: any) => {
     return c.json({ error: 'scope_value_required_for_this_scope_type' }, 400);
   }
 
-  // 1) Snapshot SKUs in scope.
   /* "Only SKUs with stock" combines with Category / Prefix (owner 2026-10-06:
      a Category take listed 704 lines, nearly all zero). */
   const nonzeroOnly = body.nonzeroOnly === true || scopeType === 'NONZERO';
@@ -598,7 +497,7 @@ export const createStockTakeHandler = async (c: any) => {
   }
 
   const headerInsert: Record<string, unknown> = {
-    company_id:   activeCompanyId(c), // multi-company: stamp the active company
+    company_id:   activeCompanyId(c),
     status:       'OPEN',
     warehouse_id: warehouseId,
     scope_type:   scopeType,
@@ -608,7 +507,6 @@ export const createStockTakeHandler = async (c: any) => {
     assignee_staff_id: assignees.ids[0],
     assignee_staff_ids: assignees.ids,
     nonzero_only: nonzeroOnly,
-    /* Strict === true: only an explicit request counts blind. */
     blind:        body.blind === true,
   };
   if (body.takeDate) headerInsert.take_date = body.takeDate;
@@ -619,20 +517,11 @@ export const createStockTakeHandler = async (c: any) => {
       .from('stock_takes').insert({ take_no: takeNo, ...headerInsert }).select(HEADER).single(),
   );
   if (hErr) {
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (hErr.code === '42501') return c.json({ error: 'forbidden', reason: hErr.message }, 403);
     return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   }
   const header = headerData as unknown as { id: string; take_no: string };
 
-  // 2) Bulk-insert lines with system_qty filled + counted_qty NULL.
   const lineRows = scoped.rows.map((r) => ({
     stock_take_id: header.id,
     item_code:  r.item_code,
@@ -644,7 +533,6 @@ export const createStockTakeHandler = async (c: any) => {
   }));
   const { error: lErr } = await sb.from('stock_take_lines').insert(stampCompany(lineRows, c));
   if (lErr) {
-    // Best-effort rollback so we don't leak a no-lines header.
     await sb.from('stock_takes').delete().eq('id', header.id);
     return c.json({ error: 'lines_insert_failed', reason: lErr.message }, 500);
   }
@@ -657,9 +545,6 @@ export const createStockTakeHandler = async (c: any) => {
 };
 stockTakes.post('/', createStockTakeHandler);
 
-// ── Update counted_qty per line (bulk) ────────────────────────────────
-// body: { lines: [{ id, countedQty (number | null), notes? }] }
-/* Exported for the vitest harness (see getStockTakeDetailHandler's note). */
 export const patchStockTakeLinesHandler = async (c: any) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
@@ -688,9 +573,6 @@ export const patchStockTakeLinesHandler = async (c: any) => {
     return c.json({ error: 'lines_required' }, 400);
   }
 
-  /* A line's rack (round 2) must be a rack of THIS take's warehouse — a rack
-     row is per warehouse record, so per company; any other id is refused
-     before anything is written. */
   const rackIds = [...new Set(lines.map((l) => l.rackId).filter((x): x is string => typeof x === 'string' && x !== ''))];
   if (rackIds.length > 0) {
     const { data: okRacks, error: rkErr } = await scopeToCompanyId(
@@ -704,18 +586,9 @@ export const patchStockTakeLinesHandler = async (c: any) => {
     }
   }
 
-  /* AUDIT PRE-FLIGHT. recordEntityAudit runs after the counts are already
-     stored, so it cannot honestly fail there; the sink is asked here instead,
-     behind the cheap guards and ahead of the first update, so that the refusal
-     below is literally true — nothing has been written yet. Same reasoning at
-     every other pre-flight in this file. */
   const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'UPDATE', companyId: head.company_id });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  /* BEFORE values for the from->to record. Batched (chunkIn bounds the .in()
-     list and pages each chunk, so a 500-line take cannot lose rows to
-     PostgREST's 1000-row cap) rather than a read per line — the update loop
-     below is already one round-trip per line and does not need doubling. */
   const lineIds = lines.map((l) => l.id).filter((x): x is string => !!x);
   const beforeById = new Map<string, { item_code: string; counted_qty: number | null; notes: string | null }>();
   if (lineIds.length > 0) {
@@ -727,15 +600,8 @@ export const patchStockTakeLinesHandler = async (c: any) => {
     for (const b of beforeLines ?? []) beforeById.set(b.id, b);
   }
 
-  /* WHO/WHEN per counted cell (phase 1, migration 0270). Resolved ONCE per
-     request — the caller's REAL staff uuid, never the pinned system row. A
-     caller the mig-0066 bridge cannot resolve stamps NULL (renders "—"),
-     which is honest; stamping the system row is how "Unknown user" happened. */
   const counterStaffId = await callerStaffIdOf(sb, c);
 
-  // Issue updates one-at-a-time (Supabase JS lacks a true bulk upsert by
-  // PK). Pilot scale (<500 lines per take) — fine. If volumes grow we can
-  // switch to a single RPC.
   const errors: string[] = [];
   const countChanges: Array<FieldChange | null> = [];
   for (const l of lines) {
@@ -746,16 +612,11 @@ export const patchStockTakeLinesHandler = async (c: any) => {
         l.countedQty == null || (l.countedQty as unknown) === ''
           ? null
           : Math.max(0, Math.floor(Number(l.countedQty)));
-      /* A cleared count clears its attribution too — "nobody has counted this
-         cell" must not keep naming the person whose entry was erased. */
       patch.counted_by = patch.counted_qty == null ? null : counterStaffId;
       patch.counted_at = patch.counted_qty == null ? null : new Date().toISOString();
     }
     if ('notes' in l) patch.notes = l.notes ?? null;
     if ('rackId' in l) patch.rack_id = l.rackId ? l.rackId : null;
-    /* Operator-typed unit cost (sen) for a found line whose SKU has no priced
-       lot — stored verbatim (clamped ≥ 0); Post reads it as a fallback cost
-       basis. Empty / null clears it back to "no cost on the sheet". */
     if ('enteredUnitCostSen' in l) {
       const v = l.enteredUnitCostSen;
       patch.entered_unit_cost_sen =
@@ -767,9 +628,6 @@ export const patchStockTakeLinesHandler = async (c: any) => {
       .update(patch).eq('id', l.id).eq('stock_take_id', id);
     if (error) { errors.push(`${l.id}: ${error.message}`); continue; }
 
-    /* Keyed by PRODUCT CODE, not the line uuid — the History drawer's reader is
-       a stock controller asking "who changed the count on this SKU", and a uuid
-       cannot answer that. Only lines whose stored update SUCCEEDED reach here. */
     const b = beforeById.get(l.id);
     if ('counted_qty' in patch) {
       countChanges.push(fieldChange(b?.item_code ?? l.id, b?.counted_qty ?? null, patch.counted_qty));
@@ -781,9 +639,6 @@ export const patchStockTakeLinesHandler = async (c: any) => {
   }
 
   const changed = compactChanges(countChanges);
-  /* A PATCH that moved no count writes no row. The endpoint is called on every
-     keystroke-blur in the counting UI, so logging no-ops would bury the real
-     edits in an unreadable history. */
   if (changed.length > 0) {
     await recordEntityAudit(sb, {
       entityType: 'STOCK_TAKE',
@@ -802,8 +657,6 @@ export const patchStockTakeLinesHandler = async (c: any) => {
 };
 stockTakes.patch('/:id/lines', patchStockTakeLinesHandler);
 
-// ── Edit the header of an OPEN take (assignees, notes) ───────────────
-// body: { assigneeStaffIds?: string[], notes?: string | null }
 /* Owner 2026-10-06: "上面没有写名字，而且我也不能 save、不能 edit" — who counted
    is often known only after the count, so the list stays editable until the
    take is posted. Warehouse / scope / date are NOT editable: they decide which
@@ -867,11 +720,6 @@ export const patchStockTakeHeaderHandler = async (c: any) => {
 };
 stockTakes.patch('/:id', patchStockTakeHeaderHandler);
 
-// ── Variant buckets a SKU is known in (for Add line) ─────────────────
-/* Every variant_key this SKU has ever held in the active company, with its
-   on-hand at the take's warehouse (0 when it has none there). A found sofa /
-   bedframe is matched to a variant the business already knows; a brand-new
-   variant goes through Stock Adjustment, which has the full variant editor. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
 export const stockTakeBucketOptionsHandler = async (c: any) => {
   const sb = c.get('supabase');
@@ -906,8 +754,6 @@ export const stockTakeBucketOptionsHandler = async (c: any) => {
 };
 stockTakes.get('/:id/bucket-options', stockTakeBucketOptionsHandler);
 
-// ── Add a line found during the count ────────────────────────────────
-// body: { itemCode, variantKey?, countedQty }
 /* Owner 2026-10-06: stock the system does not list but the shelf holds. The
    line's system_qty is the LIVE on-hand of that bucket here (usually 0), so the
    variance is exactly what was found; the post re-reads live on-hand anyway. */
@@ -945,8 +791,6 @@ export const addStockTakeLineHandler = async (c: any) => {
   if (!product) return c.json({ error: 'unknown_sku', message: `${itemCode} is not a product of this company.` }, 404);
   const prod = product as { code: string; name: string | null; category: string | null };
   const cat = (prod.category ?? '').trim().toLowerCase();
-  /* A sofa / bedframe always lives in a variant bucket — the '' bucket for one
-     is the "unclassified" stock no order can match. */
   if (!variantKey && (cat === 'sofa' || cat === 'bedframe')) {
     return c.json({
       error: 'variant_required',
@@ -997,7 +841,6 @@ export const addStockTakeLineHandler = async (c: any) => {
 };
 stockTakes.post('/:id/lines', addStockTakeLineHandler);
 
-// ── Delete a line ────────────────────────────────────────────────────
 /* HC-0140: any line can be removed while OPEN (Sim asked for a delete on
    every line, sheet lines too). A deleted line writes no adjustment at Post,
    same as a blank one; the audit row keeps what the sheet expected. */
@@ -1046,9 +889,6 @@ export const deleteStockTakeLineHandler = async (c: any) => {
 };
 stockTakes.delete('/:id/lines/:lineId', deleteStockTakeLineHandler);
 
-// ── Racks of the take's warehouse (round 2) ──────────────────────────
-/* What the Rack column can name: this company's racks of the take's own
-   warehouse (a shared building is one record per company — warehouses.md). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
 export const stockTakeRacksHandler = async (c: any) => {
   const sb = c.get('supabase');
@@ -1070,18 +910,12 @@ export const stockTakeRacksHandler = async (c: any) => {
 };
 stockTakes.get('/:id/racks', stockTakeRacksHandler);
 
-/* Read a photographed, counted paper sheet back (round 2). Writes nothing. */
 stockTakes.post('/:id/read-sheet', readStockTakeSheetHandler);
 
-// ── Cancel OPEN ───────────────────────────────────────────────────────
 stockTakes.patch('/:id/cancel', async (c) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
 
-  /* The flip below is this handler's first statement that touches anything, and
-     it is also its not-found / wrong-state check, so the probe sits directly in
-     front of it rather than behind a guard. The flip keeps its single-flight
-     role untouched. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
@@ -1095,9 +929,6 @@ stockTakes.patch('/:id/cancel', async (c) => {
   if (error) return c.json({ error: 'cancel_failed', reason: error.message }, 500);
   if (!data)  { const r = await notOpenOrNotOurs(sb, id, co.companyId, 'OPEN'); return c.json(r.body, r.status); }
 
-  /* The .eq('status','OPEN') gate means only the call that actually flipped it
-     gets a row back, so this records once. The prior status is OPEN by
-     construction — that is what the gate asserts. */
   const cancelledTake = data as unknown as { take_no: string; company_id: number | null };
   await recordEntityAudit(sb, {
     entityType: 'STOCK_TAKE',
@@ -1122,8 +953,6 @@ stockTakes.patch('/:id/cancel', async (c) => {
 // a new take). The previous counts are dropped: a reopen is a fresh count. Works
 // from either cancel path (OPEN→CANCELLED, or a reversed POSTED→CANCELLED whose
 // stock the reverse already put back).
-/* Exported for the vitest harness (same reason as postStockTakeHandler — the
-   supabaseAuth bridge cannot run there). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client / Hono context without generated types; same as every handler in this file
 export const reopenStockTakeHandler = async (c: any) => {
   const sb = c.get('supabase');
@@ -1131,7 +960,6 @@ export const reopenStockTakeHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  // Scope needed to re-snapshot; also the ownership + state check.
   const { data: prev, error: prevErr } = await scopeToCompanyId(
     sb.from('stock_takes')
       .select('status, take_no, company_id, warehouse_id, scope_type, scope_value, nonzero_only')
@@ -1148,14 +976,12 @@ export const reopenStockTakeHandler = async (c: any) => {
     return c.json({ error: 'not_cancelled', message: 'Only a cancelled stock take can be reopened.' }, 409);
   }
 
-  // The warehouse is still ours (same belt-and-braces as createStockTakeHandler).
   const whCheck = await assertWarehouseInCompany(sb, head.warehouse_id, co.companyId);
   if (!whCheck.ok) return c.json(whCheck.body, whCheck.status);
 
   const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'UPDATE', companyId: head.company_id });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  // Fresh snapshot BEFORE the flip — a scope read failure leaves the take CANCELLED.
   const scoped = await fetchScopedSkus(
     sb, head.warehouse_id,
     head.scope_type as 'ALL' | 'CATEGORY' | 'CODE_PREFIX' | 'NONZERO',
@@ -1166,7 +992,6 @@ export const reopenStockTakeHandler = async (c: any) => {
     return c.json({ error: 'scope_empty', reason: 'No SKUs match the scope now; nothing to reopen onto.' }, 400);
   }
 
-  // Single-flight flip CANCELLED → OPEN; only the winner rewrites the lines.
   const { data: flipped, error: fErr } = await scopeToCompanyId(sb.from('stock_takes')
     .update({ status: 'OPEN', cancelled_at: null, posted_at: null })
     .eq('id', id), co.companyId).eq('status', 'CANCELLED')
@@ -1174,9 +999,6 @@ export const reopenStockTakeHandler = async (c: any) => {
   if (fErr) return c.json({ error: 'reopen_failed', reason: fErr.message }, 500);
   if (!flipped) return c.json({ error: 'not_cancelled', message: 'Only a cancelled stock take can be reopened.' }, 409);
 
-  // Replace the sheet with the fresh snapshot. If the insert fails the status is
-  // rolled back to CANCELLED so the document is never left OPEN-and-broken (a
-  // later reopen re-snapshots from scratch).
   const { error: delErr } = await sb.from('stock_take_lines').delete().eq('stock_take_id', id);
   if (delErr) {
     await scopeToCompanyId(sb.from('stock_takes').update({ status: 'CANCELLED', cancelled_at: new Date().toISOString() }).eq('id', id), co.companyId);
@@ -1209,38 +1031,17 @@ export const reopenStockTakeHandler = async (c: any) => {
 };
 stockTakes.patch('/:id/reopen', reopenStockTakeHandler);
 
-// ── Reverse POSTED → CANCELLED (undo a posted count) ──────────────────
-// Every other inventory module's cancel reverses its stock; a POSTED stock
-// take previously had no such path (cancel only accepted OPEN). This writes
-// the OPPOSITE signed ADJUSTMENT for every movement the post wrote, so stock
-// returns to exactly its pre-post level, then marks the take CANCELLED and
-// locked. To re-count, the commander starts a fresh take (same posture as a
-// cancelled DO/GRN/PR — the document is terminal, you make a new one).
-//
-// Cost note: the reversing ADJUSTMENT is qty-exact. A reversing increase is
-// re-valued at the variant's current weighted-average open-lot cost (the same
-// basis the forward post used for found stock); a reversing decrease is FIFO-
-// consumed at the real layers. For cycle-count-sized variances this is fully
-// consistent with how the forward adjustment itself was costed.
-//
-// Idempotency: status is flipped POSTED → CANCELLED FIRST (single-flight); a
-// second call sees a non-POSTED row and returns 409, so reversal rows are
-// written at most once.
 stockTakes.patch('/:id/reverse', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
   const id = c.req.param('id');
 
-  /* Probe before the flip: the flip is the first mutating call and doubles as
-     the state check, so there is no earlier guard to sit behind. It remains the
-     single-flight lock. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
   const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'REVERSE', companyId: co.companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  // Flip status first so a concurrent reverse can't double-write movements.
   const { data: cancelled, error: cErr } = await scopeToCompanyId(sb.from('stock_takes')
     .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString() })
     .eq('id', id), co.companyId).eq('status', 'POSTED')
@@ -1252,18 +1053,8 @@ stockTakes.patch('/:id/reverse', async (c) => {
     id: string; take_no: string; warehouse_id: string;
   };
 
-  /* Attribution fix (phase 1): the reversal rows used to stamp performed_by
-     with the pinned system staff uuid (user.id), which the roster scopes out —
-     rendering "Unknown user". Stamp the REAL caller; fall back to the system
-     row only when the bridge has no row, so the FK stays satisfied. */
   const reverserStaffId = (await callerStaffIdOf(sb, c)) ?? user.id;
 
-  // Load the forward ADJUSTMENT movements this take wrote. (Reversal can only
-  // run once — the status gate above — so there are no prior reversal rows to
-  // filter out.)
-  /* unit_cost_sen is SELECTED now — it was not, so the reversal below could not
-     have carried the original basis even if it wanted to. See the note on the
-     reversal row. */
   const { data: movs, error: mLoadErr } = await sb.from('inventory_movements')
     .select('warehouse_id, item_code, product_name, variant_key, batch_no, qty, unit_cost_sen')
     .eq('source_doc_type', 'STOCK_TAKE')
@@ -1278,7 +1069,7 @@ stockTakes.patch('/:id/reverse', async (c) => {
     variant_key: string | null; batch_no: string | null; qty: number;
     unit_cost_sen: number | null;
   }>) ?? []) {
-    if (!m.qty) continue; // zero-variance lines wrote nothing; nothing to undo
+    if (!m.qty) continue;
     reverseRows.push({
       movement_type:   'ADJUSTMENT',
       warehouse_id:    m.warehouse_id,
@@ -1286,32 +1077,7 @@ stockTakes.patch('/:id/reverse', async (c) => {
       product_name:    m.product_name,
       variant_key:     m.variant_key ?? '',
       batch_no:        m.batch_no ?? null,
-      qty:             -m.qty,                          // flip the sign — undo
-      /* CARRY THE ORIGINAL BASIS. This was `unit_cost_sen: 0`, commented
-         "trigger recomputes cost" — and the trigger cannot. Its IN branch
-         (`fn_inventory_movement_fifo`, migration 0195:138-150) averages OPEN
-         lots only, with no last-known tier and no consignment exclusion:
-
-             v_unit_cost := COALESCE(NULLIF(NEW.unit_cost_sen, 0), v_avg_cost, 0);
-
-         A write-off is precisely the case that DRAINS the bucket, so on reversal
-         the average query matches no rows, v_avg_cost is 0, and the units come
-         back as a permanent RM0 lot. Ten units that left at RM100 return worth
-         nothing: RM1,000 of COGS vanishes into phantom margin, and
-         reconcileUncostedAfterIn does not repair it (it costs prior short OUTs
-         from arriving lots, not the arriving lot itself).
-
-         This handler's own POST refuses to do exactly this — it 422s
-         `cost_required` rather than open a cost-less lot (:951-963), using the
-         4-tier resolveForcedUnitCostSen ladder that never returns 0. The fix
-         landed on POST and inventory-adjustments and never on the reverse, whose
-         sibling reverseMovements DOES carry the cost
-         (lib/inventory-movements.ts:559).
-
-         Carrying the forward row's own unit_cost_sen is exact, not an estimate:
-         it is the basis those units left at. `|| 0` only when the forward row
-         had none, which is the pre-existing behaviour for a genuinely uncosted
-         movement. */
+      qty:             -m.qty,
       unit_cost_sen:   Number(m.unit_cost_sen ?? 0),
       source_doc_type: 'STOCK_TAKE',
       source_doc_id:   header.id,
@@ -1326,8 +1092,6 @@ stockTakes.patch('/:id/reverse', async (c) => {
   if (reverseRows.length > 0) {
     const { error: insErr } = await sb.from('inventory_movements').insert(stampCompany(reverseRows, c));
     if (insErr) movementErrors.push(insErr.message);
-    /* Undoing a NEGATIVE variance is a positive ADJUSTMENT — it re-opens a lot,
-       so it is a stock IN and gets the same retro-cost as the post path. */
     if (!insErr) await reconcileUncostedAfterIn(sb, reverseRows, reverserStaffId);
   }
 
@@ -1343,10 +1107,6 @@ stockTakes.patch('/:id/reverse', async (c) => {
     console.error('[stock-takes] mirror adjustment delete on reverse failed:', (saDelErr as { message?: unknown }).message ?? saDelErr);
   }
 
-  /* POSTED is the prior status by construction — the .eq('status','POSTED')
-     gate on the flip above is what let this call proceed. The reversed quantity
-     is recorded as a signed total so the history says how much stock moved back,
-     not merely that a reversal was attempted. */
   await recordEntityAudit(sb, {
     entityType: 'STOCK_TAKE',
     entityId: id,
@@ -1366,7 +1126,6 @@ stockTakes.patch('/:id/reverse', async (c) => {
     ]),
   });
 
-  /* Stock changed back — re-walk SO stock allocation (mirrors the post path). */
   try {
     const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
     await recomputeAllocationAfterSave(sb, 'reverse-stock-take');
@@ -1379,7 +1138,6 @@ stockTakes.patch('/:id/reverse', async (c) => {
   });
 });
 
-// ── Delete OPEN ───────────────────────────────────────────────────────
 stockTakes.delete('/:id', async (c) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
@@ -1406,12 +1164,6 @@ stockTakes.delete('/:id', async (c) => {
   );
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
-  /* The one action whose subject no longer exists once it is recorded — the
-     stock_takes row is gone, so this audit row is the ONLY remaining evidence
-     that the document ever existed. Hence the snapshot of take_no and warehouse
-     in field_changes rather than a bare status transition: nothing can be joined
-     back to afterwards. entity_id is retained anyway so a later re-created
-     document cannot silently inherit this history. */
   await recordEntityAudit(sb, {
     entityType: 'STOCK_TAKE',
     entityId: id,
@@ -1430,13 +1182,6 @@ stockTakes.delete('/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Posting: the shared count → movement computation ──────────────────
-// For every line where counted_qty IS NOT NULL and variance != 0, build a
-// single ADJUSTMENT movement with SIGNED qty (mirrors what POST
-// /inventory/adjustments does). Lines with counted_qty == NULL are "untouched"
-// (the counter never got to that SKU) and skipped. Purely READS — it writes
-// nothing and flips nothing, so it is safe to run BEFORE the status flip, which
-// is what lets the post decide pending-vs-book, and lets /approve reuse it.
 type PostingHeader = { id: string; take_no: string; warehouse_id: string };
 type PostingPlan = {
   liveByKey: Map<string, number>;
@@ -1457,14 +1202,6 @@ const computeStockTakePosting = async (
     entered_unit_cost_sen: number | null;
   }>) ?? []).filter((ln) => ln.counted_qty != null);
 
-  // Audit 2026-06-20 (#15) — re-read LIVE on-hand per (item_code, variant_key)
-  // at post time, NOT the frozen create-time snapshot, so:
-  //   adjustment = counted − live_on_hand(code, variant)
-  // drives the exact bucket the operator counted to exactly the counted qty.
-  // This stamps variant_key (an attributed SKU lands in its REAL bucket, not the
-  // '' bucket that corrupted on-hand/valuation) AND closes the stale-snapshot gap
-  // — stock that moved during the count no longer skews the correction
-  // (supersedes branch fix/stock-take-reconcile).
   const liveByKey = new Map<string, number>();
   const codes = [...new Set(counted.map((ln) => ln.item_code))];
   for (let i = 0; i < codes.length; i += 200) {
@@ -1485,7 +1222,6 @@ const computeStockTakePosting = async (
     }
   }
 
-  // Every line whose count differs from live on-hand, with its SIGNED variance.
   const pending = counted
     .map((ln) => {
       const variantKey = ln.variant_key ?? '';
@@ -1494,19 +1230,6 @@ const computeStockTakePosting = async (
     })
     .filter((p) => p.adjustment !== 0);
 
-  // R3 write-path guard: a POSITIVE variance opens a new lot, so it MUST carry a
-  // real unit cost — the FIFO trigger otherwise floors a cost-less lot to RM0 that
-  // no path ever re-costs (permanent RM0 COGS when it sells). Fetch every
-  // (product, variant) bucket's lots ONCE (open + consumed), scoped to company,
-  // and resolve each positive line's cost from the SKU's own priced lots. A
-  // negative variance is an OUT: the trigger consumes open lots FIFO and stamps
-  // the OUT from THEIR cost, so its unit_cost_sen stays 0 (unused).
-  //
-  // Phase 1 widening: lots are fetched for EVERY pending code, not only the
-  // positive ones — the variance THRESHOLD below values negative lines too
-  // (best-effort, from the same priced-lot basis), and a per-line estimate
-  // costs nothing extra beyond the wider .in() list. The R3 cost_required
-  // refusal itself still fires ONLY for positive lines, exactly as before.
   const lotsByKey = new Map<string, LotCostRow[]>();
   const upCodes = [...new Set(pending.map((p) => p.ln.item_code))];
   for (let i = 0; i < upCodes.length; i += 200) {
@@ -1530,8 +1253,6 @@ const computeStockTakePosting = async (
 
   const adjustmentRows: Array<Record<string, unknown>> = [];
   const costlessSkus: string[] = [];
-  /* Feed for the variance-threshold fold — every pending line with its
-     best-known unit cost (null when no basis; the fold then judges qty only). */
   const thresholdLines: VarianceLine[] = [];
   for (const p of pending) {
     const forced = resolveForcedUnitCostSen({
@@ -1563,19 +1284,14 @@ const computeStockTakePosting = async (
       warehouse_id:    header.warehouse_id,
       item_code:    p.ln.item_code,
       product_name:    p.ln.product_name,
-      variant_key:     p.variantKey,                   // #15 — land in the counted bucket
-      qty:             p.adjustment,                   // SIGNED — see /inventory/adjustments
-      unit_cost_sen:   unitCostSen,                    // R3 — real cost on the +variance lot
+      variant_key:     p.variantKey,
+      qty:             p.adjustment,
+      unit_cost_sen:   unitCostSen,
       source_doc_type: 'STOCK_TAKE',
       source_doc_id:   header.id,
       source_doc_no:   header.take_no,
-      reason_code:     'COUNT',                          // count correction
+      reason_code:     'COUNT',
       notes:           `Stock take variance${p.ln.notes ? ` · ${p.ln.notes}` : ''}`,
-      /* Phase 1 attribution fix: the REAL caller's staff uuid — never the pinned
-         system row, which the roster scopes out and which therefore rendered
-         "Performed by: Unknown user". On /approve this is the SUPERVISOR who
-         signed the count off, which is exactly who performed the correction.
-         Fallback keeps the FK satisfied for a bridge-less caller. */
       performed_by:    performedBy,
     });
   }
@@ -1583,11 +1299,6 @@ const computeStockTakePosting = async (
   return { liveByKey, adjustmentRows, costlessSkus, thresholdLines };
 };
 
-// ── Posting: the shared write (movements + audit + racks + allocation) ─
-// Given a header already flipped to POSTED and a plan from
-// computeStockTakePosting, write the stock effects. Used by both the direct
-// post (OPEN → POSTED) and the supervisor approval (PENDING_APPROVAL → POSTED);
-// `fromStatus` and `auditAction` carry the difference into the audit row.
 /* Mirror Stock Adjustment (owner 2026-11-20). A posted take's variance already
    moved stock as ADJUSTMENT movements (source STOCK_TAKE). This ALSO records a
    formal Stock Adjustment DOCUMENT (SA number, scm.stock_adjustments) so the
@@ -1610,7 +1321,7 @@ const createMirrorAdjustment = async (
       (adjustmentNo) => sb.from('stock_adjustments')
         .insert({
           adjustment_no:        adjustmentNo,
-          company_id:           activeCompanyId(c),  // multi-company: the only boundary
+          company_id:           activeCompanyId(c),
           warehouse_id:         header.warehouse_id,
           notes:                `Auto-created from stock take ${header.take_no}`,
           created_by:           performedBy,
@@ -1637,8 +1348,6 @@ const createMirrorAdjustment = async (
     }));
     const { error: lErr } = await sb.from('stock_adjustment_lines').insert(stampCompany(lines, c));
     if (lErr) {
-      // A header with no lines reads as an empty adjustment; drop it (lines cascade
-      // on the header, so nothing orphans) and leave the take with no mirror.
       await sb.from('stock_adjustments').delete().eq('id', sa.id);
       // eslint-disable-next-line no-console
       console.error('[stock-takes] mirror adjustment lines failed:', lErr.message);
@@ -1660,31 +1369,15 @@ const writePostingEffects = async (
   const movementErrors: string[] = [];
 
   if (adjustmentRows.length > 0) {
-    // One bulk insert — the FIFO trigger runs row-by-row anyway, but the
-    // round-trip is single. Best-effort: failures listed, post not rolled
-    // back (matches the audit-DLQ posture in writeMovements()).
     const { error: mErr } = await sb.from('inventory_movements').insert(stampCompany(adjustmentRows, c));
     if (mErr) movementErrors.push(mErr.message);
-    /* Oversell retro-cost (0154) — a POSITIVE variance opens a lot, so a prior
-       "ship anyway" DO that went out at RM0 in this warehouse can now be costed
-       from it. Wired 2026-07-29; before that only a GRN reconciled, so stock
-       found by a count never repaired the earlier shipment (COE §2). Negative
-       variances are filtered out by the helper. Best-effort — never fails the
-       post, and the shortfall is retried on the next IN. */
     if (!mErr) await reconcileUncostedAfterIn(sb, adjustmentRows, opts.performedBy);
   }
 
-  /* Record the formal Stock Adjustment document for this variance (owner
-     2026-11-20) — ONLY when the movements actually landed, so a document never
-     claims a correction the ledger does not hold. No movements are written here;
-     stock moved once, above. */
   const mirror = movementErrors.length === 0
     ? await createMirrorAdjustment(sb, c, header, adjustmentRows, opts.performedBy)
     : null;
 
-  /* The variance that actually hit stock, per SKU — keyed by product code for
-     the same reason the line PATCH is. This is the moment a count becomes the
-     new truth, so the per-SKU adjustment is the WHAT, not a summary count. */
   await recordEntityAudit(sb, {
     entityType: 'STOCK_TAKE',
     entityId: header.id,
@@ -1699,10 +1392,6 @@ const writePostingEffects = async (
     fieldChanges: compactChanges([
       ...statusChange(opts.fromStatus, 'POSTED'),
       fieldChange('warehouseId', null, header.warehouse_id),
-      /* from = the on-hand this post overwrote, to = the counted figure that
-         replaced it. Recording the PAIR is the whole point: "12" alone does not
-         say what it corrected. adjustmentRows holds only non-zero variances (the
-         loop above skips the rest), so every entry here is a real movement. */
       ...adjustmentRows.map((r) => {
         const live = liveByKey.get(`${r.item_code} ${r.variant_key ?? ''}`) ?? 0;
         return fieldChange(String(r.item_code), live, live + Number(r.qty));
@@ -1718,10 +1407,6 @@ const writePostingEffects = async (
     companyId: co.companyId, performedBy: opts.performedBy,
   });
 
-  /* B2C SO auto-allocation — variance changed stock, re-walk SO lines. One
-     inline recompute for the whole module's posting path (post AND approve
-     funnel through here); /reverse has the only other. The pinned ledger in
-     stockAllocationDurabilityScope.test.ts counts exactly two. */
   try {
     const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
     await recomputeAllocationAfterSave(sb, 'post-stock-take');
@@ -1733,26 +1418,13 @@ const writePostingEffects = async (
     racksMoved: racks.moved,
     racksSkipped: racks.skippedCodes.length ? racks.skippedCodes : undefined,
     rackError: racks.error ?? undefined,
-    /* The Stock Adjustment document this post booked (null when nothing moved or
-       the record failed) — the take detail links to it. */
     adjustmentId: mirror?.id,
     adjustmentNo: mirror?.adjustment_no,
   };
 };
 
-/* The cost_required refusal — a positive variance on a SKU with NO cost basis
-   anywhere cannot be booked at a real cost, so RM0 would be written (the exact
-   defect). Refused for anyone, supervisor included: approving the count cannot
-   invent a cost. Nothing was flipped yet, so there is no status to revert. */
 const costRequiredBody = (costlessSkus: string[]) => {
   const skus = [...new Set(costlessSkus)];
-  /* Keep the sentence SHORT so the client shows it rather than the generic
-     "some details weren't accepted" — the operator must see WHICH items have no
-     cost. authed-fetch.ts `isPlain` drops any refusal >= 200 chars, and the old
-     message listed every SKU (owner saw the generic line on a 97-line mattress
-     count, 2026-11-20). So list the fewest names that stay under the cap — two,
-     then one, then one truncated — with "and N more" for the rest; the full set
-     still rides in `itemCodes`. */
   const say = (list: string) => `No cost on record for ${list}. Give them a cost first (a costed stock adjustment or a GRN), then post again.`;
   const more = (n: number) => (n > 0 ? ` and ${n} more` : '');
   let message = say(skus.slice(0, 2).join(', ') + more(Math.max(0, skus.length - 2)));
@@ -1785,9 +1457,6 @@ export const postStockTakeHandler = async (c: any) => {
   const pf = await assertAuditWritable(sb, { entityType: 'STOCK_TAKE', entityId: id, action: 'POST', companyId: co.companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  /* Load the OPEN header read-only FIRST (company-scoped), so the plan is
-     computed before any flip and the handler can choose pending-vs-book. The
-     flip below keeps its single-flight role via `.eq('status', ...)`. */
   const { data: head0, error: h0Err } = await scopeToCompanyId(
     sb.from('stock_takes').select(HEADER).eq('id', id), co.companyId,
   ).eq('status', 'OPEN').maybeSingle();
@@ -1798,9 +1467,6 @@ export const postStockTakeHandler = async (c: any) => {
   const plan = await computeStockTakePosting(sb, c, header, performedBy);
   if (plan.costlessSkus.length > 0) return c.json(costRequiredBody(plan.costlessSkus), 422);
 
-  /* A non-supervisor whose count breaches the threshold SUBMITS for approval
-     instead of booking: flip OPEN → PENDING_APPROVAL, stamp who/when, write no
-     movement. The supervisor's /approve does the booking. */
   if (!isSupervisor) {
     const thresholds = parseVarianceThresholds(c.env);
     const breaches = findVarianceBreaches(plan.thresholdLines, thresholds);
@@ -1828,10 +1494,6 @@ export const postStockTakeHandler = async (c: any) => {
     }
   }
 
-  /* Company predicate on the FLIP (the siblings below were already company-aware
-     — the inventory_balances read is scopeToCompany'd and the movements insert
-     stampCompany'd). Posting another company's take would otherwise compare THEIR
-     counted qty against OUR on-hand (no rows -> live 0). */
   const { data: posted, error: pErr } = await scopeToCompanyId(sb.from('stock_takes')
     .update({ status: 'POSTED', posted_at: new Date().toISOString() })
     .eq('id', id), co.companyId).eq('status', 'OPEN')
@@ -1846,11 +1508,6 @@ export const postStockTakeHandler = async (c: any) => {
 };
 stockTakes.patch('/:id/post', postStockTakeHandler);
 
-// ── Approve PENDING_APPROVAL → POSTED (supervisor signs an over-limit count) ──
-// The booking the non-supervisor's post deferred: same movements, same costing,
-// same racks — now performed by, and attributed to, the supervisor. The variance
-// threshold is NOT re-checked (approving IS the override); cost_required still
-// holds (no path can book a positive variance at RM0).
 export const approveStockTakeHandler = async (c: any) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
@@ -1871,9 +1528,6 @@ export const approveStockTakeHandler = async (c: any) => {
   if (h0Err)  return c.json({ error: 'approve_failed', reason: h0Err.message }, 500);
   if (!head0) { const r = await notOpenOrNotOurs(sb, id, co.companyId, 'PENDING_APPROVAL'); return c.json(r.body, r.status); }
   const header = head0 as unknown as PostingHeader;
-  /* Nobody approves their own submission (parity with the backdate request
-     inbox). In practice the submitter lacks the supervise key and never reaches
-     here, but a mid-flight grant could — refuse it. */
   const submittedBy = (head0 as unknown as { submitted_by?: string | null }).submitted_by;
   if (submittedBy && String(submittedBy) === String(performedBy)) {
     return c.json({ error: 'own_submission', message: 'You submitted this count — another supervisor has to approve it.' }, 403);
@@ -1896,10 +1550,6 @@ export const approveStockTakeHandler = async (c: any) => {
 };
 stockTakes.patch('/:id/approve', approveStockTakeHandler);
 
-// ── Reject PENDING_APPROVAL → OPEN (supervisor returns it for a recount) ──
-// No stock ever moved while pending, so there is nothing to reverse: clear the
-// submission marks and hand the sheet back to OPEN so the count can be edited
-// and re-submitted.
 export const rejectStockTakeHandler = async (c: any) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');

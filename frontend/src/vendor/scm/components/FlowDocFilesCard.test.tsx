@@ -1,6 +1,3 @@
-/* The Files card on the receiving and return documents (backlog A3): who sees
- * Attach and Remove, that a finished document keeps its files, that a
- * cancelled one takes no more, and that each kind talks to its own document. */
 import { render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AccessLevel } from '../../../types';

@@ -1,10 +1,3 @@
-// notifySaveProblems — one decision, three surfaces, and the half that is NOT
-// shared.
-//
-// The controls here guard the thing the extraction could have broken: each
-// surface's own fallback. Collapsing those would have taken the inline banner
-// off the SO Detail page and replaced the mobile wizard's wording, and neither
-// would have failed a typecheck.
 import { describe, expect, test } from 'vitest';
 import { notifySaveProblems, saveProblemsTitle } from './SaveProblemsList';
 
@@ -19,7 +12,6 @@ const spy = () => {
   };
 };
 
-/** A 422 body in the aggregated `validation_failed` shape the gates return. */
 const gateRefusal = (n: number) => ({
   body: JSON.stringify({
     error: 'validation_failed',

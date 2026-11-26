@@ -1,10 +1,3 @@
-/* Adrian (2026-10-09, after DEV-61): on the phone, Qty opens the number pad
- * but Unit Price opened the letter keyboard, so a price had to be typed through
- * the "123" key. Money fields on the phone SO editor ask for the decimal pad.
- *
- * Harness copied from MobileNewSO.savedVenue.test.tsx (an edit-mode mount with
- * one saved line).
- */
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -51,7 +44,6 @@ const VENUES = [venue("V-DEFAULT", "PJ SHOWROOM"), venue("107", "2990s PJ")];
 const staff = (id: string, venueId: string | null) => ({
   id, staffCode: id, name: id, role: "sales", showroomId: null, venueId, initials: id, color: "#000", active: true, userId: null, email: null, phone: null,
 });
-/* S1 is Scarlett's shape on production: a default venue of her own. */
 const STAFF = [staff("S1", "V-DEFAULT"), staff("S2", null)];
 
 const header = (o: { venue: string | null; salesperson_id: string }) => ({

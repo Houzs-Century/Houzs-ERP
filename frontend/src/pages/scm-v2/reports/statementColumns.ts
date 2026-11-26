@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// statementColumns — the columns a Finance statement shows (the owner's Claude
-// Design, batch 6 §4.1 / §5.1) and the lines they merge into. A column IS the
-// report for its period, read from the report's own endpoint, so a month can
-// never disagree with the same month shown alone:
-//   · Single — the range picked;
-//   · Compare — the range and the one it is compared with (the period before
-//     it, or the same dates a year back), and the change between them;
-//   · By month — Total over the months (leftmost), then each month, newest
-//     first, ending at the range's last month (a balance sheet's month is its
-//     month-end balance, and it has no Total).
-// Nothing here formats a date by hand: days through fmtDate, months through
-// toLocaleString with a fixed locale and zone (a month label is not a date).
-// ----------------------------------------------------------------------------
 
 import { addDays, daysInRange, monthEnd, monthStart } from '../../../lib/dateRangePresets';
 import { fmtDate } from '../../../vendor/shared/format';
@@ -24,23 +10,16 @@ export type CompareWith = 'previous' | 'lastYear';
 export type StatementColumn = {
   key: string;
   label: string;
-  /** The small grey line under the label. */
   sub?: string;
-  /** Total: the tinted column with the stronger rule after it; change: computed, no lines. */
   kind: 'total' | 'period' | 'change';
-  /** The period the column reads, and its lines open on. */
   from: string;
   to: string;
-  /** A % rides beside the amount. */
   pct: boolean;
-  /** A column under a heading it shares with its neighbours (the Cash Flow's Settlement |
-      Deposit under each month): the heading's key, its name, its small grey line. */
   group?: { key: string; label: string; sub?: string };
   /** A small coloured mark before the column's name, so two columns of one heading tell
       apart at a glance (the Cash Flow's Settlement petrol, Deposit gold — owner 2026-11-10;
       the forecast's Actual petrol, Orders & bills brass, P&L forecast gold). */
   mark?: 'petrol' | 'gold' | 'brass';
-  /** A column with no ledger lines behind it (the Forecast Balance Sheet's): its figures do not open. */
   noDrill?: boolean;
 };
 

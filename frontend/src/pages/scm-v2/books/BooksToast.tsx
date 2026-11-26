@@ -1,6 +1,3 @@
-// The Books pages' toast (the owner's redesign, batch 6 §1.4): dark, with a
-// brass check, top centre, gone after a few seconds. It confirms what a
-// person just did; a refusal keeps the shared error dialog of the mutation.
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { CheckCircle2 } from 'lucide-react';

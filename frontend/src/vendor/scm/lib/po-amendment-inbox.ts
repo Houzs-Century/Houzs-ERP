@@ -14,9 +14,6 @@ import type { PoAmendmentRow } from './po-amendment-queries';
 import type { AmendmentRow } from './so-amendment-queries';
 import { PO_AMENDMENT_APPROVER, soAmendmentApprover, type AmendmentApprover } from './amendment-approver';
 
-/* `id` belongs to the row's OWN table, so it opens in its own module; `key` is
-   unique across the merged set. `soDocNo` is the order an SO-driven row revises:
-   the phone opens that order, whose page hosts the amendment gates. */
 type InboxRowBase = {
   key: string;
   id: string;

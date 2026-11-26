@@ -1,14 +1,9 @@
-// BUG-63 — swapping a line's product (HC-SO-2609-337: 8069-2A(RHF) -> 8069-2B(LHF))
-// saved it at RM 0: the new SKU had no sell price, so the editor sent 0 and the
-// PATCH wrote it over the stored RM 4,888.
 import { describe, expect, test } from 'vitest';
 import { erpLineTrust, recomputeFromSnapshot, unitAfterLineEdit } from './mfg-pricing-recompute';
 import { soRouterSource } from '../../../tests/lib/so-router-source';
 
 const STORED = 488_800;
 
-/** A sofa module line with no cells and no sell price: the engine cannot price
- *  it and hands back whatever the client sent. */
 const resolve = (clientUnitSen: number, zeroPriceIntended: unknown, migrated: boolean) => {
   const trust = erpLineTrust(false, clientUnitSen, zeroPriceIntended, migrated);
   const r = recomputeFromSnapshot(

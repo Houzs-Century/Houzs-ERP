@@ -44,7 +44,6 @@ export function sharedLiveMrp(
   sb: unknown,
   db: D1Database,
   companyId: number | null | undefined,
-  /** The looked-at document's last save; a run that started before it is not reused. */
   savedAt: string | null = null,
   now: () => number = Date.now,
 ): { result: Promise<MrpResult>; startedAt: number } {

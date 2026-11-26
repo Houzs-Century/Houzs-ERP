@@ -1,14 +1,8 @@
-// Own-lorry running cost: km driven from the Velocity fixes (scm.lorry_positions)
-// x the lorry's cost_per_km_sen. Pure, so the light test project covers it.
 
 export type Fix = { lat: number; lng: number; recorded_at: string };
 
 const EARTH_KM = 6371;
-// ponytail: a hop faster than this is treated as a GPS jump and skipped; a
-// road-snapped distance (map-matching API) if straight-line km proves too low.
 export const MAX_KMH = 150;
-// ponytail: a hop under this is parked-GPS drift (288 fixes/day x a few metres
-// adds phantom km); an ignition-aware filter if crawling traffic gets lost.
 export const MIN_HOP_KM = 0.05;
 
 export function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {

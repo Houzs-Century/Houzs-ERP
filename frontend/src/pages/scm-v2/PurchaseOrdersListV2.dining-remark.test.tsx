@@ -80,16 +80,12 @@ describe("PO quick-view: a DINING line shows its Remark", () => {
       line({ id: "d-2", item_code: "DINING CHAIR", item_group: "dining", notes: "7010 DC-LS" }),
     ];
     mount();
-    // getByText throws if absent, so these calls are the presence assertions.
     expect(screen.getByText("MT-505OV 5.3ft")).toBeTruthy();
     expect(screen.getByText("7010 DC-LS")).toBeTruthy();
-    // Both dining lines show the "Remark" label.
     expect(screen.getAllByText("Remark")).toHaveLength(2);
   });
 
   it("does NOT surface a non-dining line's own note (the DINING gate holds)", () => {
-    // A sofa line carries a `notes` value too, but it is not a dining line, so
-    // the panel must stay silent on it.
     h.items = [
       line({ id: "s-1", item_code: "SOFA BOOQIT", item_group: "sofa", notes: "WOOD FRAME NOTE" }),
     ];

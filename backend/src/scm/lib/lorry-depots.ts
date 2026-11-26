@@ -38,7 +38,6 @@ export async function loadLorryDepots(sb: SupabaseClient, env: { GOOGLE_MAPS_API
       address1: (w.location ?? null) as string | null, address2: (w.city ?? null) as string | null,
       postcode: (w.postcode ?? null) as string | null, state: (w.state ?? null) as string | null,
     });
-    /* The map position the owner set wins; an address is only a fallback. */
     const pinned = w.latitude != null && w.longitude != null ? { lat: Number(w.latitude), lng: Number(w.longitude) } : null;
     const hit = pinned ?? (addr ? await geocodeAddressCached(sb, env, addr) : null);
     if (hit) point.set(String(w.id), { name: String(w.name ?? ''), lat: hit.lat, lng: hit.lng });

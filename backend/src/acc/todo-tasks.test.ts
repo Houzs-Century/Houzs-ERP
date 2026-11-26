@@ -1,6 +1,3 @@
-// The To do's tasks and routines (the owner's Claude Design redesign, batch 2):
-// when a repeating task falls, which occurrence waits now, how a repeat reads,
-// and how tasks land on the page — mine, waiting on others, done today.
 
 import { describe, it, expect } from 'vitest';
 import { occurrenceDays, pendingOccurrence, repeatText, type TodoTask } from './todo-tasks';

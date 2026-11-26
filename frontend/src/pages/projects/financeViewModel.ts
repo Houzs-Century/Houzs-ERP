@@ -1,18 +1,8 @@
-// ── Profitability / analytics ────────────────────────────────
-// Aggregate view across every project. Four cuts (brand / state /
-// event type / month) plus the biggest and smallest events by
-// profit. All data served by /api/projects/analytics/profitability
-// which reads from the finance rollup (already synced by the
-// ledger write path).
 
 export interface ProfitabilityBreakdown {
   key: string;
   count: number;
   income: number;
-  // Owner P&L model: Revenue − COGS = GP; GP − Cost = NP. `cost` is the
-  // NON-COGS cost (rental, setup, transport, commission, merchandise,
-  // others); `cogs` is the goods cost; `profit` is Net Profit. `rental` is
-  // the rental slice of `cost`, pulled out so it shows as its own column.
   cogs: number;
   cost: number;
   rental: number;
@@ -21,26 +11,17 @@ export interface ProfitabilityBreakdown {
   margin: number | null;
 }
 
-// The dimension a breakdown groups on — drives the drill-down queries.
 export type ProfitabilityGroupBy = "brand" | "event_type" | "organizer" | "venue" | "month";
 
-// Filters currently active on the dashboard, forwarded to every drill query so
-// a drill always reflects the same scope as the group table it opened from.
 export interface ProfitabilityFilters {
   date_from?: string;
   date_to?: string;
   brand?: string;
   organizer?: string;
   event_type_id?: string;
-  // Lifecycle scope — must be forwarded to the drill so a drilled level totals
-  // the same population as the card it was opened from.
   scope?: string;
 }
 
-// The open drill path, held in the URL (see ProjectsAnalyticsView): which
-// dimension card is expanded (dim), to which value (value), and — for the four
-// real dimensions — which month under it (month). Only one path is open at a
-// time so the URL stays a single shareable drill.
 export interface ProfitabilityDrillState {
   dim: ProfitabilityGroupBy | null;
   value: string | null;
@@ -49,8 +30,6 @@ export interface ProfitabilityDrillState {
   toggleMonth: (key: string) => void;
 }
 
-// Layer 2 (dimension cards): one finance month inside a dimension value. Same
-// P&L columns as the group row; `key` is the YYYY-MM bucket.
 interface ProfitabilityDrillMonth {
   key: string;
   count: number;
@@ -70,9 +49,6 @@ export interface ProfitabilityMonthsResponse {
   months: ProfitabilityDrillMonth[];
 }
 
-// Layer 3: one project inside a month (or, for the By-Month card, inside the
-// clicked month). Same P&L columns plus identity so the row can navigate to
-// the project page (Layer 4).
 interface ProfitabilityProjectRow {
   id: number;
   code: string;
@@ -141,8 +117,6 @@ export interface ProfitabilityResponse {
   bottom: ProfitabilityResponse["top"];
 }
 
-// Finances view — tabbed: List (raw ledger lines) / Analytics
-// (per-project profitability) / P&L (monthly trend).
 export type FinanceTab = "list" | "analytics" | "pnl";
 export const FINANCE_TABS: FinanceTab[] = ["list", "analytics", "pnl"];
 

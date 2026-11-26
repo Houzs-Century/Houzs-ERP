@@ -1,25 +1,6 @@
-/**
- * Store the AutoCount DtlKeys a create/convert returned onto the ERP line rows.
- *
- * SPLIT OUT OF autocount-outbox.ts on 2026-08-17, for the same reason
- * `mastersOf` and the `autocount-read` helpers were: that file sits at the
- * 2,000-line cap and the cap is not raisable (docs/repo-hygiene.md). Nothing
- * about the behaviour moved with it — this is the same function, and the
- * `dispatchOne` call site is unchanged.
- *
- * It is a good seam rather than an arbitrary one: line IDENTITY is the whole
- * subject here and it has its own failure mode (a wrong key silently edits a
- * different line in a live account book), so it earns being readable on its own.
- */
 import type { AcCreatedLine } from '../../services/autocount-writeback';
 import { isConvertOp } from './autocount-convert-lines';
-/* TYPE-ONLY, so it is erased and there is no runtime cycle back to the module
-   that imports this one. The table union is the real contract — writing
-   `string` here would let a caller name a table with no `linked_ac_dtlkey`. */
 import type { AcLineTable } from './autocount-outbox';
-/* VALUE import, not type-only: the four downstream item tables are read off it
-   rather than re-listed. No cycle — autocount-convert-lines imports types from
-   services/autocount-writeback, never from this file. */
 import { CONVERT_TARGET, DOWNSTREAM, type AcDownstreamSpec } from './autocount-convert-lines';
 // @ts-expect-error - plain .mjs, shared with stamp-conversion-line-keys.mjs so the drain and the backlog stamp hold one pairing rule
 import { planDocumentKeys } from '../../../scripts/lib/conversion-line-key-plan.mjs';
@@ -34,8 +15,6 @@ export interface LineKeyTarget {
   ids: Array<string | string[]>;
   codes: string[];
   desc2?: Array<string | null>;
-  /** `so_to_po` only: the source sales-line keys AS SENT (`body.DtlKeys`, after
-   *  the drain's backfill). The host creates purchase line N from key N. */
   sourceDtlKeys?: number[];
 }
 
@@ -45,13 +24,6 @@ export interface LineKeyRowLabel {
   doc_no: string;
 }
 
-/* The same `SupabaseClient<any, any, any>` alias `autocount-outbox` passes in,
-   narrowed to the one method used here. It stays `any` for the SAME reason the
-   original does: `schema.pg.ts` covers none of the SCM tables, so a precise
-   return type would be invented rather than derived, and a hand-written shape
-   that is subtly wrong is worse than an honest `any` — it makes the compiler
-   agree with a fiction. CLAUDE.md's remedy is drizzle-kit pull, not a cast.
-   Written at the site with its reason rather than as a ratchet number. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM tables have no generated types; see the note above
 type Sb = { from: (table: string) => any };
 
@@ -91,7 +63,6 @@ export async function lineIdentityGap(
   row: LineKeyRowLabel,
   payload: { lineWriteback?: LineKeyTarget },
   lines: AcCreatedLine[],
-  /** The body that went on the WIRE — a `wait` row's DtlKeys are filled at drain. */
   sent: { DtlKeys?: unknown } = {},
 ): Promise<string | null> {
   if (payload.lineWriteback) {
@@ -124,9 +95,6 @@ export async function persistLineKeys(
      Sync screen already look. The console lines stay: they carry detail a
      one-line reason should not. */
   try {
-    /* Not an error. An AcSyncService built before 2026-08-11 returns no lines,
-       and the service also degrades to an empty array rather than losing the
-       DocNo when its own read-back fails. */
     if (!lines.length) {
       return 'AutoCount reported no lines for this document, so no line identity could be stored. '
         + 'A service built before 2026-08-11 does not report them, and the service also returns an '
@@ -158,14 +126,6 @@ export async function persistLineKeys(
     const groups = target.ids.map((g) => (Array.isArray(g) ? g : [g]));
     const norm = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase();
 
-    /* A TRANSFER IS PROVEN BY ITS SOURCE KEY, NOT BY ITS ITEM CODE (2026-09-14).
-       AddSOToPOTransferDetail copies the SALES line's item, so the book holds
-       'HOK-2038 (A) (Q)' where the ERP composed 'CELENE (A)-(Q)' (recorded on
-       HC-PO-2609-089) and the ItemCode check below could never pass for a
-       supplier-coded product: 52 of 74 transfers since go-live kept no keys.
-       The host creates purchase line N from DtlKeys[N] and costs it on exactly
-       that correspondence, so line N belongs to the ERP row whose sales line IS
-       DtlKeys[N] — checked against the database before anything is written. */
     if (row.op === 'so_to_po') {
       const keys = target.sourceDtlKeys ?? [];
       if (keys.length !== groups.length) {
@@ -195,18 +155,10 @@ export async function persistLineKeys(
         }
       }
     }
-    /* A CREATE's order is CONSTRUCTED: the host adds the details in payload order
-       and reads them back in DtlKey order, so position is identity and a repeated
-       code needs no Desc2 to tell it apart. The Desc2 and repeated-code refusals
-       below exist for CONVERSIONS, whose order is only presumed; applied to a
-       create they left HC-PO-2609-064 ('5536-1NA' twice) and HC-PO-2609-098
-       ('AK-BASTION MATT (Q)') with no keys at all. */
     const byConstruction = row.op === 'create_so' || row.op === 'create_po' || row.op === 'so_to_po';
     for (let i = 0; i < ordered.length && row.op !== 'so_to_po'; i += 1) {
       const got = norm(ordered[i].ItemCode);
       const want = norm(target.codes[i]);
-      /* An older service may omit ItemCode; only a PRESENT and DIFFERENT code
-         is evidence the zip is wrong. */
       if (got && want && got !== want) {
         // eslint-disable-next-line no-console
         console.error(
@@ -218,30 +170,12 @@ export async function persistLineKeys(
       }
     }
 
-    /* ItemCode alone stops being an identity check the moment a code repeats,
-       and on a CONVERSION that is the normal case, not an edge one: the ERP
-       never sends a line list for a conversion — AutoCount chooses the source
-       lines itself (AcSyncService.cs:382-411) — so the two orderings are only
-       PRESUMED to line up. A sofa document is the concrete failure: several
-       lines share one code and differ only in the build written into Desc2, so
-       an all-codes-match check passes while the keys land on the wrong lines,
-       and the next edit rewrites somebody else's line in a live book.
-       Desc2 is what tells those lines apart, so where it is available on both
-       sides it must agree too, and a repeated code with no Desc2 to separate it
-       is refused outright rather than guessed. */
     const dupes = new Set(
       target.codes.map(norm).filter((c, i, a) => c && a.indexOf(c) !== i),
     );
     for (let i = 0; i < ordered.length && !byConstruction; i += 1) {
       const gotD = norm(ordered[i].Desc2);
       const wantD = norm(target.desc2?.[i]);
-      /* PREFIX-TOLERANT, because AutoCount's own column truncates. SODTL.Desc2
-         is nvarchar(100) and live sofa builds already sit at exactly 100 — the
-         account book cut them itself, before the ERP ever saw them. An equality
-         test would refuse those legitimately-matching lines. A prefix test keeps
-         all the discriminating power that matters here: two different builds of
-         the same model diverge in the first few tokens, not after character
-         100. */
       const differs = gotD && wantD && !gotD.startsWith(wantD) && !wantD.startsWith(gotD);
       if (differs) {
         // eslint-disable-next-line no-console
@@ -266,9 +200,6 @@ export async function persistLineKeys(
 
     let failed = 0;
     for (let i = 0; i < ordered.length; i += 1) {
-      /* Every ERP row behind this AutoCount line gets the SAME key. For a sofa
-         that is the build's compartments; composeEdit later accepts the build
-         only when all of them still agree on it. */
       for (const id of groups[i]) {
         const { error } = await sb.from(target.table)
           .update({ linked_ac_dtlkey: ordered[i].DtlKey })
@@ -280,9 +211,6 @@ export async function persistLineKeys(
         }
       }
     }
-    /* A PARTIAL IS WORSE THAN A CLEAN MISS and has to say so: composeEdit
-       refuses a document with ANY keyless line, so one failed write costs the
-       whole document its next edit exactly as if nothing had been stored. */
     return failed
       ? `Line identity was stored for only part of this document: ${failed} row(s) could not be `
         + 'written. Its next edit will still be refused until they are matched up.'
@@ -295,23 +223,9 @@ export async function persistLineKeys(
   }
 }
 
-/** The conversions whose created lines AutoCount links in DocTransfer are the
- *  four in CONVERT_TARGET, read off it rather than listed again; the spec says
- *  where each ERP row names its source line. `so_to_po` is not one of them: the
- *  book records that edge on PODTL, and its source keys travel in the request
- *  (`sourceDtlKeys`, above). */
 const transferLinkedSpec = (op: string): AcDownstreamSpec | undefined =>
   Object.hasOwn(CONVERT_TARGET, op) ? DOWNSTREAM[CONVERT_TARGET[op as keyof typeof CONVERT_TARGET]] : undefined;
 
-/**
- * Pair a converted document's rows with the book's lines by SOURCE line: our
- * row's `sourceFk` names a source row, that row's `linked_ac_dtlkey` is the
- * book's source line, and the book line whose `FromDocDtlKey` equals it is ours.
- * The rule is `conversion-line-key-plan.mjs`, the same one the backlog stamp
- * runs. Stores only what it proves; a row it cannot prove keeps NULL and is
- * named in the returned sentence, because composeEdit refuses a document with
- * any keyless line and the operator has to know why.
- */
 async function persistByTransferLink(
   sb: Sb,
   label: string,
@@ -385,9 +299,7 @@ async function persistByTransferLink(
  */
 export interface NewLineKeyTarget {
   table: AcLineTable;
-  /** ERP row ids per declared-new line, in payload order (a sofa build is many). */
   newIds: string[][];
-  /** The AutoCount ItemCode sent for each declared-new line, same order. */
   newCodes: string[];
   /** The Desc2 sent for each declared-new line, same order. Carried because
    *  ItemCode ALONE cannot separate two lines of the same model in different
@@ -395,7 +307,6 @@ export interface NewLineKeyTarget {
    *  `persistLineKeys` has compared Desc2 since it was written; this one did
    *  not, which is docs/bugs/0672 site 12. */
   newDesc2: string[];
-  /** Every DtlKey the payload already carried — the book lines we did NOT add. */
   knownKeys: number[];
   /** The edit cleared the document and laid every line down in payload order,
    *  so the book's new keys ascend in that order and position IS identity — the
@@ -413,9 +324,6 @@ export async function persistNewLineKeys(
   const label = `[autocount-outbox] ${row.op} ${row.doc_no} new line keys`;
   try {
     if (!target.newIds.length) return;
-    /* An AcSyncService built before 2026-08-31 answers an edit with no lines at
-       all. That is not an error and not a degradation to shout about — it is the
-       old exe, and the behaviour is exactly what it was before this existed. */
     if (!lines.length) return;
 
     const known = new Set(target.knownKeys.map((k) => Number(k)));
@@ -461,11 +369,6 @@ export async function persistNewLineKeys(
         );
         return;
       }
-      /* PREFIX-TOLERANT, for the reason the sibling records: SODTL.Desc2 is
-         nvarchar(100) and live sofa builds already sit at exactly 100, so the
-         book truncates them itself. An equality test would refuse lines that
-         legitimately match. Two different builds of one model diverge in the
-         first few tokens, not after character 100. */
       const gotD = norm(fresh[i].Desc2);
       const wantD = norm(target.newDesc2?.[i]);
       if (gotD && wantD && !gotD.startsWith(wantD) && !wantD.startsWith(gotD)) {
@@ -477,9 +380,6 @@ export async function persistNewLineKeys(
         );
         return;
       }
-      /* Two added lines of the SAME code — one sofa model in two fabrics is the
-         ordinary case — cannot be told apart by code, so the zip is a coin flip
-         unless Desc2 is present on both sides to break the tie. */
       /* NOT on a rebuild: the document was cleared and laid down in payload order,
          so position is identity and the repeat is no coin flip. Refusing it left
          HC-SO-2609-071 (A01 twice) and HC-PO-2609-098 (four repeated mattress
@@ -567,8 +467,6 @@ export function newLineTargetOf(docType: string, payload: { body?: unknown }): N
     const ids = Array.isArray(l.ErpLineIds)
       ? (l.ErpLineIds as unknown[]).filter((v): v is string => typeof v === 'string' && !!v)
       : [];
-    /* A declared-new line with no ids cannot be stored back, and storing the
-       OTHERS by position would then be a guess — refuse the whole batch. */
     if (!ids.length) return null;
     newIds.push(ids);
     newCodes.push(String(l.ItemCode ?? ''));

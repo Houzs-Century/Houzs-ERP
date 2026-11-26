@@ -54,21 +54,11 @@ export interface CascadeDoc {
   docType: 'SO' | 'PO' | 'DO' | 'GR' | 'IV' | 'PI';
   docId: string;
   docNo: string;
-  /** The account book's own number for it, or null when it is not in the book. */
   linkedAcDocNo: string | null;
 }
 
-/* ONE RUNG OF THE CHAIN, DERIVED — never a second copy of DOWNSTREAM.
-   The four links this walks are the four DOWNSTREAM already describes; writing
-   them out again would be a second home for the same rule, and the
-   duplicated-decision gate says so by name. What DOWNSTREAM does NOT carry is
-   the way back UP from a source LINE to its parent HEADER — the child's own
-   spec names `sourceItemTable` and `sourceFk`, but not which column on that
-   table points at the header, nor what the header's number is called. Those
-   three facts per rung are what lives here, and nothing else does. */
 const UP: Record<string, {
   parentType: CascadeDoc['docType'];
-  /** The column on the SOURCE ITEM table that names its own header. */
   sourceParentCol: string;
   parentTable: string;
   parentNoCol: string;
@@ -79,9 +69,6 @@ const UP: Record<string, {
   GR: { parentType: 'PO', sourceParentCol: 'purchase_order_id', parentTable: 'purchase_orders', parentNoCol: 'po_number' },
 };
 
-/* A sales order is keyed by its NUMBER, not by an id — the one document in the
-   chain that is, which is why AcDocRef carries a keyCol at all. Reading its
-   header therefore matches on doc_no. */
 const KEYED_BY_NUMBER = new Set(['SO']);
 
 async function parentOf(sb: Sb, docType: string, docId: string): Promise<CascadeDoc | null> {
@@ -101,10 +88,6 @@ async function parentOf(sb: Sb, docType: string, docId: string): Promise<Cascade
   if (e2 || !srcLines?.length) return null;
   const parentKeys = [...new Set((srcLines as Array<Record<string, string | null>>)
     .map((r) => r[up.sourceParentCol]).filter((v): v is string => !!v))];
-  /* MORE THAN ONE PARENT IS NOT A CHAIN. A merged conversion has several, and
-     "send the ancestors in order" has no single answer for it — the caller is
-     told nothing rather than told the first one, which would silently send one
-     parent and leave the rest. */
   if (parentKeys.length !== 1) return null;
 
   const keyCol = KEYED_BY_NUMBER.has(up.parentType) ? up.parentNoCol : 'id';
@@ -131,7 +114,6 @@ async function parentOf(sb: Sb, docType: string, docId: string): Promise<Cascade
  */
 export interface CascadeStep extends CascadeDoc {
   reason: CascadeReason;
-  /** The outbox row to send, or null when the document has none at all. */
   rowId: string | null;
   rowStatus: string | null;
 }
@@ -232,7 +214,6 @@ export async function ancestorsNeedingSend(
     type = parent.docType;
     id = parent.docId;
   }
-  /* Collected child-upwards; the caller sends parent-downwards. */
   return steps.reverse();
 }
 

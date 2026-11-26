@@ -1,8 +1,3 @@
-// attachOrderPurchaseOrders — the Service Case "Order PO" merge. A case's own
-// po_no is the SERVICE purchase order (generate-po, costing); this is a
-// different fact: the supplier purchase orders raised from the case's SALES
-// ORDER lines. Pinned through a minimal fake PostgREST client, the same shape
-// as scm/lib/so-converted-po.test.ts, because the D1 test harness has no scm.
 import { describe, expect, test } from 'vitest';
 import { applyErpSupplierNames, attachOrderPurchaseOrders, supplierPickerResults, orderPoSupplierCode, orderSupplierCode } from './assrOrderPos';
 
@@ -40,7 +35,6 @@ const tables = {
     { id: 'hl-1', doc_no: 'HC-SO-011733', company_id: HOUZS },
     { id: 'hl-2', doc_no: 'HC-SO-011733', company_id: HOUZS },
     { id: 'tl-1', doc_no: 'SO-2607-001', company_id: CO_2990 },
-    // Same doc number in the OTHER company: must never reach a Houzs case.
     { id: 'xl-1', doc_no: 'SO-2607-001', company_id: HOUZS },
   ],
   purchase_order_items: [
@@ -69,14 +63,11 @@ describe('attachOrderPurchaseOrders', () => {
       { id: 'po-h2', po_number: 'HC-PO-008790' },
     ]);
     expect(rows[1].order_pos).toEqual([{ id: 'po-t1', po_number: 'PO-2607-004' }]);
-    // The case's own service PO is a different field and is never touched.
     expect(rows[0].po_no).toBe('SVC-PO-1');
     expect(rows[1].po_no).toBeNull();
   });
 
   test("a case reads only its OWN company's books", async () => {
-    // A 2990 case on SO-2607-001 must not pick up HC-PO-000001, raised from
-    // the Houzs line that happens to carry the same doc number.
     const seen: string[] = [];
     const rows: Row[] = [{ id: 11, doc_no: 'SO-2607-001', company_id: CO_2990 }];
     await attachOrderPurchaseOrders(fakeSb(tables, seen), rows);

@@ -16,19 +16,15 @@ export type BillMatch = {
   so_project_id: number | null;
   so_salesperson_id: string | null;
   so_amount_sen: number | null;
-  /** The order exists under ANOTHER event — the rep is asked to amend it. */
   other_event: boolean;
-  /** The order exists and is linked to no event. */
   unlinked: boolean;
 };
 
 export type ProjectSalesBill = {
-  /** `${source_activity_id}:${line}` — stable while the chat message is. */
   key: string;
   ref_raw: string;
   ref_token: string;
   amount_sen: number;
-  /** A "+ 710(T)" tail the report keeps apart from the bill; shown, not counted. */
   extra_sen: number | null;
   extra_tag: string | null;
   salesperson_name: string | null;
@@ -38,7 +34,6 @@ export type ProjectSalesBill = {
   match: BillMatch;
   person_key: string;
   sales_rep_id: number | null;
-  /** The event a wrongly linked order sits under, when it is one. */
   other_event_name: string | null;
 };
 
@@ -70,7 +65,6 @@ export type BillTotals = {
 export type ReportSummary = {
   activity_id: number;
   total_sen: number;
-  /** Sum of its day lines; null when it has none. */
   days_sen: number | null;
   created_at: string | null;
 };
@@ -79,15 +73,11 @@ export type ProjectSalesBillsResponse = {
   bills: ProjectSalesBill[];
   persons: PersonSummary[];
   totals: BillTotals;
-  /** Chat messages whose bills count — the chat marks those. */
   report_activity_ids: number[];
   summary: ReportSummary | null;
-  /** Total Sales in whole RM — sent to the three who report only, else null. */
   total_sales_rm: number | null;
   can_save: boolean;
-  /** This event — what "transfer here" moves an order to (null from an older server). */
   project_id?: number | null;
-  /** The caller may transfer an order here from the report (Finance or PMS). */
   can_transfer?: boolean;
 };
 

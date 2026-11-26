@@ -1,30 +1,14 @@
-// ----------------------------------------------------------------------------
-// payment-vocab — the live, active payment dropdown vocabulary and the snap that
-// enforces "never invent a value not in the live list".
-//
-// ONE HOME for the four payment-cascade categories (payment_method /
-// payment_merchant / online_type / installment_plan) and the canonical-casing
-// snap. Lifted out of scm/routes/scan-payment.ts so the Houzs Connect payment
-// push (routes/connect-payments.ts) validates a pushed bank / online sub-type
-// against the SAME active so_dropdown_options the OCR flow snaps to — rather
-// than carrying a second, drifting copy of the loader and the match. scan-payment
-// keeps its OCR-specific prompt + formatOptions; only the load + snap moved.
-// ----------------------------------------------------------------------------
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { paginateAll } from './paginate-all';
 
-// scm-scoped, loosely-typed client (matches scm/env.ts Variables.supabase and
-// the service-role client from db/supabase.getSupabaseService). The scm
-// PostgREST client has no generated schema types, so it is typed loosely here
-// exactly as scan-payment.ts and every scm route do.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose scm client; no generated schema types (same as scan-payment.ts / scm route Variables.supabase)
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
 export const PAYMENT_OPTION_CATEGORIES = [
-  'payment_method',     // L1 — Merchant / Online / Cash (3-method model)
-  'payment_merchant',   // L2 merchant banks (MBB / CIMB / Public / AEON / …)
-  'online_type',        // L2 online sub-types (Bank Transfer / TNG / Cheque / DuitNow)
-  'installment_plan',   // L2 Merchant plans (One Shot / 3 / 6 / 12 / 24 / 36 months)
+  'payment_method',
+  'payment_merchant',
+  'online_type',
+  'installment_plan',
 ] as const;
 export type PaymentOptionCategory = (typeof PAYMENT_OPTION_CATEGORIES)[number];
 export type CatalogOption = { value: string; label: string };

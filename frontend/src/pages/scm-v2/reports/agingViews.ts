@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// agingViews — what the AR / AP aging screen works out from the report it was
-// given (the owner's Claude Design, batch 6 §5.4 (a), question g1's default),
-// once, so the tiles, the tables and the exports read the same figures:
-//   · the tiles' second lines — how many parties hold money in each column,
-//     in Unapplied, and at all;
-//   · the By invoice view — the design's flat table: each open bill of each
-//     party with its Days overdue (the as-at day less the due day; a bill with
-//     no due date is due on its own date, as the server ages it by due date)
-//     and the design's bucket (Current / 1-30 / 31-60 / 61-90 / 90+), then the
-//     money not tied to a bill, as Unapplied.
-// No read change: everything comes from the report's rows[].items/unapplied.
-// ----------------------------------------------------------------------------
 
 import type { AgingRow } from '../../../vendor/scm/lib/aging-queries';
 import type { Tone } from '../finance/SetupParts';
@@ -60,20 +47,14 @@ export type AgingInvoiceLine = {
   kind: string;
   date: string;
   dueDate: string | null;
-  /** The order a customer's bill belongs to (AR), for its link. */
   so: string | null;
-  /** The bill's whole amount; for unapplied money, that money. */
   amountSen: number;
-  /** What is outstanding: the bill's open part, or the unapplied money (negative). */
   outstandingSen: number;
-  /** The column the bill sits in on the party view; null for unapplied money. */
   column: number | null;
-  /** The as-at day less the due day (or the bill's date); null for unapplied money. */
   daysOverdue: number | null;
   bucket: OverdueBucket | 'unapplied';
 };
 
-/** Most overdue first; the unapplied money after the bills; then by date and number. */
 const byOverdue = (a: AgingInvoiceLine, b: AgingInvoiceLine): number =>
   (b.daysOverdue ?? Number.NEGATIVE_INFINITY) - (a.daysOverdue ?? Number.NEGATIVE_INFINITY)
   || a.date.localeCompare(b.date)

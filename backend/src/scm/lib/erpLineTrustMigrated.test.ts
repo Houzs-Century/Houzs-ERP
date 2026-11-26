@@ -36,8 +36,6 @@ describe('erpLineTrust — the migrated marker', () => {
   });
 
   it('the migrated answer is NOT the same value as a native trusted one', () => {
-    /* The whole point: only 'including-zero' switches off the chargeable
-       surcharge arm. If these two ever compare equal the fix is gone. */
     expect(erpLineTrust(false, 0, undefined, true))
       .not.toBe(erpLineTrust(false, 0, undefined, false));
   });

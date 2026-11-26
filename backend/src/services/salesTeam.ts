@@ -1,8 +1,5 @@
 import type { Env } from "../types";
 
-// ── Code generator ────────────────────────────────────────────
-// Format: SR-NNN. Sequence picks up after the highest existing code
-// across all-time (no per-year reset since rep population is small).
 
 export async function nextSalesRepCode(env: Env): Promise<string> {
   const row = await env.DB.prepare(
@@ -19,12 +16,6 @@ export async function nextSalesRepCode(env: Env): Promise<string> {
   return `SR-${String(next).padStart(3, "0")}`;
 }
 
-// ── Cycle check ──────────────────────────────────────────────
-// Walk upward from the proposed upline; if we ever land on the rep
-// itself, the assignment would create a loop. Caller-less on main:
-// its POST/PATCH sales-team admin routes are stranded on
-// ux/tier3-polish and the module is slated to return (owner call,
-// 2026-07-29). Kept deliberately — don't sweep as dead code.
 
 export async function wouldCreateUplineCycle(
   env: Env,
@@ -36,7 +27,7 @@ export async function wouldCreateUplineCycle(
   const visited = new Set<number>();
   while (cursor != null) {
     if (cursor === repId) return true;
-    if (visited.has(cursor)) return true; // pre-existing cycle in data, defensive
+    if (visited.has(cursor)) return true;
     visited.add(cursor);
     const row: { upline_id: number | null } | null = await env.DB.prepare(
       `SELECT upline_id FROM sales_reps WHERE id = ?`,
@@ -48,13 +39,6 @@ export async function wouldCreateUplineCycle(
   return false;
 }
 
-// ── Subtree resolution ───────────────────────────────────────
-// Returns the set of rep ids in a rep's downline (inclusive); archived
-// reps are pruned together with their whole branch. No callers on main
-// today: SCM row-level visibility moved to the users manager_id tree
-// (scm/lib/salesScope.ts, PR #245) and the admin-of-subtree PATCH checks
-// left with the stripped sales-team admin module. Kept deliberately —
-// salesTeamSubtree.test.ts pins the contract.
 
 export async function subtreeRepIds(env: Env, rootRepId: number): Promise<Set<number>> {
   const result = new Set<number>([rootRepId]);
@@ -78,7 +62,6 @@ export async function subtreeRepIds(env: Env, rootRepId: number): Promise<Set<nu
   return result;
 }
 
-// ── Audit log helper ─────────────────────────────────────────
 
 export async function logSalesTeamActivity(
   env: Env,
@@ -157,20 +140,6 @@ export async function ensureSalesRepForUser(
   return { action: "created", repId };
 }
 
-// ── User ↔ Sales rep sync ────────────────────────────────────
-//
-// Keeps the sales_reps roster in lockstep with the users.department:
-//   * department = "Sales" and no rep row → auto-create (linked by user_id)
-//   * department = "Sales" and rep is archived → un-archive
-//   * department ≠ "Sales" and rep exists → soft-archive
-//
-// Sales-specific attributes (position, upline, commission, brands) stay
-// editable in the Sales Team page — only the rep ROW lifecycle is auto-
-// managed here. Called from users PATCH after department_id changes.
-//
-// Department lookup is by NAME (case-insensitive). There's no slug on
-// the departments table; the seeded row is canonically "Sales" but prod
-// uses "Sales Department", so we match any name CONTAINING 'sales'.
 
 export async function syncSalesRepFromUser(
   env: Env,
@@ -189,7 +158,6 @@ export async function syncSalesRepFromUser(
 
   const isSales = (user.dept_name || "").trim().toLowerCase().includes("sales");
 
-  // Existing rep linked to this user (active or archived).
   const existing = await env.DB.prepare(
     `SELECT id, archived_at FROM sales_reps WHERE user_id = ? LIMIT 1`,
   )
@@ -198,8 +166,6 @@ export async function syncSalesRepFromUser(
 
   if (isSales) {
     if (!existing) {
-      // Auto-create with sensible defaults — boss fills in position /
-      // upline / brands / commission from the Sales Team page later.
       const code = await nextSalesRepCode(env);
       const r = await env.DB.prepare(
         `INSERT INTO sales_reps (code, name, email, user_id, status)
@@ -220,7 +186,6 @@ export async function syncSalesRepFromUser(
       return { action: "created", repId };
     }
     if (existing.archived_at) {
-      // Restore — they're back in Sales.
       await env.DB.prepare(
         `UPDATE sales_reps
             SET archived_at = NULL, archived_by = NULL, status = 'active',
@@ -243,7 +208,6 @@ export async function syncSalesRepFromUser(
     return { action: "noop", repId: existing.id };
   }
 
-  // Not in Sales — archive any live rep row.
   if (existing && !existing.archived_at) {
     await env.DB.prepare(
       `UPDATE sales_reps

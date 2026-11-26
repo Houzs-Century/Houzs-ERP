@@ -16,9 +16,7 @@ const TOKEN = "abcdefghijklmnopqrstuvwx012345_-";
 const fetchMock = vi.fn();
 const sheets: (string | number)[][][] = [];
 const written: string[] = [];
-// What the contractor's server says one press of Export covers.
 let contractorScope: "month" | "year" = "month";
-// The floorplan PDF: what jsPDF was told to draw and what it was asked to save as.
 const pdf = vi.hoisted(() => ({ pages: [] as { orientation: string; texts: string[]; images: string[] }[], saved: [] as string[] }));
 
 vi.mock("jspdf", () => ({
@@ -47,8 +45,6 @@ vi.mock("../lib/xlsx-runtime", () => ({
 
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
-  // jsdom cannot decode images; the page falls back to a 4:3 landscape page
-  // without this, so give it a real size to prove the orientation is read.
   vi.stubGlobal("createImageBitmap", async () => ({ width: 600, height: 900, close() {} }));
   sheets.length = 0;
   written.length = 0;
@@ -79,7 +75,6 @@ const event = {
   name: null,
 };
 
-/** A fake of both public routes, keyed on the URL's tail. */
 function serve(url: string): Promise<Response> {
   if (/\/export\?(month=\d{4}-\d{2}|year=\d{4})$/.test(url)) {
     const brand = url.includes("/brand-calendar/");
@@ -162,7 +157,6 @@ describe("ShareCalendar", () => {
     window.history.pushState({}, "", `/b/${TOKEN}`);
     render(<ShareCalendar mode="brand" />);
     await screen.findByText(/Booth 3053-3055/);
-    // A brand link's Export is a menu; the contractor's (above) is one button.
     expect(screen.queryByText("Export to Excel")).toBeNull();
     fireEvent.click(screen.getByText("Export"));
     fireEvent.click(screen.getByText("Event List"));
@@ -186,15 +180,12 @@ describe("ShareCalendar", () => {
     fireEvent.click(screen.getByText("Display Floorplan"));
     await waitFor(() => expect(pdf.saved.length).toBe(1));
     expect(pdf.saved[0]).toMatch(/^AKEMI display floorplans .+\.pdf$/);
-    // Two image pages (the .pdf upload on event 7 is skipped), event 7 first.
     expect(pdf.pages.map((p) => p.images)).toEqual([["JPEG"], ["PNG"]]);
     expect(pdf.pages.map((p) => p.orientation)).toEqual(["portrait", "portrait"]);
     expect(pdf.pages[0].texts).toEqual(["MID VALLEY", "2026/09/11 – 2026/09/13  ·  Booth 3053-3055"]);
     expect(pdf.pages[1].texts).toEqual(["Spice Fair", "2026/09/20 – 2026/09/21  ·  SETIA SPICE"]);
-    // Only image files were fetched, and the .pdf upload never was.
     const fetched = fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => /\/floorplan\/t\d+$/.test(u));
     expect(fetched.map((u) => u.slice(u.lastIndexOf("/") + 1))).toEqual(["t702", "t901"]);
-    // Nothing from the event list went into the PDF.
     expect(pdf.pages.flatMap((p) => p.texts).join(" ")).not.toContain("Total");
   });
 
@@ -244,8 +235,6 @@ describe("ShareCalendar", () => {
     window.history.pushState({}, "", `/c/${TOKEN}`);
     fetchMock.mockImplementation((input: RequestInfo | URL) => serve(String(input)));
     render(<ShareCalendar mode="contractor" />);
-    // The bar carries whatever organizer the server returned; the Solo -> "Solo"
-    // masking happens server-side, so the page simply shows the value.
     expect(await screen.findByText(/HOMELOVE/)).toBeTruthy();
   });
 

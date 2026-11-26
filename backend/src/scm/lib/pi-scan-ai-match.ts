@@ -1,12 +1,3 @@
-// ---------------------------------------------------------------------------
-// pi-scan-ai-match — the last try for invoice rows the rules could not tie (owner
-// 2026-11-09: "if it's similar it should AI-match"). ONE text call per invoice:
-// the printed rows still untied and the supplier's open SKUs; the model names the
-// best SKU per row, or none, with a confidence. Only a high-confidence answer
-// naming a SKU we sent, of the size the row prints, is kept, and it reaches the
-// check screen marked "AI match, please check". No key, a failed call or an
-// unreadable answer leaves the rows as they were, never an error.
-// ---------------------------------------------------------------------------
 
 import type { Env } from '../env';
 import { recordAi, type AiUsageTag } from '../../services/aiUsage';

@@ -116,7 +116,6 @@ async function chunkRoad(apiKey: string, chunk: Point[], cache: ChunkCache): Pro
     const res = await fetch(chunkUrl(chunk, apiKey), { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) return null;
     const body = (await res.json()) as Body;
-    // A quota or key refusal can clear up; only a real answer about this chunk is kept.
     if (body.status !== 'OK' && body.status !== 'ZERO_RESULTS' && body.status !== 'NOT_FOUND') return null;
     const road = parseChunkRoad(body, chunk);
     await cache.put(key, road);

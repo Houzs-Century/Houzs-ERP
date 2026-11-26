@@ -22,8 +22,6 @@ import {
   type DefectActionTone,
 } from "./defectReviewer";
 
-/** Outline-button Tailwind for a defect action tone (the list only shows idle
- *  buttons — the editor replaces them once one is picked). */
 function defectListBtn(tone: DefectActionTone): string {
   switch (tone) {
     case "done":
@@ -34,8 +32,6 @@ function defectListBtn(tone: DefectActionTone): string {
       return "border-amber-300 bg-surface text-amber-600 hover:bg-amber-50 dark:border-amber-800 dark:text-amber-300 dark:hover:bg-amber-950/40";
   }
 }
-/** Badge Tailwind for a stored status: resolved green, in-progress/fresh amber,
- *  escalated rose. */
 function defectListBadge(status: string | null): string {
   const stage = defectStage(status);
   if (stage === "resolved") return "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300";
@@ -103,15 +99,11 @@ interface ProjectGroup {
   rows: DefectRow[];
 }
 
-/** Normalize a stored date ("2026-12-18", "2026/12/18", or an ISO timestamp)
- *  to "YYYY-MM-DD" so it compares lexicographically with <input type="date">. */
 function dateKey(value: string | null): string {
   if (!value) return "";
   return value.slice(0, 10).replace(/\//g, "-");
 }
 
-/** Group the flat feed by project, preserving the server's ordering (most
- *  recent event first, newest photo first within it). */
 function groupByProject(rows: DefectRow[]): ProjectGroup[] {
   const order: number[] = [];
   const by = new Map<number, ProjectGroup>();
@@ -139,8 +131,6 @@ function groupByProject(rows: DefectRow[]): ProjectGroup[] {
   return order.map((id) => by.get(id)!);
 }
 
-// A lazily-fetched thumbnail (same auth'd blob fetch the full viewer uses).
-// Revoked on unmount; a non-image or a failed fetch leaves a hatched box.
 function DefectThumb({
   r2Key,
   contentType,
@@ -210,7 +200,6 @@ export function DefectListView() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [lightbox, setLightbox] = useState<number | null>(null);
-  // One action editor open at a time, keyed by attachment id.
   const [draft, setDraft] = useState<{ attId: number; status: string } | null>(null);
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
@@ -233,10 +222,6 @@ export function DefectListView() {
   );
   const hasFilter = search.trim() !== "" || dateFrom !== "" || dateTo !== "";
 
-  // Filter client-side on the already-fetched feed: fast, and no extra request
-  // while the service team types. Search spans the event fields a user would
-  // recognise (name, code, brand, organizer, venue, booth, state); the date
-  // range keeps events whose run overlaps the chosen window.
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase();
     return allRows.filter((r) => {
@@ -251,7 +236,6 @@ export function DefectListView() {
         const start = dateKey(r.start_date);
         const end = dateKey(r.end_date) || start;
         if (!start && !end) return false;
-        // Overlap: event ends on/after dateFrom and starts on/before dateTo.
         if (dateFrom && end && end < dateFrom) return false;
         if (dateTo && start && start > dateTo) return false;
       }
@@ -333,8 +317,6 @@ export function DefectListView() {
         </span>
       </div>
 
-      {/* Search + date filter — find an event by name/booth/organizer, or narrow
-          to a date window. All client-side over the fetched feed. */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-muted" />
@@ -444,7 +426,6 @@ export function DefectListView() {
                         onOpen={() => setLightbox(idx)}
                       />
                       <div className="min-w-0 flex-1">
-                        {/* Model / Reason the uploader recorded. */}
                         {(model || reason) && (
                           <div className="rounded-md border-l-[3px] border-amber-400 bg-surface-2 px-2.5 py-1.5 text-[11.5px] leading-snug text-ink-secondary">
                             {model && (
@@ -476,10 +457,6 @@ export function DefectListView() {
                           </div>
                         )}
 
-                        {/* Action buttons — same gate and route as the project
-                            detail card. Fresh → reviewer (Done Clean / Exchange /
-                            Service); escalated → purchaser (In Progress / Done).
-                            Every button opens the remark editor before it saves. */}
                         {((stage === "fresh" && canReview) || (stage === "purchaser" && canPurchase)) &&
                           !editing && (
                             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">

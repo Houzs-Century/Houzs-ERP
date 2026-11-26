@@ -36,10 +36,6 @@ type EffectivePolicy = {
   duty: string;
 };
 
-/** What a Title resolves to right now — from its row when it has one, else
- *  from the name rule (reported as `source: "name"` so the editor can show
- *  "not set — defaults to …"). A name-resolved Title has no profile the code
- *  can name, so it reads null there. */
 function effectiveFor(p: PositionRow, row: PositionPolicyRow | null): { source: "row" | "name"; effective: EffectivePolicy } {
   if (row) {
     return {
@@ -79,8 +75,6 @@ async function loadPosition(env: Env, id: number): Promise<PositionRow | null> {
     .first<PositionRow>();
 }
 
-/** GET /api/position-policy — every Title with its row (if any) and what it
- *  resolves to, plus the vocabularies the editor renders. */
 app.get("/", requirePermission("users.read"), async (c) => {
   const [positions, rows] = await Promise.all([
     c.env.DB.prepare(
@@ -102,8 +96,6 @@ app.get("/", requirePermission("users.read"), async (c) => {
   });
 });
 
-/** PUT /api/position-policy/:positionId — set (upsert) one Title's row.
- *  Body: { cohort, profile, can_move_money, can_write_config, is_fleet }. */
 app.put("/:positionId", requirePermission("roles.manage"), async (c) => {
   const positionId = parseInt(c.req.param("positionId"), 10);
   if (!Number.isFinite(positionId) || positionId <= 0)
@@ -160,8 +152,6 @@ app.put("/:positionId", requirePermission("roles.manage"), async (c) => {
   return c.json({ ok: true, row: after, ...effectiveFor(position, after) });
 });
 
-/** DELETE /api/position-policy/:positionId — remove the row; the Title goes
- *  back to the name rule (reported as source "name" on the next GET). */
 app.delete("/:positionId", requirePermission("roles.manage"), async (c) => {
   const positionId = parseInt(c.req.param("positionId"), 10);
   if (!Number.isFinite(positionId) || positionId <= 0)

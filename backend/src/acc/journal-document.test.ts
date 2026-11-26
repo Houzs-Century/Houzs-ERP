@@ -1,10 +1,3 @@
-/* The document a journal entry was written from (batch 6, owner question g3:
-   the card of a document's entry opens its document instead of posting).
-   Pinned: an invoice, a voucher and a note are read back from their number to
-   the id their page opens by; a payment opens the order or the invoice it sits
-   on; a reversal opens its original's document; another company's row is never
-   found; an entry with no document (a stock close, a manual journal) has none;
-   a failed read is a refusal, never a blank. */
 
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';

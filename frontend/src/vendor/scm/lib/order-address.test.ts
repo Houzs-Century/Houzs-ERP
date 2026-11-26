@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { orderAddressLines, soStreetTail } from './order-address';
 
-/* 2990-0036 (2990-SO-2611-009): the POS sent the whole address as address1 and
-   the save spilled its end into address3, which the SO print left out. */
 describe('a street that runs on into lines 3 and 4 prints', () => {
   const SPILLED = {
     address1: "A-05-07, D'Clover Residences, A-UG1-11,", address2: 'Dataran Sentral Damansara, No 3,',

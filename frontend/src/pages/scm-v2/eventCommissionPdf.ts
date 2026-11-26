@@ -43,7 +43,6 @@ export function ecPrintedBlock(b: EcBlock): { head: string[]; body: EcPrintedCel
 }
 
 const FILL: Partial<Record<EcRowKind, Rgb>> = { subtotal: [241, 242, 238], total: [227, 230, 224] };
-/** The type a size down as a table widens, so it stays on A4. */
 const fontFor = (columns: number): number => (columns <= 9 ? 7.5 : columns <= 13 ? 7 : 6.5);
 const TOP = 16;
 
@@ -62,7 +61,6 @@ export async function generateEcPdf(sections: readonly EcSection[], opts: {
       y += 8;
     }
     for (const b of s.blocks) {
-      /* A title never sits alone at the foot of a page. */
       if (y > pageH - 40) { doc.addPage(); y = TOP; }
       if (b.title) {
         doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5); doc.setTextColor(0);
@@ -91,7 +89,6 @@ export async function generateEcPdf(sections: readonly EcSection[], opts: {
           if (kind === 'group') { d.cell.styles.halign = 'left'; d.cell.styles.cellPadding = { ...LISTING_CELL, top: 3 }; }
           if (kind === 'group' || kind === 'subtotal' || kind === 'total') d.cell.styles.fontStyle = 'bold';
           if (kind === 'memo') d.cell.styles.textColor = 110;
-          /* An "of which" line and a brand under its tab's total are set in. */
           if ((kind === 'memo' || kind === 'inner') && d.column.index === 0) d.cell.styles.cellPadding = { ...LISTING_CELL, left: 4.5 };
           const fill = FILL[kind];
           if (fill) d.cell.styles.fillColor = fill;

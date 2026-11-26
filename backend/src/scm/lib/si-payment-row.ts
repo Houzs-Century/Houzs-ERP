@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// si-payment-row — the factored insert core of POST /sales-invoices/:id/payments,
-// with the column list that belongs to it.
-//
-// The same split so-payment-row.ts records for the SO side: the file-size
-// ratchet holds routes/sales-invoices.ts to "may only shrink", so the payment
-// row's derivation + insert live below the route layer. Moved verbatim apart
-// from the imports — a split the ratchet asks for, not a redesign. The legacy
-// quick-pay endpoint's minimal cash insert stays in-route on purpose: it
-// derives nothing.
-// ----------------------------------------------------------------------------
 
 import { createReceiptForPayment } from '../../acc/receipts';
 import { companyCodeById } from './doc-no';
@@ -46,7 +35,6 @@ export async function insertSiPaymentRow(sb: any, p: SiPaymentRowInput) {
   const onlineType        = p.method === 'transfer' ? (p.onlineType ?? null) : null;
 
   const res = await sb.from('sales_invoice_payments').insert({
-    // The ACTIVE company, proven to be the invoice's by the caller's scoped read.
     company_id:         p.companyId,
     sales_invoice_id:   p.salesInvoiceId,
     paid_at:            p.paidAt,
@@ -62,10 +50,6 @@ export async function insertSiPaymentRow(sb: any, p: SiPaymentRowInput) {
     created_by:         p.createdBy,
   }).select(SI_PAYMENT_COLS).single();
 
-  /* The Official Receipt is born with the payment (GL redesign item 9) —
-     DRAFT for card/transfer, formal at once for cash. BEST-EFFORT: the money
-     is recorded; a receipt hiccup must never un-record it, and
-     ensureReceiptForPayment heals the gap at the next print. */
   if (!res.error) {
     try {
       const paymentId = String((res.data as { id?: unknown } | null)?.id ?? '');

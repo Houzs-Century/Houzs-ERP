@@ -5,16 +5,6 @@
    Not a waiver, a signal separator: 13 of ~20 findings were these every run.
    If the fleet ever needs per-company reads, delete this header and let the
    checker fail. docs/MASTER-DATA-SCOPE-RULE.md. */
-// ----------------------------------------------------------------------------
-// /driver-leave — Fleet Module A3 admin for scm.driver_leave (mig 0206). The
-// small master the dispatcher uses to record a driver's date-ranged absence so
-// the A2 auto-assigner (delivery-zones sequence-assign) stops crewing them on
-// those days. There is no structured HR leave source in this ERP, so this is it.
-//
-// Same Transportation area gate as the rest of the TMS fleet masters
-// (scm.transportation.drivers) — mounted in scm/index.ts. Company-scoped writes;
-// the read is scoped to the active company like the other per-company masters.
-// ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -28,10 +18,6 @@ driverLeave.use('*', supabaseAuth);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const COLS = 'id, driver_id, helper_id, start_date, end_date, reason, created_at';
 
-// Leave is an INTERNAL-driver concept only: you do not track a 3PL's drivers'
-// absences (scm.drivers.in_house = false). PURE guard over a driver lookup row —
-// only a driver KNOWN to be external (in_house === false) is rejected; a missing
-// flag defaults to in-house, matching the column's NOT NULL DEFAULT true.
 export function isInHouseDriver(row: { in_house?: unknown } | null | undefined): boolean {
   if (!row) return false;
   return row.in_house !== false;
@@ -42,7 +28,6 @@ function rowOut(r: Record<string, unknown>) {
   const helperId = (r.helperId ?? r.helper_id) ?? null;
   return {
     id: String(r.id),
-    // WS2: a row is EITHER a driver's or a helper's leave (mig 0208 XOR).
     driverId: driverId != null ? String(driverId) : null,
     helperId: helperId != null ? String(helperId) : null,
     startDate: String((r.startDate ?? r.start_date) ?? '').slice(0, 10),
@@ -52,8 +37,6 @@ function rowOut(r: Record<string, unknown>) {
   };
 }
 
-// GET /driver-leave?driverId=&from=&to= — the leave rows, optionally filtered to
-// a driver and/or overlapping a [from, to] window.
 driverLeave.get('/', async (c) => {
   const sb = c.get('supabase');
   const driverId = c.req.query('driverId');
@@ -65,7 +48,6 @@ driverLeave.get('/', async (c) => {
     .order('start_date', { ascending: false });
   if (driverId) q = q.eq('driver_id', driverId);
   if (helperId) q = q.eq('helper_id', helperId);
-  // Overlap: start_date <= to AND end_date >= from.
   if (to && ISO_DATE.test(to)) q = q.lte('start_date', to);
   if (from && ISO_DATE.test(from)) q = q.gte('end_date', from);
   const { data, error } = await q;
@@ -73,7 +55,6 @@ driverLeave.get('/', async (c) => {
   return c.json({ leave: ((data ?? []) as Array<Record<string, unknown>>).map(rowOut) });
 });
 
-// WS2: a leave row targets EXACTLY ONE of a driver or a helper (mig 0208 XOR).
 const createSchema = z.object({
   driverId: z.string().uuid().optional(),
   helperId: z.string().uuid().optional(),
@@ -86,7 +67,6 @@ const createSchema = z.object({
     message: 'Provide exactly one of driverId or helperId', path: ['driverId'],
   });
 
-// POST /driver-leave — record an absence.
 driverLeave.post('/', async (c) => {
   // company-scope: the driver/helper lookups read the UNIFIED roster (drivers.ts / helpers.ts "every company's TMS page shows the same drivers"); the leave row itself is stamped with the active company and its list/delete are company-scoped.
   let body: unknown;
@@ -98,9 +78,6 @@ driverLeave.post('/', async (c) => {
 
   const sb = c.get('supabase');
 
-  // INTERNAL-only guard for DRIVERS: leave records only make sense for own-fleet
-  // drivers. Look the driver up (roster is company-unified like the /drivers read)
-  // and reject an external/3PL driver with a clear 422 before writing.
   if (p.driverId) {
     const { data: drv, error: drvErr } = await sb.from('drivers')
       .select('id, in_house').eq('id', p.driverId).maybeSingle();
@@ -113,8 +90,6 @@ driverLeave.post('/', async (c) => {
       }, 422);
     }
   } else {
-    // HELPERS have no in_house flag yet (all internal today — see mig 0208); only
-    // confirm the helper exists before writing. A 3PL-external guard follows in WS4.
     const { data: hlp, error: hErr } = await sb.from('helpers')
       .select('id').eq('id', p.helperId!).maybeSingle();
     if (hErr) return c.json({ error: 'helper_lookup_failed', reason: hErr.message }, 500);
@@ -131,22 +106,12 @@ driverLeave.post('/', async (c) => {
     created_by: user?.id ?? null,
   }).select(COLS).single();
   if (error) {
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'create_failed', reason: error.message }, 500);
   }
   return c.json({ leave: rowOut(data as Record<string, unknown>) }, 201);
 });
 
-// DELETE /driver-leave/:id — remove an absence (reversible: re-add it). STRICT
-// company scope so one company cannot delete another's row.
 driverLeave.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');

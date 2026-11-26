@@ -12,6 +12,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
+import { primeProductCategories } from './product-categories-store';
 
 type JsPdf = import('jspdf').jsPDF;
 
@@ -33,8 +34,8 @@ afterEach(() => {
 });
 
 async function printedText(groups: string[]): Promise<string[]> {
-  /* Plain ASCII, no variants, no logo: no font fetch and no network. */
   setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
+  primeProductCategories([{ code: 'FABRIC_ACCESSORY', name: 'Sofa Accessory', isActive: true }, { code: 'SOFA', name: 'Sofa', isActive: true }]);
   const [{ jsPDF }, { default: autoTable }, { renderSalesOrderInto }] = await Promise.all([
     import('jspdf'),
     import('jspdf-autotable'),

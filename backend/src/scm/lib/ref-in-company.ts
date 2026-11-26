@@ -1,40 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────
-// ref-in-company.ts — prove that a REFERENCE arriving in a request body names
-// a row this caller's company owns, before writing anything against it.
-//
-// WHY THIS FILE EXISTS. companyScope.ts covers the two shapes that were being
-// got wrong at the time it was written: scoping a QUERY (scopeToCompany*) and
-// proving a named SOURCE DOCUMENT (crossCompanySourceRefusal). Neither covers
-// the third shape, which is a body field naming a piece of INFRASTRUCTURE —
-// a warehouse, a trip — that the handler then writes stock or stops into.
-//
-// A grep for assertWarehouseInCompany / warehouseInCompany / requireWarehouse
-// across backend/src/scm returned NOTHING on 2026-08-18, and that absence is
-// visible in the call sites: three separate handlers took `body.warehouseId`
-// or `body.tripId` straight from the request and used it, each with its own
-// half-argument about why that was fine. One of those arguments was factually
-// wrong (stock-takes claimed v_inventory_all_skus has no company_id; migration
-// 0156 appends `w.company_id` to it as the last column and says so in its own
-// header). The rule was missing, so each site invented one.
-//
-// TWO PREDICATES, NOT ONE, because the two references have different rules and
-// collapsing them would be a leak in one direction or an outage in the other:
-//
-//   · WAREHOUSES are PER-COMPANY (mig 0086 adds warehouses.company_id; 0087
-//     makes the code unique per company). The predicate is the ACTIVE company.
-//   · TRIPS are a CROSS-COMPANY shared queue (companyScope.ts's second pattern;
-//     trips.ts:423 reads them with scopeToAllowedCompanies). The predicate is
-//     the caller's ALLOWED set — wider, but still a predicate. "Shared queue"
-//     has never meant "no predicate" here.
-//
-// BOTH DEGRADE where the company context is unresolved, and both FAIL CLOSED on
-// a read error. The degrade matches every helper in companyScope.ts, so a
-// pre-migration / D1-test-mirror / cold-start install keeps working. The
-// fail-closed on error does NOT: a read that errored has proved nothing, and
-// these guards sit in front of stock movements and driver routes, where
-// "unknown" must not resolve to "allowed" (same rule crossCompanySourceRefusal
-// states for conversions).
-// ─────────────────────────────────────────────────────────────────────────
 
 import { assertLinkedLineItemsMatch } from "./line-link-item-identity";
 import {
@@ -48,20 +11,10 @@ import {
 export type RefCheck =
   | { ok: true }
   | { ok: false; body: { error: string; message: string }; status: 404 | 409 | 500 }
-  /* The identity refusal (below) carries `reason` rather than `message`, the
-     shape `soLinkTargetRefusal` already answers with, and can be a 503 when the
-     source rows could not be READ — "we could not check" must never be spelled
-     the same way as "we checked and it was fine". */
   | { ok: false; body: { error: string; reason: string } & Record<string, unknown>; status: 409 | 503 };
 
 const OK: RefCheck = { ok: true };
 
-/** FAIL CLOSED on a read error, with a sentence an operator can act on. The
- *  driver's error text is deliberately NOT interpolated: the SCM client drops
- *  any server message of 200 characters or more, and a PostgREST message drags
- *  the whole refusal past that into a blank generic wall (the rule is written
- *  out on crossCompanyConversionBlocked). Log `reason` at the call site if you
- *  need it. */
 const unreadable = (what: string): RefCheck => ({
   ok: false,
   body: {
@@ -89,7 +42,7 @@ export async function assertWarehouseInCompany(
   warehouseId: string | null | undefined,
   companyId: number,
 ): Promise<RefCheck> {
-  if (!warehouseId) return OK; // nothing named — the caller's own required-check owns this
+  if (!warehouseId) return OK;
   const { data, error } = await sb
     .from("warehouses")
     .select("id")
@@ -122,11 +75,8 @@ export async function assertTripInAllowedCompanies(
 ): Promise<RefCheck> {
   if (!tripId) return OK;
   const allowed = allowedCompanyIds(c);
-  // UNRESOLVED → degrade, exactly as scopeToAllowedCompanies does.
   if (allowed === undefined) return OK;
   let q = sb.from("trips").select("id").eq("id", tripId);
-  // RESTRICTED TO NOTHING → `.in('company_id', [])` matches nothing, which is
-  // the correct answer for a caller granted no active company.
   q = q.in("company_id", allowed);
   const { data, error } = await q.maybeSingle();
   if (error) return unreadable("trip");

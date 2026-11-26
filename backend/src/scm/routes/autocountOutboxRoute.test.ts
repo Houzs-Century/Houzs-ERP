@@ -1,14 +1,3 @@
-// GET /api/scm/autocount-outbox — the page the owner reads.
-//
-// Harness follows tests/companyScopeMastersConfig.test.ts: a bare Hono app whose
-// middleware injects a fake scm supabase client and a company context, mounting
-// the EXPORTED handler rather than the router (the supabaseAuth bridge cannot
-// run here). The client is scm/lib/fake-postgrest's fakeSb, the same PostgREST
-// stand-in autocount-outbox.test.ts and autocount-requeue.test.ts already use.
-//
-// Each leak test is paired with a same-company test proving the legitimate
-// request still works — a scope assertion that only ever checks the negative
-// half passes just as happily when the endpoint returns nothing at all.
 import { Hono } from 'hono';
 import type { Env, Variables } from '../env';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -26,10 +15,6 @@ import {
   REQUEUED_LIKE,
 } from './autocount-outbox';
 
-/* The flag is cached for 30 seconds by design (a toggle must be readable
-   without a query per request), and the cache is module-level, so without this
-   the second test in a file inherits the first one's switch. Its own test seam,
-   used the way autocount-outbox.test.ts uses it. */
 beforeEach(() => resetWritebackFlagCache());
 
 type Row = Record<string, unknown>;
@@ -56,7 +41,6 @@ function harness(opts: {
   flag?: string | null;
   companyId?: number | undefined;
   perms?: string[];
-  /** Make the app_config read FAIL rather than come back empty. */
   missingAppConfigValue?: boolean;
 }) {
   const sb = fakeSb(
@@ -69,10 +53,6 @@ function harness(opts: {
     },
     opts.missingAppConfigValue ? { app_config: ['value'] } : {},
   );
-  /* Typed with the app's OWN Variables rather than a bare Hono plus `as never`
-     casts at every c.set. The casts are what the other harnesses in this tree
-     use, and they are exactly the thing that would let this file keep compiling
-     after the handler started reading a context key nobody sets here. */
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
   app.use('*', async (c, next) => {
     c.set('supabase', sb as unknown as Variables['supabase']);
@@ -88,12 +68,9 @@ function harness(opts: {
   app.get('/autocount-outbox', listAutocountOutboxHandler);
   app.post('/autocount-outbox/archive', archiveAutocountOutboxHandler);
   app.post('/autocount-outbox/restore', restoreAutocountOutboxHandler);
-  /* The fake is handed back so a test can read what the write actually did to
-     the rows, rather than trusting the handler's own report of it. */
   return Object.assign(app, { sb });
 }
 
-/** What the route answers with — every field the assertions below read. */
 interface Body {
   error?: string;
   reason?: string;
@@ -117,7 +94,6 @@ const get = async (app: Hono<{ Bindings: Env; Variables: Variables }>, qs = '') 
   return { status: res.status, body: (await res.json()) as Body };
 };
 
-/** The rows, non-null, so an assertion cannot silently pass on `undefined`. */
 const rowsOf = (body: Body): Array<Record<string, unknown>> => {
   if (!body.rows) throw new Error('the response carried no rows array');
   return body.rows;
@@ -135,7 +111,6 @@ describe('GET /autocount-outbox — permission gate', () => {
     expect(status).toBe(403);
     expect(body.error).toBe('forbidden');
     expect(body.message).toContain('scm.autocount.read');
-    /* The refusal must not leak the thing it is refusing. */
     expect(body.rows).toBeUndefined();
     expect(body.counts).toBeUndefined();
   });
@@ -146,8 +121,6 @@ describe('GET /autocount-outbox — permission gate', () => {
     expect(rowsOf(body)).toHaveLength(1);
   });
 
-  /* A key nobody has been granted is an endpoint nobody can call, so the route
-     also takes the key that already owns the sync connection. */
   it('admits settings.manage', async () => {
     const { status } = await get(harness({ outbox: [row()], perms: ['settings.manage'] }));
     expect(status).toBe(200);
@@ -178,9 +151,6 @@ describe('GET /autocount-outbox — company scope', () => {
     expect(countsOf(body).failed).toBe(1);
   });
 
-  /* The counts are computed by their own statements, so they are their own
-     chance to leak — a scoped list over unscoped tiles would still tell the
-     owner another company's document is stuck. */
   it('scopes the oldest-pending probe as well', async () => {
     const { body } = await get(harness({
       outbox: [
@@ -280,9 +250,6 @@ describe('GET /autocount-outbox — a re-queued skip is history, not backlog', (
     expect(idsOf((await get(harness({ outbox: [requeued, openSkip] }), '?state=requeued')).body)).toEqual(['r']);
   });
 
-  /* The LIKE pattern the count is built from. A metacharacter creeping into the
-     marker would widen it silently and start reporting open refusals as
-     settled — the one error the whole distinction exists to prevent. */
   it('the re-queued LIKE pattern carries no wildcard but its own trailing %', () => {
     expect(REQUEUED_LIKE).toBe(`${REQUEUE_NOTE_PREFIX}%`);
     expect(REQUEUE_NOTE_PREFIX).not.toMatch(/[%_\\]/);
@@ -310,7 +277,6 @@ describe('GET /autocount-outbox — a re-queued FAILED row is history too', () =
   it('does not count it as failed, or as needing attention', async () => {
     const { body } = await get(harness({ outbox: [requeuedFailed] }));
     expect(countsOf(body)).toMatchObject({ failed: 0, requeued: 1, attention: 0 });
-    /* Still one row in the table — outstanding fell, history did not vanish. */
     expect(countsOf(body).total).toBe(1);
   });
 
@@ -353,18 +319,6 @@ describe('GET /autocount-outbox — the switch and the empty queue', () => {
     expect(body.writeback?.on).toBe(false);
   });
 
-  /* THE SWITCH IS A COMPANY ALLOW-LIST, AND `on` ANSWERS FOR ONE COMPANY.
-     Until 2026-08-18 this route read the scope bare and published
-     `on: scope !== 'off'` — "is it on for ANYBODY" — while all eight enqueue
-     gates asked `isWritebackEnabled(sb, companyId)`. With the live value set to
-     one company, the OTHER organisation's operator was told on this page that
-     sending was switched on FOR HIS COMPANY and that saving a document would
-     queue it. His queue is company-scoped, so it stays empty and nothing
-     errors: a false sentence with no symptom attached to it.
-
-     This test used to pass NO company at all and still assert `on === true`,
-     which is how the company-blind reading looked correct. Its title already
-     said "for the named company"; now it names one. */
   it('reads an on flag as on, for the named company', async () => {
     const { body } = await get(harness({ outbox: [], flag: '1', companyId: 1 }));
     expect(body.writeback?.on).toBe(true);
@@ -374,8 +328,6 @@ describe('GET /autocount-outbox — the switch and the empty queue', () => {
   it('is OFF for a company the allow-list does not name, while still reporting the scope', async () => {
     const { body } = await get(harness({ outbox: [], flag: '1', companyId: 2 }));
     expect(body.writeback?.on).toBe(false);
-    // The scope is still the whole truth — an admin has to be able to see the
-    // allow-list — it is `on` that is answered per company.
     expect(body.writeback?.scope).toBe('1');
     expect(body.writeback?.value).toBe('1');
   });
@@ -386,11 +338,6 @@ describe('GET /autocount-outbox — the switch and the empty queue', () => {
     expect(body.writeback?.scope).toBe('all');
   });
 
-  /* UNRESOLVED IS NOT OFF. A REPORT and an ENQUEUE want opposite answers here:
-     the enqueue must refuse (never write into a live account book on a guess),
-     while this page must not claim the switch is off on the strength of a
-     company it could not resolve. null is its own state and the client renders
-     its own sentence for it. */
   it('answers null, not false, when the company cannot be resolved', async () => {
     const { body } = await get(harness({ outbox: [], flag: '1', companyId: undefined }));
     expect(body.writeback?.on).toBeNull();
@@ -404,14 +351,7 @@ describe('GET /autocount-outbox — the switch and the empty queue', () => {
     expect(unresolved.body.writeback?.on).toBe(false);
   });
 
-  /* An UNREADABLE switch and an ABSENT switch render as opposite claims — "OFF"
-     versus "row absent" — and supabase-js does not throw, so only the bound
-     error tells them apart. Printing either one from a read that failed would be
-     a definite statement about a live account book that nobody actually made. */
   it('refuses the whole response when the switch cannot be read', async () => {
-    /* fakeSb's `missing` map makes the column read fail the WHOLE query with
-       42703, which is what a real unreadable app_config looks like to
-       supabase-js: an error and a null body. */
     const app = harness({ outbox: [row()], missingAppConfigValue: true });
     const { status, body } = await get(app);
     expect(status).toBe(500);
@@ -428,7 +368,6 @@ describe('GET /autocount-outbox — the switch and the empty queue', () => {
     expect(countsOf(body)).toEqual({
       pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 0,
     });
-    /* Zero because there is nothing, not because the scan gave up. */
     expect(body.counts_complete).toBe(true);
     expect(body.oldest_pending).toBeNull();
     expect(rowsOf(body)).toEqual([]);
@@ -446,7 +385,6 @@ describe('GET /autocount-outbox — the switch and the empty queue', () => {
    then edited three times IS four rows — the counts were the wrong unit.
    ─────────────────────────────────────────────────────────────────────────── */
 describe('GET /autocount-outbox — one document counted once', () => {
-  /** His four rows: the create, then three edits, all accepted. */
   const fourSends = [
     row({ id: 's1', op: 'create_so', doc_no: 'HC-SO-2608-002', status: 'sent',
       created_at: '2026-08-14T17:25:00.000Z' }),
@@ -462,14 +400,9 @@ describe('GET /autocount-outbox — one document counted once', () => {
     const { body } = await get(harness({ outbox: fourSends }));
     expect(countsOf(body).sent).toBe(1);
     expect(countsOf(body).total).toBe(1);
-    /* The SENDS are all still there — the audit trail is the whole point of an
-       append-only queue, and the page folds them, it does not drop them. */
     expect(rowsOf(body)).toHaveLength(4);
   });
 
-  /* A DOCUMENT NUMBER IS NOT A DOCUMENT. 0277's CHECK admits six types and the
-     same number can belong to two of them; folding those together would LOSE
-     one. The key is the pair, which is autocount_outbox_doc_idx's own. */
   it('keeps two types carrying one number apart', async () => {
     const { body } = await get(harness({
       outbox: [
@@ -481,9 +414,6 @@ describe('GET /autocount-outbox — one document counted once', () => {
     expect(countsOf(body).total).toBe(2);
   });
 
-  /* A document that arrived and was later edited into a refusal IS in the
-     account book AND does need attention, and both chips would list it. The
-     counts therefore do NOT sum to the total, on purpose. */
   it('counts a document under every state it has a send in', async () => {
     const { body } = await get(harness({
       outbox: [
@@ -501,13 +431,6 @@ describe('GET /autocount-outbox — one document counted once', () => {
     expect(body.counts_complete).toBe(true);
   });
 
-  /* A COUNT THAT DID NOT SEE EVERY ROW MUST NOT READ AS A FACT. The scan pages
-     through the queue and stops at AC_DOC_SCAN_MAX; past that the numbers are a
-     floor and the response says so, rather than reporting the prefix it managed
-     to read as the whole company. Slow-ish by construction — it is asserting a
-     boundary that only exists at scale — and the alternative is an untested
-     branch that turns an undercount into a fact the day the queue outgrows the
-     cap. */
   it('refuses to call a partial scan a count', async () => {
     const overCap = Array.from(
       { length: AC_DOC_SCAN_MAX + 1 },
@@ -515,13 +438,9 @@ describe('GET /autocount-outbox — one document counted once', () => {
     );
     const { body } = await get(harness({ outbox: overCap }), '?limit=1');
     expect(body.counts_complete).toBe(false);
-    /* Still the best answer available, and right for everything it reached. */
     expect(countsOf(body).sent).toBe(AC_DOC_SCAN_MAX);
   });
 
-  /* The re-queue marker still decides the state, and it is still read by the
-     SHARED classifier rather than restated — a document whose only send is a
-     replaced refusal is Replaced, not Held back. */
   it('applies the re-queue marker per send, not per document', async () => {
     const marker = `${REQUEUE_NOTE_PREFIX} 2026-08-16T02:00:00.000Z -> outbox ob-new] refused, nothing sent (ItemCodeError): x`;
     const { body } = await get(harness({
@@ -533,8 +452,6 @@ describe('GET /autocount-outbox — one document counted once', () => {
           created_at: '2026-08-16T03:00:00.000Z' }),
       ],
     }));
-    /* ONE document, and it is in both states: one send was replaced, the other
-       is an open refusal that somebody still has to work. */
     expect(countsOf(body)).toMatchObject({ skipped: 1, requeued: 1, attention: 1, total: 1 });
   });
 });
@@ -548,8 +465,6 @@ describe('GET /autocount-outbox — filters', () => {
   it('filters by document type', async () => {
     const { body } = await get(harness({ outbox: rows }), '?docType=PO');
     expect(idsOf(body)).toEqual(['po']);
-    /* The tiles stay whole-company: the owner's "is anything stuck" must not
-       change because he narrowed the list. */
     expect(countsOf(body).total).toBe(2);
   });
 
@@ -579,27 +494,13 @@ describe('GET /autocount-outbox — filters', () => {
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/scm/autocount-outbox/:id/requeue — the page's per-row button.
-//
-// The read tests above prove the gate on a REPORT. This one writes into a live
-// licensed account book, so its gate is tested harder: an unauthenticated call,
-// a call by a caller who may only READ the queue, and a call for another
-// company's row must each be refused, and each with nothing written.
-// ─────────────────────────────────────────────────────────────────────────────
 
-/** The re-queue harness. Same shape as `harness`, plus the tables the ladder
- *  reads, and `authed: false` for the no-session case. */
 function requeueHarness(opts: {
   outbox?: Row[];
   flag?: string | null;
   companyId?: number;
-  /** true = the company context never resolved. Its own flag, because
-   *  `companyId: undefined` is indistinguishable from "the caller said
-   *  nothing", and that is the DEFAULTED case, not the unresolved one. */
   noCompany?: boolean;
   perms?: string[];
-  /** false = no session at all: the global /api/* auth never ran. */
   authed?: boolean;
   salesOrders?: Row[];
 }) {
@@ -617,12 +518,6 @@ function requeueHarness(opts: {
   app.use('*', async (c, next) => {
     c.set('supabase', sb as unknown as Variables['supabase']);
     c.set('companyId', (opts.noCompany ? undefined : opts.companyId ?? 1) as Variables['companyId']);
-    /* An UNAUTHENTICATED request reaches an SCM handler with no `houzsUser` on
-       the context: the global /api/* auth middleware (src/index.ts:293) is what
-       populates it, and scm/middleware/auth.ts only MIRRORS what that put
-       there — it is a type bridge, not the authenticator. So "no houzsUser" is
-       exactly the shape an unauthenticated call has if it ever got this far,
-       and every gate in lib/houzs-perms.ts is written to fail closed on it. */
     if (opts.authed !== false) {
       c.set('user', { id: 'u1' } as unknown as Variables['user']);
       c.set('houzsUser', {
@@ -653,10 +548,6 @@ const post = async (app: Hono<{ Bindings: Env; Variables: Variables }>, id: stri
   return { status: res.status, body: (await res.json()) as RequeueBody };
 };
 
-/* The value is typed as possibly ABSENT, which it genuinely is — the fake only
-   holds the tables it was seeded with. Typing it non-null would make the `?? []`
-   look redundant to the compiler while being the only thing standing between an
-   unseeded table and a crash inside the assertion. */
 const outboxRows = (sb: { tables: Record<string, Array<Record<string, unknown>> | undefined> }) =>
   sb.tables.autocount_outbox ?? [];
 
@@ -668,10 +559,6 @@ describe('POST /autocount-outbox/:id/requeue — the gate', () => {
   });
 
   it('REFUSES AN UNAUTHENTICATED CALL, and writes nothing', async () => {
-    /* No session means no houzsUser, so grantedFor() answers an empty set and
-       every key check fails. Proven here rather than asserted in prose because
-       a batch of scm server actions shipped with no gate at all once and it is
-       on the permanent defect list. */
     const { app, sb } = requeueHarness({ outbox: [skipped], authed: false, flag: '1' });
     const before = JSON.stringify(outboxRows(sb));
     const { status, body } = await post(app, 'ob-skip');
@@ -682,8 +569,6 @@ describe('POST /autocount-outbox/:id/requeue — the gate', () => {
   });
 
   it('refuses a caller who may only READ the queue', async () => {
-    /* Reading the queue is watching; re-sending writes a document into a live
-       licensed account book. scm.autocount.read must not carry the second. */
     const { app, sb } = requeueHarness({
       outbox: [skipped], perms: ['scm.autocount.read'], flag: '1',
     });
@@ -700,7 +585,6 @@ describe('POST /autocount-outbox/:id/requeue — the gate', () => {
     });
     const { status, body } = await post(app, 'ob-skip');
     expect(status).toBe(200);
-    /* It got PAST the gate; the switch being off is the next rung, not the gate. */
     expect(body.code).toBe('switch-off');
   });
 
@@ -722,9 +606,6 @@ describe('POST /autocount-outbox/:id/requeue — the gate', () => {
 
 describe('POST /autocount-outbox/:id/requeue — the answer it gives', () => {
   it('refuses a SENT row with a code and a sentence, and never a 500', async () => {
-    /* The refusal that stops a duplicate document in a live account book. It is
-       a 200: the server answered the question, and an HTTP error would reach
-       the page through the generic failure path that prints a status code. */
     const { app, sb } = requeueHarness({
       outbox: [row({ id: 'ob-sent', status: 'sent', ac_doc_no: 'SO-000451' })],
       flag: '1',
@@ -747,8 +628,6 @@ describe('POST /autocount-outbox/:id/requeue — the answer it gives', () => {
     const { status, body } = await post(app, 'ob-other');
     expect(status).toBe(404);
     expect(body.code).toBe('row-not-found');
-    /* Not the document number, not the company: confirming somebody else's id
-       exists is itself a leak. */
     expect(body.doc_no).toBe('');
   });
 
@@ -817,10 +696,6 @@ const postDoc = async (
 };
 
 const MAY_ARCHIVE = ['scm.autocount.requeue'];
-/* The two keys are deliberately different sets — the read gate accepts
-   `scm.autocount.read`, the clear gate does not — so a test that both clears a
-   document and then LOOKS at the list needs both. That asymmetry is the point
-   of the permission tests above and is not worth collapsing here. */
 const MAY_ARCHIVE_AND_READ = ['scm.autocount.requeue', 'scm.autocount.read'];
 
 describe('POST /autocount-outbox/archive', () => {
@@ -843,17 +718,10 @@ describe('POST /autocount-outbox/archive', () => {
     expect(status).toBe(200);
     expect(body.archived).toBe(true);
     expect(body.rows).toBe(3);
-    /* THE ROWS ARE STILL THERE. This is the whole safety property: 0277's table
-       comment forbids deleting them, and the audit trail is the point of the
-       table. */
     expect(outbox).toHaveLength(3);
     for (const r of outbox) {
       expect(r.archived_at, String(r.id)).not.toBeNull();
       expect(r.archived_by, String(r.id)).toBe(9);
-      /* AND NEITHER THE STATUS NOR THE REASON WAS TOUCHED — the trap this whole
-         design exists to avoid. `isRequeuedNote` is a PREFIX test, so a marker
-         written onto `last_error` would stop a settled row reading as Replaced
-         and push it back onto the Not accepted tab. */
       expect(r.status, String(r.id)).toBe('sent');
       expect(r.last_error, String(r.id)).toBeNull();
     }
@@ -866,16 +734,9 @@ describe('POST /autocount-outbox/archive', () => {
     ];
     const app = harness({ outbox, companyId: 1, perms: MAY_ARCHIVE });
     const { status, body } = await postDoc(app, 'archive', { doc_type: 'SO', doc_no: 'HC-SO-9' });
-    /* A REFUSAL IS A 200 — the same contract the re-queue handler uses. The
-       caller asked a legitimate question and got an answer; an HTTP error would
-       reach the page through the generic path that prints a status code at a
-       reader who cannot act on one. */
     expect(status).toBe(200);
     expect(body.archived).toBe(false);
     expect(body.code).toBe('needs-attention');
-    /* THE REFUSAL REACHES A PERSON. Thirty-five write paths in this repo once
-       refused correctly and told nobody, and the owner reported it as "the
-       button does nothing". */
     expect(String(body.message).length).toBeGreaterThan(20);
     expect(body.blocked).toBe(1);
     expect(outbox.every((r) => (r.archived_at ?? null) === null)).toBe(true);
@@ -892,9 +753,6 @@ describe('POST /autocount-outbox/archive', () => {
     expect(body.archived).toBe(false);
   });
 
-  /* A RE-QUEUED REFUSAL IS HISTORY, and all three of the documents this was
-     built for carry one. A rule that read `status` alone would refuse every one
-     of them; the shared `acNeedsAttention` is what tells the two apart. */
   it('clears a document whose refusals were all replaced by a later send', async () => {
     const outbox = [
       row({ id: 'a', status: 'sent', doc_no: 'HC-SO-013361' }),
@@ -906,9 +764,6 @@ describe('POST /autocount-outbox/archive', () => {
     expect(body.rows).toBe(2);
   });
 
-  /* THE TENANT BOUNDARY. The SCM client is service-role and bypasses RLS, so
-     the company predicate is the whole of it — on the WRITE as well as on the
-     read that preceded it. */
   it('never touches another company row carrying the same document number', async () => {
     const mine = row({ id: 'mine', company_id: 1, status: 'sent', doc_no: 'HC-SO-7' });
     const theirs = row({ id: 'theirs', company_id: 2, status: 'sent', doc_no: 'HC-SO-7' });
@@ -955,9 +810,6 @@ describe('the cleared documents are hidden, counted apart, and reachable', () =>
     const { body } = await get(app, '?state=all');
     expect(countsOf(body).sent).toBe(1);
     expect(countsOf(body).total).toBe(1);
-    /* COUNTED APART, never folded into `total`: every other number on that line
-       is a claim about what AutoCount did, and this one is a claim about what a
-       person decided. */
     expect(countsOf(body).archived).toBe(1);
   });
 

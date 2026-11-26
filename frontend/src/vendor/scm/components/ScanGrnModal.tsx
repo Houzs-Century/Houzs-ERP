@@ -1,8 +1,3 @@
-// ----------------------------------------------------------------------------
-// ScanGrnModal — "Scan Delivery Order" on the Goods Receipt list: upload, check,
-// then create (ScanCheckModal). Drafts are converted from PO lines, and nothing
-// posts stock until the draft is posted.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { writeFailedAs } from '../lib/mutation-error';
@@ -27,7 +22,6 @@ const API = {
 
 
 export function ScanGrnModal({ onClose }: { onClose: () => void }) {
-  // PO lines of a supplier the operator switched to, which the list did not carry.
   const [extra, setExtra] = useState<CheckPoLine[]>([]);
   const extraById = useMemo(() => new Map(extra.map((l) => [l.poItemId, l])), [extra]);
   const linesOf = (d: Data) => {

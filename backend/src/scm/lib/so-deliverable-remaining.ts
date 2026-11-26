@@ -45,24 +45,14 @@ const one = <T>(v: One<T>): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v 
 type ReturnLine = { do_item_id: string | null; qty_returned: number | null; parent: One<{ status: string | null }> };
 const RETURN_SELECT = 'do_item_id, qty_returned, parent:delivery_returns(status)';
 
-/* These reads have always answered with whatever arrived when one failed — the
-   callers' numbers were built on that, and this change keeps every answer as it
-   was. It is no longer SILENT: a failure is logged with what it can cost. */
 function readFailed(what: string, error: { message: string }): void {
   // eslint-disable-next-line no-console
   console.error(`[so-deliverable-remaining] ${what} read failed; this answer may be short: ${error.message}`);
 }
 
-/* chunkIn runs 6 batches at a time; past one such wave a whole-table read can be cheaper. */
 const CHUNK_WAVE = 6;
-/* Never scan more than this many pages instead — a big table goes back to the chunked read. */
 const RETURN_SCAN_MAX_PAGES = 10;
 
-/**
- * Every delivery_return_items row (keyset pages on id), or null when the table
- * is not small enough to beat `chunkedRequests`, or anything about the read is
- * in doubt. Null always means "use the chunked read" — never "no returns".
- */
 async function readAllReturnLinesIfCheaper(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped SCM client
   sb: any,
@@ -83,20 +73,16 @@ async function readAllReturnLinesIfCheaper(
       const rows = (data ?? []) as Array<ReturnLine & { id: string }>;
       all.push(...rows);
       if (rows.length < PAGE) {
-        /* Fewer rows than were counted means a page came back short for some
-           other reason than the end of the table (a lower server row cap, or
-           rows deleted mid-read) — not provably complete, so do not use it. */
         return all.length >= count ? all : null;
       }
       after = rows[rows.length - 1]!.id;
     }
-    return null; // the table grew past the planned pages mid-read
+    return null;
   } catch {
     return null;
   }
 }
 
-/** The return lines on `doLineIds` — the same rows the chunked `.in('do_item_id')` read returns. */
 async function readReturnLines(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped SCM client
   sb: any,
@@ -111,33 +97,11 @@ async function readReturnLines(
       return all.filter((r) => r.do_item_id != null && want.has(r.do_item_id));
     }
   }
-  /* CHUNKED + PAGED, mirroring the delivered hop: one DO-LINE uuid per shipped line of
-     every order in the batch, all in one URL. Under-reading is the bad direction here —
-     a dropped return leaves the order no longer asking for goods that came back. */
   const { data, error } = await chunkIn<ReturnLine>(doLineIds, (batch, from, to) => sb.from('delivery_return_items').select(RETURN_SELECT).in('do_item_id', batch).order('id').range(from, to));
   if (error) readFailed('return-line', error);
   return data;
 }
 
-/* Commander 2026-05-30 — LINE-LEVEL, QUANTITY-BASED partial delivery.
-   Replaces the old binary whole-SO conversion lock. For each SO line, the
-   DELIVERABLE REMAINING quantity is DERIVED LIVE (no stored counter — that
-   drifts):
-
-     remaining(soItem) = soItem.qty
-       − Σ delivery_order_items.qty   where so_item_id = soItem.id
-                                      AND its delivery_orders.status != 'CANCELLED'
-       + Σ delivery_return_items.qty_returned  where that return line traces
-              (do_item_id → delivery_order_items.so_item_id = soItem.id) to a
-              non-cancelled delivery_returns
-
-   So a line is partially delivered (remaining > 0 → still convertible) or
-   fully delivered (remaining == 0 → not convertible). Cancelling a DO,
-   deleting a DO line, or processing a Delivery Return automatically RAISES
-   remaining again, because the formula re-derives from the live rows.
-
-   Returns one descriptor row per requested SO line (qty + remaining + the
-   fields the picker / convert handler need), keyed by SO line id. */
 export type DeliverableLine = {
   soItemId: string;
   docNo: string;
@@ -153,9 +117,6 @@ export type DeliverableLine = {
   unitCostSen: number;
   discountSen: number;
   variants: unknown;
-  /* Migration 0058 — dedicated sofa/bedframe variant-breakdown columns. Carried
-     so the SO→DO convert keeps them (delivery_order_items has all 8); previously
-     dropped here, so a converted DO lost the sofa/bedframe build breakdown. */
   gapInches: number | null;
   divanHeightInches: number | null;
   divanPriceSen: number;
@@ -167,10 +128,6 @@ export type DeliverableLine = {
   delivered: number;
   returned: number;
   remaining: number;
-  /** Position of this line within ITS SO listing order (re-derived at read:
-   *  rank mains→accessories→services + each build's left-to-right walk) — DO
-   *  lines copy the SO's listing order instead of shuffling by uuid (Loo
-   *  2026-06-12: mains first + sofa modules left-to-right survive onto the DO). */
   lineSeq: number;
 };
 
@@ -191,23 +148,9 @@ export async function soDeliverableRemaining(
   if (soDocNos.length === 0) return out;
   const docs = [...new Set(soDocNos)];
 
-  /* ONE WAVE. The header debtor and the unlinked DO lines key off the doc
-     numbers alone, so they run beside the SO-line read. `eager` holds a failure
-     until the point of use, where the code below treats it exactly as before. */
-  /* chunkIn: unbounded at BOTH ends before; unpaged, the 1001st header silently
-     dropped, swapping the header debtor for the drifted line copy below. */
   const headsProm = eager(chunkIn<{ doc_no: string; debtor_code: string | null; debtor_name: string | null }>(docs, (batch, from, to) => sb.from('mfg_sales_orders').select('doc_no, debtor_code, debtor_name').in('doc_no', batch).order('doc_no').range(from, to)));
   const unlinkedProm = eager(readUnlinkedDoLinesUnder(sb, soDocNos));
 
-  // 1. Load the non-cancelled SO lines of the requested SOs and re-derive
-  //    each SO's listing order from the rows themselves (Loo 2026-06-12:
-  //    mains → accessories → services, sofa modules left-to-right). The bulk
-  //    insert gives every line the same created_at, so the timestamp can't
-  //    recover the persisted order once routine updates relocate rows.
-  /* CHUNKED on doc_no — paginateAll bounds the ROWS back; the doc numbers go OUT in the URL
-     unbounded. One SO's lines stay in one batch and the walk below re-derives their order
-     regardless ("the walk MUST run per doc"), so the split is invisible downstream.
-     The embed is to-many, so it nests JSON and never changes the row count paged on. */
   const readLines = (select: string) => chunkIn<SoLineRow>(docs, (batch, from, to) => sb.from('mfg_sales_order_items')
     .select(select)
     .in('doc_no', batch)
@@ -217,30 +160,14 @@ export async function soDeliverableRemaining(
     .order('id')
     .range(from, to));
   const embedded = await readLines(`${SO_LINE_SELECT}, ${SO_LINE_DO_LINES_EMBED}`);
-  /* Only trust the embed when it came back in the shape asked for: every row an
-     ARRAY of DO lines, each carrying its id and its `parent` key (null for an
-     orphan). Anything else — an error, a client or proxy that dropped the embed —
-     runs the old two-step read, never a silent "nothing delivered". */
   const embeddedOk = !embedded.error && embedded.data.every((r) => Array.isArray(r.do_lines) && r.do_lines.every(isEmbeddedDoLine));
   const plain = embeddedOk ? null : await readLines(SO_LINE_SELECT);
   if (plain?.error) readFailed('sales-order line', plain.error);
   const rawLines = plain ? plain.data : embedded.data;
   if (rawLines.length === 0) return out;
 
-  /* THE CUSTOMER IS A PROPERTY OF THE SALES ORDER, NOT OF ITS LINES.
-     mfg_sales_order_items carries its own debtor_code/debtor_name copy, and
-     those copies DRIFT: on 2990-SO-2606-034 the two sofa lines say "The Wei
-     chin", the delivery line says "Teh Wei chin" and the disposal line says
-     nothing at all — while the header says "Teh Wei chin" for all of them.
-     Reading the line copy made the same-customer rule split ONE sales order into
-     three customers: the picker greyed out half of 2606-034 the moment the
-     operator ticked a sofa, and POST /from-sos would have rejected all four
-     lines as `mixed_customers` (Nico, 2026-08-03; two SOs in prod carry this
-     drift). Stamp the HEADER's debtor on every line — one order, one customer. */
   const headerDebtor = new Map<string, { code: string | null; name: string | null }>();
 
-  /* buildKey values are per-SO ('build-1', …) — the walk MUST run per doc;
-     keyed across docs it would mix two SOs' builds into one group. */
   const orderByDoc = new Map<string, typeof rawLines>();
   for (const l of rawLines) {
     const arr = orderByDoc.get(l.doc_no) ?? [];
@@ -254,12 +181,6 @@ export async function soDeliverableRemaining(
   );
   const coverageLines = lines.map((l) => ({ id: l.id, docNo: l.doc_no, itemCode: l.item_code, qty: Number(l.qty ?? 0) }));
 
-  /* 2. Σ delivered per SO line — the real so_item_id links AND the shipments
-        whose link the FK blanked but whose DO header still names this order
-        (lib/do-unlinked-coverage.ts). Linked: from the embedded DO lines, the
-        same rows and the same gate as netDeliveredBySoItem's linked read (a DO
-        line with no parent is skipped; doCountsAsDelivered decides the rest).
-        A failed embedded read runs netDeliveredBySoItem itself instead. */
   let deliveredBySoItem: Map<string, number>;
   let doLineToSoItem: Map<string, string>;
   let returnsProm: Promise<() => ReturnLine[]> | null = null;
@@ -270,14 +191,11 @@ export async function soDeliverableRemaining(
     for (const l of lines) {
       for (const d of l.do_lines ?? []) {
         const parent = one(d.parent);
-        /* LEAK GUARD (PRE-SHIP): DRAFT and LOADED have not shipped —
-           shared/do-shipped-states.ts doCountsAsDelivered is the one home. */
         if (!parent || !doCountsAsDelivered(parent.status)) continue;
         doLineToSoItem.set(d.id, l.id);
         deliveredBySoItem.set(l.id, (deliveredBySoItem.get(l.id) ?? 0) + Number(d.qty ?? 0));
       }
     }
-    // The linked DO lines' returns can be read now, beside the unlinked attribution.
     linkedDoLineIds = new Set(doLineToSoItem.keys());
     returnsProm = eager(readReturnLines(sb, [...linkedDoLineIds]));
     for (const a of attributeUnlinkedDoLines(coverageLines, deliveredBySoItem, (await unlinkedProm)())) {
@@ -294,17 +212,9 @@ export async function soDeliverableRemaining(
     headerDebtor.set(h.doc_no, { code: h.debtor_code ?? null, name: h.debtor_name ?? null });
   }
 
-  // 3. Σ returned — DR lines whose do_item_id traces (via the active DO line)
-  //    back to one of our SO items, and whose parent DR is NOT cancelled.
-  //    The non-cancelled decision stays in JS (.toUpperCase()), and an orphan
-  //    DR line (no parent) is excluded.
   const returnedBySoItem = new Map<string, number>();
   let drLines: ReturnLine[];
   if (returnsProm) {
-    /* The linked lines' returns were started above; only the DO lines the
-       unlinked attribution added are left to read. Disjoint id sets (a linked
-       DO line has an so_item_id, an unlinked one has none), so the union is
-       exactly the one read over every key of doLineToSoItem. */
     const restProm = eager(readReturnLines(sb, [...doLineToSoItem.keys()].filter((id) => !linkedDoLineIds.has(id))));
     drLines = [...(await returnsProm)(), ...(await restProm)()];
   } else {
@@ -319,8 +229,6 @@ export async function soDeliverableRemaining(
     returnedBySoItem.set(soItemId, (returnedBySoItem.get(soItemId) ?? 0) + Number(l.qty_returned ?? 0));
   }
 
-  // 4. Assemble per-line descriptors with the live remaining. lineSeq counts
-  //    per SO so the picker / DO create can keep each SO's listing order.
   const seqByDoc = new Map<string, number>();
   for (const l of lines) {
     const qty = Number(l.qty ?? 0);
@@ -331,8 +239,6 @@ export async function soDeliverableRemaining(
     out.set(l.id, {
       soItemId: l.id,
       docNo: l.doc_no,
-      /* Header first (see the drift note above); the line copy only fills in for
-         an SO whose header row could not be read. */
       debtorCode: headerDebtor.get(l.doc_no)?.code ?? (l.debtor_code as string | null) ?? null,
       debtorName: headerDebtor.get(l.doc_no)?.name ?? (l.debtor_name as string | null) ?? null,
       itemCode: l.item_code as string,
@@ -345,8 +251,6 @@ export async function soDeliverableRemaining(
       unitCostSen: Number(l.unit_cost_sen ?? 0),
       discountSen: Number(l.discount_sen ?? 0),
       variants: l.variants ?? null,
-      /* Migration 0058 — carry the dedicated variant-breakdown columns onto the
-         deliverable descriptor (supabase-js snake_case; dual-read stays safe). */
       gapInches: (l.gapInches ?? l.gap_inches ?? null) as number | null,
       divanHeightInches: (l.divanHeightInches ?? l.divan_height_inches ?? null) as number | null,
       divanPriceSen: Number(l.divanPriceSen ?? l.divan_price_sen ?? 0),

@@ -127,7 +127,6 @@ describe("leaving a form with unsaved typing", () => {
     await waitFor(() => expect(dialogTitle()).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "Stay on this page" }));
     await waitFor(() => expect(window.location.pathname).toBe("/orders/new"));
-    // Still "Tan": the router never saw the move, so the form never unmounted.
     expect((screen.getByLabelText("Customer") as HTMLInputElement).value).toBe("Tan");
   });
 

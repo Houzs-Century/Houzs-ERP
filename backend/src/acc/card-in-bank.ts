@@ -36,10 +36,7 @@ export type CardPayoutFacts = {
   rows: Array<{ id: number; batch_id: number; confirmed_at: string | null }>;
   batches: Array<{ id: number; stated_net_sen: number | null; net_sen: number | null }>;
   receipts: Array<{ batch_id: number; received_on: string; amount_sen: number; charge_sen: number | null; je_no: string | null }>;
-  /** What the bank kept off a payout, booked on its advice day; a caller that reads no advice days passes none. */
   dayCharges?: Array<{ batch_id: number; charge_sen: number | null; charge_je_no: string | null }>;
-  /** Card payments a bank movement took in itself, no report carrying them (acc/bank-card-settle):
-      all of it in the bank on the movement's day. */
   bankCards?: Array<{ payment_source: string; payment_id: string; received_on: string }>;
 };
 
@@ -55,8 +52,6 @@ export function inBankShares(facts: CardPayoutFacts, asOf: string): Map<string, 
     const id = Number(r.batch_id);
     received.set(id, (received.get(id) ?? 0) + Number(r.amount_sen) + Number(r.charge_sen ?? 0));
   }
-  /* A charge booked on the advice day settles with the payout it was kept off: counted
-     once its report has a credit in the bank by `asOf`, and only when it is posted. */
   for (const d of facts.dayCharges ?? []) {
     const id = Number(d.batch_id);
     const kept = Number(d.charge_sen ?? 0);
@@ -93,12 +88,10 @@ export function merchantMatched(facts: CardPayoutFacts): Set<string> {
   for (const m of facts.matches) {
     if (confirmed.has(Number(m.settlement_row_id))) out.add(paymentKey(m.payment_source, String(m.payment_id)));
   }
-  /* Taken in by the bank itself: nothing is left for a report to match. */
   for (const b of facts.bankCards ?? []) out.add(paymentKey(b.payment_source, String(b.payment_id)));
   return out;
 }
 
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 
 /** The company's whole settlement history — five small tables, read once. */

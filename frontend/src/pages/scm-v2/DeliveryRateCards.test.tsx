@@ -1,11 +1,3 @@
-// Carriers & Rates (restyle + audit 2026-11-07; card redesign 2026-11-11; finance
-// tables 2026-11-11; the Areas ruled table back 2026-11-12): every carrier is
-// listed with the supplier it bills as (no
-// count of prices), a card whose 3PL company was deleted is not passed off as
-// own fleet, the card's settings read as one line and are edited in a drawer, a
-// price is changed from its tile, the categories are tabs with outstation towns
-// grouped by price, Price check prices a supplier pickup as you type, and
-// Reconciliation reads the bills the 3PL invoices tab keeps.
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -62,10 +54,8 @@ function api(path: string, init?: RequestInit) {
   return Promise.resolve({});
 }
 
-/** Opens MSJ's card from the carrier list. */
 const openMsj = async () => { fireEvent.click(await screen.findByText('MSJ TRANSPORT')); };
 
-/** The Areas table: the ruled table whose head reads Town. */
 const areasTable = (panel: HTMLElement) => within(panel).getAllByRole('columnheader').find((h) => h.textContent === 'Town')?.closest('table') as HTMLElement;
 
 const mount = () => render(
@@ -155,7 +145,6 @@ describe('Carriers & Rates', () => {
       { ...RULE, id: 'r2', tierPosition: 3, amountSen: 4000 },
       { ...RULE, id: 'r3', ruleType: 'OUTSTATION', tierPosition: null, zone: 'KUCHING', amountSen: 30000 },
       { ...RULE, id: 'r4', ruleType: 'OUTSTATION', tierPosition: null, zone: 'BAU', amountSen: 30000 },
-      /* An area's own 1st-set price: the area's, never a second 1st set here. */
       { ...RULE, id: 'r5', tierPosition: 1, amountSen: 9900, areaId: 'area-kuching' },
     ];
     fetchMock.mockImplementation((path: string, init?: RequestInit) => (path === '/delivery-rate-cards/card-msj' && !init?.method
@@ -184,7 +173,6 @@ describe('Carriers & Rates', () => {
     expect(within(out).getByText(/Surcharges apply to:/).textContent).toContain('Delivery order');
     fireEvent.change(within(out).getByLabelText('Area: a postcode zone or a town'), { target: { value: 'KUCHING' } });
     fireEvent.change(within(out).getByLabelText('Amount (RM)'), { target: { value: '120' } });
-    /* Applies to starts at Delivery order alone, which is sent as no setting. */
     const applies = within(out).getByRole('group', { name: 'Applies to' });
     expect(within(applies).getAllByRole('checkbox').filter((b) => (b as HTMLInputElement).checked).map((b) => b.parentElement?.textContent)).toEqual(['Delivery order']);
     expect((within(applies).getByLabelText('Delivery order') as HTMLInputElement).disabled).toBe(true);
@@ -224,7 +212,6 @@ describe('Carriers & Rates', () => {
       expect(JSON.parse(String(posts[posts.length - 1]?.[1].body))).toEqual({ ruleType: 'PICKUP', amountSen: 2500 });
     });
 
-    /* The open tab stays while another carrier is opened. */
     fireEvent.click(screen.getByText('Own fleet cost'));
     expect((await screen.findByRole('tab', { name: /^Service calls/ })).getAttribute('aria-selected')).toBe('true');
   });
@@ -271,7 +258,6 @@ describe('Carriers & Rates', () => {
     expect(labuan.textContent).toBe('Labuan');
     expect(within(out).getByText(/its town price adds on top of the area’s price/).textContent).toContain('Labuan (Far towns)');
 
-    /* The pencil opens the area's name and towns in a row under the area. */
     fireEvent.click(within(far).getByRole('button', { name: 'Change Far towns' }));
     expect((within(far).getByLabelText(/^Towns, separated by commas/) as HTMLTextAreaElement).value).toBe('BINTULU, LABUAN');
     fireEvent.click(within(far).getByRole('button', { name: 'Cancel' }));

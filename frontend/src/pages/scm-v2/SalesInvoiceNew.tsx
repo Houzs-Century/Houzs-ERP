@@ -1,25 +1,3 @@
-// ----------------------------------------------------------------------------
-// SalesInvoiceNew — full-page Create Sales Invoice at /sales-invoices/new.
-//
-// An editable Create form, clone of DeliveryOrderNew (itself an SO-clone): the
-// same Customer / Invoice Info / Emergency / Address cards + SoLineCard list +
-// PaymentsTable in DRAFT mode.
-//
-// Prefill: when navigated with ?fromDo=<DO id>, it fetches the DO header +
-// items and seeds every field (debtor, salesperson/agent, address, phone, line
-// items with variants + prices) so the operator can review/edit before Saving
-// to create the invoice. Payments are NOT copied: the sales order is the one
-// place money is taken, and its ledger is shown read-only below. Without
-// ?fromDo it is a blank Create-Invoice form.
-//
-// ?fromSo=<SO doc no> (DEV-76) seeds the same fields from a Sales Order that has
-// no DO — a charge-only order (extra logistics / storage) invoiced on its own.
-//
-// On Save: POST /sales-invoices (header + items) — the server records revenue
-// (Dr Accounts Receivable / Cr Sales Revenue) on create — then replay the
-// payment drafts through POST /:id/payments before navigating to the new
-// invoice detail.
-// ----------------------------------------------------------------------------
 
 import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
@@ -82,34 +60,16 @@ export const SalesInvoiceNew = () => {
   const [searchParams] = useSearchParams();
   const fromDo = searchParams.get('fromDo');
   const fromPicks = searchParams.get('fromPicks') === '1';
-  // ?fromDo wins when both are present: the DO already carries its SO.
   const fromSo = fromDo ? null : searchParams.get('fromSo');
 
   const create = useCreateSalesInvoice();
-  /* One key for the one invoice this page is open to raise (lib/idempotency.ts).
-     Route-level form; onSuccess navigates to the SI detail unconditionally, so
-     the MOUNT is exactly one invoice — stable across re-renders (lazy init) and
-     across a re-press after a stalled submit, fresh on the next mount.
-
-     Load-bearing beyond the double-tap: onSuccess awaits flushPaymentDrafts and
-     up to two notifies BEFORE navigate, so it is the longest window in this set
-     between "the invoice exists" and "the page leaves". A stable key means any
-     re-press in that window replays the first invoiceNumber instead of posting
-     revenue twice. The payment drafts carry their own per-draft keys (line 235),
-     so they don't double either. */
   const idemKey = useIdempotencyKey();
   const addPayment = useAddSalesInvoicePayment();
   const loc = useLocalities();
 
-  // Prefill source — the DO this invoice is being raised from (if any).
   const doDetail = useMfgDeliveryOrderDetail(fromDo);
-  // Same header read the Create-DO page uses for ?fromSo; lines from the SO detail.
   const soSource = useSoConversionSource(fromSo);
   const soDetail = useMfgSalesOrderDetail(fromSo);
-  /* `include` carries the salesperson already on the SOURCE document this one is
-     being raised from, so someone the onlySales narrowing hides is still named.
-     "(former staff)" below is then only reachable for a row that genuinely is
-     gone. Declared after the source query so the id is in scope. */
   const staffQ = usePickableStaff({
     onlySales: true,
     include: [
@@ -125,7 +85,6 @@ export const SalesInvoiceNew = () => {
   const buildingTypeOpts = optionsOrFallback('building_type', buildingTypeOptsQ.data);
   const relationshipOpts = optionsOrFallback('relationship', relationshipOptsQ.data);
 
-  // ── Customer ──
   const [debtorCode, setDebtorCode] = useState('');
   const [debtorName, setDebtorName] = useState('');
   const [phone, setPhone] = useState('');
@@ -134,7 +93,6 @@ export const SalesInvoiceNew = () => {
   const [customerType, setCustomerType] = useState('');
   const [customerSoNo, setCustomerSoNo] = useState('');
 
-  // ── Invoice info ──
   const [buildingType, setBuildingType] = useState('');
   const [venue, setVenue] = useState('');
   const [venueId, setVenueId] = useState('');
@@ -143,7 +101,6 @@ export const SalesInvoiceNew = () => {
   const [customerDeliveryDate, setCustomerDeliveryDate] = useState('');
   const [note, setNote] = useState('');
 
-  // ── Address ──
   const [address1, setAddress1] = useState('');
   const [address2, setAddress2] = useState('');
   const [state, setState] = useState('');
@@ -152,18 +109,14 @@ export const SalesInvoiceNew = () => {
   const [salesLocation, setSalesLocation] = useState('');
   const [branding, setBranding] = useState('');
 
-  // ── Provenance (Transfer From) — carried silently from the source DO so the
-  //    invoice keeps its SO reference, customer PO and free-text ref. ──
   const [soDocNo, setSoDocNo] = useState('');
   const [poDocNo, setPoDocNo] = useState('');
   const [ref, setRef] = useState('');
 
-  // ── Emergency ──
   const [emergencyName, setEmergencyName] = useState('');
   const [emergencyRel, setEmergencyRel] = useState('');
   const [emergencyPhone, setEmergencyPhone] = useState('');
 
-  // ── Items + payments ──
   const [lines, setLines] = useState<DraftLine[]>(() => [newLine()]);
   const [paymentDrafts, setPaymentDrafts] = useState<PaymentDraft[]>([]);
   /* The source order's OWN collected payments (read-only) — shown so the operator
@@ -172,9 +125,6 @@ export const SalesInvoiceNew = () => {
   const soPaymentsQ = useSalesOrderPayments(soDocNo || null);
   const [createdInvoice, setCreatedInvoice] = useState<{ id: string; number: string } | null>(null);
 
-  /* Prefill from the DO once its detail loads. Guarded so we only
-     seed once (when the form is still pristine) — re-fetches don't clobber
-     the operator's edits. */
   const [prefilled, setPrefilled] = useState(false);
   useEffect(() => {
     if (!fromDo || prefilled) return;
@@ -208,11 +158,6 @@ export const SalesInvoiceNew = () => {
     setEmergencyRel((doc.emergency_contact_relationship as string) ?? '');
     setEmergencyPhone((doc.emergency_contact_phone as string) ?? '');
 
-    // Line items. When we arrived from the DO→SI picker (fromPicks) the operator
-    // already chose specific lines + quantities — build from that stash, carrying
-    // each line's doItemId so the invoice stays linked to its DO line (the server's
-    // remaining-to-invoice tracking depends on it). Otherwise (plain ?fromDo) seed
-    // every DO line at its full quantity.
     type Stash = {
       doItemId: string; itemCode: string; itemGroup: string | null;
       description: string | null; uom: string | null; qty: number;
@@ -235,9 +180,6 @@ export const SalesInvoiceNew = () => {
         discountSen: Number(s.discountSen ?? 0),
         unitCostSen: Number(s.unitCostSen ?? 0),
         variants: (s.variants as Record<string, unknown>) ?? {},
-        /* Carry the DO line's delivery date onto the SI line; fall back to the DO
-           header's delivery date when the line has none (most DOs carry ONE
-           order-level date, not a per-line one — so this fills the column). */
         lineDeliveryDate: s.lineDeliveryDate ?? (doc.customer_delivery_date as string | null) ?? null,
       })));
       removeScmHandoff('siFromDoPicks');
@@ -263,8 +205,6 @@ export const SalesInvoiceNew = () => {
     setPrefilled(true);
   }, [fromDo, fromPicks, prefilled, doDetail.data]);
 
-  /* ?fromSo prefill — header mapping mirrors DeliveryOrderNewV2's; every live
-     SO line is invoiced at its full qty and price. Seeds once, like ?fromDo. */
   useEffect(() => {
     if (!fromSo || prefilled) return;
     const so = soSource.data?.source;
@@ -317,9 +257,6 @@ export const SalesInvoiceNew = () => {
   const staffList = useMemo(() => (staffQ.data ?? []).filter((s) => s.active), [staffQ.data]);
 
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
-  /* Shared address cascade, BOTH directions (address-cascade.ts). Three atoms,
-     so each pick writes all three back — the raw setters keep the value just
-     chosen, which routing through the State picker's handler would clear. */
   const { cities, postcodes } = useAddressCascade(locRows, state, city);
   const applyTriple = (next: { state: string; city: string; postcode: string }) => {
     setState(next.state); setCity(next.city); setPostcode(next.postcode);
@@ -354,9 +291,6 @@ export const SalesInvoiceNew = () => {
           accountSheet: d.accountSheet || null,
           approvalCode: d.approvalCode || null,
           collectedBy: d.collectedBy || null,
-          // Per-draft key (lib/idempotency.ts) — the invoice is created first and
-          // the payments posted after, so a re-save after a partial failure
-          // re-posts these rows; the key makes that replay instead of duplicate.
           idempotencyKey: d.idempotencyKey,
         };
         Object.assign(body, draftMethodFields(method, d));
@@ -414,8 +348,6 @@ export const SalesInvoiceNew = () => {
     create.mutate(
       {
         idempotencyKey: idemKey,
-        /* DRAFT flow — when saving as draft the server lands the invoice as DRAFT
-           and posts NO revenue / credit until it is confirmed on the detail page. */
         asDraft: asDraft || undefined,
         deliveryOrderId: fromDo || undefined,
         debtorName,
@@ -463,9 +395,6 @@ export const SalesInvoiceNew = () => {
       },
       {
         onSuccess: async (res: { id: string; invoiceNumber: string; priceWarningMessage?: string }) => {
-          /* A DRAFT invoice cannot take payments yet (the server 409s a draft
-             payment). Skip the payment flush — the operator records payments
-             after confirming on the detail page. */
           const intents = asDraft ? [] : paymentIntents();
           const staged = intents.length === 0 || writePaymentRetryHandoff('si', res.id, intents);
           const { failedDrafts } = staged
@@ -482,23 +411,12 @@ export const SalesInvoiceNew = () => {
               tone: 'error',
             });
           }
-          /* Price differs from the price agreed on the order (server-side
-             comparison against the source DO line, which carries the SO's
-             agreed price). ADVISORY, never a block — the selling price is the
-             operator's to author (Commander 2026-05-29), so this states the
-             discrepancy and gets out of the way. Not tone:'error': nothing
-             failed, and the invoice was created. */
           if (res.priceWarningMessage) {
             await notify({
               title: `Invoice ${res.invoiceNumber} was created, but a price does not match the order.`,
               body: res.priceWarningMessage,
             });
           }
-          /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT — an invoice raised
-             from a delivery order is TRANSFERRED into AutoCount, and the
-             transfer route applies a narrower set of header fields than an edit
-             does. Said before either exit, so the early return below cannot
-             swallow it. Never blocks: the invoice exists. */
           await notifyAcNotSent(notify, res, 'Invoice');
           if (!staged) {
             setCreatedInvoice({ id: res.id, number: res.invoiceNumber });
@@ -530,7 +448,6 @@ export const SalesInvoiceNew = () => {
           : undefined}
         actions={
           <div className={styles.actions}>
-            {/* Pull lines from a Delivery Order — mirrors the purchase-side New forms. */}
             {!createdInvoice && (
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/sales-invoices/from-do')}>
                 <ArrowRightLeft {...ICON} /> {transferFromLabel('do')}
@@ -574,7 +491,6 @@ export const SalesInvoiceNew = () => {
         </div>
       )}
 
-      {/* ── CUSTOMER ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Customer</h2></header>
         <div className={styles.cardBody}>
@@ -624,7 +540,6 @@ export const SalesInvoiceNew = () => {
         </div>
       </section>
 
-      {/* ── INVOICE INFO ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Invoice Info</h2></header>
         <div className={styles.cardBody}>
@@ -665,7 +580,6 @@ export const SalesInvoiceNew = () => {
         </div>
       </section>
 
-      {/* ── EMERGENCY CONTACT ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Emergency Contact</h2>
@@ -698,7 +612,6 @@ export const SalesInvoiceNew = () => {
         </div>
       </section>
 
-      {/* ── BILLING / DELIVERY ADDRESS ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Billing / Delivery Address</h2></header>
         <div className={styles.cardBody}>
@@ -745,7 +658,6 @@ export const SalesInvoiceNew = () => {
         </div>
       </section>
 
-      {/* ── LINE ITEMS ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Line Items ({lines.length})</h2></header>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -757,14 +669,6 @@ export const SalesInvoiceNew = () => {
               onChange={(patch) => updateLine(line.rid, patch)}
               onRemove={() => dropLine(line.rid)}
               canRemove={lines.length > 1}
-              /* Downstream document: the items were already specified on the
-              originating order and their variants ride in with them, so they
-              are NOT re-required here. Same rule DeliveryOrderNewV2 states
-              for the DO. Verified 2026-08-13: this document's server does no
-              variant enforcement at all (findIncompleteVariantLines appears
-              0 times in its route), so the default `= true` was pure
-              client-side invention - a red ring and a ` *` for a field the
-              backend never asked for. */
               variantsRequired={false}
               specLockedReason={null}
               lineDateLocked={false}
@@ -806,7 +710,6 @@ export const SalesInvoiceNew = () => {
         </section>
       )}
 
-      {/* ── PAYMENTS (shared draft-mode ledger) ── */}
       <PaymentsTable
         docNo={null}
         payments={paymentDrafts}

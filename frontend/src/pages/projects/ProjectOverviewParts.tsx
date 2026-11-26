@@ -30,17 +30,13 @@ interface DataGaps {
 interface ProblemBill { ref: string; amountSen: number; salesperson: string | null; problem: "not_opened" | "other_event"; soDocNo: string | null; otherEvent: string | null }
 interface BookRow {
   sizeSqm: number | null;
-  /** What a person took off this list because the event truly has none. */
   waived: BooksGap[];
   id: number; code: string; name: string; brand: string | null; endDate: string; soSen: number; soDocs: string[];
   hasReport: boolean; reportBills: number; problemBills: ProblemBill[];
-  /** The P&L's rental (Finance's books or a typed line), in RM. */
   rental: number;
 }
 type BooksTab = "daily" | "nocogs" | "rental" | "report" | "size";
-/** A Sales Order of a recent event with a product line at no cost - its SKU has no cost in Product Maintenance. */
 interface SoNoCogs { docNo: string; projectId: number; event: string; code: string; startDate: string; endDate: string; amountSen: number; items: string[] }
-/** An event of the last 180 days whose chat report holds bills not opened under it. */
 interface NotDailyEvent { id: number; code: string; name: string; startDate: string; endDate: string; reportBills: number; bills: ProblemBill[] }
 
 /** Finished events and what still makes their P&L wrong. */
@@ -60,7 +56,6 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
   const rentalRows = live(rentalAll, "rental");
   const reportAll = g.books.filter((r) => !r.hasReport);
   const noReport = live(reportAll, "report");
-  /* Venue rent per m² reads the booth size, so an event without one is left out of it. */
   const sizeAll = g.books.filter((r) => !((r.sizeSqm ?? 0) > 0));
   const noSize = live(sizeAll, "size");
   const removable: Partial<Record<BooksTab, { all: BookRow[]; left: BookRow[] }>> = {
@@ -83,7 +78,6 @@ export function ProjectDataGapsPanel({ onOpen }: { onOpen: (id: number) => void 
           <table className="w-full border-collapse">
             <thead className="sticky top-0 bg-surface"><tr><Th left>Event</Th><Th>Dates</Th><Th left>Bill</Th><Th>Amount</Th><Th left>Salesperson</Th><Th left>Problem</Th></tr></thead>
             <tbody>{bills.map(({ r, b }, i) => {
-              /* An event's name and dates once, on its first bill; its other bills under it. */
               const first = i === 0 || bills[i - 1]!.r.id !== r.id;
               return (
               <tr key={`${r.id}-${b.ref}-${i}`} className={cn("cursor-pointer hover:bg-surface-2/50", first && i > 0 && "border-t-2 border-border")} onClick={() => onOpen(r.id)}>
@@ -213,7 +207,6 @@ export function ProjectStuckPanel({ onOpen }: { onOpen: (id: number) => void }) 
                 <Td className={!st.allDone && stageDue && stageDue < d.today ? "text-err" : ""}>{st.allDone ? "—" : stageDue ?? "—"}</Td>
                 <Td>{st.allDone ? st.lastIdx : st.currentIdx} / {st.lastIdx}</Td>
                 <Td left className="max-w-[340px] truncate text-[12px] text-ink-secondary">
-                  {/* One line: the most overdue task, the rest on hover. */}
                   {e.late.length === 0 ? <span className="text-ink-muted">—</span> : (
                     <span title={e.late.map((t) => `${t.title} · ${t.daysOver} d`).join("\n")}>
                       {e.late[0]!.title} <span className="text-ink-muted">· {e.late[0]!.daysOver} d{e.late.length > 1 ? ` · +${e.late.length - 1} more` : ""}</span>

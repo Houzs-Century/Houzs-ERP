@@ -1,18 +1,10 @@
-/* THE NO-LOGIN CONTRACTOR CALENDAR, MOUNTED.
- *
- * A booth contractor opens /c/<token> with no Houzs account and sees only their
- * confirmed events + booth numbers. The token in the URL is the only credential;
- * a killed or unknown link gets the same "not valid" screen. These mount the
- * REAL page and assert what the contractor SEES — and that an invalid link says
- * so rather than leaking that it once worked.
- */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ContractorCalendar } from "./ContractorCalendar";
 import { todayMyt } from "../vendor/scm/lib/dates";
 
-const TOKEN = "abcdefghijklmnopqrstuvwx012345_-"; // 32 chars, matches the token shape
+const TOKEN = "abcdefghijklmnopqrstuvwx012345_-"; // gitleaks:allow — a fixed 32-char test token, not a credential
 
 const fetchMock = vi.fn();
 
@@ -93,8 +85,6 @@ describe("ContractorCalendar (public, no-login)", () => {
     expect(download?.getAttribute("href")).toMatch(/\/events\/7\/floorplan\/t700\?download=1$/);
     const view = screen.getByText("View").closest("a");
     expect(view?.getAttribute("href")).toMatch(/\/events\/7\/floorplan\/t700$/);
-    // The panel asks the server for the floorplan and the size (owner
-    // 2026-09-09: "size not in here. please add also") and nothing else.
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(urls.filter((u) => u.includes("/events/")).sort()).toEqual([
       expect.stringMatching(/\/events\/7$/),

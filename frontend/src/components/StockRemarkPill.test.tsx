@@ -30,7 +30,6 @@ describe("StockRemarkPill", () => {
   it("paints a not-fully-ready remark in the warning slot, not as body text", () => {
     const { container } = render(<StockRemarkPill remark="PARTIAL" />);
     const pill = container.querySelector("span") as HTMLElement;
-    // The amber WARNING pair from ConsignmentOrders, the design of record.
     expect(pill.style.background).toContain("232, 107, 58");
     expect(pill.style.fontWeight).toBe("700");
   });
@@ -43,8 +42,6 @@ describe("StockRemarkPill", () => {
   });
 
   it("an UNKNOWN token takes the warning colours, never a neutral slot (#2334)", () => {
-    /* The branch is `=== 'READY'` and everything else is the warning pair. A
-       vocabulary that grows a fourth token must not be able to render as fine. */
     const { container } = render(<StockRemarkPill remark="SOMETHING NEW" />);
     const pill = container.querySelector("span") as HTMLElement;
     expect(pill.style.background).toContain("232, 107, 58");
@@ -67,9 +64,6 @@ describe("stock remark ordering", () => {
   });
 
   it("a LONGER ready list means more is in, so it sorts higher (#2334's direction)", () => {
-    /* This is the inverse of the 2026-08-16-morning ordering, which scored a
-       what-is-MISSING label. Getting the direction wrong here silently ranks the
-       emptiest orders at the top of a column headed "Stock Status". */
     expect(stockRemarkSortScore("BEDFRAME/ACC")).toBeGreaterThan(stockRemarkSortScore("ACC"));
   });
 

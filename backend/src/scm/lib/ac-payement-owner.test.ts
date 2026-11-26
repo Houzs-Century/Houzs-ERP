@@ -11,7 +11,6 @@ import { fakeSb, type Row } from './fake-postgrest';
 
 beforeEach(() => resetWritebackFlagCache());
 
-/* A real cutover code: the composer refuses an item it cannot map. */
 const ERP_ITEM = 'AKEMI APEX MATT (SP)';
 
 const order = (linkedAcDocNo: string): Row => ({
@@ -23,8 +22,6 @@ const order = (linkedAcDocNo: string): Row => ({
   linked_ac_docno: linkedAcDocNo,
 });
 
-/* Two ERP payment rows with references: on a carried-over order the book's text
-   holds more than these, which is exactly what a rewrite would lose. */
 const seed = (linkedAcDocNo: string) => fakeSb({
   app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
   autocount_outbox: [],

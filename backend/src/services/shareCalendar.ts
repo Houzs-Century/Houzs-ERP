@@ -1,32 +1,9 @@
-// ----------------------------------------------------------------------------
-// shareCalendar — the reads behind the public, no-login calendar share links
-// (routes/publicContractorCalendar.ts and routes/publicBrandCalendar.ts).
-//
-// Both links show ONE party's confirmed events. The party is a SCOPE: a column
-// of `projects` (`contractor` or `brand`) and the value the token row resolved
-// to. Every read here takes that scope and re-applies it — the list, the
-// single-event resolve, the floorplan files, the export rows — because RLS is
-// off prod-wide and the WHERE clause IS the boundary. The value comes off the
-// token row, never the request; the column is a two-member union, never a
-// string, so it cannot be injected.
-//
-// MINIMISATION. Whitelisted columns only; no `SELECT *`, no row spread. What
-// each party may see is decided by the ROUTE that calls these (a contractor
-// gets the blank floorplan and no money; a brand gets the display floorplan,
-// its own size and total sales), never by a flag the browser sends.
-// ----------------------------------------------------------------------------
 import type { Env } from "../types";
 
 export type ShareScope = { column: "contractor" | "brand"; value: string };
 
-// A share token is 24 random bytes as URL-safe base64 (32 chars). Nothing else
-// can exist, so a junk probe costs a regex, never a database round trip.
 export const TOKEN_RE = /^[A-Za-z0-9_-]{24,64}$/;
 
-// File ids are namespaced by the table they came from — `t<id>` for a
-// checklist-task attachment, `l<id>` for a legacy project-level one — so the
-// stream route knows which row to read the R2 key from. The key itself never
-// travels to the browser.
 export const FILE_ID_RE = /^[tl][1-9][0-9]{0,11}$/;
 const EVENT_ID_RE = /^[1-9][0-9]{0,11}$/;
 
@@ -77,9 +54,6 @@ type KeyRow = { r2_key: string; file_name: string | null; content_type: string |
  *  floorplan (contractor); `display` = the Display Floor Plan (brand). */
 export type PlanKind = "blank" | "display";
 
-// Titles carry owner-added suffixes and both "Floor Plan" / "Floorplan"
-// spellings, so the match strips spaces first — the same rule the mobile Floor
-// Plans card uses (MobilePMS.tsx `taskPlanAtts(/^blank\s*floor\s*plan/i)`).
 const PLAN_TITLE_LIKE: Record<PlanKind, string> = {
   blank: "blankfloorplan%",
   display: "displayfloorplan%",
@@ -87,9 +61,6 @@ const PLAN_TITLE_LIKE: Record<PlanKind, string> = {
 
 const LIVE = `lower(status) = 'confirmed' AND archived_at IS NULL`;
 
-// Types whose organizer is the mall-management company: never named to the
-// external link holder (owner). A Solo / Cash & Carry event reads its own type
-// label instead of the organizer.
 const SHARE_MASKED_TYPES = new Set(["solo", "cash & carry"]);
 
 /**
@@ -233,9 +204,6 @@ export async function listPlanFiles(env: Env, projectId: number, kind: PlanKind)
   return legacy.results.map(toFile("l"));
 }
 
-/** The R2 key for ONE file id, joined back to the project AND the task kind, so
- *  an id from another project's task — or from this project's other floorplan
- *  task — can never be streamed under this link. */
 async function planFileKey(env: Env, projectId: number, fileId: string, kind: PlanKind): Promise<KeyRow | null> {
   if (!FILE_ID_RE.test(fileId)) return null;
   const id = Number(fileId.slice(1));
@@ -291,10 +259,7 @@ export async function streamPlanFile(
     headers: {
       "Content-Type": att.content_type || obj.httpMetadata?.contentType || "application/octet-stream",
       "Content-Disposition": contentDisposition(download ? "attachment" : "inline", att.file_name || "floorplan"),
-      // Block MIME-sniffing the server-derived content-type back into
-      // html/svg (parity with the authenticated attachment stream).
       "X-Content-Type-Options": "nosniff",
-      // Token-gated: never let a shared cache hold it.
       "Cache-Control": "private, max-age=300",
     },
   });
@@ -394,7 +359,6 @@ export async function readContractorExportScope(env: Env, contractor: string): P
 export async function listShareExportRows(env: Env, scope: ShareScope, withSales: boolean, win: ExportWindow | null): Promise<ShareExportRow[]> {
   // company-scope: intentionally cross-company — see listShareEvents.
   const cols = `p.start_date, p.end_date, p.venue, p.state, p.organizer, p.brand, et.name AS event_type, p.booth_no, p.size_sqm`;
-  // Dates are 'YYYY-MM-DD[...]' text; the first ten characters compare as days.
   const inMonth = win
     ? `substr(p.start_date, 1, 10) <= ? AND substr(COALESCE(p.end_date, p.start_date), 1, 10) >= ?`
     : `1 = 1`;

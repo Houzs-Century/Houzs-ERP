@@ -39,18 +39,12 @@ import {
  * a fact answers "what is true", nothing more.
  */
 export interface AgentFact<I = unknown, O = unknown> {
-  /** Stable dotted name `<domain>.<fact>`, e.g. 'procurement.estimateReadyDate'. */
   name: string;
-  /** The family that OWNS this fact — the module the caller defers to instead of
-   *  reading its data directly. */
   owner: AgentFamily;
-  /** One line for the orchestrator / a human reading the registry. */
   summary: string;
-  /** Deterministic, read-only handler. */
   run: (env: Env, input: I) => Promise<O>;
 }
 
-// ── Facts ────────────────────────────────────────────────────────────────────
 
 export interface EstimateReadyDateInput {
   items: ReadyDateItem[];
@@ -73,13 +67,10 @@ export const PROCUREMENT_ESTIMATE_READY_DATE: AgentFact<EstimateReadyDateInput, 
     estimateReadyDateForCompany(env, { items: input?.items ?? [], asOfDate: input?.asOfDate }),
 };
 
-/** The registry. One entry today; each addition is one line here, not a new wire
- *  between two agents. */
 const FACTS: AgentFact[] = [PROCUREMENT_ESTIMATE_READY_DATE as AgentFact];
 
 const byName = new Map(FACTS.map((f) => [f.name, f]));
 
-// ── Lookup + governed dispatch ───────────────────────────────────────────────
 
 /** The registry, as data — for the orchestrator or a human to see what facts
  *  exist and who owns each. Never exposes the handler. */

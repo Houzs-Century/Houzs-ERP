@@ -63,24 +63,6 @@ export function activeCompanyId(c: CompanyScopeCtx): number | undefined {
   return c.get("companyId") as number | undefined;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   STRICT flavour — for WRITES that must never act across companies.
-   ═══════════════════════════════════════════════════════════════════════════
-
-   The helpers above DEGRADE when the active company is unresolved: no
-   predicate, so single-company Houzs kept serving through a pre-migration or
-   cold-start window. That is the right trade for a READ. It is the wrong trade
-   for a WRITE, where "I don't know which company" degrades to "act on ALL
-   companies' rows" — which is how setting your default warehouse came to demote
-   the other company's default.
-
-   So writes resolve through requireActiveCompanyId and REFUSE when it is
-   unknown. There is deliberately no default and no `?? `: an unresolvable
-   company is a condition to surface, never one to guess past. And the company
-   id is a REQUIRED positional argument to scopeToCompanyId — not an optional
-   field on an options bag — so a caller cannot omit it and silently get
-   "every company" (this codebase has pooled Houzs and 2990 data twice for
-   exactly that reason). */
 
 export type CompanyScopeRefusal = { error: string; message: string };
 
@@ -190,10 +172,7 @@ export function isRestrictedToNoCompany(c: CompanyScopeCtx): boolean {
  */
 export function allowedCompaniesSql(c: CompanyScopeCtx, col = "company_id"): string {
   const ids = allowedCompanyIds(c);
-  // UNRESOLVED → no predicate (legacy single-company SQL runs unchanged).
   if (ids === undefined) return "";
-  // RESTRICTED TO NOTHING → a predicate that matches nothing. `1=0` (not
-  // `false`) so the fragment stays valid on the D1/SQLite test mirror too.
   if (ids.length === 0) return ` AND 1=0`;
   return ` AND ${col} IN (${ids.join(",")})`;
 }
@@ -209,23 +188,13 @@ export function allowedCompaniesSql(c: CompanyScopeCtx, col = "company_id"): str
 export function activeCompanySql(c: CompanyScopeCtx, col = "company_id"): string {
   const id = Number(activeCompanyId(c));
   if (Number.isInteger(id) && id > 0) return ` AND ${col} = ${id}`;
-  // No active company. FAIL CLOSED whenever the context is RESOLVED
-  // (allowedCompanyIds is set) but no single active company could be picked —
-  // the RESTRICTED-TO-NOTHING `[]` state AND a multi-company caller with no
-  // usable switcher header during a companies-master blip (allowedCompanyIds
-  // set, companyId unset). Kept in lock-step with scopeToCompany; if the two
-  // ever disagree that is the same bug class again. Only the genuinely
-  // UNRESOLVED / legacy state (allowedCompanyIds === undefined) degrades to no
-  // predicate, so a single-company install is never blanked.
   if (allowedCompanyIds(c) !== undefined) return ` AND 1=0`;
   return "";
 }
 
 /** A parameterised company predicate for a table keyed by company CODE. */
 export interface CompanyCodePredicate {
-  /** ` AND (...)` fragment to append to a WHERE, or "" to degrade. */
   sql: string;
-  /** The values for the `?` placeholders in `sql`, in order. */
   binds: string[];
 }
 
@@ -269,8 +238,6 @@ export function activeCompanyCodePred(
   c: CompanyScopeCtx,
   col = "company_code",
 ): CompanyCodePredicate {
-  // UNRESOLVED (pre-migration / D1 test mirror / cold-start) → no predicate, so
-  // single-company Houzs serves unchanged. Same first branch as activeCompanySql.
   if (allowedCompanyIds(c) === undefined) return { sql: "", binds: [] };
 
   const id = Number(activeCompanyId(c));
@@ -286,9 +253,6 @@ export function activeCompanyCodePred(
     if (!others.some((r) => String(r.code) === String(id))) values.push(String(id));
   }
 
-  // RESOLVED but nothing to match on — the RESTRICTED-TO-NOTHING `[]` state, or
-  // a multi-company caller with no usable switcher header during a master blip.
-  // FAIL CLOSED, exactly as activeCompanySql does.
   if (values.length === 0) return { sql: " AND 1=0", binds: [] };
 
   const base = houzsCompanyId(c);
@@ -391,16 +355,6 @@ export function scopeToCompany<Q>(query: Q, c: CompanyScopeCtx): Q {
   if (id != null) {
     return (query as unknown as { eq(col: string, val: unknown): Q }).eq("company_id", id);
   }
-  // No active company resolved. FAIL CLOSED whenever the company context is
-  // RESOLVED (allowedCompanyIds is set) but no single active company could be
-  // picked — both the RESTRICTED-TO-NOTHING `[]` state and a multi-company
-  // caller whose switcher header didn't arrive during a companies-master blip
-  // (allowedCompanyIds set, companyId unset). Serving every company's rows here
-  // is the cross-company READ leak this guard exists to prevent; an empty list
-  // self-heals within one request. FAIL OPEN only in the genuinely UNRESOLVED /
-  // legacy state (allowedCompanyIds === undefined: pre-migration, or a brand-new
-  // isolate that has never read the master), so a single-company install is
-  // never blanked.
   if (allowedCompanyIds(c) !== undefined) {
     return (query as unknown as { in(col: string, vals: number[]): Q }).in("company_id", []);
   }
@@ -414,10 +368,6 @@ export function scopeToCompany<Q>(query: Q, c: CompanyScopeCtx): Q {
  */
 export function scopeToAllowedCompanies<Q>(query: Q, c: CompanyScopeCtx): Q {
   const ids = allowedCompanyIds(c);
-  // UNRESOLVED → no filter. Otherwise `.in` the resolved set — which for the
-  // RESTRICTED-TO-NOTHING state is an empty list, and an empty `in` matches no
-  // rows. Same three-state contract as allowedCompaniesSql; if these two ever
-  // disagree, that is the same bug class again.
   if (ids === undefined) return query;
   return (query as unknown as { in(col: string, vals: number[]): Q }).in("company_id", ids);
 }
@@ -432,30 +382,6 @@ export function scopeToGrantedCompanies<Q>(query: Q, c: CompanyScopeCtx, activeC
   return allowedCompanyIds(c) !== undefined ? scopeToAllowedCompanies(query, c) : scopeToCompanyId(query, activeCompanyId);
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   CROSS-COMPANY DETAIL MISS — turn a per-company by-id miss into an HONEST answer.
-   ═══════════════════════════════════════════════════════════════════════════
-
-   A PER-COMPANY detail route (scopeToCompany + .maybeSingle) returns nothing for
-   BOTH "no such row anywhere" AND "the row is in another company". Those are two
-   very different facts, and conflating them is the supplier-404 the owner kept
-   hitting (2026-07-24): a multi-company user reaches a detail by a bookmark, a
-   second window, or a link that carries the id but not the company, and the bare
-   `{ error: 'not_found' }` renders as the alarming "That item could no longer be
-   found — it may have been changed or removed." The record is right there; it is
-   simply in the company they are not currently switched to.
-
-   detailMissResponse re-looks-up the id WIDENED to the caller's ALLOWED companies
-   (via scopeToAllowedCompanies — never beyond, so a company-1-only user still gets
-   a plain not_found for a company-2 row and NOTHING leaks). When it resolves in
-   another allowed company, it returns an `in_other_company` body naming that
-   company so the UI can offer to switch, instead of implying the record is gone.
-
-   Deliberately NOT registered in the SCM client's ERROR_CODE_MESSAGES: that map is
-   consulted first and REPLACES the server message (authed-fetch humanApiError),
-   which would throw away the company name. Falling through to the plain-sentence
-   `message` below keeps it. The message is kept < 200 chars, no leading `{`, and
-   free of the internals the plain-sentence filter rejects. */
 export const IN_OTHER_COMPANY = "in_other_company";
 
 export type DetailMiss =
@@ -556,12 +482,6 @@ const DOC_PREFIX_BY_COMPANY: Record<string, string> = {
  */
 export function companyDocPrefix(c: CompanyScopeCtx): string {
   const code = c.get("companyCode");
-  /* A non-string (a whole company object leaking in from a reconstructed
-     context — as the scan background job did, minting
-     "[object Object]-SO-2607-001") degrades to the BASE company's prefix. It
-     used to degrade to "", which was the base company's prefix at the time;
-     now that HOUZS mints `HC-`, returning "" would invent a THIRD numbering
-     shape belonging to no company. */
   if (typeof code !== "string" || !code) return docPrefixForCode(BASE_COMPANY_CODE);
   return docPrefixForCode(code);
 }
@@ -741,8 +661,8 @@ export function isCrossCompanySource(
   c: CompanyScopeCtx,
 ): boolean {
   const active = activeCompanyId(c);
-  if (active == null) return false; // unresolved -> degrade, as everywhere else
-  if (sourceCompanyId == null) return false; // pre-migration row -> degrade
+  if (active == null) return false;
+  if (sourceCompanyId == null) return false;
   const src = Number(sourceCompanyId);
   if (!Number.isInteger(src) || src <= 0) return false;
   return src !== Number(active);

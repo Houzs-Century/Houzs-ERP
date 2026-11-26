@@ -14,7 +14,6 @@
 // Pure: no reads, no writes.
 // ----------------------------------------------------------------------------
 
-/** A merchant name as the till typed it, compared without case or edge spaces. */
 const nameKey = (s: string | null | undefined): string => String(s ?? '').trim().toUpperCase();
 
 /** Every name a merchant's money is keyed under: its display name first, then

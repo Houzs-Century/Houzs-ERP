@@ -4,16 +4,9 @@ import { api } from "../../api/client";
 import { cn } from "../../lib/utils";
 import type { FinanceLine } from "./types";
 
-// Shared className for every editable input in the strip — keeps
-// dropdowns + text inputs + date inputs visually identical.
 export const SPEC_INPUT_CLASS =
   "w-full appearance-none rounded border border-border bg-surface px-2 py-1 text-[12.5px] font-medium text-ink outline-none transition-colors focus:border-primary focus:ring-1 focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60";
 
-// Quick Rental (RM) — writes a single `rental` cost line to the finance
-// ledger (the same category the Financial Snapshot's Rental row edits),
-// so keying rental here syncs the Rental row, Total Cost, Net Profit, the
-// Rental KPI card, and the Project List "Rental (RM)" column. Saves on
-// blur / Enter.
 export function QuickRentalField({
   projectId,
   financeLines,
@@ -28,7 +21,6 @@ export function QuickRentalField({
   const existing = financeLines.filter(
     (l) => l.kind === "cost" && ((l.category as string | null) ?? "").trim() === "rental" && !l.auto_source && !l.source,
   );
-  // Rental from the books (payment-request item 5): Finance's figure, not typed over.
   const fromBooks = financeLines.filter((l) => l.kind === "cost" && l.source === "books" && l.category === "rental");
   const current = existing.reduce((s, l) => s + (l.amount || 0), 0);
   const [val, setVal] = useState(current ? String(current) : "");
@@ -45,7 +37,7 @@ export function QuickRentalField({
       toast.error("Enter a valid rental amount");
       return;
     }
-    if (Math.abs(n - current) < 0.005) return; // unchanged
+    if (Math.abs(n - current) < 0.005) return;
     setSaving(true);
     try {
       if (n <= 0) {
@@ -53,7 +45,6 @@ export function QuickRentalField({
       } else if (existing.length === 1) {
         await api.patch(`/api/projects/finance/lines/${existing[0].id}`, { amount: n });
       } else {
-        // 0 existing → create; >1 → consolidate the duplicates into one.
         for (const l of existing) await api.del(`/api/projects/finance/lines/${l.id}`);
         await api.post(`/api/projects/${projectId}/finance/lines`, {
           kind: "cost",
@@ -133,9 +124,6 @@ export function QuickRentalField({
   );
 }
 
-// Text input that flips between read-only display and an editable
-// input depending on `editing`. Centralised here so every text field
-// in the spec strip looks identical.
 export function SpecTextField({
   editing,
   value,
@@ -188,10 +176,6 @@ export function SpecTextField({
   );
 }
 
-// ── Spec-strip helpers ────────────────────────────────────────────
-// Each cell renders its own label + a children slot for the value
-// (text or input). Designed to be visually flat — the dividing
-// borders come from the parent `divide-x divide-y` on the grid.
 
 export function SpecCell({
   label,

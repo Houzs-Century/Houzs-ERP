@@ -77,8 +77,6 @@ vi.mock('../../vendor/scm/lib/consignment-return-queries', async (importOriginal
 import { ConsignmentNotes } from './ConsignmentNotes';
 import { ConsignmentReturns } from './ConsignmentReturns';
 
-/* The server answers the paged contract: 0-based `page`, `pageSize` clamped to
-   200 — here 2 per page, so three documents take two requests. */
 const serve = (route: string, key: string, all: unknown[]) => async (path: string) => {
   if (!path.startsWith(`${route}?`)) return {};
   const p = new URL(path, 'http://x').searchParams;
@@ -136,7 +134,6 @@ describe.each(cases)('$name list Export', ({ ui, url, route, key, all, search, f
     h.authed.mockImplementation(serve(route, key, all));
     mount(ui, `${url}?status=CANCELLED`);
     fireEvent.change(screen.getByPlaceholderText(search), { target: { value: 'Bravo' } });
-    // the page debounces its search box by 300 ms before the term reaches the query
     await new Promise((r) => setTimeout(r, 400));
     await exportNow();
     expect(listCalls(route)[0]?.get('q')).toBe('Bravo');

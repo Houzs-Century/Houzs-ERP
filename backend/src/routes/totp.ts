@@ -10,9 +10,6 @@ import { acceptTotpCode } from "../services/totpCheck";
 import { sealTotpSecret } from "../services/totpSecret";
 import { audit } from "../services/audit";
 
-// Authenticated TOTP self-service (mounted at /api/totp, INSIDE the auth
-// middleware so c.get("user") is the enrolling user). The login second-step
-// itself is public and lives in routes/auth.ts (/api/auth/totp/login).
 const app = new Hono<{ Bindings: Env }>();
 
 type TotpRow = {
@@ -30,7 +27,6 @@ async function loadTotp(env: Env, userId: number): Promise<TotpRow | null> {
     .first<TotpRow>();
 }
 
-/** GET /api/totp/status — does the current user have 2FA on, codes left? */
 app.get("/status", async (c) => {
   const user = c.get("user");
   const row = await loadTotp(c.env, user.id);
@@ -47,12 +43,6 @@ app.get("/status", async (c) => {
   });
 });
 
-/**
- * POST /api/totp/setup — mint a fresh secret (replaces any un-confirmed one)
- * and hand back the otpauth URI + the secret for manual entry. Does NOT enable
- * 2FA; the user must confirm with a code via /enable. Refused once enabled
- * (disable first) so an attacker on a live session can't silently re-key.
- */
 app.post("/setup", async (c) => {
   const user = c.get("user");
   const row = await loadTotp(c.env, user.id);
@@ -66,11 +56,6 @@ app.post("/setup", async (c) => {
   return c.json({ secret, otpauth_uri: otpauthUri(secret, user.email) });
 });
 
-/**
- * POST /api/totp/enable  Body: { code }
- * Confirms the enrolling code, flips totp_enabled, and returns 10 one-time
- * backup codes (shown ONCE). From here on the user needs a code at login.
- */
 app.post("/enable", async (c) => {
   const user = c.get("user");
   const { code } = await c.req.json<{ code?: string }>();
@@ -108,12 +93,6 @@ app.post("/enable", async (c) => {
   return c.json({ ok: true, backup_codes: plain });
 });
 
-/**
- * POST /api/totp/disable  Body: { code }
- * Self-disable. Requires a current TOTP (or backup) code so a hijacked session
- * can't quietly turn 2FA off. Lost-device recovery is the admin reset
- * (POST /api/users/:id/totp/disable, users.manage).
- */
 app.post("/disable", async (c) => {
   const user = c.get("user");
   const { code } = await c.req.json<{ code?: string }>();
@@ -125,7 +104,6 @@ app.post("/disable", async (c) => {
 
   let ok = await acceptTotpCode(c.env, user.id, row, code);
   if (!ok && row.totp_backup_codes) {
-    // Allow a backup code too (the user may be disabling because the device is gone).
     try {
       const remaining = await consumeBackupCode(code, JSON.parse(row.totp_backup_codes));
       ok = remaining !== null;
@@ -133,7 +111,6 @@ app.post("/disable", async (c) => {
       ok = false;
     }
   }
-  // Backup codes are accepted here too (device may be gone) — say so.
   if (!ok) {
     return c.json(
       { error: "That code didn't match — try the current code from your authenticator app, or a backup code." },

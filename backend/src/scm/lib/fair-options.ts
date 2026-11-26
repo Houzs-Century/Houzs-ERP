@@ -69,18 +69,12 @@ import { fmtDayMonth, fmtDayMonthRange } from '../shared/format';
  *  at one organizer's event: the fair the owner talks about is several of these. */
 export type FairProjectRow = {
   projectId: number;
-  /** `public.projects.venue` — free text historically, now always a master name. */
   venue: string | null;
   organizer: string | null;
-  /** `public.projects.brand` — AKEMI / ZANOTTI / ERGOTEX / DUNLOPILLO / … */
   brand: string | null;
-  /** `YYYY-MM-DD`, MYT calendar date. A project with no start has no period. */
   startDate: string | null;
-  /** `YYYY-MM-DD`, MYT, INCLUSIVE. NULL = open-ended. */
   endDate: string | null;
   status: string | null;
-  /** `project_event_types.slug` — "exhibition" / "solo". Optional: only the
-   *  picker's LABEL reads it, so a loader that resolves a fair need not carry it. */
   eventType?: string | null;
 };
 
@@ -89,9 +83,6 @@ export type FairBooth = { projectId: number; brand: string | null };
 
 /** One row in the dropdown. `key` is what the client sends back on save. */
 export type FairOption = {
-  /** Stable identity of the EVENT: venue + organizer + period. Not a project id —
-   *  one row covers every brand booth at that event, and which brand applies is
-   *  decided from the order's own lines, not by the person picking. */
   key: string;
   venue: string;
   organizer: string;
@@ -100,14 +91,8 @@ export type FairOption = {
    *  management is only who the space was rented from). `organizer` itself is
    *  untouched — it is still what the save path resolves the project from. */
   solo: boolean;
-  /** The event's period. It travels with the pick and is what the save path
-   *  matches the event on — see `loadFairsForEvent`. Not decoration: it is half
-   *  the row's identity, and dropping it is what made a fair that had already
-   *  closed impossible to attribute a sale to. */
   startDate: string;
   endDate: string | null;
-  /** The project ids this row covers, one per brand. For display/debug only —
-   *  the server re-resolves on save and never trusts an id from the client. */
   projectIds: number[];
   /** The same booths WITH their brand, by brand then id. The Fair Links screen
    *  links an order to one booth and has to say whose it is (owner 2026-10-20:
@@ -116,13 +101,7 @@ export type FairOption = {
 };
 
 export type FairOptionGroups = {
-  /** Fairs whose period CONTAINS the order date. Normally where the rep is. */
   running: FairOption[];
-  /** The rest of the lookback window — fairs that have already CLOSED, newest
-   *  first. Never anything in the future: the window ends at the order date.
-   *  Was `month` until 2026-09-19, when the window stopped being a calendar
-   *  month; the name changed with it so it cannot quietly describe the wrong
-   *  thing. */
   earlier: FairOption[];
 };
 
@@ -240,7 +219,6 @@ export function fairDayOnSave(
   const picked = fairPickedPeriod(body);
   const day = typeof body.fairDate === 'string' ? body.fairDate.slice(0, 10) : '';
   if (!organizer || !picked || !ISO_DATE.test(day)) return null;
-  /* A NULL end is ONE day, as everywhere else in this module. */
   if (day < picked.startDate || day > (picked.endDate ?? picked.startDate)) return null;
   const cap = clean(soDate).slice(0, 10);
   if (ISO_DATE.test(cap) && day > cap) return null;
@@ -319,9 +297,6 @@ export function fairEventKey(row: FairProjectRow): string {
   return optionOf(row).key;
 }
 
-/** One picker row for one PICKABLE project. The single place a row is built, so
- *  the dropdown and the keyer's default (`keyerFairDefault`) key an event
- *  identically and the form can light up the row it was given. */
 function optionOf(row: FairProjectRow): FairOption {
   const venue = clean(row.venue);
   const organizer = clean(row.organizer);
@@ -359,9 +334,6 @@ export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOp
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { running: [], earlier: [] };
   const { start: windowStart } = lookbackWindow(date);
 
-  /* Overlaps [windowStart, orderDate]. The upper bound is what keeps fairs
-     that have not happened yet out of the list — there is no separate
-     "no future" rule to forget. */
   const all = eventsOf(rows, (o) => o.startDate <= date && (o.endDate ?? o.startDate) >= windowStart);
 
   const running: FairOption[] = [];
@@ -372,10 +344,6 @@ export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOp
   }
 
   running.sort((a, b) => a.venue.localeCompare(b.venue) || a.organizer.localeCompare(b.organizer));
-  /* NEWEST FIRST in the closed group. The window is four weeks of history and
-     the fair that just ended is overwhelmingly the one being written up; the
-     old ascending order put the oldest at the top, which is the least likely
-     answer. */
   earlier.sort(
     (a, b) =>
       b.startDate.localeCompare(a.startDate) ||
@@ -386,9 +354,6 @@ export function buildFairOptions(rows: FairProjectRow[], soDate: string): FairOp
   return { running, earlier };
 }
 
-/** The pickable projects grouped into events (one row per place + organizer +
- *  period, each with its brand booths), keeping the events `keep` accepts.
- *  The one grouping both lists use. */
 function eventsOf(rows: readonly FairProjectRow[], keep: (o: FairOption) => boolean): FairOption[] {
   const byKey = new Map<string, FairOption>();
   const rowsOf = new Map<string, FairProjectRow[]>();
@@ -431,31 +396,19 @@ export function allFairOptions(rows: readonly FairProjectRow[]): FairOption[] {
   );
 }
 
-// ── Resolution: from a PICKED row back to one project ────────────────────────
 
 /** How an order's fair link was decided. Persisted in
  *  `scm.mfg_sales_orders.fair_match` so a report can tell a real answer from a
  *  blank, which a NULL `project_id` on its own cannot. */
 export type FairMatch =
-  /** One project matched — `projectId` is set. */
   | 'PICKED'
-  /** No fair exists at that venue on that date yet. The venue is still recorded
-   *  and the nightly reconcile will try again once the fair is created. This is
-   *  the 23% of fairs that reach the system within a week of opening, 13 of them
-   *  after they had already started (measured 2026-09-13, Jun-Sep). */
   | 'PENDING'
-  /** A fair exists but more than one brand booth fits and the order's own lines
-   *  do not say which. A person decides; the system does not guess. */
   | 'AMBIGUOUS'
-  /** A fair exists and the order's brand is not one of its booths — e.g. a
-   *  DUNLOPILLO sale written at an AKEMI-only event. Recorded, not resolved. */
   | 'UNMATCHED';
 
 export type FairResolution = {
   projectId: number | null;
   match: FairMatch;
-  /** Every project that survived the venue/organizer/date filter. Lets the
-   *  pending screen show a person exactly what it was choosing between. */
   candidateIds: number[];
 };
 
@@ -482,14 +435,6 @@ export function resolveFair(input: {
   const wantOrg = fairKeyPart(input.organizer);
   const wantBrand = fairKeyPart(input.brand);
 
-  /* NO DATE FILTER HERE ANY MORE (2026-09-19). The caller has already narrowed
-     the candidates — to the exact event the operator picked, or to the venue's
-     fairs inside the lookback window — and re-checking "was it running on the
-     order date" here would undo that. It is precisely what it used to do, and
-     it is why an order written a week after its fair closed could not be
-     attributed by any path in the system: the save refused it, the nightly
-     reconcile refused it again, and the settle-by-hand screen refused it a
-     third time, all from this one line. */
   const narrowed = input.candidates
     .filter(isPickableFair)
     .filter((r) => (wantOrg ? fairKeyPart(r.organizer) === wantOrg : true));
@@ -503,7 +448,6 @@ export function resolveFair(input: {
     return oneBoothOrNothing(onBrand, candidateIds);
   }
 
-  /* No brand to narrow with. One booth is still an answer; several is not. */
   return oneBoothOrNothing(narrowed, candidateIds);
 }
 
@@ -539,33 +483,12 @@ export function resolveFairWithKeyer(input: {
   const booths = narrowed.filter((r) => fairEventKey(r) === event);
   const inEvent = resolveFair({ candidates: booths, brand: input.brand, organizer: input.organizer });
   if (inEvent.projectId != null) return { ...inEvent, candidateIds: plain.candidateIds };
-  /* Two records of ONE booth still count as one, as everywhere here. */
   const own = booths.filter((r) => input.keyerProjectIds.has(r.projectId));
   const mine = own.length > 0 ? oneBoothOrNothing(own, plain.candidateIds) : null;
   return mine?.projectId != null ? mine : plain;
 }
 
-/** A BOOTH is one organizer's stand for one brand. Two project rows that agree
- *  on both are duplicate records of the same booth — the data-gaps report's
- *  first clean run (2026-09-13) found 66 such groups across all years, 9 of them
- *  inside Jun-Dec 2026 — and collapsing them to the lowest id is a documented,
- *  stable arbiter (the same choice `venue-binding.ts` makes between
- *  indistinguishable projects): an auditable tie-break beats a planner-order
- *  coin flip, and beats refusing to link an order that has exactly one real
- *  answer. `report-fair-data-gaps.mjs` lists the duplicates so they get merged.
- *
- *  Two rows that differ on organizer or brand are DIFFERENT FAIRS with different
- *  P&L, and the lowest id there would be a guess wearing a rule's clothes —
- *  MID VALLEY on 2026-03-20 had MLE and REX side by side. That case answers
- *  AMBIGUOUS and a person decides. */
 function oneBoothOrNothing(rows: FairProjectRow[], candidateIds: number[]): FairResolution {
-  /* THE PERIOD IS PART OF THE BOOTH KEY (added 2026-09-19). Without it, REX /
-     AKEMI at one venue twice inside the lookback window read as ONE booth and
-     collapsed to the lower id — silently posting the second fair's sales to the
-     first fair's P&L. That could not happen while the caller filtered to fairs
-     running on the order date, because only one of them ever was; the window
-     made two of them reachable at once, so the key has to carry what now tells
-     them apart. Two rows that differ only by period are DIFFERENT FAIRS. */
   const booths = new Set(
     rows.map((r) => `${fairKeyPart(r.organizer)}|${fairKeyPart(r.brand)}|${r.startDate ?? ''}|${r.endDate ?? ''}`),
   );
@@ -644,16 +567,11 @@ export type FairWhy =
   | { code: 'too_old'; venue: string; startDate: string; endDate: string | null };
 
 export type KeyerFairDefault = {
-  /** The event the create form fills in — a row of the dropdown — or null. */
   event: FairOption | null;
-  /** `ongoing`: running on the order date. `latest`: the newest that closed
-   *  inside the lookback window. Null with no event. */
   how: 'ongoing' | 'latest' | null;
-  /** Set only when there is no event and it can be said why. */
   why: FairWhy | null;
 };
 
-/* The fair's last trading day — a blank end is ONE day, as everywhere here. */
 const lastDayOf = (r: FairProjectRow): string => clean(r.endDate) || clean(r.startDate);
 
 /**
@@ -672,7 +590,6 @@ export function keyerFairDefault(rows: FairProjectRow[], orderDate: string): Key
   const date = clean(orderDate).slice(0, 10);
   if (!ISO_DATE.test(date)) return { event: null, how: null, why: null };
   const { start: windowStart } = lookbackWindow(date);
-  /* Never a fair that has not started — nobody keys an order before it. */
   const mine = rows.filter((r) => isPickableFair(r) && (r.startDate as string) <= date);
   const asEvent = (r: FairProjectRow): FairOption => {
     const event = optionOf(r);

@@ -1,26 +1,7 @@
-// ----------------------------------------------------------------------------
-// Categories — catalogue-category management at /scm/categories.
-//
-// Reads + writes scm.categories via the publicCategoriesApi (backend
-// scm/routes/categories.ts). The grid is now editable:
-//   · Click the card image → hero editor (existing HeroImageEditor drawer).
-//   · Click the kebab on the card → Edit / Delete / Move up / Move down.
-//   · "+ New category" in the toolbar → create form drawer.
-//
-// Delete is gated server-side on product_models.category referencing this id;
-// the 409 response carries a count + sample model codes so we can offer a
-// "Go to Products" jump that pre-filters by category so the operator can
-// re-categorise before retrying the delete.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-// Static named imports — every icon the Categories page might render is listed
-// here so Rollup can tree-shake the rest of lucide-react out of the bundle.
-// The earlier `import * as Lucide from "lucide-react"` (and the subsequent
-// `lucide-react/dynamicIconImports` map) both forced every icon module to be
-// reachable from this chunk, ballooning the lucide chunk to ~780–920 KB raw.
 import {
   AlertCircle,
   ArrowDown,
@@ -35,9 +16,6 @@ import {
   RotateCw,
   Trash2,
   X,
-  // ── Picker icons (kebab → PascalCase). Adding a new pick here means
-  // adding it to POPULAR_ICONS below AND to ICON_MAP. Names outside this
-  // map fall back to the Package icon at render time.
   Armchair,
   Baby,
   Bath,
@@ -77,7 +55,6 @@ import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { writeFailedAs } from "../../vendor/scm/lib/mutation-error";
 import { cn } from "../../lib/utils";
 
-// ── Types ───────────────────────────────────────────────────────────────────
 
 type CategoryRow = {
   id: string;
@@ -87,8 +64,6 @@ type CategoryRow = {
   hero_url?: string | null;
 };
 
-// The wire shape returned by POST/PATCH (label + icon, not the read-side
-// "name + slug" alias).
 type CategoryWire = {
   id: string;
   label: string;
@@ -97,12 +72,6 @@ type CategoryWire = {
   hero_image_key: string | null;
 };
 
-// Curated picks — lucide names that show up first in the icon picker. They
-// cover ~95% of real-world catalogue categories so the operator usually
-// doesn't need to drop into free-text. Free text below stays as the escape.
-// Each entry MUST also exist in ICON_MAP below; names outside the map render
-// as the Package fallback. (`sink` was previously listed but is not exported
-// by lucide-react 0.460, so the picker silently dropped it — omitted here.)
 const POPULAR_ICONS = [
   "sofa", "armchair", "bed", "bed-double", "bed-single",
   "lamp", "lamp-ceiling", "lamp-desk", "lamp-floor", "lamp-wall-down",
@@ -146,15 +115,11 @@ const ICON_MAP: Record<string, LucideIcon> = {
   utensils: Utensils,
 };
 
-// Free-text icon names that aren't in the map fall back to the Package icon
-// so the data round-trips fine (the picker's text input + popular grid still
-// works); only the rendered glyph downgrades for unknown names.
 function resolveIcon(name: string | null | undefined): LucideIcon {
   if (!name) return Package;
   return ICON_MAP[name] ?? Package;
 }
 
-// ── Mutations ───────────────────────────────────────────────────────────────
 
 const useCreateCategory = () => {
   const qc = useQueryClient();
@@ -201,18 +166,11 @@ const useDeleteCategory = () => {
   });
 };
 
-// ── Component ───────────────────────────────────────────────────────────────
 
 export function Categories() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  // When Categories is mounted inside the Products page (as the
-  // `?tab=categories` sub-tab, per PR #164) the "← Products" breadcrumb
-  // navigates to `/scm/products` — dropping the `?tab=categories` query
-  // and teleporting the user back to the SKU Master tab. Hide the
-  // breadcrumb in that case; the outer Products tab strip already tells
-  // them where they are.
   const embedded = location.pathname === "/scm/products";
 
   const catsQ = useQuery({
@@ -227,7 +185,6 @@ export function Categories() {
   const loadStatus = catsQ.error ? classifyLoadError(catsQ.error) : "ok";
   const cats = catsQ.data ?? [];
 
-  // URL state · 3 modes: hero / meta / new. Only one drawer open at a time.
   const heroId = searchParams.get("edit-hero");
   const metaId = searchParams.get("edit-meta");
   const isNew = searchParams.get("new") === "1";
@@ -263,7 +220,6 @@ export function Categories() {
     setSearchParams(sp, { replace: true });
   };
 
-  // Esc closes whichever drawer is open
   useEffect(() => {
     if (!heroId && !metaId && !isNew) return;
     const onKey = (e: KeyboardEvent) => {
@@ -274,16 +230,12 @@ export function Categories() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heroId, metaId, isNew]);
 
-  // Reorder via arrows — adjust this row's sort_order to one slot above or
-  // below its neighbour in display order.
   const updateMut = useUpdateCategory();
   const sortedByOrder = useMemo(
     () =>
       cats
         .slice()
         .sort((a, b) => {
-          // Surface the API's sort_order field (we read it via the same
-          // /categories list); fall back to name for stability.
           const ao = (a as unknown as { sort_order?: number }).sort_order ?? 0;
           const bo = (b as unknown as { sort_order?: number }).sort_order ?? 0;
           if (ao !== bo) return ao - bo;
@@ -300,10 +252,6 @@ export function Categories() {
       (sortedByOrder[idx] as unknown as { sort_order?: number }).sort_order ?? idx;
     const swapOrder =
       (swap as unknown as { sort_order?: number }).sort_order ?? idx + dir;
-    // Swap the two orders so they trade places. Backend just stores them.
-    // Fire-and-forget, so the refusal has to be raised here: nothing awaits
-    // these and the grid re-renders from cache, so without onError a refused
-    // PATCH left the card exactly where it was and said nothing.
     const onError = writeFailedAs("Category order not changed");
     updateMut.mutate({ id: swap.id, sort_order: curOrder }, { onError });
     updateMut.mutate({ id, sort_order: swapOrder }, { onError });
@@ -311,7 +259,6 @@ export function Categories() {
 
   return (
     <div className="space-y-4 py-4 sm:py-6">
-      {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           {!embedded && (
@@ -340,7 +287,6 @@ export function Categories() {
         </Button>
       </div>
 
-      {/* Loading */}
       {catsQ.isLoading && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -349,7 +295,6 @@ export function Categories() {
         </div>
       )}
 
-      {/* Not configured / error */}
       {loadStatus === "not-configured" && !catsQ.isLoading && (
         <div className="rounded-lg border border-border bg-surface-2 px-5 py-8 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-[10px] border border-amber-300 dark:border-amber-800 bg-warning-bg text-warning-text">
@@ -379,14 +324,12 @@ export function Categories() {
         </div>
       )}
 
-      {/* Empty */}
       {loadStatus === "ok" && !catsQ.isLoading && cats.length === 0 && (
         <div className="rounded-md border border-dashed border-border bg-surface-2 px-4 py-12 text-center text-[12px] text-ink-muted">
           No categories yet. Click <span className="font-semibold text-ink">+ New category</span> to add one.
         </div>
       )}
 
-      {/* Grid */}
       {loadStatus === "ok" && sortedByOrder.length > 0 && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {sortedByOrder.map((c, idx) => (
@@ -404,7 +347,6 @@ export function Categories() {
         </div>
       )}
 
-      {/* Drawers */}
       {editingHero && (
         <Drawer onClose={closeDrawer} title={`Edit hero · ${editingHero.name}`}>
           <HeroImageEditor
@@ -432,7 +374,6 @@ export function Categories() {
   );
 }
 
-// ── Card with kebab menu ────────────────────────────────────────────────────
 
 function CategoryCard({
   cat,
@@ -458,18 +399,9 @@ function CategoryCard({
     <div
       className={cn(
         "group relative rounded-xl border border-border bg-surface shadow-stone transition-all hover:-translate-y-px hover:border-primary/40",
-        // While the kebab dropdown is open, lift the card above its siblings.
-        // The card uses `hover:-translate-y-px`, and `transform` creates a
-        // stacking context that locks the absolutely-positioned dropdown
-        // inside the card. Without an explicit z-index, DOM-later sibling
-        // cards (next row in the grid) paint on top and clip the menu.
         menuOpen && "z-30",
       )}
     >
-      {/* Image area — clickable, opens hero editor. overflow-hidden lives
-          here (not on the card wrapper) so the kebab dropdown can extend
-          below the card without being clipped. rounded-t-xl keeps the
-          image's top corners flush with the card's rounded border. */}
       <button
         type="button"
         onClick={onOpenHero}
@@ -488,7 +420,6 @@ function CategoryCard({
         )}
       </button>
 
-      {/* Footer */}
       <div className="flex items-center justify-between gap-2 px-4 py-3">
         <button
           type="button"
@@ -509,7 +440,6 @@ function CategoryCard({
           )}
         </button>
 
-        {/* Kebab menu */}
         <div className="relative">
           <button
             type="button"
@@ -604,7 +534,6 @@ function MenuItem({
   );
 }
 
-// ── Category form (shared by new + edit) ────────────────────────────────────
 
 function CategoryForm({
   mode,
@@ -643,7 +572,6 @@ function CategoryForm({
 
   return (
     <div className="space-y-4">
-      {/* ID (create only) */}
       {mode === "create" && (
         <Field
           label="ID / slug"
@@ -735,7 +663,6 @@ function Field({
   );
 }
 
-// ── Icon picker ─────────────────────────────────────────────────────────────
 
 function IconPicker({
   value,
@@ -747,7 +674,6 @@ function IconPicker({
   const CurrentIcon = resolveIcon(value);
   return (
     <div className="space-y-2">
-      {/* Free-text input with current preview */}
       <div className="flex items-center gap-2">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-border bg-surface-2 text-ink">
           <CurrentIcon size={20} />
@@ -762,7 +688,6 @@ function IconPicker({
           maxLength={40}
         />
       </div>
-      {/* Popular picks */}
       <div>
         <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
           Popular
@@ -795,7 +720,6 @@ function IconPicker({
   );
 }
 
-// ── Delete confirm ──────────────────────────────────────────────────────────
 
 function DeleteConfirm({
   cat,
@@ -814,13 +738,8 @@ function DeleteConfirm({
       await deleteMut.mutateAsync(cat.id);
       onClose();
     } catch (e) {
-      // 409 carries the "category_in_use" payload; surface it inline.
       const msg = errMsg(e);
-      // Best-effort extract — server returns the count + sample_models inside
-      // the error body. The vendored authedFetch stringifies error bodies; we
-      // look for the marker phrase to detect the gated 409.
       if (/category_in_use/i.test(msg)) {
-        // Pull count + a few model codes from the message blob.
         const countMatch = msg.match(/"count"\s*:\s*(\d+)/);
         const samplesMatch = msg.match(/"sample_models"\s*:\s*\[([^\]]*)\]/);
         const sample = samplesMatch
@@ -829,7 +748,6 @@ function DeleteConfirm({
         setInUse({ count: countMatch ? Number(countMatch[1]) : 0, sample });
         return;
       }
-      // Fallback — generic error toast.
       setInUse({ count: 0, sample: [] });
     }
   };
@@ -911,7 +829,6 @@ function DeleteConfirm({
   );
 }
 
-// ── Drawer ──────────────────────────────────────────────────────────────────
 
 function Drawer({
   onClose,

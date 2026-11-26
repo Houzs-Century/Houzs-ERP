@@ -1,6 +1,3 @@
-// B6 (Conts #790): Proceed PO sends the computedAt of the plan on screen, and a
-// stale-plan refusal or a successful create recalculates the plan so the lines
-// just ordered stop reading as short.
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';

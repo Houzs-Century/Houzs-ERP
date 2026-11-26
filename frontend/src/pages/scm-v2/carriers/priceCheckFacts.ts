@@ -24,15 +24,10 @@ export interface PriceCheckForm {
   /** The job being priced (owner 2026-11-18: every job, not only a delivery
    *  order). An outstation price adds only to the jobs it applies to. */
   job: BillableJobType;
-  /** Sets or items — what a per-unit card counts. */
   count: string;
-  /** Compartments of each sofa, comma-separated: "3, 6". */
   sofas: string;
-  /** An outstation town or zone of this card, or a town of one of its areas;
-   *  '' is in town. */
   town: string;
   counts: Partial<Record<FlatRuleType, string>>;
-  /** The DO's goods value in RM, for a charge that is a % of it (Per DO charge). */
   goods: string;
 }
 export const EMPTY_FORM: PriceCheckForm = { job: 'DELIVERY', count: '1', sofas: '', town: '', counts: {}, goods: '' };
@@ -44,7 +39,6 @@ export const EMPTY_FORM: PriceCheckForm = { job: 'DELIVERY', count: '1', sofas: 
  * a non-delivery job is named after it (rate-rule-taxonomy RULE_JOB_TYPE).
  */
 export function withJob(form: PriceCheckForm, job: BillableJobType, priced: ReadonlySet<string>): PriceCheckForm {
-  /* The job left behind takes its count with it, so Setup's 1 does not ride into an ASSR - Service check. */
   const counts = { ...form.counts };
   if (form.job !== 'DELIVERY' && form.job !== job) delete counts[form.job as FlatRuleType];
   if (job === 'DELIVERY') {
@@ -87,8 +81,6 @@ export function readFacts(
     return n;
   };
   const facts: DeliveryFacts = {};
-  /* Only a per-unit card counts sets or items; a per-trip card prices the trip
-     whatever it carries, and the calculator has no drop count to send. */
   if (card.aggregation === 'UNIT') facts[card.basis === 'ITEM' ? 'itemCount' : 'setCount'] = whole('count', form.count);
   if (priced.has('SOFA_BRACKET')) {
     const parts = form.sofas.split(',').map((s) => s.trim()).filter((s) => s !== '');
@@ -98,7 +90,6 @@ export function readFacts(
   for (const t of FLAT_ORDER) {
     if (priced.has(t)) facts[countFact(t)] = whole(t, form.counts[t] ?? '');
   }
-  /* A charge on each DO: one delivery order, its goods value as typed. */
   if (priced.has('DO_CHARGE') && form.job === 'DELIVERY') {
     const t = form.goods.trim();
     const sen = t === '' ? 0 : Number(t);
@@ -107,8 +98,6 @@ export function readFacts(
     facts.dropCount = 1;
   }
   facts.destinationZone = form.town.trim() || null;
-  /* Delivery order is what the engine assumes when no job is named, so the
-     facts for one stay exactly what they were. */
   if (form.job !== 'DELIVERY') facts.jobType = form.job;
   const area = areaOfTown(areas, form.town);
   if (area) facts.areaId = area.id;
@@ -172,7 +161,6 @@ export function lineLabel(line: CostLine, unit: ChargingUnit): string {
       const z = text(d.zone);
       return z == null ? line.label : `${z}, per trip`;
     }
-    /* Its own name and share, as the engine wrote them: "Tax 5% of goods". */
     case 'DO_CHARGE':
       return line.label;
     default: {

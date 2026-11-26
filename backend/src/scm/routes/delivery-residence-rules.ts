@@ -1,28 +1,3 @@
-// ----------------------------------------------------------------------------
-// /delivery-residence-rules — CONFIG for the TMS scheduler's per-residence
-// delivery rules (migration 0196). Owner-maintained: each residence / building
-// type (Condo / Landed / Apartment / Office / Shop / Other — the SO's
-// building_type UDF values) carries a service duration (minutes to unload +
-// carry up) and optional delivery-access rules (no-delivery time windows,
-// service-lift booking, gated-community registration).
-//
-// The Phase 3 scheduler will READ this table (service duration + access windows
-// per residence type). This router is the config + CRUD only; nothing here wires
-// a scheduler.
-//
-// Per-company scoped exactly like /delivery-planning-regions: scopeToCompany on
-// reads, scopeToCompanyId on writes, stamp the active company on INSERT. The
-// natural key is (company_id, building_type) (migration 0196).
-//
-// Endpoints:
-//   GET    /            — list this company's rules (active + inactive, sorted)
-//   POST   /            — create a rule for a custom building_type
-//   PATCH  /:id         — patch a rule (duration, windows, flags, notes, active)
-//   DELETE /:id         — delete a rule (for a custom type the owner added)
-//
-// Mounted at '/delivery-residence-rules' in scm/index.ts, gated by
-// scmAreaGuard('scm.transportation.drivers') — same area as the rest of TMS.
-// ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -42,8 +17,6 @@ deliveryResidenceRules.use('*', supabaseAuth);
 
 const RULE_COLS = 'id, building_type, service_duration_minutes, earliest_delivery_time, latest_delivery_time, requires_lift_booking, requires_registration, notes, is_active, created_at, updated_at';
 
-/* Shape a rule row out (dual-read camelCase — the pg/PostgREST layer may surface
-   either snake_case or camelCase depending on the path). */
 type RuleRow = {
   id: string;
   building_type?: string | null;               buildingType?: string | null;
@@ -58,7 +31,6 @@ type RuleRow = {
   updated_at?: string | null;                   updatedAt?: string | null;
 };
 
-/** Normalise a TIME value to HH:MM (Postgres returns HH:MM:SS). null stays null. */
 function timeOut(v: string | null | undefined): string | null {
   if (v == null || v === '') return null;
   const m = /^(\d{2}):(\d{2})/.exec(String(v));
@@ -81,14 +53,12 @@ function ruleOut(r: RuleRow) {
   };
 }
 
-// A HH:MM (24h) time string, or null to clear. Accepts HH:MM or HH:MM:SS.
 const timeField = z
   .string()
   .trim()
   .regex(/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/, 'Time must be HH:MM (24-hour)')
   .nullable();
 
-// ── GET / — list this company's residence rules, sorted by building_type.
 deliveryResidenceRules.get('/', async (c) => {
   const sb = c.get('supabase');
   const { data, error } = await paginateAll<RuleRow>((from, to) =>
@@ -112,8 +82,6 @@ const ruleCreateSchema = z.object({
   isActive:               z.boolean().optional(),
 });
 
-// ── POST / — create a rule for a custom building_type. (company_id, building_type)
-//    is UNIQUE per company (migration 0196), so a duplicate type is a 409.
 deliveryResidenceRules.post('/', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -140,14 +108,6 @@ deliveryResidenceRules.post('/', async (c) => {
   }).select(RULE_COLS).single();
   if (error) {
     if (error.code === '23505') return c.json({ error: 'duplicate_type', reason: 'A rule for that residence type already exists.' }, 409);
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
@@ -165,8 +125,6 @@ const rulePatchSchema = z.object({
   isActive:               z.boolean().optional(),
 });
 
-// ── PATCH /:id — patch a rule. STRICT company scope (a blind-id WHERE would let
-//    a caller in company A edit company B's rule by knowing its UUID).
 deliveryResidenceRules.patch('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -205,9 +163,6 @@ deliveryResidenceRules.patch('/:id', async (c) => {
   return c.json({ rule: ruleOut(data as RuleRow) });
 });
 
-// ── DELETE /:id — delete a rule (a custom residence type the owner added).
-//    STRICT company scope. No in-use guard: nothing references this table by FK
-//    yet (the scheduler will READ it, not link to it), so a delete is safe.
 deliveryResidenceRules.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);

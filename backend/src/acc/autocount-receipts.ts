@@ -26,7 +26,6 @@ const day = (v: unknown): string => String(v ?? '').slice(0, 10);
 export async function loadAutoCountReceipts(
   sb: Sb, companyId: number, from: string, to: string,
 ): Promise<{ ok: true; payments: AutoCountReceipt[] } | { ok: false; reason: string }> {
-  /* The books' first day follows the opening journal's; no opening journal, no boundary. */
   const { data: opening, error: oErr } = await sb.from('v_gl_entries').select('entry_date')
     .eq('company_id', companyId).eq('source_type', OPENING_SOURCE)
     .order('entry_date', { ascending: false }).range(0, 0);

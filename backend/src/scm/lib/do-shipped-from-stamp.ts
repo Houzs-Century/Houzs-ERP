@@ -37,7 +37,6 @@ export type ShippedFromStamp = {
   qty: number;
   pos: Array<{ po: string; qty: number | null }>;
   adj_qty: number;
-  /** via 'dispatch': the DO's own STOCK_OUT; via 'grn': PO -> GRN line rack. */
   racks: Array<{ rack_id: string; label: string | null; qty: number; via?: 'dispatch' | 'grn'; po?: string; grn?: string }>;
   returns?: Array<{ at: string; why: string; reshipped_at?: string }>;
 };
@@ -63,8 +62,6 @@ export type DoShippedFromPlan = { lines: LineRow[]; stamps: Map<string, ShippedF
 export async function planDoShippedFrom(
   sb: any, deliveryOrderId: string, companyId: number | null, src: 'ship' | 'backfill',
 ): Promise<DoShippedFromPlan | null> {
-  /* Every read below refuses on error rather than reading "nothing": a stamp
-     planned from a half-read ledger would lock a wrong or empty answer for good. */
   const { data: hdr, error: hdrErr } = await scopeToCompanyIdOrOpen(
     sb.from('delivery_orders').select('do_number, warehouse_id').eq('id', deliveryOrderId), companyId).maybeSingle();
   if (hdrErr) return null;
@@ -84,16 +81,11 @@ export async function planDoShippedFrom(
   if (consErr) return null;
   const cons = (consData ?? []) as Array<{ lot_id: string; item_code: string | null; variant_key: string | null; qty_consumed: number | null }>;
   const lotClass = await classifyLots(sb, cons.map((r) => r.lot_id));
-  /* A variant-tracked company (binding-mode.ts) matches lines to ledger rows
-     canonically: the OUT may carry the stocked bucket's older spelling of the
-     spec. Company 1 keeps the exact string. */
   const idOf = (vk: string | null): string => (variantTrackedCompany(companyId) ? canonicalVariantKey(vk) : (vk ?? ''));
   const poUnits = cons.map((r) => {
     const cls = lotClass.get(r.lot_id);
     return { item_code: r.item_code, variant_key: idOf(r.variant_key), po: cls?.po ?? null, adjustment: cls?.adjustment ?? false, qty: Number(r.qty_consumed ?? 0) };
   });
-  /* A batched OUT with no consumption (drop-ship shipped before its receipt)
-     still names its PO: the batch is the expected PO number. */
   const consumed = new Set(poUnits.map((u) => `${u.item_code}::${u.variant_key}`));
   const { data: movData, error: movErr } = await scopeToCompanyIdOrOpen(
     sb.from('inventory_movements').select('item_code, variant_key, batch_no, qty')
@@ -104,9 +96,6 @@ export async function planDoShippedFrom(
     if (!m.item_code || consumed.has(`${m.item_code}::${idOf(m.variant_key)}`)) continue;
     poUnits.push({ item_code: m.item_code, variant_key: idOf(m.variant_key), po: m.batch_no, adjustment: false, qty: Math.abs(Number(m.qty ?? 0)) });
   }
-  /* The forward trace (what the DO detail showed until now) overrides the raw
-     lots for company-1 hard-bound lines (BUG-103): the stamp must lock the same
-     PO the screen named, not the lot plain FIFO happened to eat. */
   const poOverride = new Map<string, string[]>();
   try {
     const { byBucket } = await traceDoShipmentSources(sb, [deliveryOrderId]);
@@ -121,7 +110,7 @@ export async function planDoShippedFrom(
       const mine = ledger.get(b) ?? new Set<string>();
       if (t.pos.length !== mine.size || t.pos.some((p) => !mine.has(p))) poOverride.set(b, t.pos);
     }
-  } catch { /* trace unreadable — the raw lots stand */ }
+  } catch { }
 
   let rackOuts: Array<{ item_code: string; rack_id: string | null; label: string | null; qty: number }> = [];
   if (doNo) {
@@ -161,7 +150,7 @@ export async function planDoShippedFrom(
       companyId);
     return gate(plan(lineWh, grnRacks));
   } catch {
-    return null; // a half-read GRN chain must not lock "no rack" for good
+    return null;
   }
 }
 

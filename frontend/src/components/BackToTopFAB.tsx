@@ -24,9 +24,6 @@ export function BackToTopFAB() {
   const location = useLocation();
 
   useEffect(() => {
-    // The Houzs layout wraps content in a single <main class="… overflow-y-auto …">
-    // and disables document-level scrolling. That element IS the scroll container
-    // — window.scrollTo would no-op.
     const main = document.querySelector("main");
     scrollElRef.current = main;
     if (!main) return;
@@ -36,12 +33,10 @@ export function BackToTopFAB() {
     return () => main.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Reset visibility on route change — a fresh page starts scrolled to top.
   useEffect(() => {
     setVisible(false);
   }, [location.pathname]);
 
-  // Hide on the driver shell (separate layout, no <main> scroll container).
   if (location.pathname.startsWith("/driver")) return null;
   if (!visible) return null;
 
@@ -61,10 +56,6 @@ export function BackToTopFAB() {
         "fixed z-40 inline-flex h-9 w-9 items-center justify-center rounded-lg",
         "border border-border/70 bg-surface/70 text-ink-muted backdrop-blur-sm",
         "transition-all duration-200 hover:bg-surface hover:text-primary hover:border-primary/40 active:scale-95",
-        // Parks directly ABOVE the "New Case" pill, sharing its right offset.
-        // Above-offsets = pill bottom + pill height (48) + 8 px gap:
-        //   Mobile:  96 + 48 + 8 = 152 px  (+ safe-area-inset)
-        //   Desktop: 20 + 48 + 8 = 76 px
         "right-4 bottom-[calc(9.5rem+env(safe-area-inset-bottom))]",
         "lg:right-5 lg:bottom-[76px]",
       )}

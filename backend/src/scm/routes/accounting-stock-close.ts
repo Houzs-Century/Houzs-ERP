@@ -17,10 +17,6 @@ const RUN_LIMIT = 400;
 
 const requirePerm = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 
-/* ── GET /accounting/stock-close — run log + the live number ────────────────
-   Books › Stock close (batch 6 c4): the live value with its buckets, every
-   month the close has booked (its buckets, posted or re-posted, the entries)
-   and the runs of the last 90 days. */
 export const stockCloseStatus = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   const co = requireActiveCompanyId(c);
@@ -52,13 +48,12 @@ export const stockCloseStatus = async (c: any): Promise<Response> => {
   });
 };
 
-/* ── POST /accounting/stock-close/run — {month?} defaults to last month ───── */
 export const stockCloseRun = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   let body: any = {};
-  try { body = await c.req.json(); } catch { /* empty body = default month */ }
+  try { body = await c.req.json(); } catch { }
   const month = String(body?.month ?? '').trim() || sweepMonths()[0];
   if (!/^\d{4}-\d{2}$/.test(month)) return c.json({ error: 'bad_month', message: 'Month must be YYYY-MM.' }, 400);
 

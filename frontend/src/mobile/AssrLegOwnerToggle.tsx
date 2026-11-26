@@ -1,13 +1,3 @@
-/**
- * The own-team / supplier toggle shared by a Service Case's three logistics
- * legs on mobile — inspection, pickup and delivery. Each leg reaches the HC
- * Delivery sheet only when its own-team option is chosen (the gate lives in the
- * backend feed); this is just the control that sets the marker.
- *
- * Extracted from MobileServiceCase.tsx so the three legs share one control and
- * that file stays under its size ceiling. Colours are local literals, as
- * elsewhere in the mobile tree (there is no shared mobile palette module).
- */
 import { useOptimisticChoice } from "../hooks/useOptimisticChoice";
 
 const INK_SEC = "#3f463a";

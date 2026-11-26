@@ -1,20 +1,3 @@
-// ---------------------------------------------------------------------------
-// fleet-availability.ts — Fleet Module A2: load a depot's lorries WITH their
-// Module-B dispatch status folded in, so the A2 assigner never puts a delivery
-// on a lorry the maintenance module has grounded.
-//
-// This is the vehicle-availability half of A3. It reuses Module B's PURE state
-// machine verbatim (services/fleet-status.ts: deriveVehicleStatus + canDispatch)
-// over the same signals the maintenance dashboard reads — compliance docs (vault
-// + the flat scm.lorries columns), an active maintenance WINDOW, service-due
-// mileage/date, active breakdown cases, and open work orders. A lorry that
-// derives to BREAKDOWN / COMPLIANCE_BLOCKED / OUT_OF_SERVICE / a maintenance
-// window (or any other non-dispatchable status) comes back with
-// `dispatchable: false`, and the assigner excludes it.
-//
-// It is a thin DB loader — the reasoning it relies on is the unit-tested pure
-// core. It writes NOTHING.
-// ---------------------------------------------------------------------------
 
 import {
   deriveVehicleStatus,
@@ -57,7 +40,6 @@ export interface AvailableLorry {
   maxSets: number | null;
   maxRevenueSen: number | null;
   layer: CapacityLayer;
-  /** The lorry's regular driver, matched by plate (drivers.vehicle). */
   driverId: string | null;
   driverName: string | null;
 }
@@ -95,8 +77,6 @@ export async function loadAvailableLorries(
 
   const ids = lorries.map((l) => String(l.id));
 
-  // Module-B signals. Each read is defensive: a table absent on a fresh env just
-  // yields no rows for that signal (Promise.allSettled — never a hard failure).
   const [driversR, vaultR, maintR, svcR, plansR, mileageR, breakdownR] = await Promise.allSettled([
     sb.from('drivers').select('vehicle, id, name').eq('active', true),
     sb.from('lorry_compliance_documents').select('lorry_id, doc_type, expiry_date, issue_date, result').in('lorry_id', ids),
@@ -164,8 +144,6 @@ export async function loadAvailableLorries(
   return lorries.map((l): AvailableLorry => {
     const id = String(l.id);
     const plate = String(l.plate ?? '');
-    // Current compliance doc per type: latest-expiring vault row, else the flat
-    // scm.lorries column (existing lorries with no vault rows still resolve).
     const vaultRows = vaultByLorry.get(id) ?? [];
     const currentVault = currentDocsByType(vaultRows.map((d) => ({
       docType: String(dual(d, 'docType', 'doc_type')) as ComplianceDocType,

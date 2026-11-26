@@ -34,9 +34,7 @@ import { resolveAlias } from "./routeAliases";
 export const WORKSPACE_TABS_KEY = "houzs.workspaceTabs.v1";
 
 export interface WorkspaceTab {
-  /** Stable id — the tab's identity in the strip. Its href wanders freely. */
   id: string;
-  /** Where this tab currently is: pathname + search (no hash). */
   href: string;
   /** The tab, and the page in it, a DOCUMENT tab was opened from (a document
       link — Merchant Recon's order numbers, Fair Links, a relationship map).
@@ -55,13 +53,10 @@ interface StoredBlob {
   company: number | null;
   tabs: WorkspaceTab[];
   activeId: string | null;
-  /** Monotonic id source — persisted so a reload can't re-mint a live id. */
   nextId: number;
 }
 
-/** In-memory state. `null` until the first read hydrates from sessionStorage. */
 let state: StoredBlob | null = null;
-/** Cached object for useSyncExternalStore — recreated only on change. */
 let snapshot: WorkspaceTabsSnapshot = { tabs: [], activeId: null };
 
 type Listener = () => void;
@@ -75,18 +70,8 @@ function refreshSnapshot(): void {
   snapshot = { tabs: state?.tabs ?? [], activeId: state?.activeId ?? null };
 }
 
-// ── Open intent ─────────────────────────────────────────────────────────────
-// The sidebar marks "the NEXT route change is an explicit open" the moment a
-// destination is plain-left-clicked; the location effect consumes it. Expiry
-// guards the flag against a click that never produced a navigation (link to
-// the current page, navigation blocked) — a stale flag must not turn some
-// later hub click into a tab spawn.
 
 const OPEN_INTENT_TTL_MS = 1500;
-/* `doc` false: a sidebar open, which reuses the tab already in that section.
-   `doc` true: a linked document opened from a relationship map (owner
-   2026-09-27), which gets a tab of its own so it never overwrites another
-   tab's page; only a tab already on that exact document is reused. */
 let openIntent: { at: number; doc: boolean } | null = null;
 
 /** Call from a plain left-click on a sidebar destination (or, with `doc`,
@@ -103,11 +88,7 @@ function consumeOpenIntent(): { doc: boolean } | null {
   return pending !== null && Date.now() - pending.at <= OPEN_INTENT_TTL_MS ? pending : null;
 }
 
-// ── Section derivation ──────────────────────────────────────────────────────
 
-/** Alias-resolved, trailing-slash-normalised pathname. Aliases are resolved so
- *  the one render an alias URL gets before its <Navigate replace> lands cannot
- *  double-count against the canonical location. */
 function canonicalPath(pathname: string): string {
   const bare = (pathname || "/").split("?")[0].split("#")[0];
   const trimmed = bare.length > 1 && bare.endsWith("/") ? bare.slice(0, -1) : bare;
@@ -142,7 +123,6 @@ export function sectionKeyFor(pathname: string): string {
  *  uses, so the strip and the navbar can never disagree about a page's name. */
 export { labelForPath as workspaceTabLabel } from "./routeLabels";
 
-// ── Persistence ─────────────────────────────────────────────────────────────
 
 const validTab = (value: unknown): value is WorkspaceTab => {
   if (!value || typeof value !== "object") return false;
@@ -151,8 +131,6 @@ const validTab = (value: unknown): value is WorkspaceTab => {
     typeof t.id === "string" &&
     /^t\d+$/.test(t.id) &&
     typeof t.href === "string" &&
-    // Same-origin path only — a stored href is fed to navigate(), and "//host"
-    // would be treated as protocol-relative by a hard fallback.
     /^\/(?!\/)/.test(t.href)
   );
 };
@@ -167,15 +145,12 @@ function readStored(): StoredBlob | null {
     const user = typeof blob.user === "number" && Number.isFinite(blob.user) ? blob.user : null;
     const company =
       typeof blob.company === "number" && Number.isFinite(blob.company) ? blob.company : null;
-    /* An opener survives a reload only when it is a well-formed tab reference
-       to a same-origin page; anything else is dropped, never fed to navigate(). */
     const tabs = (Array.isArray(blob.tabs) ? blob.tabs.filter(validTab) : []).map((t): WorkspaceTab => {
       const o = t.opener;
       const ok = !!o && typeof o === "object" && typeof o.id === "string" && /^t\d+$/.test(o.id)
         && typeof o.href === "string" && /^\/(?!\/)/.test(o.href);
       return ok ? { id: t.id, href: t.href, opener: { id: o.id, href: o.href } } : { id: t.id, href: t.href };
     });
-    // De-dup on id (corrupt writes must not yield two tabs one identity).
     const seen = new Set<string>();
     const deduped = tabs.filter((t) => (seen.has(t.id) ? false : (seen.add(t.id), true)));
     const activeId =
@@ -198,23 +173,14 @@ function persist(): void {
     if (state === null || state.tabs.length === 0) sessionStorage.removeItem(WORKSPACE_TABS_KEY);
     else sessionStorage.setItem(WORKSPACE_TABS_KEY, JSON.stringify(state));
   } catch {
-    // Storage disabled (private mode): the strip still works in memory;
-    // only reload restore is lost.
   }
 }
 
-/** Who this strip belongs to right now. Identity binds when /auth/me resolves
- *  (before the authed Layout mounts), so by the time tabs are recorded this is
- *  normally known; `null`s cover the brief pre-bind window and are claimed by
- *  the first bound identity — same-tab, same-session, so they can only be the
- *  same person (mirrors the ownerless-pick rule in lib/activeCompany.ts). */
 function currentIdentity(): { user: number | null; company: number | null } {
   const id = getBrowserStorageIdentity();
   return { user: id?.userId ?? null, company: id?.companyId ?? null };
 }
 
-/** Hydrate once, validating ownership. A blob owned by a DIFFERENT identity is
- *  discarded, never inherited. An ownerless blob (pre-bind writes) is claimed. */
 function ensureLoaded(): StoredBlob {
   const identity = currentIdentity();
   if (state === null) {
@@ -231,16 +197,11 @@ function ensureLoaded(): StoredBlob {
     }
     refreshSnapshot();
   }
-  // Identity became known (or changed) after hydration.
   if (identity.user !== null) {
     if (state.user === null) {
       state = { ...state, ...identity };
       persist();
     } else if (state.user !== identity.user || state.company !== identity.company) {
-      // No emit(): this runs inside a snapshot read, and the caller is about
-      // to receive the fresh (empty) state anyway — emitting mid-render would
-      // schedule an update during render. (Identity changes normally remount
-      // the whole authed tree, so this branch is a same-tab-relogin edge.)
       state = { ...identity, tabs: [], activeId: null, nextId: 1 };
       persist();
       refreshSnapshot();
@@ -249,7 +210,6 @@ function ensureLoaded(): StoredBlob {
   return state;
 }
 
-// ── Public API ──────────────────────────────────────────────────────────────
 
 /** Stable snapshot for useSyncExternalStore. */
 export function getWorkspaceTabsSnapshot(): WorkspaceTabsSnapshot {
@@ -285,7 +245,6 @@ export function recordWorkspaceVisit(pathname: string, search: string): void {
     const existing = intent.doc
       ? s.tabs.find((t) => t.href === href)
       : s.tabs.find((t) => sectionKeyFor(t.href) === section);
-    /* A document remembers where it was opened from, so its Back can go there. */
     const from = s.tabs.find((t) => t.id === s.activeId) ?? null;
     const openerFor = (tabId: string) =>
       intent.doc && from && from.id !== tabId ? { opener: { id: from.id, href: from.href } } : {};
@@ -301,9 +260,6 @@ export function recordWorkspaceVisit(pathname: string, search: string): void {
       state = { ...s, tabs: [...s.tabs, { id, href, ...openerFor(id) }], activeId: id, nextId: s.nextId + 1 };
     }
   } else {
-    // The active tab follows in-content navigation. A missing active pointer
-    // (corrupt blob survived validation edge) falls back to spawning, so the
-    // location is never silently unrepresented in the strip.
     const active = s.tabs.find((t) => t.id === s.activeId) ?? null;
     if (active === null) {
       const id = `t${s.nextId}`;

@@ -1,7 +1,3 @@
-// One press of a payment row's Save = one POST (HC-SO-2609-164, HC-SO-008674:
-// the same transfer booked twice, seconds apart). The row's Save is held from
-// the press until the request settles; a refused save frees it again, and the
-// retry carries the SAME Idempotency-Key, so the server can tell it is one intent.
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

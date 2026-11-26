@@ -1,7 +1,3 @@
-/* The SKU Master "Edit Prices" editor row, lifted out of Products.tsx so the
-   edit flow can be tested on its own and the page stays under its size ceiling.
-   Nothing here writes to the server: every cell stages into the parent's
-   pending edits, and the parent's Save sends them. */
 import { memo, useMemo, useState } from 'react';
 import { Truck } from 'lucide-react';
 import { fmtSen } from '@2990s/shared';
@@ -16,8 +12,6 @@ export const fmtRm = (sen: number | null): string => fmtSen(sen);
 export const fmtUnit = (milli: number): string =>
   (milli / 1000).toFixed(3);
 
-// Look up the priceSen for a given (height, tier) pair. Legacy rows with no
-// `tier` field count as PRICE_2 (HOOKKA's historic default).
 export const priceForHeightTier = (
   arr: SeatHeightPrice[] | null | undefined,
   height: string,
@@ -28,7 +22,6 @@ export const priceForHeightTier = (
   return hit ? hit.priceSen : null;
 };
 
-// Replace (or insert) the priceSen for one (height × tier) slot in the array.
 export const upsertHeightTier = (
   arr: SeatHeightPrice[] | null | undefined,
   height: string,
@@ -61,19 +54,11 @@ export type ProductEditPatch = {
   price1Sen?: number | null;
 };
 
-/* One seat-height price list compared by content, not by array order: staging
-   a cell re-inserts its slot at the end, and a list that only moved is not an
-   edit. */
 const seatKey = (arr: SeatHeightPrice[] | null | undefined): string =>
   JSON.stringify((arr ?? [])
     .map((p) => [String(p.height), p.tier ?? 'PRICE_2', p.priceSen] as const)
     .sort((a, b) => `${a[0]}|${a[1]}`.localeCompare(`${b[0]}|${b[1]}`)));
 
-/* Fold one cell's change into the staged edits. A field staged back to what
-   is stored is DROPPED, and a row with nothing left leaves the list, so
-   tabbing through a price, or typing a description back to what it was, is
-   not an unsaved change and the Save count means what it says. `row` is the
-   stored SKU; without it the change is kept as typed. */
 export function stageRowEdit(
   prev: Record<string, ProductEditPatch>,
   row: MfgProductRow | null,
@@ -95,10 +80,6 @@ export function stageRowEdit(
   return out;
 }
 
-/* Send every staged row, one PATCH each, and report which went through. A
-   failure does not stop the others and is never thrown past the caller: the
-   page keeps the failed rows staged and on screen so the operator can retry,
-   and drops only the ones the server accepted. */
 export async function saveStagedEdits(
   pending: Record<string, ProductEditPatch>,
   save: (id: string, patch: ProductEditPatch) => Promise<unknown>,
@@ -126,9 +107,6 @@ export function rowsInGridOrder<R extends { id: string }>(rows: R[], gridRows: R
   return gridRows.flatMap((g) => byId.get(g.id) ?? []);
 }
 
-/* SKU Master grid-order state: the grid stays mounted (hidden) in edit mode and
-   reports the rows it shows via `setGridRows`; `shownRows` renders them in that
-   order. `bumpGridEpoch` remounts the grid unfiltered after a Save (0917). */
 export function useSkuGridOrder(rows: MfgProductRow[]) {
   const [gridRows, setGridRows] = useState<MfgProductRow[] | null>(null);
   const [gridEpoch, setGridEpoch] = useState(0);
@@ -150,23 +128,14 @@ export const ProductRow = memo(({
   /** Canonical branding pool (Project Maintenance -> Brands). Drives the
       Mattress-row Branding <select>. Owner 2026-07-23 rule: no free-text. */
   brandingPool: string[];
-  /** PR #82 — multi-select state lives on SkuMasterTab; row just renders
-      the checkbox + reports clicks. */
   selected:         boolean;
   onToggleSelected: (id: string) => void;
-  /** Edit→Save (Commander 2026-06-15) — staged edits for THIS row (undefined =
-      none yet) + the parent stager. Cells read the staged value over the stored
-      one; nothing commits until the parent's Save. No more blur-auto-save. */
   patch?: ProductEditPatch;
   onStage: (id: string, patch: ProductEditPatch) => void;
 }) => {
-  // Effective values — a staged patch wins over the stored row while editing.
   const seatArr = patch?.seatHeightPrices ?? row.seat_height_prices ?? [];
-  // Prices can be staged as null (a deliberate clear), so test key presence,
-  // not nullishness, before falling back to the stored value.
   const baseSen = patch && 'basePriceSen' in patch ? patch.basePriceSen ?? null : row.base_price_sen;
   const p1Sen = patch && 'price1Sen' in patch ? patch.price1Sen ?? null : row.price1_sen;
-  // Same key-presence rule: a branding staged as null is a clear, not "unchanged".
   const brandingVal = patch && 'branding' in patch ? patch.branding ?? '' : row.branding ?? '';
   /* The code and description cells show the STAGED text once a change is
      staged. They showed the stored text, so a typed description snapped back to
@@ -189,8 +158,6 @@ export const ProductRow = memo(({
         : 'Double-click row — or click the truck icon — to see suppliers for this product'}
       style={{ cursor: editMode ? 'default' : 'pointer' }}
     >
-      {/* PR #82 — row checkbox. stopPropagation so clicking the box
-          doesn't bubble into the double-click "open suppliers" handler. */}
       <td style={{ width: 32 }} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
         <input
           type="checkbox"
@@ -240,9 +207,6 @@ export const ProductRow = memo(({
           />
         </span>
       </td>
-      {/* PR #89 — click description to edit. Description stored in the
-          `name` column on mfg_products (commander calls it "description"
-          in the UI). */}
       <td onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
           <EditableTextCell
@@ -272,8 +236,6 @@ export const ProductRow = memo(({
           </td>
           {sofaSizes.map((s) => {
             const sen = priceForHeightTier(seatArr, s, tier);
-            // When user is on P1 or P3 and the cell is empty, surface the P2
-            // baseline as a placeholder so they have a reference price.
             const baselineSen = tier !== 'PRICE_2'
               ? priceForHeightTier(seatArr, s, 'PRICE_2')
               : null;
@@ -295,7 +257,6 @@ export const ProductRow = memo(({
         </>
       ) : isMattressView ? (
         <>
-          {/* Branding cell — editable text input in edit mode. */}
           <td>
             {editMode ? (
               <BrandingInput
@@ -310,7 +271,6 @@ export const ProductRow = memo(({
             )}
           </td>
           <td>{row.size_label ?? '—'}</td>
-          {/* Single Price column for mattress — uses base_price_sen. */}
           <td className={baseSen ? styles.price : styles.priceEmpty}>
             {editMode ? (
               <PriceInput
@@ -408,7 +368,6 @@ const BrandingInput = ({
   );
 };
 
-/* Compact RM input — accepts blank (= clear). Commits on blur or Enter. */
 const PriceInput = ({
   valueSen,
   onCommit,
@@ -416,8 +375,6 @@ const PriceInput = ({
 }: {
   valueSen: number | null;
   onCommit: (v: number | null) => void;
-  /** P2-tier baseline to surface as placeholder when P1/P3 cell is empty —
-      shows what the default price would be so user knows the reference. */
   baselineSen?: number | null;
 }) => {
   const [local, setLocal] = useState<string>(
@@ -463,28 +420,14 @@ const PriceInput = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   PR #89 — Click-to-edit cell for SKU Master code + name columns.
-   Same UX as Fabric Converter DescriptionCell: chip → click → input,
-   Enter / blur saves, Esc cancels. inline=true uses regular text styling
-   (no chip pill); inline=false uses chipClassName for the resting state.
-   ════════════════════════════════════════════════════════════════════════ */
 const EditableTextCell = ({
   value, chipClassName, ariaLabel, onSave, inline = false, editable = true,
 }: {
   value:          string;
-  /** CSS-module class — typed loose so `styles.foo` (which TS treats as
-      `string | undefined`) flows in without callers having to coalesce.
-      PR #87 merge fix: PR #89 landed with this typed `string` which broke
-      the build under `tsc -b --noEmit`. */
   chipClassName:  string | undefined;
   ariaLabel:      string;
   onSave:         (val: string) => void;
   inline?:        boolean;
-  /** PR #95 — Commander 2026-05-26: gate click-to-edit behind the parent
-      table's edit mode. When false, the cell renders as plain text/chip
-      and any click is ignored. Defaults to true so existing callers
-      (Fabric Converter description cell, etc.) keep working. */
   editable?:      boolean;
 }) => {
   const [editing, setEditing] = useState(false);
@@ -503,8 +446,6 @@ const EditableTextCell = ({
   const cancel = () => { setDraft(value); setEditing(false); };
 
   if (!editing) {
-    // PR #95 — Read-only mode. Same visual chip / inline text but no
-    // click target, no cursor pointer, no "Click to edit" tooltip.
     if (!editable) {
       return inline ? (
         <span className={chipClassName}>{value}</span>

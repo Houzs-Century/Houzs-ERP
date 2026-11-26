@@ -1,9 +1,3 @@
-// Manual stock-adjustment reason codes — single source of truth for the
-// dropdown (frontend) AND the backend validation gate, so the same list is
-// enforced on both sides. Wei Siang 2026-06-04.
-//
-// Stored in inventory_movements.reason_code on ADJUSTMENT movements. Stock-take
-// posting stamps COUNT automatically (a count correction).
 
 export const ADJUSTMENT_REASONS = [
   { code: 'DAMAGE', label: 'Damage' },

@@ -1,57 +1,3 @@
-// ---------------------------------------------------------------------------
-// /scan-payment — Claude-powered OCR for Malaysian bank card-terminal / EPP
-// receipts uploaded as a payment row's SLIP. One upload, both uses: the image
-// is the slip AND the OCR source. The Payments panel POSTs it here in parallel
-// with the slip upload and fill-blanks-only auto-fills that row's draft fields.
-//
-// Extraction-only for the OCR fields — no samples, no learning, no few-shot.
-// A sibling of scan-so.ts but deliberately MINIMAL: it mirrors scan-so's
-// Anthropic fetch + toBase64 + stripJsonFences plumbing (helpers inlined here,
-// NOT imported, so scan-so's exports stay narrow) and snaps every *Match to the
-// LIVE active so_dropdown_options just like scan-so's validateSlip.
-//
-// RECEIPT-AS-SLIP (ocr-payment-spec.md Round-2 bug #3): the owner has no
-// separate slip — the scanned card receipt IS the payment row's slip. So this
-// endpoint ALSO persists the uploaded image to R2 (the SLIPS bucket, same key
-// shape as /slips) and registers a pending_slip_uploads row at status
-// 'uploaded'. It returns that row's { uploadSessionId, slipKey } so the
-// frontend can attach the receipt as the payment's slip exactly like a normal
-// slip upload — the SO-create / add-payment handlers consume the session by
-// upload_session_id and promote it (mfg-sales-orders.ts). The slip persistence
-// is best-effort: if R2 / the DB insert fails (or R2 is unbound), the OCR
-// fields still return — slipKey/uploadSessionId come back null and slipError
-// names the step that failed.
-//
-// OWNER'S RECORDING CONVENTION (authoritative — ocr-payment-spec.md, 3-method
-// model): a card-terminal receipt is booked as Method = MERCHANT.
-//   • merchant_provider (bankMatch) = the Host / acquirer bank ("Host: MBB" ->
-//     MBB; an AEON terminal -> AEON). If the host bank is NOT in the live
-//     payment_merchant list, leave it blank for a manual pick — never invent.
-//   • installment_months (installmentPlanMatch) = the "Tenure: N Months" / IPP /
-//     EPP tenure when the receipt prints one; a plain swipe with NO tenure ->
-//     "One Shot". (A bank EPP is still Merchant + an installment term — there is
-//     no separate "Installment" method.)
-//   • paid_at (paidAt) = the receipt SWIPE DATE/TIME — this CAN be in the past
-//     (the SO is often opened days after the money was collected). NEVER today.
-// DuitNow / transfer / TNG / cheque -> Online + sub-type. Cash -> Cash.
-//
-// Endpoint:
-//   POST /scan-payment/extract   — multipart image/pdf → validated JSON
-//     { paymentMethodMatch, bankMatch, onlineTypeMatch, installmentPlanMatch,
-//       approvalCode, amountRm, paidAt }
-//   each *Match = { value, confidence, reason } | null, snapped to the live
-//   active so_dropdown_options (categories payment_method / payment_merchant /
-//   online_type / installment_plan); any value not in the live list is cleared.
-//   paidAt is a bare YYYY-MM-DD string (the receipt's swipe date) or null.
-//   The response also carries { slipKey, uploadSessionId, slipError } (the
-//   first two null and slipError set when the persistence step failed) — the receipt stored AS the
-//   payment's slip (RECEIPT-AS-SLIP, see header above).
-//
-// Auth: supabaseAuth on the whole router (same as scan-so). The catalog read
-// uses the middleware-attached c.get('supabase') (scm-scoped, RLS applies).
-// ANTHROPIC_API_KEY is OPTIONAL on the Houzs Env — when absent /extract returns
-// 503 anthropic_key_missing and never breaks the worker or tsc.
-// ---------------------------------------------------------------------------
 
 import { Hono, type Context } from 'hono';
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
@@ -72,7 +18,6 @@ import { scanTimer } from '../lib/scan-timing';
 import { keepScanFile } from '../lib/scan-files';
 import { aiReadEnqueue, aiReadPoll, type AiReadSplit } from '../lib/ai-read-jobs';
 
-// scm-scoped, loosely-typed client (matches scm/env.ts Variables.supabase).
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
 export const scanPayment = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -84,8 +29,6 @@ const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
 const IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
-// ArrayBuffer -> base64 (chunked; Workers have no Node Buffer). Inlined from
-// scan-so.ts's toBase64 — kept private so scan-so's surface doesn't widen.
 function toBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   const chunkSize = 0x8000;
@@ -97,8 +40,6 @@ function toBase64(buf: ArrayBuffer): string {
   return btoa(binary);
 }
 
-// Claude sometimes wraps JSON in fences or adds a preamble — take the first `{`
-// to the last `}`. Inlined verbatim from scan-so.ts's stripJsonFences.
 function stripJsonFences(text: string): string {
   let trimmed = text.trim();
   const fenceRe = /^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/;
@@ -112,13 +53,6 @@ function stripJsonFences(text: string): string {
   return trimmed;
 }
 
-// ===========================================================================
-// Live payment vocabularies — the four payment-cascade categories the Payments
-// panel cascades over. The loader + the "never invent" snap now live in
-// scm/lib/payment-vocab (loadPaymentOptions / snapPaymentOption), shared with
-// the Houzs Connect payment push so both validate against the SAME active
-// so_dropdown_options. formatOptions (OCR prompt text) stays here.
-// ===========================================================================
 function formatOptions(o: CatalogOptions): string {
   const lines: string[] = [];
   const section = (title: string, cat: OptionCategory) => {
@@ -135,14 +69,6 @@ function formatOptions(o: CatalogOptions): string {
   return lines.join('\n').trimEnd();
 }
 
-// ===========================================================================
-// Prompt — extraction-only, 3-method model (Merchant / Online / Cash). A card
-// terminal receipt (incl. EPP / installment) is Method = MERCHANT; the tenure
-// is the installment_months plan under Merchant, not a separate method.
-// ===========================================================================
-// Company name comes from the central Branding config (getBranding) instead of
-// a hardcode. scan-payment sends the prompt inline per call (no prompt-cache),
-// so injecting the name has no cache implications.
 const buildSystemPrompt = (companyName: string) => `You read a single MALAYSIAN bank CARD-TERMINAL / payment receipt and extract the payment fields for ONE payment row at ${companyName}, a Malaysian furniture retailer. The image is usually a thermal card-machine slip (Maybank / CIMB / Public Bank / HLB / RHB / AEON terminal), an EPP (Easy Payment Plan / installment) approval slip, a DuitNow / bank-transfer / e-wallet (Touch 'n Go) confirmation, a cheque, or a cash receipt.
 
 A reference list of ALLOWED VALUES follows this prompt (PAYMENT METHODS, MERCHANT BANKS, ONLINE TYPES, INSTALLMENT PLANS). Each row is "value | label". Every *Match you return MUST be the VALUE (left side), copied character-for-character from the list. NEVER invent a value outside the list; when you cannot find a defensible match, return null for that field.
@@ -194,9 +120,6 @@ Return STRICT JSON, no markdown fences, no prose:
   "paidAt": string | null
 }`;
 
-// ===========================================================================
-// Types + normalisation
-// ===========================================================================
 type OptionMatch = { value: string; confidence: number; reason: string };
 type ExtractedReceipt = {
   paymentMethodMatch: OptionMatch | null;
@@ -205,7 +128,6 @@ type ExtractedReceipt = {
   installmentPlanMatch: OptionMatch | null;
   approvalCode: string | null;
   amountRm: number | null;
-  // The receipt's own SWIPE date (YYYY-MM-DD) — can be a PAST date, never today.
   paidAt: string | null;
 };
 
@@ -216,17 +138,12 @@ type AnthropicResponse = {
 
 type Warning = { field: string; value: string; message: string };
 
-// Coerce Claude's output into the ExtractedReceipt shape — tolerate omitted
-// fields, wrong primitive types, and a { code } key in place of { value }.
 function normalizeReceipt(raw: unknown): ExtractedReceipt {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const str = (v: unknown): string | null =>
     typeof v === 'string' && v.trim() !== '' ? v : null;
   const num = (v: unknown): number | null =>
     typeof v === 'number' && Number.isFinite(v) ? v : null;
-  // Accept only a bare ISO date the receipt printed (YYYY-MM-DD). Anything else
-  // (today's date, free text, a datetime) is dropped — the UI keeps its own
-  // default. Never coerce to today: the receipt date is intentionally past.
   const isoDate = (v: unknown): string | null => {
     if (typeof v !== 'string') return null;
     const m = v.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -260,9 +177,6 @@ function normalizeReceipt(raw: unknown): ExtractedReceipt {
   };
 }
 
-// Never-invent enforcement (server-side, same as scan-so's validateSlip): a
-// match value outside the ACTIVE allowed list is cleared to null; on hit the
-// value is snapped to the canonical casing.
 function validateReceipt(rec: ExtractedReceipt, options: CatalogOptions): Warning[] {
   const warnings: Warning[] = [];
   const fields: Array<{
@@ -293,17 +207,6 @@ function validateReceipt(rec: ExtractedReceipt, options: CatalogOptions): Warnin
   return warnings;
 }
 
-// ===========================================================================
-// RECEIPT-AS-SLIP persistence (ocr-payment-spec.md Round-2 bug #3)
-// ---------------------------------------------------------------------------
-// Store the uploaded receipt into the SLIPS bucket (same key shape as /slips)
-// and register a pending_slip_uploads row at status 'uploaded' so the SO-create
-// / add-payment handlers can consume it by upload_session_id and promote it.
-// Returns { uploadSessionId, slipKey } for the frontend to attach as the
-// payment row's slip — or { error } naming the step that failed (the OCR
-// fields still return; the receipt just isn't auto-attached, and the response
-// says why in slipError instead of a bare null).
-// ===========================================================================
 type SlipPersistResult =
   | { ok: true; uploadSessionId: string; slipKey: string }
   | { ok: false; error: string };
@@ -320,9 +223,6 @@ async function persistReceiptAsSlip(
   try { bindings = slipBindings(c.env); }
   catch { return { ok: false, error: 'r2_not_configured' }; }
 
-  // Stamp the company's first active showroom when it has one (same as
-  // /slips/init); a company with none keeps the slip with none (showroom_id
-  // nullable since 20261110T0300_slip_upload_showroom_optional).
   let roomQ = sb
     .from('showrooms')
     .select('id')
@@ -337,22 +237,17 @@ async function persistReceiptAsSlip(
   const sessionId = crypto.randomUUID();
   const slipKey = buildSlipKey(sessionId, mime);
 
-  // content_hash mirrors the browser-upload path (sha-256 hex of the bytes).
   const digest = await crypto.subtle.digest('SHA-256', buf);
   const contentHash = Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
 
   try {
-    // Worker holds the bytes already (multipart) — write straight through the
-    // native binding (no presigned PUT needed, unlike the browser flow).
     await bindings.bucket.put(slipKey, buf, { httpMetadata: { contentType: mime } });
   } catch {
     return { ok: false, error: 'r2_put_failed' };
   }
 
-  // Register the session as already 'uploaded' (the bytes are in R2) so the
-  // consumer accepts it without a separate /confirm round-trip.
   const { error: insertErr } = await sb.from('pending_slip_uploads').insert({
     company_id: companyId ?? null,
     id: sessionId,
@@ -367,7 +262,6 @@ async function persistReceiptAsSlip(
     expires_at: expiresInOneHour(),
   });
   if (insertErr) {
-    // Roll back the orphaned R2 object so a failed insert doesn't leak bytes.
     await bindings.bucket.delete(slipKey).catch(() => {});
     return { ok: false, error: 'db_insert_failed' };
   }
@@ -375,9 +269,6 @@ async function persistReceiptAsSlip(
   return { ok: true, uploadSessionId: sessionId, slipKey };
 }
 
-// ===========================================================================
-// POST /scan-payment/extract
-// ===========================================================================
 export const extractPaymentHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>): Promise<Response> => {
   const timer = scanTimer('payment');
   const apiKey = c.env.ANTHROPIC_API_KEY;
@@ -395,10 +286,6 @@ export const extractPaymentHandler = async (c: Context<{ Bindings: Env; Variable
     return c.json({ error: 'bad_request', reason: `Invalid multipart body: ${(e as Error).message}` }, 400);
   }
 
-  // Accept the receipt under any field name ("file" is what the frontend
-  // sends). First file wins — one receipt per payment row.
-  // (entries cast to unknown: workers-types narrows the value to string,
-  // which breaks the instanceof check — same cast as scan-so.ts.)
   let file: File | null = null;
   for (const [, v] of formData.entries() as Iterable<[string, unknown]>) {
     if (v instanceof File && v.size > 0) { file = v; break; }
@@ -436,8 +323,6 @@ export const extractPaymentHandler = async (c: Context<{ Bindings: Env; Variable
   });
   timer.mark('upload');
   const data = toBase64(buf);
-  // Canonical slip mime for R2 storage (RECEIPT-AS-SLIP) — same coercion as
-  // the Anthropic image block below, but always one of the 4 SlipMime values.
   const slipMime: SlipMime = isPdf
     ? 'application/pdf'
     : IMAGE_MIMES.has(mime)
@@ -461,16 +346,10 @@ export const extractPaymentHandler = async (c: Context<{ Bindings: Env; Variable
         },
       };
 
-  // Live active payment vocabularies via the user-scoped client (RLS applies).
   const sb = c.get('supabase');
-  // A vocabulary read error leaves `options` empty here, exactly as before the
-  // loader was factored out: validateReceipt then clears every match (with a
-  // warning) rather than failing the OCR — the operator still gets the raw
-  // fields to key. The Connect push treats the same error as fatal instead.
   const { options } = await loadPaymentOptions(sb, activeCompanyId(c) ?? null);
   const optionsText = formatOptions(options);
 
-  // Company name from the central Branding config (anchors the prompt).
   const branding = await getBranding(c.env);
   const systemPrompt = buildSystemPrompt(branding.companyName);
   timer.mark('prep');
@@ -491,7 +370,6 @@ export const extractPaymentHandler = async (c: Context<{ Bindings: Env; Variable
       body: JSON.stringify({
         model: CLAUDE_MODEL,
         max_tokens: 1024,
-        // temperature=0 — deterministic OCR (same lesson as scan-so).
         temperature: 0,
         messages: [
           {
@@ -538,7 +416,7 @@ export const extractPaymentHandler = async (c: Context<{ Bindings: Env; Variable
   } catch (e) {
     errorMsg = `Network/fetch error: ${(e as Error).message}`;
   }
-  await kept; // kept alongside the model read, also when it threw; never throws
+  await kept;
 
   if (!parsed) {
     timer.done(c.env, null, 'error');
@@ -548,8 +426,6 @@ export const extractPaymentHandler = async (c: Context<{ Bindings: Env; Variable
   const warnings = validateReceipt(parsed, options);
   timer.mark('parse');
 
-  // RECEIPT-AS-SLIP: persist the receipt image as the payment row's slip and
-  // hand back its session+key. Best-effort — never block the OCR result on it.
   let slip: SlipPersistResult;
   try {
     const staffId = (c.get('user') as { id: string }).id;
@@ -577,8 +453,6 @@ export const extractPaymentHandler = async (c: Context<{ Bindings: Env; Variable
 };
 scanPayment.post('/extract', extractPaymentHandler);
 
-/* The same read on the scan queue (lib/ai-read-jobs.ts): the receipt is stored
-   and the answer is polled, so the Payments panel never holds a request open. */
 const firstReceipt: AiReadSplit = async (c) => {
   let formData: FormData;
   try {

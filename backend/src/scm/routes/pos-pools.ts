@@ -64,18 +64,12 @@ posPools.use('*', supabaseAuth);
 
 type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
-// SELLING-only projection. cost_price_sen / base_price_sen / price1_sen are
-// deliberately absent (#625) — the POS never needs them and they are cost.
-// retail_product_id is added explicitly (the standard /mfg-products select
-// omits it) so the POS's legacy-UUID bridge can resolve.
 export const MFG_CATALOG_COLS =
   'id, code, name, category, description, branding, size_label, size_code, ' +
   'sell_price_sen, pwp_price_sen, seat_height_prices, included_addons, ' +
   'base_model, model_id, retail_product_id, status, pos_active, ' +
   'product_models(id, name, model_code, photo_url, active, allowed_options)';
 
-// seat_height_prices holds a per-height COST (priceSen) next to the selling
-// side (sellingPriceSen). Strip the cost per entry, keep {height,tier,sellingPriceSen}.
 function stripSeatHeightCost(rows: unknown): unknown {
   if (!Array.isArray(rows)) return rows;
   return rows.map((r) => {
@@ -88,13 +82,6 @@ function stripSeatHeightCost(rows: unknown): unknown {
   });
 }
 
-// ── GET /mfg-catalog ─────────────────────────────────────────────────────────
-// The catalog spine + configurator loader. Four mutually-exclusive variants
-// share ONE row shape; only the filter differs. Precedence id > modelId >
-// baseModel > spine. HARD RULE: the id/modelId/baseModel variants must NOT
-// filter on status/pos_active — a discontinued (status=INACTIVE) but pos_active
-// sibling has to survive so the size picker keeps every size (greyed
-// client-side). Only the paramless spine filters to pos_active=true (any status).
 export const mfgCatalogHandler = async (c: AppContext) => {
   const supabase = c.get('supabase');
   const id = c.req.query('id');
@@ -123,19 +110,12 @@ export const mfgCatalogHandler = async (c: AppContext) => {
     ...p,
     seat_height_prices: stripSeatHeightCost(p.seat_height_prices),
   }));
-  // Short PRIVATE cache like /mfg-products; Vary on X-Company-Id so a company
-  // switch does not serve the other company's cached catalogue.
   c.header('cache-control', 'private, max-age=60');
   c.header('vary', 'X-Company-Id');
   return c.json({ products });
 };
 posPools.get('/mfg-catalog', mfgCatalogHandler);
 
-// ── legacy-retail configurator pools ─────────────────────────────────────────
-// Each backs one 2990 direct-Supabase read; whole-MYR selling values, no cost
-// column exists on any of these tables. All company-scoped. productId-scoped
-// pools return [] when the param is absent (mfg-* ids short-circuit client-side
-// before ever calling; only legacy-UUID products reach these).
 
 export const productSizeVariantsHandler = async (c: AppContext) => {
   const supabase = c.get('supabase');
@@ -281,19 +261,6 @@ export const bedframeOptionsHandler = async (c: AppContext) => {
 };
 posPools.get('/bedframe-options', bedframeOptionsHandler);
 
-// ── GET /sofa-combos ─────────────────────────────────────────────────────
-// Cost-stripped Sofa Combo pricing for the POS. The admin /sofa-combos route is
-// DELIBERATELY not openRead — its GET returns prices_by_height (the PO-benchmark
-// COST) + supplier_id, a supplier-cost leak (class #625). The POS needs the
-// CHARGED price only: selling merged over cost — the SAME merge the server SO-time
-// recompute + drift gate use (comboChargedPrices). So we compute charged =
-// selling ?? cost SERVER-side and emit it as sellingPricesByHeight with
-// pricesByHeight = {}; the POS's own comboChargedPrices(selling, {}) resolves to
-// exactly that, so POS live total == server recompute (no false drift-reject),
-// and raw cost / supplierId / internal notes never leave the server. All 137
-// company_2 combos carry selling prices (verified 2026-07-20), so the merge only
-// ever surfaces the sell side. Master/sales combos only (supplier_id IS NULL);
-// reduced to the active row per scope tuple (same reducer as the admin GET /).
 type ComboPricingRow = {
   id: string;
   base_model: string;
@@ -311,8 +278,6 @@ type ComboPricingRow = {
   created_by: string | null;
 };
 
-// charged = selling ?? cost per height — mirrors @2990s/shared comboChargedPrices
-// so the POS sees the identical number the server recompute charges.
 function comboChargedByHeight(
   selling: Record<string, number | null> | null,
   cost: Record<string, number | null> | null,
@@ -367,11 +332,10 @@ export const sofaCombosPosHandler = async (c: AppContext) => {
   const seen = new Set<string>();
   const rules: unknown[] = [];
   for (const r of (data ?? []) as unknown as ComboPricingRow[]) {
-    if (r.effective_from > today) continue; // future-dated not yet active
+    if (r.effective_from > today) continue;
     const key = JSON.stringify([r.base_model, comboSlotsKey(r.modules ?? []), r.tier, r.customer_id]);
-    if (seen.has(key)) continue; // first (latest-effective) per tuple wins
+    if (seen.has(key)) continue;
     seen.add(key);
-    // A combo opened with no price yet has nothing for the POS to sell.
     const charged = comboChargedByHeight(r.selling_prices_by_height, r.prices_by_height);
     if (!Object.values(charged).some((v) => v !== null)) continue;
     rules.push({
@@ -380,15 +344,15 @@ export const sofaCombosPosHandler = async (c: AppContext) => {
       modules: r.modules ?? [],
       tier: r.tier,
       customerId: r.customer_id,
-      supplierId: null, // withheld — never reveal which supplier to the POS
-      pricesByHeight: {}, // cost stripped; the charged value rides sellingPricesByHeight
+      supplierId: null,
+      pricesByHeight: {},
       sellingPricesByHeight: charged,
       pwpPricesByHeight: r.pwp_prices_by_height ?? {},
       defaultFreeGifts: r.default_free_gifts ?? [],
       label: r.label,
       effectiveFrom: r.effective_from,
       deletedAt: null,
-      notes: '', // internal notes withheld
+      notes: '',
       createdAt: r.created_at,
       updatedAt: r.updated_at,
       createdBy: r.created_by,

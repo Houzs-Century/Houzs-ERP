@@ -8,7 +8,6 @@ import { api } from "../../api/client";
 import { MediaLightbox } from "../../components/MediaLightbox";
 import { formatTimestamp } from "../../lib/utils";
 
-// ── Phase Photos — crew-uploaded evidence panel (read-only office side) ──
 
 export interface PhasePhoto {
   id: number;
@@ -97,12 +96,6 @@ function PhasePhotoThumb({
   const isImage = (photo.content_type || "").startsWith("image/");
   const isVideo = (photo.content_type || "").startsWith("video/");
   const [url, setUrl] = useState<string | null>(null);
-  // A thumbnail that fails to load used to render an empty grey square,
-  // indistinguishable from one still loading and from a photo that isn't there.
-  // Keep the reason: the tile shows a broken-image state and the tooltip carries
-  // the plain-language message (api.client throws HttpError whose `.message` is
-  // already humanHttpMessage — a 403 reads "You don't have permission to do
-  // that", not a status dump).
   const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     if (!isImage) return;
@@ -129,10 +122,6 @@ function PhasePhotoThumb({
     return m ? m[1].toUpperCase() : "FILE";
   })();
 
-  // Compact card: thumb fills the cell; uploader + delete sit in a tiny
-  // hover-revealed strip so the grid reads as a dense gallery rather
-  // than a stack of metadata cards. Lightbox surfaces the full caption
-  // + uploader, so this surface stays terse on purpose.
   return (
     <div className="group relative overflow-hidden rounded-md border border-border bg-surface">
       <button
@@ -182,9 +171,6 @@ function PhasePhotoThumb({
           )}
         </div>
       </button>
-      {/* Uploader strip — single line at the bottom edge, very small.
-          Stays visible (not hover-gated) so a glance reads "who took
-          this" without opening the lightbox. */}
       <div className="flex items-center justify-between gap-1 border-t border-border-subtle bg-bg/40 px-1.5 py-0.5">
         <span className="truncate text-[9px] text-ink-secondary" title={photo.uploaded_by_name || "Unknown"}>
           {photo.uploaded_by_name || "—"}
@@ -205,11 +191,6 @@ function PhasePhotoThumb({
               danger: true,
             });
             if (!ok) return;
-            // The refresh must not run unless the delete actually happened.
-            // It used to be `.catch(() => {})` followed by an unconditional
-            // onDeleted(): a denied or failed delete re-rendered the grid with
-            // the file still in it and said nothing, so the operator read the
-            // reappearing tile as the UI being slow and clicked again.
             try {
               await api.del(`/api/projects/phase-photos/${photo.id}`);
             } catch (e) {

@@ -1,6 +1,3 @@
-// The ONLY place the phone and the desktop SO filter controls differ: class
-// names. The phone draws with mobile.css (`.hz-m` scope), the desktop with the
-// Tailwind tokens the SO list page already uses. Behaviour is shared.
 export type SoFilterSkin = "mobile" | "desktop";
 
 export interface SoFilterSkinClasses {

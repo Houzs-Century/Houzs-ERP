@@ -7,34 +7,8 @@ import {
   type AssrStageColor,
 } from "../scm/shared/assr-stage-labels";
 
-// Per-case tokenised tracking. Three flows produce a token:
-//   1. Customer hits /track, enters ASSR number + phone → server
-//      verifies the pair matches, issues a 30-min token.
-//   2. Staff hits the "Copy portal link" button on a case → server
-//      issues a PERMANENT token (shareable via WhatsApp without the
-//      customer having to type anything; Nick 2026-07-07 — links must
-//      keep working forever, mig 0076 extended the existing ones).
-//   3. Staff hits "Sales Portal Link" — same permanent per-case token
-//      but source='sales'; the portal renders the salesperson
-//      variant (full stage progress, comments attributed to sales).
-//
-// In all flows the token grants access to ONE case only. The
-// middleware resolves the token to an `assr_id` which scopes every
-// subsequent portal API query.
 
-export const CUSTOMER_TTL_SECONDS = 60 * 30;            // 30 minutes
-// Staff/sales links never expire. Stored as a far-future ISO stamp so
-// the existing `expires_at > now` reads keep working without a schema
-// change (expires_at is NOT NULL).
-//
-// The unbounded lifetime is a product decision, not an oversight: the
-// link is pasted into WhatsApp and the customer reopens it months
-// later to check their case (Nick 2026-07-07, mig 0076). A TTL would
-// break that flow for everyone to contain the rare forwarded link, and
-// the token is 192-bit CSPRNG scoped to one assr_id, so there is
-// nothing enumerable to bound. The answer to a leaked link is
-// revokeCaseTokens() below (mig 0126 revoked_at) -- permanent by
-// default, killable on demand.
+export const CUSTOMER_TTL_SECONDS = 60 * 30;
 export const PERMANENT_EXPIRES_AT = "9999-12-31T23:59:59.000Z";
 
 export type TrackSource = "customer" | "staff" | "sales";
@@ -45,7 +19,6 @@ export interface TrackedCase {
   verified_phone: string | null;
 }
 
-// ── Token issuance ──────────────────────────────────────────
 
 async function issueToken(
   env: Env,
@@ -126,9 +99,6 @@ export async function verifyAndIssueCustomerToken(
   if (!row.phone) return null;
   if (!phonesMatch(row.phone, phone)) return null;
 
-  // The token records the phone in its canonical form when we have one, so a
-  // later audit of who opened a case reads consistently no matter how the
-  // customer typed it. Falls back to the punctuation-stripped form.
   const stamped = normalizePhone(phone) ?? cleaned;
   const token = await issueToken(env, row.id, "customer", stamped, isoIn(CUSTOMER_TTL_SECONDS));
   return { token, assr_id: row.id, assr_no: asNum };
@@ -142,10 +112,6 @@ export async function verifyAndIssueCustomerToken(
  * the case panel.
  */
 export async function issueStaffToken(env: Env, assrId: number): Promise<string> {
-  // `revoked_at IS NULL` is what makes revocation a rotation rather
-  // than a permanent lockout: without it the reuse branch would hand
-  // back the very token that was just killed, so the button would
-  // return a dead link forever.
   const existing = await env.DB.prepare(
     `SELECT token FROM case_track_tokens
       WHERE assr_id = ? AND source = 'staff'
@@ -166,7 +132,6 @@ export async function issueStaffToken(env: Env, assrId: number): Promise<string>
  * the same reason issueStaffToken is.
  */
 export async function issueSalesToken(env: Env, assrId: number): Promise<string> {
-  // Excludes revoked rows for the same reason issueStaffToken does.
   const existing = await env.DB.prepare(
     `SELECT token FROM case_track_tokens
       WHERE assr_id = ? AND source = 'sales'
@@ -187,9 +152,6 @@ export async function issueSalesToken(env: Env, assrId: number): Promise<string>
  * portal link displays without requiring the user to click anything.
  */
 export async function getActiveStaffToken(env: Env, assrId: number): Promise<string | null> {
-  // A revoked link must stop displaying in the staff panel too -- the
-  // panel is where someone copies it from, so showing a dead token
-  // here would just re-share it.
   const row = await env.DB.prepare(
     `SELECT token FROM case_track_tokens
       WHERE assr_id = ? AND source = 'staff'
@@ -203,15 +165,11 @@ export async function getActiveStaffToken(env: Env, assrId: number): Promise<str
   return row?.token ?? null;
 }
 
-// ── Resolution ──────────────────────────────────────────────
 
 export async function resolveTrackToken(
   env: Env,
   token: string
 ): Promise<TrackedCase | null> {
-  // An empty token must never reach the lookup: `WHERE token = ''`
-  // would match any row a bad mint left with a blank token, and this
-  // is the gate for an unauthenticated surface.
   if (!token) return null;
   const row = await env.DB.prepare(
     `SELECT assr_id, source, verified_phone, expires_at, revoked_at
@@ -226,12 +184,8 @@ export async function resolveTrackToken(
       revoked_at: string | null;
     }>();
   if (!row) return null;
-  // Revoked is checked before expiry and the row is kept, not deleted:
-  // staff need to see that the link existed and when it was killed,
-  // and the expiry branch below would delete the evidence.
   if (row.revoked_at) return null;
   if (row.expires_at < new Date().toISOString()) {
-    // Expired — opportunistic cleanup.
     await env.DB.prepare(`DELETE FROM case_track_tokens WHERE token = ?`)
       .bind(token)
       .run();
@@ -244,7 +198,6 @@ export async function resolveTrackToken(
   };
 }
 
-// ── Revocation ──────────────────────────────────────────────
 
 /**
  * Kill every live portal link for a case. The answer to "that
@@ -276,7 +229,6 @@ export async function revokeCaseTokens(env: Env, assrId: number): Promise<void> 
     .run();
 }
 
-// ── Status mapping (customer-facing, server-authoritative) ──
 
 /**
  * What the customer's portal calls this stage.

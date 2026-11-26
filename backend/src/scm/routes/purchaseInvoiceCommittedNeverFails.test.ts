@@ -1,28 +1,3 @@
-/* Once the invoice is committed, the answer is 201 — whatever happens after.
- *
- * The create's tail runs five side-effects, and every one of them promises in
- * its own docblock never to throw into its caller: recordPiCreate ("best-effort
- * by design"), recordParentlessCreate, reallocatePiCharges ("Best-effort
- * (audit-DLQ pattern)"), recomputeGrnInvoiced ("Best-effort, never throws"),
- * recostForPi ("never throws into the caller"). A promise kept by five
- * try/catch blocks is not the same fact as a guarantee: a TypeError raised
- * ABOVE a catch, a subrequest cap reached mid-cascade, or a client call that
- * rejects rather than resolving with an `error` all unwind past the lot of them
- * into app.onError, which answers 500 "Something went wrong. Please try again."
- *
- * WHY THAT 500 IS THE DANGEROUS ONE. The invoice, its lines, its audit row and
- * its AutoCount ledger row are already committed. The operator is told the save
- * failed and presses Save again — and this handler now RELEASES the idempotency
- * claim on its refusals, so the only thing that used to stand between that
- * second press and a second payable is gone on exactly the requests where the
- * first one really did commit. The release and the lie must not be able to
- * meet, which is why the two changes shipped together.
- *
- * recordPiCreate stands in for all five here. It is the FIRST thing the tail
- * calls, so a throw from it also proves that the four behind it are inside the
- * same guard; and mocking it is how a test reaches the failure mode the
- * try/catch blocks exist for, which by construction cannot be reached through
- * them. */
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -52,9 +27,6 @@ const sb = fakeSb({
 
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => sb }));
 
-/* The shape of the failure this guards: something above the audit writer's own
-   catch. A TypeError, not a rejected query, because a rejected query is what
-   the catch was written for and would prove nothing. */
 vi.mock('../lib/pi-audit-trail', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/pi-audit-trail')>()),
   recordPiCreate: async () => { throw new TypeError("Cannot read properties of undefined (reading 'id')"); },
@@ -92,8 +64,6 @@ describe('a committed Purchase Invoice is never reported as a failure', () => {
     });
 
     expect(res.status).toBe(201);
-    /* The two facts together are the point: the operator was told the truth AND
-       the truth is that one invoice exists. */
     expect(await res.json()).toMatchObject({ invoiceNumber: expect.stringContaining('PI-') });
     expect(sb.tables.purchase_invoices).toHaveLength(1);
     expect(sb.tables.purchase_invoice_items).toHaveLength(1);

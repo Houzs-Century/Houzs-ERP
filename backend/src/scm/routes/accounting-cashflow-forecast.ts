@@ -76,7 +76,6 @@ import { cashFlowLines, type RpEntry, type RpRow } from './accounting-rp';
 import { loadForecastAccounts, loadGrid, loadSupplierBills, loadSupplierMaster, netBilledBySupplier, type SupplierMasterRow } from './accounting-forecast';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 type Fail = { ok: false; reason: string };
 
@@ -90,12 +89,9 @@ const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 export const FORECAST_COLUMN = 'FORECAST';
 const PNL_COLUMN_NAME = 'P&L forecast';
 const DOCS_COLUMN_NAME = 'Orders & bills';
-/** What a forecast figure's entry says it came from. */
 const SOURCE_TYPE: Record<CashLeg['source'], string> = { pnl: 'FORECAST', input: 'FORECAST_INPUT', order: 'FORECAST_ORDER', bill: 'FORECAST_BILL', tf: 'FORECAST_TF' };
-/** Customer payments that are not customers' money coming in: carried over from AutoCount, moved between orders. */
 const NOT_RECEIPTS = new Set(['imported', 'converted']);
 const failed = (e: unknown): string => String((e as { message?: string }).message ?? e);
-/** A layout's block by its key — a block the tree does not carry is empty. */
 const blockOf = (blocks: Partial<Record<string, LayoutItem[]>>, key: string): LayoutItem[] => blocks[key] ?? [];
 
 /** One month's forecast as the Cash Flow report's own shape — the page lays it beside the month's actual. */
@@ -116,32 +112,19 @@ export type ForecastMonthReport = {
 export type CashFlowForecastPayload = {
   from: string; to: string; currentMonth: string;
   months: Array<{ month: string; future: boolean; report: ForecastMonthReport }>;
-  /** What the timings were measured over. */
   measured: { from: string; to: string };
-  /** The customers' money by kind and delay after the order month, in % of what came in. */
   receiptMix: Array<{ kind: 'DEP' | 'BAL'; months: number; pct: number }>;
-  /** Suppliers timed a month later for want of a usable payment term. */
   flagged: Array<{ id: string; code: string; name: string }>;
-  /** Forecast lines left out as moving no cash. */
   nonCash: Array<{ code: string; name: string }>;
-  /** The Orders & bills column: the current month as at its 1st, then each later month the
-      orders and bills reach; null when the range ends before the current month. */
   docs: {
     months: Array<{ month: string; future: boolean; report: ForecastMonthReport }>;
-    /** The day the current month's orders and bills are taken as at. */
     asAt: string;
-    /** Open orders with no delivery date, by the year ordered: in no month. */
     undated: Array<{ year: string; orders: number; sen: number }>;
-    /** Orders and bills expected after the last month shown. */
     beyond: { orders: number; orderSen: number; bills: number; billSen: number };
-    /** Suppliers a bill of which was timed a month later for want of a payment term. */
     flagged: string[];
   } | null;
-  /** The trade-finance plan in both forecasts (step 5); null when the range ends before the
-      current month or the company has no facility. */
   tf: {
     facilities: Array<{ code: string; lender: string; tenorDays: number; rateBp: number; owedNowSen: number; suppliers: string[] }>;
-    /** The Forecast P&L's interest lines left out: the interest comes with each repayment. */
     interestLeftOut: Array<{ code: string; name: string }>;
   } | null;
 };
@@ -168,7 +151,6 @@ export function forecastMonthReport(month: string, legs: readonly CashLeg[], tre
       party: l.party, side: l.flow === 'in' ? 'R' : 'P', rowKey: l.key, column: FORECAST_COLUMN, sen: l.sen,
     });
   }
-  /* By code, the debtor control's Deposit before its Settlement — the actual report's order. */
   const rank = (r: RpRow): number => (r.group?.id === 'DEP' ? 0 : r.group?.id === 'BAL' ? 1 : 2);
   const byKey = (m: Map<string, RpRow>): RpRow[] => [...m.values()].filter((r) => r.totalSen !== 0)
     .sort((a, b) => String(a.code ?? '').localeCompare(String(b.code ?? '')) || rank(a) - rank(b) || a.key.localeCompare(b.key));
@@ -194,7 +176,6 @@ export function forecastMonthReport(month: string, legs: readonly CashLeg[], tre
 
 type PaymentRow = { id: string; so_doc_no: string; amount_sen: number | null; paid_at: string | null; method: string | null; mirror_of_payment_id: string | null };
 
-/** The customers' money of the measured window by kind and delay after its order month. */
 async function loadReceiptMix(sb: Sb, companyId: number, win: { from: string; to: string }): Promise<{ ok: true; mix: ReceiptMix } | Fail> {
   const paid = await paginateAll<PaymentRow>((f: number, t: number) => sb.from('mfg_sales_order_payments')
     .select('id, so_doc_no, amount_sen, paid_at, method, mirror_of_payment_id')
@@ -222,11 +203,8 @@ async function loadReceiptMix(sb: Sb, companyId: number, win: { from: string; to
 
 type Chart = {
   names: Map<string, string>; money: Set<string>; facilities: Array<{ code: string; name: string; lender: string }>;
-  /** Every account's type and section — where the Forecast Balance Sheet files an account new to it. */
   kinds: Map<string, { name: string; type: string; section: string | null }>;
 };
-/** The company's active leaf accounts, code → name: what a keyed amount may name and is called by; its
-    bank and cash accounts; its trade-finance facilities (a liability named TRADE FINANCE). */
 async function loadChartLeaves(sb: Sb, companyId: number): Promise<({ ok: true } & Chart) | Fail> {
   const { data, error } = await sb.from('accounts').select('account_code, account_name, account_type, section, parent_code, is_active, acc_money').eq('company_id', companyId);
   if (error) return { ok: false, reason: `chart: ${failed(error)}` };
@@ -243,7 +221,6 @@ async function loadChartLeaves(sb: Sb, companyId: number): Promise<({ ok: true }
   };
 }
 
-/** The company's Capex & financing table as stored. */
 async function loadForecastInputs(sb: Sb, companyId: number): Promise<{ ok: true; months: KeyedInputs } | Fail> {
   const { data, error } = await sb.from('acc_forecast_inputs').select('month, account_code, amount_sen').eq('company_id', companyId);
   if (error) return { ok: false, reason: `capex and financing: ${failed(error)}` };
@@ -255,19 +232,14 @@ async function loadForecastInputs(sb: Sb, companyId: number): Promise<{ ok: true
   return { ok: true, months };
 }
 
-/* ── The Orders & bills column (step 4) ───────────────────────────────────── */
 
 type OrderRow = {
   doc_no: string; so_date: string | null; debtor_name: string | null; balance_sen: number | string | null; status: string | null;
   amended_delivery_date: string | null; customer_delivery_date: string | null;
 };
 const ORDER_COLS = 'doc_no, so_date, debtor_name, balance_sen, status, amended_delivery_date, customer_delivery_date';
-/** No money to come: not an order (a draft, a cancelled one), or one whose remainder was given up (closed). */
 const NOT_OPEN: ReadonlySet<string> = new Set([...SO_NOT_AN_ORDER, 'CLOSED']);
 
-/** The open orders today, and as they stood on the current month's 1st:
-    today's balance with what was paid on it since added back; an order placed
-    since then left out. */
 async function loadOpenOrders(sb: Sb, companyId: number, first: string): Promise<{ ok: true; live: OpenOrder[]; baseline: OpenOrder[] } | Fail> {
   const [open, paid] = await Promise.all([
     paginateAll<OrderRow>((f: number, t: number) => sb.from('mfg_sales_orders').select(ORDER_COLS)
@@ -280,7 +252,6 @@ async function loadOpenOrders(sb: Sb, companyId: number, first: string): Promise
   const since = new Map<string, number>();
   for (const p of paid.data ?? []) since.set(String(p.so_doc_no), (since.get(String(p.so_doc_no)) ?? 0) + Number(p.amount_sen ?? 0));
   const rows = new Map((open.data ?? []).map((o) => [String(o.doc_no), o]));
-  /* An order paid off since the 1st is not open today, but it was then. */
   const more = [...since.keys()].filter((d) => !rows.has(d));
   if (more.length > 0) {
     const got = await chunkIn<OrderRow>(more, (batch, f, t) => sb.from('mfg_sales_orders').select(ORDER_COLS)
@@ -301,7 +272,6 @@ async function loadOpenOrders(sb: Sb, companyId: number, first: string): Promise
   return { ok: true, live, baseline };
 }
 
-/** The bills the books owe as at a day: the formal AP Aging, each supplier's unapplied money on its oldest bills. */
 async function loadOwedBills(sb: Sb, companyId: number, codes: string[], asOf: string): Promise<{ ok: true; bills: OwedBill[] } | Fail> {
   const loaded = await loadApAging(sb, companyId, codes, asOf);
   if (!loaded.ok) return { ok: false, reason: `supplier aging: ${loaded.reason}` };
@@ -310,10 +280,6 @@ async function loadOwedBills(sb: Sb, companyId: number, codes: string[], asOf: s
 
 type GlRow = { source_doc_no: string | null; account_code: string; account_name: string | null; debit_sen: number | string | null; posted: boolean | null; reversed: boolean | null; reversed_by_je: string | null };
 
-/** What times and places each owed bill: its plan (Bills to pay), the accounts
-    it was bought on — a PI's own journal debits off the control, an AP
-    invoice's lines, as an actual supplier payment reads (rule A) — and its
-    supplier's payment term. */
 async function billFacts(
   sb: Sb, companyId: number, owed: readonly OwedBill[], controls: ReadonlySet<string>,
   nameOf: (code: string) => string, termOf: (supplierCode: string | null) => TermInfo,
@@ -364,7 +330,6 @@ async function billFacts(
   };
 }
 
-/** The bills the books owe today, each timed and placed. */
 async function loadNowBills(sb: Sb, companyId: number, a: { today: string; controls: string[]; nameOf: (code: string) => string; termOf: (supplierCode: string | null) => TermInfo }): Promise<{ ok: true; bills: DueBill[] } | Fail> {
   const now = await loadOwedBills(sb, companyId, a.controls, a.today);
   if (!now.ok) return now;
@@ -375,7 +340,6 @@ async function loadNowBills(sb: Sb, companyId: number, a: { today: string; contr
 
 type DocsFacts = { orders: { live: OpenOrder[]; baseline: OpenOrder[] }; then: DueBill[]; now: DueBill[] };
 
-/** What the Orders & bills column reads: the open orders today and on the current month's 1st, the bills owed then and today. */
 async function loadDocsFacts(sb: Sb, companyId: number, a: {
   today: string; currentMonth: string; controls: string[]; nameOf: (code: string) => string; termOf: (supplierCode: string | null) => TermInfo;
 }): Promise<({ ok: true } & DocsFacts) | Fail> {
@@ -393,7 +357,6 @@ async function loadDocsFacts(sb: Sb, companyId: number, a: {
   return { ok: true, orders, then: then.bills.map(facts.due), now: now.bills.map(facts.due) };
 }
 
-/** The Orders & bills column's months, as Cash Flow reports on the same tree. */
 function docsColumn(companyId: number, facts: DocsFacts, a: {
   currentMonth: string; ar: string; ap: string; nameOf: (code: string) => string; tree: LayoutItem[]; stored: boolean; costs: CashLeg[]; inputs: CashLeg[];
 }): NonNullable<CashFlowForecastPayload['docs']> {
@@ -413,25 +376,18 @@ function docsColumn(companyId: number, facts: DocsFacts, a: {
   };
 }
 
-/* ── The trade-finance plan (step 5) ──────────────────────────────────────── */
 
 /** One facility as the Trade finance table shows it and the forecasts use it. */
 export type TfFacilityPayload = {
   code: string; name: string; lender: string;
-  /** Finance's own tenor and rate per draw; null = the default. */
   tenorSet: number | null; rateSet: number | null;
   tenorDays: number; rateBp: number;
-  /** The last six repayments' interest over their principal. */
   defaultRateBp: number;
-  /** Where the repayment vouchers book the interest. */
   interest: { code: string; name: string } | null;
   owedNowSen: number;
-  /** The draws still owed, oldest first. */
   open: OpenDraw[];
-  /** The suppliers the facility pays, and the months unticked by hand. */
   suppliers: string[];
   off: Off;
-  /** Every supplier's dues by month — the chosen ones are drawn. */
   dues: Dues;
   schedule: TfMonth[];
 };
@@ -450,8 +406,6 @@ const offOf = (raw: unknown): Off => {
   return out;
 };
 
-/** Each facility's lines as at today and its repayments: the principal, and the interest
-    booked beside it (a debit on neither the facility nor a bank or cash account). */
 async function loadFacilityBooks(sb: Sb, companyId: number, codes: string[], money: ReadonlySet<string>, today: string): Promise<{
   ok: true; lines: Map<string, FacilityLine[]>; repayments: Map<string, Array<{ date: string; principalSen: number; interestSen: number }>>; interestCode: Map<string, string>;
 } | Fail> {
@@ -501,10 +455,8 @@ async function loadFacilityBooks(sb: Sb, companyId: number, codes: string[], mon
   return { ok: true, lines, repayments, interestCode };
 }
 
-/** Each facility's plan: its legs for both forecasts and what the Trade finance table shows. */
 async function buildTf(sb: Sb, companyId: number, a: {
   today: string; currentMonth: string; chart: Chart; master: SupplierMasterRow[]; nowBills: DueBill[];
-  /** The draws owed as at this day: today for the Cash Flow; the start for the Forecast Balance Sheet. */
   openAsOf: string;
   grid: ForecastGrid; suppliers: SupplierGrid; accounts: ForecastAccount[];
 }): Promise<{ ok: true; facilities: TfFacilityPayload[]; legs: CashLeg[]; interestCodes: Set<string> } | Fail> {
@@ -522,7 +474,6 @@ async function buildTf(sb: Sb, companyId: number, a: {
   const termMonths = (id: string): number => parseTermMonths(byId.get(id)?.payment_terms ?? null).months;
   const shown = shownMonths(a.currentMonth);
   const lastYm = shown[shown.length - 1] ?? a.currentMonth;
-  /* What each supplier is due: the bills the books owe, then the Forecast P&L's supplier figures from this month on. */
   const billDues = a.nowBills.flatMap((b) => {
     const s = b.supplierCode == null ? undefined : byCode.get(b.supplierCode);
     return s ? [{ supplierId: String(s.id), ym: billMonth(b).ym, sen: b.sen }] : [];
@@ -531,7 +482,6 @@ async function buildTf(sb: Sb, companyId: number, a: {
     monthFigures(a.grid[S] ?? {}, a.suppliers[S] ?? {}, a.accounts).lines.flatMap((l) => (l.keyed === 'suppliers'
       ? l.bySupplier.filter((x) => x.supplierId !== OTHER_SUPPLIER).map((x) => ({ supplierId: x.supplierId, ym: addMonthsYm(S, termMonths(x.supplierId)), sen: x.amountSen }))
       : [])));
-  /* Every supplier's dues, so the table can show one the moment Finance adds it; the plan draws the chosen ones'. */
   const everyone = new Set([...billDues, ...forecastDues].map((d) => d.supplierId));
   const allDues = supplierDues({ currentYm: a.currentMonth, lastYm, chosen: everyone, bills: billDues, forecast: forecastDues });
   const facilities: TfFacilityPayload[] = [];
@@ -562,7 +512,6 @@ async function buildTf(sb: Sb, companyId: number, a: {
 }
 
 type Resolved = Extract<Awaited<ReturnType<typeof resolveLayout>>, { ok: true }>;
-/** What both forecasts stand on: the Forecast P&L as cash legs, the keyed table, the company's chart, suppliers and roles. */
 type Basis = {
   win: { from: string; to: string }; accounts: ForecastAccount[]; grid: ForecastGrid; suppliers: SupplierGrid;
   rpLayout: Resolved; pnlLayout: Resolved; roles: Awaited<ReturnType<typeof resolveRoles>>; master: SupplierMasterRow[];
@@ -599,7 +548,6 @@ async function forecastBasis(sb: Sb, companyId: number, layoutIds: number[], tod
   const byCode = new Map(master.rows.map((s) => [String(s.code), s]));
   const termOf = (s: SupplierMasterRow | undefined): TermInfo => parseTermMonths(s?.payment_terms ?? null);
   const flaggedIds = new Set<string>();
-  /* A purchase line keyed whole: by what each recent supplier billed it, each after its own term. */
   const billed = netBilledBySupplier(bills.rows, new Set(accs.accounts.filter(isPurchaseAccount).map((a) => a.code)));
   const mixOf = new Map<string, TermMix>();
   const purchaseMix = (code: string): TermMix => {
@@ -627,7 +575,6 @@ async function forecastBasis(sb: Sb, companyId: number, layoutIds: number[], tod
     salaryCodes,
   });
   for (const id of built.flagged) flaggedIds.add(id);
-  /* The Capex & financing table's amounts, on their own accounts in their own months. */
   const nameOf = (code: string): string => chart.names.get(code) ?? code;
   const inputLegs = keyedInputLegs(inputs.months, nameOf);
   const currentMonth = today.slice(0, 7);
@@ -649,8 +596,6 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
   const receipts = { mix: b.receiptMix };
   const tree = blockOf(rpLayout.layout.blocks, 'accounts');
 
-  /* From the current month on: the orders and bills in hand, and the trade-finance plan, which
-     pays its interest with each repayment — so the Forecast P&L's own line for it steps aside. */
   let facts: DocsFacts | null = null;
   let tf: { facilities: TfFacilityPayload[]; legs: CashLeg[]; interestCodes: Set<string> } = { facilities: [], legs: [], interestCodes: new Set() };
   if (to >= currentMonth) {
@@ -667,8 +612,6 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
   const months = forecastMonths(from, to, currentMonth, legs).map(({ month, future }) => ({
     month, future, report: forecastMonthReport(month, legs.filter((l) => l.ym === month), tree, rpLayout.stored, companyId, PNL_COLUMN_NAME),
   }));
-  /* Orders & bills: sales and purchases come from the open orders and the owed bills, so of
-     the Forecast P&L only its other lines join them. */
   const docs = facts == null ? null : docsColumn(companyId, facts, {
     currentMonth, ar: roles.AR, ap: roles.AP, nameOf, tree, stored: rpLayout.stored,
     costs: pnlLegs.filter((l) => l.group == null && !purchaseCodes.has(l.code)),
@@ -697,7 +640,6 @@ export async function buildCashFlowForecast(sb: Sb, companyId: number, layoutIds
   };
 }
 
-/* ── The door, with its 60-second memory (the Dashboard's) ──────────────── */
 
 const CACHE_TTL_MS = 60_000;
 const CACHE_MAX = 64;
@@ -705,7 +647,6 @@ const cache = new Map<string, { at: number; payload: CashFlowForecastPayload }>(
 const bsCache = new Map<string, { at: number; payload: BsForecastPayload }>();
 /** For the tests. */
 export const clearCashFlowForecastCache = (): void => { cache.clear(); bsCache.clear(); };
-/** A company's answers, after its Capex & financing table or trade-finance plan changed. */
 const forgetCompany = (companyId: number): void => {
   for (const m of [cache, bsCache] as Array<Map<string, unknown>>) for (const key of [...m.keys()]) if (key.startsWith(`${companyId}|`)) m.delete(key);
 };
@@ -732,15 +673,12 @@ export const cashFlowForecastHandler = async (c: Ctx): Promise<Response> => {
 };
 
 
-/* ── The Capex & financing table (step 3) ─────────────────────────────────── */
 
 export type ForecastInputsPayload = {
   currentMonth: string;
-  /** The months the table shows: the current one and the eleven after it. */
   shown: string[];
   months: KeyedInputs;
   accounts: KeyableAccount[];
-  /** Accounts keyed in some month that the layout no longer offers: to be cleared before a save. */
   notOffered: Array<{ code: string; name: string }>;
 };
 
@@ -755,7 +693,6 @@ const shownMonths = (current: string): string[] => {
   return out;
 };
 
-/** The accounts on offer for the active company: its layout's funding block over its own chart. */
 async function loadOffered(sb: Sb, companyId: number, layoutIds: number[]): Promise<{ ok: true; accounts: KeyableAccount[]; names: Map<string, string> } | Fail> {
   const [laid, chart] = await Promise.all([resolveLayout(sb, layoutIds, 'rp'), loadChartLeaves(sb, companyId)]);
   if (!laid.ok) return { ok: false, reason: laid.reason };
@@ -792,7 +729,6 @@ export const forecastInputsPutHandler = async (c: Ctx): Promise<Response> => {
   if (!stored.ok) return c.json({ error: 'load_failed', reason: stored.reason }, 500);
   const checked = validateKeyedInputs(body.months, new Set(offered.accounts.map((a) => a.code)));
   if (!checked.ok) return c.json({ error: 'bad_cell', cell: checked.cell, message: `${checked.cell}: ${checked.reason}` }, 400);
-  /* Kept first, then the cleared cells removed: a failure between the two leaves an extra amount, never a lost one. */
   const at = new Date().toISOString();
   const rows = Object.entries(checked.months).flatMap(([month, cells]) => Object.entries(cells).map(([code, sen]) => ({
     company_id: co.companyId, month, account_code: code, amount_sen: sen, updated_at: at, updated_by: who(c),
@@ -812,14 +748,11 @@ export const forecastInputsPutHandler = async (c: Ctx): Promise<Response> => {
   return c.json({ ok: true, months: checked.months });
 };
 
-/* ── The Trade finance table (step 5) ─────────────────────────────────────── */
 
 export type TfPayload = {
   currentMonth: string;
-  /** The months the table shows: the current one and the eleven after it. */
   shown: string[];
   facilities: TfFacilityPayload[];
-  /** The company's suppliers to choose from, by name, with their payment term. */
   suppliers: Array<{ id: string; code: string; name: string; term: string | null }>;
 };
 
@@ -914,19 +847,13 @@ export const tfPutHandler = async (c: Ctx): Promise<Response> => {
   return c.json({ ok: true });
 };
 
-/* ── The Forecast Balance Sheet (step 6) ──────────────────────────────────── */
 
 export type BsForecastPayload = {
-  /** The last month-end: the actual sheet the forecast starts from. */
   start: string;
   currentMonth: string;
-  /** From the current month to the last the Forecast P&L has figures for, a year at most. */
   months: Array<{ month: string; report: BalanceSheetReport }>;
-  /** The salary accrual the forecast moves, when the chart has one. */
   accrual: { code: string; name: string } | null;
-  /** The open orders' balances at the start, and what of them was counted: never beyond the debtors on the start sheet. */
   receipts: { orders: number; sen: number; capSen: number; countedSen: number };
-  /** The stock engine's total at the start: the forecast keeps it. */
   stockTotalSen: number;
 };
 
@@ -951,7 +878,6 @@ export async function buildBalanceSheetForecast(sb: Sb, companyId: number, layou
   const tf = await buildTf(sb, companyId, { today, openAsOf: start, currentMonth, chart, master: b.master, nowBills: facts.now, grid: b.grid, suppliers: b.suppliers, accounts: b.accounts });
   if (!tf.ok) return tf;
 
-  /* The months: from this one to the last the Forecast P&L has figures for, a year at most. */
   const lastFigure = Object.keys(b.grid).sort().at(-1) ?? '';
   const cap = addMonthsYm(currentMonth, KEYED_MONTHS - 1);
   const months: string[] = [];
@@ -961,7 +887,6 @@ export async function buildBalanceSheetForecast(sb: Sb, companyId: number, layou
   const accrualCode = accrualLine?.code ?? [...chart.kinds].find(([, k]) => k.type === 'LIABILITY' && SALARY_ACCRUAL.test(k.name))?.[0] ?? null;
   const byCodeAcc = new Map(b.accounts.map((a) => [a.code, a]));
   const isPurchase = (code: string): boolean => b.purchaseCodes.has(code) && blockOfSection(byCodeAcc.get(code)?.section ?? '') === 'costOfSales';
-  /* What each month earns and spends before money moves. */
   const accruals: Record<string, Accrual> = {};
   for (const ym of months) {
     const f = monthFigures(b.grid[ym] ?? {}, b.suppliers[ym] ?? {}, b.accounts);
@@ -974,7 +899,6 @@ export async function buildBalanceSheetForecast(sb: Sb, companyId: number, layou
     }
     accruals[ym] = a;
   }
-  /* The money, as the P&L forecast moves it (its own months from this one on), the plan and the table. */
   const moves: BsMove[] = [];
   const facilities = new Set(chart.facilities.map((x) => x.code));
   for (const l of b.built.legs) {
@@ -987,7 +911,6 @@ export async function buildBalanceSheetForecast(sb: Sb, companyId: number, layou
   for (const l of b.inputLegs) moves.push({ ym: l.ym, sen: l.sen, against: l.code, flow: l.flow });
   for (const l of tf.legs) moves.push({ ym: l.ym, sen: l.sen, against: facilities.has(l.code) ? l.code : FC_PROFIT, flow: l.flow });
 
-  /* What was open at the start. */
   const arOnSheet = sheet.report.assets.filter((l) => l.code === roles.AR).reduce((s, l) => s + l.amountSen, 0);
   const due = facts.orders.baseline.flatMap((o) => (o.deliveryDate ? [{ ym: o.deliveryDate.slice(0, 7), sen: o.balanceSen }] : []));
   const openingReceipts = capReceipts(due, arOnSheet);
@@ -1000,7 +923,6 @@ export async function buildBalanceSheetForecast(sb: Sb, companyId: number, layou
   });
   const running = cumulate(months, deltas);
 
-  /* Each month as the Balance Sheet's own shape, on its own layout. */
   const lineOf = (side: StartSheet['assets']) => side.map((l) => ({ ...l }));
   const startSheet: StartSheet = {
     assets: lineOf(sheet.report.assets), liabilities: lineOf(sheet.report.liabilities), equity: lineOf(sheet.report.equity), earningsSen: sheet.report.totals.earningsSen,

@@ -24,12 +24,6 @@ describe("build id comes from index.html, not from the code chunks", () => {
     expect(readBuildId(undefined)).toBe("dev");
   });
 
-  /* WHY THIS IS PINNED. A per-build value compiled INTO a chunk changes that
-     chunk's hash on every build, and every chunk importing it inherits the new
-     name — measured 2026-09-14: building one unchanged commit twice renamed 391
-     of 561 files in dist/assets3, sales-order-pdf among them. Each deploy then
-     deleted the file an open tab was about to import. A `define` of it anywhere
-     in src brings that back silently, so the source may not mention it. */
   it("no source file compiles a per-build define into the bundle", () => {
     const offenders: string[] = [];
     const walk = (dir: string) => {

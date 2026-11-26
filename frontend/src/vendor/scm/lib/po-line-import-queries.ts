@@ -50,7 +50,6 @@ export function applyBodyOf(preview: PoLineImportPreview): PoLineImportApplyBody
   };
 }
 
-/* authedFetch rejects with the raw status + body; the conflict list rides the body. */
 const errorOf = (e: unknown): { message: string; conflicts: PoLineImportConflict[] } => {
   const err = (e ?? {}) as { status?: number; body?: string; message?: string };
   let conflicts: PoLineImportConflict[] = [];
@@ -61,7 +60,7 @@ const errorOf = (e: unknown): { message: string; conflicts: PoLineImportConflict
       if (typeof j.message === 'string' && j.message.length > 0 && typeof err.status === 'number' && conflicts.length > 0) {
         return { message: j.message, conflicts };
       }
-    } catch { /* not JSON: fall through to the plain sentence */ }
+    } catch { }
   }
   const message = typeof err.status === 'number' && typeof err.body === 'string'
     ? humanApiError(err.status, err.body)
@@ -106,7 +105,6 @@ export function usePoLineImport() {
         method: 'POST',
         body: JSON.stringify(applyBodyOf(current.preview)),
       });
-      /* The one list of PO cache roots both surfaces refresh after a PO write. */
       invalidateModuleShared(qc, 'mfg-purchase-orders');
       setState({ step: 'done', fileName: current.fileName, result });
     } catch (e) {

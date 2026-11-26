@@ -1,17 +1,3 @@
-// ---------------------------------------------------------------------------
-// Announcement AUDIENCE helpers — who a notice reaches, and the roster it is
-// measured against. Split out of routes/announcements.ts on 2026-09-06 (the
-// route had crossed the 2000-line file-size cap with the division-targeting
-// work); nothing here is route-specific. The route keeps the gate itself
-// (userCanSee) because it reads the row shape; these are its ingredients:
-//
-//   · division targets (mig 20260906T0639): the {deptId, division} pairs a
-//     notice may name, parsed + de-duplicated, and the case-insensitive
-//     equality the gate uses;
-//   · the caller's own division (AuthUser carries none);
-//   · the active roster with org fields (receipts / ack-summary / team-pending),
-//     the company-grant narrowing, and the per-person pending state.
-// ---------------------------------------------------------------------------
 import type { Env } from "../types";
 import type { AnnouncementTranslations } from "./translate-announcement";
 
@@ -71,11 +57,6 @@ export function rosterCompaniesSql(companyIds: number[], alias = "users"): strin
              OR EXISTS (SELECT 1 FROM user_companies uc WHERE uc.user_id = ${alias}.id AND uc.company_id IN (${inList})))`;
 }
 
-// The caller's division for the reader-side audience gates. AuthUser carries
-// department_id / position_id but not users.division (mig 0021), so the
-// list / banner / attachment gates look it up once per request. Missing table
-// or column (older D1 mirrors) = no division, which only ever HIDES a
-// division-targeted notice, never shows one.
 export async function callerDivision(env: Env, userId: number): Promise<string | null> {
   try {
     // company-scope: the caller's OWN row by primary key; no company dimension.
@@ -101,10 +82,6 @@ export type RosterUser = {
   division: string | null;
 };
 
-// Every ACTIVE user with their org-chart fields. `companyIds` narrows to the
-// notice's targeted companies via the same fail-open grant rule as before
-// (rosterCompaniesSql); [] = the whole roster. Reads dual-keyed because the pg
-// driver folds snake_case → camelCase on read.
 export async function loadRoster(env: Env, companyIds: number[]): Promise<RosterUser[]> {
   const res = await env.DB.prepare(
     `SELECT u.id, u.email, u.name, u.department_id, u.position_id, u.manager_id,
@@ -143,11 +120,6 @@ export async function loadRoster(env: Env, companyIds: number[]): Promise<Roster
   }));
 }
 
-// The user_companies grants, for narrowing a roster to a notice's targeted
-// companies in JS (the summary walks every notice against one roster, so the
-// per-notice SQL filter does not fit). Same fail-open rule as
-// rosterCompaniesSql: a user with NO grant row belongs to every company. A
-// missing table (D1 test mirror, pre-0085) means no grants → everyone belongs.
 export async function loadCompanyGrants(env: Env): Promise<Map<number, Set<number>>> {
   const out = new Map<number, Set<number>>();
   try {
@@ -166,7 +138,6 @@ export async function loadCompanyGrants(env: Env): Promise<Map<number, Set<numbe
       set.add(cid);
     }
   } catch {
-    /* no grants table → fail-open, everyone belongs to every company */
   }
   return out;
 }
@@ -182,9 +153,6 @@ export function inTargetCompanies(
   return targets.some((id) => mine.has(id));
 }
 
-// A pending person's state (design handoff 2026-09-04, drawer + dashboard):
-// reminded = the office has reminded since the post; overdue = still unacked
-// past the window; otherwise plainly pending. Confirmed is the acked side.
 export const ACK_OVERDUE_HOURS = 48;
 export type PendingState = "pending" | "reminded" | "overdue";
 /** The two timestamps pendingState reads, dual-keyed like every row. */
@@ -201,8 +169,6 @@ export function pendingState(
   now = Date.now(),
   personRemindedAt: string | null = null,
 ): PendingState {
-  // Reminded = the whole notice was reminded (announcements.reminded_at) OR
-  // this person was (announcement_reminders, mig 20260906T0921).
   const remindedAt = laterOf(ann.remindedAt ?? ann.reminded_at ?? null, personRemindedAt);
   if (remindedAt && !Number.isNaN(Date.parse(remindedAt))) return "reminded";
   const t = liveSinceMs(ann);
@@ -232,8 +198,6 @@ export function laterOf(a: string | null | undefined, b: string | null | undefin
   return ta >= tb ? (a ?? null) : (b ?? null);
 }
 
-// ── Per-person reminders (mig 20260906T0921). Every reader tolerates the
-// table being absent (pre-migration window, older D1 mirrors): no rows.
 
 /** ONE notice → user id → reminded_at. */
 export async function loadReminderMap(env: Env, id: string): Promise<Map<number, string>> {
@@ -251,7 +215,6 @@ export async function loadReminderMap(env: Env, id: string): Promise<Map<number,
       if (uid != null && at) out.set(uid, at);
     }
   } catch {
-    /* no reminders table yet */
   }
   return out;
 }
@@ -272,7 +235,6 @@ export async function loadUserReminders(env: Env, userId: number): Promise<Map<s
       if (id && at) out.set(id, at);
     }
   } catch {
-    /* no reminders table yet */
   }
   return out;
 }
@@ -298,7 +260,6 @@ export async function loadAllReminders(env: Env): Promise<Map<string, Map<number
       m.set(uid, at);
     }
   } catch {
-    /* no reminders table yet */
   }
   return out;
 }
@@ -337,10 +298,6 @@ export function isOverdue(ann: PendingStateRow, now = Date.now()): boolean {
   return !Number.isNaN(t) && now - t > ACK_OVERDUE_HOURS * 3_600_000;
 }
 
-// ── Row shape + readers + the gate (moved from routes/announcements.ts on
-// 2026-09-06 so the overdue-escalation cron can share them; the route imports
-// them back). `userCanSee` is THE audience rule: every reader-side gate, the
-// roster, ack-summary, team-pending and escalation go through it.
 
 export type AnnouncementCategory = "GENERAL" | "WARNING" | "SOP" | "LEARNING";
 
@@ -364,28 +321,16 @@ export type VideoLayout = "1x1" | "1x2";
 
 export type MediaLayout = { photo?: PhotoLayout; video?: VideoLayout };
 
-// Raw row shape from the DB (dual-keyed because the pg driver folds
-// snake_case -> camelCase on read — the #1 Hookka read-gotcha).
 export type AnnouncementRow = {
   id: string;
-  // Numbered under (mig 20260909T0900): the department whose series the
-  // number is minted on; NULL = the submitter's own department.
   number_dept_id?: number | null;
   numberDeptId?: number | null;
   title: string;
   body: string;
-  // Rich body (mig 20260904T1700). Canonical HTML fragment — see
-  // lib/announcementRichText.ts — or NULL for a plain-text notice. `body` is
-  // ALWAYS the plain-text shadow of it, so plain-only readers need no branch.
   body_html?: string | null;
   bodyHtml?: string | null;
-  // Per-notice "must acknowledge" flag (mig 20260905T1125), integer 0/1. NULL
-  // only on a pre-migration row / the D1 test mirror — toPublic then emits
-  // null and the client falls back to the category rule (WARNING / SOP).
   require_ack?: number | boolean | null;
   requireAck?: number | boolean | null;
-  // Scheduled posting instant (same migration). ISO text; NULL = posted at
-  // once. A row is not delivered (list / banner / ack) before it.
   scheduled_at?: string | null;
   scheduledAt?: string | null;
   is_active?: number | boolean | null;
@@ -402,8 +347,6 @@ export type AnnouncementRow = {
   updatedAt?: string | null;
   translations?: AnnouncementTranslations | string | null;
   attachments?: string | unknown[] | null;
-  // Rich-media layout hint (mig 0140). JSON string, dual-keyed for the pg
-  // snake->camel fold. NULL = derive a default from the attachment count.
   media_layout?: string | MediaLayout | null;
   mediaLayout?: string | MediaLayout | null;
   target_type?: string | null;
@@ -414,29 +357,14 @@ export type AnnouncementRow = {
   targetPositionIds?: string | number[] | null;
   target_user_ids?: string | number[] | null;
   targetUserIds?: string | number[] | null;
-  // Company-targeting dimension (mig 0113). JSON array of company ids, e.g.
-  // '[1]' or '[1,2]'. NULL / empty = ALL companies (visible to everyone). The
-  // existing per-row company_id below is the AUTHORING company; this is the
-  // independent audience filter combined (AND) with the dept/position/user
-  // audience match. See userCompanyCanSee / the unified read paths below.
   target_company_ids?: string | number[] | null;
   targetCompanyIds?: string | number[] | null;
-  // Division targeting (mig 20260906T0639). JSON array of {deptId, division}
-  // — a division is the free-text users.division within ONE department, so
-  // the pair is the key. Counts as the DEPARTMENT bucket of target_type (a
-  // division is a slice of a department; the CHECK constraint is untouched).
   target_divisions?: string | DivisionTarget[] | null;
   targetDivisions?: string | DivisionTarget[] | null;
-  // People carved OUT of the audience (mig 20260906T0639). JSON integer array;
-  // an excluded id never sees the notice, whatever else targets them.
   excluded_user_ids?: string | number[] | null;
   excludedUserIds?: string | number[] | null;
-  // When the overdue escalation ran for this notice (cron or the drawer's
-  // click; mig 20260906T0833). NULL = never — the cron's "due" filter.
   escalated_at?: string | null;
   escalatedAt?: string | null;
-  // Approval workflow (mig 20260906T1509). approval_status NULL / absent =
-  // APPROVED (the column's DEFAULT; a D1 mirror without it behaves the same).
   approval_status?: string | null;
   approvalStatus?: string | null;
   submitted_by?: number | null;
@@ -451,16 +379,12 @@ export type AnnouncementRow = {
   rejectReason?: string | null;
   ref_no?: string | null;
   refNo?: string | null;
-  // Void (mig 20260907T1030): a submitted notice is never deleted, only voided
-  // with a reason. voided_at set = out of every reader surface for good.
   voided_by?: number | null;
   voidedBy?: number | null;
   voided_at?: string | null;
   voidedAt?: string | null;
   void_reason?: string | null;
   voidReason?: string | null;
-  // Document type (mig 20260908T0300): the [TYPE] segment of the reference
-  // number — ANN (the DEFAULT) or MEMO, a code in document_types.
   doc_type?: string | null;
   docType?: string | null;
   category?: string | null;
@@ -501,11 +425,6 @@ export function scheduledLater(scheduledAt: string | null | undefined, now = Dat
   return !Number.isNaN(t) && t > now;
 }
 
-// Is this row DELIVERABLE to a reader right now? Active, past its schedule,
-// and not expired — where an SOP never expires (redesign 2026-09-04: the SOP
-// Library is permanent, so a stale expires_at on an SOP is ignored rather than
-// silently pulling a standing procedure off everyone's screen). The list's
-// reader branch, /banner and the ack POST all use this one answer.
 export type ApprovalStatus = "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
 const APPROVAL_STATUSES: ReadonlySet<string> = new Set(["DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED"]);
 
@@ -537,10 +456,6 @@ export function isVoided(r: Pick<AnnouncementRow, "voided_at" | "voidedAt">): bo
 }
 
 export function deliverableNow(r: AnnouncementRow, now = Date.now()): boolean {
-  // Approval first (mig 20260906T1509): a draft, pending or rejected notice
-  // is nobody's to read — not the feed, not the pop-up, not the bell, not
-  // the ack endpoint, not the escalation cron. A voided notice (mig
-  // 20260907T1030) is out the same way, whatever its approval state.
   if (isVoided(r)) return false;
   if (readApprovalStatus(r) !== "APPROVED") return false;
   if (!isActiveFlag(r.isActive ?? r.is_active ?? null)) return false;
@@ -549,8 +464,6 @@ export function deliverableNow(r: AnnouncementRow, now = Date.now()): boolean {
   return notExpired(r.expiresAt ?? r.expires_at ?? null);
 }
 
-// Parse a stored JSON array of integers. Tolerates a JSON string OR a parsed
-// array; drops non-numbers; deduplicates.
 export function readIntArray(v: string | number[] | null | undefined): number[] {
   if (v == null) return [];
   let arr: unknown = v;
@@ -594,15 +507,10 @@ export function readTargetType(r: AnnouncementRow): TargetType {
   return "ALL_USERS";
 }
 
-// The announcement's targeted company ids (JSON array), dual-keyed for the pg
-// snake->camel fold. Empty = ALL companies.
 export function readTargetCompanyIds(r: AnnouncementRow): number[] {
   return readIntArray(r.targetCompanyIds ?? r.target_company_ids ?? null);
 }
 
-// True when a user with (id, deptId, positionId) is in the announcement's
-// audience. Used by the banner GET so we never surface a notice the user
-// shouldn't see.
 export function userCanSee(
   r: AnnouncementRow,
   userId: number,
@@ -610,14 +518,11 @@ export function userCanSee(
   userPositionId: number | null,
   userDivision: string | null = null,
 ): boolean {
-  // An unticked person is out, whatever else targets them (mig 20260906T0639).
   if (rowExcluded(r).includes(userId)) return false;
   const type = readTargetType(r);
   if (type === "ALL_USERS") return true;
   const deptIds = readIntArray(r.targetDeptIds ?? r.target_dept_ids ?? null);
   if (userDeptId != null && deptIds.includes(userDeptId)) return true;
-  // A division target matches the user's PRIMARY department + their division
-  // text (users.division, mig 0021), case-insensitively.
   if (userDeptId != null && userDivision) {
     const divisions = rowDivisions(r);
     if (divisions.some((d) => d.deptId === userDeptId && divisionEq(d.division, userDivision))) {
@@ -637,8 +542,6 @@ export function audienceOf(ann: AnnouncementRow, roster: RosterUser[]): RosterUs
   return roster.filter((u) => userCanSee(ann, u.id, u.departmentId, u.positionId, u.division));
 }
 
-// acked_at per user for ONE notice (or, with no id, every notice → keyed by
-// notice id first).
 export async function loadAckMap(env: Env, id: string): Promise<Map<number, string | null>> {
   // company-scope: receipts for ONE notice the caller already passed getScopedAnnouncement (companyCanSee) for; acks carry no company dimension of their own.
   const res = await env.DB.prepare(
@@ -674,8 +577,6 @@ export async function loadAllAcks(env: Env): Promise<Map<string, Set<number>>> {
   return out;
 }
 
-// Does the notice demand an acknowledgement? The stored flag, else the
-// category rule — the same fallback the client applies.
 export function announcementRequiresAck(r: AnnouncementRow): boolean {
   return readRequireAck(r.requireAck ?? r.require_ack ?? null) ?? categoryRequiresAck(readCategory(r.category));
 }

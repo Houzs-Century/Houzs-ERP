@@ -69,7 +69,6 @@ export function readPdfContent(content: string): PdfStatement | null {
       }
       lines.push({ y: l.y, cells: [...cells].sort((a, b) => a.x - b.x) });
     }
-    /* Top of the page first: pdf.js measures y upwards from the bottom. */
     pages.push({ lines: [...lines].sort((a, b) => b.y - a.y) });
   }
   return { kind: PDF_TEXT_KIND, pages };
@@ -85,7 +84,6 @@ export const PDF_LAYOUTS: ReadonlySet<string> = new Set(['MBB']);
 const rm = (sen: number) =>
   `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-/** "6,820.80" → 682080, ".50" → 50; null when it is not money. */
 const senOf = (raw: string): number | null => {
   const s = raw.replace(/,/g, '').trim();
   if (!/^\d*\.\d{2}$/.test(s)) return null;
@@ -109,30 +107,20 @@ export function parsePdfStatement(p: { bankCode: string; pdf: PdfStatement; stat
   };
 }
 
-/* ── Maybank ─────────────────────────────────────────────────────────────── */
 
 const MBB = {
-  /** The entry date sits at the left edge; the description starts past it. */
   dateMaxX: 70,
   descFromX: 90,
   descToX: 320,
-  /** The running balance is the rightmost figure. */
   balanceFromX: 400,
 };
 
 const DATE_DDMM = /^(\d{2})\/(\d{2})$/;
 const DATE_DDMMYY = /^(\d{2})\/(\d{2})\/(\d{2})$/;
-/* An amount under RM 1 prints with no leading zero: the DuitNow service charge
-   is ".50-", its refund ".50+" (Houzs 564418610346, September 2026 — nineteen
-   such rows went unread and the walk missed by RM 8.45). */
 const SIGNED_MONEY = /^((?:\d[\d,]*)?\.\d{2})([+-])$/;
 const MONEY = /^(?:\d[\d,]*)?\.\d{2}$/;
 
 function parseMaybank(pdf: PdfStatement, statementMonth: string | null): BankParseResult {
-  /* THE YEAR. The rows print dd/mm; the header prints the statement date
-     dd/mm/yy. That date is the month's last day, so its month is the month
-     the rows belong to — except a row from the month before, which a
-     statement opening on the 1st never carries but a rollover would. */
   let year: number | null = null;
   let month: number | null = null;
   for (const page of pdf.pages) {
@@ -155,22 +143,16 @@ function parseMaybank(pdf: PdfStatement, statementMonth: string | null): BankPar
   let openingBalanceSen: number | null = null;
   let closingBalanceSen: number | null = null;
   let ended = false;
-  /* The row a continuation line belongs to; none after a row left out. */
   let current: BankLine | null = null;
   let skipped = 0;
 
   for (const page of pdf.pages) {
     if (ended) break;
-    /* The page header repeats above the table on every page; rows start once
-       the column headings, or the beginning balance, have gone by. */
     let inTable = false;
     for (const line of page.lines) {
       const texts = line.cells.map((c) => c.t.trim());
       const joined = texts.join(' ');
       const balanceCell = [...line.cells].reverse().find((c) => c.x >= MBB.balanceFromX && MONEY.test(c.t.trim()));
-      /* The balance rows carry a FIGURE. The page footer prints "LEDGER
-         BALANCE = ENDING BALANCE - UNCLEARED CHEQUES" under every page's
-         table, and those words alone must neither open nor end the reading. */
       if (/ENTRY DATE/.test(joined) || (/BEGINNING BALANCE/.test(joined) && balanceCell)) inTable = true;
       if (!inTable) continue;
       if (/BEGINNING BALANCE/.test(joined) && balanceCell) {
@@ -195,8 +177,6 @@ function parseMaybank(pdf: PdfStatement, statementMonth: string | null): BankPar
         const dd = Number(dateHit[1]);
         const mm = Number(dateHit[2]);
         if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return { ok: false, reason: `Line ${lines.length + 1}: "${first!.t}" is not a day.` };
-        /* A zero-amount row ("ACTIVATE ACCOUNT .00+") is not a movement — left
-           out and counted, as the CSV reader does. */
         if (magnitude === 0) { skipped += 1; current = null; continue; }
         current = {
           lineNo: lines.length + 1,
@@ -209,9 +189,6 @@ function parseMaybank(pdf: PdfStatement, statementMonth: string | null): BankPar
         lines.push(current);
         continue;
       }
-      /* A continuation line: the rest of the description of the row above
-         (the payer's name, "Transfer", the bank's own tag). Only text inside
-         the description column, with no date and no figure, counts. */
       if (!dateHit && !amountCell && !balanceCell && description && current
         && line.cells.every((c) => c.x >= MBB.descFromX && c.x < MBB.descToX)) {
         current.description = `${current.description} ${description}`.trim();
@@ -223,9 +200,6 @@ function parseMaybank(pdf: PdfStatement, statementMonth: string | null): BankPar
     return { ok: false, reason: 'No transaction rows, and no beginning or ending balance, were found on this PDF — is it a Maybank account statement?' };
   }
 
-  /* THE CHECK. The rows must walk from the balance the statement opened at
-     to the balance it closed at; where they do not, a row was misread (or a
-     page was missing) and the file is refused rather than trusted. */
   const netSen = lines.reduce((s, l) => s + l.amountSen, 0);
   if (openingBalanceSen != null && closingBalanceSen != null && openingBalanceSen + netSen !== closingBalanceSen) {
     return {

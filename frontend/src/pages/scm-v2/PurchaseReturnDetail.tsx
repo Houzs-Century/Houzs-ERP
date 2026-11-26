@@ -1,40 +1,3 @@
-// ----------------------------------------------------------------------------
-// PurchaseReturnDetail — full-page route at /purchase-returns/:id.
-//
-// EXACT clone of PurchaseOrderDetail / GoodsReceivedDetail / PurchaseInvoiceDetail
-// (the gold standard): a draft-style View → Edit → Save/Back machine, Print PDF,
-// Cancel. A Purchase Return is CONFIRMED the moment it exists (no Draft
-// lifecycle), so POSTED reads as "Confirmed".
-//
-//   1. Header: back button + Return# · supplier + status pill + actions
-//   2. Supplier card: editable supplier + return date + reason + credit note ref
-//      + notes (inputs in Edit, read-only InfoCells in View). No currency /
-//      warehouse — money shows as MYR.
-//   3. Line items table: code + group + variants summary + qty(returned) + unit
-//      + total  (a return has NO discount / delivery — qty × unit price)
-//   4. Totals card: refund total (live from line items = Σ line_refund_sen)
-//
-// Draft model (mirrors PO #194 / GRN / PI):
-//   • Edit  → snapshots header + lets you edit Qty(returned) / Unit INLINE per
-//             row. Nothing persists until the single top Save.
-//   • Save  → commits header changes + every changed line's field edits.
-//   • Back  → leaves the page, discarding the field-edit draft (no auto-save).
-//   • Delete (trash) removes the line immediately (no confirm popup).
-//
-// purchase_return_status enum: POSTED / COMPLETED / CANCELLED. POSTED →
-// "Confirmed" (editable). COMPLETED / CANCELLED render their label and lock the
-// page read-only. isLocked = CANCELLED or COMPLETED (mirror GRN's lock logic).
-// Cancel reverses the inventory OUT server-side (writes a reversing IN).
-//
-// HOUZS VENDOR — re-vendored from apps/backend/src/pages/PurchaseReturnDetail.tsx
-// (2990 T12, 2026-06-19). Import boundary only: react-router → react-router-dom;
-// the PR flow hooks resolve from the vendored split module purchase-return-queries
-// (NOT the 2990 flow-queries barrel); suppliers / category-badges / mfg-products
-// + the PDF helper → ../../vendor/scm/*; back links repointed to /scm/*. Carries
-// 2990's T12 in-place variant editor verbatim (editable Description + per-category
-// SOFA/BEDFRAME variant editor + bedframe total-height auto-compute) for existing
-// non-sourced bedframe/sofa lines in Edit mode; from-GRN lines stay read-only.
-// ----------------------------------------------------------------------------
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
@@ -76,9 +39,6 @@ const fmtRm = (sen: number | null | undefined): string => {
   })}`;
 };
 
-/* T12 — existing PR lines whose product is a bedframe/sofa get the SAME
-   per-category variant editor as New PR. Small local copy of PurchaseReturnNew's
-   VariantSelect (not exported there). */
 const VariantSelect = ({
   label, options, value, onChange, disabled = false,
 }: {
@@ -104,11 +64,6 @@ const VariantSelect = ({
   </label>
 );
 
-/* Draft state shapes (mirror PO #194 / GRN / PI). HeaderDraft mirrors the
-   editable PR header fields; LineDraft holds the inline-editable per-line fields
-   where qty maps to qty_returned (a return has NO discount / delivery). T12 adds
-   the identity/variant fields so a non-sourced PR line can edit its description +
-   bedframe/sofa variants; from-GRN lines keep their identity read-only. */
 type HeaderDraft = {
   supplierId: string;
   returnDate: string;
@@ -117,7 +72,7 @@ type HeaderDraft = {
   notes: string;
 };
 type LineDraft = {
-  qty: number;            // maps to qty_returned
+  qty: number;
   unitPriceSen: number;
   materialName: string;
   itemGroup: string | null;
@@ -136,9 +91,6 @@ type PrItemRow = Record<string, unknown> & {
   material_kind?: string | null;
   description?: string | null;
   variants?: Record<string, unknown> | null;
-  /* From-GRN lines carry the source GRN line id; their identity + variants stay
-     read-only to avoid stranding the GRN's returned-qty inventory. Manual /
-     PO-sourced lines (no grn_item_id) get full editing. */
   grn_item_id?: string | null;
 };
 
@@ -182,9 +134,6 @@ export const PurchaseReturnDetail = () => {
   const pr = (detail.data?.purchaseReturn ?? null) as PrHeaderRow | null;
   const items = (detail.data?.items ?? []) as PrItemRow[];
 
-  /* T12 — maintenance config + special-orders pools drive the per-category
-     variant editor on EXISTING bedframe/sofa lines in Edit mode (same dropdown
-     pools as New PR). */
   const maintQ = useMaintenanceConfig('master');
   const maint  = maintQ.data?.data ?? null;
   const specialAddonsQ = useSpecialAddons();
@@ -197,26 +146,15 @@ export const PurchaseReturnDetail = () => {
     return { bedframe: pick('BEDFRAME'), sofa: pick('SOFA') };
   }, [specialAddonsQ.data]);
 
-  /* View → Edit gate (mirror PO/GRN/PI) — default read-only View; click Edit to
-     flip into draft mode. The PR list's right-click "Edit" lands here with
-     ?edit=1. */
   const [searchParams] = useSearchParams();
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
 
-  /* Draft buffers. headerDraft is null until the first header field is touched
-     (then seeded from the PR). lineDrafts overlays per-line edits keyed by item
-     id; any line without an entry shows its stored values. None of this persists
-     until Save. */
   const [headerDraft, setHeaderDraft] = useState<HeaderDraft | null>(null);
   const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft | undefined>>({});
   const [savingDraft, setSavingDraft] = useState(false);
 
-  // POSTED ("Confirmed") is editable; COMPLETED / CANCELLED lock read-only
-  // (mirror GRN's lock logic).
   const isLocked = pr ? pr.status !== 'POSTED' : true;
 
-  /* If the PR locks while we're in Edit mode (e.g. cancelled in another tab),
-     drop back to View + discard the draft. */
   useEffect(() => {
     if (isLocked && isEditing) {
       setIsEditing(false);
@@ -240,7 +178,6 @@ export const PurchaseReturnDetail = () => {
     );
   }
 
-  /* ── Draft helpers (pr is guaranteed non-null past the guards above) ── */
   const visibleItems = items;
   const lineOf = (it: PrItemRow): LineDraft => lineDrafts[it.id] ?? lineSnapshot(it);
   const lineTotalOf = (it: PrItemRow): number => {
@@ -259,8 +196,6 @@ export const PurchaseReturnDetail = () => {
   const setLine = (it: PrItemRow, patch: Partial<LineDraft>) =>
     setLineDrafts((prev) => ({ ...prev, [it.id]: { ...(prev[it.id] ?? lineSnapshot(it)), ...patch } }));
 
-  /* T12 — patch one variant key on a line + auto-compute bedframe Total Height
-     (= Divan + Leg + Gap), mirroring New PR's setVariant. */
   const setVariant = (it: PrItemRow, key: string, value: string) =>
     setLineDrafts((prev) => {
       const cur = prev[it.id] ?? lineSnapshot(it);
@@ -278,9 +213,6 @@ export const PurchaseReturnDetail = () => {
     setIsEditing(true);
   };
 
-  /* Single Save — commit header (only if touched) + every changed line's field
-     edits, then drop back to View. Back discards the field-edit draft.
-     (Line delete already committed server-side — see the trash handler.) */
   const handleSave = async () => {
     if (savingDraft) return;
     setSavingDraft(true);
@@ -292,9 +224,6 @@ export const PurchaseReturnDetail = () => {
         const d = lineDrafts[it.id];
         if (!d) continue;
         const snap = lineSnapshot(it);
-        /* Identity/variants are editable only on non-sourced lines (no
-           grn_item_id); from-GRN lines never send those keys (their identity is
-           locked so the GRN's returned-qty inventory can't be stranded). */
         const editableIdentity = !it.grn_item_id;
         const identityChanged = editableIdentity && (
           d.materialName !== snap.materialName ||
@@ -309,8 +238,6 @@ export const PurchaseReturnDetail = () => {
           await updateItem.mutateAsync({
             id: pr.id, itemId: it.id,
             qty: d.qty, unitPriceSen: d.unitPriceSen,
-            /* T12 — only non-sourced lines send identity/variants; the server
-               recomputes description2 + writes inventory with the new identity. */
             ...(editableIdentity ? {
               materialName: d.materialName,
               description:  d.materialName,
@@ -331,8 +258,6 @@ export const PurchaseReturnDetail = () => {
   };
 
   const handlePrint = () => {
-    // PR PDF (to send to the supplier for credit-note issuance) — mirrors
-    // PO/GRN/PI's handlePrint wiring its own purchase-return-pdf helper.
     import('../../vendor/scm/lib/purchase-return-pdf').then(({ generatePurchaseReturnPdf }) =>
       generatePurchaseReturnPdf(pr, items),
     ).catch((e) => notify({ title: 'PDF generation failed', body: `${e instanceof Error ? e.message : String(e)}`, tone: 'error' }));
@@ -340,7 +265,6 @@ export const PurchaseReturnDetail = () => {
 
   return (
     <div className={styles.page}>
-      {/* ── Header ──────────────────────────────────────────────── */}
       <div className={styles.headerRow}>
         <div className={styles.titleBlock}>
           <Link to="/scm/purchase-returns" className={styles.backBtn}>
@@ -355,22 +279,16 @@ export const PurchaseReturnDetail = () => {
           </div>
         </div>
         <div className={styles.actions}>
-          {/* Refund KPI tile — tracks the live line items (incl. unsaved draft
-              edits). */}
           <div className={styles.totalRail}>
             <span className={styles.totalRailLabel}>Refund</span>
             <span className={styles.totalRailValue}>{fmtRm(refundTotal)}</span>
           </div>
-          {/* A return is Confirmed the moment it exists (no Draft/lifecycle). */}
           <StatusPill docType="pr" status={pr.status} />
           <RelationshipMapButton type="pr" id={id} />
           <Button variant="ghost" size="md" onClick={handlePrint}>
             <Printer {...ICON} />
             <span>Print PDF</span>
           </Button>
-          {/* Cancel — only when the PR is still active (not cancelled / completed).
-              Confirm dialog → cancel mutation (reverses the inventory OUT
-              server-side — stock is put back). */}
           {pr.status !== 'CANCELLED' && pr.status !== 'COMPLETED' && (
             <Button variant="ghost" size="md"
               onClick={async () => {
@@ -389,9 +307,6 @@ export const PurchaseReturnDetail = () => {
               <span>{cancel.isPending ? 'Cancelling…' : 'Cancel'}</span>
             </Button>
           )}
-          {/* View → Edit gate. Default View shows Edit (disabled while locked);
-              editing flips into draft mode and the button becomes the single
-              "Save" that commits the whole draft. Back (top-left) discards. */}
           {!isEditing ? (
             <Button variant="primary" size="md" onClick={enterEdit} disabled={isLocked}>
               <Pencil {...ICON} />
@@ -406,9 +321,6 @@ export const PurchaseReturnDetail = () => {
         </div>
       </div>
 
-      {/* ── Supplier / dates / reason / notes ───────────────────── */}
-      {/* In View the card renders read-only text; in Edit it shows inputs bound
-          to the draft (committed by the single top Save). */}
       <SupplierCard
         pr={pr}
         draft={headerView}
@@ -417,7 +329,6 @@ export const PurchaseReturnDetail = () => {
         isEditing={isEditing}
       />
 
-      {/* ── Line items ──────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Items ({visibleItems.length})</h2>
@@ -435,16 +346,12 @@ export const PurchaseReturnDetail = () => {
                 <th className={styles.tableRight}>Qty</th>
                 <th className={styles.tableRight}>Unit</th>
                 <th className={styles.tableRight}>Total</th>
-                {/* Actions column only in Edit mode — View is read-only. A return
-                    has NO discount / delivery, so no Disc / Delivery columns. */}
                 {isEditing && <th className={styles.tableRight}>Actions</th>}
               </tr>
             </thead>
             <tbody>
               {visibleItems.map((it) => {
                 const d = lineOf(it);
-                /* T12 — identity + variants are editable only on non-sourced lines
-                   (no grn_item_id); from-GRN lines stay read-only. */
                 const editableIdentity = !it.grn_item_id;
                 const showVariantEditor =
                   isEditing && editableIdentity && !isLocked &&
@@ -462,12 +369,8 @@ export const PurchaseReturnDetail = () => {
                       })()}
                     </td>
                     <td className={styles.muted}>{it.item_group ?? it.material_kind ?? '—'}</td>
-                    {/* Per-line ship-from warehouse (Agent D, TASK #32): the same
-                        warehouse the PR OUT pulls stock from. Display-only. */}
                     <td className={styles.muted}>{(it.warehouse_code as string | null) ?? '—'}</td>
 
-                    {/* Qty(returned) / Unit are inline-editable in Edit mode (no
-                        per-line modal). */}
                     {isEditing ? (
                       <>
                         <td className={styles.tableRight}>
@@ -520,9 +423,6 @@ export const PurchaseReturnDetail = () => {
                       </>
                     )}
                   </tr>
-                  {/* T12 — expanded editor row (Edit mode, non-sourced lines): an
-                      editable Description + the per-category variant editor. A
-                      from-GRN line gets no editor — its identity stays read-only. */}
                   {isEditing && editableIdentity && (
                     <tr>
                       <td colSpan={7} style={{ background: 'var(--c-paper)', borderTop: 'none' }}>
@@ -549,7 +449,6 @@ export const PurchaseReturnDetail = () => {
                                     value={String(d.variants?.gap ?? '')} onChange={(v) => setVariant(it, 'gap', v)} />
                                   <VariantSelect label="Leg Height" disabled={isLocked} options={sortByNumeric(activeOptions(maint!.legHeights, String(d.variants?.legHeight ?? '')))}
                                     value={String(d.variants?.legHeight ?? '')} onChange={(v) => setVariant(it, 'legHeight', v)} />
-                                  {/* Total Height auto-computed (see setVariant). */}
                                   <VariantSelect label="Special" disabled={isLocked} options={specialsPools.bedframe}
                                     value={String(d.variants?.special ?? '')} onChange={(v) => setVariant(it, 'special', v)} />
                                 </div>
@@ -582,15 +481,11 @@ export const PurchaseReturnDetail = () => {
         )}
       </section>
 
-      {/* ── Totals ────────────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Totals</h2>
         </header>
         <div className={styles.cardBody}>
-          {/* Refund computed LIVE from the visible line items (incl. unsaved
-              draft edits) so it can never drift. A return is qty × unit price —
-              no tax / discount. */}
           <div className={styles.totalsGrid}>
             <div className={`${styles.totalRow} ${styles.grandTotalRow}`}>
               <span className={styles.totalLabel}>Total Refund</span>
@@ -603,27 +498,18 @@ export const PurchaseReturnDetail = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Supplier / header card — controlled by the page's draft (mirror PO/GRN/PI).
-   In View it renders read-only InfoCells; in Edit it shows inputs bound to the
-   page draft (committed by the single top Save).
-   ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
   pr, draft, onField, locked, isEditing = true,
 }: {
   pr: PrHeaderRow;
-  /** Draft header values (page-owned). In View these mirror the saved PR. */
   draft: HeaderDraft;
-  /** Update a single header field on the page draft. */
   onField: (k: keyof HeaderDraft, v: string) => void;
   locked: boolean;
-  /** View → Edit gate. When false the card renders read-only display text. */
   isEditing?: boolean;
 }) => {
   const suppliersQ = useSuppliers();
   const suppliers = suppliersQ.data ?? [];
-  // In Edit follow the draft's picked supplier; in View follow the saved PR.
   const supplierIdForDetail = isEditing ? (draft.supplierId || null) : (pr.supplier_id ?? null);
   const supplierDetail = useSupplierDetail(supplierIdForDetail);
   const supplier: SupplierRow | null = supplierDetail.data?.supplier ?? null;
@@ -635,7 +521,6 @@ const SupplierCard = ({
       </header>
       <div className={styles.cardBody}>
         {!isEditing ? (
-          /* View mode — read-only display text sourced from the saved PR. */
           <div
             style={{
               display: 'grid',
@@ -696,7 +581,6 @@ const SupplierCard = ({
         </div>
         )}
 
-        {/* Supplier-info auto-fill card. Read-only display from /suppliers/:id. */}
         {supplier && (
           <div
             style={{
@@ -733,7 +617,6 @@ const SupplierCard = ({
   );
 };
 
-/* Read-only label/value cell for the supplier auto-fill card. */
 function InfoCell({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div>

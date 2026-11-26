@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// service-lines — pure builders that turn server-computed charges into
-// SERVICE SKU line specs (P2 of the SO all-charges-as-SKU-lines spec,
-// docs/specs/2026-06-04-so-sku-lines-and-sync-spec.md §4.1 + §4.2).
-//
-// The MONEY is computed elsewhere (computeSoDeliveryFee for delivery,
-// the addons table for dispose/lift) — these builders only decide how the
-// amounts decompose into lines (which SKU, qty, unit price, description).
-// Pure + shared so the API and tests run the same decomposition.
-//
-// All amounts here are SEN (the SO ledger unit). The addons table is
-// whole-MYR (POS retail convention) — computeAddonServiceLines does the
-// ×100 at this boundary.
-// ----------------------------------------------------------------------------
 
 import type { SoDeliveryFeeResult } from './pricing';
 import {
@@ -31,15 +17,9 @@ import {
 export interface ServiceLineSpec {
   itemCode:     string;
   description:  string;
-  /** Dynamic per-order detail (cross-order source SO, lift floors×items math).
-   *  Lands in mfg_sales_order_lines.remark — Loo 2026-06-10: the description
-   *  stays the stable SKU wording; order-specific context belongs in the
-   *  Remark column (and prints as its own "Remark:" note line). */
   remark?:      string | null;
   qty:          number;
-  /** SEN per unit. */
   unitPriceSen: number;
-  /** qty × unitPriceSen — convenience for callers summing the batch. */
   totalSen:     number;
 }
 
@@ -56,15 +36,10 @@ export interface AddonSelectionInput {
 export interface AddonRowInput {
   id:            string;
   kind:          'qty' | 'floors_items' | 'flat' | string;
-  /** Whole MYR. */
   price:         number;
-  /** Whole MYR per floor·item (lift). */
   perFloorItem?: number | null;
   label?:        string | null;
   enabled?:      boolean | null;
-  /** Migration 0160 — per-add-on SERVICE SKU. Wins over the legacy
-   *  ADDON_ID_TO_SERVICE_SKU map; NULL/blank falls through to it, then to
-   *  the generic SVC-ADDON. */
   serviceSku?:   string | null;
 }
 
@@ -80,9 +55,6 @@ export const ADDON_ID_TO_SERVICE_SKU: Record<string, string> = {
   'lift':             SVC_LIFT_CARRY,
 };
 
-/* Sanity ceilings — a crafted payload must not be able to overflow
-   qty × unitPriceSen into precision-loss territory. Generous vs reality
-   (no Malaysian walk-up exceeds 50 floors; no order carries 99 pieces). */
 export const MAX_LIFT_FLOORS = 50;
 export const MAX_LIFT_ITEMS = 99;
 export const MAX_ADDON_QTY = 99;
@@ -171,15 +143,6 @@ export function deliveryFeeStateKey(
   };
   const out: Record<string, [string, number, number, number]> = {};
   for (const l of deliveryLines) {
-    /* EXACTLY the three codes the RPC's own predicate names, not
-       isDeliveryFeeServiceCode's PREFIX match. The caller filters with the
-       prefix (`startsWith(SVC_DELIVERY)`), the function compares
-       `item_code IN ('SVC-DELIVERY','SVC-DELIVERY-CROSS','SVC-DELIVERY-ADD')`,
-       and a hand-added SVC-DELIVERY-ANYTHING row would therefore be in the
-       expectation and NOT in what the function re-reads — a mismatch that never
-       resolves, so the fee would stop re-deriving on that order forever. Fails
-       CLOSED, silently, which is the worst shape. The two sides must name the
-       same set. */
     if (!REBUILT_DELIVERY_FEE_CODES.has(l.item_code)) continue;
     const id = l.id == null ? '' : String(l.id);
     if (!id) return null;
@@ -244,19 +207,14 @@ export function computeAddonServiceLines(
   addonRows: AddonRowInput[],
 ): ServiceLineSpec[] {
   const rowById = new Map(addonRows.map((r) => [r.id, r]));
-  /* One line per addon id — first selection wins. The POS form is a dict
-     keyed by id so real clients can't duplicate; a crafted payload repeating
-     an id must not book the charge twice. */
   const seen = new Set<string>();
   const lines: ServiceLineSpec[] = [];
   for (const sel of selections) {
     if (seen.has(sel.id)) continue;
     seen.add(sel.id);
     const row = rowById.get(sel.id);
-    if (!row) continue;                       // unknown to the addons catalog
-    if (row.enabled === false) continue;      // operator disabled it since
-    // Per-row SERVICE SKU first (0160), legacy hardcoded map next, generic
-    // SVC-ADDON otherwise (0157).
+    if (!row) continue;
+    if (row.enabled === false) continue;
     const itemCode =
       (row.serviceSku ?? '').trim() || ADDON_ID_TO_SERVICE_SKU[sel.id] || SVC_ADDON;
     const label = (row.label ?? '').trim() || sel.id;
@@ -266,9 +224,6 @@ export function computeAddonServiceLines(
       const rateSen = Math.round(Number(row.perFloorItem ?? 0) * 100);
       const remark = `${floors} ${floors === 1 ? 'floor' : 'floors'} × ${items} ${items === 1 ? 'item' : 'items'} (first 2 floors free)`;
       if (itemCode === SVC_LIFT_CARRY && floors >= 1 && floors <= MAX_LIFT_TIER_FLOOR) {
-        // Per-floor tier SKU (Loo 2026-06-10). qty = pieces carried; the
-        // floor is the SKU. Floors 1–2 book at RM0 on purpose — the free
-        // band must SHOW on the SO, not vanish.
         if (items <= 0 || rateSen <= 0) continue;
         const unitSen = Math.max(0, floors - 2) * rateSen;
         lines.push({
@@ -281,9 +236,6 @@ export function computeAddonServiceLines(
         });
         continue;
       }
-      // Legacy decomposition — floors above the tier ceiling, or a custom
-      // floors_items addon with its own serviceSku (whose tier SKUs don't
-      // exist in the catalog; minting one here would 409 the order).
       const units = liftChargeableUnits(floors, items);
       if (units <= 0 || rateSen <= 0) continue;
       lines.push({
@@ -295,8 +247,6 @@ export function computeAddonServiceLines(
         totalSen: units * rateSen,
       });
     } else {
-      // 'qty' (and a defensive 'flat' fallback: qty=1). Clamped to the
-      // sanity ceiling so qty × unitPriceSen can't blow up.
       const qty = row.kind === 'qty' ? Math.min(MAX_ADDON_QTY, Math.max(1, Math.floor(sel.qty ?? 1))) : 1;
       const unitSen = Math.round(Number(row.price ?? 0) * 100);
       if (unitSen <= 0) continue;

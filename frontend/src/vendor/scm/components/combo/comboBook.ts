@@ -1,6 +1,3 @@
-// The combo screen's view of the rows. A combo the user sees is one model + module
-// set; underneath it is one rule per Price (and one per supplier). Everything here
-// is pure so the screen and the Excel file read the same answer.
 
 import { buildComboLabel, comboSlotsKey, fmtSen, type SofaPriceTier } from '@2990s/shared';
 import type { ApplyComboItem, SofaComboRule } from '../../lib/sofa-combos-queries';
@@ -14,7 +11,6 @@ export type ComboLine = {
   key: string;
   baseModel: string;
   modules: string[][];
-  /** What the combo is called; `name` adds a number when a model repeats it. */
   label: string;
   name: string;
   byTier: Partial<Record<SofaPriceTier, SofaComboRule>>;

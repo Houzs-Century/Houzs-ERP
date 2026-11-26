@@ -63,14 +63,8 @@ import { callAcRead } from '../../services/autocount-host-read';
 import { paginateAll } from './paginate-all';
 
 type Row = Record<string, unknown>;
-/* paginate-all keeps PageResult private, so the shape is restated rather than
-   widening that module's surface for one caller. */
 type PageResult<T> = { data: T[] | null; error: { message: string; code?: string } | null };
 
-/* supabase-js types a dynamic `.select(string)` as a parser error, which then
-   poisons the whole builder. Every read here is one flat table with no embed,
-   so the honest shape is a row bag — asserted in ONE place rather than at each
-   field. Same reason committed-shipments.ts takes `sb: any`. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
 const asPage = (q: any): PromiseLike<PageResult<Row>> => q as PromiseLike<PageResult<Row>>;
 
@@ -80,36 +74,19 @@ export const DELIVERY_DATE_SWEEP_KEY = 'scm.autocount_delivery_date_sweep';
 
 export type DeliveryDateSweepMode = 'off' | 'plan' | 'apply';
 
-/** The AED_HOUZS book IS Houzs Century. 2990 carries no AutoCount link at all
- *  (owner: 2990 does not sync) and Hookka is a different book, so both are out
- *  of scope by construction — the predicate is here anyway, because every
- *  AutoCount repair in this repo carries one. */
 const BOOK_COMPANY_ID = 1;
 
-/** How far back the window reaches. Filtering on the DELIVERY DATE is both the
- *  bound and the right semantics: a date staff still move belongs to a document
- *  delivering soon or delivered recently. Measured on the 2026-09-11 export —
- *  the book holds 51,041 SO and 48,291 DO dated lines in total, and 120 days
- *  back is 8,522 / 6,075, well inside the host route's 20,000-row ceiling. */
 const WINDOW_DAYS = 120;
 
-/** A ceiling per run, so one cron slot cannot spend itself on round trips. Each
- *  write is its own PostgREST call; the next slot continues where this stopped,
- *  and `remaining` says how much is left. */
 const MAX_WRITES_PER_RUN = 200;
 
 interface TypeSpec {
   readonly type: 'SO' | 'DO';
   readonly itemTable: string;
   readonly headerTable: string;
-  /** The column on the ITEM row that names its parent document. */
   readonly itemParentCol: string;
-  /** The column on the HEADER that names the same document. */
   readonly headerKeyCol: string;
   readonly headerDateCols: readonly string[];
-  /* LITERAL select strings. supabase-js parses the select at the TYPE level, so
-     a template string resolves to ParserError and the whole query loses its
-     type. Two literals cost less than one clever one. */
   readonly itemSelect: string;
   readonly headerSelect: string;
 }
@@ -131,11 +108,8 @@ const SPECS: readonly TypeSpec[] = [
     headerTable: 'delivery_orders',
     itemParentCol: 'delivery_order_id',
     headerKeyCol: 'id',
-    /* Two column names for one fact on a delivery order; both follow the book,
-       the way the repair script writes them. */
     headerDateCols: ['expected_delivery_at', 'customer_delivery_date'],
     itemSelect: 'id, delivery_order_id, linked_ac_dtlkey, line_delivery_date, line_delivery_date_overridden',
-    /* A delivery order has no amendment column; `amended` stays null for DO. */
     headerSelect: 'id, expected_delivery_at, customer_delivery_date',
   },
 ];
@@ -143,14 +117,11 @@ const SPECS: readonly TypeSpec[] = [
 export interface DeliveryDateSweepResult {
   mode: DeliveryDateSweepMode;
   since: string;
-  /** True when the host answered but does not serve `/delivery-dates` yet. */
   hostRouteMissing: boolean;
-  /** One sentence when the host could not be read at all. */
   hostError: string | null;
   perType: Record<string, { bookRows: number; truncated: boolean; erpLines: number; lineDiffs: number; headerDiffs: number }>;
   linesWritten: number;
   headersWritten: number;
-  /** Differences this run did not get to, because of MAX_WRITES_PER_RUN. */
   remaining: number;
 }
 
@@ -220,23 +191,20 @@ export function planDeliveryDateSweep(
   }
 
   const lines: LinePlan[] = [];
-  /* parent -> the set of book dates its ERP lines map to. One value means the
-     header can follow; more than one means the document genuinely has mixed
-     dates and only the lines move. */
   const parentDates = new Map<string, Set<string>>();
 
   for (const l of erpLines) {
     if (l.linked_ac_dtlkey == null) continue;
     const want = byKey.get(String(l.linked_ac_dtlkey));
-    if (want == null) continue;                       // outside the window
+    if (want == null) continue;
     if (l.parent != null) {
       const s = parentDates.get(l.parent) ?? new Set<string>();
       s.add(want);
       parentDates.set(l.parent, s);
     }
-    if (l.line_delivery_date === want) continue;      // already in step
+    if (l.line_delivery_date === want) continue;
     if (l.line_delivery_date_overridden === true) continue;
-    if (l.line_delivery_date == null) continue;       // a blank is not a change
+    if (l.line_delivery_date == null) continue;
     lines.push({ id: l.id, from: l.line_delivery_date, to: want, parent: l.parent });
   }
 
@@ -247,15 +215,13 @@ export function planDeliveryDateSweep(
     const now = headerNow.get(parent);
     if (now == null) continue;
     if (now.amended != null) continue;
-    if (now.date == null) continue;                   // a blank is not a change
+    if (now.date == null) continue;
     if (now.date === want) continue;
     headers.push({ key: parent, from: now.date, to: want });
   }
   return { lines, headers };
 }
 
-/** `YYYY-MM-DD` from whatever Postgres handed back (a date column can arrive as
- *  a Date, and `String(d).slice(0,10)` on one gives `NaN`). */
 function ymd(v: unknown): string | null {
   if (v == null) return null;
   if (v instanceof Date) {
@@ -284,9 +250,6 @@ export async function deliveryDateSweep(
   for (const spec of SPECS) {
     const res = await callAcRead(env, 'delivery_dates', { Type: spec.type, SinceDeliveryDate: since });
     if (!res.ok) {
-      /* 404 = the host is up and running a build that predates this route. That
-         is the expected state until deploy-on-host.ps1 runs, so it is reported,
-         not raised. */
       if (res.status === 404) out.hostRouteMissing = true;
       else out.hostError = res.error;
       out.perType[spec.type] = { bookRows: 0, truncated: false, erpLines: 0, lineDiffs: 0, headerDiffs: 0 };

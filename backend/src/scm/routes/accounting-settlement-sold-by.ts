@@ -24,10 +24,8 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
 const actorOf = (c: Ctx): string | null => (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
 
-/** Refusals a person can act on — the line, the choice or the setup — answer 409. */
 const PERSON_CAN_FIX = new Set(['already_confirmed', 'ignored', 'qr_line', 'not_a_sale', 'linked', 'no_link', 'link_account_unusable']);
 
-/* ── GET /settlement/other-companies ─────────────────────────────────────── */
 
 export const settlementOtherCompanies = settlementGuard(async (c: Ctx) => {
   const co = requireActiveCompanyId(c);
@@ -37,7 +35,6 @@ export const settlementOtherCompanies = settlementGuard(async (c: Ctx) => {
   return c.json({ companies: got.links });
 });
 
-/* ── POST /settlement/rows/:id/sold-by ───────────────────────────────────── */
 
 export const settlementRowSoldBy = settlementGuard(async (c: Ctx) => {
   const co = requireActiveCompanyId(c);

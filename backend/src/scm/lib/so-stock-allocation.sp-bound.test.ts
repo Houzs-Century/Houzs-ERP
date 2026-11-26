@@ -99,9 +99,6 @@ describe('special-order mattresses under hard binding', () => {
   });
 
   test('a STANDARD mattress did not join bound mode — no stock means PENDING even with a received PO', async () => {
-    /* The 2026-08-10 ruling stands for standard sizes: mattresses pool. A
-       received dedication without pooled stock must NOT light a standard
-       mattress, or common stock stops being common. */
     const sb = world('AKEMI BULWARK MATT (K)', [{ qty: 1, received_qty: 1 }]);
     const res = await recomputeSoStockAllocation(sb);
     expect(res.ok).toBe(true);

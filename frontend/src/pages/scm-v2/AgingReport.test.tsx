@@ -69,7 +69,6 @@ const draw = (side: 'ar' | 'ap' = 'ar') => render(
 );
 const parties = () => screen.getByRole('region', { name: 'AR aging by debtor' });
 const tile = (name: RegExp) => within(screen.getByRole('group', { name: 'AR aging figures' })).getByRole('button', { name });
-/* A Finance table prints its heads in title case: "This month" reads "This Month". */
 const head = (label: string) => new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
 
 describe('AR / AP aging — by party', () => {
@@ -190,11 +189,9 @@ describe('AR / AP aging — by invoice', () => {
     const order = ['SI-C1', 'SI-A1', 'SO-B'].map((n) => table.getByText(n).closest('tr')!);
     expect(order[0]!.compareDocumentPosition(order[1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(order[1]!.compareDocumentPosition(order[2]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    /* Due 2026/07/20, as at 2026/09/30: 72 days, 61-90. */
     expect(order[0]!.textContent).toContain('2026/07/20');
     expect(order[0]!.textContent).toContain('72');
     expect(within(order[0]!).getByText('61-90')).toBeTruthy();
-    /* No due date: due on its date, 2026/08/10 — 51 days, 31-60. */
     expect(within(order[1]!).getByText('51')).toBeTruthy();
     expect(within(order[1]!).getByText('31-60')).toBeTruthy();
     expect(table.getByText('SI-A1').getAttribute('href')).toBe('/scm/sales-orders/SO-A');

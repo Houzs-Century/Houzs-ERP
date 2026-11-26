@@ -30,7 +30,7 @@ export async function poWarehouseGap(
   const { data: hdr, error: hErr } = await sb.from('purchase_orders').select('purchase_location_id').eq('id', poId).maybeSingle();
   if (hErr) return { missing: true, codes: [] };
   const headerWh = (hdr as { purchase_location_id: string | null } | null)?.purchase_location_id ?? null;
-  if (headerWh) return { missing: false }; // header default covers every line
+  if (headerWh) return { missing: false };
   const { data: lines, error: lErr } = await sb.from('purchase_order_items').select('item_code, warehouse_id').eq('purchase_order_id', poId);
   if (lErr) return { missing: true, codes: [] };
   const bad = ((lines ?? []) as Array<{ item_code: string | null; warehouse_id: string | null }>).filter((l) => !l.warehouse_id);

@@ -79,7 +79,6 @@ export function LorryTodayRoute({ lorryId }: { lorryId: string }) {
   const dayWord = isToday ? "today" : date;
   const dayOf = isToday ? "today's" : date;
 
-  /* A failed read used to look exactly like "no run today / no position yet". */
   const failed = [day.isError && `${dayOf} runs`, isToday && positions.isError && "the GPS position", trackQ.isError && `${dayOf} track`].filter(Boolean);
   return (
     <div className="space-y-3">

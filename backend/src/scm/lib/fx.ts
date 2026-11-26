@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// fx.ts — multi-currency helpers for the procure-to-pay money path.
-// Ported verbatim from 2990 apps/api/src/lib/fx.ts (migrations 0188/0190/0193).
-//
-// Three documents carry an exchange rate (MYR per 1 unit of the doc's currency):
-//   · purchase_invoices.exchange_rate — converts the AP journal entry to MYR at
-//     GL-post time.
-//   · grns.exchange_rate — converts the inventory IN unit cost (the FIFO lot) to
-//     MYR at receive time.
-//   · payment_vouchers.exchange_rate — converts the PV's cash-out GL post to MYR.
-//
-// MYR is ALWAYS rate 1; a foreign rate must be a finite number > 0, else it falls
-// back to 1 so a malformed rate can NEVER zero out the money. rate = 1 ⇒ toMyrSen
-// is a byte-for-byte NO-OP (round(x*1) === x for an integer sen amount), so every
-// existing all-MYR Houzs flow is unchanged.
-// ----------------------------------------------------------------------------
 
 /**
  * Normalise an incoming currency code to the canonical stored form: trimmed +

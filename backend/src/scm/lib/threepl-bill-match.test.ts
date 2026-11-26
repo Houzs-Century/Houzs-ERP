@@ -112,7 +112,6 @@ describe('a trip\'s one price, and an order delivered twice', () => {
     ]);
     const goods = new Map([['101', 300_000], ['102', 100_000]]);
     const charges = chargesPerDo(assignedLines(lines, assignments, new Map([['101', DO('101')], ['102', DO('102')]])), () => null, (id) => goods.get(id) ?? null);
-    // 11% of each order's goods, and the RM 50 of permits in the same shares.
     expect(charges.map((c) => [c.doId, c.billedSen])).toEqual([['101', 33_000 + 3_750], ['102', 11_000 + 1_250]]);
   });
 
@@ -166,7 +165,6 @@ describe('where a line goes, as the reader sees it', () => {
     const ap = [{ amountSen: 110_000, projectId: 345 }, { amountSen: 5_300, projectId: null }];
     expect(preselect(m({ status: 'not_delivery', kind: 'dismantle', amountSen: 110_000 }), ap)).toMatchObject({ assign: 'event', projectId: 345 });
     expect(preselect(m({ status: 'not_delivery', kind: 'setup', amountSen: 90_000 }), ap)).toMatchObject({ assign: 'event', projectId: null });
-    /* Two fairs carry that amount: not guessed. */
     expect(preselect(m({ status: 'not_delivery', kind: 'setup', amountSen: 110_000 }), [...ap, { amountSen: 110_000, projectId: 346 }])).toMatchObject({ projectId: null });
   });
 

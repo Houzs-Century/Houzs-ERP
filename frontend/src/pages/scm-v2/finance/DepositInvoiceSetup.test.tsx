@@ -1,9 +1,3 @@
-/* Setup › Deposit invoices (the owner's Claude Design, batch 5 step 5): the
-   per-company switch that issues a deposit invoice for every customer payment
-   and the day it counts from, moved off the old Deposit invoices page. The
-   same read and save (GET / POST /deposit-invoices/settings); Save shows only
-   once something changed; switching on needs a day. The server half is
-   backend/tests/depositInvoices.test.ts. */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';

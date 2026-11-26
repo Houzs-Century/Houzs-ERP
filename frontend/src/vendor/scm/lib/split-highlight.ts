@@ -1,7 +1,3 @@
-// split-highlight — split a display string into matched / unmatched segments so
-// a search picker can wrap the matched text in a <mark>. Case-insensitive, every
-// occurrence; the query matches literally (indexOf, so no regex escaping). Pure,
-// so it is unit-tested without a DOM.
 
 export type HighlightSegment = { text: string; hit: boolean };
 

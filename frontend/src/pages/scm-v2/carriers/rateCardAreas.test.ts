@@ -1,6 +1,3 @@
-// Areas on a rate card (mig 20261111T1000): an area's prices laid out like the
-// Delivery tab's, the boxes a new area asks for, a typed town list, and the
-// towns worth a second look. Amounts are made up.
 import { describe, expect, it } from 'vitest';
 import type { RateArea, RateRule } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import {
@@ -14,7 +11,6 @@ const rule = (over: Partial<RateRule>): RateRule => ({
 });
 const area = (over: Partial<RateArea>): RateArea => ({ id: 'a1', cardId: 'c', name: 'Far', towns: [], sortOrder: 0, ...over });
 
-/* A card priced the 3-position way, with two sofa bands. */
 const LADDER_CARD = [
   rule({ id: 't1', tierPosition: 1, amountSen: 10_000 }),
   rule({ id: 't2', tierPosition: 2, amountSen: 0 }),

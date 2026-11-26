@@ -77,7 +77,6 @@ export function RolesTab({
     "/api/roles/permissions",
     () => api.get("/api/roles/permissions")
   );
-  // Members for the avatar cluster. Needs users.read; degrade to counts on 403.
   const usersQ = useQuery<{ users: TeamMember[] }>("/api/users", () =>
     api.get<{ users: TeamMember[] }>("/api/users").catch(() => ({ users: [] as TeamMember[] }))
   );
@@ -123,8 +122,6 @@ export function RolesTab({
   const [creatingBusy, setCreatingBusy] = useState(false);
   const pendingSelect = useRef<number | null>(null);
 
-  // (Re)seed the staged + baseline grants from the server whenever the role
-  // list (re)loads — first load, and after every save/create/delete reload().
   useEffect(() => {
     const data = rolesQ.data;
     if (!data) return;
@@ -158,7 +155,6 @@ export function RolesTab({
   const diff = useMemo(() => diffGrants(grants, baseline), [grants, baseline]);
   const dirty = diff.total > 0;
 
-  // ── left-rail filtering ────────────────────────────────────
   const q = query.trim().toLowerCase();
   const filtered = useMemo(() => {
     return roleList.filter((r) => {
@@ -172,8 +168,6 @@ export function RolesTab({
         )
       )
         return true;
-      // Searching an unrecognised stored key (e.g. planner.run) surfaces the
-      // roles that still carry it — the whole point of showing them.
       return (r.unknown_permissions ?? []).some((k) => k.toLowerCase().includes(q));
     });
   }, [roleList, groupFilter, q, keyLabel]);
@@ -192,7 +186,6 @@ export function RolesTab({
     return (usersQ.data?.users ?? []).filter((u) => u.role_id === selected);
   }, [usersQ.data, selected, isBulk]);
 
-  // ── handlers ───────────────────────────────────────────────
   function selectRole(id: number) {
     setSelected(id);
     setChecked([]);
@@ -255,9 +248,6 @@ export function RolesTab({
     }
   }
 
-  // Re-save the role's VALID staged grants; the backend PATCH filters through
-  // isValidPermission, so this drops every unrecognised stored key at once
-  // (per-key clear isn't possible — the API strips them all on any write).
   async function clearDropped(r: Role) {
     try {
       await api.patch(`/api/roles/${r.id}`, {
@@ -328,9 +318,8 @@ export function RolesTab({
 
   async function duplicateRole(r: Role) {
     const permissions = r.permissions.includes("*")
-      ? allKeys.slice() // "duplicate as editable": expand the wildcard to real keys
+      ? allKeys.slice()
       : Array.from(grants[r.id] ?? new Set(r.permissions));
-    // Find a free name — the backend rejects duplicates with 409.
     const taken = new Set(roleList.map((x) => x.name.toLowerCase()));
     let name = `${r.name} copy`;
     let n = 2;
@@ -385,7 +374,6 @@ export function RolesTab({
     );
   }
 
-  // ── derived display ────────────────────────────────────────
   const systemChecked = isBulk ? checked.filter((id) => lockedIds.has(id)) : [];
   const detailTitle = isBulk
     ? ids.length === 1
@@ -439,7 +427,6 @@ export function RolesTab({
   return (
     <div className={cn("relative", dirty && "pb-20")}>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(280px,320px)_minmax(0,1fr)] lg:items-start">
-        {/* ── Left rail ─────────────────────────────────────── */}
         <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone lg:sticky lg:top-4">
           <div className="border-b border-border-subtle p-2.5">
             <SearchInput
@@ -542,7 +529,6 @@ export function RolesTab({
           </div>
         </div>
 
-        {/* ── Right panel ───────────────────────────────────── */}
         <div className="min-h-[560px] overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
           {loading || !current ? (
             <div className="p-6">
@@ -551,7 +537,6 @@ export function RolesTab({
             </div>
           ) : (
             <>
-              {/* header */}
               <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border-subtle px-4 py-3.5">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -606,7 +591,6 @@ export function RolesTab({
                 )}
               </div>
 
-              {/* members disclosure */}
               {membersOpen && !isBulk && (
                 <div className="flex flex-wrap gap-1.5 border-b border-border-subtle bg-surface-dim px-4 py-2.5">
                   {members.length === 0 ? (
@@ -676,7 +660,6 @@ export function RolesTab({
                 </div>
               )}
 
-              {/* body: system empty-state OR the matrix */}
               {isSystemView ? (
                 <div className="p-11">
                   <EmptyState
@@ -692,7 +675,6 @@ export function RolesTab({
                 </div>
               ) : mod ? (
                 <>
-                  {/* module strip */}
                   <div className="flex flex-wrap gap-1.5 border-b border-border-subtle bg-surface-2 px-3.5 py-2.5">
                     {modules.map((m) => {
                       const active = m.id === mod.id;
@@ -729,7 +711,6 @@ export function RolesTab({
                     })}
                   </div>
 
-                  {/* module header */}
                   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle px-4 py-2.5">
                     <div className="min-w-0">
                       <div className="text-[13.5px] font-semibold text-ink">{mod.label}</div>
@@ -754,7 +735,6 @@ export function RolesTab({
                     )}
                   </div>
 
-                  {/* matrix */}
                   <div className="overflow-x-auto">
                     <div className="min-w-[520px]">
                       <div className="grid h-[34px] grid-cols-[minmax(200px,1fr)_repeat(5,58px)] items-center border-b border-border-subtle bg-surface px-4">
@@ -804,7 +784,6 @@ export function RolesTab({
         </div>
       </div>
 
-      {/* ── save bar ────────────────────────────────────────── */}
       {dirty && canManage && (
         <div className="fixed inset-x-0 bottom-0 z-40 flex flex-wrap items-center justify-between gap-4 border-t border-border bg-ink px-6 py-2.5 text-white shadow-slab">
           <div className="flex items-center gap-2.5 text-[12.5px]">
@@ -829,7 +808,6 @@ export function RolesTab({
         </div>
       )}
 
-      {/* ── modals ──────────────────────────────────────────── */}
       <NewRoleModal
         open={creating}
         roles={roleList}
@@ -866,7 +844,6 @@ export function RolesTab({
   );
 }
 
-// ── left-rail role row ───────────────────────────────────────
 function RoleRow({
   role,
   selected,
@@ -958,7 +935,6 @@ function RoleRow({
   );
 }
 
-// ── one matrix cell ──────────────────────────────────────────
 function MatrixCell({
   state,
   readOnly,

@@ -28,14 +28,11 @@ const PARAM = 'open';
 export function useOpenSections(defaultOpen: string[] = []): {
   isOpen: (key: string) => boolean;
   toggle: (key: string) => void;
-  /** Open without closing — what a jump-to-section control needs. */
   ensureOpen: (key: string) => void;
   setAll: (keys: string[]) => void;
 } {
   const [params, setParams] = useSearchParams();
   const raw = params.get(PARAM);
-  /* No ?open= at all means "first visit" -> the caller's default. An EMPTY
-     ?open= is a deliberate "collapse everything" and must not spring back. */
   const open = new Set(raw === null ? defaultOpen : raw.split(',').filter(Boolean));
 
   const write = (next: Set<string>) => {
@@ -63,16 +60,12 @@ export const CollapsibleSection = ({ id, title, hint, count, open, onToggle, chi
   id: string;
   title: string;
   hint?: string;
-  /** A short right-aligned summary shown while closed, e.g. "5 regions". */
   count?: ReactNode;
   open: boolean;
   onToggle: () => void;
   children: ReactNode;
 }) => (
   <section id={id} className="overflow-hidden rounded-lg border border-border bg-surface">
-    {/* The toggle and the trailing slot are SIBLINGS, not nested: `count` is
-        allowed to carry a link, and an interactive element inside a <button> is
-        invalid HTML that browsers resolve inconsistently. */}
     <div className="flex items-center gap-2.5 px-4 py-3">
       <button
         type="button"

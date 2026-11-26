@@ -1,46 +1,9 @@
-// ----------------------------------------------------------------------------
-// venture-portal-outbox — the SENDER for the ERP -> Venture Portal live
-// sales-order feed. Queue and snapshot builder are migration 20260912T1800.
-//
-// WHAT THE PORTAL DOES WITH THIS. It pays Revenue Department commission out of
-// our sales orders. Until now that was a monthly xlsx somebody exported and
-// imported. Each delivery here carries one order's header, every line with its
-// COST (line_cost_sen — the input its margin layer was waiting for), every
-// payment, and the salesperson behind it. A cancellation travels as a status
-// change or as {deleted:true}; the portal excludes it and stops paying on it.
-//
-// WHY THE WORKER AND NOT pg_cron/pg_net. The portal's hand-off contract
-// specifies pg_cron every 10s and pg_net for the POST. Neither extension is
-// installed on production — measured 2026-09-12, see the migration header for
-// the query and its NULL. The migration header also says why installing them
-// is the wrong trade for this repo: a pg_cron job is invisible to every gate
-// here. This runs in the */5 cron beside two outboxes that already work.
-//
-// THREE OFF SWITCHES, and the feed is dark until all three are set:
-//   1. scm.app_config 'scm.venture_portal_feed' — seeded 'off'
-//      (venture-portal-feed-flag.ts). This carries the COMPANY SCOPE too.
-//   2. scm.sync_config 'vp.url'    — no receiver, nothing is sent.
-//   3. scm.sync_config 'vp.secret' — the portal answers 503 without it anyway.
-// `vp.since` is a date floor: orders dated before it are not sent, so
-// enabling the feed cannot leak years of history into somebody's commission.
-// One exception (migration 20261107T1212): an old order whose salesperson has
-// left and which took a payment dated on or after the floor, because the
-// portal pays the colleague who collected it (scm.vp_old_orders_wanted).
-//
-// The company scope lives ONLY in the app_config flag. The contract put it in a
-// second place (a vp.companies config row) and this deliberately does not: two
-// places that both decide who gets delivered is how a company nobody enabled
-// ends up in an external system.
-// ----------------------------------------------------------------------------
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
 import { getSupabaseService } from '../../db/supabase';
 import { isFeedEnabled, readFeedScope, type FeedScope } from './venture-portal-feed-flag';
 
-/* The SCM PostgREST client is untyped at every call site in this tree; a typed
-   signature here would describe a contract nothing else keeps. Named once so
-   the three `any`s live in one place rather than on every function. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
 type ScmClient = SupabaseClient<any, any, any>;
 
@@ -59,7 +22,6 @@ export const VP_DRAIN_BATCH = 25;
  *  Config refusals (401/503) do NOT consume an attempt — see classifyResponse. */
 export const VP_MAX_ATTEMPTS = 6;
 
-/** How long a delivery may take before we treat it as failed and retry. */
 const VP_TIMEOUT_MS = 10_000;
 
 /**
@@ -105,8 +67,6 @@ export type VpDrainSummary = {
   failed: number;
   retried: number;
   outOfScope: number;
-  /** Delivered, but the order was saved again while its delivery was in
-   *  flight, so the row stays pending and goes again with the newer state. */
   changed: number;
 };
 
@@ -142,11 +102,6 @@ export async function readVpConfig(
     .select('k, v')
     .in('k', VP_CONFIG_KEYS as unknown as string[]);
   if (error) return null;
-  /* The `| null` in the cast is not decoration. supabase-js types `data` as
-     non-nullable, so without it the linter calls the `?? []` redundant and the
-     guard gets deleted — while PostgREST really does answer null. This repo has
-     a dozen of those findings in its money routes for exactly this reason;
-     correcting the type is better than silencing the check. */
   const rows = (data as { k: string; v: string }[] | null) ?? [];
   const at = (k: string) => rows.find((r) => r.k === k)?.v.trim() || '';
   const url = at('vp.url');
@@ -178,16 +133,11 @@ export function classifyVpResponse(status: number): {
     return { outcome: 'retry', attempt: false, note: 'http 503 — the portal has no ERP_SYNC_SECRET set yet; nothing to fix on our side' };
   }
   if (status === 400 || status === 422) {
-    /* The portal could not READ the delivery. Retrying sends the same bytes, so
-       this is parked at once rather than six times. */
     return { outcome: 'failed', attempt: true, note: `http ${status} — the portal could not read this delivery; a person must look` };
   }
   return { outcome: 'retry', attempt: true, note: `http ${status}` };
 }
 
-/** The portal's own word for what it did, when it gave us one. A 200 whose
- *  outcome is `held` or `stale` is a SUCCESSFUL delivery the portal chose not to
- *  apply, and the contract warns twice against conflating the two. */
 function readPortalOutcome(body: string): string | null {
   try {
     const j = JSON.parse(body) as { outcome?: unknown; result?: unknown };
@@ -225,35 +175,6 @@ export async function drainVenturePortalOutbox(
   const cfg = await readVpConfig(sb);
   if (!cfg) return { skipped: 'not_configured', ...zero };
 
-  /* A LIVE SAVE IS NEVER STUCK BEHIND A BACKFILL, and this is the whole reason
-     the selection is two queries instead of one.
-
-     It used to be a single `ORDER BY created_at ASC LIMIT 25` — strict FIFO —
-     which is the obvious ordering and is wrong for the one property the owner
-     asked for. `created_at` is when the ROW was made, so a backfill sweep stamps
-     thousands of rows with "now", and an order saved a minute later sorts BEHIND
-     all of them. Measured on production 2026-09-13, the day the feed was turned
-     on: 2,613 backfilled rows draining at ~4.2/min, so a newly saved order would
-     have waited about TEN HOURS while the kick dutifully fired and delivered
-     somebody's 2024 paperwork. The feature would have looked broken, and the
-     module guide's "the save sends its own order" would have been false for as
-     long as any backlog existed.
-
-     So: trigger rows first, oldest-first among themselves; the backfill tops the
-     batch up with whatever room is left, also oldest-first. Nothing is starved —
-     the backfill still drains at the full rate whenever no live save is waiting,
-     which is almost always — and a live save waits at most one in-flight batch.
-
-     `op` is the discriminator because the migration already writes it: the
-     triggers write TG_OP (INSERT/UPDATE/DELETE, `:child_table` for a child edit)
-     and `vp_requeue_undelivered` writes the literal 'RECONCILE'. Two queries
-     rather than one expression because PostgREST orders by COLUMNS, not by
-     expressions, and inventing a sort column would mean a migration on a table
-     whose shape this PR must not change.
-
-     THE COST is one extra read per sweep when no live row is waiting. That is
-     the steady state, so it is a real cost and a small one: a `head`-less select
-     of at most 25 narrow rows, inside the subrequest diet. */
   const { data: liveData, error: liveErr } = await sb
     .from('venture_portal_outbox')
     .select('id, doc_no, op, attempts, revision')
@@ -279,25 +200,11 @@ export async function drainVenturePortalOutbox(
   }
   if (!rows.length) return { ...zero };
 
-  /* SCOPE FIRST, and from the order itself. A document whose company is not
-     enabled, or which predates vp.since (one exception, below), is marked
-     skipped WITHOUT a request, so the queue never fills with orders the portal
-     does not want. A row whose order no longer exists is NOT out of scope — it
-     is a deletion, and the portal needs it to stop paying commission on a
-     cancelled sale. */
   const docNos = rows.map((r) => r.doc_no);
   const { data: soData, error: soErr } = await sb
     .from('mfg_sales_orders')
     .select('doc_no, company_id, so_date')
     .in('doc_no', docNos);
-  /* THE ERROR IS BOUND AND THE SWEEP ABORTS, and this is the one read here where
-     swallowing it is not a cosmetic bug. This map IS the company-scope check.
-     Left unbound, a five-second database blip returns no rows, every `so` below
-     is undefined, `if (so)` is false — and the row falls through to `deliverable`
-     WITHOUT ANY SCOPE CHECK AT ALL. A blip would deliver another company's sales
-     order, with its costs and margins, to an external portal. That is the exact
-     shape audit:swallowed-reads exists to catch, and it caught it here.
-     Returning leaves every row pending, which the next sweep retries. */
   if (soErr) return { skipped: 'scope_read_failed', ...zero };
   const soByDoc = new Map<string, { company_id: number | null; so_date: string | null }>(
     ((soData ?? []) as { doc_no: string; company_id: number | null; so_date: string | null }[])
@@ -352,9 +259,6 @@ export async function drainVenturePortalOutbox(
   }
   if (!deliverable.length) return summary;
 
-  /* ONE round trip for every payload in the sweep (see the migration's note on
-     the subrequest diet). Built at SEND time, so a retry carries current state
-     and five edits to one order collapse into one delivery. */
   const { data: built, error: buildErr } = await sb.rpc('vp_build_payloads', {
     p_doc_nos: deliverable.map((r) => r.doc_no),
   });
@@ -368,18 +272,12 @@ export async function drainVenturePortalOutbox(
   for (const row of deliverable) {
     const payload = payloadByDoc.get(row.doc_no);
     if (!payload) {
-      /* The builder answered for every other document but not this one. That is
-         a contradiction, not a delivery problem, so it is recorded and left
-         pending rather than sent as something invented here. */
       await markRetry(sb, row, 'the snapshot builder returned no payload for this document', true);
       summary.processed += 1;
       summary.retried += 1;
       continue;
     }
 
-    /* Re-checked per row, not once per sweep: somebody may turn the feed off
-       mid-sweep, and off must stop the next delivery rather than finish the
-       batch. Off leaves the row pending — it is not a failure. */
     const so = soByDoc.get(row.doc_no);
     if (so && !(await isFeedEnabled(sb, so.company_id))) break;
 
@@ -472,13 +370,6 @@ async function markFailed(
     .eq('id', row.id);
 }
 
-/**
- * One delivery. Never throws: a transport failure is an outcome, reported as
- * status 0 so classifyVpResponse retries it.
- *
- * The secret goes in the header the portal's own mirror receivers already use.
- * It is never logged and never returned.
- */
 async function deliverOne(
   cfg: VpConfig,
   payload: VpPayload,
@@ -518,9 +409,6 @@ export async function probeVenturePortal(
   const sb = getSupabaseService(env);
   const cfg = await readVpConfig(sb);
   if (!cfg) return { ok: false, status: 0, body: '', reason: 'not_configured' };
-  /* The health endpoint is the delivery URL's sibling, per the contract:
-     .../sales-orders -> .../health. Derived rather than stored so there is one
-     URL to keep right. */
   const healthUrl = cfg.url.replace(/\/[^/]*$/, '/health');
   try {
     const res = await fetchImpl(healthUrl, {
@@ -655,24 +543,6 @@ export const VP_KICK_DELAY_MS = 1_500;
  *  a POS rush clears in seconds rather than at 25 per five minutes. */
 export const VP_KICK_MAX_SWEEPS = 4;
 
-/* TWO KICKS CAN OVERLAP, and that is a deliberate choice rather than an
-   oversight. The debounce only collapses writes inside ONE window; a busy
-   backfill sweep is 25 POSTs and can easily outlast 1.5 s, so a save arriving
-   mid-sweep starts a second drain and both may read the same pending rows.
-   There is no in-flight lock because the alternative is worse for the thing the
-   owner actually asked for: a lock would make a save that lands during a long
-   drain get no kick at all, and wait for the five-minute sweep.
-
-   What the overlap costs is a duplicate POST. The portal upserts one live row
-   per document and applies the newest snapshotAt, answering `duplicate` — which
-   is a SUCCESSFUL delivery it chose not to re-apply (see the taxonomy above), so
-   nothing is double-counted in anybody's commission. `attempts` can undercount a
-   little, which matters to nothing: it exists to park a row that keeps failing.
-
-   LIKELY, not PROVEN here: the dedupe is the portal's behaviour, stated in its
-   contract, and its receiver lives in another repository. The same overlap is
-   already reachable today by pressing "Send now" while the cron sweeps, so the
-   kick makes an existing property more frequent rather than creating one. */
 
 type VpKickSeams = { now: () => number; sleep: (ms: number) => Promise<void> };
 
@@ -764,9 +634,6 @@ export function kickVenturePortalDrain(
 
   try {
     ctx.waitUntil(runVpKick(env, afterDrain));
-    /* Stamped only once something IS scheduled. Stamped before the call, a
-       waitUntil that refused would debounce the next 1.5 s of writes into a
-       drain that does not exist. */
     vpLastKickAt = now;
   } catch (e) {
     console.error('[vp-kick] could not schedule a drain', String((e as Error | undefined)?.message ?? e));
@@ -775,20 +642,15 @@ export function kickVenturePortalDrain(
   return 'scheduled';
 }
 
-/** The scheduled work. Swallows everything — see kickVenturePortalDrain. */
 async function runVpKick(env: Env, afterDrain: ((env: Env) => Promise<unknown>) | null): Promise<void> {
   try {
     await vpKickSeams.sleep(VP_KICK_DELAY_MS);
     for (let sweep = 0; sweep < VP_KICK_MAX_SWEEPS; sweep += 1) {
       const summary = await drainVenturePortalOutbox(env);
       if (!vpKickSweepAgain(summary)) break;
-      /* A save still being written (its header total lands after its line) gets
-         the same wait the first sweep gave it before it is built again. */
       if (summary.changed > 0) await vpKickSeams.sleep(VP_KICK_DELAY_MS);
     }
   } catch (e) {
-    /* [vp-kick] is the string to alert on. A burst of these means the drain is
-       failing for every save, which the page's own verdict will also be saying. */
     console.error('[vp-kick] drain failed', String((e as Error | undefined)?.message ?? e));
   }
   if (afterDrain == null) return;

@@ -10,15 +10,12 @@ import { authedFetch } from './authed-fetch';
 export type Place = {
   id: string;
   name: string;
-  /** The zone its postcodes fall in; null = in no zone (abroad). */
   zone: string | null;
-  /** The rate cards that price it. */
   cards: string[];
 };
 
 export type PlacesResponse = {
   places: Place[];
-  /** Towns rate cards price that no zone holds yet. */
   unplaced: Array<{ name: string; cards: string[] }>;
 };
 

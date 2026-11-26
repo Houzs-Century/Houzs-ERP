@@ -37,13 +37,9 @@
 export type ReturnExportFormat = 'text' | 'number' | 'money' | 'rate' | 'date';
 
 export type ReturnLineColumn = {
-  /** The grid column key — unique within a list. */
   key: string;
-  /** The header written to the file and shown on the grid. */
   label: string;
-  /** One of AutoCount's default Detail Listing columns (shown by default). */
   autoCount: boolean;
-  /** 'document' repeats on every line of the document; 'line' is per line. */
   level: 'document' | 'line';
   format: ReturnExportFormat;
 };
@@ -140,11 +136,8 @@ export const PR_LINE_COLUMNS: readonly ReturnLineColumn[] = [
  *  stays in SEN on the wire; the grid converts at the cell (`senToRinggit`). */
 export type DrListLine = {
   id: string;
-  /** Item Code, Description, Item Group and UOM are the account book's for a
-   *  HOUZS line (bookLineItem), the ERP's own where the book has no such item. */
   item_code: string | null;
   description: string | null;
-  /** Composed from the variants, else the stored text. */
   description2: string | null;
   notes: string | null;
   item_group: string | null;
@@ -154,22 +147,16 @@ export type DrListLine = {
   unit_price_sen: number | null;
   discount_sen: number | null;
   line_total_sen: number | null;
-  /** AutoCount's short location code (`KL`) of the warehouse the line went back
-   *  into: its SO line's warehouse, else the delivery order's, else the return's. */
   location: string | null;
-  /** The Sales Order the delivered line was sold on (DO line -> SO line). */
   so_doc_no: string | null;
 };
 
 /** One Purchase Return line as the list endpoint and the export send it. */
 export type PrListLine = {
   id: string;
-  /** As on DrListLine: the book's item facts for a HOUZS line. `description` is
-   *  the book's, else material_name, else description; `material_name` is raw. */
   item_code: string | null;
   material_name: string | null;
   description: string | null;
-  /** Composed from the variants, else the stored text. */
   description2: string | null;
   notes: string | null;
   reason: string | null;
@@ -178,11 +165,8 @@ export type PrListLine = {
   qty_returned: number;
   unit_price_sen: number | null;
   line_refund_sen: number | null;
-  /** AutoCount's short location code of the receipt the goods came in on. */
   location: string | null;
-  /** The Goods Received Note the line returns from (grn_item_id), else the return's. */
   grn_no: string | null;
-  /** The Purchase Order behind that receipt line, else the return's. */
   po_no: string | null;
 };
 

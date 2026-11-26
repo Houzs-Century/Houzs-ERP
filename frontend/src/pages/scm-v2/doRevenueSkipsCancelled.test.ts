@@ -1,5 +1,3 @@
-/* Gap review G16: the Delivery Orders Revenue card summed every row on screen,
-   cancelled deliveries included. */
 import { describe, expect, it } from 'vitest';
 import { doRevenueSen } from './do-list-status';
 

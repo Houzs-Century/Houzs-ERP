@@ -3,12 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import { SearchableSelect, enterPick, moveHighlight, nextOptionWindow } from "./SearchableSelect";
 import { pushEscapeLayer } from "../../../lib/escapeStack";
 
-// Unmount is handled by the global afterEach(cleanup) in src/test-setup.ts.
-// This file must NOT clear document.body by hand: the menu is portalled to
-// body, and racing innerHTML="" against RTL's own node removal throws
-// NotFoundError once auto-cleanup is registered.
 
-// A product-catalogue-sized list — the case that made this windowing necessary.
 const many = Array.from({ length: 360 }, (_, i) => ({
   value: `P${i}`,
   label: `Product ${i}`,
@@ -18,14 +13,11 @@ function openMenu() {
   fireEvent.focus(screen.getByRole("combobox"));
 }
 
-/** The portalled <ul> is the only list in the document. */
 function menu(): HTMLElement {
   return document.querySelector("ul") as HTMLElement;
 }
 
 function renderedOptions(): HTMLElement[] {
-  // The footer <li> carries no value; option rows are the ones with text
-  // matching an option label.
   return Array.from(menu().querySelectorAll("li")).filter((li) =>
     /^Product \d+$/.test(li.textContent ?? ""),
   ) as HTMLElement[];
@@ -56,7 +48,6 @@ describe("SearchableSelect windowing", () => {
   test("opening a 360-option picker renders ONE page, not the whole list", () => {
     render(<SearchableSelect value="" onChange={() => {}} options={many} />);
     openMenu();
-    // The regression this guards: all 360 <li> built into a 280px box.
     expect(renderedOptions()).toHaveLength(60);
   });
 
@@ -70,7 +61,6 @@ describe("SearchableSelect windowing", () => {
     render(<SearchableSelect value="" onChange={() => {}} options={many} />);
     openMenu();
     const ul = menu();
-    // jsdom reports 0 for layout; describe a list scrolled to its end.
     Object.defineProperty(ul, "scrollHeight", { value: 2000, configurable: true });
     Object.defineProperty(ul, "clientHeight", { value: 280, configurable: true });
     Object.defineProperty(ul, "scrollTop", { value: 1720, configurable: true });
@@ -87,8 +77,6 @@ describe("SearchableSelect windowing", () => {
   });
 
   test("FILTERING still runs over the full list, not the rendered page", () => {
-    // Product 359 is far past the first page. If filtering were applied to the
-    // slice, this would find nothing — the bug that windowing must not cause.
     render(<SearchableSelect value="" onChange={() => {}} options={many} />);
     openMenu();
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "Product 359" } });
@@ -105,7 +93,6 @@ describe("SearchableSelect windowing", () => {
     fireEvent.scroll(ul);
     expect(renderedOptions()).toHaveLength(120);
 
-    // "Product" matches all 360; without the rewind this would still show 120.
     fireEvent.change(screen.getByRole("combobox"), { target: { value: "Product" } });
     expect(renderedOptions()).toHaveLength(60);
   });
@@ -119,8 +106,6 @@ describe("SearchableSelect windowing", () => {
   });
 });
 
-// Sim, 2026-10-20 (HC-GRN-2610-155): racks typed and Enter'd on the GRN edit
-// page showed the text but were never picked, so Save stored 1 rack of 11.
 describe("Enter picks the typed option", () => {
   const racks = ["Rack L1.9", "Rack L19.1", "Rack L19.2", "Rack R7.2", "Rack R17.2"].map((label, i) => ({ value: `r${i}`, label }));
 
@@ -281,8 +266,6 @@ describe("SearchableSelect groups", () => {
   });
 });
 
-/* A blur's delayed close firing after the field unmounted crashed a CI run with
-   "window is not defined" (jsdom already torn down). Unmount clears it. */
 describe("SearchableSelect blur timer", () => {
   test("unmounting right after a blur leaves no pending close", () => {
     vi.useFakeTimers();
@@ -290,7 +273,7 @@ describe("SearchableSelect blur timer", () => {
       const { unmount } = render(<SearchableSelect value="" onChange={() => {}} options={[{ value: "a", label: "A" }]} />);
       const input = screen.getByRole("combobox");
       fireEvent.focus(input);
-      const before = vi.getTimerCount(); // React's own scheduler may hold one
+      const before = vi.getTimerCount();
       fireEvent.blur(input);
       expect(vi.getTimerCount()).toBe(before + 1);
       unmount();
@@ -384,7 +367,6 @@ describe("SearchableSelect from the keyboard", () => {
       expect(onChange).not.toHaveBeenCalled();
       expect((box() as HTMLInputElement).value).toBe("Apple");
       expect(dialogEsc).not.toHaveBeenCalled();
-      // With the list already closed, Esc is the dialog's again.
       fireEvent.keyDown(box(), { key: "Escape" });
       expect(dialogEsc).toHaveBeenCalledTimes(1);
     } finally {

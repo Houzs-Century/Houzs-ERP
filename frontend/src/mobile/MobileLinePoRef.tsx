@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// MobileLinePoRef — the purchase order a goods-receipt / purchase-invoice line
-// came from, on the phone. Desktop twin: the "PO" column (LinePoRefLink) on
-// GoodsReceivedDetailV2 and PurchaseInvoiceDetailV2 (#26). One reading of
-// whether a line HAS a PO — `linePoLink` — for both surfaces.
-//
-// Tapping opens the order through the shell's flow navigation (the same gate
-// the Relationship Map uses), so a user who may not open purchase orders sees
-// the number without a dead button.
-// ----------------------------------------------------------------------------
 import type { CSSProperties } from "react";
 import { linePoLink, type LinePoFields, type LinePoLink } from "../vendor/scm/lib/line-po-link";
 import type { FlowNav } from "./relationship-map-model";

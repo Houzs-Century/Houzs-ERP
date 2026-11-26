@@ -45,9 +45,6 @@ const response = (undated: MrpResponse['undated'], skus: MrpResponse['skus'] = [
   totals: EMPTY_TOTALS,
 });
 
-/* One BEDFRAME sku carrying two order lines competing for the same bucket: one
-   promised for December, one with no date at all. Reads the ROW, which is the
-   claim that outlived the banner. */
 const line = (soItemId: string, docNo: string, deliveryDate: string | null): MrpResponse['skus'][number]['lines'][number] => ({
   soItemId, soDocNo: docNo,
   debtorName: 'Beta', customerState: null,
@@ -66,9 +63,6 @@ const bedframeSku = (): MrpResponse['skus'] => [{
 }];
 
 let mrpData: MrpResponse = response({ lines: 0, shortageUnits: 0, sofaSets: 0, sofaShortageUnits: 0, hidden: true });
-/* What the page last ASKED the server for. The checkbox is the only remaining
-   way to move this, so a test that only asserted the box looks ticked would not
-   have caught the wire being cut. */
 let lastIncludeUndated: boolean | undefined;
 
 vi.mock('../../vendor/scm/lib/mrp-queries', async (importOriginal) => ({
@@ -99,9 +93,6 @@ describe('MRP — undated demand', () => {
     lastIncludeUndated = undefined;
   });
 
-  /* THE ROW-LEVEL STATEMENT, and since 2026-08-20 the only one. An undated row
-     used to render `fmtDate(null)` — the same em-dash as a missing debtor name
-     or warehouse, which is not a marking, it is the absence of one. */
   test('an undated ORDER LINE is tagged "No date"; a dated one still shows its date', () => {
     mrpData = response(
       { lines: 1, shortageUnits: 5, sofaSets: 0, sofaShortageUnits: 0, hidden: false },
@@ -111,12 +102,9 @@ describe('MRP — undated demand', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Bedframe' }));
     fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
 
-    // Both lines are on screen…
     expect(screen.getByText('SO-DATED')).toBeTruthy();
     expect(screen.getByText('SO-UNDATED')).toBeTruthy();
-    // …and only the undated one carries the tag.
     expect(screen.getAllByText('No date')).toHaveLength(1);
-    // The dated line keeps a real date rather than being swept into the tag.
     const datedLine = screen.getByText('SO-DATED').closest('tr') as HTMLTableRowElement;
     expect(within(datedLine).getByText('2026/12/01')).toBeTruthy();
   });
@@ -127,11 +115,8 @@ describe('MRP — undated demand', () => {
      numbers — that is the point of setting them high here. */
   test('the undated SUMMARY BANNER is gone — the payload carries counts, the page states none', () => {
     mrpData = response({ lines: 81, shortageUnits: 60, sofaSets: 7, sofaShortageUnits: 5, hidden: true });
-    renderPage();                                   // opens on Sofa
+    renderPage();
     expect(screen.queryByText(/sofa sets/)).toBeNull();
-    // The banner's own wording, not a bare "7": the report table now shows a
-    // "Columns · 7" count (7 movable columns), so a naked number would collide
-    // with DataTable chrome rather than prove the banner gone.
     expect(screen.queryByText(/hidden from this view/i)).toBeNull();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Bedframe' }));
@@ -143,15 +128,12 @@ describe('MRP — undated demand', () => {
     expect(screen.queryByRole('button', { name: 'Hide them' })).toBeNull();
   });
 
-  /* The banner owned a Show/Hide button. Removing it must not strand
-     `showUndated` — the filter-row checkbox is the surviving affordance, and it
-     has to reach the REQUEST, not just its own checked state. */
   test('"Show no-date" is the surviving toggle: off by default, and it drives the request', () => {
     mrpData = response({ lines: 81, shortageUnits: 60, sofaSets: 0, sofaShortageUnits: 0, hidden: true });
     renderPage();
 
     const box = screen.getByLabelText('Show no-date') as HTMLInputElement;
-    expect(box.checked).toBe(false);                // hidden by default (2026-08-18)
+    expect(box.checked).toBe(false);
     expect(lastIncludeUndated).toBe(false);
 
     fireEvent.click(box);

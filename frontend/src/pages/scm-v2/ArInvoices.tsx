@@ -80,7 +80,6 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   const canWrite = can('scm.payment_voucher.write') || canCreate;
   const canCancel = can('scm.payment_voucher.cancel');
   const canPost = can('scm.payment_voucher.post');
-  /* Deposit invoices show to whoever saw their old entry; sales invoices and bills to AR invoices' (batch 5 §1). */
   const showDeposits = gates.paperKeys && !debitNotes;
   const showAr = gates.createKeys;
 
@@ -93,7 +92,6 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
     return next;
   }, { replace: !push });
 
-  /* The Deposit invoices page's exact order filter (`?so=`) seeds the search. */
   const [q, setQ] = useState(() => params.get('so') ?? '');
   const [party, setParty] = useState(() => { const d = params.get('debtor'); return d ? `D:${d}` : ''; });
   const [ticked, setTicked] = useState<Set<string>>(new Set());
@@ -122,8 +120,6 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
     ...(showDeposits ? (diQ.data?.rows ?? []).map(depositItem) : []),
   ], [showAr, arQ.data, debitNotes, today, showDeposits, diQ.data]);
 
-  /* The party filter: the customers and debtors on the list, plus every active
-     debtor off the registry, so `?debtor=` always names one. */
   const partyOptions = useMemo(() => {
     const seen = new Map<string, string>();
     for (const d of debtorsQ.data?.debtors ?? []) if (d.is_active) seen.set(`D:${d.id}`, d.code ? `${d.code} · ${d.name}` : d.name);
@@ -132,7 +128,6 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
   }, [debtorsQ.data, items]);
   const partyName = party ? partyOptions.find((o) => o.value === party)?.label ?? null : null;
 
-  /* Counts follow the chip (the design: the kinds count what the chip shows). */
   const base = useMemo(() => items.filter((x) => (!party || x.partyKey === party) && matchesInvoice(x, q)), [items, party, q]);
   const list = useMemo(() => base.filter((x) => inInvoiceKind(x, kind) && inInvoiceChip(x, chip)).sort(newestInvoiceFirst), [base, kind, chip]);
 
@@ -142,8 +137,6 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
     void qc.invalidateQueries({ queryKey: ['journal-entries'] });
   };
 
-  /* Post to ledger (one or a batch): the deposit invoice's own post route, one
-     by one; the first refusal stops the run, verbatim. */
   const postDeposits = async (rows: InvoiceItem[]) => {
     const targets = rows.filter((x) => x.kind === 'di' && x.status === 'notposted');
     if (targets.length === 0 || busy) return;
@@ -166,9 +159,6 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
     }
   };
 
-  /* Print: each document as it prints — a sales invoice the Sales print (f4),
-     a debtor bill its own, a deposit invoice its A4 sheet — ONE document in
-     list order, through the print dialog (batch 5 step 10). */
   const deliverPrint = async (rows: InvoiceItem[], action: PdfAction) => {
     if (rows.length === 0 || busy) return;
     setBusy('print'); setFailure(null);
@@ -201,10 +191,8 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
     });
   };
 
-  /* Ask: cancel a deposit invoice (a reason), or a bill. */
   const [asking, setAsking] = useState<InvoiceItem | null>(null);
   const [askError, setAskError] = useState<string | null>(null);
-  /* A bill's journal, named in its Cancel ask (a deposit invoice carries its own). */
   const askJournals = useDocJournals('ODB', asking?.kind === 'bill' ? asking.no : null);
   const askLive = liveJournal(askJournals.data);
   const ask: Ask | null = !asking ? null : asking.kind === 'di' ? {
@@ -300,7 +288,6 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
     },
     {
       key: 'outstanding', label: 'Outstanding', align: 'right',
-      /* The SI list's own figure; when the order's deposit settles part of it the cell says so. */
       render: (x) => (x.outstandingSen == null ? <span className={ui.muted}>—</span> : (
         <span className={ui.money} title={(x.ar?.depositAppliedSen ?? 0) > 0 ? `${fmtSen(x.ar!.depositAppliedSen)} was collected on ${x.ar!.ref ?? 'the sales order'} and settles this invoice.` : undefined}>
           {fmtSen(x.outstandingSen)}{(x.ar?.depositAppliedSen ?? 0) > 0 && <span className={ui.under}>deposit applied</span>}
@@ -384,7 +371,6 @@ export const ArInvoices = ({ docKind }: { docKind?: 'DN' } = {}) => {
           )} />
       )}
 
-      {/* The switch's backlogs, at the head of the page (the switch is in Setup). */}
       {showDeposits && settings?.enabled && missing > 0 && (
         <div className={ui.backlog}>
           <AlertCircle size={15} className={ui.checkBad} />

@@ -30,12 +30,10 @@ const ROWS: UnmatchedPayment[] = [
   row({ paymentId: 'p2', docNo: '2990-SO-2609-031', customerName: 'Chong Hui Wen', kind: 'transfer', channel: 'Bank Transfer', amountSen: 143_300, reference: '260920CE0DB5C26', ref: 'TEST-REF-02', customer_so_no: 'TEST-REF-OLD', ageDays: 10, state: 'TRANSFER_NOT_MATCHED', bankAccountCode: '310-0020', statementUpTo: '2026-09-28', jeNo: 'JE-2609-0031' }),
   row({ paymentId: 'p3', docNo: '2990-SO-2608-069', customerName: 'Poon How kei', kind: 'transfer', channel: 'TNG', amountSen: 150_000, reference: '602788', ageDays: 1, state: 'TRANSFER_NO_STATEMENT', bankAccountCode: '310-0020', statementUpTo: '2026-09-28', jeNo: 'JE-2609-0099' }),
   row({ paymentId: 'p4', docNo: '2990-SO-2609-050', channel: null, amountSen: 50_000, ageDays: 3, state: 'CARD_NOT_REPORTED', collectedByName: null }),
-  /* The sale MBB's 01/11 report line 19 guesses (GUESS below): the same money, from the books' side. */
   row({ paymentId: 'g1', docNo: '2990-SO-2611-021', customerName: 'Alice Ong', channel: 'MBB', amountSen: 164_000, reference: '080405',
     paidOn: '2026-11-04', ageDays: 6, state: 'CARD_NOT_REPORTED' }),
 ];
 
-/* Merchant Recon's own reports: two open lines in the window, one decided, one outside it. */
 const BATCHES = [
   { id: 7, acquirer_code: 'MBB', file_name: '027032649949_DVS04A_1_20261101.CSV', period_from: '2026-11-01', period_to: '2026-11-01', open_count: 2 },
   { id: 8, acquirer_code: 'GHL', file_name: 'ghl-done.csv', period_from: '2026-10-01', period_to: '2026-10-01', open_count: 0 },
@@ -110,11 +108,9 @@ import { reportLinesOf, withSameMoney } from './unmatchedLists';
 import { primeInVisitColFilters, resetInVisitColFilters } from '../../components/dataTableColFilterMemory';
 
 const draw = (at = '/scm/unmatched-payments') => render(<MemoryRouter initialEntries={[at]}><UnmatchedPayments /></MemoryRouter>);
-/* The row on the list that is open: the other two stay mounted, hidden, and may name the same document. */
 const rowOf = (text: string): HTMLElement => screen.getAllByText(text).find((el) => el.closest('[hidden]') == null)!.closest('tr') as HTMLElement;
 const tab = (name: RegExp) => screen.getByRole('tab', { name });
 
-/* The window is today's: pin today, so the lines below stay inside it. */
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-11-10T04:00:00Z'));
@@ -185,7 +181,6 @@ describe('Payments', () => {
     const transfer = within(rowOf('2990-SO-2609-031'));
     const bankLine = transfer.getByText('Bank money in · 2026/09/21 · RM 1,433.00');
     expect(bankLine.getAttribute('href')).toBe('/scm/bank-recon?account=310-0020&month=2026-09');
-    /* Nothing on another list: nothing named. */
     expect(within(rowOf('2990-SO-2608-069')).queryByText(/^(Merchant report line|Bank money in) · /)).toBeNull();
   });
 
@@ -217,7 +212,6 @@ describe('Payments', () => {
     expect(screen.queryByText('2990-SO-2609-045')).toBeNull();
     expect(rowOf('2990-SO-2611-021')).toBeTruthy();
     expect(screen.getByText(/^2 payments not matched, .*2,140\.00 in total\.$/)).toBeTruthy();
-    /* A stage with nothing in it is not offered. */
     expect(screen.queryByRole('button', { name: /Transfer · not in the books/ })).toBeNull();
   });
 
@@ -258,7 +252,6 @@ describe('Merchant report lines', () => {
     const none = within(rowOf('999001'));
     expect(none.getByText('no sale in the ERP')).toBeTruthy();
     expect(none.getByText('Merchant reports').getAttribute('href')).toBe('/scm/merchant-recon?acq=MBB&batch=7&tab=no-sale');
-    /* The confirmed line is done: not listed. */
     expect(screen.getByText(/^2 lines not reconciled/)).toBeTruthy();
   });
 
@@ -305,13 +298,11 @@ describe('Export', () => {
     ]);
     for (const s of sheets) expect(s.heading[1]).toMatch(/^Dated .* to .* · No filter — every row$/);
     expect(fileName).toMatch(/^payments-not-matched-\d{4}-\d{2}-\d{2}\.xlsx$/);
-    /* The columns each table shows: Collected by, not the hidden Salesperson. */
     const payments = sheets[2]!.matrix.header;
     expect(payments).toContain('Collected by');
     expect(payments).not.toContain('Salesperson');
     expect(payments).toContain('Where it is stuck');
     expect(payments).toContain('Possibly the same as');
-    /* The Ref No. right after the document, as the screen shows it; none keyed, an empty cell. */
     expect(payments[payments.indexOf('Document') + 1]).toBe('Ref No.');
     const refOf = (doc: string) => sheets[2]!.matrix.body.find((r) => r[payments.indexOf('Document')] === doc)?.[payments.indexOf('Ref No.')];
     expect(refOf('2990-SO-2609-045')).toBe('TEST-REF-01');
@@ -334,7 +325,6 @@ describe('Export', () => {
       'Filter: Card payout',
       'Filter: Card · not on a report · Collected by: Esther',
     ]);
-    /* The same, on paper. */
     fireEvent.click(screen.getByRole('button', { name: /Export all · PDF/ }));
     await waitFor(() => expect(printPdf).toHaveBeenCalledTimes(1));
     const [parts] = printPdf.mock.calls[0]! as [Part[]];
@@ -359,7 +349,6 @@ describe('Export', () => {
   });
 
   test('a column the reader hid stays out of Export all — on a list not even open', async () => {
-    /* The Bank list is not the one open; its table still says what it shows. */
     localStorage.setItem('dt:hidden:unmatched-bank-lines', JSON.stringify(['description']));
     localStorage.setItem('dt:shown:unmatched-payments', JSON.stringify(['salesperson']));
     try {
@@ -432,7 +421,6 @@ describe('Previous records', () => {
     expect(row.getByText('Previous Customer')).toBeTruthy();
     expect(row.getByText('From AutoCount')).toBeTruthy();
     expect(row.getByText('Chew')).toBeTruthy();
-    /* The three lists are put away while it is open. */
     expect(screen.queryByRole('group', { name: /filter$/ })).toBeNull();
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Tick 2990-SO-2605-001' }));

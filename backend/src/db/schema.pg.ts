@@ -1,30 +1,3 @@
-// ---------------------------------------------------------------------------
-// DRAFT - Postgres (pg-core) port of schema.ts. UNTESTED until validated with
-// `drizzle-kit` against the live Supabase DB (Phase 2 of the migration).
-//
-// Additive: this file does NOT replace schema.ts yet, so the D1 build stays
-// green. The cutover swaps client.ts to drizzle-orm/postgres-js + this schema
-// and renames it over schema.ts.
-//
-// Faithful mapping choices (deliberately low-churn so the 600+ snake_case
-// readers and 685 raw-SQL sites keep working):
-//   - integer("id").primaryKey({autoIncrement:true})  -> serial(...).primaryKey()
-//   - other integer(...)        -> integer(...)        (kept int4)
-//   - 0/1 flag columns          -> integer(...)        (NOT boolean — app r/w 0/1)
-//   - real(...)                 -> doublePrecision(...) (SQLite REAL is float8)
-//   - *_at / created_at columns -> text(...)           (app reads ISO strings,
-//                                  not Date objects; keep them text)
-//   - default (datetime('now')) -> `nowText` (UTC text, same 'YYYY-MM-DD HH:MM:SS' shape)
-//
-// REVIEW BEFORE IMPORT (Phase 4): SQLite INTEGER holds int64, Postgres
-// `integer` is int4 (max ~2.1e9). Money/amount columns stored in sen could
-// overflow. Promote these to `bigint({mode:"number"})` if a real value
-// exceeds int4 (the import will fail loudly otherwise — verify per table):
-//   sales_orders.local_total/balance, order_details.total_cost + freight cols,
-//   purchase_orders.amount/unit_price, purchase_order_docs.final_total/local_ex_tax,
-//   project_finance.*, project_finance_lines.amount, sales_entries.amount/deposit_amount,
-//   petty_cash_entries.amount_cents, project_cost_rates.boost_min_sales.
-// ---------------------------------------------------------------------------
 import {
   pgTable,
   pgEnum,
@@ -46,11 +19,8 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
-// SQLite datetime('now') yields 'YYYY-MM-DD HH:MM:SS' (UTC). Reproduce the same
-// text shape so existing string parsing/sorting is unchanged.
 const nowText = sql`(to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))`;
 
-// ── users ──────────────────────────────────────────────────
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   email: text("email").notNull().unique(),
@@ -66,8 +36,6 @@ export const users = pgTable("users", {
   created_at: text("created_at").default(nowText),
   manager_id: integer("manager_id"),
   department_id: integer("department_id"),
-  // Free-text sub-grouping within a department — drives the org chart's
-  // columns ("divisions"). Super-admin editable (mig 0021).
   division: text("division"),
   position_id: integer("position_id"),
   points_balance: integer("points_balance").notNull().default(0),
@@ -76,16 +44,10 @@ export const users = pgTable("users", {
   current_streak: integer("current_streak").notNull().default(0),
   profile_pic_r2_key: text("profile_pic_r2_key"),
   phone: text("phone"),
-  // The member's outward Mail Center alias (e.g. lim@houzscentury.com). Surfaced
-  // in User Management; complements the email_addresses link (mig 0039+).
   email_alias: text("email_alias"),
-  // Per-user opt-out of ASSR service-case digest/escalation emails. The user
-  // keeps service_cases.manage (can still view + manage cases) — this only
-  // mutes the outbound mail. 0 = receives, 1 = muted.
   assr_email_muted: integer("assr_email_muted").notNull().default(0),
 });
 
-// ── roles ──────────────────────────────────────────────────
 export const roles = pgTable("roles", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().unique(),
@@ -96,13 +58,6 @@ export const roles = pgTable("roles", {
   created_at: text("created_at").default(nowText),
 });
 
-// ── role_page_access (mig-pg 20261019T1300) ────────────────
-// Persistent per-role page visibility — one level per (role, page_key). Recreates
-// the old 073 table dropped on 2026-09-17; the RBAC rebuild (Option A) makes the
-// role the single source of page access, edited through PR2's matrix down to
-// sub-page granularity. `level` is free text (none/partial/view/edit/full) so the
-// resolver's whole vocabulary round-trips; the cascade/filter lives in
-// pageAccess.resolvePositionAccessFromRows, consumed by memberPageAccess.ts.
 export const role_page_access = pgTable(
   "role_page_access",
   {
@@ -115,7 +70,6 @@ export const role_page_access = pgTable(
   (t) => ({ pk: primaryKey({ columns: [t.role_id, t.page_key] }) }),
 );
 
-// ── push_devices (mig-pg 0266) — iOS push token registry ───
 export const push_devices = pgTable("push_devices", {
   id: serial("id").primaryKey(),
   user_id: integer("user_id").notNull(),
@@ -128,33 +82,19 @@ export const push_devices = pgTable("push_devices", {
   last_reminder_sent_on: text("last_reminder_sent_on"),
 });
 
-// ── departments ────────────────────────────────────────────
 export const departments = pgTable("departments", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().unique(),
   description: text("description"),
   color: text("color").notNull().default("64748b"),
   sort_order: integer("sort_order").notNull().default(0),
-  // The department's 2–4 letter code (mig 20260906T1417) — the [DEPT] segment
-  // of a document reference number (OPS-ANN-2609-0001). NULL = not assigned
-  // yet; unique case-insensitively (idx_departments_code_upper).
   code: text("code"),
-  // The department's LEAD, an explicit choice (mig-pg 0331) rather than the
-  // derived one the Team screens inferred from manager_id. NULL = no lead yet
-  // (the red "No lead" state), which is the default. ON DELETE SET NULL so
-  // removing the person un-leads the department instead of blocking.
   lead_user_id: integer("lead_user_id"),
-  // Optional planned headcount an HR lead fills in — the "N / target" the
-  // Departments cards show. NULL = no target set (show live count only).
   headcount_target: integer("headcount_target"),
   created_at: text("created_at").default(nowText),
 });
 
-// ── projects ───────────────────────────────────────────────
 export const projects = pgTable("projects", {
-  // Multi-company (mig-pg 0093). Declared for the Drizzle-based readers
-  // (events / notifications / finance rollups); raw-SQL paths reference the
-  // column by name. Nullable in the model — the PG DEFAULT backfills.
   company_id: bigint("company_id", { mode: "number" }),
   id: serial("id").primaryKey(),
   code: text("code").unique(),
@@ -166,8 +106,6 @@ export const projects = pgTable("projects", {
   venue: text("venue"),
   venue_address: text("venue_address"),
   brand: text("brand"),
-  // Booth setup/dismantle contractor (free text, mirrors organizer). Picker-backed
-  // by project_contractors; raw-SQL read/write paths reference it by name.
   contractor: text("contractor"),
   pic_id: integer("pic_id"),
   created_by: integer("created_by"),
@@ -190,7 +128,6 @@ export const projects = pgTable("projects", {
   dismantle_helper_outsourced: integer("dismantle_helper_outsourced").notNull().default(0),
 });
 
-// ── project_phase_photos ───────────────────────────────────
 export const project_phase_photos = pgTable("project_phase_photos", {
   id: serial("id").primaryKey(),
   project_id: integer("project_id").notNull(),
@@ -202,7 +139,6 @@ export const project_phase_photos = pgTable("project_phase_photos", {
   uploaded_at: text("uploaded_at").notNull().default(nowText),
 });
 
-// ── project_brands ─────────────────────────────────────────
 export const project_brands = pgTable("project_brands", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().unique(),
@@ -212,7 +148,6 @@ export const project_brands = pgTable("project_brands", {
   created_at: text("created_at").default(nowText),
 });
 
-// ── user_brands (mig 049) ──────────────────────────────────
 export const user_brands = pgTable(
   "user_brands",
   {
@@ -223,10 +158,6 @@ export const user_brands = pgTable(
   (t) => ({ pk: primaryKey({ columns: [t.user_id, t.brand] }) }),
 );
 
-// ── user_departments (mig 0020) ────────────────────────────
-// Full set of departments a user belongs to. users.department_id stays the
-// PRIMARY; this carries the primary plus any extras (the primary is one row
-// here too). Replace-set on PATCH /api/users/:id, same shape as user_brands.
 export const user_departments = pgTable(
   "user_departments",
   {
@@ -237,7 +168,6 @@ export const user_departments = pgTable(
   (t) => ({ pk: primaryKey({ columns: [t.user_id, t.department_id] }) }),
 );
 
-// ── project_activity ───────────────────────────────────────
 export const project_activity = pgTable("project_activity", {
   id: serial("id").primaryKey(),
   project_id: integer("project_id").notNull(),
@@ -250,7 +180,6 @@ export const project_activity = pgTable("project_activity", {
   archived_at: text("archived_at"),
 });
 
-// ── project_reads (mig 045) ────────────────────────────────
 export const project_reads = pgTable(
   "project_reads",
   {
@@ -261,7 +190,6 @@ export const project_reads = pgTable(
   (t) => ({ pk: primaryKey({ columns: [t.project_id, t.user_id] }) }),
 );
 
-// ── sessions ───────────────────────────────────────────────
 export const sessions = pgTable("sessions", {
   token: text("token").primaryKey(),
   user_id: integer("user_id").notNull(),
@@ -269,7 +197,6 @@ export const sessions = pgTable("sessions", {
   created_at: text("created_at").default(nowText),
 });
 
-// ── invitations ────────────────────────────────────────────
 export const invitations = pgTable("invitations", {
   id: serial("id").primaryKey(),
   email: text("email").notNull(),
@@ -279,13 +206,11 @@ export const invitations = pgTable("invitations", {
   expires_at: text("expires_at").notNull(),
   accepted_at: text("accepted_at"),
   created_at: text("created_at").default(nowText),
-  // Org dimensions carried by the invite + applied on accept (mig 094).
   position_id: integer("position_id"),
   department_id: integer("department_id"),
   manager_id: integer("manager_id"),
 });
 
-// ── positions (mig 094) — staff org unit (department × position) ──
 export const positions = pgTable("positions", {
   id: serial("id").primaryKey(),
   department_id: integer("department_id"),
@@ -297,7 +222,6 @@ export const positions = pgTable("positions", {
   created_at: text("created_at").default(nowText),
 });
 
-// ── password_resets (mig 027) ──────────────────────────────
 export const password_resets = pgTable("password_resets", {
   id: serial("id").primaryKey(),
   user_id: integer("user_id").notNull(),
@@ -308,9 +232,7 @@ export const password_resets = pgTable("password_resets", {
   created_at: text("created_at").default(nowText),
 });
 
-// ── events ─────────────────────────────────────────────────
 export const events = pgTable("events", {
-  // Multi-company (mig-pg 0093) — see projects.company_id above.
   company_id: bigint("company_id", { mode: "number" }),
   id: serial("id").primaryKey(),
   type: text("type").notNull(),
@@ -324,7 +246,6 @@ export const events = pgTable("events", {
   updated_at: text("updated_at").default(nowText),
 });
 
-// ── lorries ────────────────────────────────────────────────
 export const lorries = pgTable("lorries", {
   company_id: bigint("company_id", { mode: "number" }),
   id: serial("id").primaryKey(),
@@ -333,13 +254,11 @@ export const lorries = pgTable("lorries", {
   default_driver_user_id: integer("default_driver_user_id"),
 });
 
-// ── warehouses ─────────────────────────────────────────────
 export const warehouses = pgTable("warehouses", {
   code: text("code").primaryKey(),
   name: text("name").notNull(),
 });
 
-// ── trips ──────────────────────────────────────────────────
 export const trips = pgTable("trips", {
   company_id: bigint("company_id", { mode: "number" }),
   id: serial("id").primaryKey(),
@@ -350,12 +269,9 @@ export const trips = pgTable("trips", {
   status: text("status").notNull(),
   started_at: text("started_at"),
   completed_at: text("completed_at"),
-  // mig 20261101T0900 — planned departure for the office Last Mile board, beside
-  // the actual clock-in/out. timestamptz in pg; text here like the siblings.
   planned_depart_at: text("planned_depart_at"),
 });
 
-// ── trip_stops ─────────────────────────────────────────────
 export const trip_stops = pgTable("trip_stops", {
   company_id: bigint("company_id", { mode: "number" }),
   id: serial("id").primaryKey(),
@@ -367,7 +283,6 @@ export const trip_stops = pgTable("trip_stops", {
   updated_at: text("updated_at").default(nowText),
 });
 
-// ── trip_locations ─────────────────────────────────────────
 export const trip_locations = pgTable("trip_locations", {
   company_id: bigint("company_id", { mode: "number" }),
   id: serial("id").primaryKey(),
@@ -378,7 +293,6 @@ export const trip_locations = pgTable("trip_locations", {
   recorded_at: text("recorded_at").notNull(),
 });
 
-// ── sales_orders ───────────────────────────────────────────
 export const sales_orders = pgTable("sales_orders", {
   company_id: bigint("company_id", { mode: "number" }),
   doc_no: text("doc_no").primaryKey(),
@@ -395,12 +309,6 @@ export const sales_orders = pgTable("sales_orders", {
   remark2: text("remark2"),
   remark3: text("remark3"),
   remark4: text("remark4"),
-  /* AutoCount's own UDF field SO.UDF_PDate, mirrored verbatim by
-     services/pull.ts. NOT the ERP's Processing Date — that is exactly ONE
-     column, scm.mfg_sales_orders.internal_expected_dd, on a different table for
-     a different document. Renamed from `processing_date` in mig 0285 so the two
-     can never be confused again. Read by nothing today; kept because the mirror's
-     job is to be a faithful local copy of AutoCount for reconciliation. */
   ac_udf_pdate: text("ac_udf_pdate"),
   expiry_date: text("expiry_date"),
   po_doc_no: text("po_doc_no"),
@@ -409,12 +317,9 @@ export const sales_orders = pgTable("sales_orders", {
   last_modified: text("last_modified"),
   sync_status: text("sync_status"),
   updated_at: text("updated_at"),
-  // Houzs-side recipient for auto-sent DO/invoice email; AutoCount debtor sync
-  // carries no email, so this is maintained manually (mig 098/0009).
   customer_email: text("customer_email"),
 });
 
-// ── order_details ──────────────────────────────────────────
 export const order_details = pgTable("order_details", {
   company_id: bigint("company_id", { mode: "number" }),
   doc_no: text("doc_no").primaryKey(),
@@ -454,7 +359,6 @@ export const order_details = pgTable("order_details", {
   updated_at: text("updated_at"),
 });
 
-// ── purchase_orders ────────────────────────────────────────
 export const purchase_orders = pgTable("purchase_orders", {
   company_id: bigint("company_id", { mode: "number" }),
   id: serial("id").primaryKey(),
@@ -478,7 +382,6 @@ export const purchase_orders = pgTable("purchase_orders", {
   updated_at: text("updated_at"),
 });
 
-// ── creditors ──────────────────────────────────────────────
 export const creditors = pgTable("creditors", {
   company_id: bigint("company_id", { mode: "number" }),
   creditor_code: text("creditor_code").primaryKey(),
@@ -496,7 +399,6 @@ export const creditors = pgTable("creditors", {
   updated_at: text("updated_at"),
 });
 
-// ── overdue_history ────────────────────────────────────────
 export const overdue_history = pgTable("overdue_history", {
   id: serial("id").primaryKey(),
   pull_date: text("pull_date").notNull(),
@@ -511,7 +413,6 @@ export const overdue_history = pgTable("overdue_history", {
   created_at: text("created_at").default(nowText),
 });
 
-// ── purchase_order_docs ────────────────────────────────────
 export const purchase_order_docs = pgTable("purchase_order_docs", {
   company_id: bigint("company_id", { mode: "number" }),
   doc_no: text("doc_no").primaryKey(),
@@ -527,7 +428,6 @@ export const purchase_order_docs = pgTable("purchase_order_docs", {
   updated_at: text("updated_at"),
 });
 
-// ── project_finance ────────────────────────────────────────
 export const project_finance = pgTable("project_finance", {
   project_id: integer("project_id").primaryKey(),
   rental: integer("rental"),
@@ -537,7 +437,6 @@ export const project_finance = pgTable("project_finance", {
   updated_at: text("updated_at"),
 });
 
-// ── project_checklist_sections (mig 050) ───────────────────
 export const project_checklist_sections = pgTable("project_checklist_sections", {
   id: serial("id").primaryKey(),
   project_id: integer("project_id").notNull(),
@@ -547,7 +446,6 @@ export const project_checklist_sections = pgTable("project_checklist_sections", 
   created_at: text("created_at").default(nowText),
 });
 
-// ── project_checklist_template_sections (mig 050) ──────────
 export const project_checklist_template_sections = pgTable(
   "project_checklist_template_sections",
   {
@@ -560,7 +458,6 @@ export const project_checklist_template_sections = pgTable(
   },
 );
 
-// ── project_checklist_attachments (mig 050) ────────────────
 export const project_checklist_attachments = pgTable(
   "project_checklist_attachments",
   {
@@ -579,7 +476,6 @@ export const project_checklist_attachments = pgTable(
   },
 );
 
-// ── project_checklist ──────────────────────────────────────
 export const project_checklist = pgTable("project_checklist", {
   id: serial("id").primaryKey(),
   project_id: integer("project_id").notNull(),
@@ -604,7 +500,6 @@ export const project_checklist = pgTable("project_checklist", {
   updated_at: text("updated_at").default(nowText),
 });
 
-// ── project_checklist_templates ────────────────────────────
 export const project_checklist_templates = pgTable("project_checklist_templates", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
@@ -613,7 +508,6 @@ export const project_checklist_templates = pgTable("project_checklist_templates"
   created_at: text("created_at").default(nowText),
 });
 
-// ── project_checklist_template_items (mig 050) ─────────────
 export const project_checklist_template_items = pgTable(
   "project_checklist_template_items",
   {
@@ -631,11 +525,6 @@ export const project_checklist_template_items = pgTable(
   },
 );
 
-// ── project_sales_bills (mig 20261014T1600) ────────────────
-// The evening sales report pasted into a project's chat, one row per booklet
-// number: what the slip said and who sold it, so the project can say which
-// bills are still not opened as Sales Orders. Matching is done at read time
-// (routes/lib/sales-report-bills.ts); nothing about the match is stored.
 export const project_sales_bills = pgTable(
   "project_sales_bills",
   {
@@ -672,10 +561,6 @@ export const project_forecast = pgTable(
   (t) => [uniqueIndex("uq_project_forecast_line").on(t.project_id, t.line_key)],
 );
 
-// ── Houzs POS (mig 20261014T1147) ──────────────────────────
-// The cash & carry booth app's bills, synced from the device into the ERP's
-// own database. Money is integer sen. A bill is VOIDed, never deleted; its
-// lines and payments hang under it (ON DELETE CASCADE in the DDL).
 export const pos_sales = pgTable(
   "pos_sales",
   {
@@ -697,7 +582,6 @@ export const pos_sales = pgTable(
     subtotal_sen: bigint("subtotal_sen", { mode: "number" }).notNull().default(0),
     item_discount_sen: bigint("item_discount_sen", { mode: "number" }).notNull().default(0),
     bill_discount_sen: bigint("bill_discount_sen", { mode: "number" }).notNull().default(0),
-    // Mig 20261014T1711: the supervisor who passed a bill discount above the cap.
     bill_discount_by: text("bill_discount_by"),
     sst_applied: boolean("sst_applied").notNull().default(false),
     sst_rate: numeric("sst_rate", { precision: 5, scale: 2 }).notNull().default("0"),
@@ -711,8 +595,6 @@ export const pos_sales = pgTable(
     is_test: boolean("is_test").notNull().default(false),
     source: text("source").notNull().default("NORMAL"),
     local_seq: integer("local_seq"),
-    // Mig 20261014T1445: why the stock deduction was not clean (no location,
-    // location went negative); NULL = deducted without a remark.
     stock_warning: text("stock_warning"),
     synced_at: timestamp("synced_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
     created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
@@ -743,7 +625,6 @@ export const pos_sale_lines = pgTable(
     discount_source: text("discount_source"),
     discount_type: text("discount_type"),
     discount_value: numeric("discount_value", { precision: 12, scale: 2 }),
-    // Mig 20261014T1711: the supervisor who passed a manual discount above the cap.
     discount_by: text("discount_by"),
     discount_amount_sen: bigint("discount_amount_sen", { mode: "number" }).notNull().default(0),
     is_foc: boolean("is_foc").notNull().default(false),
@@ -767,7 +648,6 @@ export const pos_payments = pgTable(
   (t) => [index("idx_pos_payments_sale").on(t.sale_id)],
 );
 
-// ── Houzs POS Admin masters (mig 20261014T1304) ────────────
 export const pos_settings = pgTable(
   "pos_settings",
   {
@@ -869,18 +749,13 @@ export const pos_terminals = pgTable(
     status: text("status").notNull().default("NEW"),
     active: boolean("active").notNull().default(true),
     token_hash: text("token_hash"),
-    // Mig 20261022T0533: the one-time pairing code (hash) and when it dies.
     pairing_code_hash: text("pairing_code_hash"),
     pairing_expires_at: timestamp("pairing_expires_at", { withTimezone: true, mode: "string" }),
-    // Mig 20261112T0330: the token the terminal held just before the last swap,
-    // and that device's open request to have the terminal back (routes/lib/pos-reconnect.ts).
     prev_token_hash: text("prev_token_hash"),
     reconnect_requested_at: timestamp("reconnect_requested_at", { withTimezone: true, mode: "string" }),
     reconnect_device_name: text("reconnect_device_name"),
     reconnect_approved_at: timestamp("reconnect_approved_at", { withTimezone: true, mode: "string" }),
     reconnect_approved_by: text("reconnect_approved_by"),
-    // Mig 20261014T1445: the last heartbeat that still reported pending bills,
-    // so an empty device reconnecting is recognised as DATA LOST.
     last_known_pending_count: integer("last_known_pending_count").notNull().default(0),
     last_known_pending_sen: bigint("last_known_pending_sen", { mode: "number" }).notNull().default(0),
     db_empty_at: timestamp("db_empty_at", { withTimezone: true, mode: "string" }),
@@ -902,7 +777,6 @@ export const pos_event_links = pgTable(
     receipt_header: text("receipt_header"),
     catalog_version: integer("catalog_version").notNull().default(1),
     pushed_at: timestamp("pushed_at", { withTimezone: true, mode: "string" }),
-    // Mig 20261014T1530: the end-of-event summary email went out (once).
     summary_sent_at: timestamp("summary_sent_at", { withTimezone: true, mode: "string" }),
     created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
     updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
@@ -1227,6 +1101,11 @@ export const hr_attendance = pgTable(
     out_site_id: bigint("out_site_id", { mode: "number" }),
     out_distance_m: integer("out_distance_m"),
     out_photo_key: text("out_photo_key"),
+    // Actual clocking (HC-0125): every clock-in/out pair of the day, in order
+    // (clock 1-4), each with its evidence. clock_in_at / clock_out_at above stay
+    // the FIRST in and LAST out, so existing readers are unchanged; segments is
+    // the detail. NULL on old rows = the single clock_in/out pair.
+    segments: jsonb("segments"),
     notes: text("notes"),
     created_at: timestamp("created_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
     updated_at: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull().defaultNow(),
@@ -1337,7 +1216,6 @@ export const hr_advances = pgTable("hr_advances", {
   employee_id: bigint("employee_id", { mode: "number" }).notNull(),
   advance_date: date("advance_date", { mode: "string" }).notNull(),
   amount_sen: bigint("amount_sen", { mode: "number" }).notNull(),
-  /** Per-month deduction in sen; NULL = lump sum (whole amount in advance_date's month). */
   installment_sen: bigint("installment_sen", { mode: "number" }),
   note: text("note"),
   status: text("status").notNull().default("UNSETTLED"),
@@ -1407,7 +1285,6 @@ export const hr_trip_rows = pgTable(
     driver_2_employee_id: bigint("driver_2_employee_id", { mode: "number" }),
     helper_1_employee_id: bigint("helper_1_employee_id", { mode: "number" }),
     helper_2_employee_id: bigint("helper_2_employee_id", { mode: "number" }),
-    // mig-pg 20261117T2100 (Trip Pay redesign): NULL job_type = read from kind.
     job_type: text("job_type"),
     event_type: text("event_type"),
     postcode: text("postcode").notNull().default(""),
@@ -1497,7 +1374,6 @@ export const hr_kpi_metrics = pgTable(
   (t) => [index("idx_hr_kpi_metrics_company").on(t.company_id, t.sort_order)],
 );
 
-// The payout bands: an inclusive final-score range pays a fixed RM by role.
 export const hr_kpi_tiers = pgTable(
   "hr_kpi_tiers",
   {
@@ -1515,9 +1391,6 @@ export const hr_kpi_tiers = pgTable(
   (t) => [index("idx_hr_kpi_tiers_company").on(t.company_id, t.sort_order)],
 );
 
-// One monthly appraisal per employee: the weekly ratings grid (jsonb) plus the
-// computed final score, tier and the RM it pays. CONFIRMED books a KPI
-// allowance (allowance_id) for the month.
 export const hr_kpi_reviews = pgTable(
   "hr_kpi_reviews",
   {
@@ -1541,7 +1414,6 @@ export const hr_kpi_reviews = pgTable(
   (t) => [uniqueIndex("uq_hr_kpi_reviews_emp_period").on(t.company_id, t.employee_id, t.period)],
 );
 
-// ── sales_entries (mig 041 / 051) ──────────────────────────
 export const sales_entries = pgTable("sales_entries", {
   company_id: bigint("company_id", { mode: "number" }),
   id: serial("id").primaryKey(),
@@ -1562,12 +1434,6 @@ export const sales_entries = pgTable("sales_entries", {
   deposit_payment_type: text("deposit_payment_type"),
   currency: text("currency").notNull().default("MYR"),
   occurred_at: text("occurred_at").notNull(),
-  /* Legacy native Sales module's own date (mig 070). NOT the SCM Sales Order's
-     Processing Date — a sales_entry has no SO row and none of the SO gates/locks.
-     The SO's Processing Date is scm.mfg_sales_orders.internal_expected_dd, and
-     that is the only column that concept may live in. Kept under this name
-     because a rename would silently drop the field from queued sales change
-     requests; see SO_FORM_TEXT_FIELDS in src/routes/sales.ts. */
   processing_date: text("processing_date"),
   delivery_date: text("delivery_date"),
   status_2: text("status_2"),
@@ -1591,7 +1457,6 @@ export const sales_entries = pgTable("sales_entries", {
   archived_at: text("archived_at"),
 });
 
-// ── sales_entry_items ──────────────────────────────────────
 export const sales_entry_items = pgTable("sales_entry_items", {
   company_id: bigint("company_id", { mode: "number" }),
   id: serial("id").primaryKey(),
@@ -1607,7 +1472,6 @@ export const sales_entry_items = pgTable("sales_entry_items", {
   created_at: text("created_at").default(nowText),
 });
 
-// ── sales_entry_payments ───────────────────────────────────
 export const sales_entry_payments = pgTable("sales_entry_payments", {
   company_id: bigint("company_id", { mode: "number" }),
   id: serial("id").primaryKey(),
@@ -1621,7 +1485,6 @@ export const sales_entry_payments = pgTable("sales_entry_payments", {
   created_at: text("created_at").default(nowText),
 });
 
-// ── project_finance_lines ──────────────────────────────────
 export const project_finance_lines = pgTable("project_finance_lines", {
   id: serial("id").primaryKey(),
   project_id: integer("project_id").notNull(),
@@ -1639,7 +1502,6 @@ export const project_finance_lines = pgTable("project_finance_lines", {
   auto_source: text("auto_source"),
 });
 
-// ── project_cost_rates (mig 063) ───────────────────────────
 export const project_cost_rates = pgTable("project_cost_rates", {
   id: serial("id").primaryKey(),
   brand: text("brand").notNull().unique(),
@@ -1653,7 +1515,6 @@ export const project_cost_rates = pgTable("project_cost_rates", {
   updated_by: integer("updated_by"),
 });
 
-// ── sales_positions / tiers / reps (mig 067) ───────────────
 export const sales_positions = pgTable("sales_positions", {
   id: serial("id").primaryKey(),
   slug: text("slug").notNull().unique(),
@@ -1729,7 +1590,6 @@ export const sales_team_activity = pgTable("sales_team_activity", {
   created_at: text("created_at").default(nowText),
 });
 
-// ── project_sales_attendees (mig 087) ──────────────────────
 export const project_sales_attendees = pgTable(
   "project_sales_attendees",
   {
@@ -1741,7 +1601,6 @@ export const project_sales_attendees = pgTable(
   (t) => ({ pk: primaryKey({ columns: [t.project_id, t.sales_rep_id] }) }),
 );
 
-// ── companies (multi-company master; Phase 0a) ─────────
 export const companies = pgTable("companies", {
   id: bigint("id", { mode: "number" }).primaryKey().generatedByDefaultAsIdentity(),
   code: text("code").notNull().unique(),
@@ -1750,8 +1609,6 @@ export const companies = pgTable("companies", {
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// ── auth_failed_logins (mig 20261016T0910; DEV-35) ─────────
-// One row per failed sign-in. Never holds the attempted password or code.
 export const auth_failed_logins = pgTable("auth_failed_logins", {
   id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
   created_at: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1761,7 +1618,6 @@ export const auth_failed_logins = pgTable("auth_failed_logins", {
   reason: text("reason").notNull(),
 });
 
-// ── job_runs (mig 20261016T0900): one row per scheduled job run ──
 export const job_runs = pgTable("job_runs", {
   id: uuid("id").primaryKey(),
   job: text("job").notNull(),

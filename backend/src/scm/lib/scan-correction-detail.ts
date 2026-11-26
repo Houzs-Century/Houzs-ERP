@@ -1,6 +1,3 @@
-// What a person changed on a scanned sales order, as before/after text for the OCR
-// page (services/ocrStats.ts). "before" is the draft as the scan built it
-// (so_scan_samples.draft_baseline), "after" is what the person confirmed.
 import { HEADER_FIELDS, LINE_FIELDS, LINES_CHANGED, asObj, changedFields } from "./scan-slip-fields";
 import { uniqueByRawText } from "./scan-sample-review";
 

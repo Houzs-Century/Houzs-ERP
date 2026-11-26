@@ -1,21 +1,3 @@
-// ----------------------------------------------------------------------------
-// Fabric Converter — minimal master view (renamed from Fabric Tracking 2026-05-26).
-//
-// 5 columns: Fabric Code · Description (editable) · Supplier Code (editable) ·
-// Sofa Tier · Bedframe Tier · (delete). Tiers are picked from a list.
-//
-// Commander 2026-05-26 history:
-//   • Drop "All Categories" dropdown
-//   • Rename from "Fabric Tracking" to "Fabric Converter"
-//   • Description must be editable
-//   • PR #43 — add "+ New Fabric" + per-row delete (was missing!)
-//   • Export CSV / Import CSV (this PR) — round-trip catalog + metric cols via
-//     Excel; bulk-upsert by fabric_code instead of one-by-one form entry.
-//   • Drop Category select from New Fabric form (still NULL-able in DB).
-//
-// The table is shared with Products → Maintenance → Fabrics via
-// components/FabricsTable.tsx — changes here reflect there automatically.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useRef, useState } from 'react';
 import { Search, Plus, X, Download, Upload, Info } from 'lucide-react';
@@ -36,9 +18,6 @@ import { todayMyt } from '../../vendor/scm/lib/dates';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/* Shared field chrome for the two dialogs — the design-system input slab.
-   Was `styles.searchInput` from the bespoke module, whose colours only
-   resolved through the deleted `.page` token-override cascade. */
 const FIELD =
   'h-9 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-muted focus:border-primary focus:ring-2 focus:ring-primary/20';
 const FIELD_LABEL = 'mb-1 block text-[11px] font-semibold uppercase tracking-wider text-ink-muted';
@@ -50,13 +29,6 @@ export const FabricTracking = () => {
   const [importPreview, setImportPreview] = useState<ParsedImport | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /* Retired rows are hidden by DEFAULT and one click away, not gone. The
-     2026-06-12 spec says inactive fabrics stay on the converter, and they do —
-     but after the 2026-08-11 merge pass, 88 of ~830 rows are supersede
-     tombstones ("AVANI-01 [merged into AVANI-01 on 2026-08-11]"), which made
-     the master list read as if every code were duplicated. Both views come from
-     ONE cached fetch (see useFabricTrackings' select), so the count costs
-     nothing. */
   const [showRetired, setShowRetired] = useState(false);
 
   const { data: fabrics, isLoading, error } = useFabricTrackings({
@@ -68,9 +40,6 @@ export const FabricTracking = () => {
   const rows = useMemo(() => fabrics ?? [], [fabrics]);
   const retiredCount = (allRowsForCount ?? []).filter((f) => f.is_active === false).length;
 
-  // Export: pull the FULL list (ignoring any active search filter — the user
-  // would not expect a search-filtered export to round-trip safely on import).
-  // Re-fetch unfiltered if a search is active; otherwise reuse `rows`.
   const exportFetch = useFabricTrackings({}).data;
   const onExport = () => {
     const all = (search.trim() ? exportFetch : rows) ?? rows;
@@ -82,16 +51,13 @@ export const FabricTracking = () => {
   const onPickFile = () => fileInputRef.current?.click();
   const onFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    e.target.value = '';  // reset so picking same file again re-fires onChange
+    e.target.value = '';
     if (!file) return;
-    // Excel (.xlsx/.xls) or CSV — parseImportFile dispatches on extension and
-    // both formats land as the same row shape (owner: any file should import).
     setImportPreview(await parseImportFile(file));
   };
 
   return (
     <div>
-      {/* ── Header — shared PageHeader (full-bleed, design-system) ─── */}
       <PageHeader
         eyebrow="Master Data"
         title="Fabric Converter"
@@ -110,7 +76,6 @@ export const FabricTracking = () => {
         }
       />
 
-      {/* ── Filter row — search only; the CTAs moved into the header ── */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative min-w-[320px] flex-1">
           <Search
@@ -145,8 +110,6 @@ export const FabricTracking = () => {
           style={{ display: 'none' }} onChange={onFileChosen} />
       </div>
 
-      {/* Approved redesign 2026-09-17 — plain-language note on what the tiers
-          drive and the per-company scope of these codes. */}
       <div className="mb-4 flex items-start gap-2 rounded-md border border-border bg-surface-2 p-3 text-[12px] leading-relaxed text-ink-muted">
         <Info size={15} strokeWidth={1.75} className="mt-px flex-none text-primary" />
         <span>
@@ -201,7 +164,6 @@ const NewFabricDialog = ({ onClose }: { onClose: () => void }) => {
       series: form.series.trim() || undefined,
       sofaPriceTier: form.sofaPriceTier,
       bedframePriceTier: form.bedframePriceTier,
-      // Migration 0124/0125 — also create the POS-pickable fabric_library entry + colours.
       label: form.fabricDescription.trim() || form.fabricCode.trim(),
       colours: colourList,
     }, {
@@ -298,9 +260,6 @@ const NewFabricDialog = ({ onClose }: { onClose: () => void }) => {
   );
 };
 
-// Import-preview modal: shows row count + any parse warnings/errors before
-// the user commits to writing to the DB. Upsert semantics — fabric_code is
-// the match key. Existing rows missing from the CSV are NOT deleted.
 const ImportPreviewDialog = ({
   preview,
   onClose,
@@ -315,12 +274,10 @@ const ImportPreviewDialog = ({
 
   const commit = () => {
     upsert.mutate(rows, {
-      // Some rows saved, some the server refused (200 OK, per-row `errors`). Show
-      // WHICH rows and WHY, not just a count — the owner needs the real reason.
       onSuccess: async (res) => {
         if (res.errors.length > 0) {
           const shown = res.errors.slice(0, 30)
-            .map((e) => `Row ${e.index + 2}: ${e.reason}`);  // +2: 1-based, past the header
+            .map((e) => `Row ${e.index + 2}: ${e.reason}`);
           const more = res.errors.length > 30 ? `\n…and ${res.errors.length - 30} more.` : '';
           await notify({
             title: `Imported ${res.upserted} fabric${res.upserted === 1 ? '' : 's'}, ${res.errors.length} rejected.`,
@@ -332,9 +289,6 @@ const ImportPreviewDialog = ({
         }
         onClose();
       },
-      // Whole request refused (e.g. a 409). Surface the server's specific reason
-      // and any conflicting codes it named, not the generic "clashes with
-      // something" line — importErrorDetail reads them off the raw error body.
       onError: (e) => {
         const base = e instanceof Error ? e.message : 'Something went wrong.';
         const detail = importErrorDetail(e);

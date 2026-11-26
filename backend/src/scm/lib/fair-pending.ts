@@ -48,17 +48,10 @@ export type FairPendingRow = {
   status: string | null;
   local_total_sen: number | null;
   salesperson_id: string | null;
-  /** The Ref No., `ref` first (frontend lib/customer-ref.ts). Optional so a
-   *  row built without them still types. */
   ref?: string | null;
   customer_so_no?: string | null;
 };
 
-/* TWO READS, ONE LIST. The listed set is "a verdict in LISTED_VERDICTS" OR "no
-   verdict and dated from NO_VERDICT_LISTED_FROM". PostgREST can only say that
-   OR through its `or=` grammar, which the house fake client does not speak and a
-   reader has to decode; two plain reads with the same shared filters say it
-   once each, and the merge below is the whole of the OR. */
 function withVerdicts(q: any): any {
   return q.in('fair_match', [...LISTED_VERDICTS]).is('project_id', null).neq('status', 'CANCELLED').is('fair_put_aside_at', null);
 }
@@ -66,7 +59,6 @@ function withoutVerdict(q: any): any {
   return q.is('fair_match', null).is('project_id', null).neq('status', 'CANCELLED').gte('so_date', NO_VERDICT_LISTED_FROM).is('fair_put_aside_at', null);
 }
 
-/** Newest first; a day's orders by document number, newest number first. */
 function newestFirst(a: FairPendingRow, b: FairPendingRow): number {
   const d = String(b.so_date ?? '').localeCompare(String(a.so_date ?? ''));
   return d !== 0 ? d : String(b.doc_no).localeCompare(String(a.doc_no));

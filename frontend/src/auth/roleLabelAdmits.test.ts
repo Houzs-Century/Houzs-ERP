@@ -1,6 +1,3 @@
-// The desktop copy of the backend's role-badge rule. Pinned as a UNIT test
-// because the two bugs it exists to prevent (0546 attach, 0628 delete) were
-// both the desktop answering a question the server answers differently.
 import { describe, it, expect } from "vitest";
 import { roleLabelAdmitsRole } from "./roleLabelAdmits";
 
@@ -24,7 +21,6 @@ describe("roleLabelAdmitsRole — mirrors backend roleLabelAdmits", () => {
   });
 
   it("extends DRIVER field work to helpers and storekeepers, not the reverse", () => {
-    // The crew swap these jobs last-minute and no task is ever badged either.
     expect(roleLabelAdmitsRole("DRIVER", "Helper")).toBe(true);
     expect(roleLabelAdmitsRole("DRIVER", "Storekeeper")).toBe(true);
     expect(roleLabelAdmitsRole("HELPER", "Driver")).toBe(false);
@@ -35,7 +31,6 @@ describe("roleLabelAdmitsRole — mirrors backend roleLabelAdmits", () => {
     expect(roleLabelAdmitsRole("", "Purchaser")).toBe(false);
     expect(roleLabelAdmitsRole("PURCHASER", null)).toBe(false);
     expect(roleLabelAdmitsRole("PURCHASER", "   ")).toBe(false);
-    // A badge of only separators has no parts, so it admits no one.
     expect(roleLabelAdmitsRole(" & ", "Purchaser")).toBe(false);
   });
 });

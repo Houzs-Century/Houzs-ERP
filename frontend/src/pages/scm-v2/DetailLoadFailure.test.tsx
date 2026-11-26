@@ -1,7 +1,3 @@
-/* Regression: detail pages showed "X not found" when the request merely failed
-   (timeout, 500, offline), so operators re-keyed documents that existed. Only a
-   real 404 or an empty answer says "not found"; anything else says it could not
-   load, shows the reason and offers Retry. */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { classifyLoadFailure, isNotFoundError } from "../../lib/loadFailure";

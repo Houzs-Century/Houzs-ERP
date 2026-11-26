@@ -1,9 +1,3 @@
-// The service-case detail view renders SEVERAL upload targets at once, so a
-// pasted screenshot must land in the zone the user is pointing at — never in
-// a sibling slot (wrong category on a customer-visible record) and never
-// twice. This suite pins the routing rules: hover claims a paste, non-hover
-// ignores it, disabled/unmounted zones can't claim, and drops bypassing the
-// file picker still get the picker's type filter.
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -19,8 +13,6 @@ beforeEach(() => hoveredUploadZones.clear());
 
 const asFile = (name: string, type: string) => new File([new Uint8Array(4)], name, { type });
 
-/** Build a dispatchable paste event carrying file (and/or string) items —
- *  jsdom has no DataTransfer constructor, so fake the items list. */
 function pasteEvent(files: File[], withText = false): ClipboardEvent {
   const e = new Event("paste", { bubbles: true, cancelable: true }) as any;
   const items = files.map((f) => ({ kind: "file", getAsFile: () => f }));
@@ -98,14 +90,11 @@ describe("UploadDropZone", () => {
     const zone = container.firstElementChild as HTMLElement;
     const f = asFile("shot.png", "image/png");
 
-    // Not hovered — paste passes through untouched.
     const miss = pasteEvent([f]);
     document.dispatchEvent(miss);
     expect(onFiles).not.toHaveBeenCalled();
     expect(miss.defaultPrevented).toBe(false);
 
-    // Hovered — paste is claimed. (React synthesizes onMouseEnter from
-    // native mouseover, so that's what we fire.)
     fireEvent.mouseOver(zone);
     expect(hoveredUploadZones.size).toBe(1);
     const hit = pasteEvent([f]);
@@ -113,7 +102,6 @@ describe("UploadDropZone", () => {
     expect(onFiles).toHaveBeenCalledWith([f]);
     expect(hit.defaultPrevented).toBe(true);
 
-    // Un-hovered again — back to pass-through.
     fireEvent.mouseOut(zone);
     expect(hoveredUploadZones.size).toBe(0);
   });
@@ -157,7 +145,6 @@ describe("UploadDropZone", () => {
     fireEvent.mouseOver(container.firstElementChild as HTMLElement);
     expect(hoveredUploadZones.size).toBe(1);
     unmount();
-    // A stale entry here would suppress the detail view's paste hint forever.
     expect(hoveredUploadZones.size).toBe(0);
     document.dispatchEvent(pasteEvent([asFile("a.png", "image/png")]));
     expect(onFiles).not.toHaveBeenCalled();

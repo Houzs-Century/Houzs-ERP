@@ -21,7 +21,6 @@ import { storeFixes, type VelocityFix } from './velocity-poll';
 
 const BASE = 'http://api.itrack.top';
 
-// Web Crypto has no MD5; reuse the repo's own.
 const md5 = (s: string) => [...md5Bytes(new TextEncoder().encode(s))].map((b) => b.toString(16).padStart(2, '0')).join('');
 
 export const itrackSignature = (password: string, time: number) => md5(md5(password) + time);
@@ -54,7 +53,7 @@ export function parseTrack(
   for (const d of body?.record ?? []) {
     const imei = String(d.imei ?? '');
     const lat = num(d.latitude), lng = num(d.longitude), ts = num(d.gpstime);
-    if (d.datastatus === 1 || lat == null || lng == null || !ts) continue; // 1 = never online
+    if (d.datastatus === 1 || lat == null || lng == null || !ts) continue;
     if (Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
     const plate = normalizePlate(plateByImei.get(imei) ?? null);
     if (!plate) { noPlate.push(imei); continue; }
@@ -83,8 +82,6 @@ async function call<T>(path: string, query: Record<string, string>): Promise<T> 
 
 const TOKEN_KEY = 'itrack:access_token';
 
-// The doc asks for a refresh about every 90 min (token lives 2 h) and has a
-// "too frequent" error, so the token is kept in KV, not fetched every 5 min.
 async function accessToken(env: Env, account: string, password: string): Promise<string> {
   const cached = await env.SESSION_CACHE?.get(TOKEN_KEY);
   if (cached) return cached;
@@ -109,14 +106,13 @@ export async function pollItrack(env: Env): Promise<{ skipped?: true; devices?: 
     const list = await call<{ record?: RawDevice[] }>('/api/device/list', { access_token });
     const plateByImei = new Map((list.record ?? []).map((d) => [String(d.imei ?? ''), devicePlate(d)]));
     const imeis = [...plateByImei.keys()].filter(Boolean);
-    for (let i = 0; i < imeis.length; i += 100) { // /api/track takes at most 100 IMEIs
+    for (let i = 0; i < imeis.length; i += 100) {
       const track = await call<{ record?: RawTrack[] }>('/api/track', { access_token, imeis: imeis.slice(i, i + 100).join(',') });
       const r = parseTrack(track, plateByImei);
       fixes.push(...r.fixes);
       noPlate.push(...r.noPlate);
     }
   } catch (e) {
-    // A dead or replaced token must not stick for 80 min: log in again next run.
     await env.SESSION_CACHE?.delete(TOKEN_KEY);
     throw e;
   }

@@ -12,8 +12,6 @@ import {
   type SofaSetModule,
 } from './ship-commitment';
 
-/* The decision table the owner described, made executable. Every row here is a
-   sentence he said or a hole the 2026-07-30/31 prod measurement found. */
 
 const line = (over: Partial<ShipLineFact> = {}): ShipLineFact => ({
   lineRef: 'L1',
@@ -40,7 +38,6 @@ describe('planShipCommitments — binding follows the fact, not the dialog', () 
   });
 
   test('line without a PO -> plain oversell, NO binding', () => {
-    // The 3 stranded prod OUTs (2990-DO-2607-009 / -017) are exactly this shape.
     const d = only(line({ expectedBatchNo: null }));
     expect(d.bind).toBe(false);
     expect(d.batchNo).toBeNull();
@@ -49,8 +46,6 @@ describe('planShipCommitments — binding follows the fact, not the dialog', () 
 
   test('sofa with no received batch but one bound PO -> BOUND (the drop-ship case)', () => {
     const d = only(line({ isSofa: true, expectedBatchNo: 'PO-1', availableQty: 5 }));
-    // availableQty is irrelevant for a sofa: its OUT is batch-scoped, so pooled
-    // stock of another dye lot must never be consumed for it.
     expect(d).toMatchObject({ bind: true, batchNo: 'PO-1', reason: 'sofa_before_arrival' });
   });
 
@@ -76,10 +71,6 @@ describe('planShipCommitments — binding follows the fact, not the dialog', () 
   });
 
   test('no allocator pick (no incoming supply for the bucket) binds nothing', () => {
-    // Since PR-4 expectedBatchNo carries the live allocator's pick; null means
-    // the pooled open-PO supply has nothing for this bucket. (Pre-flip the same
-    // null came from resolveExpectedBatchBySoItem 'block' on >1 live PO —
-    // audit H3; the allocator has no ambiguity, its ties auto-pick.)
     expect(only(line({ isSofa: true, expectedBatchNo: null }))).toMatchObject({
       bind: false, reason: 'no_po',
     });
@@ -100,18 +91,6 @@ describe('planShipCommitments — binding follows the fact, not the dialog', () 
 });
 
 describe('strictBatch — binding a non-sofa must NOT cost it the fallback repair', () => {
-  /* THE REGRESSION THIS GUARDS. Migration 0230 first excluded EVERY committed
-     OUT from fn_reconcile_uncosted_out, justified as "costing them from an
-     arbitrary dye lot is exactly the colour-mixing batch binding exists to
-     prevent". That argument is about SOFA. A mattress has no dye lot, and the
-     exclusion turned a repairable RM0 into a permanent one: bind MAT-X to
-     PO-500, cancel PO-500 (or let the supplier re-ship under a new number, or
-     receive the goods by transfer / stock take), and fn_reconcile_dropship_batch
-     never fires for PO-500 while the batch-agnostic repair steps over the OUT
-     forever. On main, ANY later stock-IN fixed that OUT.
-
-     strictBatch is what the SQL keys the exclusion off, so these two rows are
-     the whole difference. */
   test('a SOFA binding is strict — its batch is a dye lot, never substitutable', () => {
     const d = only(line({ isSofa: true, expectedBatchNo: 'PO-500' }));
     expect(d).toMatchObject({ bind: true, strictBatch: true });
@@ -129,11 +108,6 @@ describe('strictBatch — binding a non-sofa must NOT cost it the fallback repai
 });
 
 describe('a qty-increase on a line that ALREADY shipped elsewhere', () => {
-  /* resyncInventoryForDo keys its delta on (warehouse, code, variant, BATCH).
-     Stamping a batch onto a line whose earlier units went out un-batched would
-     make the resync reverse a costed OUT and re-issue the whole line against
-     goods that have not arrived — the temporal form of the partial short the
-     table already refuses. */
   test('earlier units went out UN-BATCHED -> the delta does not bind', () => {
     const d = only(line({
       expectedBatchNo: 'PO-1', priorShippedQty: 5, priorBatchNo: null,
@@ -202,8 +176,6 @@ describe('planSofaSetPoConflicts — a sofa SET binds ONE PO, not one per module
   });
 
   test('a module that would ship UN-batched alongside a bound one is a split too', () => {
-    // Un-batched means plain FIFO picks its lot — a different dye lot by
-    // another name, which is what the set rule exists to stop.
     const cf = planSofaSetPoConflicts([
       mod({ lineRef: 'a', boundBatchNo: 'PO-A' }),
       mod({ lineRef: 'b', itemCode: 'BOOQIT-LL', boundBatchNo: null }),
@@ -241,7 +213,6 @@ describe('planSofaSetPoConflicts — a sofa SET binds ONE PO, not one per module
   });
 });
 
-/* ── the MRP half ─────────────────────────────────────────────────────────── */
 
 const K = 'wh-kl|TRION-(K)|';
 
@@ -269,9 +240,6 @@ describe('outstandingCommitments — the same "still short" test the SQL reconci
   });
 
   test('an OUT the reconcile can never claim is NOT a commitment', () => {
-    // Neither signal: an accidental short-ship (the concurrent-DO race 0088
-    // hardened against). Nothing will hand these units over, so deducting them
-    // from MRP would take away supply that stays free.
     expect(outstandingCommitments([mov({ lineCommitted: false, headerDropship: false })]).size).toBe(0);
   });
 
@@ -291,13 +259,9 @@ describe('outstandingCommitments — the same "still short" test the SQL reconci
   });
 });
 
-/** The qty-only view of a commitment map, for the assertions that only care
- *  about the number. The map's VALUE is structured now so `unmatched` can be
- *  reported without ever splitting the key (a variant key contains '|'). */
 const qtyMap = (m: Map<string, OutstandingCommitment>): Map<string, number> =>
   new Map([...m].map(([k, v]) => [k, v.qty]));
 
-/** A commitment map keyed exactly as outstandingCommitments builds it. */
 const owed = (
   pairs: Array<[bucketKey: string, batchNo: string, qty: number]>,
 ): Map<string, OutstandingCommitment> => new Map(pairs.map(([bucketKey, batchNo, qty]) => {
@@ -315,8 +279,6 @@ describe('applyCommittedSupply — deducted exactly once, and never double-count
   test('committed units leave the PO pool AND return to on-hand stock', () => {
     const r = applyCommittedSupply([po()], owed([[K, 'PO-A', 1]]));
     expect(r.entries).toEqual([{ ...po(), qtyLeft: 2 }]);
-    // THE INVARIANT: the ship's OUT already took this unit off inventory_balances,
-    // so deducting from PO supply without adding it back would count it twice.
     expect(r.stockAddBack).toEqual(new Map([[K, 1]]));
     expect(r.unmatched).toEqual([]);
   });
@@ -340,9 +302,6 @@ describe('applyCommittedSupply — deducted exactly once, and never double-count
     const r = applyCommittedSupply([po({ qtyLeft: 1 })], owed([[K, 'PO-A', 4]]));
     expect(r.entries).toEqual([]);
     expect(r.stockAddBack).toEqual(new Map([[K, 1]]));
-    // FIX 4 — reported AS DATA, with the bucket spelled out so a caller can
-    // print it. These rows are the ones most worth seeing: the units left the
-    // shelf and no receipt is ever going to net them.
     expect(r.unmatched).toEqual([{
       bucketKey: K, warehouseId: 'wh-kl', itemCode: 'TRION-(K)', variantKey: '',
       batchNo: 'PO-A', qty: 3,
@@ -379,9 +338,6 @@ describe('applyCommittedSupply — deducted exactly once, and never double-count
   });
 
   test('after the receipt nets it, the deduction is gone — no second bite', () => {
-    // Receipt of 3: received_qty moves the PO line to 0 left, and the reconcile
-    // books the consumption so the commitment recomputes to 0. Both sides fall
-    // away from the SAME ledger fact.
     const committed = outstandingCommitments([mov({ outQty: 1, consumedQty: 1 })]);
     const r = applyCommittedSupply([po({ qtyLeft: 0 })], committed);
     expect(r.entries).toEqual([]);

@@ -5,10 +5,6 @@
 import { describe, expect, test, vi } from 'vitest';
 import { buildDoItemRow, carriedPhotoUrls, loadCarriedSoLinePhotos } from './do-item-row';
 
-/* The scoped read, faked at the PostgREST seam: `scope` receives the builder
-   and the test asserts it was APPLIED — the predicate is the tenant boundary,
-   so a helper that forgot to pass the query through `scope` would ship a
-   cross-company photo read. */
 function fakeSb(rows: Array<{ id: string; photo_urls: string[] | null }>) {
   const calls: Array<{ table: string; select: string; inIds: unknown[] }> = [];
   const sb = {
@@ -45,7 +41,6 @@ describe('loadCarriedSoLinePhotos', () => {
     expect(calls[0]!.table).toBe('mfg_sales_order_items');
     expect(calls[0]!.inIds).toEqual(['si-1', 'si-2']);
     expect(map.get('si-1')).toEqual(['so-items/SO-1/si-1/a.jpg']);
-    // A null photo_urls row lands in the map as [] — readers never see null.
     expect(map.get('si-2')).toEqual([]);
   });
 
@@ -63,8 +58,6 @@ describe('loadCarriedSoLinePhotos', () => {
   });
 
   test('a failed read degrades to photo-less lines (empty map), never a throw', async () => {
-    /* Best-effort by design — the keys stay on the SO line and a re-carry is
-       possible, so a blip must not fail the delivery being cut. */
     const sb = {
       from: () => ({
         select: () => ({

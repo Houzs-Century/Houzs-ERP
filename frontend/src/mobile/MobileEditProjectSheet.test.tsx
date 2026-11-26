@@ -40,7 +40,6 @@ describe("EditProjectSheet — every event field is editable at once", () => {
     expect(field("Booth number").value).toBe("A01-A04");
     expect(field("Venue").value).toBe("SETIA SPICE CONVENTION CENTRE");
     expect(field("Organizer").value).toBe("HOMELOVE");
-    // DateField shows the canonical ISO as dd/mm/yyyy.
     expect(field("Start date").value).toBe("2026/09/04");
     expect(field("End date").value).toBe("2026/09/06");
   });

@@ -97,9 +97,7 @@ export type BillFamily = {
   totalSen: number | null;
   askedSen: number;
   paidSen: number;
-  /** Asked, not paid yet — waiting for Finance, in its cycle, or returned to fix. */
   pendingSen: number;
-  /** Left to ask on the bill; null when its total is not known. */
   remainingSen: number | null;
   installments: FamilyMember[];
 };
@@ -126,11 +124,6 @@ export const familyRootId = (r: Row): string => String(r.parent_request_id ?? r.
 /** Who may edit / withdraw: the requester, while Finance has not answered. */
 export const requesterMayChange = (status: string): boolean => status === 'SUBMITTED' || status === 'REJECTED';
 
-/* ── The bank's confirmation of a voucher ─────────────────────────────────
-   A voucher is confirmed when its live journal entry (source PV, its number)
-   is matched to a bank-statement line that is POSTED — the read every bank
-   reconciliation screen keeps (a match on a line that is not POSTED is nobody's
-   claim). Returns the voucher numbers that are. */
 export async function bankConfirmedVoucherNumbers(sb: any, companyId: number, pvNumbers: string[]): Promise<{ ok: true; confirmed: Set<string> } | { ok: false; reason: string }> {
   const confirmed = new Set<string>();
   const nos = [...new Set(pvNumbers.filter(Boolean))];
@@ -207,10 +200,6 @@ export function refundAnswerRefusal(req: Row, answer: AnswerDraft): { error: str
     : null;
 }
 
-/* Called by the create door of the voucher and of the AP invoice, BEFORE the
-   document is written: the request must be this company's and still waiting —
-   one with a live answer is refused by name — and a refund request takes a
-   refund on its own order (refundAnswerRefusal). */
 export async function paymentRequestLinkGuard(c: any, rawId: unknown, answer: AnswerDraft = { kind: 'PV' }): Promise<{ request: Row | null } | { resp: Response }> {
   const id = typeof rawId === 'string' ? rawId.trim() : '';
   if (!id) return { request: null };
@@ -311,26 +300,17 @@ export async function linkPaymentRequest(
     .eq('company_id', co.companyId).eq('id', req.id).eq('status', String(req.status));
   claim = req.pv_id ? claim.eq('pv_id', req.pv_id) : claim.is('pv_id', null);
   claim = req.ap_invoice_id ? claim.eq('ap_invoice_id', req.ap_invoice_id) : claim.is('ap_invoice_id', null);
-  /* One row by id: UPDATE … RETURNING through maybeSingle — null means someone
-     claimed or moved it first. */
   const { data: claimed, error } = await claim.select('id').maybeSingle();
   if (error) return { ok: false, status: 500, body: { error: 'link_failed', reason: error.message } };
   if (!claimed) {
     return { ok: false, status: 409, body: { error: 'request_taken', message: `${req.request_no} was answered by another document a moment ago — nothing was created.` } };
   }
-  /* A balance's answer carries the bill (on the first request) and anything
-     attached to the balance itself — the official invoice, say. */
   let copied = 0;
   if (req.parent_request_id) copied += await copyRequestFiles(c, co.companyId, String(req.parent_request_id), doc);
   copied += await copyRequestFiles(c, co.companyId, String(req.id), doc);
   return { ok: true, filesCopied: copied };
 }
 
-/* The bill travels with the money: each request file is copied into the SLIPS
-   bucket under the answering document's own prefix and indexed on its files
-   table (PV_FILES / AP_INVOICE_FILES — the documents' own specs), so its print
-   bundle carries it. A copy that fails leaves the file where it was (still on
-   the request) — the document is not undone for evidence. */
 async function copyRequestFiles(c: any, companyId: number, requestId: string, doc: { kind: AnswerKind; id: string }): Promise<number> {
   const bucket = (c.env as { SLIPS?: { get: (k: string) => Promise<any>; put: (k: string, v: ArrayBuffer, o?: unknown) => Promise<unknown> } }).SLIPS;
   if (!bucket) return 0;
@@ -344,7 +324,6 @@ async function copyRequestFiles(c: any, companyId: number, requestId: string, do
     try {
       const obj = await bucket.get(String(f.file_key));
       if (!obj) continue;
-      /* R2ObjectBody reads with arrayBuffer(); a bare body stream reads through Response. */
       const bytes: ArrayBuffer = typeof obj.arrayBuffer === 'function' ? await obj.arrayBuffer() : await new Response(obj.body).arrayBuffer();
       const ext = String(f.file_key).split('.').pop() ?? 'bin';
       const key = `${home.keyPrefix}/${companyId}/${doc.id}/${crypto.randomUUID()}.${ext}`;
@@ -355,7 +334,6 @@ async function copyRequestFiles(c: any, companyId: number, requestId: string, do
       });
       if (!insErr) copied += 1;
     } catch {
-      /* The file stays on the request; the next copy is tried. */
     }
   }
   return copied;

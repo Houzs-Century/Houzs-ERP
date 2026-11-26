@@ -24,15 +24,12 @@ vi.mock('../../vendor/scm/lib/supplier-maintenance-queries', async (importOrigin
   useCreateMaintainedSupplier: () => ({ mutateAsync: createSupplier, isPending: false }),
   useUpdateMaintainedSupplier: () => ({ mutateAsync: updateSupplier, isPending: false }),
 }));
-/* The next-code preview (GET /suppliers/next-code): the kind, the name's first
-   letter, and — in this fake — always number 002. */
 vi.mock('../../vendor/scm/lib/suppliers-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/suppliers-queries')>()),
   useNextSupplierCode: (kind: string, name: string, enabled: boolean) => ({
     data: enabled && name.trim() ? { kind, code: `${kind}-${name.trim()[0]!.toUpperCase()}002` } : undefined,
   }),
 }));
-/* State / City / Postcode reads the localities master; the form only needs the postcode here. */
 vi.mock('../../vendor/scm/components/AddressTripleFields', () => ({
   AddressTripleFields: ({ value, onChange, postcodeRequired }: {
     value: { state: string; city: string; postcode: string };
@@ -63,7 +60,6 @@ beforeEach(() => {
   updateSupplier.mockReset().mockResolvedValue({ supplier: { id: 's-bed' } });
 });
 
-/** The table row a supplier's name sits on. */
 const rowOf = (name: string): HTMLElement => screen.getByText(name).closest('tr') as HTMLElement;
 
 describe('the list', () => {
@@ -72,7 +68,6 @@ describe('the list', () => {
     expect(screen.getByText('BEST BED SDN BHD')).toBeTruthy();
     expect(screen.getByText('RM 8,000.00')).toBeTruthy();
     expect(screen.getByText('Maybank · 5123 4567 8901')).toBeTruthy();
-    /* Tags in English: Finance only, the control, the TIN on file or missing, the status. */
     const land = within(rowOf('MAJU PROPERTY SDN BHD'));
     expect(land.getByText('Finance only')).toBeTruthy();
     expect(land.getByText('Other 405')).toBeTruthy();
@@ -81,9 +76,7 @@ describe('the list', () => {
     expect(bed.getByText('Trade 400')).toBeTruthy();
     expect(bed.getByText('On file')).toBeTruthy();
     expect(bed.getByText('Active')).toBeTruthy();
-    /* The header in English (the table title-cases every header). */
     expect(screen.getByText('Advance Open')).toBeTruthy();
-    /* No monospace on the code. */
     expect(bed.getByText('400-B001').getAttribute('style')).toBeNull();
 
     const views = within(screen.getByRole('group', { name: 'Suppliers' }));
@@ -130,18 +123,14 @@ describe('the pop-out', () => {
     expect(d.getByText('Advance open')).toBeTruthy();
     expect(d.getByText('Open bills (3)')).toBeTruthy();
     expect(d.getByText('AutoCount')).toBeTruthy();
-    /* Each number opens its own document: a PI, an AP bill, a voucher. */
     expect(d.getByText('PI-2609-002').getAttribute('href')).toBe('/scm/purchase-invoices/pi-1');
     expect(d.getByText('HC-API-2609-004').getAttribute('href')).toBe('/scm/ap-invoices/api-1');
     expect(d.getByText('AP bill')).toBeTruthy();
     expect(d.getByText('PV-2609-003').getAttribute('href')).toBe('/scm/payment-vouchers/pv-adv');
     expect(d.getByText('PV-2609-001').getAttribute('href')).toBe('/scm/payment-vouchers/pv-1');
-    /* A foreign-currency bill reads in its own currency; the dates year-first. */
     expect(d.getByText('USD 500.00')).toBeTruthy();
     expect(d.getByText('2026/10/20')).toBeTruthy();
-    /* A credit note is not a link (it has no page here). */
     expect(d.getByText('HC-SCN-2609-001').closest('a')).toBeNull();
-    /* The voucher's state in Money out's words. */
     expect(d.getByText('Approved')).toBeTruthy();
     expect(d.getByText('5123 4567 8901')).toBeTruthy();
     expect(d.getByText('Edit')).toBeTruthy();
@@ -180,7 +169,6 @@ describe('the form', () => {
     await waitFor(() => expect(code()).toBe('400-T002'));
     expect(shared()).toBe(true);
 
-    /* Typed over, the code stays — a later name change does not renumber it. */
     fireEvent.change(screen.getByLabelText('Credit Account (code)'), { target: { value: '400-X001' } });
     fireEvent.change(screen.getByLabelText('Company name *'), { target: { value: 'ANOTHER NAME' } });
     expect(code()).toBe('400-X001');

@@ -2,16 +2,6 @@ import type { Env } from "../types";
 import { hasPermission } from "./permissions";
 import type { PositionPolicyRow } from "./positionPolicyRows";
 
-/**
- * Who may act on a project's checklist — the owner's people rules, extracted
- * from routes/projects.ts (2026-08-14, file-size ratchet).
- *
- * These are the four gates the checklist routes apply on top of the permission
- * middleware: crew scoping, the brand-scoped approver split, the Sales Director
- * floorplan exception, and the two-warehouse defect-review split. They are the
- * rules most likely to be re-read and re-argued, so they live together rather
- * than scattered through a 5,000-line route file.
- */
 
 // Owner 2026-07-21: helpers/storekeepers are CREW-SCOPED — they may view/edit
 // only events they're crewed on (setup/dismantle FK slots or the per-lorry
@@ -46,8 +36,6 @@ export function isCrewScopedUser(
   if (!user) return false;
   const granted = (user as any).permissions_set ?? user.permissions;
   if (hasPermission(granted, "*") || hasPermission(granted, "projects.write")) return false;
-  // The Title's row decides (Roles & Permissions › Titles, Duty column);
-  // the name rule below is the fallback for a Title with no row.
   const row = user.position_policy;
   if (row) return row.duty === "helper" || row.duty === "warehouse";
   const pos = (user.position_name ?? "").trim().toLowerCase();
@@ -117,7 +105,7 @@ export async function approverBrandBlocked(
     .bind(userId)
     .all<{ brand: string }>();
   const brands = (rows.results ?? []).map((r) => (r.brand ?? "").trim()).filter(Boolean);
-  if (brands.length === 0) return null; // unrestricted approver
+  if (brands.length === 0) return null;
   const proj = await env.DB.prepare(
     `SELECT p.brand FROM project_checklist pc
        JOIN projects p ON p.id = pc.project_id

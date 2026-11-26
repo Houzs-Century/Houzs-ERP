@@ -51,7 +51,6 @@ import { stampSoRefs } from "../lib/so-ref-lookup";
 export const outstanding = new Hono<{ Bindings: Env; Variables: Variables }>();
 outstanding.use("*", supabaseAuth);
 
-// Map endpoint → (view, date column for from/to filter).
 const MODULES: Record<string, { view: string; dateCol: string }> = {
   po:  { view: "v_po_outstanding",  dateCol: "po_date" },
   grn: { view: "v_grn_outstanding", dateCol: "received_at" },
@@ -62,7 +61,6 @@ const MODULES: Record<string, { view: string; dateCol: string }> = {
   si:  { view: "v_si_outstanding",  dateCol: "invoice_date" },
 };
 
-// Tabs whose rows name a Sales Order, and the column that holds its number.
 const SO_DOC_KEY: Record<string, string> = { so: "doc_no", do: "so_doc_no", si: "so_doc_no" };
 
 for (const [slug, { view, dateCol }] of Object.entries(MODULES)) {
@@ -72,31 +70,20 @@ for (const [slug, { view, dateCol }] of Object.entries(MODULES)) {
     const from = c.req.query("from");
     const to = c.req.query("to");
 
-    // Page through so PostgREST's 1000-row cap can't silently truncate the
-    // outstanding list (an "all"/wide-range view can exceed 1000 docs).
     const { data, error } = await paginateAll((pFrom, pTo) => {
       let q = sb.from(view).select("*").order(dateCol, { ascending: false });
-      q = scopeToCompany(q, c); // multi-company: isolate to the active company (views expose company_id via mig 0062)
-      // outstanding filter: default = true (only outstanding rows)
+      q = scopeToCompany(q, c);
       if (outstandingParam === "true" || outstandingParam == null) {
         q = q.eq("is_outstanding", true);
       } else if (outstandingParam === "false") {
         q = q.eq("is_outstanding", false);
       }
-      // else 'all' (or any other value) → no filter, return both
-      /* LEAK GUARD (DRAFT) — a DRAFT Sales Invoice has not posted AR yet, so it
-         must never appear in the SI Outstanding / AR-aging list. The
-         v_si_outstanding view's is_outstanding CASE only excludes PAID/CANCELLED
-         (it would mark a DRAFT outstanding), so filter DRAFT out here. The view
-         exposes s.status, so this is safe (verified 0059_outstanding_views.sql). */
       if (slug === "si") q = q.neq("status", "DRAFT");
       if (from) q = q.gte(dateCol, from);
       if (to) q = q.lte(dateCol, to);
       return q.range(pFrom, pTo);
     });
     if (error) {
-      // The view is missing entirely → treat as "no data yet" so the page
-      // renders an empty tab instead of 500ing.
       if (/relation .* does not exist/i.test(error.message)) {
         return c.json({ rows: [] });
       }
@@ -136,28 +123,6 @@ for (const [slug, { view, dateCol }] of Object.entries(MODULES)) {
   });
 }
 
-/* ── LINE-LEVEL PO chasing list (GET /outstanding/po-lines, 2026-09-12) ───────
-   The six MODULES endpoints above are PER-COMPANY and HEADER-grained. The
-   procurement chasing list differs on BOTH axes and so is its own handler:
-
-     • LINE-grained — one row per outstanding PO line, backed by
-       scm.v_po_outstanding_lines (mig 20260912T1000). The existing
-       v_po_outstanding is a per-PO roll-up (qty + money) for AP; this is the
-       AutoCount "PO chasing list" shape (item / spec / warehouse / delivery
-       date per line) for a buyer chasing each supplier.
-
-     • CROSS-COMPANY — the owner wants HOUZS + 2990 in ONE list with a company
-       column (the TMS / delivery-planning pattern, companyScope.ts), NOT the
-       active-company isolation the money tabs use. So it widens with
-       scopeToAllowedCompanies (the caller's GRANTED companies — a rep pinned to
-       one still sees only that one; nothing leaks) and tags each row with
-       company_code via withCompanyCode so the UI can render the column.
-
-   Same ?outstanding=true|false|all + ?from/&to (po_date) contract and the same
-   missing-view graceful degradation as its siblings. Rolling sofa component
-   lines up into one "set" row is a PRESENTATION concern — there is no set key on
-   the line (binding_id is null; each component carries its own so_item_id) — so
-   it lives in the frontend, not here. */
 outstanding.get("/po-lines", async (c) => {
   const sb = c.get("supabase");
   const outstandingParam = c.req.query("outstanding");
@@ -169,15 +134,12 @@ outstanding.get("/po-lines", async (c) => {
       .from("v_po_outstanding_lines")
       .select("*")
       .order("po_date", { ascending: false });
-    q = scopeToAllowedCompanies(q, c); // CROSS-COMPANY: both books in one list
+    q = scopeToAllowedCompanies(q, c);
     if (outstandingParam === "true" || outstandingParam == null) {
       q = q.eq("is_outstanding", true);
     } else if (outstandingParam === "false") {
       q = q.eq("is_outstanding", false);
     }
-    // else 'all' → no is_outstanding filter, return both
-    // A chasing list has nothing to chase on a fully received line, so 'all'
-    // drops it too (DEV-43); 'completed' is exactly those lines, so it keeps them.
     if (outstandingParam !== "false") q = q.gt("remaining_qty", 0);
     if (from) q = q.gte("po_date", from);
     if (to) q = q.lte("po_date", to);
@@ -207,20 +169,6 @@ outstanding.get("/po-lines", async (c) => {
   return c.json({ rows });
 });
 
-/* Per-module aggregate shape for /summary. The JS reducer this replaces sums
-   `Number(r.total_sen ?? r.local_total_sen ?? 0)` and
-   `Number(r.outstanding_sen ?? 0)` over every outstanding row. Cross-referenced
-   against the v_*_outstanding view definitions (mig 0084), each view exposes at
-   most ONE of {total_sen, local_total_sen} and only pi/si expose
-   outstanding_sen — so no view ever mixes columns in the `??` chain and each
-   module maps to a single SUM column (or none → the total is always 0). We push
-   these sums into SQL via PostgREST aggregates:
-     - pkCol:   a non-null PK → PK.count() equals rows.length exactly.
-     - amtCol:  the column the `total_sen` reduce resolves to for this view
-                (null ⇒ total_sen is always 0, so no sum is requested).
-     - outCol:  outstanding_sen where the view has it (null ⇒ always 0).
-   SUM ignores NULLs (0 contribution) exactly as the `?? 0` chain does, so the
-   numbers stay byte-identical. */
 const SUMMARY_AGG: Record<
   string,
   { pkCol: string; amtCol: string | null; outCol: string | null }
@@ -234,34 +182,12 @@ const SUMMARY_AGG: Record<
   si:  { pkCol: "id",     amtCol: "total_sen",       outCol: "outstanding_sen" },
 };
 
-/* /outstanding/summary — counts + totals across all modules in one call.
-   Used by the cross-module Outstanding Dashboard. Degrades to a zeroed summary
-   when a view is missing/empty.
-
-   Aggregates in SQL (one PostgREST aggregate request per module) instead of
-   fetching every outstanding row and reducing in JS. Output numbers are
-   byte-identical to the old reducer (see SUMMARY_AGG). If the aggregate request
-   errors for any reason (aggregates disabled, missing view, etc.) that module
-   falls back to the original paginate-all + JS reduce so a total is never
-   wrong — worst case it's as slow as before, never incorrect. */
 outstanding.get("/summary", async (c) => {
   const sb = c.get("supabase");
   const from = c.req.query("from");
   const to = c.req.query("to");
   const wantSnapshot = c.req.query("snapshot") === "1";
 
-  /* SNAPSHOT FAST PATH (?snapshot=1) — serve the pre-aggregated scm.mv_ar_aging
-     (migration 0151) instead of the seven live SUM/count scans. The live query
-     stays the DEFAULT: the Outstanding page is a same-day operational dashboard
-     and always sends a user-chosen date range (Outstanding.tsx), which this
-     all-time snapshot does not carry — so the snapshot is opt-in for callers who
-     want the cheap all-time rollup and accept a nightly figure.
-
-     Only honoured with NO date range: the MV is all-time, so a date-bounded
-     request MUST fall through to the live path (which filters each module by its
-     own date column). A missing MV / freshness row — migration 0151 not yet
-     applied on this DB — also falls through, so the endpoint degrades to exactly
-     the behaviour it has today. */
   if (wantSnapshot && !from && !to) {
     const meta = await sb
       .from("mv_ar_aging_meta")
@@ -272,16 +198,10 @@ outstanding.get("/summary", async (c) => {
       let mvQ = sb
         .from("mv_ar_aging")
         .select("module, cnt, total_sen, total_outstanding_sen");
-      mvQ = scopeToCompany(mvQ, c); // same REQUIRED-half predicate as the live path
+      mvQ = scopeToCompany(mvQ, c);
       const { data, error } = await mvQ;
       if (!error) {
         const snap = reduceAgingSnapshot((data ?? []) as AgingMvRow[]);
-        /* The materialized view sums the SI view's `total_sen - paid_sen`, so
-           this rollup is blind to order deposits exactly as the live aggregate
-           was. The MV is NOT rewritten to fix it — see the file header on why a
-           view is not touched here — so the snapshot SAYS its SI figure is a
-           ceiling instead of quietly presenting it as the same number the live
-           path now returns. */
         const si = snap.si as unknown as Record<string, unknown> | undefined;
         if (si) {
           si.deposit_applied = false;
@@ -294,31 +214,20 @@ outstanding.get("/summary", async (c) => {
         });
       }
     }
-    // fall through to the live computation below
   }
 
   const summary: Record<
     string,
     {
       count: number; total_sen?: number; total_outstanding_sen?: number;
-      /* SI only. `deposit_applied: false` means the figure does NOT subtract the
-         deposits taken on the source sales orders and is therefore a CEILING,
-         never an under-statement; `unavailable` means nothing could be read and
-         the numbers must not be printed at all. */
       deposit_applied?: boolean; deposit_note?: string | null; unavailable?: true;
     }
   > = {};
 
-  // Shared filter set — IDENTICAL to the individual endpoints' outstanding path:
-  // is_outstanding=true + company scope + SI DRAFT leak-guard + optional date range.
-  // Typed loosely (any) on purpose: the dynamic aggregate `.select("cnt:...")`
-  // string defeats supabase-js's static column-type inference, so we chain the
-  // PostgREST filter methods structurally without dragging in the builder's type.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const applyFilters = (q0: any, slug: string, dateCol: string): any => {
     let q = q0.eq("is_outstanding", true);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
-    // LEAK GUARD (DRAFT) — keep DRAFT SIs out of the AR outstanding totals.
+    q = scopeToCompany(q, c);
     if (slug === "si") q = q.neq("status", "DRAFT");
     if (from) q = q.gte(dateCol, from);
     if (to) q = q.lte(dateCol, to);
@@ -355,16 +264,12 @@ outstanding.get("/summary", async (c) => {
           aggregate,
         );
       } catch (e) {
-        /* A throw here is a missing view or a broken client. It must not become
-           a zeroed module: on this page a 0 reads as "nothing outstanding". */
         summary[slug] = unavailableSiSummary(e instanceof Error ? e.message : String(e));
       }
       continue;
     }
 
     if (agg) {
-      // PostgREST aggregate: PK.count() = row count, plus the module's SUM
-      // column(s). All aggregates → a single implicit group → one returned row.
       const parts = [`cnt:${agg.pkCol}.count()`];
       if (agg.amtCol) parts.push(`amt:${agg.amtCol}.sum()`);
       if (agg.outCol) parts.push(`outs:${agg.outCol}.sum()`);
@@ -377,7 +282,6 @@ outstanding.get("/summary", async (c) => {
         const row = ((data ?? []) as Array<Record<string, unknown>>)[0] ?? {};
         summary[slug] = {
           count: Number(row.cnt ?? 0),
-          // SUM over zero rows is NULL → coalesce to 0, matching the empty reduce.
           total_sen: agg.amtCol ? Number(row.amt ?? 0) : 0,
           total_outstanding_sen: agg.outCol ? Number(row.outs ?? 0) : 0,
         };
@@ -386,9 +290,6 @@ outstanding.get("/summary", async (c) => {
     }
 
     if (!done) {
-      // Fallback — original paginate-all + JS reduce. Preserves exact numbers and
-      // the missing-view graceful degradation (error → data null → zeroed module).
-      // Ordered by the view's key: unordered pages repeat / skip rows (lib/paginate-all.ts).
       const { data } = await paginateAll((pFrom, pTo) =>
         applyFilters(sb.from(view).select("*"), slug, dateCol).order(agg?.pkCol ?? "id", { ascending: true }).range(pFrom, pTo),
       );
@@ -406,9 +307,6 @@ outstanding.get("/summary", async (c) => {
       };
     }
   }
-  // Live path: numbers are computed on this request, so `refreshed_at` is null
-  // (no snapshot) and `snapshot` is false — Finance can tell a live figure from
-  // a nightly one by these two fields.
   return c.json({ summary, snapshot: false, refreshed_at: null });
 });
 

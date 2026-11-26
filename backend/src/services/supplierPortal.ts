@@ -1,11 +1,3 @@
-/**
- * Supplier Portal token lifecycle — proposal §6.3.
- *
- * Mirrors customer portal (services/caseTracking.ts) but scopes the
- * token to (case, creditor_code) so a supplier rep only sees the job
- * assigned to them. The main UI's "Copy supplier link" button issues
- * one of these and pastes the URL into WhatsApp / email.
- */
 import type { Env } from "../types";
 import { generateToken } from "./auth";
 
@@ -44,7 +36,6 @@ export async function resolveSupplierToken(
   if (row.revoked_at) return null;
   if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return null;
 
-  // Best-effort touch; failure shouldn't block the request.
   env.DB.prepare(
     `UPDATE assr_supplier_tokens SET last_seen_at = datetime('now') WHERE id = ?`
   )
@@ -66,12 +57,6 @@ export async function issueSupplierToken(
   creditorCode: string | null,
   ttlDays: number = SUPPLIER_PORTAL_TTL_DAYS
 ): Promise<string> {
-  // Postgres rejects `column IS ?` — the RHS of IS must be a literal
-  // (NULL / TRUE / FALSE / DISTINCT FROM ...), not a bound param. Match
-  // both a real creditor_code AND the "no creditor resolved yet" NULL
-  // case by folding both sides through COALESCE with an empty-string
-  // sentinel (real codes never look like ''). Works on SQLite (dev
-  // fallback) and Postgres (prod) identically.
   const existing = await env.DB.prepare(
     `SELECT token FROM assr_supplier_tokens
       WHERE assr_id = ?

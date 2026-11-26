@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// fleet-day/vm — the view-model assembly for the lorry-card board. PURE: it
-// folds the two feeds (FleetDayTrip runs + PlanningOrder drops) and a stop-status
-// map into the LorryRunVM / DocRowVM the UI renders, and applies the filter row
-// + search. Kept out of the components so the grouping, filtering and search
-// rules are testable without a browser (vm.test.ts).
-// ----------------------------------------------------------------------------
 import type { JobProgress } from '../../../vendor/scm/lib/delivery-job';
 import type { PlanningOrder } from '../../../vendor/scm/lib/delivery-planning-queries';
 import type { FleetDayTrip } from '../../../vendor/scm/lib/fleet-day-queries';
@@ -19,7 +12,6 @@ import {
   type RunStatus, type SlotKind, type RunRollup,
 } from '../../../vendor/scm/lib/fleet-day-cards';
 
-/* The clock + day the board is rendered against (Malaysian time). */
 export type DayClock = { day: string; today: string; nowMinutes: number };
 
 /** An ISO instant as a Malaysian-time clock "8:42 AM" (null-safe). Time only —
@@ -69,17 +61,10 @@ export function actualDepartOf(docs: ReadonlyArray<{ order: PlanningOrder }>): s
 }
 
 export type DocRowVM = {
-  /** The board-row key the grid/selection uses (so:<docNo>). */
   key: string;
   order: PlanningOrder;
-  /** The feed row type — SO deliveries vs the non-SO jobs (assr / dp / project)
-   *  the same lorry also runs. Drives the job tag + which identity line to show. */
   rowType: PlanningOrder['row_type'];
-  /** The job-type tag for a NON-SO job ("Setup" / "Dismantle" / "Transfer item" /
-   *  "Supplier pickup" / "Service"…); null for an SO delivery, which needs no tag. */
   jobLabel: string | null;
-  /** The identity line the card shows: SO · DO · Ref for a delivery, the job's own
-   *  document (DP / ASSR / project code) for a non-SO job. */
   codeLine: string;
   soDocNo: string;
   doNumber: string | null;
@@ -101,25 +86,16 @@ export type DocRowVM = {
   lateReason: string | null;
   hasPod: boolean;
   deliveredAt: string | null;
-  /** The crew set off for it (Start / on the way), and reached it (Arrived). */
   departedAt: string | null;
   arrivedAt: string | null;
-  /** The latest non-draft/cancelled DO's id — the POD + crew target; null when none. */
   latestLiveDoId: string | null;
-  /** A delivery whose only DO is still a DRAFT (the card tags it "DRAFT DO"). */
   draftDo: boolean;
-  /** A job's POD photo count (job progress); null for a delivery order, whose
-   *  photos live on the DO (`hasPod` says whether it has any). */
   podPhotoCount: number | null;
 };
 
 export type LorryRunVM = {
-  /** The scheduled trip backing this card, or null for a lorry that carries
-   *  assigned drops (or is a pinned in-house lorry) with no run opened yet. */
   trip: FleetDayTrip | null;
-  /** The lorry master id; null for a plate seen only as a drop's crew label. */
   lorryId: string | null;
-  /** In-house (own fleet) vs outsourced/3PL — drives the board sectioning. */
   isInternal: boolean;
   plate: string;
   tripNo: string | null;
@@ -163,20 +139,12 @@ export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock, 
     return s !== 'DRAFT' && s !== 'CANCELLED';
   });
   const doNumber = live.length > 0 ? live[live.length - 1]!.do_number : null;
-  // A non-SO job (assr / dp / project): its tag comes from the shared leg vocabulary
-  // (LEG_LABEL — the same one the mobile run-sheet and job panel use) and its
-  // identity line is the job's own document (dp_no for a DP job, else the row's ref
-  // = the ASSR no. / project code). An SO delivery keeps its SO · DO · Ref line.
   const jr = jobRefOf(o);
   const jobLabel = jr ? (LEG_LABEL[jr.leg] ?? jr.leg) : null;
   const jobDoc = jr ? (jr.sourceType === 'dp' ? o.dp_no ?? null : o.ref ?? null) : null;
   const codeLine = jr
     ? (jobDoc ?? '')
     : [o.so_doc_no, doNumber, o.so_ref].filter(Boolean).join(' · ');
-  // A completed NON-SO job (an ASSR service leg, a DP transfer / dismantle, a
-  // project window) carries its done-ness on delivery_state — it has no DO status
-  // or job-progress completion the stop-status reader keys on — so fold it into
-  // the day's done list instead of showing a finished job as "Not started".
   const effStatus: StopStatus = o.row_type !== 'so' && o.delivery_state === 'DELIVERED' ? 'done' : status;
   return {
     key: `so:${o.so_doc_no}`,
@@ -203,8 +171,6 @@ export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock, 
     late: isLate(effStatus),
     lateReason: lateReason(effStatus, { day: clock.day, today: clock.today, slotEnd }),
     hasPod: !!o.has_pod,
-    /* A delivery order carries its own stamps; a set-up, pickup or service job keeps them
-       on the crew's job progress. */
     deliveredAt: o.delivered_at ?? progress?.completed_at ?? o.customer_delivered_date ?? null,
     departedAt: o.departure_at ?? progress?.departed_at ?? null,
     arrivedAt: o.arrival_at ?? progress?.arrived_at ?? null,
@@ -214,7 +180,6 @@ export function docRowVM(o: PlanningOrder, status: StopStatus, clock: DayClock, 
   };
 }
 
-/** Minutes between two stamps; null when either is missing or they run backwards. */
 const minutesBetween = (from: string | null, to: string | null): number | null => {
   if (!from || !to) return null;
   const m = Math.round((Date.parse(to) - Date.parse(from)) / 60_000);
@@ -239,14 +204,8 @@ export function stopTimes(docs: readonly DocRowVM[]): Map<string, { roadMin: num
 /** "1 h 05 min" / "25 min". */
 export const fmtMinutes = (m: number): string => (m >= 60 ? `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min` : `${m} min`);
 
-/** Neutral plate/stop colour for a card with no trip (no map route to tint). */
 const NO_TRIP_COLOR = '#b4b9ad';
 
-/** Assemble one lorry card from its (optional) trip + the drops on it, sorted by
- *  stop no. With a trip, the crew + IC/phone come off the trip and the drivers
- *  master; without one (a lorry given drops on the DP board but no run opened),
- *  they fall back to the drops' own crew snapshot. driver-2's NAME always comes
- *  off the crew snapshot (its only store). */
 function makeRunVM(args: {
   plate: string;
   lorryId: string | null;
@@ -342,7 +301,6 @@ export function buildLorryCards(
   const tripByPlate = new Map<string, FleetDayTrip>();
   for (const t of trips) if (t.lorry?.plate) tripByPlate.set(platekey(t.lorry.plate), t);
 
-  // Each drop -> its lorry key: its trip's plate, else its crew's plate label.
   const docsByKey = new Map<string, DocRowVM[]>();
   for (const d of dayDocs) {
     const viaTrip = d.order.trip_id ? trips.find((t) => t.id === d.order.trip_id) : undefined;
@@ -351,8 +309,6 @@ export function buildLorryCards(
     (docsByKey.get(key) ?? docsByKey.set(key, []).get(key)!).push(d);
   }
 
-  // Keys to show: every trip's lorry, every active in-house lorry (pinned), and
-  // every lorry a drop was assigned to today.
   const keys = new Set<string>();
   for (const t of trips) if (t.lorry?.plate) keys.add(platekey(t.lorry.plate));
   for (const l of lorries) if (l.is_internal === true && l.active) keys.add(platekey(l.plate));
@@ -427,8 +383,6 @@ export function buildLorryRoutes(
         lng: pt.lng,
         order,
         label,
-        // Condensed for the day-map legend ("10:30AM to 12:30PM" -> "10:30–12:30");
-        // the lorry card keeps the full slotLabel.
         windowLabel: condenseWindow(d.slotLabel) || null,
         approximate: approxRefs.has(d.soDocNo),
       });
@@ -438,9 +392,7 @@ export function buildLorryRoutes(
       color: colorForPlate(key),
       title: run.plate,
       crewLabel: run.driverName,
-      /* The lorry leaves from and comes back to its own home warehouse when it has one. */
       depot: homeOf(key) ?? depot,
-      /* Two stops at one address share a pin labelled "6, 7" instead of one hiding the other. */
       stops: mergeSameSpotStops(stops),
       allRefs: run.docs.map((d) => d.soDocNo),
       delivered: run.rollup.delivered,
@@ -450,14 +402,13 @@ export function buildLorryRoutes(
   return { routes, unlocated, noByRef };
 }
 
-/* ── Filter row + search ──────────────────────────────────────────────────*/
 export type StatusFilter = 'ALL' | 'scheduled' | 'active' | 'done' | 'overdue';
 export type SlotFilter = 'ALL' | 'AM' | 'PM';
 
 export type FleetFilters = {
-  region: string;          // 'ALL' or a region code
+  region: string;
   status: StatusFilter;
-  salespersonId: string;   // 'ALL' or a staff id
+  salespersonId: string;
   slot: SlotFilter;
   lateOnly: boolean;
   query: string;
@@ -480,8 +431,6 @@ export function searchMatch(d: DocRowVM, query: string): boolean {
   const digits = q.replace(/\D/g, '');
   const phoneDigits = (d.phone ?? '').replace(/\D/g, '');
   if (digits.length >= 3 && phoneDigits.includes(digits)) return true;
-  // codeLine carries a non-SO job's own document (DP / ASSR / project code), so a
-  // transfer or service leg is searchable by its number too, not only an SO.
   return [d.customer, d.soDocNo, d.doNumber, d.ref, d.codeLine].some(
     (v) => (v ?? '').toLowerCase().includes(q),
   );

@@ -47,13 +47,11 @@ import {
 
 export type AmendmentSubmitAnswer = { reason: string };
 
-/* One line per lane the request will split into, in the approver's own words. */
 export function describeLanePreview(p: AmendmentLanePreview): Array<{ lane: AmendmentLane; text: string }> {
   return p.lanes.map((lane) => {
     const half = p.perLane[lane];
     const parts: string[] = [];
     if (half.lineCount > 0) parts.push(`${half.lineCount} line change${half.lineCount === 1 ? '' : 's'}`);
-    /* The server may name a header key this build does not know yet — fall back to the key. */
     for (const k of half.headerKeys) parts.push((AMENDABLE_HEADER_LABELS as Record<string, string | undefined>)[k] ?? k);
     return { lane, text: parts.join(', ') };
   });
@@ -179,8 +177,6 @@ export const AmendmentSubmitDialog = ({ ask, onConfirm, onCancel }: AmendmentSub
 
 type Pending = { id: number; ask: AmendmentLanePreviewArgs; resolve: (v: AmendmentSubmitAnswer | null) => void };
 
-/* Page-owned: render `element` once anywhere in the page's tree, then `ask()`.
-   A second ask while one is open resolves the first with null, like usePrompt. */
 export function useAmendmentSubmitDialog(): {
   ask: (a: AmendmentLanePreviewArgs) => Promise<AmendmentSubmitAnswer | null>;
   element: ReactNode;

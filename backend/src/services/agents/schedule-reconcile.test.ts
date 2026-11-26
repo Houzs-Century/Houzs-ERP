@@ -15,14 +15,12 @@ describe("venueMatch", () => {
   it("matches on canonical containment, ignoring case/punctuation/truncation", () => {
     expect(venueMatch("Sutera Mall", "SUTERA MALL")).toBe(true);
     expect(venueMatch("The Commune Kulai", "COMMUNE KULAI")).toBe(true);
-    expect(venueMatch("Pavilion Bukit Jali", "Pavilion Bukit Jalil")).toBe(true); // truncated
+    expect(venueMatch("Pavilion Bukit Jali", "Pavilion Bukit Jalil")).toBe(true);
     expect(venueMatch("Sutera Mall", "IOI Mall")).toBe(false);
     expect(venueMatch("", "x")).toBe(false);
   });
 });
 
-// IN HOME EXPO example: 2 venues. System has both projects; the organizer's new
-// schedule postpones Sutera (date change), keeps Commune, and drops a 3rd venue.
 const projects: ProjRow[] = [
   { id: 1, code: "P-CMN", name: "IN HOME @ Commune", venue: "The Commune Kulai", startDate: "13/03/2026", endDate: "15/03/2026", stage: "draft" },
   { id: 2, code: "P-SUT", name: "IN HOME @ Sutera", venue: "Sutera Mall", startDate: "03/04/2026", endDate: "05/04/2026", stage: "draft" },
@@ -32,9 +30,9 @@ const projects: ProjRow[] = [
 const extract: SchedExtract = {
   organizer: "IN HOME EXPO",
   events: [
-    { venue: "The Commune Kulai", startDate: "2026-03-13", endDate: "2026-03-15" }, // unchanged
-    { venue: "Sutera Mall", startDate: "2026-04-10", endDate: "2026-04-12" },       // postponed a week
-    { venue: "New Venue Mall", startDate: "2026-06-05", endDate: "2026-06-07" },    // brand-new event
+    { venue: "The Commune Kulai", startDate: "2026-03-13", endDate: "2026-03-15" },
+    { venue: "Sutera Mall", startDate: "2026-04-10", endDate: "2026-04-12" },
+    { venue: "New Venue Mall", startDate: "2026-06-05", endDate: "2026-06-07" },
   ],
 };
 
@@ -51,7 +49,7 @@ describe("reconcileSchedule", () => {
     const r = byVenue("Sutera Mall");
     expect(r.status).toBe("DATE_CHANGED");
     expect(r.project?.id).toBe(2);
-    expect(r.scheduleStart).toBe("2026-04-10"); // vs project 03/04
+    expect(r.scheduleStart).toBe("2026-04-10");
   });
 
   it("NEW when the schedule has a venue with no project", () => {

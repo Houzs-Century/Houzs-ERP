@@ -16,10 +16,6 @@
 
 import { useLayoutEffect, useMemo, useState, type RefObject } from 'react';
 
-/* Panel geometry, in px. Fixed house values — a caller choosing its own gap or
-   floor is how two menus on one page stop looking like one control. Only the
-   CAP is per-caller, because it is the list's own design (a ten-row state list
-   and a two-row confirm menu are not the same object). */
 const PANEL_GAP = 4;
 const PANEL_MIN_H = 120;
 const VIEWPORT_MARGIN = 8;
@@ -58,7 +54,6 @@ export function measureAnchoredPanel(
 ): AnchoredPanelPos {
   const below = viewportHeight - anchor.bottom - PANEL_GAP - VIEWPORT_MARGIN;
   const above = anchor.top - PANEL_GAP - VIEWPORT_MARGIN;
-  // Flip up only when below cannot hold the list AND above holds more of it.
   const flipUp = below < Math.min(maxHeight, above);
   return {
     left: anchor.left,
@@ -172,35 +167,6 @@ export function anchoredPanelStyle(pos: AnchoredPanelPos): React.CSSProperties {
     position: 'fixed',
     left: pos.left,
     width: pos.width,
-    /* BOTH EDGES, ALWAYS — `'auto'` for the one this placement does not use.
-     *
-     * `pos.top` and `pos.bottom` are exclusive: a panel that flips UP carries
-     * only `bottom`. Writing `top: pos.top` then hands React `undefined`, and
-     * React OMITS an undefined style property — so the element keeps whatever
-     * `top` its own class rule sets, and the two combine into a box that is
-     * over-constrained to zero height.
-     *
-     * That is not hypothetical. Measured on production 2026-08-22, the Sales
-     * Order fabric picker:
-     *
-     *   class      position:absolute; top:100%; left:0; right:0
-     *   inline     position:fixed; left:295px; width:286px; bottom:376px
-     *   used       top 816px (=100% of the 816px viewport), height 2px
-     *
-     *   816 - 816 - 376 = -376  ->  clamped to 0; the 2px was its own borders.
-     *
-     * The panel WAS rendering, with all 18 rows in it, parked on the bottom
-     * edge of the window at the height of a hairline. It looked exactly like
-     * "the dropdown does not open".
-     *
-     * The same class also sets `right: 0`, and SoLineCard already passed
-     * `right: 'auto'` by hand to neutralise it — half of this bug had been
-     * found and patched at ONE call site. Neutralising both edges here fixes
-     * it for every consumer at once, and stops the next panel that flips up
-     * from inheriting a stray `top`.
-     *
-     * `'auto'` is the CSS initial value, so this is a no-op for a panel whose
-     * class sets neither. */
     top: pos.top ?? 'auto',
     bottom: pos.bottom ?? 'auto',
     maxHeight: pos.maxHeight,

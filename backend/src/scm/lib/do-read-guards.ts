@@ -1,29 +1,9 @@
-/* What a delivery order does when a read in front of its stock write fails.
- * Kept out of routes/delivery-orders-mfg.ts, which sits at its size ceiling.
- * The rule is lib/failed-read-refusal.ts: a failed read is not an empty list.
- *
- * Two cases, because the two writers sit at different points:
- *
- *   SHIP (PATCH /:id/status). The status flip lands BEFORE deductInventoryForDo
- *   reads the lines (the flip is the CAS that stops a double ship). If that read
- *   fails, the DO would stay LOADED/DISPATCHED with no stock OUT. The flip is
- *   put back, over the status this request wrote and nothing else, so the
- *   operator sees the DO where it was and can confirm again.
- *
- *   RESYNC (a line edit on an already-shipped DO). The edit has committed; the
- *   delta is best-effort by design. A failed read used to look like "no lines"
- *   (delta = return every unit shipped) or "no movements" (delta = ship it all
- *   again). Now it writes nothing and leaves the same RECOUNT_FAILED trail a
- *   failed delta write leaves. */
 import { recordEntityAudit } from './entity-audit';
 import { scopeToCompanyId } from './companyScope';
 import { LINES_UNREADABLE, linesUnreadableMessage } from './failed-read-refusal';
 
 type PgError = { message?: string | null } | null | undefined;
 
-/* The columns the ship flip stamps that a pre-ship DO does not have yet. The
-   first ship always leaves a pre-ship status (deductInventoryForDo no-ops on a
-   DO that already wrote its OUT), so null is the value they held before. */
 const SHIP_STAMPS = ['dispatched_at', 'departure_at', 'signed_at', 'delivered_at'] as const;
 
 export async function revertShipOnUnreadLines(
@@ -35,8 +15,6 @@ export async function revertShipOnUnreadLines(
   stamped: Record<string, unknown>,
   prevCustomerDeliveredDate: string | null,
   movementErrors: string[],
-  /* Set by the create paths: the DO they made is kept as a DRAFT, and a retry of
-     the CREATE would make a second one, so the operator is sent to that draft. */
   keptAsDraftDocNo: string | null,
 ) {
   const back: Record<string, unknown> = { status: prevStatus, updated_at: new Date().toISOString() };
@@ -79,5 +57,5 @@ export async function noteResyncReadFailure(
       source: 'resyncInventoryForDo',
       note: `Line edit committed on a shipped DO but ${note}. The ledger does not reflect this edit until a re-save repairs it.`,
     });
-  } catch { /* the console line above still stands */ }
+  } catch { }
 }

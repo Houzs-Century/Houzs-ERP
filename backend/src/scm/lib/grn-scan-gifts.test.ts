@@ -1,6 +1,3 @@
-// Sim, 2026-10-20: free gifts on a delivery order that are on no PO (DIGLANT's
-// "GWP Pillow" with the mattresses) go into stock at RM0. A gift's printed code
-// is taught once to a catalogue product; each later scan adds it to the draft.
 import { describe, expect, test } from 'vitest';
 import { addGiftLines, giftLines, giftNote, isGiftRow, FREE_GIFT_REASON } from './grn-scan-gifts';
 import type { ScannedGrnLine, UnmatchedScanLine } from './grn-scan-match';

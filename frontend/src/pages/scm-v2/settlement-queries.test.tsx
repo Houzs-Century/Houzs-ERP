@@ -1,6 +1,3 @@
-// The settlement hooks' contract is the URL + verb + body each one sends — so
-// that is what these pin, the same way accounting-phase1-queries.test.tsx does.
-// authed-fetch is mocked at the module seam: no network, no component tree.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
@@ -126,9 +123,6 @@ describe('the writes', () => {
   });
 });
 
-/* Two people made ~1,300 report reads a day: the work list mounts one report
-   read per row, the read was never fresh (staleTime 0), and every posting
-   marked every report stale — so each return to the list re-read all of them. */
 describe('how often a report is re-read', () => {
   const sharedWrapper = (qc: QueryClient) => ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={qc}>{children}</QueryClientProvider>
@@ -143,7 +137,6 @@ describe('how often a report is re-read', () => {
     const first = renderHook(() => useSettlementBatchRow(5), { wrapper: w });
     await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
     first.unmount();
-    /* Back on the list: no second read. */
     const again = renderHook(() => useSettlementBatchRow(5), { wrapper: w });
     await waitFor(() => expect(again.result.current.isSuccess).toBe(true));
     expect(readsOf(5)).toBe(1);

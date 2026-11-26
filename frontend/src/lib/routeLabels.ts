@@ -1,14 +1,6 @@
-// Route → human label resolution. Extracted VERBATIM from TopNavbar.tsx so the
-// workspace tab strip (components/WorkspaceTabs.tsx) can label its tabs with
-// exactly the strings the breadcrumb fallback uses — one table, no drift.
-// TopNavbar keeps consuming labelForPath from here.
 
-// ── Route → label fallback ─────────────────────────────────
-// Quick mapping for pages that don't push breadcrumbs themselves.
-// Keeps the navbar from rendering as an empty strip.
 const ROUTE_LABELS: Array<[RegExp, string]> = [
   [/^\/$/, "Overview"],
-  // Money in's documents, each a page of its own (Claude Design, batch 5 §8).
   [/^\/scm\/ar-invoices\/deposit\/.+$/, "Deposit invoice"],
   [/^\/scm\/ar-invoices\/bills\/.+$/, "Debtor bill"],
   [/^\/scm\/ar-invoices\/sales\/.+$/, "Sales invoice"],
@@ -44,36 +36,21 @@ const ROUTE_LABELS: Array<[RegExp, string]> = [
   [/^\/system-health$/, "System Health"],
   [/^\/reports\/fair-report$/, "Sales report"],
   [/^\/hr\/employees$/, "Employees & Attendance"],
-  // The Supply Chain hub is a single-segment route, so it never reaches the
-  // /scm/* segment table below (which needs a 2nd segment). Curate it here —
-  // without this entry labelForPath title-cased the slug to a bare "Scm".
   [/^\/scm$/, "Supply Chain"],
 ];
 
-// SCM V2 routes ship dozens of /scm/* pages — hand-rolling a regex per page
-// bloats the list. Instead the second URL segment picks the label from this
-// table. A bare string is used where the listing and the detail page read the
-// same; a [plural, singular] pair where they differ — plural covers the listing
-// (and its action children like /new or /from-*), singular the detail page (a
-// trailing entity id). One central table, so a new SCM route is one map entry,
-// not two regex lines. EVERY /scm section in routeManifest must have an entry
-// (routeLabels.test.ts walks the manifest and fails CI otherwise), so a tab
-// always shows the page's own title and never falls through to a bare "Scm".
 type SegmentLabel = string | [string, string];
 export const SCM_SEGMENT_LABELS: Record<string, SegmentLabel> = {
-  // Sales chain
   "sales-orders": ["Sales Orders", "Sales Order"],
   "delivery-orders": ["Delivery Orders", "Delivery Order"],
   "sales-invoices": ["Sales Invoices", "Sales Invoice"],
   "delivery-returns": ["Delivery Returns", "Delivery Return"],
-  // The DO print's "SCAN . MARK LOADED" QR lands on this one-shot page.
   "do-load": "Scan Delivery Order",
   // Owner 2026-07-27 — the two amendment queues carry SHORT tab names so the
   // workspace strip stays scannable ("SO Amdt." / "PO Amdt."), and the two
   // sides are distinguishable at a glance. Detail pages push their own
   // breadcrumbs, so the descriptive titles live on-page, not here.
   "amendments": "SO Amdt.",
-  // Procurement chain
   "purchase-orders": ["Purchase Orders", "Purchase Order"],
   "po-amendments": "PO Amdt.",
   "cancel-requests": ["Cancellation Requests", "Cancellation Request"],
@@ -85,7 +62,6 @@ export const SCM_SEGMENT_LABELS: Record<string, SegmentLabel> = {
   "suppliers": ["Suppliers", "Supplier"],
   "supplier-maintenance": "Supplier Maintenance",
   "payment-listing": "Payment Listing",
-  // Warehouse / stock
   "warehouses": ["Warehouses", "Warehouse"],
   "inventory": "Inventory",
   "stock-adjustments": ["Stock Adjustments", "Stock Adjustment"],
@@ -94,15 +70,12 @@ export const SCM_SEGMENT_LABELS: Record<string, SegmentLabel> = {
   "stock-take-approvals": ["Stock Take Approvals", "Stock Take Approval"],
   "fabric-tracking": "Fabric Converter",
   "loading-list": "Loading List",
-  // Products
   "products": ["Products", "Product"],
   "categories": ["Categories", "Category"],
   "product-models": ["Product Models", "Product Model"],
   "product-requests": ["Product Requests", "Product Request"],
-  // Finance
   "accounting": "Accounting",
   "outstanding": "Outstanding",
-  // Money in's pages carry the redesign's names (owner's Claude Design, batch 5).
   "unbilled-deliveries": "Not yet billed",
   "payment-vouchers": ["Payment Vouchers", "Payment Voucher"],
   "payment-requests": ["Payment Requests", "Payment Request"],
@@ -127,7 +100,6 @@ export const SCM_SEGMENT_LABELS: Record<string, SegmentLabel> = {
   "unmatched-payments": "Unmatched Payments",
   "settlement-setup": "Recon setup",
   "fair-pending": "Fair Links to Settle",
-  // Transportation
   "drivers": ["Drivers", "Driver"],
   "delivery-planning": "Delivery Planning",
   "delivery-planning-driver": "Last Mile Delivery (Driver)",
@@ -149,30 +121,21 @@ export const SCM_SEGMENT_LABELS: Record<string, SegmentLabel> = {
   "lorry-live-map": "Lorry Live Map",
   "logistic-overview": "Logistic Overview",
   "procurement-overview": "Procurement Overview",
-  // Consignment (sale side)
   "consignment-orders": ["Consignment Orders", "Consignment Order"],
   "consignment-notes": ["Consignment Notes", "Consignment Note"],
   "consignment-returns": ["Consignment Returns", "Consignment Return"],
-  // Consignment (purchase side)
   "purchase-consignment-orders": ["Purchase Consignment Orders", "Purchase Consignment Order"],
   "purchase-consignment-receives": ["Purchase Consignment Receives", "Purchase Consignment Receive"],
   "purchase-consignment-returns": ["Purchase Consignment Returns", "Purchase Consignment Return"],
-  // Section hubs — the Level-2 sub-group landing pages (ScmSubgroupHub). The
-  // slug is the singular group id and the label mirrors the NAV_TABS group
-  // header the hub renders as its title. Without these, /scm/<group> title-cased
-  // the slug to "Scm".
   "sales-order": "Sales Order",
   "consignment": "Consignment",
   "procurement": "Procurement",
   "transportation": "Transportation",
   "warehouse": "Warehouse",
   "finance": "Finance",
-  // Misc
   "maintenance": "Maintenance",
 };
 
-// /scm/reports/<report-slug> — its own table since these live one level
-// deeper (segs[2] is the report slug).
 const SCM_REPORT_LABELS: Record<string, string> = {
   "sales-order-detail-listing": "SO Detail Listing",
   "delivery-order-detail-listing": "DO Detail Listing",
@@ -180,18 +143,11 @@ const SCM_REPORT_LABELS: Record<string, string> = {
   "delivery-return-detail-listing": "DR Detail Listing",
 };
 
-// /scm/hr/<leaf-slug> — HR sits one level deeper too (segs[2] is the leaf) and
-// has no /scm/hr hub page, so like reports it gets its own table. Labels mirror
-// the NAV_TABS HR leaves. Without this, /scm/hr/* title-cased "scm" to "Scm".
 const SCM_HR_LABELS: Record<string, string> = {
   "commission": "Commission",
   "settings": "HR Settings",
 };
 
-// Path segments that are actions/children rather than entity IDs — used to
-// keep the plural label on /scm/<x>/new, /scm/<x>/from-so, etc. Anything
-// not in this set (and not obviously an action prefix) is treated as an
-// entity id → singular label.
 const SCM_ACTION_SEGMENTS = new Set([
   "new",
   "guided",
@@ -206,12 +162,6 @@ function isScmActionSegment(seg: string): boolean {
   return false;
 }
 
-// Last-resort label for a URL segment with no curated entry: the slug, dashes
-// turned to spaces and each word capitalised ("fleet-day" -> "Fleet Day").
-// It is only a SAFETY NET — a real page belongs in a table above so its tab
-// carries its on-screen title, not a prettied slug — but it guarantees a /scm/
-// page can never again collapse to a bare "Scm" (which is what an uncurated
-// second segment used to do: it fell through to the FIRST segment, "scm").
 function titleCaseSlug(slug: string): string {
   return slug
     .split("-")
@@ -225,7 +175,6 @@ export function labelForPath(pathname: string): string {
     if (re.test(pathname)) return label;
   }
   const segs = pathname.split("/").filter(Boolean);
-  // /scm/* — resolve via the segment tables above.
   if (segs[0] === "scm" && segs.length >= 2) {
     if (segs[1] === "reports" && segs[2]) {
       return SCM_REPORT_LABELS[segs[2]] ?? "Report";
@@ -235,15 +184,10 @@ export function labelForPath(pathname: string): string {
     }
     const entry = SCM_SEGMENT_LABELS[segs[1]];
     if (entry) {
-      // A bare string means listing and detail read the same.
       const [plural, singular] = typeof entry === "string" ? [entry, entry] : entry;
       const isDetail = !!segs[2] && !isScmActionSegment(segs[2]);
       return isDetail ? singular : plural;
     }
-    // Unknown /scm/<seg> — label it from the SECTION segment (the second one),
-    // never the first: the first is always "scm", and collapsing to "Scm" is
-    // exactly the bug this guards against. Curate the page above to give it its
-    // real title; this keeps it readable until someone does.
     return titleCaseSlug(segs[1]);
   }
   const seg = segs[0] || "";

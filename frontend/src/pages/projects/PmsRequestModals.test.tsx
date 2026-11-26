@@ -15,7 +15,6 @@ import type { TaskAttachment } from './types';
 
 const fetchBlob = vi.fn(async (_path: string, _type?: string | null) => new Blob(['%PDF-1.4 bytes'], { type: 'application/octet-stream' }));
 vi.mock('../../api/client', () => ({ api: { fetchBlob: (p: string, t?: string | null) => fetchBlob(p, t) } }));
-/* The shell's providers stand in the app; the dialogs only need the notifier, stubbed below. */
 vi.mock('../scm-v2/Scm2990Shell', () => ({ Scm2990Shell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 type Seed = { files: File[]; projectId: number; checklistItemId: number; eventLabel: string };
 vi.mock('../scm-v2/PaymentRequestForm', () => ({

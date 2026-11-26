@@ -1,5 +1,3 @@
-// Verdict and error scrubbing for GET /api/admin/health/services (DEV-35).
-// Pure: the route reads the numbers, this decides what they mean.
 
 export type ServiceVerdict = "ok" | "warning" | "critical";
 

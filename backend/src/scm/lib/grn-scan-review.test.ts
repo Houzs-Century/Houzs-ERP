@@ -1,8 +1,3 @@
-// Unit tests for the GR OCR learning writer — fired on a GRN DRAFT -> POSTED.
-// A scanned GRN's extraction is promoted EXTRACTED -> ACCEPTED (feeding the GR
-// few-shot pool); a GRN that never came from a scan, or an already-reviewed
-// sample, is left untouched. Driven through the same hand-rolled PostgREST
-// stand-in the SO review tests use.
 import { describe, expect, test } from 'vitest';
 import { noteGrnScanAccepted } from './grn-scan-review';
 
@@ -76,7 +71,6 @@ describe('noteGrnScanAccepted', () => {
       so_scan_samples: [{ id: 's1', status: 'ACCEPTED', extracted: {}, corrected: { done: true } }],
     });
     await noteGrnScanAccepted(h.svc, GRN);
-    // The update is gated on status='EXTRACTED', so it matches 0 rows.
     const applied = h.updates.filter((u) => u.rows.length > 0);
     expect(applied).toHaveLength(0);
     expect(h.tables.so_scan_samples[0].corrected).toEqual({ done: true });

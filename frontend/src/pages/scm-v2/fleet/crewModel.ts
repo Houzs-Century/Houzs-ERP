@@ -47,8 +47,6 @@ export type CrewPatch = {
   inHouse?: boolean; threeplCompanyId?: string | null; warehouseId?: string | null;
 };
 
-/** The employer part of a write: attaching a company forces outsource server-side;
- *  leaving a company sends an explicit detach plus the flag picked. */
 function employerPatch(before: Employer | null, next: Employer): Pick<CrewPatch, "inHouse" | "threeplCompanyId"> {
   if (before === next) return {};
   if (next !== "in" && next !== "out") return { threeplCompanyId: next };

@@ -1,25 +1,3 @@
-// ---------------------------------------------------------------------------
-// assistant-teach.ts — the CHAT-side door to the agent teaching notebook.
-//
-// The store and the inject already exist: addAgentFeedback writes agent_feedback
-// (services/agent-console.ts), and activeInstructions(db, FAMILY) injects the
-// ACTIVE rows into that family's brain on its next run (agents/index.ts via
-// maybeAiFocus). The only thing missing was a way to teach from the chat the
-// owner already uses — the Agent Console form was the sole entry. This module is
-// that chat door and nothing more:
-//   - names the teachable families and their human labels,
-//   - parses the router's teach/ask decision (pure, unit-tested, total),
-//   - records a teaching against the SAME notebook the console form writes.
-//
-// The WRITE is performed by the route (routes/assistant.ts), never by
-// services/assistant.ts, so the assistant answerer stays strictly read-only.
-//
-// WHO MAY TEACH: the owner only (wildcard scope), enforced at the route. A rule
-// steers an agent's JUDGMENT for everyone; it is not a per-user preference. And
-// it teaches JUDGMENT, not MATH — corrections to numbers go through config
-// proposals so the deterministic engines stay deterministic (see the note on
-// addAgentFeedback).
-// ---------------------------------------------------------------------------
 
 import type { Env } from '../types';
 import { AGENT_FAMILIES, addAgentFeedback, type AgentFamily } from './agent-console';
@@ -85,7 +63,6 @@ export function parseRouterDecision(
       const ask = asAsk(obj?.ask);
       if (ask) return ask;
     } catch {
-      /* fall through to the array form below */
     }
   }
 

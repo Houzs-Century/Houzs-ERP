@@ -1,20 +1,3 @@
-/* ----------------------------------------------------------------------------
-   A child document a list row can both NAME and FETCH.
-
-   THREE THINGS ARE PINNED, and each one is invisible in a screenshot with a
-   single child:
-
-     1. A CHILD WITH NO ADDRESS IS DROPPED. The row menu prints by id, so a
-        number with no id builds a menu entry that 404s. The number ARRAYS beside
-        these refs must keep it — the delivery still happened — which is the
-        split `so-delivery-order-nos.ts` states and this file enforces.
-     2. THE ORDER MATCHES THE COLUMN ABOVE IT. The DO half deliberately does NOT
-        use the generic number sort: the DO No. column orders by delivery date,
-        and a menu listing the same deliveries in a different order reads as a
-        different set of documents.
-     3. ONE DOCUMENT IS OFFERED ONCE. A child can legitimately appear twice in a
-        joined read.
-   ---------------------------------------------------------------------------- */
 
 import { describe, it, expect } from 'vitest';
 import {
@@ -88,8 +71,6 @@ describe('soDownstreamRefs', () => {
     ({ id: 'do-1', so_doc_no: 'SO-1', do_number: 'DO-1', do_date: '2026-08-01', created_at: null, ...o });
 
   it("lists the order's deliveries in the SAME order as the DO No. column", () => {
-    /* The generic number sort would put DO-2608-009 above DO-2608-004; the
-       column sorts by DELIVERY DATE, and the menu has to agree with it. */
     const rows = [
       doRow({ id: 'a', do_number: 'DO-2608-009', do_date: '2026-07-02' }),
       doRow({ id: 'b', do_number: 'DO-2608-004', do_date: '2026-08-11' }),
@@ -121,7 +102,6 @@ describe('soDownstreamRefs', () => {
   });
 
   it('the shared empty cannot be mutated by a caller that assigns it onto a row', () => {
-    // Object.assign puts the SAME array on every empty row; a push would leak.
     expect(() => NO_SO_DOWNSTREAM_REFS.do_refs.push({ id: 'x', docNo: 'y' })).toThrow();
   });
 });

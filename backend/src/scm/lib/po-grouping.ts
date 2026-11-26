@@ -47,14 +47,9 @@ export type PoMode = 'combined' | 'per-so';
 /** Default merge window for mattress under Combine. 7 = the ISO week. */
 export const DEFAULT_MATTRESS_WINDOW_DAYS = 7;
 
-/** 1970-01-05 was a Monday. Anchoring to it makes a 7-day bucket == the ISO
-    week, and makes every bucket independent of when the convert runs. */
 const MONDAY_EPOCH_MS = Date.parse('1970-01-05T00:00:00Z');
 const DAY_MS = 86_400_000;
 
-/** A window of at least 1 whole day. A zero/negative/NaN window would collapse
-    every mattress into one bucket (or throw), silently undoing the rule —
-    reject the input rather than normalise it into a wrong answer. */
 function normaliseWindow(days: number): number {
   if (!Number.isFinite(days) || days < 1) return DEFAULT_MATTRESS_WINDOW_DAYS;
   return Math.floor(days);
@@ -73,8 +68,6 @@ export function windowStartOf(dateStr: string | null | undefined, windowDays: nu
   if (Number.isNaN(ms)) return null;
   const w = normaliseWindow(windowDays);
   const daysSinceAnchor = Math.floor((ms - MONDAY_EPOCH_MS) / DAY_MS);
-  // floorDiv, so dates before the anchor (there are none in practice, but the
-  // maths must not flip sign) still bucket downward.
   const bucket = Math.floor(daysSinceAnchor / w);
   return new Date(MONDAY_EPOCH_MS + bucket * w * DAY_MS).toISOString().slice(0, 10);
 }
@@ -84,9 +77,6 @@ export interface GroupKeyInput {
   supplierId: string;
   soDocNo: string;
   itemGroup: string | null;
-  /** The PO line's delivery date — i.e. AFTER the lead time has been subtracted.
-      The window buckets what the SUPPLIER is asked to deliver, not what the
-      customer asked for, because that is what actually lands in the warehouse. */
   deliveryDate: string | null;
 }
 
@@ -98,7 +88,6 @@ export interface GroupKeyContext {
       the batch, so accessories merge by supplier as normal. REQUIRED so a caller
       cannot forget it and silently lose the sofa-cover co-location. */
   sofaSoDocNos: ReadonlySet<string>;
-  /** Mattress merge window in days; defaults to the ISO week. */
   mattressWindowDays?: number;
 }
 
@@ -124,15 +113,10 @@ export function groupKeyFor(input: GroupKeyInput, toggle: PoMode, ctx: GroupKeyC
     return `${base}::so:${input.soDocNo}::cat:${cat || 'none'}`;
   }
 
-  // COMBINE.
   switch (cat) {
     case 'sofa':
-      // Per-SO (dye lot), and NO category tag — so this SO's accessories, keyed
-      // the same below, MERGE onto the sofa's PO.
       return `${base}::so:${input.soDocNo}`;
     case 'bedframe':
-      // Toggle has no effect: same supplier + one SO -> one PO. The category tag
-      // keeps it off the sofa's untagged key even when an SO has both.
       return `${base}::so:${input.soDocNo}::cat:bedframe`;
     case 'mattress': {
       // Merge within the delivery WEEK (window kept, owner 2026-09-11). An
@@ -142,9 +126,6 @@ export function groupKeyFor(input: GroupKeyInput, toggle: PoMode, ctx: GroupKeyC
       return start ? `${base}::w:${start}::cat:mattress` : `${base}::so:${input.soDocNo}::cat:mattress`;
     }
     default:
-      // Accessory / others. If this SO has a sofa, ride with it (the untagged
-      // per-SO key, identical to the sofa's above). Otherwise merge same-supplier
-      // across SOs into one accessory PO.
       return ctx.sofaSoDocNos.has(input.soDocNo)
         ? `${base}::so:${input.soDocNo}`
         : `${base}::acc`;

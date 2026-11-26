@@ -33,8 +33,6 @@ import { DateField, isCoarsePointer } from './DateField';
 
 type Pointer = 'coarse' | 'fine';
 
-/** jsdom ships no matchMedia at all, so the component reads a FINE pointer by
- *  default and every other test in the suite keeps the desktop behaviour. */
 function setPointer(kind: Pointer) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -52,8 +50,6 @@ function setPointer(kind: Pointer) {
   });
 }
 
-/** jsdom implements no showPicker either; the component falls back to
- *  focus()+click() when it is absent, which is not what we are asserting. */
 function stubShowPicker() {
   const spy = vi.fn();
   (HTMLInputElement.prototype as unknown as { showPicker: () => void }).showPicker = spy;
@@ -65,8 +61,6 @@ afterEach(() => {
   delete (HTMLInputElement.prototype as unknown as { showPicker?: unknown }).showPicker;
 });
 
-/** The native date input, which is never labelled (it is aria-hidden — the
- *  visible masked text box is what a screen reader reads). */
 function nativeDateInput(container: HTMLElement): HTMLInputElement {
   const el = container.querySelector('input[type="date"]');
   if (!el) throw new Error('no native date input rendered');
@@ -105,7 +99,6 @@ describe('reaching the picker by finger', () => {
     expect(box.disabled).toBe(false);
     expect(box.getAttribute('readonly')).toBeNull();
 
-    // And it accepts a date typed into it, on a phone, per keystroke.
     fireEvent.focus(box);
     for (const chunk of ['2', '20', '202', '2026', '2026/', '2026/9', '2026/9/', '2026/9/7']) {
       fireEvent.change(box, { target: { value: chunk } });
@@ -174,8 +167,6 @@ describe('reaching the picker by finger', () => {
     const { container } = render(
       <DateField value="" onChange={() => {}} disabled aria-label="Locked date" />,
     );
-    // The overlay is still the tap target, but a disabled native input takes
-    // no interaction from the OS either.
     expect(nativeDateInput(container).disabled).toBe(true);
     fireEvent.click(screen.getByLabelText('Open calendar'));
     expect(showPicker).not.toHaveBeenCalled();

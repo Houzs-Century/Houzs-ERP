@@ -1,5 +1,3 @@
-// The Sync Status rules: which alerts a terminal needs, auto-resolve, the
-// daily re-send, the status word, and when the end-of-event summary is due.
 import { describe, expect, test } from "vitest";
 import { alertSubject, emailDue, reconcileAlerts, summaryDue, terminalStatusWord, wantedAlerts, type TerminalFacts } from "./pos-alerts";
 

@@ -1,6 +1,3 @@
-// The receipts of one company (optionally one event / terminal / day range)
-// in the shape pos-report.ts aggregates: the end-of-event summary email, the
-// ERP Sales Report (E6) and the Sync Status KPIs read through here.
 import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import type { getDb } from "../../db/client";
 import { pos_payments, pos_sale_lines, pos_sales } from "../../db/schema";

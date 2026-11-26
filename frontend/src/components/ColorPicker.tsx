@@ -19,13 +19,9 @@ export function ColorPicker({
   size = 28,
   ariaLabel,
 }: {
-  /** Current colour, 6-char hex, no '#'. */
   value: string;
-  /** Called with the new hex (no '#'). Only fires on a valid 6-char hex. */
   onChange: (hex: string) => void;
-  /** Optional quick-pick swatches under the picker. Hex without '#'. */
   presets?: string[];
-  /** Trigger chip size in px. Default 28. */
   size?: number;
   ariaLabel?: string;
 }) {
@@ -33,8 +29,6 @@ export function ColorPicker({
   const [hexDraft, setHexDraft] = useState(value);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  // Keep the draft in sync when the source value changes from outside
-  // (e.g. preset click, or another edit in the same form).
   useEffect(() => setHexDraft(value), [value]);
 
   useEffect(() => {
@@ -75,7 +69,6 @@ export function ColorPicker({
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 w-60 rounded-md border border-border bg-surface p-3 shadow-slab">
           <div className="mb-2 flex items-center gap-2">
-            {/* Native picker — opens the OS / browser colour wheel. */}
             <input
               type="color"
               value={`#${value}`}

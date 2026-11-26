@@ -49,11 +49,6 @@ const findSrc = (): string => {
 };
 const SRC = findSrc();
 
-/** The SCM document pages that spell a status themselves, and which document
- *  vocabulary each one is spelling. Pages outside the SCM document set
- *  (Overview, SystemHealth, team, MerchantRecon, ServiceCases, SupplierDetail)
- *  are NOT here: they carry their own unrelated vocabularies, and sweeping them
- *  in would be the same over-reach this file exists to avoid. */
 const PAGES: ReadonlyArray<readonly [rel: string, docType: StatusDocType]> = [
   ['pages/scm-v2/PurchaseOrdersListV2.tsx', 'po'],
   ['pages/scm-v2/PurchaseOrderDetailV2.tsx', 'po'],
@@ -69,24 +64,7 @@ const PAGES: ReadonlyArray<readonly [rel: string, docType: StatusDocType]> = [
   ['pages/scm-v2/DeliveryReturnDetailV2.tsx', 'dr'],
 ];
 
-/* COLLAPSED — these six no longer declare a label of their own, so they are off
-   the list above by the rule this file states: the list says how much of the
-   root fix is LEFT. They were chosen by measurement, not by reading: each one
-   renders the byte-identical string through `statusLabel(docType, STATUS)` that
-   it used to hand-write. Every page still listed above would change at least one
-   word on screen, which is a decision and not a refactor.
 
-   GoodsReceivedListV2 · GoodsReceivedDetailV2 · PurchaseReturnsListV2
-   PurchaseReturnDetailV2 · StockTakesListV2 · StockTransfersListV2 */
-
-/* The words those six surfaces showed BEFORE the collapse, transcribed from the
-   maps this PR deleted (read the diff, not this comment, if you doubt one).
-   They now come from status-pill.ts, so this table is what fails if a later edit
-   to the canonical map silently re-words a screen the owner already signed off.
-
-   `pr` DRAFT is deliberately not in the canonical map and resolves through
-   statusLabel's humanise fallback; it is listed here because what a user reads
-   is the point, not which branch produced it. */
 const COLLAPSED_WORDS: ReadonlyArray<readonly [docType: StatusDocType, status: string, word: string]> = [
   ['grn', 'DRAFT', 'Draft'],
   ['grn', 'POSTED', 'Submitted'],
@@ -105,13 +83,6 @@ const COLLAPSED_WORDS: ReadonlyArray<readonly [docType: StatusDocType, status: s
   ['stockTransfer', 'CANCELLED', 'Cancelled'],
 ];
 
-/* DELIBERATE differences — a page that says something else ON PURPOSE, with the
-   reason and its authority. Every entry here is a decision somebody made, not a
-   miss; sweeping them into agreement would UNDO those decisions, which is the
-   exact over-reach that cost a production incident on 2026-09-13
-   (docs/option-pool-clear-coe.md).
-
-   The key is `<file>::<STATUS>`. Adding one means writing why. */
 const DELIBERATE = new Map<string, string>([
   ['pages/scm-v2/do-list-status.ts::SIGNED',
    'OWNER RULING 2026-08-21: SIGNED is merged into DELIVERED and gets no tab of '
@@ -129,8 +100,6 @@ const DELIBERATE = new Map<string, string>([
 
 type Entry = { status: string; label: string };
 
-/** `DRAFT: { tone: "warning", label: "Draft", … }` and the lowercase-key form
- *  `posted: { tone: "success", label: "Confirmed" … }` both occur. */
 const parseLocalMap = (source: string): Entry[] => {
   const text = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
   const out: Entry[] = [];
@@ -149,9 +118,6 @@ const read = (rel: string): string => {
 describe('the scan is reading real maps', () => {
   it('finds status entries in every page listed', () => {
     const empty = PAGES.filter(([rel]) => parseLocalMap(read(rel)).length === 0).map(([rel]) => rel);
-    /* A page that stops declaring its own map is GOOD news — it means somebody
-       collapsed it onto status-pill.ts. Remove it from PAGES in that same PR,
-       so this list always says how much of the root fix is left. */
     expect(empty, 'these pages no longer declare a local map — remove them from PAGES').toEqual([]);
   });
 
@@ -167,9 +133,6 @@ describe('the six collapsed pages still read the words they read before', () => 
     const moved = COLLAPSED_WORDS
       .filter(([docType, status, word]) => statusLabel(docType, status) !== word)
       .map(([docType, status, word]) => `${docType}.${status}: was "${word}", status-pill.ts now says "${statusLabel(docType, status)}"`);
-    /* A failure here is NOT a licence to edit the expected word. It means a
-       screen the owner already reads changed wording — go and get that decided,
-       the way the DELIBERATE list above records the ones that were. */
     expect(moved).toEqual([]);
   });
 
@@ -205,8 +168,6 @@ describe('withStatusLabels — how a collapsed page gets its word', () => {
   });
 
   it("adds no status the page did not list, so the page's own fallback still decides an unknown one", () => {
-    /* The collapsed pages answer an unlisted status with its RAW value. That only
-       survives if this helper does not quietly add the whole canonical vocabulary. */
     expect(Object.keys(withLabels).sort()).toEqual(['DRAFT', 'POSTED']);
     expect(withLabels.CANCELLED).toBeUndefined();
   });
@@ -220,11 +181,6 @@ describe('no page spells a status differently from status-pill.ts', () => {
   for (const [rel, docType] of PAGES) {
     for (const e of parseLocalMap(read(rel))) {
       const key = e.status.toUpperCase();
-      /* statusVocabulary returns an ARRAY of keys. The first draft of this
-         test wrote `key in vocab`, which tests ARRAY INDICES — so every status
-         fell into `unknown` and the suite passed having compared nothing. A
-         verdict computed over nothing must never read as a pass (CLAUDE.md);
-         the assertion below is what makes that impossible now. */
       const vocab = statusVocabulary(docType);
       if (!vocab.includes(key)) { unknown.push(`${rel}: ${e.status} = "${e.label}"`); continue; }
       const canonical = statusLabel(docType, key);
@@ -235,8 +191,6 @@ describe('no page spells a status differently from status-pill.ts', () => {
   }
 
   it('actually compared something — a scan that matched nothing must not pass', () => {
-    /* The guard on the guard. Without it, one wrong membership test silently
-       turns this whole file into a no-op that reports green. */
     const compared = PAGES.reduce((n, [rel, docType]) => n + parseLocalMap(read(rel))
       .filter((e) => statusVocabulary(docType).includes(e.status.toUpperCase())).length, 0);
     expect(compared).toBeGreaterThan(40);
@@ -247,18 +201,11 @@ describe('no page spells a status differently from status-pill.ts', () => {
   });
 
   it('every recorded DELIBERATE difference is still real — the list cannot rot', () => {
-    /* An entry that no longer differs is a page somebody fixed; leaving it here
-       would waive a future regression on that exact status. Same failure mode as
-       an exemption list nobody re-checks. */
     const stale = [...DELIBERATE.keys()].filter((k) => !deliberate.includes(k));
     expect(stale, 'these no longer differ — delete them from DELIBERATE').toEqual([]);
   });
 
   it('reports the statuses no canonical vocabulary holds, without failing on them', () => {
-    /* These are a page's own bucket keys (all / open / partial …) and statuses
-       the shared map has never been taught. Reported so the count is visible;
-       NOT failed, because adding a canonical entry to silence a test is
-       inventing the evidence the test exists to check. */
     expect(Array.isArray(unknown)).toBe(true);
     if (unknown.length) console.log(`[status-map scan] ${unknown.length} entr(ies) outside the canonical vocabularies (informational)`);
   });
@@ -310,8 +257,6 @@ describe('the header badge spells a status the way status-pill.ts does', () => {
   const declaring = scmV2Files().filter((rel) => parseStageMap(read(rel)) !== null);
 
   it('the shape scan finds real flat stage maps — it cannot pass by matching nothing', () => {
-    /* Proof the regex still matches the shape it exists for. If every page is
-       collapsed one day this assertion is the one to change, on purpose. */
     expect(declaring.length).toBeGreaterThan(0);
     const entries = declaring.reduce((n, rel) => n + (parseStageMap(read(rel)) ?? []).length, 0);
     expect(entries).toBeGreaterThan(10);
@@ -325,15 +270,11 @@ describe('the header badge spells a status the way status-pill.ts does', () => {
   it('no badge word disagrees with status-pill.ts', () => {
     const wrong: string[] = [];
     for (const rel of declaring) {
-      /* `in`, not a truthiness check on the lookup: the unclassified test above
-         owns that failure, and a Record index is typed as always present. */
       if (!(rel in STAGE_MAP_DOC)) continue;
       const docType = STAGE_MAP_DOC[rel];
       for (const e of parseStageMap(read(rel)) ?? []) {
         if (!statusVocabulary(docType).includes(e.status)) continue;
         const canonical = statusLabel(docType, e.status);
-        /* Case-insensitive, like the object-map scan above: "Partially received"
-           against "Partially Received" is a separate, owner-visible decision. */
         if (canonical.toLowerCase() !== e.label.toLowerCase()) {
           wrong.push(`${rel}: badge ${e.status} reads "${e.label}", status-pill.ts says "${canonical}"`);
         }
@@ -343,10 +284,6 @@ describe('the header badge spells a status the way status-pill.ts does', () => {
   });
 });
 
-/* The phone's document header. Every SCM document module must name the canonical
-   vocabulary its pill reads, so the word comes from status-pill.ts and not from
-   title-casing the stored value. Parsed from source because MobileModuleDetail is
-   one 2,000-line screen with no seam to render a single header through. */
 const MOBILE_MODULE_DOC: Record<string, StatusDocType | null> = {
   'delivery-orders-mfg': 'do',
   'sales-invoices': 'si',
@@ -355,9 +292,6 @@ const MOBILE_MODULE_DOC: Record<string, StatusDocType | null> = {
   'purchase-invoices': 'pi',
   'purchase-returns': 'pr',
   'delivery-returns': 'dr',
-  /* No canonical map exists for the consignment documents, and the owner kept
-     their own words (consignment IN_PRODUCTION reads "Proceed", 2026-09-13), so
-     their pill humanises the stored value exactly as before. */
   'consignment-orders': null,
   'consignment-notes': null,
   'consignment-returns': null,

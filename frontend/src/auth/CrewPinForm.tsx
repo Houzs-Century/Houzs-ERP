@@ -1,13 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "./AuthContext";
 
-/* Crew sign-in — staff code + 6-digit PIN, for helpers and drivers with no
- * usable email. ONE form for the desktop and phone sign-in screens.
- *
- * `EMP-` is fixed in front of the field, so only the digits are typed; a pasted
- * "EMP-0042" is reduced to "0042" so the prefix can never be doubled. The server
- * decides everything else (who may use a PIN, the lock, what the session may
- * open) and its sentence is shown as-is. */
 
 export const CREW_LOGIN_PREFIX = "EMP-";
 export const CREW_PIN_LENGTH = 6;
@@ -23,7 +16,6 @@ export function CrewPinForm({
   onTotp,
   onBack,
 }: {
-  /** A 2FA account: hand the challenge to the host screen's code step. */
   onTotp: (challenge: string) => void;
   onBack: () => void;
 }) {

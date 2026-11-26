@@ -60,7 +60,6 @@ export function applySoLineSpecs<T extends SoSpecLine>(
     const code = String(it.itemCode ?? '').trim();
     if (code && so.item_code && code !== so.item_code.trim()) return it;
     const variants = adoptSoSpec((it.variants as Bag | null) ?? null, so.variants);
-    // Nothing on either side: keep the line's own null rather than invent `{}`.
     if (it.variants == null && Object.keys(variants).length === 0) return it;
     return { ...it, variants };
   });

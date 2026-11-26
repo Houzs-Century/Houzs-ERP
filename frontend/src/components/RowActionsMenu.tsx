@@ -13,20 +13,14 @@ import { cn } from "../lib/utils";
  */
 
 export interface MenuItem {
-  /** "toggle" shows an ON chip + filled icon plate when active.
-   *  "action" fires the click without state. Defaults to "action". */
   type?: "toggle" | "action";
   icon: LucideIcon;
   label: string;
   onClick: () => void;
-  /** For toggles: current value drives the plate fill. */
   active?: boolean;
-  /** Renders the row in `err` colour with an err-tinted icon plate. */
   danger?: boolean;
 }
 
-/** Menu width in px. Must match the `w-44` on the panel below — the flip
- *  measurement needs the number, and Tailwind only gives it as a class. */
 const MENU_W = 176;
 
 /**
@@ -61,21 +55,14 @@ export function RowActionsMenu({
   size = 28,
 }: {
   items: MenuItem[];
-  /** Tiny brass dot on the trigger to flag a state worth noticing
-   *  (e.g. "this template item needs management review") without
-   *  having to open every menu. */
   indicator?: boolean;
   title?: string;
-  /** Trigger square size in px. Default 28 (h-7 w-7). */
   size?: number;
 }) {
   const [open, setOpen] = useState(false);
-  /** Open RIGHTWARD when the default right-aligned panel would be clipped. */
   const [flipRight, setFlipRight] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  // Measure at OPEN, not at render: the row can be scrolled or the sidebar
-  // collapsed between mounts, and a stale side is exactly the bug being fixed.
   useEffect(() => {
     if (!open || !wrapRef.current) return;
     const trigger = wrapRef.current.getBoundingClientRect();

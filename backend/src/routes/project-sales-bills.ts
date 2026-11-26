@@ -64,8 +64,6 @@ type ProjectRow = { id: number; name: string; start_date: string | null; end_dat
 const MISMATCH_SOURCE = "sales_report_fair_mismatch";
 const ONLY_THREE = "Only the Owner, Ummu, Wei Siang, Peter, or an attending rep of this event can do this.";
 
-/** The real caller — supabaseAuth has replaced `user` with the pinned scm
- *  staff row by the time a handler runs; the person is in houzsUser. */
 function realUser(c: Ctx): { email?: string | null; position_name?: string | null; role_name?: string | null; id: number } | null {
   const hu = c.get("houzsUser");
   return hu ? { id: hu.id, email: hu.email ?? null, position_name: hu.position_name ?? null, role_name: hu.role_name ?? null } : null;
@@ -123,8 +121,6 @@ async function loadAttendeeEmails(db: Db, projectId: number): Promise<Set<string
   return emails;
 }
 
-/** The project's live chat messages and who wrote each — the report's source.
- *  The project itself was read inside the company first; its notes are its own. */
 async function loadNotes(db: Db, projectId: number): Promise<NoteRow[]> {
   const rows = await db
     .select({
@@ -151,10 +147,6 @@ async function loadNotes(db: Db, projectId: number): Promise<NoteRow[]> {
   }));
 }
 
-/* The orders a bill could be: this company's live orders dated from a month
-   before the fair. A fair's bill is never an order dated earlier than that, and
-   the window keeps the read to a few hundred rows; the matching itself is the
-   pure index in lib/sales-report-bills.ts. */
 const ORDER_COLS = "doc_no, project_id, status, customer_so_no, ref, salesperson_id, local_total_sen, total_revenue_sen";
 
 function orderWindowStart(startDate: string | null): string {
@@ -181,8 +173,6 @@ async function loadOrders(c: Ctx, project: ProjectRow): Promise<OrderRow[]> {
   return data ?? [];
 }
 
-/** The names of the events a wrongly linked order sits under, so the page can
- *  say where it went. Same company as the project being read. */
 async function loadEventNames(db: Db, ids: number[], companyId: number | undefined): Promise<Map<number, string>> {
   if (ids.length === 0) return new Map();
   const rows = await db
@@ -192,11 +182,6 @@ async function loadEventNames(db: Db, ids: number[], companyId: number | undefin
   return new Map(rows.map((r) => [Number(r.id), r.name] as const));
 }
 
-/** Total Sales (whole RM), for the people who may save a report: the chat
- *  needs it to put Total Sales back when the summary it came from is voided.
- *  Everyone else gets null — Total Sales is finance data the project detail
- *  strips for them. Attendees of this project count on the save side (owner
- *  2026-10-30), so they also see it. */
 async function loadTotalSalesFor(c: Ctx, db: Db, projectId: number, attendeeEmails: ReadonlySet<string>): Promise<number | null> {
   if (!canSaveSalesReport(realUser(c), attendeeEmails)) return null;
   const rows = await db.select({ total_sales: project_finance.total_sales }).from(project_finance).where(eq(project_finance.project_id, projectId)).limit(1);
@@ -211,8 +196,6 @@ async function readPayload(c: Ctx, db: Db, project: ProjectRow) {
   ]);
   const totalSalesRm = await loadTotalSalesFor(c, db, project.id, attendeeEmails);
   const report = collectReport(notes, project.start_date, attendeeEmails);
-  /* No bills, no matching: most events have no report, and the order read is
-     the heavy one. */
   const orders = report.bills.length > 0 ? await loadOrders(c, project) : [];
   const matched = matchBills(report.bills, project.id, orders, attendees);
   const { persons, totals } = summarizeBills(matched, attendees);
@@ -236,10 +219,6 @@ async function readPayload(c: Ctx, db: Db, project: ProjectRow) {
   };
 }
 
-/* ── the wrong-fair notice ──────────────────────────────────────────────────
-   One personal notice per salesperson naming each of their orders that the
-   report puts at this event while the order says another. postPersonalNotice
-   de-duplicates an identical unread notice, so a re-paste does not nag. */
 async function notifyWrongFair(c: Ctx, db: Db, project: ProjectRow, matched: readonly MatchedBill[]): Promise<number> {
   const wrong = matched.filter((b) => b.match.other_event && b.match.so_doc_no && b.match.so_salesperson_id);
   if (wrong.length === 0) return 0;
@@ -250,8 +229,6 @@ async function notifyWrongFair(c: Ctx, db: Db, project: ProjectRow, matched: rea
     staffIds,
     (batch, a, b) => sb.from("staff").select("id, user_id").in("id", batch).range(a, b),
   );
-  /* A failed staff read means nobody can be addressed: say so in the log and
-     send nothing rather than treating the failure as "no such people". */
   if (staffErr) {
     console.log(`[project-sales-bills] staff lookup failed, no wrong-fair notice sent: ${staffErr.message}`);
     return 0;
@@ -338,7 +315,6 @@ projectSalesBills.post("/:projectId/rename-ref", async (c) => {
   if (!me || !canSaveSalesReport(me, attendeeEmails)) return c.json({ error: ONLY_THREE }, 403);
   const notes = await loadNotes(db, project.id);
   const { bills } = collectReport(notes, project.start_date, attendeeEmails);
-  /* A second press lands after the first changed it: the report already says so. */
   if (!bills.some((b) => b.ref_raw === from) && bills.some((b) => extractRefTokens(to).includes(b.ref_token))) return c.json({ ok: true });
   const bill = bills.find((b) => b.ref_raw === from);
   const source = bill ? notes.find((n) => n.id === bill.source_activity_id) : undefined;

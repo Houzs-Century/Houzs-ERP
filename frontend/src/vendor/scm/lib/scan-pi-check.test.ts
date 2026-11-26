@@ -17,7 +17,6 @@ describe('piAmounts', () => {
     const r = review([row('1', 'a', 2, read(800, 1600)), row('2', null, 1, read(200, 200)), row('3', null, 1, read(50, 50))]);
     const a = piAmounts(r, lines);
     expect(a).toEqual({ invoiceSen: 185_000, oursSen: 160_000, matchedInvoiceSen: 160_000, unmatched: 2 });
-    // The tied rows are compared with what the invoice charges for them, not with the whole invoice.
     expect(piAmountsDiffer(a)).toBe(false);
     expect(piAmountsDiffer(piAmounts(review([row('1', 'a', 2, read(830, 1660)), row('2', null, 1, read(200, 200))]), lines))).toBe(true);
   });

@@ -1,17 +1,3 @@
-// GPS km per lorry over a date range, read ONE MALAYSIA DAY AT A TIME.
-//
-// A whole month in one paged read (~288 fixes per tracked lorry per day) passes
-// paginateAll's 50-page guard at about 6 lorries, and that guard used to stop
-// silently: the fixes are ordered by time, so the last days of the month simply
-// went missing and km / running cost came out low with no error. One day per
-// read keeps each read far below the guard (about 170 lorries per day).
-//
-// The per-day sum differs from one continuous read only by a hop that crosses
-// midnight, which /lorries/km-cost (one day) already drops; lorries are parked then.
-//
-// Answers are complete or say why not: a range longer than KM_MAX_DAYS, or a day
-// whose read hit the guard, returns `incomplete` and no km at all, so the
-// dashboard shows a dash instead of a number that is too small.
 
 import { paginateAll } from './paginate-all';
 import { mapBounded } from './concurrency';

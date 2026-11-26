@@ -1,8 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-sku.ts — the furniture SKU master as the Houzs POS reads it (raw SQL
-// over scm.mfg_products + scm.inventory_balances; the SKU master is not in the
-// Drizzle schema). Shared by the POS Admin routes and the device bundle.
-// ----------------------------------------------------------------------------
 import { sql } from "drizzle-orm";
 import type { getDb } from "../../db/client";
 
@@ -16,7 +11,6 @@ export type SkuFact = {
   barcode: string | null;
   sell_price_sen: number | null;
   cost_price_sen: number | null;
-  /** On hand across the company's warehouses, or at ONE warehouse when asked. */
   stock_qty: number;
 };
 

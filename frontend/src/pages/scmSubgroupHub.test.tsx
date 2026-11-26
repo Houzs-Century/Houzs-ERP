@@ -15,9 +15,6 @@ import type { AuthUser, AccessLevel } from "../types";
  *      Delivery Returns (scm.sales.returns = none for them).
  */
 
-// A Sales Director's resolved SCM page access (prod position_page_access[5] plus
-// the SALES_JD leaf caps): scm.sales=full cascades to orders; delivery/invoices
-// are view-capped; returns is denied. No procurement / warehouse / finance grant.
 const SD_ACCESS: Record<string, AccessLevel> = {
   "scm.sales": "full",
   "scm.sales.orders": "full",
@@ -26,8 +23,6 @@ const SD_ACCESS: Record<string, AccessLevel> = {
   "scm.sales.returns": "none",
 };
 
-// The Sales Director carries RBAC role "Member" (permissions []), so `can()` holds
-// nothing — admittance + tiles must come from the position page-access alone.
 vi.mock("../auth/AuthContext", () => ({
   useAuth: () => ({
     user: {
@@ -73,11 +68,9 @@ describe("ScmSubgroupHub — a Sales Director sees only their own sales modules"
         <ScmSubgroupHub groupId="scm-sales" description="Pick a section." />
       </MemoryRouter>,
     );
-    // Granted tiles (scm.sales.orders=full, delivery/invoices=view) render.
     expect(screen.getByText("Sales Orders")).toBeTruthy();
     expect(screen.getByText("Delivery Orders")).toBeTruthy();
     expect(screen.getByText("Sales Invoices")).toBeTruthy();
-    // scm.sales.returns = none → the tile is filtered out (own-modules-only).
     expect(screen.queryByText("Delivery Returns")).toBeNull();
   });
 });

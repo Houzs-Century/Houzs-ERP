@@ -1,30 +1,5 @@
-// ----------------------------------------------------------------------------
-// VariantsTab — per-SKU variant maintenance for a sofa base model.
-//
-// Lives as a top-tab on the Products page (next to SKU Master, Modular,
-// Maintenance, Combos, Fabric). The matching combo-pricing UI already lives
-// on the existing `combos` tab via the vendored SofaComboTab (full CRUD +
-// history + anchors) — see the design handoff: combo-pricing is NOT
-// duplicated here, only the docked variant editor from the Final design.
-//
-// Layout (Final · Pricing & Variants, right pane):
-//   · Base model picker
-//   · Axes — Size / Fabric tier / Colour swatches; selected = primary-soft
-//     + primary border. Multi-select per axis acts as a filter on the table.
-//   · Variant table — one row per SKU under the picked model:
-//       SKU code (mono) · variant summary · price override · enable toggle
-//   · Cancel / Save variants — local staged edits, batched PATCH on Save.
-//
-// Writes wire to existing endpoints:
-//   PATCH /mfg-products/:id  { sell_price_sen / status }
-// (useUpdateMfgProductPrices + useUpdateMfgProductStatus). Both already work
-// in prod for the SKU Master editor — no new backend.
-//
-// "Setup notes" link in the header notes the BACKEND-CHECKLIST A6
-// (sofa-compartments rename — for variant axis renames) dependency. Until A6
-// ships, renames must be done one row at a time via SKU Master.
-// ----------------------------------------------------------------------------
 
+import { useProductCategories, type MfgProductCategory } from "../../../vendor/scm/lib/product-categories-store";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
@@ -51,7 +26,6 @@ import { classifyLoadError, errMsg } from "../../../components/scm-v2/PhotoGalle
 import { cn } from "../../../lib/utils";
 import { fmtSen } from "@2990s/shared";
 
-// ── Types ───────────────────────────────────────────────────────────────────
 
 type Tier = "PRICE_1" | "PRICE_2" | "PRICE_3" | "PRICE_4";
 const TIER_LABELS: Record<Tier, string> = {
@@ -74,20 +48,17 @@ type ProductModel = {
 };
 
 type StagedEdit = {
-  sellPriceSen?: number | null; // null = clear override → falls back to base
+  sellPriceSen?: number | null;
   status?: "ACTIVE" | "INACTIVE";
 };
 
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 // ── Hook: models by category ────────────────────────────────────────────────
-// The model registry carries five categories (backend CATEGORIES enum,
-// product-models.ts) — the tab was SOFA-hardcoded for no backend reason
-// (owner 2026-08-07: "only 1 category can be choose?").
+// The model registry takes every product category (product-models.ts) — the
+// tab was SOFA-hardcoded for no backend reason (owner 2026-08-07).
 
-const VARIANT_CATEGORIES = ["SOFA", "BEDFRAME", "MATTRESS", "ACCESSORY", "SERVICE"] as const;
-type VariantCategory = (typeof VARIANT_CATEGORIES)[number];
-const catLabel = (c: string) => c.charAt(0) + c.slice(1).toLowerCase();
+type VariantCategory = MfgProductCategory;
 
 const useModelsByCategory = (category: VariantCategory) =>
   useQuery({
@@ -100,15 +71,12 @@ const useModelsByCategory = (category: VariantCategory) =>
     retry: false,
   });
 
-// ── Component ───────────────────────────────────────────────────────────────
 
 export function VariantsTab() {
   const [searchParams, setSearchParams] = useSearchParams();
   const modelId = searchParams.get("model") ?? "";
   const rawCat = searchParams.get("cat") ?? "SOFA";
-  const category: VariantCategory = (VARIANT_CATEGORIES as readonly string[]).includes(rawCat)
-    ? (rawCat as VariantCategory)
-    : "SOFA";
+  const category: VariantCategory = /^[A-Z][A-Z0-9_]{1,29}$/.test(rawCat) ? rawCat : "SOFA";
 
   const setModelId = (id: string) => {
     const sp = new URLSearchParams(searchParams);
@@ -116,7 +84,6 @@ export function VariantsTab() {
     else sp.delete("model");
     setSearchParams(sp, { replace: true });
   };
-  // Switching category clears the picked model — it belongs to the old one.
   const setCategory = (c: string) => {
     const sp = new URLSearchParams(searchParams);
     sp.set("cat", c);
@@ -138,12 +105,10 @@ export function VariantsTab() {
     [skus, selectedModel],
   );
 
-  // Axis state — filter, multi-select
   const [pickedSizes, setPickedSizes] = useState<Set<string>>(new Set());
   const [pickedTiers, setPickedTiers] = useState<Set<Tier>>(new Set());
   const [pickedColours, setPickedColours] = useState<Set<string>>(new Set());
 
-  // Reset axis picks when model changes
   useEffect(() => {
     setPickedSizes(new Set());
     setPickedTiers(new Set());
@@ -155,7 +120,6 @@ export function VariantsTab() {
   const allSizes = useMemo<string[]>(() => {
     const fromAllowed = selectedModel?.allowed_options?.sizes ?? [];
     if (fromAllowed.length > 0) return [...fromAllowed].sort();
-    // Fallback: derive from SKU size_code values when allowed_options is empty.
     return Array.from(
       new Set(modelSkus.map((s) => s.size_code ?? "").filter(Boolean)),
     ).sort();
@@ -165,16 +129,12 @@ export function VariantsTab() {
     return [...(selectedModel?.allowed_options?.fabrics ?? [])].sort();
   }, [selectedModel]);
 
-  // Filter the SKU rows by the picks. Empty pick set on an axis = "no filter".
   const filteredSkus = useMemo(() => {
     return modelSkus.filter((s) => {
       if (pickedSizes.size > 0) {
         const sz = s.size_code ?? "";
         if (!pickedSizes.has(sz)) return false;
       }
-      // Tier / colour filters are advisory in v1 — concrete tier/colour live
-      // inside seat_height_prices + default_variants, not on the row directly.
-      // We honour them only when the row's default_variants contains the keys.
       if (pickedTiers.size > 0) {
         const tier = (s.default_variants as { fabricTier?: string } | null)?.fabricTier;
         if (!tier || !pickedTiers.has(tier as Tier)) return false;
@@ -187,7 +147,6 @@ export function VariantsTab() {
     });
   }, [modelSkus, pickedSizes, pickedTiers, pickedColours]);
 
-  // Staged edits + save mutations
   const [staged, setStaged] = useState<Record<string, StagedEdit>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -220,8 +179,6 @@ export function VariantsTab() {
         if (edit.sellPriceSen !== undefined) {
           await priceMut.mutateAsync({
             id,
-            // sell-price routes through price1Sen on this PATCH shape (the
-            // existing SKU Master editor's "Selling" column maps to it).
             price1Sen: edit.sellPriceSen,
           });
         }
@@ -248,7 +205,6 @@ export function VariantsTab() {
 
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-brand text-accent">
@@ -303,7 +259,6 @@ export function VariantsTab() {
         </div>
       )}
 
-      {/* Model picker */}
       <ModelPicker
         category={category}
         onCategory={setCategory}
@@ -321,7 +276,6 @@ export function VariantsTab() {
         </div>
       ) : (
         <>
-          {/* Axes */}
           <AxesBar
             sizes={allSizes}
             tiers={allTiers}
@@ -334,7 +288,6 @@ export function VariantsTab() {
             onColours={setPickedColours}
           />
 
-          {/* Variants table */}
           <VariantsTable
             loading={skusQ.isLoading}
             error={writesLikelyMissing ? null : skusQ.error ? errMsg(skusQ.error) : null}
@@ -346,7 +299,6 @@ export function VariantsTab() {
             onOpenSetup={() => setShowSetup(true)}
           />
 
-          {/* Footer — Cancel / Save */}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-subtle pt-3">
             <div className="text-[11.5px] text-ink-muted">
               {dirty
@@ -395,7 +347,6 @@ export function VariantsTab() {
   );
 }
 
-// ── Model picker ────────────────────────────────────────────────────────────
 
 function ModelPicker({
   category,
@@ -414,9 +365,9 @@ function ModelPicker({
   error: string | null;
   selectedId: string;
   onPick: (id: string) => void;
-  /** SKU count under the picked model — the picker's one-line summary. */
   variantCount: number | null;
-}) {
+}) {  const categoryOptions = useProductCategories().active.map((c) => ({ value: c.code, label: c.name }));
+
   /* Owner, 2026-08-07 (twice): picking ONE required model from a long code
      list is a COMBOBOX job — this is the same SearchableSelect the rest of
      the system's long dropdowns use (owner 2026-07-27: "全部下拉的 option 都要
@@ -449,7 +400,7 @@ function ModelPicker({
             <SearchableSelect
               value={category}
               onChange={(c) => c && onCategory(c)}
-              options={VARIANT_CATEGORIES.map((c) => ({ value: c, label: catLabel(c) }))}
+              options={categoryOptions}
               className={inputCls}
               ariaLabel="Category"
             />
@@ -479,7 +430,6 @@ function ModelPicker({
   );
 }
 
-// ── Axes bar ────────────────────────────────────────────────────────────────
 
 function AxesBar({
   sizes,
@@ -607,7 +557,6 @@ function Chip({
   );
 }
 
-// ── Variants table ─────────────────────────────────────────────────────────
 
 function VariantsTable({
   loading,
@@ -733,12 +682,9 @@ function VariantRow({
   const liveSellSen = staged?.sellPriceSen ?? row.sell_price_sen ?? row.price1_sen ?? null;
   const liveStatus = staged?.status ?? row.status;
   const enabled = liveStatus === "ACTIVE";
-  // The "effective" price is what the order engine charges: the override if
-  // present, else the base.
   const effectiveSen = liveSellSen ?? basePriceSen;
   const overrideHasValue = liveSellSen !== null && liveSellSen !== undefined;
 
-  // Local input state so the user can type freely; commit on blur.
   const [overrideStr, setOverrideStr] = useState<string>(
     overrideHasValue ? (liveSellSen! / 100).toFixed(2) : "",
   );
@@ -754,12 +700,11 @@ function VariantRow({
       return;
     }
     const n = Number(t);
-    if (!Number.isFinite(n) || n < 0) return; // ignore garbage
+    if (!Number.isFinite(n) || n < 0) return;
     onStage({ sellPriceSen: Math.round(n * 100) });
   };
 
   const variantSummary = useMemo(() => {
-    // Build a compact "Variant" cell from the row's distinguishing axes.
     const parts: string[] = [];
     if (row.size_code) parts.push(row.size_code);
     const dv = row.default_variants as Record<string, unknown> | null;

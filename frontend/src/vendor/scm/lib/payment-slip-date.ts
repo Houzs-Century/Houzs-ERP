@@ -56,8 +56,6 @@ export function checkPaymentSlipDate(
   const iso = String(paidAt ?? '').slice(0, 10);
   if (!isIsoDate(iso)) return { ok: false, code: 'unreadable', reason: 'Enter the slip date as a real calendar date.' };
   const { min, max } = paymentSlipDateWindow(today);
-  /* An unreadable `today` would make both bounds '' and every date "out of
-     window" — refuse to judge instead of refusing the operator. */
   if (!min || !max) return { ok: true };
   if (iso > max) {
     return { ok: false, code: 'future', reason: `Slip date cannot be in the future. The latest you can key in is ${dmy(max)}.` };
@@ -72,7 +70,6 @@ export function checkPaymentSlipDate(
   return { ok: true };
 }
 
-/** True for a `YYYY-MM-DD` that is a real calendar date (rejects 2026-02-31). */
 function isIsoDate(iso: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
   const [y, m, d] = iso.split('-').map(Number) as [number, number, number];

@@ -74,9 +74,6 @@ async function walkPoToSo(
   const s = escapeForOr(term ?? '');
   if (!s) return [];
 
-  // 1. PO headers whose number contains the term. CANCELLED dropped app-side
-  //    (the same rule so-converted-po applies), so the search admits exactly
-  //    the orders the "PO No." column shows. Capped at the match budget.
   const headRes = await scope(
     sb.from('purchase_orders').select('id, status').ilike('po_number', `%${s}%`),
   ).limit(PO_NUMBER_MATCH_CAP);
@@ -87,7 +84,6 @@ async function walkPoToSo(
     .filter((id): id is string => !!id);
   if (poIds.length === 0) return [];
 
-  // 2. Their PO lines -> the SO lines they were raised from (direct link only).
   const poItems = await chunkIn<{ so_item_id: string | null }>(poIds, (batch, from, to) =>
     scope(sb.from('purchase_order_items').select('so_item_id'))
       .in('purchase_order_id', batch)
@@ -100,7 +96,6 @@ async function walkPoToSo(
   )];
   if (soItemIds.length === 0) return [];
 
-  // 3. Those SO lines -> their SO doc_no.
   const soItems = await chunkIn<{ doc_no: string | null }>(soItemIds, (batch, from, to) =>
     scope(sb.from('mfg_sales_order_items').select('doc_no'))
       .in('id', batch)

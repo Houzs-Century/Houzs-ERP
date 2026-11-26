@@ -52,8 +52,6 @@ describe("alert dedupe", () => {
 });
 
 describe("job classification reuse", () => {
-  /** A fake DB whose job_runs read returns these rows: what readJobs (the
-   *  System Health panel's own read) sees. */
   const fakeDb = (rows: Array<Record<string, unknown>>) => ({ execute: async () => rows }) as unknown as DB;
   const run = (job: string, startedMinAgo: number, status: string) => ({
     job, started_at: new Date(NOW - startedMinAgo * 60_000).toISOString(), status, error: status === "error" ? "boom" : null,
@@ -65,10 +63,10 @@ describe("job classification reuse", () => {
     const rows = healthy
       .filter((r) => !["so-pull", "mrp-snapshot", "stock-close", "keepwarm"].includes(r.job))
       .concat([
-        run("so-pull", 2, "error"), // AutoCount pull: last run failed
-        run("mrp-snapshot", 15 * 3 + 5, "ok"), // missed: 15-min job, last start 50 min ago
-        run("stock-close", 27 * 60, "running"), // daily job that never finished
-        run("keepwarm", 1, "running"), // running now: fine
+        run("so-pull", 2, "error"),
+        run("mrp-snapshot", 15 * 3 + 5, "ok"),
+        run("stock-close", 27 * 60, "running"),
+        run("keepwarm", 1, "running"),
       ]);
     const jobs = await readJobs(fakeDb(rows), NOW);
     const critical = jobs.filter((j) => j.verdict === "critical").map((j) => j.job).sort();

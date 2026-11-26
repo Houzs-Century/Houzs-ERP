@@ -234,8 +234,6 @@ describe('a suggested tie to a receipt line another invoice billed is stale (own
 });
 
 describe('a row printed at RM 0 bills nothing (owner 2026-11-10, HOOKKA INV-2610-097)', () => {
-  /* The invoice prints EX-PO-009744, EX-HC-PO-2609-151, EX-HC-PO-2609-226 (exchange) and D.O. DO-2610-090:
-     JAGER 5FT, CODY (HF)(W) 3FT twice, all at RM 0.00, and SOFA 5536 1NA at RM 550.00. */
   const inv: PiScanExtract = { supplierName: 'HOOKKA INDUSTRIES SDN BHD', supplierCode: null, invoiceNumber: 'INV-2610-097', invoiceDate: '2026-10-30', poNo: 'EX-PO-009744, EX-HC-PO-2609-151, EX-HC-PO-2609-226', doNo: 'DO-2610-090', salesTax: null, totalAmount: 550, lines: [
     { itemCode: '1013-(Q)', articleNo: null, description: 'JAGER BEDFRAME 5FT', qty: 1, unitPrice: 0, salesTax: null, lineTotal: 0 },
     { itemCode: '1007(HF)(W)-(S)', articleNo: null, description: 'CODY BEDFRAME (HF)(W) 3FT', qty: 1, unitPrice: 0, salesTax: null, lineTotal: 0 },
@@ -249,7 +247,6 @@ describe('a row printed at RM 0 bills nothing (owner 2026-11-10, HOOKKA INV-2610
   ];
   const known = open.map((o) => ({ supplierSku: o.supplierSku, itemCode: o.itemCode }));
   const codes = { families: familiesByModelWord(known), prefixes: modelPrefixes(known) };
-  // The scanner learned 1013-(Q) = JAGER-(Q): the code rule alone would bill the free row at our RM 440.
   const binding = new Map([['1013-(Q)', 'JAGER-(Q)']]);
   const match = matchInvoiceLinesToGrnLines(inv.lines, open.map((o) => ({ grnItemId: o.grnItemId, grnNumber: o.grnNumber, itemCode: o.itemCode, remaining: o.remaining, unitPriceSen: o.unitPriceSen })), binding);
   const freeJager = (): PiReviewLine => ({ key: 'j', grnItemId: null, grnNumber: null, qty: 1, suggested: false, ai: false, read: { itemCode: '1013-(Q)', description: 'JAGER BEDFRAME 5FT', qty: 1, unitPrice: 0, lineTotal: 0 } });
@@ -259,7 +256,6 @@ describe('a row printed at RM 0 bills nothing (owner 2026-11-10, HOOKKA INV-2610
     expect(r.lines.map((l) => [l.read?.description, l.grnItemId])).toEqual([
       ['JAGER BEDFRAME 5FT', null], ['CODY BEDFRAME (HF)(W) 3FT', null], ['CODY BEDFRAME (HF)(W) 3FT', null], ['SOFA 5536 1NA', 'sofa'],
     ]);
-    // What Create converts is the sofa row alone, at RM 550.
     expect(billPicks(r)).toEqual([{ grnItemId: 'sofa', qty: 1, unitPriceSen: 550_00 }]);
   });
   test('the code matcher does not bill a free row against a line that costs money', () => {
@@ -286,11 +282,8 @@ describe('a row printed at RM 0 bills nothing (owner 2026-11-10, HOOKKA INV-2610
     const copy = (v: number, lines: PiReviewLine[]): PiReview => ({ v, supplierId: 's1', supplierRead: null, invoiceNumber: 'INV-2610-097', invoiceDate: null, doNo: 'DO-2610-090', poNo: null, notes: null, taxNote: null, lineTier: null, lines });
     const byId = new Map(open.map((o) => [o.grnItemId, o]));
     expect(staleSuggestions(copy(PI_REVIEW_VERSION, [tied(true)]), byId)).toBe(1);
-    // A tie the operator chose in this version stands.
     expect(staleSuggestions(copy(PI_REVIEW_VERSION, [tied(false)]), byId)).toBe(0);
-    // The old matcher tied it without the mark: re-matched once.
     expect(staleSuggestions(copy(PI_REVIEW_VERSION - 1, [tied(false)]), byId)).toBe(1);
-    // A free row on a free line is not stale.
     expect(staleSuggestions(copy(PI_REVIEW_VERSION, [tied(true)]), new Map([['jager', { unitPriceSen: 0 }]]))).toBe(0);
   });
 });

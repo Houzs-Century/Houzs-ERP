@@ -45,8 +45,6 @@ export const PayoutAdviceTab = ({ onUpload }: { onUpload?: () => void }) => {
 
   return (
     <div className="space-y-4">
-      {/* The advice goes up through the page's Upload drawer (MerchantUpload) —
-          one door for it, as for the reports. */}
       <section className="space-y-2">
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
           <b style={{ fontSize: 'var(--fs-15, 15px)' }}>PBB payment advices</b>
@@ -80,9 +78,6 @@ export const PayoutAdviceTab = ({ onUpload }: { onUpload?: () => void }) => {
   );
 };
 
-/* ── One advice, and where each of its days stands ────────────────────────────
-   Re-checked by the server on every read, not read back from upload time: a
-   report uploaded since must count, and one re-opened since must block. */
 
 const AdviceCard = ({ payout, chargeAccounts, defaultAccount }: {
   payout: Payout; chargeAccounts: ChargeAccount[]; defaultAccount: string | null;
@@ -100,8 +95,6 @@ const AdviceCard = ({ payout, chargeAccounts, defaultAccount }: {
         <span style={{ fontSize: 'var(--fs-16, 15px)', fontWeight: 700 }}>{fmt(payout.net_sen)}</span>
       </div>
 
-      {/* WHERE THE MONEY WENT, off the advice itself — a credit hunted for in
-          the wrong bank account is invisible until the statement disagrees. */}
       <div style={softText}>
         Pays into {payout.payee_bank ?? 'a bank the advice does not name'}
         {payout.payee_account_no ? ` · account ${payout.payee_account_no}` : ''}
@@ -114,7 +107,6 @@ const AdviceCard = ({ payout, chargeAccounts, defaultAccount }: {
           {reportCount} report{reportCount === 1 ? '' : 's'}.
         </div>
       ) : (
-        /* ONE sentence, the server's own, naming the first thing in the way. */
         <div style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
           <AlertTriangle {...ICON} />
           <span>{s.blockedBy ?? 'This advice names no settlement days.'}</span>
@@ -167,7 +159,6 @@ const DayStanding = ({ day, payoutId, chargeAccounts, defaultAccount }: {
             onClick={() => undo.mutate({ payoutId, settledOn: day.settledOn })}>
             {undo.isPending ? 'Undoing…' : 'Undo'}
           </button>
-          {/* A refusal reaches the person who pressed Undo, in the server's own sentence. */}
           {undo.isError && (
             <span style={{ color: danger, fontSize: 'var(--fs-12)', marginLeft: 6 }}>{refusalText(undo.error, 'The charge could not be undone.')}</span>
           )}
@@ -208,10 +199,6 @@ const linkBtn: React.CSSProperties = {
   borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontSize: 'var(--fs-12)', fontWeight: 600,
 };
 
-/* The ask: how much the bank deducted (the whole difference unless told
-   otherwise), which account it goes to (Finance's choice, starting on the
-   acquirer's fee account), and what it was for (required — the corrections
-   report prints it). Every refusal is the server's own sentence. */
 const ChargeForm = ({ payoutId, day, chargeAccounts, defaultAccount, onClose }: {
   payoutId: number; day: PayoutDay; chargeAccounts: ChargeAccount[]; defaultAccount: string | null; onClose: () => void;
 }) => {

@@ -77,8 +77,8 @@ describe('allocateOrderDeposit — the owner\'s split rule', () => {
       inv({ id: 'a', invoiceNumber: 'HC-SI-2608-001', totalSen: 300_000, ownPaidSen: 250_000 }),
       inv({ id: 'b', invoiceNumber: 'HC-SI-2608-002', totalSen: 300_000 }),
     ]);
-    expect(slices.get('a')).toBe(50_000);  // only what it still owed
-    expect(slices.get('b')).toBe(150_000); // the rest spilled
+    expect(slices.get('a')).toBe(50_000);
+    expect(slices.get('b')).toBe(150_000);
   });
 
   /* A customer's credit note knocked off the first invoice (owner 2026-11-03:
@@ -110,10 +110,6 @@ describe('allocateOrderDeposit — the owner\'s split rule', () => {
     expect(slices.get('live')).toBe(200_000);
   });
 
-  /* THE MONEY INVARIANT. Nothing here may make an invoice look more paid than
-     it is, and nothing may lose a customer's money between two invoices. Both
-     halves are asserted over generated cases rather than a handful of examples,
-     because the failure that matters is the combination nobody thought of. */
   test('the slices always sum to min(order collected, what the invoices could absorb)', () => {
     let seed = 20260823;
     const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
@@ -139,11 +135,8 @@ describe('allocateOrderDeposit — the owner\'s split rule', () => {
         .reduce((s, r) => s + Math.max(0, r.totalSen - r.ownPaidSen - r.creditedSen), 0);
       const allocated = [...slices.values()].reduce((s, v) => s + v, 0);
 
-      // Total-preserving: nothing invented, nothing lost.
       expect(allocated).toBe(Math.min(collected, absorbable));
-      // Never more than the order actually holds...
       expect(allocated).toBeLessThanOrEqual(collected);
-      // ...and never more than any single invoice still owes.
       for (const r of rows) {
         const take = slices.get(r.id) ?? 0;
         expect(take).toBeGreaterThanOrEqual(0);
@@ -154,7 +147,6 @@ describe('allocateOrderDeposit — the owner\'s split rule', () => {
   });
 });
 
-// ── The DB half: the order's money must actually reach the invoice ──────────
 
 type Store = {
   so: Record<string, unknown> | null;
@@ -163,7 +155,6 @@ type Store = {
   invoices: Array<Record<string, unknown>>;
   siPayments: Array<Record<string, unknown>>;
   updates: Array<Record<string, unknown>>;
-  /* The customers' credit notes knocked off the invoices (si-credit-notes.ts). */
   allocations: Array<Record<string, unknown>>;
   notes: Array<Record<string, unknown>>;
   creditErr: string | null;
@@ -182,7 +173,6 @@ const emptyStore = (o: Partial<Store> = {}): Store => ({
   ...o,
 });
 
-/** Chainable, awaitable PostgREST stand-in over the four tables this reads. */
 function fakeSb(store: Store) {
   class Q {
     table: string;
@@ -237,8 +227,6 @@ function fakeSb(store: Store) {
   return { from: (t: string) => new Q(t) };
 }
 
-/* The reported chain, rebuilt: one order carrying a 2,000 cash deposit, one
-   4,400 invoice raised off it with nothing in its own ledger. */
 const reportedChain = () => emptyStore({
   orderPayments: [{ id: 'pay-1', so_doc_no: 'HC-SO-2608-006', paid_at: '2026-08-23', method: 'cash', amount_sen: 200_000, account_sheet: 'Cash', note: null, is_deposit: true }],
   invoices: [{ id: 'si-1', so_doc_no: 'HC-SO-2608-006', company_id: 1, invoice_number: 'HC-SI-2608-004', invoice_date: '2026-08-23', status: 'SENT', total_sen: 440_000, paid_sen: 0 }],
@@ -253,7 +241,6 @@ describe('the invoice sees what the order collected', () => {
     expect(dep).not.toBeNull();
     expect(dep!.applied_sen).toBe(200_000);
     expect(dep!.order_collected_sen).toBe(200_000);
-    // "Which document took the money" is part of the answer, not a footnote.
     expect(dep!.so_doc_no).toBe('HC-SO-2608-006');
     expect(dep!.transactions).toHaveLength(1);
     expect(dep!.transactions[0]!.method).toBe('cash');
@@ -290,9 +277,7 @@ describe('recomputeSiPaid — the number and the status pill agree', () => {
     const store = reportedChain();
     await recomputeSiPaid(fakeSb(store), 'si-1');
     const u = store.updates.at(-1)!;
-    // paid_sen keeps its old meaning: receipts taken on THIS invoice.
     expect(u.paid_sen).toBe(0);
-    // ...but the status the office reads counts the order's money.
     expect(u.status).toBe('PARTIALLY_PAID');
   });
 

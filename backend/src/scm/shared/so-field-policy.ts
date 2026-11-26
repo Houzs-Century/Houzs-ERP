@@ -61,19 +61,13 @@
 export type SoFieldClass = 'FREE' | 'CONTROLLED' | 'DERIVED';
 
 export type SoHeaderFieldPolicy = {
-  /** DB column on mfg_sales_orders. */
   column: string;
-  /** camelCase key the header PATCH / amendment payloads use. */
   payloadKey: string;
-  /** Human label — rendered in amendment before/after diffs and lock copy. */
   label: string;
   cls: SoFieldClass;
-  /** Why it sits in that class. Read this before moving a row. */
   reason: string;
 };
 
-/* The CONTROLLED + DERIVED rows. Every other patchable header column is FREE by
-   omission — see SO_FREE_HEADER_NOTE below for why that default is deliberate. */
 export const SO_HEADER_FIELD_POLICY: readonly SoHeaderFieldPolicy[] = [
   {
     column: 'processing_date',
@@ -252,20 +246,6 @@ export const SO_HEADER_FIELD_POLICY: readonly SoHeaderFieldPolicy[] = [
   },
 ];
 
-/* WHY FREE IS THE DEFAULT, AND WHAT THAT COSTS
-   -------------------------------------------
-   The free bucket is "every patchable column not named above": customer type,
-   customer SO ref, salesperson, building type, venue, branding, note,
-   emergency contact + relationship, and the payments collection. That matches
-   the owner's ruling and matches how the header PATCH has always behaved.
-   (Customer name / phone / email LEFT this bucket 2026-08-21 — rows above.)
-
-   It is a RESIDUE, not a per-field decision. One entry still deserves the
-   owner's eye rather than my silence:
-     * A delivery-address change on an SO with an already-SCHEDULED delivery
-       trip does not re-plan that trip. The address now moves by amendment
-       (rows above, 2026-07-27), so Logistics signs it — but the trip still
-       needs re-planning by hand after the amendment applies. */
 export const SO_FREE_HEADER_NOTE =
   'Header columns absent from SO_HEADER_FIELD_POLICY are FREE: Save writes them directly, '
   + 'audited via entity-audit.';
@@ -299,22 +279,7 @@ export const soHeaderFieldClass = (payloadKey: string): SoFieldClass => {
   return hit ? hit.cls : 'FREE';
 };
 
-/* ── The enforcement predicate ─────────────────────────────────────────────
-   THE server-side control. A client that posts a CONTROLLED field directly on
-   a processing-locked SO must be REJECTED — the UI disabling the input is a
-   courtesy, this is the thing that actually holds.
 
-   Extracted from the PATCH handler so it can be tested directly rather than by
-   a copy that could drift from what ships. */
-
-/** Loose equality for the LOCK ONLY — null / undefined / '' all collapse, so a
-    form re-sending a blank field as '' does not read as a change from null,
-    and edge whitespace is ignored (2026-09-12, HC-SO-013497): AutoCount-
-    imported rows hold "MR LIM " with a trailing space, and a client that sends
-    back the "MR LIM" it displayed changes nothing anyone can see. That must
-    not be a CONTROLLED change. This is deliberately looser than the route's
-    write-path `norm()`: the lock decides whether an amendment is NEEDED, and
-    a whitespace-only delta never is. */
 const normValue = (v: unknown): string =>
   v === null || v === undefined ? '' : String(v).trim();
 
@@ -410,10 +375,7 @@ export const lockedColumnsChanged = (
 export type PaymentMutationKind = 'ADD' | 'EDIT' | 'DELETE';
 
 export type PaymentRowMutability = {
-  /** May this payment row still be edited or deleted? */
   mutable: boolean;
-  /** Plain-language reason when it may not — shown to the operator verbatim.
-      null when it may. */
   problem: string | null;
   /** WHY it may, when it may — null when it may not. A correction allowed by
       the amend right owes a reason and is reported to Finance; a same-day fix
@@ -465,20 +427,12 @@ export const paymentRowMutable = (
     closed over it, and an operator told only "it is reconciled" cannot go and
     look at the one that did. */
 export type PaymentReconciledBy =
-  /** Matched into a merchant settlement report — its fee is booked. */
   | { kind: 'merchant'; on: string }
-  /** Its journal entry has been claimed by a movement on a bank statement. */
   | { kind: 'bank'; jeNo: string }
-  /** Its month on that account has been closed and reported. */
   | { kind: 'month'; accountCode: string; month: string };
 
 export type PaymentAmendContext = {
-  /** Does the caller hold `scm.so_payment.amend`? Finance does; sales does
-      not. Absent means no — a missing permission is never an open door. */
   mayAmend?: boolean;
-  /** What has already reconciled this row, if anything. Null / absent means
-      the caller CHECKED and found nothing — never "the caller did not look":
-      the server refuses outright when it cannot read the answer. */
   reconciled?: PaymentReconciledBy | null;
 };
 

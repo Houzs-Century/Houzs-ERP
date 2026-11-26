@@ -69,8 +69,6 @@ export async function deliveredReturnedBySoItem(sb: any, soItemIds: string[]): P
     .in('so_item_id', batch)
     .order('id')
     .range(from, to));
-  // The old copy read these as empty on failure and netted nothing — a wrong
-  // Available rather than an error. A failed read now fails the request.
   if (doLinesErr) throw new Error(`delivery order lines: ${doLinesErr.message}`);
   const doLineRows = (doLines ?? []) as Array<{ id: string; so_item_id: string | null; qty: number; delivery_order_id: string }>;
   const doIds = [...new Set(doLineRows.map((l) => l.delivery_order_id).filter(Boolean))];
@@ -81,11 +79,6 @@ export async function deliveredReturnedBySoItem(sb: any, soItemIds: string[]): P
       sb.from('delivery_orders').select('id, status').in('id', batch).order('id').range(from, to));
     if (dosErr) throw new Error(`delivery orders: ${dosErr.message}`);
     for (const d of (dos ?? []) as Array<{ id: string; status: string | null }>) {
-      // A PRE-SHIP DO hasn't shipped and hasn't moved stock — excluding it
-      // (like soDeliverableRemaining's LEAK GUARD) keeps its units in Reserved
-      // so a free-to-sell KPI can't be inflated into over-sell. DRAFT *and*
-      // LOADED: this read named only DRAFT until 2026-08-20. (DRs have no
-      // DRAFT.)
       if (doCountsAsDelivered(d.status)) activeDoIds.add(d.id);
     }
   }

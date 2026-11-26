@@ -3,9 +3,6 @@ import type { Env } from "../types";
 import { requireItPages } from "../middleware/auth";
 import { loadAiUsageReport } from "../services/aiUsage";
 
-// GET /api/admin/ai-usage?months=6 — monthly Anthropic spend for the IT AI Usage
-// page: total RM, per feature and per company, oldest month first. Months before
-// recording started are back-filled from agent_runs and marked partial.
 const app = new Hono<{ Bindings: Env }>();
 app.use("*", requireItPages());
 

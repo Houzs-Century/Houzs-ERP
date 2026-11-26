@@ -1,5 +1,3 @@
-// Monthly pay (ported from Hookka's computeMonthlyLabor / calcStatutory) and
-// PCB, checked against figures worked by hand.
 import { describe, expect, test } from "vitest";
 import { DEFAULT_PAY_RULES } from "./hr-pay-rules";
 import { absenceCutoffDay, computeMonthlyPay, effectiveSalaryForMonth, statutoryFor, type PayEmployee } from "./hr-payroll";
@@ -8,7 +6,6 @@ import { residentPcbSen, resolvePcb } from "./hr-pcb";
 const deepavali = new Set(["2026-10-20"]);
 const monthly: PayEmployee = { payMode: "MONTHLY", salarySen: 260000, dailyRateSen: 0, workingDaysPerMonth: 26, workingHoursPerDay: 9, otMultiplier: 1.5, resignedOn: "" };
 
-/** Every Oct 2026 working day at 9h except those listed, plus extras. */
 function october(skip: string[], extra: Record<string, number>) {
   const days: { date: string; hours: number }[] = [];
   for (let d = 1; d <= 31; d++) {
@@ -44,7 +41,6 @@ describe("computeMonthlyPay", () => {
       rulesOn: () => DEFAULT_PAY_RULES,
       confirmedOtHoursByDate: null,
     });
-    // day rate 2600/26 = RM100; hour rate 100 / (9 + 1 lunch) = RM10.
     expect(p.dayRateSen).toBe(10000);
     expect(p.hourRateSen).toBe(1000);
     expect(p.absentDates).toEqual(["2026-10-05", "2026-10-06"]);
@@ -102,8 +98,6 @@ describe("computeMonthlyPay", () => {
   });
 
   test("with a confirmed-OT map, weekday OT is the reported hours, not the punch surplus", () => {
-    // 10-22 punched ~0.9 h past the 9 h day but nobody reported OT, so it pays
-    // nothing; 10-23 has 2 h of confirmed OT. Only the confirmed OT pays.
     const p = computeMonthlyPay({
       employee: monthly,
       year: 2026,
@@ -116,7 +110,7 @@ describe("computeMonthlyPay", () => {
       confirmedOtHoursByDate: new Map([["2026-10-23", 2]]),
     });
     expect(p.otWeekdayHours).toBe(2);
-    expect(p.otWeekdayPaySen).toBe(2 * 1000 * 1.5); // 2 h x RM10 x 1.5
+    expect(p.otWeekdayPaySen).toBe(2 * 1000 * 1.5);
     expect(p.daysWorked).toBe(2);
   });
 
@@ -140,7 +134,6 @@ describe("computeMonthlyPay", () => {
 describe("effectiveSalaryForMonth", () => {
   test("a raise mid-month is weighted by working days", () => {
     const s = effectiveSalaryForMonth([{ effectiveFrom: "2026-01-01", basicSalarySen: 260000 }, { effectiveFrom: "2026-10-16", basicSalarySen: 286000 }], 0, 2026, 10, deepavali);
-    // 26 working days: 13 before the 16th at 2600, 13 from it at 2860.
     expect(s).toBe(273000);
   });
 });

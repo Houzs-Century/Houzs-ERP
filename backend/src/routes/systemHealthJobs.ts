@@ -7,11 +7,6 @@ import { HEALTH_HUB_JOB } from "../services/healthHub";
 import { hubTarget } from "../services/itHub";
 import { scrubError } from "../services/serviceHealth";
 
-// GET /api/admin/health/jobs, /queues and /hub-report. Mounted inside
-// systemHealth.ts, so the IT pages gate there applies. Every read is
-// system-wide counts with no row data, and each section is wrapped so a DB
-// failure reads { ok: false, error } instead of blanking the page. The
-// measuring lives in services/healthMeasures.ts, shared with the IT Hub report.
 const app = new Hono<{ Bindings: Env }>();
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -36,9 +31,6 @@ app.get("/queues", async (c) => {
   }
   const queues = await readQueues(db);
 
-  // Failed order-slip scans, last 7 days. The Cloudflare dead-letter queue
-  // houzs-scan-ocr-dlq cannot be read from the Worker (a queue is consumed, not
-  // queried), so the scan rows marked 'error' are the readable record.
   let failedSlipScans: { ok: true; count_7d: number } | { ok: false; error: string };
   try {
     const [r] = await db.execute<{ n: number }>(
@@ -54,9 +46,6 @@ app.get("/queues", async (c) => {
   return c.json({ ok: true, queues, failed_slip_scans: failedSlipScans });
 });
 
-// The 5-minute health report to the IT Hub (services/healthHub.ts): whether it
-// is set up here, and when it last went through or failed, from its job_runs
-// rows. "configured" is read from this Worker's env now, so it is never stale.
 app.get("/hub-report", async (c) => {
   const configured = hubTarget(c.env) !== null;
   try {

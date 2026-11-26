@@ -1,11 +1,3 @@
-// ---------------------------------------------------------------------------
-// scan-word-match — which line a printed row most likely is, when its code and its
-// name are spelled the supplier's way: "DUN CS2 PURE BREEZE MAT 190X152X30CM" is
-// DL-CS2 PURE BREEZE (Q), "SF9050 - 1EPL + 1B" is AMN-SF9050 SOFA 1B(RHF).
-//
-// This only fills the check screen, where a person confirms each row (it arrives
-// marked "matched by name, check"). No draft is ever made from it.
-// ---------------------------------------------------------------------------
 
 const NOISE = new Set(['SOFA', 'BEDFRAME', 'BED', 'DIVAN', 'MAT', 'MATT', 'MATTRESS', 'FABRIC', 'SIZE', 'COL', 'SEAT', 'LEG', 'THE', 'AND', 'WITH', 'PO', 'SO', 'NEW', 'BOX', 'UNIT', 'PCS', 'SET', 'FT', 'FTS', 'CM', 'KING', 'QUEEN', 'SINGLE', 'SUPER', 'LHF', 'RHF', 'SEATER', 'SEATERS']);
 
@@ -14,18 +6,15 @@ const NOISE = new Set(['SOFA', 'BEDFRAME', 'BED', 'DIVAN', 'MAT', 'MATT', 'MATTR
    6FT with DIVAN ONLY-(K) and DIVAN ONLY 3FT with JAGER-(S) (owner 2026-11-09). */
 const SIZE_WORD = /^(?:[WL]?\d+X[WL]?\d+(?:X\d+)?(?:CM|MM)?|\d+(?:FT|FTS|FEET|CM|MM|INCH))$/;
 
-// "DSL 8075" and DSL8075 are one word.
 export const wordsOf = (s: string | null | undefined): string[] =>
   (s ?? '').toUpperCase().replace(/\b([A-Z]{2,5})\s+(\d{3,})/g, '$1$2').split(/[^A-Z0-9]+/)
     .filter((w) => w.length >= 2 && !NOISE.has(w) && !/^\d+$/.test(w) && !SIZE_WORD.test(w));
 
-/** A word that names one model, not a kind of thing: letters and digits, SF9050. */
 const isModel = (w: string): boolean => w.length >= 4 && /[A-Z]/.test(w) && /\d/.test(w);
 
 /** The bed size a row prints, as our codes spell it: 190X152, W152 X L190 or 5 FTS is (Q). */
 export function printedSize(text: string | null | undefined): string | null {
   const t = (text ?? '').toUpperCase();
-  // ERGOTEX prints W152 X L190.
   const cm = /(?<!\d)(?:190|200)\s*X\s*[WL]?(91|107|152|183|200)(?!\d)|(?<!\d)(91|107|152|183|200)\s*X\s*[WL]?(?:190|200)(?!\d)/.exec(t);
   const width = cm?.[1] ?? cm?.[2];
   if (width) return { 91: 'S', 107: 'SS', 152: 'Q', 183: 'K', 200: 'SK' }[width] ?? null;

@@ -56,8 +56,4 @@
  *  The position gate (scm.finance.view capability, backend isFinanceViewer)
  *  applies independently on top: BOTH the switch and the position must pass, so a
  *  salesperson sees nothing either way. */
-// Typed `boolean`, NOT left to infer a literal. With a literal type every
-// `COSTING_DISPLAY_ENABLED && x` narrows away, and the strict `tsc -b` the CI
-// runs can then flag the gated branches as unreachable — the annotation keeps
-// this a value, not a type.
 export const COSTING_DISPLAY_ENABLED: boolean = true;

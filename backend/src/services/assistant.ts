@@ -44,19 +44,13 @@ import {
 } from './assistant-tools';
 import { activeCompanyId, type CompanyScopeCtx } from '../scm/lib/companyScope';
 
-/** One specialist the router can consult. `briefTable`/`itemsTable` are module
- *  constants — never user input — so they are safe to interpolate. */
 interface Capability {
   key: string;
-  /** Shown to the router LLM so it can choose. */
   answers: string;
   briefTable: string;
-  /** briefs are ordered by generated_at in some families, created_at in others. */
   briefOrderCol: 'generated_at' | 'created_at';
   itemsTable: string;
-  /** findings tables filter on status='OPEN'; proposal tables on 'PENDING'. */
   itemsOpenStatus: 'OPEN' | 'PENDING';
-  /** Human label for the routing trace the UI shows. */
   label: string;
 }
 
@@ -104,10 +98,6 @@ const byKey = new Map(CAPABILITIES.map((c) => [c.key, c]));
 const TEACHABLE_LIST = AGENT_FAMILIES.map((f) => `${f} (${agentLabel(f)})`).join(', ');
 const ASK_KEYS_LIST = CAPABILITIES.map((c) => c.key).join(', ');
 
-/* The router now also spots TEACHING — the owner giving an agent a standing rule
-   in the same chat — and returns a teach/ask OBJECT (parseRouterDecision reads
-   it, and still accepts the old bare array for safety). Teaching is a PROPOSAL
-   here; the route performs the owner-gated write, so this file never writes. */
 const ROUTER_SYSTEM = [
   'You are the router of an ERP assistant. Decide whether the user is TEACHING an agent a standing rule or ASKING a question, then reply with ONE JSON object only — no prose, no markdown.',
   'TEACH = the user gives a STANDING RULE for an agent to remember and apply from now on (imperative: "from now on...", "always...", "never...", "以后...", "记住...", "不要..."). A one-off question is NOT teaching.',
@@ -149,7 +139,7 @@ async function latestBrief(env: Env, cap: Capability): Promise<unknown> {
     const b = r?.brief;
     return typeof b === 'string' ? JSON.parse(b) : (b ?? null);
   } catch {
-    return null; // a family whose table is absent must not sink the answer
+    return null;
   }
 }
 
@@ -164,9 +154,6 @@ async function openItems(env: Env, cap: Capability, limit = 8): Promise<unknown[
   }
 }
 
-/** Keyword fallback when the LLM is unavailable or returns nothing usable — the
- *  assistant still routes rather than shrugging. Deliberately generous: consulting
- *  one agent too many costs a read, missing the right one costs the answer. */
 function keywordRoute(message: string): string[] {
   const m = message.toLowerCase();
   const hits: string[] = [];
@@ -182,13 +169,8 @@ function keywordRoute(message: string): string[] {
 
 export interface AssistantAnswer {
   answer: string;
-  /** Which specialists were consulted — the UI shows this as the routing trace. */
   agents: Array<{ key: string; label: string }>;
-  /** True when the LLM was unavailable and this is the deterministic fallback. */
   degraded: boolean;
-  /** Set when the router read the message as TEACHING an agent a standing rule.
-   *  A PROPOSAL only — this file never writes; the route performs the owner-gated
-   *  write to the teaching notebook and composes the final confirmation. */
   teach?: { family: AgentFamily; label: string; instruction: string };
 }
 
@@ -199,21 +181,8 @@ export async function askAssistant(
   env: Env,
   message: string,
   usageSink?: AgentBrainUsageSink,
-  /* The caller's visibility. The default is the MOST RESTRICTIVE scope, not the
-     most permissive: the route is now open to any authenticated staff member, so
-     a future caller that forgets to pass a scope must under-disclose, never
-     over-disclose. (This default WAS wildcard, correct only while the route was
-     owner-only — the two were documented as having to change together, and this
-     is that change.) */
   scope: AssistantScope = { canSeeMargin: false, canSeeCommission: false, orderScope: 'own' },
-  /* Image / PDF blocks from an upload. When present, the assistant READS the file
-     directly (no routing, no agent gather) — it is the user's OWN upload, not
-     agent data, so the money-redaction path does not apply to it. */
   contentBlocks?: ContentBlock[],
-  /* The request's company context (Hono's `c`). When present, the answer path
-     runs the TOOL-LOOP — the model can call search_erp to locate a specific record
-     the briefs don't cover — scoped to exactly this caller's companies. Absent (a
-     headless caller, or tests) → the proven single-shot path, unchanged. */
   companyCtx?: CompanyScopeCtx,
 ): Promise<AssistantAnswer> {
   const apiKey = env.ANTHROPIC_API_KEY;
@@ -229,8 +198,6 @@ export async function askAssistant(
     return { answer: 'Ask me something about your orders, deliveries, payments, stock or sales.', agents: [], degraded: false };
   }
 
-  // FILE path — the user attached an image / PDF. Answer strictly from the file
-  // (plus their question). No specialist routing; no business data joins in.
   if (hasFiles) {
     if (!apiKey) {
       return { answer: 'The assistant needs an AI key to read a file. Please try again later.', agents: [], degraded: true };
@@ -246,9 +213,6 @@ export async function askAssistant(
     return { answer: worded?.trim() || 'I could not read that file just now. Please try again.', agents: [], degraded: !worded };
   }
 
-  // 1. ROUTE — the LLM decides teach-vs-ask and, for ask, picks the specialists;
-  //    keywords are the ask fallback. A teach decision returns here as a PROPOSAL:
-  //    the owner-gated write is the route's job, so this function stays read-only.
   let keys: string[] = [];
   if (apiKey) {
     const routed = await askAgentBrain(apiKey, {
@@ -273,12 +237,9 @@ export async function askAssistant(
     }
   }
   if (keys.length === 0) keys = keywordRoute(text);
-  /* Gate BEFORE gathering: a specialist the caller may not consult is never even
-     queried, so its rows do not exist to leak. */
   keys = allowedCapabilityKeys(keys, scope);
   const caps = keys.map((k) => byKey.get(k)).filter((c): c is Capability => !!c).slice(0, 4);
 
-  // 2. GATHER — each specialist's OWN deterministic output. No new arithmetic here.
   const facts: Record<string, unknown> = {};
   for (const cap of caps) {
     facts[cap.key] = { brief: await latestBrief(env, cap), openItems: await openItems(env, cap) };
@@ -286,7 +247,6 @@ export async function askAssistant(
 
   const agents = caps.map((c) => ({ key: c.key, label: c.label }));
 
-  // 3. ANSWER — worded by the LLM, STRICTLY from the gathered facts.
   if (!apiKey) {
     return {
       answer:
@@ -296,20 +256,12 @@ export async function askAssistant(
       agents, degraded: true,
     };
   }
-  /* Redact BEFORE the model call, not in the instructions to it. A figure inside
-     the context window is disclosed no matter what the system prompt asks. This one
-     redacted payload feeds BOTH answer paths below. */
   const note = scopeNote(scope);
   const baseSystem = note ? `${ANSWER_SYSTEM}
 
 ${note}` : ANSWER_SYSTEM;
   const payload = { question: text, agentData: redactFacts(facts, scope) };
 
-  /* TOOL-LOOP path — when the request carries a company context, the model may call
-     search_erp to locate a specific record the briefs do not cover. The dispatcher
-     company-scopes at source and redacts every result (assistant-tools.ts), so this
-     path can disclose nothing the single-shot path would not. On any failure it
-     returns null and we fall through to the proven single-shot answer below. */
   if (companyCtx) {
     const toolCtx: AssistantToolCtx = { env, scope, companyCtx, consulted: [] };
     const worded = await askAgentBrainWithTools(apiKey, {
@@ -333,8 +285,6 @@ ${ASSISTANT_TOOLS_GUIDANCE}`,
     }
   }
 
-  /* SINGLE-SHOT fallback — the original path: no company context (a headless caller
-     or a test), or the tool-loop could not reach the model. */
   const worded = await askAgentBrain(apiKey, {
     system: baseSystem,
     payload,

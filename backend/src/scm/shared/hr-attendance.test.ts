@@ -1,5 +1,3 @@
-// HR attendance day maths (ported from Hookka's attendance-rules) and the
-// soft punch-location check.
 import { describe, expect, test } from "vitest";
 import { DEFAULT_PAY_RULES } from "./hr-pay-rules";
 import {

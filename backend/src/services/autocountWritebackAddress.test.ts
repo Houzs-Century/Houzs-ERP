@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// AN ADDRESS THAT DOES NOT FIT THE ACCOUNT BOOK STOPS THE WHOLE DOCUMENT.
-//
-// HC-SO-2609-006, 2026-09-09, in AutoCount's own words:
-//
-//   Cannot set column 'InvAddr1'. The value violates the MaxLength limit of this
-//   column.
-//
-// Measured against AED_HOUZS the same day: all four InvAddr columns are 40
-// characters. A customer whose street line runs past forty could not have a
-// sales order in the accounts at all.
-// ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
 import {
   fitAddressLines,
@@ -21,9 +9,6 @@ import { fitSoAddress, soStreetTail, soTownLines } from './autocount-address-fit
 const LONG = 'No 12A, Jalan Perindustrian Bukit Minyak 5, Kawasan Perindustrian';
 
 describe('an address that already fits is never touched', () => {
-  /* THE RULE THAT MAKES THIS SAFE TO SHIP. Re-flowing every address would
-     rewrite the line breaks of every document on its next edit, for the sake of
-     the few that overflow. */
   test('four short lines come back exactly as they went in', () => {
     const input = ['No 1, Jalan Besar', 'Taman Sentosa', '43300 Seri Kembangan', 'Selangor'];
     expect(fitAddressLines(input).lines).toEqual(input);
@@ -47,8 +32,6 @@ describe('an overflowing address is RE-FLOWED, not cut', () => {
     for (const l of out.lines) expect((l ?? '').length).toBeLessThanOrEqual(AC_ADDRESS_LINE_MAX);
   });
 
-  /* THE ADDRESS A DELIVERY IS PRINTED FROM. Losing part of it sends goods to
-     the wrong place, so the words must all still be there and in order. */
   test('not one word is lost, and the order is kept', () => {
     const before = [LONG, 'Taman Sentosa', '43300 Seri Kembangan', 'Selangor'].join(' ').split(' ');
     const after = out.lines.filter(Boolean).join(' ').split(' ');
@@ -67,11 +50,9 @@ describe('what cannot fit is reported, never silently dropped', () => {
     const out = fitAddressLines([huge, null, null, null]);
     expect(out.lines.filter(Boolean)).toHaveLength(4);
     expect(out.dropped).toBeTruthy();
-    /* The dropped text is the TAIL, so a reader can see what was lost. */
     expect(huge.endsWith(out.dropped as string)).toBe(true);
   });
 
-  /* Nothing else can be done with a single token wider than the column. */
   test('one very long word is broken rather than dropped', () => {
     const word = 'A'.repeat(90);
     const out = fitAddressLines([word, null, null, null]);
@@ -91,7 +72,6 @@ describe('soInvoiceAddress carries the fit', () => {
     expect(inv.InvAddr1).toBeTruthy();
   });
 
-  /* The shape every other test in this repo already asserts must not move. */
   test('the ordinary address is unchanged', () => {
     const inv = soInvoiceAddress({
       address1: 'No 1, Jalan Besar', address2: 'Taman Sentosa',
@@ -114,8 +94,6 @@ describe('fitSoAddress locks a stored address to the column', () => {
     const out = fitSoAddress([LONG, null, null, null]);
     expect((out.address1 ?? '').length).toBeLessThanOrEqual(AC_ADDRESS_LINE_MAX);
     expect(out.address2).toBeTruthy();
-    /* Not one word lost, and in order — this is the address a delivery is
-       printed from. */
     expect([out.address1, out.address2, out.address3, out.address4]
       .filter(Boolean).join(' ')).toBe(LONG);
   });
@@ -130,8 +108,6 @@ describe('fitSoAddress locks a stored address to the column', () => {
     });
   });
 
-  /* A line the fitted address no longer needs is BLANKED, not left holding what
-     was there before — otherwise a re-flow that moves text up leaves a ghost. */
   test('a line the address no longer needs comes back null', () => {
     const out = fitSoAddress(['short', 'also short', null, null]);
     expect(out.address3).toBeNull();
@@ -139,8 +115,6 @@ describe('fitSoAddress locks a stored address to the column', () => {
   });
 });
 
-/* BUG-40, HC8962: the form corrects postcode / city / state and has no input for
-   address3 / address4, so the cutover's old town line must not outvote it. */
 describe('a corrected postcode replaces the cutover town line', () => {
   const MIGRATED = {
     address1: '312, Jalan Banjaran Utama,', address2: 'Kawasan Kempas Banjaran,',
@@ -169,9 +143,6 @@ describe('a corrected postcode replaces the cutover town line', () => {
   });
 });
 
-/* 2990-0036 (2990-SO-2611-009): the POS sent the whole address as address1, the
-   save fit spilled it into address3, and that line then won as the town line —
-   AutoCount and the delivery sheet lost "47820 Petaling Jaya". */
 describe('a street that runs on into lines 3 and 4 keeps the town', () => {
   const SPILLED = {
     address1: "A-05-07, D'Clover Residences, A-UG1-11,", address2: 'Dataran Sentral Damansara, No 3,',
@@ -212,7 +183,6 @@ describe('a street that runs on into lines 3 and 4 keeps the town', () => {
     expect(soStreetTail({ ...SPILLED, postcode: null })).toEqual([]);
   });
 
-  /* AutoCount-era rows keep their own text there (tests/deliverySheetSync.test.ts). */
   test('a hand-typed state, a foreign postcode or a non-Malaysian order is not street', () => {
     expect(soStreetTail({ ...SPILLED, address3: null, address4: 'P.PINANG' })).toEqual([]);
     expect(soStreetTail({ ...SPILLED, address3: 'KL' })).toEqual([]);

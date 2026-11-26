@@ -1,7 +1,3 @@
-/* "Delivered with issue" on the POD screen (sister review A2): the crew ticks
- * the problem, adds photos, and confirms. The delivery is saved FIRST, exactly
- * as a plain delivery, and the problem report follows — so a problem never
- * blocks the delivery, and a failed report says so instead of closing. */
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { fireEvent } from "@testing-library/dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -15,7 +11,6 @@ vi.mock("../vendor/scm/lib/slip", async (importOriginal) => ({
   uploadSlipFull: vi.fn(async ({ file }: { file: File }) => ({ r2Key: `slips/2026/11/${file.name}` })),
   uploadFieldPhoto: vi.fn(async ({ file }: { file: File }) => ({ r2Key: `slips/2026/11/${file.name}` })),
 }));
-// No photos uploaded earlier for this stop by anyone on the crew.
 vi.mock("../vendor/scm/lib/crew-stop-photos", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../vendor/scm/lib/crew-stop-photos")>()),
   listCrewStopPhotos: vi.fn(async () => []),
@@ -65,7 +60,6 @@ beforeEach(() => {
   authedFetch.mockImplementation(async (url: string, init?: Init) => {
     if (url.endsWith("/delivery-issue")) {
       if (reportFails) throw new Error("Network down");
-      // Reporting records the problem only — no service case (the office opens it).
       return { issue: { id: "iss-1", assr_case_id: null, assr_no: null } };
     }
     if (url.endsWith("/delivery-issues")) return { issues: [] };
@@ -83,7 +77,6 @@ const wrap = () => {
   return { ...r, onDone };
 };
 const jpeg = (name: string) => new File(["jpeg"], name, { type: "image/jpeg" });
-/* POD photos upload on pick, so wait until the photo shows as uploaded. */
 const attachPodPhoto = async (c: HTMLElement) => {
   fireEvent.change(c.querySelector('input[type="file"]')!, { target: { files: [jpeg("pod.jpg")] } });
   await screen.findByText("Uploaded");
@@ -152,7 +145,6 @@ describe("MobilePOD — delivered with issue", () => {
   });
 
   it("shows an already-reported problem but offers the crew no 'Create service case'", async () => {
-    // The office opens the case, not the crew — so the POD card never shows the button.
     authedFetch.mockImplementation(async (url: string) => {
       if (url.endsWith("/delivery-issues")) {
         return { issues: [{

@@ -1,20 +1,3 @@
-/* A zero-cost goods receipt must not be a dead end on the phone.
- *
- * `PATCH /scm/grns/:id/post` refuses a receipt that would open a zero-cost stock
- * layer and NAMES the two ways out: enter the unit price from the supplier's
- * goods-received document, or tick "Received free" on the line. Desktop has both
- * controls (`GoodsReceivedDetail`). Mobile had NEITHER — the receipt screen
- * offered "Post" and "Cancel", `zeroCostAck` appeared nowhere in
- * `frontend/src/mobile`, and the convert wizard's copy of the message told the
- * receiver to open the receipt on desktop. A receiver on the warehouse floor had
- * to go find a PC.
- *
- * FAILS ON THE PRE-FIX CODE — the sheet did not exist.
- *
- * These drive the REAL sheet with only `authedFetch` faked, so they cover the
- * controls AND the two writes they produce (`PATCH /grns/:id/items/:itemId`,
- * then the original `PATCH /grns/:id/post`).
- */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
@@ -65,8 +48,6 @@ const patches = () =>
 describe("the remedy the refusal names is ON THE SCREEN", () => {
   it("names each refused line and what it normally costs", () => {
     sheet();
-    /* The server's sentence lists them AND each line gets its own card, so both
-       spellings of the code are on screen — that is the point, not a duplicate. */
     expect(screen.getAllByText(/AKEMI-QD/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/normally about RM 450\.00 each/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/normally about RM 1,200\.50 each/).length).toBeGreaterThan(0);
@@ -159,7 +140,6 @@ describe("the receipt screen in the receiver's hand reaches it", () => {
   const detail = readFileSync(resolve(process.cwd(), 'src/mobile/MobileModuleDetail.tsx'), 'utf8');
 
   it("the mobile document footer captures the refusal and opens the remedy", () => {
-    /* Post and Cancel were the whole of the GRN footer's vocabulary. */
     expect(detail).toContain('useGrnZeroCostRemedy');
     expect(detail).toContain('zeroCost.capture(e)');
     expect(detail).toContain('{zeroCost.sheet}');

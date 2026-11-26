@@ -25,8 +25,6 @@ export type ListMrpStatus = {
   refreshing: boolean;
 };
 
-/* A stale / missing snapshot is the thing the page must say, so it wins over a
-   chunk that happened to read a fresh one. */
 const FALLBACK_RANK: Record<ListMrpFallback, number> = { stale: 3, missing: 2, refresh: 1 };
 
 /** One line for the page from every chunk's answer: the OLDEST time, live if any chunk was live. */

@@ -1,14 +1,9 @@
-// The SOLE source of truth for the POS selling fabric-tier add-on. Pure — no I/O.
-// POST /mfg-sales-orders (server recompute) and the POS configurator import THIS
-// same function so the figure cannot drift. Returns WHOLE MYR for ONE configured
-// item; callers multiply by qty and convert to the order's unit (×100 for *_sen).
-// COST is unaffected: this is selling-only.
 
 export type FabricTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3' | 'PRICE_4';
 export type FabricAddonCategory = 'SOFA' | 'BEDFRAME';
 
 export interface FabricTierAddonConfig {
-  sofaTier2Delta:     number; // whole MYR
+  sofaTier2Delta:     number;
   sofaTier3Delta:     number;
   bedframeTier2Delta: number;
   bedframeTier3Delta: number;

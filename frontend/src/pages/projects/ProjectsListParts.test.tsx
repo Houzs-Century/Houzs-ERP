@@ -1,5 +1,3 @@
-/* The project list's filter controls: the multi-select popover, the date-range
- * chip and the per-project task badges under the Status (section) filter. */
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { DateRangeFilter, MultiSelectFilter, SectionTaskBadges } from "./ProjectsListParts";

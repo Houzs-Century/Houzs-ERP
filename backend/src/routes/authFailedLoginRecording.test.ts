@@ -1,11 +1,3 @@
-/* RECORDING A FAILED LOGIN MUST NEVER CHANGE THE LOGIN.
- *
- * Every failed branch of /login now saves a row (services/failedLogins.ts).
- * The save runs after the response, and here it is made to throw in the
- * harshest way (getDb throws synchronously, as it does with no database URL):
- * each failed login must still answer with exactly the status and body it
- * answered with before, both with and without an execution context.
- */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExecutionContext } from "hono";
 

@@ -42,9 +42,6 @@ import { statusFor } from "./do-list-status";
 describe("the stored value is untouched", () => {
   it("scm.do_status still has DISPATCHED, and no member called LOADED-the-label", () => {
     expect(DO_STATUSES as readonly string[]).toContain("DISPATCHED");
-    /* The eight members, from the shared declaration the backend enforces. A
-       relabel that quietly added a ninth would be the bug 0530 shape: a status
-       literal the enum does not define is a 22P02 and a 400, not a miss. */
     /* eslint-disable no-restricted-syntax -- the literal eight, on purpose: deriving them from DO_STATUSES would assert it against itself */
     expect([...DO_STATUSES].sort()).toEqual([
       "CANCELLED", "DELIVERED", "DISPATCHED", "DRAFT",
@@ -64,16 +61,12 @@ describe("the word on screen", () => {
     expect(statusFor("dispatched").bucket).toBe("dispatched");
   });
 
-  /* LOADED reads "Confirmed" and that is the reason DISPATCHED could not simply
-     take the obvious word from its own value: the two would collide. Pinned so
-     the pair is read together. */
   it("LOADED still reads Confirmed, so the two words do not collide", () => {
     expect(statusLabel("do", "LOADED")).toBe("Confirmed");
     expect(statusFor("loaded").label).toBe("Confirmed");
   });
 });
 
-// ── The scan ────────────────────────────────────────────────────────────────
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -87,18 +80,7 @@ function productionSources(dir = SRC): string[] {
 }
 
 describe("no surface still calls the delivery order's DISPATCHED 'Shipped'", () => {
-  /* THE OLD WORD WAS NOT ONE WORD, which is why the pattern below is a small
-     alternation rather than a single literal. On 2026-08-26 the same stored
-     value read "Shipped" on the list, the pill and the consignment note, and
-     "Dispatched" on the delivery-order detail page, and the mobile shell's
-     button verb was "Dispatch". All four are refused now. Case matters: the
-     STORED literal `"DISPATCHED"` is upper-case and must keep travelling
-     freely, so `Dispatch` with a lower-case tail cannot match it. */
   it("no line names DISPATCHED beside a Shipped / Dispatch-shaped label", () => {
-    /* Comments are stripped first. This file, status-pill.ts, row-menus.ts and
-       DeliveryOrderDetailV2.tsx all EXPLAIN the old word in prose, and
-       documentation of a correction must not read as the defect — the same
-       reason do-status-evidence.test.tsx strips before scanning. */
     const offenders = productionSources().flatMap((path) => {
       const source = readFileSync(path, "utf8")
         .replace(/\/\*[\s\S]*?\*\//g, "")

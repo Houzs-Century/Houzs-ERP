@@ -57,12 +57,8 @@ export interface SiSummaryEntry {
   count: number;
   total_sen: number;
   total_outstanding_sen: number;
-  /** True only when EVERY counted invoice had its order's deposit resolved. */
   deposit_applied: boolean;
-  /** Plain-language why, when `deposit_applied` is false. Null when it is true. */
   deposit_note: string | null;
-  /** The read failed outright. The numbers above are meaningless and the screen
-   *  must not print them — see the note on `unavailableSiSummary`. */
   unavailable?: true;
 }
 
@@ -116,16 +112,10 @@ export async function summariseSiOutstanding(
     if (error) { scanError = error.message; break; }
     const got = data ?? [];
     rows.push(...got);
-    /* A short page is the last page. This is the same stop condition
-       `paginateAll` uses and it rests on the same assumption about PostgREST's
-       row ceiling, documented in that file. */
     if (got.length < PAGE) { complete = true; break; }
   }
 
   if (scanError !== null) {
-    /* The aggregate, if we have one, is a real number that is merely too big.
-       Keeping it beats reporting nothing — but it must not claim the deposits
-       were applied. */
     if (!aggregate) return unavailableSiSummary(scanError);
     return {
       ...aggregate,
@@ -135,12 +125,6 @@ export async function summariseSiOutstanding(
   }
 
   if (!complete) {
-    /* MORE INVOICES THAN THE CAP. The cap is a limit on how much this endpoint
-       will read, never a limit on what it counts — dropping the uncounted rows
-       would make the figure quietly SMALLER than the truth, which is the one
-       thing a statement of money owed may not be. So the SQL aggregate, which
-       counted all of them, stands, and the answer says the deposits are not in
-       it. */
     if (!aggregate) {
       return unavailableSiSummary(`more than ${SI_SUMMARY_ROW_CAP} outstanding invoices and no aggregate to fall back on`);
     }
@@ -151,15 +135,7 @@ export async function summariseSiOutstanding(
     };
   }
 
-  /* Batch by DISTINCT ORDER, not by row: the stamp's sibling read carries the
-     order numbers in the request URI, and an unbounded `.in()` list is a
-     rejected request, not a slow one (paginate-all.ts, URL_QUERY_BUDGET). */
   const docNos = [...new Set(rows.map((r) => (r.so_doc_no as string | null) ?? '').filter(Boolean))];
-  /* An invoice with no order behind it has a REAL zero deposit, and it is never
-     in any batch below — so it must be answered here or it would fall through
-     as "unresolved" and drag a whole page's figure back up to the ceiling on
-     the strength of manual invoices that were never in question. Its credit
-     notes (si-credit-notes.ts) are read here for the same reason. */
   const manual = rows.filter((r) => !r.so_doc_no);
   for (const r of manual) { r.so_deposit_applied_sen = 0; r.credit_notes_sen = null; }
   if (manual.length > 0 && companyId != null) {
@@ -185,15 +161,9 @@ export async function summariseSiOutstanding(
     totalSen += Number(r.total_sen ?? 0);
     const raw = Math.max(0, Number(r.outstanding_sen ?? 0));
     const dep = r.so_deposit_applied_sen;
-    /* The credit notes knocked off it come off like the deposit; unread, they
-       are subtracted as nothing and the answer says the figure may be too high. */
     const cn = r.credit_notes_sen;
     if (cn === null || cn === undefined) creditsUnread += 1;
     const credit = cn === null || cn === undefined ? 0 : Math.max(0, Number(cn));
-    /* `null` is the stamp saying it could not read that row's order. Subtract
-       NOTHING for it and count it — the row keeps its larger figure, and the
-       answer below stops claiming the deposits are in. Subtracting a guess here
-       would be the only way this endpoint could under-state. */
     if (dep === null || dep === undefined) { unresolved += 1; outstandingSen += Math.max(0, raw - credit); continue; }
     outstandingSen += Math.max(0, raw - Math.max(0, Number(dep)) - credit);
   }

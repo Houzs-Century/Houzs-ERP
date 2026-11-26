@@ -64,7 +64,6 @@ type Tab = 'lorries' | 'arrange' | 'all' | 'history';
 
 const EMPTY_REFS: ReadonlySet<string> = new Set();
 
-/** date (YYYY-MM-DD) shifted by whole days, Malaysian calendar. */
 function shiftDate(date: string, delta: number): string {
   const d = new Date(`${date}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + delta);
@@ -91,16 +90,11 @@ export function FleetDay() {
   const [selected, setSelected] = useState<DocRowVM | null>(null);
   const [crewRun, setCrewRun] = useState<LorryRunVM | null>(null);
   const [mapOpen, setMapOpen] = useMapPanelOpen('last-mile');
-  /* Per-viewer: fold done stops away on every lorry card. */
   const [hideDone, setHideDone] = useLocalStorage<boolean>('fleet-day.hide-done.v1', false, undefined, (v) => v === true);
-  /* The region chip above the map the view is fitted to (null = all stops); the
-     nonce re-fits when the same chip is clicked again after a pan. */
   const [mapZone, setMapZone] = useState<{ key: string | null; n: number }>({ key: null, n: 0 });
 
-  // ── Feeds ────────────────────────────────────────────────────────────────
   const query = useFleetDay({ date, warehouseId: warehouseId || null });
   const trips = useMemo(() => query.data?.trips ?? [], [query.data]);
-  // The board in date bands: the band holding this day first, the rest after (delivery-board-bands.ts).
   const board = useBandedBoard({ state: 'ALL', first: bandOfDay(date, todayMY()) });
   const boardRefresh = useBoardRefresh({ changeFeed: false, countsState: null });
   const boardOrders = useMemo<PlanningOrder[]>(
@@ -118,7 +112,6 @@ export function FleetDay() {
   const remarkFlags = useRemarkFlags();
   const remarkKeys = useMemo(() => new Set((remarkFlags.data ?? []).map((f) => f.soDocNo)), [remarkFlags.data]);
 
-  // ── Derivation ─────────────────────────────────────────────────────────
   const clock = useMemo(() => ({ day: date, ...mytClock(new Date()) }), [date]);
   const dayRows = useMemo(() => boardOrders.filter((o) => lastMileSideOf(o, date) != null), [boardOrders, date]);
   // Orders DUE this day that already have a lorry assigned (crew.lorry_plate) but
@@ -161,21 +154,16 @@ export function FleetDay() {
     for (const r of runs) m.set(platekey(r.plate), r);
     return m;
   }, [runs]);
-  /** The card a drop belongs to — its trip's card, else its crew plate's card. */
   const runForDoc = useCallback((d: DocRowVM): LorryRunVM | null => {
     if (d.order.trip_id) { const r = runByTripId.get(d.order.trip_id); if (r) return r; }
     const p = d.order.crew?.lorry_plate;
     return p ? runByPlate.get(platekey(p)) ?? null : null;
   }, [runByTripId, runByPlate]);
-  // To arrange = due this day, no trip AND no lorry assigned yet. Once a lorry is
-  // assigned (even before a run), the order moves onto that lorry's card above.
   const toArrangeOrders = useMemo(
     () => boardOrders.filter((o) => lastMileListSideOf(o, date) === 'TO_ARRANGE' && !isAssignedNoTripRow(o, date)),
     [boardOrders, date],
   );
 
-  // "Lorries" counts the lorries actually working today (>=1 drop); the pinned
-  // empty in-house cards still render but are not counted as out.
   const stats = useMemo(() => dayStatsFrom(runs.filter((r) => r.rollup.drops > 0).map((r) => r.rollup)), [runs]);
   const lateCount = useMemo(() => dayDocs.filter((d) => d.late).length, [dayDocs]);
   const active = filtersActive(filters);
@@ -216,7 +204,6 @@ export function FleetDay() {
 
   const selectedRun = selected ? runForDoc(selected) : null;
 
-  // ── Map wiring (reuses the shared Google-Maps panel) ───────────────────────
   const geo = useDeliveryGeo({ date, region: filters.region, enabled: mapOpen });
   const geoPoints = useMemo(
     () => (geo.data?.points ?? []).filter((p) => !isEastMalaysiaOrSingaporeStop({ region: p.region, state: p.state, country: p.country })),
@@ -230,8 +217,6 @@ export function FleetDay() {
   const jobPoints = useMemo(() => jobGeo.data?.points ?? [], [jobGeo.data?.points]);
   const mapPins = useMemo(() => [...pinsFromGeoPoints(geoPoints), ...pinsFromJobPoints(jobPoints)], [geoPoints, jobPoints]);
   const mapTotals = useMemo(() => geoTotals(geoPoints), [geoPoints]);
-  /* Every located stop with its region bucket — SOs from /geo, jobs by their row's region —
-     so the chips count and fit every job type, not only SOs. */
   const zonePoints = useMemo(() => {
     const regionOf = new Map(dayDocs.map((d) => [d.soDocNo, d.region] as const));
     return [
@@ -259,9 +244,6 @@ export function FleetDay() {
     () => (geo.data?.depot ? { lat: geo.data.depot.lat, lng: geo.data.depot.lng } : null),
     [geo.data?.depot],
   );
-  // One stable colour per lorry: a trip-backed lorry keeps its card's trip colour
-  // (card, map and legend agree); a lorry assigned drops but no trip yet gets its
-  // own palette colour so its route still reads as distinct (its card shows grey).
   const lorryColors = useMemo(() => assignRouteColors(runs.map((r) => platekey(r.plate))), [runs]);
   const colorForPlate = useCallback((k: string): string => {
     const run = runByPlate.get(k);
@@ -289,8 +271,6 @@ export function FleetDay() {
   const legByRef = useMemo(() => legLabelsByRef(roadDay.data?.values() ?? []), [roadDay.data]);
   const mapNoByRef = lorryRoutes.noByRef;
   const panelRoutes = lorryRoutes.routes.map((r) => ({ ...r, roadLabel: roadLabelOf(r.title) }));
-  // The board's own drops that could not be placed (surfaced, never dropped),
-  // then any server-ungeocoded order not already named.
   const mapUnlocated = useMemo(() => {
     const seen = new Set<string>();
     const out: Array<{ ref: string; label?: string; reason: string }> = [];
@@ -306,8 +286,6 @@ export function FleetDay() {
     }
     return out;
   }, [lorryRoutes.unlocated, geo.data?.ungeocoded]);
-  // A lorry focus (the owner's by-lorry filter): the map isolates that lorry's
-  // route and the board highlights its card; click it again to clear.
   const mapFocus = useMemo<MapFocus | null>(() => {
     if (!focusedPlate) return null;
     const run = runByPlate.get(focusedPlate);
@@ -319,14 +297,10 @@ export function FleetDay() {
     setMapZone((z) => ({ key: null, n: z.n }));
     setParam('lorry', focusedPlate === routeId ? null : routeId);
   };
-  /* A region chip fits the map to that region's stops; "All" fits everything again.
-     It replaces a lorry focus (one view at a time). */
   const pickZone = (key: string | null) => {
     if (focusedPlate) setParam('lorry', null);
     setMapZone((z) => ({ key, n: z.n + 1 }));
   };
-  /* Where the map put each stop, for the row's circle and meta — only once the map
-     has looked (it locates only while open). */
   const locatedKnown = mapOpen && geo.data != null && (jobRefs.length === 0 || jobGeo.data != null);
   const unlocatedRefs = useMemo(
     () => new Set(locatedKnown ? lorryRoutes.unlocated.map((u) => u.ref) : []),
@@ -345,8 +319,6 @@ export function FleetDay() {
   };
 
   const refetchAll = () => { void board.refetch(); void query.refetch(); };
-  // Malaysian wall-clock for the "Live · h:mm AM/PM" header, via the shared pure
-  // formatter (no locale date API — keeps audit:date-format clean).
   const liveTime = clockMY(new Date().toISOString()) ?? '';
   // "Today" header button: always shown, inert (disabled + greyed) when the board
   // is already on today, so the control never disappears (owner 2026-11-14).
@@ -454,8 +426,6 @@ export function FleetDay() {
 
   return (
     <div className="space-y-4">
-      {/* Header — one row (design handoff v2, Layout A): title left; live clock,
-          day stepper and Print on the right. */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-brand text-accent">

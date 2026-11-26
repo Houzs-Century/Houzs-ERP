@@ -3,8 +3,6 @@ import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { invalidModelDefault, pickDefaultVariants } from './model-default-variants';
 
-/* One rule, two readers: the Model PATCH gate and the line pickers. A browser
- * copy that drifted would pre-fill a default the save then refuses. */
 describe('model-default-variants', () => {
   test('backend/src/scm/shared/model-default-variants.ts is byte-identical to this one', () => {
     const norm = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n');

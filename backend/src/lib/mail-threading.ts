@@ -1,10 +1,3 @@
-// Mail Center RFC threading (DEV-03 / PRD T-011 P1).
-//
-// A customer's mail client threads a reply by its In-Reply-To / References
-// headers, and our inbound side finds the thread the same way (message_id).
-// Resend assigns the Message-ID of what we send and does not take ours, so the
-// outbound row gets it afterwards from GET /emails/:id. Until it has one, a
-// reply to that message cannot find its thread.
 import type { Env } from "../types";
 
 const REFERENCES_CAP = 20;

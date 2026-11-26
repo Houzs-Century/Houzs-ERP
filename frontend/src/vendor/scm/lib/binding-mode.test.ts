@@ -1,5 +1,3 @@
-// The frontend half of the company switch (backend lib/binding-mode.ts): company
-// 1 binds lines to their PO and keeps today's line-card behaviour exactly.
 import { describe, expect, test, vi } from 'vitest';
 
 const active = vi.hoisted(() => ({ id: null as number | null }));

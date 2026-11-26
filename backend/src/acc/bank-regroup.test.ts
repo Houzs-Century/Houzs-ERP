@@ -26,7 +26,6 @@ const row = (id: number, lineNo: number, over: Partial<StoredLine> & Row = {}): 
   state: 'OPEN', kind: 'OTHER', note: null, acquirer_code: null, trading_date: null, merchant_no: null,
   matched_batch_id: null, split: null, posted_je_no: null, ...over,
 });
-/* Production's statement 15 on 2026-10-15, cut down to the pair and its neighbours. */
 const ROWS = (): Row[] => [
   row(365, 10, { amount_sen: -500000, description: 'CIB Instant Transfer', reference: null }),
   row(366, 11, { amount_sen: 404800, kind: 'PAYOUT_UNSURE', acquirer_code: 'MBB', merchant_no: '2649949', note: 'MBB paid RM 4,048.00, and no single report of theirs is owed that.' }),

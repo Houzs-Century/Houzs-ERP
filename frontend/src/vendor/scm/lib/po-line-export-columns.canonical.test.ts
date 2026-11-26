@@ -1,18 +1,3 @@
-/* The Purchase Order line export's column CONTRACT, and the one rule for
- * AutoCount supplier dates (Estimate Delivery Date, Supplier Delivery Date 2 / 3).
- *
- * WHY A MIRROR. The server builds the rows (backend/src/scm/lib/po-line-export.ts)
- * and the browser writes the sheet and reads the names (po-list-export.ts,
- * Outstanding.tsx). The frontend cannot import from backend/src, so the module
- * is copied byte for byte — the warehouse-label.ts pattern — and this test is
- * the referee. backend/scripts/check-shared-mirrors.mjs sees the pair by
- * basename, so the file must stay at the top level of this directory.
- *
- * WHY THE NAMES ARE PINNED AS LITERALS. An import reads an exported file back
- * by these header names and matches rows by Line ID. A rename that updated both
- * copies at once would still pass byte-identity, and would still break every
- * file already exported — so the names get assertions of their own.
- */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
@@ -93,9 +78,6 @@ describe('the Status word', () => {
   });
 
   test('says exactly what the Purchase Orders list says, status by status', () => {
-    /* The list keeps its own STATUS_TONE map (localStatusMapsAgree.test.ts
-       watches it against status-pill.ts). The export must print the words that
-       map puts on screen, so read them out of the page itself. */
     const page = readFileSync(resolve(process.cwd(), 'src/pages/scm-v2/PurchaseOrdersListV2.tsx'), 'utf8');
     const block = /const STATUS_TONE[\s\S]*?\n};/.exec(page)?.[0] ?? '';
     const onScreen = Object.fromEntries(

@@ -1,7 +1,3 @@
-/* Overview reminders built from the employee master's two compliance dates
- * (work permit expiry, confirmation due). Kept pure and apart from OverviewPage
- * so the "expiring" window and the merge with holidays are tested without the
- * React harness. Dates are YMD strings, compared as strings (they sort right). */
 
 /** Flag the employees whose work permit lapses soon. Active employees only,
  *  and only the ones with a permit date filled. Counts the permits expiring on
@@ -69,14 +65,12 @@ export function buildUpcoming(
   return out;
 }
 
-/** today + days, as a YMD string. UTC so it never shifts by one near midnight. */
 function addDaysYmd(ymd: string, days: number): string {
   const d = new Date(`${ymd}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
 
-/** Whole days from one YMD to another (UTC), so it never shifts near midnight. */
 function daysBetweenYmd(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
 }

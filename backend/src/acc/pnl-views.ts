@@ -33,7 +33,6 @@ export type PnlViewTotals = {
 /** One view on the P&L's tree — the shape the P&L screen prints from (report-monthly pnlLines). */
 export type PnlViewSide = {
   layout: { baseSen: number | null } & Record<PnlViewBlock, LaidNode[]>;
-  /** The taxation lines: the block prints only when there are some. */
   taxation: LaidLine[];
   totals: PnlViewTotals;
 };
@@ -66,7 +65,6 @@ export function performanceOnPnl(
   const baseSen = r.totals.salesSen !== 0 ? r.totals.salesSen : null;
   const onTree = (block: PnlViewBlock, lines: LaidLine[]): LaidNode[] => layOutBlock(layout.blocks[block] ?? [], lines, companyId, baseSen);
 
-  /* Groups that share a sales account (mattress and bedframe) are one line on it. */
   const sales = new Map<string, LaidLine>();
   for (const g of r.groups) {
     if (g.salesSen === 0) continue;

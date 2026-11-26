@@ -25,8 +25,6 @@ export const ATTENDANCE_STATUSES: ReadonlyArray<{ value: AttendanceStatus; label
   { value: "UNPAID_LEAVE", label: "Unpaid leave" },
 ];
 
-/* Leave HR approved (phase 5): never a missed day for the driver's commission.
- * The first three are paid, so payroll does not count them absent either. */
 export const PAID_LEAVE_STATUSES: ReadonlyArray<AttendanceStatus> = ["MEDICAL_LEAVE", "ANNUAL_LEAVE", "REST_DAY"];
 export const APPROVED_LEAVE_STATUSES: ReadonlyArray<AttendanceStatus> = [...PAID_LEAVE_STATUSES, "UNPAID_LEAVE"];
 
@@ -71,10 +69,6 @@ export type AttendanceDay = {
   otMin: number;
 };
 
-/* Lateness past the grace counts from shift start in full and rounds UP to
- * the late block; lunch is the overlap with the worked window; OT only after
- * shift end, floored to whole OT blocks, less than one block is none; OT
- * offsets a shortfall minute for minute. */
 export function computeAttendanceDay(clockInMin: number, clockOutMin: number, rules: AttendanceRules): AttendanceDay {
   const rawLate = Math.max(0, clockInMin - rules.startMin);
   const isLate = rawLate > rules.lateGraceMin;
@@ -124,9 +118,6 @@ export function workClock(minutes: number): string {
 /** An open punch older than this is a forgotten clock-out, not a long shift. */
 export const AUTO_CLOSE_AFTER_HOURS = 16;
 
-/* Where a forgotten clock-out is closed: the shift end of the work date, so
- * the day counts as a normal shift and earns no OT. Someone who clocked in
- * after the shift end gets a standard day's length from their clock-in. */
 export function autoCloseMinute(clockInMin: number, rules: AttendanceRules): number {
   return clockInMin < rules.endMin ? rules.endMin : clockInMin + rules.standardWorkMin + rules.lunchMin;
 }
@@ -142,9 +133,6 @@ export function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: 
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
-/* The punch-location check. Soft, like Hookka: it is recorded and shown to
- * HR, never a reason to refuse the punch. The nearest site is named either
- * way, so HR sees "1.2 km from KL WAREHOUSE" rather than a bare "off-site". */
 export function checkPunchLocation(
   lat: number | null,
   lng: number | null,

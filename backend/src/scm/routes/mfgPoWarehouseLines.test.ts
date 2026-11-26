@@ -1,8 +1,3 @@
-// Regression (sister fix Conts-ERP #783): changing a PO's ship-to warehouse
-// updated the header only. The GRN made from the outstanding-lines picker
-// receives into each LINE's warehouse, the GRN made from the PO uses the
-// header's, so the same PO's goods went to two warehouses depending on the button.
-// Drives the REAL header PATCH through the fake PostgREST client.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -20,7 +15,6 @@ const CALLER = {
 } as unknown as User;
 
 const { mfgPurchaseOrders } = await import('./mfg-purchase-orders');
-/* The header PATCH needs the version the editor loaded (sister review G6). */
 const withVersion = (body: Record<string, unknown>) => ({
   expectedUpdatedAt: (sb.tables.purchase_orders.find((r) => r.id === 'po-1') as Row | undefined)?.updated_at, ...body,
 });
@@ -56,11 +50,8 @@ beforeEach(() => {
   sb.tables.purchase_order_items = [
     l('a', 1, 'wh-kl'),
     l('b', 1, 'wh-kl'),
-    // Deliberately set to another warehouse: keeps it.
     l('own', 1, 'wh-pg'),
-    // No own warehouse: already follows the header.
     l('none', 1, null),
-    // Another company's row on the same PO id is never touched.
     l('other', 2, 'wh-kl'),
   ];
 });

@@ -1,7 +1,3 @@
-// Accounting phase 1 — the hooks the vendored accounting-queries slice does
-// not carry (that file is a verbatim vendor copy; module-owned additions live
-// here instead): chart management, manual-JV reversal, and the layer-1
-// control-account self-check.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
@@ -77,7 +73,6 @@ export type JournalEntryCardData = {
   journalEntry: JournalEntry;
   lines: JournalEntryLine[];
   document?: JournalDocument | null;
-  /** Only when the document could not be read; the entry still shows. */
   documentError?: string;
 };
 /** One entry for its card — the detail read the post / edit / reverse hooks
@@ -117,8 +112,6 @@ export const useJournalEntriesGrouped = (f: JournalGroupedFilters, enabled = tru
 
 export type ControlDrift = {
   docNo: string; docTotalSen: number; jeTotalSen: number; diffSen: number; note: string;
-  /** The customer or supplier, the document's date, its active entry, and the
-      id its page opens by — read with the check (batch 6 c2); absent before. */
   party?: string | null; date?: string | null; jeNo?: string | null;
   docKind?: 'SI' | 'PI' | 'API' | null; docId?: string | null;
 };
@@ -134,12 +127,10 @@ export type UnbookedPayments = {
   since: string | null;
   rows: Array<{
     source: 'SOPAY' | 'SIPAY'; id: string; docNo: string; paidOn: string; amountSen: number; method: string;
-    /** The order's customer and salesperson (batch 6 c2); absent before. */
     customer?: string | null; salesperson?: string | null;
   }>;
   totalSen: number;
   ok: boolean;
-  /** Only when the check itself could not run. */
   error?: string;
   /** When NOTHING has ever booked (since = null): what the payment tables hold
       anyway — the money the hook should have moved (docs/bugs/0652). */
@@ -180,11 +171,8 @@ export type PaymentDriftRow = {
 };
 export type PaymentDrift = {
   rows: PaymentDriftRow[];
-  /** How many active payment entries were read — a clean answer over zero
-      entries is a different statement from a clean answer over 4,000. */
   scanned: number;
   ok: boolean;
-  /** Only when the check itself could not run. */
   error?: string;
 };
 
@@ -206,12 +194,8 @@ export type PaymentCorrectionRow = {
   reason: string;
   /** No reason because the row predates the rule (owner 2026-09-14: 规则之前). */
   beforeRule: boolean;
-  /** Who FIRST recorded the payment this row concerns, and when (ISO); null
-      when it could not be read — never a guess. */
   recordedBy: string | null;
   recordedOn: string | null;
-  /** The entry that was voided, the contra that voided it, the entry booked
-      in its place — any null when that part did not happen. */
   originalJeNo: string | null;
   contraJeNo: string | null;
   jeNo: string | null;
@@ -240,7 +224,6 @@ export type SelfCheckRunResult = {
   receipts: { total: number; months: unknown[] } | { error: string };
   summary: { checks: number; findings: number; items: string[] };
   ranAt: string;
-  /** Only when the summary could not be kept; the reads stand. */
   recordError?: string;
 };
 export const useRunSelfCheck = () => useMutation({
@@ -255,27 +238,18 @@ export const useControlCheck = () => useQuery({
   retryDelay: 800,
 });
 
-/* The Daily Bank board (backend/src/acc/daily-bank.ts), by bank since
-   2026-09-29: each money account carries its day's lines with who and which
-   document, its checked vouchers awaiting approval, its available, and the
-   card money swiped for the acquirers that pay into it. */
 export type DailyBankMovement = {
   jeNo: string; sourceType: string; sourceDocNo: string | null;
-  /** The number the board prints — a receipt, voucher, order or journal number, never an internal id. */
   docNo: string;
-  /** Who paid or was paid; null when the entry names nobody. */
   party: string | null;
   note: string; amountSen: number;
-  /** A customer payment's method (cash, transfer, online:<how>, …); null for anything else. */
   method?: string | null;
-  /** A receipt typed into the cash book (sourceType 'TYPED'): who typed it. */
   typedBy?: string | null;
 };
 export type DailyBankPending = { id: string | null; pvNumber: string | null; payee: string | null; description: string; voucherDate: string | null; accountCode: string | null; amountSen: number };
 export type DailyBankTransit = { acquirerCode: string; accountCode: string; accountName: string; balanceSen: number; bankAccountCode: string | null };
 export type DailyBankBlock = {
   accountCode: string; accountName: string;
-  /** On the cash-book board (2026-11-23): the day and balance the account starts from. Null on the original board. */
   start: { date: string; balanceSen: number } | null;
   openingSen: number; inSen: number; outSen: number; closingSen: number;
   receipts: DailyBankMovement[]; payouts: DailyBankMovement[];
@@ -297,14 +271,11 @@ export type DailyBankBoard = {
   totalClosingSen: number; totalTransitSen: number; pendingApprovalSen: number; availableSen: number;
   /** Card money whose acquirer names no bank on the board (未标银行). */
   unassignedTransit: DailyBankTransit[];
-  /** Pending vouchers paying from an account the board does not carry. */
   unassignedPending: DailyBankPending[];
   /** 'ledger' = the original board; 'cashbook' = the owner's cash book (2026-11-23), a second board. */
   book: 'ledger' | 'cashbook';
-  /** On the cash book: the money accounts it does not carry yet (no start, or a start after the day). */
   notStarted: Array<{ accountCode: string; accountName: string; startDate: string | null }>;
   note: string;
-  /** On the cash book only: whether the caller may tick a voucher off it. */
   canWrite?: boolean;
 };
 
@@ -320,7 +291,6 @@ export type DailyCloseRow = { bucket: string; systemSen: number; countedSen: num
 
 export const useDailyClose = (date: string) => useQuery({
   queryKey: ['daily-close', date],
-  /* confirmedBy / confirmedAt / cashJeNo: who closed the day, when, and its cash over/short entry (if any). */
   queryFn: () => authedFetch<{ date: string; rows: DailyCloseRow[]; confirmedBy?: string | null; confirmedAt?: string | null; cashJeNo?: string | null }>(`/accounting/daily-close?date=${date}`),
   staleTime: 15_000,
   retry: retryUnlessClientError,
@@ -354,10 +324,6 @@ export const useConfirmDailyClose = () => {
   });
 };
 
-/* ── Item groups — the product-group ↔ ledger-account registry (GL redesign
-   item 1). The binding decides which purchase/sales account a document line
-   posts to; an unbound group refuses to post, so this screen is where the
-   owner keeps the map. ─────────────────────────────────────────────────── */
 
 export type ItemGroupBinding = {
   purchase: string;
@@ -370,7 +336,6 @@ export type ItemGroup = {
   code: string;
   name: string;
   isActive: boolean;
-  /** companyId → the four accounts; a missing key means UNBOUND there. */
   bindings: Record<string, ItemGroupBinding>;
 };
 
@@ -412,7 +377,6 @@ export const usePatchItemGroup = () => {
   });
 };
 
-/* ── Month-end stock close (GL redesign item 4) — run log + manual run. ──── */
 
 export type StockCloseRun = {
   month: string;
@@ -436,9 +400,7 @@ export type StockCloseStatus = {
   liveValueSen: number;
   liveBuckets?: StockBucketValues;
   defaultMonth: string;
-  /** The months the nightly run re-checks: last month and the one before. */
   sweepMonths?: string[];
-  /** The last 90 days of runs, newest first. */
   runs: StockCloseRun[];
   months?: ClosedStockMonth[];
 };
@@ -467,10 +429,7 @@ export const useRunStockClose = () => {
   });
 };
 
-/* ── Voucher numbering (GL redesign item 8a) — per-bank letters + width. ── */
 
-/* fixedCash marks the drawer: its letter is C on both papers (CPV / COR),
-   minted straight off roles.CASH — shown, never editable, never PUT. */
 export type NumberingAccount = { accountCode: string; accountName: string; letter: string | null; fixedCash?: boolean };
 
 export const useVoucherNumbering = () => useQuery({

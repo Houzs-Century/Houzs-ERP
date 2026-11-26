@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// crew-leave.ts — the SHARED, pure crew-leave predicate the manual assignment
-// pickers use, mirroring the backend's scm/lib/driver-availability.ts.
-//
-// WHY THIS EXISTS. A3 folded leave into the AUTO assigner only (fleet-assign.ts
-// skips an on-leave driver/helper). The manual crew pickers on Auto-Schedule and
-// the scheduling drawer went on offering an on-leave person with no signal at
-// all, while the Crew Leave page's own copy promised they "drop off the trip
-// assignment picker automatically". This is the logic layer that makes the copy
-// true — one predicate, same inclusive-range semantics as the backend's.
-//
-// The picker does NOT hide an on-leave person: it MARKS them. The dispatcher
-// keeps the final say (the page has always promised an override), so the answer
-// to "why can't I pick him" is on screen instead of being an empty dropdown.
-// ----------------------------------------------------------------------------
 
 export type CrewKind = 'driver' | 'helper';
 

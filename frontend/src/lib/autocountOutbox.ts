@@ -73,8 +73,6 @@ import { useCallback, useState } from "react";
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
 import { fmtDateTime } from "../vendor/shared/format";
-/* THE ARCHIVE HALF, in its own file for the 2,000-line cap and nothing else —
-   the same reason autocountRegister.ts is separate. One layer, three files. */
 import {
   archiveAcOutboxDoc,
   restoreAcOutboxDoc,
@@ -156,11 +154,6 @@ export const AC_DOC_TYPE_PLURAL: Record<AcDocType, string> = {
   PI: "Supplier invoices",
 };
 
-/* `in` rather than `?? t`: both maps are keyed by the six literal types, so the
-   compiler knows the lookup cannot be undefined and a `??` there is dead code
-   the linter is right to refuse. An unknown code still falls through to itself
-   — a doc_type this build has never heard of should read as itself, not as a
-   blank. */
 export const acDocTypeLabel = (t: string): string =>
   t in AC_DOC_TYPE_LABEL ? AC_DOC_TYPE_LABEL[t as AcDocType] : t;
 export const acDocTypePlural = (t: string): string =>
@@ -194,27 +187,13 @@ export interface AcOutboxRow {
   status: string;
   state: string;
   attempts: number;
-  /** AutoCount's own words, or the ERP's refusal. Never truncated by the API. */
   reason: string | null;
   reason_kind: string | null;
   remedy: string | null;
   needs_attention: boolean;
-  /**
-   * Whether to OFFER this row a "Send again" button. Decided by the SERVER
-   * (backend scm/lib/autocount-outbox-status.ts) for the same reason nothing
-   * else here is decided locally, and it is a HINT: the POST re-reads the row
-   * and can still refuse, with a code and a sentence.
-   */
   can_requeue: boolean;
-  /**
-   * Whether to OFFER this row a "Send now" button — the WAITING row's control,
-   * where `can_requeue` is the STOPPED row's. Decided by the server for the same
-   * reason nothing else here is decided locally, and disjoint from `can_requeue`
-   * by construction, so a row never shows two buttons that both mean "send it".
-   */
   can_send_now: boolean;
   ac_doc_no: string | null;
-  /** When somebody cleared this row off the page. Null = on the page. */
   archived_at: string | null;
   created_at: string | null;
   updated_at: string | null;
@@ -222,23 +201,7 @@ export interface AcOutboxRow {
 }
 
 export interface AcOutboxResponse {
-  /**
-   * `on` answers "is sending switched on FOR THE COMPANY I AM LOOKING AT", not
-   * "for anybody" — the switch is a company allow-list ('off' / 'all' / a list
-   * of ids) and until 2026-08-18 the server published the second question's
-   * answer under the first question's name. `null` is its own state: the server
-   * could not resolve which company this reader is in, so it declines to answer
-   * rather than guessing "off". `scope` still carries what the switch SAYS, so
-   * an admin can see the whole allow-list.
-   */
   writeback: { value: string | null; on: boolean | null; scope: string };
-  /**
-   * DOCUMENTS, not sends, on every one of these — see the route's own comment.
-   *
-   * They do NOT sum to `total` and must not be made to: a document that arrived
-   * and was later edited into a refusal is counted by `sent` and by `failed`,
-   * because both are true of it and both chips would list it.
-   */
   counts: {
     pending: number;
     sent: number;
@@ -246,22 +209,9 @@ export interface AcOutboxResponse {
     skipped: number;
     requeued: number;
     attention: number;
-    /**
-     * Documents a PERSON has cleared off this page. Not a state of the send —
-     * every other number here is a claim about what AutoCount did, and this one
-     * is a claim about what somebody decided — which is why it is not summed
-     * into `total` either.
-     */
     archived: number;
     total: number;
   };
-  /**
-   * False when the server's count scan stopped before the end of the queue, so
-   * every number above is a floor rather than a fact. Required in the type
-   * rather than optional: a response that forgot it would render as "complete"
-   * and the whole point of the flag is that an undercount must never read as a
-   * count.
-   */
   counts_complete: boolean;
   oldest_pending: {
     doc_type: string;
@@ -320,7 +270,6 @@ export function useAutoCountOutbox(filters: AcOutboxFilters, enabled = true) {
  * hyphenated key. The catalogue of codes is docs/autocount-sync-reasons.md.
  */
 export interface AcRequeueResult {
-  /** True only when the document is now queued and will be sent. */
   accepted: boolean;
   code: string;
   message: string;
@@ -328,9 +277,7 @@ export interface AcRequeueResult {
   doc_type: string;
   doc_no: string;
   op: string;
-  /** The live attempt this created, when it created one. */
   new_row_id: string | null;
-  /** The ERP's own words, present only when the composer refused it again. */
   reason: string | null;
   /**
    * The ancestors this press caused, in the order they were sent.
@@ -349,9 +296,7 @@ export interface AcRequeueResult {
 export interface AcAncestorSent {
   doc_type: string;
   doc_no: string;
-  /** The outcome code, from the same catalogue as the pressed row's. */
   code: string;
-  /** Why it had to go first: `missing` or `stale`. */
   reason?: string;
 }
 
@@ -432,7 +377,6 @@ export interface AcRelinkResult {
   matched?: number;
   alreadyKeyed?: number;
   bookLines?: number;
-  /** One sentence per line that could not be matched — NAMED, never counted. */
   couldNotMatch?: string[];
   message?: string;
   error?: string | null;
@@ -445,10 +389,6 @@ export const AC_RELINK_BUSY_LABEL = "Matching";
 export const AC_SEND_AGAIN_LABEL = "Send again";
 export const AC_SEND_AGAIN_BUSY_LABEL = "Sending";
 
-/* "SEND NOW", NOT "SEND AGAIN", and the difference is the whole point of the
-   button. The row it sits on has not been refused — it is queued and on its way
-   — so "again" would be false about it. What the operator is buying is TIME:
-   the five-minute sweep, now. */
 export const AC_SEND_NOW_LABEL = "Send now";
 export const AC_SEND_NOW_BUSY_LABEL = "Sending";
 
@@ -494,11 +434,7 @@ export const AC_REQUEUE_TODO: Record<string, string> = {
     "Press it once more. If the same thing happens again, it needs somebody to look at the code.",
   "row-not-found": "Refresh the page — this row is not in this company's list.",
   "read-failed": "Nothing was tried. Give it a moment and press again.",
-  /* The batch workflow's DRY-RUN success. The button never returns it, and if
-     it ever did, reading it as "queued" would tell somebody a document had been
-     sent when nothing was written. */
   "would-requeue": "Nothing was written — this was a rehearsal, not a send.",
-  /* ── SEND NOW ──────────────────────────────────────────────────────────── */
   "sent-now": "Nothing more to do — it is in the account book already, not just queued.",
   "send-now-refused":
     "Read what AutoCount said below. This row has now used all its tries, so once you have put that right it is Send again, not Send now.",
@@ -519,41 +455,11 @@ export const acRequeueTodo = (code: string): string | null => AC_REQUEUE_TODO[co
 /** What is shown on the row after Send again has been pressed. */
 export interface AcRequeueNote {
   tone: AcTone;
-  /** The SERVER's sentence, verbatim, or — on a throw — what went wrong. */
   text: string;
-  /** What to do next, from AC_REQUEUE_TODO. Null for a code with no entry. */
   todo: string | null;
-  /**
-   * The ERP's own words, when it refused the document a second time — and, on a
-   * throw, whatever the transport said.
-   *
-   * A QUOTE, never spliced into `text`. The throw branch used to read
-   * `the request did not get through: ${e.message}`, which makes the page's own
-   * sentence and a machine's string one sentence and puts whatever a fetch layer
-   * produced into the page's voice. Same rule as the row: the page says the
-   * plain part, the machine is quoted under it.
-   */
   quote: string | null;
-  /** The quote's own machinery, behind the technical disclosure. */
   quoteTechnical: string | null;
-  /**
-   * The ancestors this press caused, already worded — one line each.
-   *
-   * ON THE ROW, like everything else here. A press on an invoice can move three
-   * documents, and the operator has to be able to see which, on the row they
-   * pressed, rather than by re-reading the whole table for what changed.
-   */
   ancestors: string[];
-  /**
-   * The document is on its way again, so the OLD refusal on this row is no
-   * longer true and comes off it.
-   *
-   * Immediately, not on the reload: the re-read is a round trip, and leaving
-   * "To fix: go and change it in AutoCount" sitting on a document that has just
-   * been re-sent is a false instruction for as long as it is on screen. The
-   * server agrees a moment later — the old row becomes `requeued`, which
-   * acReasonCopy already answers null for — so this only closes the window.
-   */
   clearsReason: boolean;
 }
 
@@ -581,12 +487,6 @@ export function useAcRequeue(onAccepted: () => void) {
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, AcRequeueNote>>({});
 
-  /* ONE PATH, TWO DOORS. `sendAgain` and `sendNow` differ only in which
-     endpoint they call: the busy flag, the notes map, the accepted/refused
-     split and the throw branch are shared, so the two buttons cannot drift into
-     rendering their answers differently. Writing a second hook would have
-     duplicated the one part of this file that has already been got wrong
-     (a refusal reaching nobody) in the one place it was got right. */
   const run = useCallback(
     async (rowId: string, call: (id: string) => Promise<AcRequeueResult>) => {
       setSendingId(rowId);
@@ -596,9 +496,6 @@ export function useAcRequeue(onAccepted: () => void) {
         setNotes((prev) => ({
           ...prev,
           [rowId]: {
-            /* `wait`, not `bad`: most refusals are the system protecting the
-               account book ("AutoCount already accepted this one"), which is
-               news, not a fault. A thrown call IS a fault. */
             tone: r.accepted ? "good" : "wait",
             text: r.message,
             todo: acRequeueTodo(r.code),
@@ -614,20 +511,11 @@ export function useAcRequeue(onAccepted: () => void) {
           ...prev,
           [rowId]: {
             tone: "bad",
-            /* THE PAGE'S OWN SENTENCE, WHOLE. What the transport said is quoted
-               under it rather than pasted into it — a fetch layer's string is
-               not this page's voice, and on a bad day it is a status line and a
-               URL. */
             text: "Nothing was sent — the request never got through.",
-            /* No dictionary entry: there is no code, because the server never
-               answered. The sentence above already says the only thing true. */
             todo: null,
             quote: e instanceof Error ? e.message : String(e),
             quoteTechnical: null,
-            /* The call was never answered, so nothing is known to have been sent
-               — an ancestor list here would be an invention. */
             ancestors: [],
-            /* The old refusal still stands — nothing was sent. */
             clearsReason: false,
           },
         }));
@@ -638,13 +526,6 @@ export function useAcRequeue(onAccepted: () => void) {
     [onAccepted],
   );
 
-  /* THE THIRD DOOR, and it shares the notes map on purpose: whatever a row's
-     button did, its answer appears in the same place, in the page's own voice.
-     It is NOT routed through `run` — that helper's contract is "call an endpoint
-     with a ROW id and read an AcRequeueResult back", and this one takes a
-     DOCUMENT and answers a different shape. Forcing them together would mean a
-     union type and a branch inside the shared body, which is the drift this
-     file's own comment warns about, pointing the other way. */
   const relink = useCallback(async (rowId: string, docType: string, docNo: string) => {
     setSendingId(rowId);
     try {
@@ -658,14 +539,10 @@ export function useAcRequeue(onAccepted: () => void) {
           text: r.message ?? (matched > 0
             ? `${matched} line(s) matched up. Open the document and save it again.`
             : "Nothing could be matched — the document is unchanged."),
-          /* The lines that could not be matched are the WORK, so they are the
-             to-do, spelled out one per line rather than counted. */
           todo: stuck.length ? stuck.join("; ") : null,
           quote: null,
           quoteTechnical: null,
           ancestors: [],
-          /* The refusal on the row still stands until the document is saved
-             again — matching the lines does not queue anything by itself. */
           clearsReason: false,
         },
       }));
@@ -691,15 +568,6 @@ export function useAcRequeue(onAccepted: () => void) {
   const sendAgain = useCallback((rowId: string) => run(rowId, requeueAcOutboxRow), [run]);
   const sendNow = useCallback((rowId: string) => run(rowId, sendNowAcOutboxRow), [run]);
 
-  /* THE FOURTH DOOR — and, like `relink`, it takes a DOCUMENT and not a row,
-     so it is not routed through `run` either. It shares the notes map for the
-     reason all four do: whatever a row's button did, its answer appears in the
-     same place, in the page's own voice. `rowId` is only the key the note is
-     written under — the newest send is the line the operator pressed.
-
-     BOTH BRANCHES ARE RENDERED, and the shaping of both lives in
-     `autocountArchive.ts` beside the endpoints, so the page cannot come to word
-     a refusal differently from the check that produced it. */
   const setDocShelf = useCallback(
     async (
       rowId: string,
@@ -736,12 +604,6 @@ export function useAcRequeue(onAccepted: () => void) {
   return { sendingId, notes, sendAgain, sendNow, relink, archiveDoc, restoreDoc };
 }
 
-/**
- * The word on the badge — and, spread into the chip map below, the word on the
- * filter chip. ONE set of five, not two: the desktop page and the mobile screen
- * each carried their own copy of these labels until now, which is the
- * hand-copied-list class this repo records about thirty times.
- */
 const STATE_WORDS = {
   pending: "Waiting",
   sent: "In AutoCount",
@@ -778,11 +640,6 @@ export const AC_FILTER_STATE_LABEL: Record<AcFilterState, string> = {
   pending: "Waiting",
   attention: "Not accepted",
   sent: "In AutoCount",
-  /* THE ONLY TAB THAT IS NOT A STATE OF THE SEND. "Cleared" and not "Archived"
-     because the reader's question is what happened to it on THIS page, and
-     "archived" invites the fear this screen must never create — that a record
-     of what the ERP told AutoCount has been thrown away. Nothing is deleted:
-     the tab exists so the rows are one press from coming back. */
   archived: "Cleared",
 };
 
@@ -826,7 +683,6 @@ export const AC_STATE_TONE: Record<string, AcTone> = {
 export const acStateLabel = (state: string): string => AC_STATE_LABEL[state] ?? state;
 export const acStateTone = (state: string): AcTone => AC_STATE_TONE[state] ?? "muted";
 
-/** The eight operations, in the operator's words rather than the column's. */
 const OP_LABEL: Record<string, string> = {
   create_so: "New sales order",
   create_po: "New purchase order",
@@ -853,7 +709,6 @@ export function acRowKind(docType: string, op: string): string {
   return OP_LABEL[op] ?? acDocTypeLabel(docType);
 }
 
-// ── the refusal, in three parts ─────────────────────────────────────────────
 
 /**
  * A refusal said three ways, because a reason a reader cannot act on is not a
@@ -861,11 +716,8 @@ export function acRowKind(docType: string, op: string): string {
  * behind a click; all three of these are rendered inline on the row.
  */
 export interface AcReasonCopy {
-  /** What happened, in one plain-language line. */
   headline: string;
-  /** One sentence of explanation. */
   explain: string;
-  /** What the human should actually go and do. */
   toFix: string;
 }
 
@@ -986,11 +838,6 @@ export const AC_REASON_COPY: Record<string, AcReasonCopy> = {
     toFix:
       "Use Send again — this often clears by itself. If the same thing happens twice, it needs somebody to look at it.",
   },
-  /* THE MACHINE DID NOT ANSWER — and this is deliberately NOT worded as a
-     refusal. AutoCount refused nothing; the request never arrived. It reached
-     the operator as "masters not opened" for a day (2026-08-23) because the
-     transport's own error text was pasted into that sentence, and it sent the
-     investigation at AutoCount logins while a Windows service sat stopped. */
   "host-unreachable": {
     headline: "The AutoCount computer did not answer",
     explain:
@@ -1012,12 +859,6 @@ export const AC_REASON_COPY: Record<string, AcReasonCopy> = {
     toFix:
       "Raise it from the document it should follow. This one stays in the ERP only — sending it again will not help.",
   },
-  /* THIS ROW IS HISTORY, and the words say so rather than repeating a limit
-     that no longer holds. A merged conversion is sent now — the AutoCount side
-     learned to take several sources on 2026-08-16 and the ERP followed — so
-     nothing new lands in this class. What is still true of a row that CARRIES
-     it: it was recorded before the change, the ERP composed nothing for it, and
-     Send again therefore has nothing to send. */
   "no-autocount-shape": {
     headline: "Merged from several documents, and recorded before we could send that",
     explain:
@@ -1073,7 +914,6 @@ export const AC_FAILED_COPY: AcReasonCopy = {
     + " number, and leave the row alone.",
 };
 
-// ── what AUTOCOUNT said, in the reader's words ───────────────────────────────
 
 /**
  * AutoCount's own refusals, translated into the same three parts the ERP's own
@@ -1107,9 +947,7 @@ export const AC_FAILED_COPY: AcReasonCopy = {
  * `acRowIsRequeueable` makes for staying out of the `.mjs` mirror.
  */
 export interface AcAutoCountSaid {
-  /** A substring of AutoCount's reply that identifies this refusal. */
   needle: string;
-  /** Where this string was OBSERVED, so the next reader can check it. */
   seen: string;
   copy: AcReasonCopy;
 }
@@ -1122,13 +960,6 @@ export const AC_AUTOCOUNT_SAID: readonly AcAutoCountSaid[] = [
       + "HC-SO-2608-002 and HC-PO-2608-001, every one of them sending its own "
       + "document number as DocNo and every one refused with these words.",
     copy: {
-      /* THE BUSINESS EFFECT, NOT THE MECHANISM. "Primary key" is the database's
-         word for it; what it MEANS is that the name is taken. Justified by what
-         was actually proven: the payload carries `DocNo: HC-SO-2608-001`
-         verbatim — no prefix is stripped — and a primary-key refusal on a create
-         is the book saying that key is already in use. What is NOT claimed here
-         is WHICH document holds it, because that lives in AED_HOUZS and nothing
-         on this side can see inside it. */
       headline: "AutoCount already has a document with this number",
       explain:
         "The ERP files each document in AutoCount under its own number, and AutoCount answered that this number is already taken. It will answer the same way every time until either that number is free or this document is given a different one.",
@@ -1164,33 +995,10 @@ export function acAutoCountCopy(reason: string | null | undefined): AcReasonCopy
 export function acReasonCopy(
   state: string,
   reasonKind: string | null,
-  /**
-   * What was written on the row — AutoCount's own answer, on the states where
-   * the account book is who spoke.
-   *
-   * REQUIRED, never optional. It DECIDES whether this row gets the specific
-   * translation or the generic one, and an optional parameter would let every
-   * existing caller keep the old wording with no compile error and no failing
-   * test — the repo's standing rule about a parameter that decides something.
-   */
   reason: string | null,
 ): AcReasonCopy | null {
   if (state === "requeued") return null;
-  /* THE ERP'S OWN CLASSIFICATION WINS. A `skipped` row carries a `reason_kind`
-     because the ERP refused it and knows exactly why; AutoCount was never asked,
-     so nothing on it can be AutoCount's words. */
   if (reasonKind) return AC_REASON_COPY[reasonKind] ?? AC_UNRECOGNISED_COPY;
-  /* BOTH STATES WHERE THE BOOK IS THE SPEAKER, and `pending` is not an
-     oversight. AcSyncService turns every exception into a 500 and a 500 is
-     retryable, so a document AutoCount REFUSES sits at `pending` carrying the
-     refusal until its sixth attempt — which is exactly where HC-SO-2608-002 was
-     on 2026-08-20 while HC-SO-2608-001 beside it read `failed` with identical
-     words. Translating only the failed one would explain a document to the
-     operator half an hour after it stopped being actionable.
-
-     It also settles the ambiguity `acReplySource` records for a pending row:
-     that label claims neither speaker because nothing distinguishes them. A
-     MATCH here is that distinction — these strings are AutoCount's. */
   if (state === "failed" || state === "pending") {
     const said = acAutoCountCopy(reason);
     if (said) return said;
@@ -1235,7 +1043,6 @@ export const AC_REPLY_LABEL: Record<AcReplySource, string> = {
 /** The sentence that goes where a quote would, when there is no quote. */
 export const AC_NOT_ASKED_NOTE = "The ERP stopped this before it was ever sent.";
 
-// ── the machine's words, split into the part a person can use ───────────────
 
 /**
  * WHERE THE AUTOCOUNT SERVICE ENDS ITS SENTENCE AND STARTS ITS EVIDENCE.
@@ -1261,9 +1068,7 @@ export const AC_MACHINE_DETAIL_MARK = " || ";
 
 /** What goes on screen, and what goes behind the technical disclosure. */
 export interface AcMachineText {
-  /** The machine's own sentence. Stays in view, quoted and attributed. */
   said: string;
-  /** Its evidence. Behind the disclosure, or null when it wrote none. */
   detail: string | null;
 }
 
@@ -1308,15 +1113,10 @@ export const AC_TECHNICAL_LABEL = "Technical detail, for whoever looks after the
  *   — it shows more, never less.
  */
 export interface AcSaid {
-  /** WHO wrote it. Never null, never merged into the text. */
   label: string;
-  /** The ERP stopped it itself, so nothing ever reached the account book. */
   notAsked: boolean;
-  /** In view, quoted. Null when the whole note is machinery. */
   said: string | null;
-  /** Behind the collapsed disclosure. Null when there is nothing to put there. */
   technical: string | null;
-  /** Nothing was written down at all — which is itself worth printing. */
   silent: boolean;
 }
 
@@ -1324,20 +1124,6 @@ export function acWhatWasSaid(row: AcOutboxRow, pageHasItsOwnWords: boolean): Ac
   const source = acReplySource(row.state, row.reason);
   const base = { label: AC_REPLY_LABEL[source], notAsked: source === "erp" };
   if (row.reason === null) return { ...base, said: null, technical: null, silent: true };
-  /* WAS `source === "erp" && pageHasItsOwnWords`, and the source half came off
-     on 2026-08-20. The reasoning above explains the split as "who wrote the
-     note, never what it says", and that was right while the ONLY notes this
-     file had words for were the ERP's — AutoCount's answers were always raw, so
-     the two conditions were the same condition. They stopped being the same the
-     moment `AC_AUTOCOUNT_SAID` gave a refusal of AutoCount's plain words of its
-     own, and keeping the source test would have printed the headline, the
-     sentence, the To fix line AND the raw string, which is the pile the owner
-     asked to have thinned.
-     The rule underneath is unchanged and is what the caller passes: the machine
-     text moves out of view only where this file says the same thing in the
-     reader's language. Where it does not — the generic failed copy, an
-     unrecognised refusal, a retry note — nothing may take the quote off screen,
-     because there the machine's sentence IS the diagnosis. */
   if (pageHasItsOwnWords) {
     return { ...base, said: null, technical: row.reason, silent: false };
   }
@@ -1345,7 +1131,6 @@ export function acWhatWasSaid(row: AcOutboxRow, pageHasItsOwnWords: boolean): Ac
   return { ...base, said, technical: detail, silent: false };
 }
 
-// ── how much of a row is on screen before anybody clicks ────────────────────
 
 /**
  * The one line a replaced refusal gets. The rest of it is behind the opener.
@@ -1380,23 +1165,10 @@ export const AC_REPLACED_NOTE =
  * long list quiet.
  */
 export interface AcRowDetail {
-  /** Always on screen. Null on a row with nothing to explain. */
   line: string | null;
-  /** Behind the opener: the sentence and the To fix line. */
   copy: AcReasonCopy | null;
-  /**
-   * Behind the opener: who was asked, what they said, and — one level further
-   * in — the machinery. Null when nothing was written down and nobody spoke.
-   *
-   * A SHAPE, not a boolean, since 2026-08-16. It used to be `showSaid: boolean`
-   * and each surface then reached into the row and rebuilt the answer itself,
-   * which is exactly how the desktop and the phone come to disagree about one
-   * row. Both now render this.
-   */
   said: AcSaid | null;
-  /** Behind the opener: why a re-sent refusal is not something to act on. */
   showRequeuedNote: boolean;
-  /** Whether the row has an opener at all. */
   expandable: boolean;
 }
 
@@ -1412,34 +1184,18 @@ export function acRowDetail(row: AcOutboxRow, reasonCleared: boolean): AcRowDeta
     && (copy !== null || (row.reason !== null && row.state !== "sent"));
   const showRequeuedNote = !reasonCleared && row.state === "requeued";
   const expandable = copy !== null || showSaid || showRequeuedNote;
-  /* DOES THIS FILE ALREADY SAY, IN THE READER'S WORDS, WHAT THE NOTE SAYS? The
-     unrecognised copy is excluded on purpose: it does NOT explain the row, it
-     says nobody has written an explanation yet and points at the quote as the
-     whole answer. Treating it as plain words would hide the only thing the row
-     has. A replaced row counts — AC_REPLACED_LINE and AC_REPLACED_NOTE say all
-     of it, and the note under it is the first refusal's machinery. */
-  /* AC_FAILED_COPY IS EXCLUDED FOR THE SAME REASON AC_UNRECOGNISED_COPY IS, and
-     it has to be: it does not explain the row either. Its own To fix line reads
-     "Read AutoCount's own words below" and then branches on whether those words
-     name anything — so folding the quote behind the disclosure would leave an
-     instruction pointing at something no longer on screen. Only a SPECIFIC
-     translation counts as this file having said what the note says. */
   const specific = copy !== null && copy !== AC_UNRECOGNISED_COPY && copy !== AC_FAILED_COPY;
   const said = showSaid ? acWhatWasSaid(row, specific || showRequeuedNote) : null;
   const line = copy !== null
     ? copy.headline
     : showRequeuedNote
       ? AC_REPLACED_LINE
-      /* No plain-language copy exists for this one — a pending row carrying its
-         last attempt's note is the case — so the line says WHO spoke and the
-         words themselves stay behind the opener. */
       : said !== null
         ? said.label
         : null;
   return { line, copy, said, showRequeuedNote, expandable };
 }
 
-// ── one line per DOCUMENT, not one line per SEND ────────────────────────────
 
 /**
  * WHAT IDENTIFIES A DOCUMENT: its TYPE and its NUMBER, together.
@@ -1469,21 +1225,11 @@ export interface AcDocGroup {
   key: string;
   docType: string;
   docNo: string;
-  /**
-   * The NEWEST send, which is what the row shows. Under a status filter that is
-   * the newest send MATCHING the filter, which is the honest answer to the
-   * question the filter asked — "In AutoCount" showing a document's arrival is
-   * right even if the document has since been edited into a refusal, and the
-   * Needs attention chip is where that refusal is somebody's job.
-   */
   current: AcOutboxRow;
-  /** Every send, newest first. `current` is the first of them. */
   sends: AcOutboxRow[];
-  /** The sends BEHIND the current one — the audit trail, kept, folded. */
   earlier: AcOutboxRow[];
 }
 
-/** Newest first, treating an unreadable or absent timestamp as oldest. */
 const sendTime = (row: AcOutboxRow): number => {
   const t = row.created_at === null ? NaN : new Date(row.created_at).getTime();
   return Number.isFinite(t) ? t : -Infinity;
@@ -1523,9 +1269,6 @@ export function acGroupByDocument(rows: AcOutboxRow[]): AcDocGroup[] {
     }
   }
   return order.map((key) => {
-    /* Non-null by construction — the key came out of the same loop that filled
-       the map — and asserted rather than defaulted, because a `?? []` here would
-       silently produce a group with no `current` to draw. */
     const bucket = byKey.get(key)!;
     const sends = [...bucket].sort((a, b) => sendTime(b) - sendTime(a));
     const current = sends[0]!;
@@ -1569,7 +1312,6 @@ export function useAcSendHistory() {
   return { isOpen, toggle };
 }
 
-// ── history is not a task list ──────────────────────────────────────────────
 
 /**
  * A document whose latest send has already been REPLACED by a newer one.
@@ -1587,9 +1329,7 @@ export function useAcSendHistory() {
 export const acIsReplaced = (group: AcDocGroup): boolean => group.current.state === "requeued";
 
 export interface AcDocSplit {
-  /** The documents that are somebody's job. These are the list. */
   live: AcDocGroup[];
-  /** The documents that are a record. Folded away unless the reader asks. */
   replaced: AcDocGroup[];
 }
 
@@ -1696,7 +1436,6 @@ export function useAcExpandedRows() {
   return { isOpen, toggle };
 }
 
-// ── the type strip ──────────────────────────────────────────────────────────
 
 /**
  * How many DOCUMENTS of each type are in the rows currently loaded, plus `all`.
@@ -1715,14 +1454,7 @@ export function useAcExpandedRows() {
 export type AcDocTypeCounts = Record<AcDocType | "all", number>;
 
 export function acDocTypeCounts(groups: AcDocGroup[]): AcDocTypeCounts {
-  /* Written out rather than built in a loop so the COMPILER holds it to
-     AcDocType: a seventh type added to AC_DOC_TYPES fails to compile here
-     instead of quietly getting a chip that always reads zero. */
   const out: AcDocTypeCounts = { all: groups.length, SO: 0, DO: 0, IV: 0, PO: 0, GR: 0, PI: 0 };
-  /* Everything is `groups.length`, so the six chips are allowed to sum to LESS
-     than it: a doc_type 0277's CHECK does not admit is counted in `all` and
-     nowhere else. That is the honest arithmetic — inventing a seventh chip for
-     a value the database cannot hold would be worse. */
   for (const g of groups) {
     if ((AC_DOC_TYPES as readonly string[]).includes(g.docType)) out[g.docType as AcDocType] += 1;
   }
@@ -1739,9 +1471,6 @@ export function acDocTypeCounts(groups: AcDocGroup[]): AcDocTypeCounts {
  */
 export function acStateCount(d: AcOutboxResponse | null, s: AcFilterState): number {
   if (!d) return 0;
-  /* `total` counts what is ON the page, so `all` must not be made to include
-     the cleared documents — a reader pressing All and seeing a bigger number
-     than the list holds would be right to distrust every other number here. */
   return s === "all" ? d.counts.total : d.counts[s];
 }
 
@@ -1838,15 +1567,12 @@ export function acEmptyLine(d: AcOutboxResponse, state: AcFilterState): string {
   if (d.counts.total === 0) {
     return "Nothing has ever been queued for AutoCount in this company.";
   }
-  /* The page now OPENS on this filter, so its empty case is the common one and
-     "try another status" would read as a dead end on a healthy day. */
   if (state === "attention" && d.counts.attention === 0) {
     return "Nothing needs your attention. Every document is either in AutoCount or on its way.";
   }
   return "Nothing here. Try another status or another document type.";
 }
 
-// ── the sentences at the top ────────────────────────────────────────────────
 
 /**
  * "4 minutes" / "2 hours" / "3 days" — how long a row has been waiting.
@@ -1928,9 +1654,6 @@ export function acHeadline(d: AcOutboxResponse | null): { tone: AcTone; text: st
   if (!d.counts_complete) {
     return {
       tone: "muted",
-      /* Deliberately NOT a repeat of AC_COUNTS_PARTIAL_LINE, which both screens
-         already render beneath this. Saying the same sentence twice is how a
-         reader learns to stop reading either one. */
       text:
         "The queue was too long to count in one pass, so this line cannot say whether everything"
         + " reached AutoCount. Filter to Not accepted or Held back to check the documents that matter.",
@@ -1963,9 +1686,6 @@ export function acHeadline(d: AcOutboxResponse | null): { tone: AcTone; text: st
  */
 export function acWritebackLine(d: AcOutboxResponse): string {
   if (d.writeback.on === null) {
-    /* The server could not resolve which company this reader is in, so it
-       declined to answer rather than guess. Saying "off" here would be the same
-       false certainty in the other direction. */
     return "Sending to AutoCount could not be checked for this company — the switch itself reads as "
       + `${JSON.stringify(d.writeback.scope)}.`;
   }
@@ -1974,12 +1694,6 @@ export function acWritebackLine(d: AcOutboxResponse): string {
       ? "Sending to AutoCount is switched on for every company."
       : "Sending to AutoCount is switched on for this company.";
   }
-  /* OFF FOR THIS COMPANY IS NOT OFF ALTOGETHER, and the difference is the whole
-     reason this branch exists. The switch is a company allow-list, so it can be
-     on for the organisation next door and off here — and the old wording,
-     `The switch is set to "1", which does not read as on`, would have told a
-     reader in company 2 that a perfectly well-formed value was a typo. Name the
-     real situation instead: it is on, just not for you. */
   if (d.writeback.scope !== "off") {
     return "Sending to AutoCount is switched off for this company — it is switched on for "
       + `${d.writeback.scope.includes(",") ? "other companies" : "another company"}, not this one.`;

@@ -51,7 +51,6 @@ export type RefundPayment = {
   method: string;
   provider: string | null;
   amountSen: number;
-  /** Reached this ledger (an active SOPAY / SIPAY journal). */
   booked: boolean;
   /** A Sales Order payment brought over from AutoCount — it counts too (owner 2026-10-05). */
   imported: boolean;
@@ -65,12 +64,8 @@ export type RefundSource = {
   status: string | null;
   customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
   payments: RefundPayment[];
-  /** What the document was paid (the refundable base): booked here, plus — on a
-      Sales Order — brought over from AutoCount. The name is older than that half. */
   bookedSen: number;
-  /** The part of it brought over from AutoCount. */
   importedSen: number;
-  /** Every non-cancelled refund voucher on the document, draft or posted. */
   refunds: RefundVoucherRow[];
   refundedSen: number;
   /** Money already moved to other orders (docs/bugs/0927) — spoken for, like a voucher. */
@@ -106,7 +101,6 @@ async function bookedIds(sb: any, companyId: number, sourceType: 'SOPAY' | 'SIPA
   return { ok: true, ids: out };
 }
 
-/** Every non-cancelled refund voucher already raised on the document. */
 async function refundsOn(sb: any, companyId: number, docNo: string, excludePvId: string | null): Promise<{ ok: true; rows: RefundVoucherRow[] } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('payment_vouchers')
     .select('id, pv_number, status, voucher_date, total_sen')
@@ -154,7 +148,6 @@ export async function loadRefundSource(
     const { data: pays, error: pErr } = await sb.from('mfg_sales_order_payments')
       .select('id, paid_at, method, merchant_provider, amount_sen').eq('so_doc_no', docNo).order('paid_at');
     if (pErr) return { ok: false, status: 500, error: 'load_failed', message: pErr.message };
-    /* A mirror row (money that left, negative; lib/so-payment-row.ts) is not money in. */
     const rows = ((pays ?? []) as Array<{ id: string; paid_at: string | null; method: string; merchant_provider: string | null; amount_sen: number }>).filter((r) => Number(r.amount_sen ?? 0) >= 0);
     const booked = await bookedIds(sb, companyId, 'SOPAY', rows.map((r) => String(r.id)));
     if (!booked.ok) return { ok: false, status: 500, error: 'load_failed', message: booked.reason };
@@ -228,7 +221,6 @@ export async function loadRefundSource(
   };
 }
 
-/* ── GET /payment-vouchers/refund-source?type=SO&docNo=… ─────────────────── */
 export const refundSourceHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -293,7 +285,6 @@ export async function refundCreateGuard(
       refund_source_doc_no: s.docNo,
       customer_id: s.customer.customerId,
       debtor_code: s.customer.debtorCode,
-      /* The payee IS the customer — from the document, never retyped. */
       payee_name: s.customer.name ?? String(body.payeeName ?? '').trim(),
     },
   };

@@ -20,36 +20,27 @@ export type CreditNote = {
   id: string; note_number: string; kind: NoteKind;
   party_type: 'CUSTOMER' | 'SUPPLIER' | 'ODEBTOR'; party_code: string | null; party_name: string | null;
   supplier_id: string | null;
-  /** An other-debtor note's debtor (Other Debtors registry). */
   debtor_id?: string | null;
-  /** That debtor's account code, read off the registry for the screens and the print (party_code stays blank: it goes to the journal). */
   debtor_code?: string | null;
   so_doc_no: string | null; sales_invoice_id: string | null;
   ap_invoice_id: string | null; purchase_invoice_id: string | null; source_doc_no: string | null;
   /** The final invoice's number when the note answers one — read for the print (docs/bugs/0834). */
   sales_invoice_number?: string | null;
-  /** The purchase invoice or AP invoice a supplier note credits (2026-10-01). */
   purchase_invoice_number?: string | null;
   ap_invoice_number?: string | null;
   note_date: string; total_sen: number; reason: string | null; notes: string | null;
   status: NoteStatus; je_no: string | null;
   created_at: string; created_by: string | null; posted_at: string | null; cancelled_at: string | null;
-  /** Part of the books' opening balance (31/08 from AutoCount) — changed on Opening Balance, not here. */
   opening?: boolean;
-  /** A posted supplier, other-debtor or customer note on the list: what its knock-offs used, and the credit left. */
   appliedSen?: number;
   unusedSen?: number;
-  /** A customer note that answers a deposit invoice — the final invoice's close-out, a refund's, a move's — knocks off nothing. */
   depositPaper?: DepositPaperKind | null;
-  /** A supplier note's control, by the supplier code: AP = 400, AP_OTHER = 405. */
   controlRole?: 'AP' | 'AP_OTHER';
-  /** The delivery return a customer note answers (backlog A1). */
   delivery_return_id?: string | null;
 };
 /** project_id / projectId: the event the line's money is for (owner 2026-10-22). */
 export type CreditNoteLine = {
   id: string; line_no: number; description: string | null; account_code: string; amount_sen: number; project_id?: number | null;
-  /** The delivery-return line it credits and its units (backlog A1). */
   delivery_return_item_id?: string | null; qty?: number | null;
 };
 export type CreditNoteLineInput = { description?: string | null; accountCode?: string | null; amountSen: number; projectId?: number | null; deliveryReturnItemId?: string; qty?: number };
@@ -58,7 +49,6 @@ export type CreditNoteLineInput = { description?: string | null; accountCode?: s
 export type ReturnCreditLine = {
   returnItemId: string; itemCode: string | null; description: string | null;
   qtyReturned: number; creditedQty: number; remainingQty: number;
-  /** Per-unit credit off the invoice (unrounded); null = never invoiced. */
   unitSen: number | null; invoiceIds: string[]; capSen: number | null;
 };
 export type ReturnCreditPrefill = {
@@ -80,9 +70,7 @@ export type CreditNoteCreate = {
   kind: NoteKind; noteDate: string; reason?: string | null; sourceDocNo?: string | null; notes?: string | null;
   soDocNo?: string | null; salesInvoiceId?: string | null; partyName?: string | null; partyCode?: string | null;
   supplierId?: string | null; debtorId?: string | null; lines: CreditNoteLineInput[];
-  /** The supplier's invoice a supplier note credits — one of that supplier's own (2026-10-01). */
   purchaseInvoiceId?: string | null; apInvoiceId?: string | null;
-  /** A supplier note's knock-off ticks (2026-10-02) — the draft's plan, carried out by the post. */
   allocations?: KnockOffTarget[];
 };
 
@@ -91,7 +79,6 @@ export type CreditNoteCreate = {
    reads. Nothing is saved by the scan; the page fills the New note form with it. */
 export type ScnScanLine = {
   description: string | null; itemCode: string | null; qty: number | null;
-  /** As printed, before tax; amountSen is what the note credits (tax spread in). */
   printedSen: number | null; amountSen: number;
   accountCode: string | null; accountName: string | null; rule: string | null;
   creditsDocId: string | null;
@@ -115,10 +102,6 @@ export type ScnScan = {
 };
 
 const KEY = 'credit-notes';
-/* An other-debtor note moves the debtor's bills, so the debtor side's lists
-   (Other Debtors, AR Invoices and its bill pop-out) are read again too; a
-   customer's knocks off sales invoices, so Sales' list and invoice and the
-   Outstanding page are too (2026-11-03). */
 const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   for (const key of [
     KEY, 'journal-entries', 'gl-entries', 'other-debtors', 'other-debtor-detail', 'ar-invoices', 'ar-bill', 'finance-todo',
@@ -143,13 +126,11 @@ export const useCreditNotes = (side: NoteSide, kind: NoteKind | 'ALL', status: N
     (API), an other debtor's bill (ODB), a customer's sales invoice (SI). */
 export type CreditDocKind = 'PI' | 'API' | 'ODB' | 'SI';
 /** Why a customer note knocks off nothing: it closed a deposit invoice at the
-    final invoice, or took a deposit back for a refund or a move. */
-export type DepositPaperKind = 'closes' | 'refund' | 'move';
-/* A supplier note's credit coming off the supplier's invoices (2026-10-01,
-   Supplier CN part 2) — an other-debtor note's off the debtor's bills. */
+    final invoice, took a deposit back for a refund or a move, or brought the
+    deposit paid in AutoCount onto the customer at the order's invoice. */
+export type DepositPaperKind = 'closes' | 'refund' | 'move' | 'autocount';
 export type CreditAllocation = {
   id: string; kind: CreditDocKind; docId: string; number: string | null;
-  /** The document's own date and total — the note's print (KNOCKED OFF AGAINST). */
   docDate?: string | null; docTotalSen?: number | null;
   amountSen: number; appliedSen: number; createdAt: string | null; createdBy: string | null;
 };
@@ -158,25 +139,19 @@ export type CreditAllocation = {
 export type KnockOffRow = {
   kind: CreditDocKind; id: string; number: string; invoiceRef: string | null; invoiceDate: string | null;
   totalSen: number;
-  /** What the invoice owes before THIS note — the most the note can take from it. */
   owedSen: number;
-  /** What this note takes off it: applied once posted, planned while a draft. */
   noteSen: number;
   status: string;
 };
 export type KnockOffTarget = { kind: CreditDocKind; id: string; amountSen: number };
 export type NoteKnockOff = {
   rows: KnockOffRow[]; totalSen: number; takenSen: number; leftSen: number; posted: boolean;
-  /** Why a deposit paper has no table (the server's sentence). */
   refusal?: string;
 };
 export type CreditNoteDetail = {
   note: CreditNote; lines: CreditNoteLine[];
-  /** A supplier, other-debtor or customer note: where its credit went, and what is left. */
   allocations?: CreditAllocation[]; appliedSen?: number; leftSen?: number;
-  /** A customer note answering a deposit invoice, and which. */
   depositPaper?: { kind: DepositPaperKind; di: string | null } | null;
-  /** A close-out's final invoice — what its print says it was knocked off against. */
   closedInvoice?: { id: string; number: string; date: string | null; totalSen: number } | null;
 };
 
@@ -191,10 +166,6 @@ export const useCreditNoteDetail = (id: string | null) => useQuery({
 export const useCreateCreditNote = () => {
   const qc = useQueryClient();
   return useMutation({
-    /* `idempotencyKey`: one per form (useIdempotencyKey), so a double press, or
-       Save & post again after the post half failed, answers the SAME note
-       instead of raising a second credit. The route releases the key on every
-       refusal (noWriteUntilMarked), so a corrected Save still goes through. */
     mutationFn: ({ idempotencyKey, ...body }: CreditNoteCreate & { idempotencyKey: string | null }) =>
       authedFetch<{ ok: boolean; note: CreditNote }>('/credit-notes', idempotentInit(idempotencyKey ?? undefined, { method: 'POST', body: JSON.stringify(body) })),
     onSuccess: () => invalidate(qc),
@@ -215,7 +186,6 @@ export const usePostCreditNote = () => {
   return useMutation({
     mutationFn: (id: string) => authedFetch<{
       ok: boolean; jeNo: string; status: string;
-      /** A supplier or other-debtor note's knock-off carried out at post: what came off each document, and what could not. */
       applied?: Array<{ kind: CreditDocKind; id: string; number: string; appliedSen: number }>; notApplied?: string;
     }>(`/credit-notes/${id}/post`, { method: 'POST', body: '{}' }),
     onSuccess: () => invalidate(qc),
@@ -229,8 +199,6 @@ export const useScanSupplierCreditNote = (onStage: ((stage: AiReadStage) => void
   }, onStage),
 });
 
-/* The note's paper (2026-10-01, mig 20261001T2355): the scanned credit note and
-   anything else attached — the AP invoice's files card, bound to this document. */
 export const useCreditNoteFiles = (noteId: string | null) => useQuery({
   queryKey: ['credit-note-files', noteId],
   queryFn: () => authedFetch<{ files: PvFile[] }>(`/credit-notes/${noteId}/files`),

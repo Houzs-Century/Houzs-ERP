@@ -59,7 +59,7 @@ describe('the six flows are hooked at the point the document becomes permanent',
     /* A draft is the scan job's guess awaiting an operator's verdict — it does
        not belong in a live account book. It is queued when it leaves DRAFT. */
     expect(tail).toContain("(body as { asDraft?: unknown }).asDraft === true ? []");
-    expect(between(soSource, 'post-status failed', 'Edge #B')).toContain("} else if (fromNorm === 'DRAFT') {");
+    expect(between(soSource, 'post-status failed', "if (toStatus === 'CANCELLED' && fromNorm !== 'CANCELLED' && fromNorm !== 'DRAFT') {")).toContain("} else if (fromNorm === 'DRAFT') {");
   });
 
   test('2. PO create — queued before the 201, and NOT for a draft', () => {
@@ -83,7 +83,7 @@ describe('the six flows are hooked at the point the document becomes permanent',
     expect(converter).toContain('docNos.map(');
     expect(converter).not.toContain('recordConvertSkipped');
 
-    const manual = between(doSource, 'await recordDoCreate(sb,', '/* A DO = goods shipped on creation');
+    const manual = between(doSource, 'await recordDoCreate(sb,', "lap('do-ac-queue');");
     expect(manual).toContain("op: 'so_to_do'");
   });
 
@@ -106,7 +106,7 @@ describe('the six flows are hooked at the point the document becomes permanent',
   });
 
   test('5. DO -> Sales Invoice', () => {
-    const conv = between(siFromDoSource, 'Converted from ${distinctDoNumbers.length > 1', '/* LEAK GUARD (DRAFT)');
+    const conv = between(siFromDoSource, 'Converted from ${distinctDoNumbers.length > 1', 'if (isDraft) {');
     expect(conv).toContain("op: 'do_to_iv'");
     // Every delivery order the invoice bills.
     expect(conv).toContain('doIds.map(');
@@ -125,7 +125,7 @@ describe('the six flows are hooked at the point the document becomes permanent',
        loop over the returned drafts (refactor/pi-from-grn-core), so the bucket
        became `draft`. Anchor on the enqueue comment, which is unique to this
        per-line handler. */
-    const perLine = between(piSource, 'ERP -> AutoCount GRN->Purchase Invoice, per bucket', '// Consume the GRN lines');
+    const perLine = between(piSource, 'const bucketAc = draft.grnIds.length ? await enqueueConvert(sb, {', 'await recomputeGrnInvoiced(sb, draft.grnItemIds);');
     expect(perLine).toContain("op: 'gr_to_pi'");
     // Every goods receipt the bucket bills; the bucket is already one supplier.
     expect(perLine).toContain('draft.grnIds.map(');
@@ -135,7 +135,7 @@ describe('the six flows are hooked at the point the document becomes permanent',
 
 describe('cancel and edit are hooked, and only where the downstream lock has already run', () => {
   test('SO cancel queues a cancel, after the status change committed', () => {
-    const tail = between(soSource, 'post-status failed', 'Edge #B');
+    const tail = between(soSource, 'post-status failed', "if (toStatus === 'CANCELLED' && fromNorm !== 'CANCELLED' && fromNorm !== 'DRAFT') {");
     expect(tail).toContain('if (isCancel)');
     expect(tail).toContain('enqueueCancel(sb, {');
     expect(tail).toContain("docType: 'SO'");
@@ -226,9 +226,9 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
        refusing the document for carrying a line with no key (2026-08-31). */
     expect(between(poSource, 'Line added: ${String(it.itemCode', 'return c.json({ item: data }, 201);'))
       .toContain('queueAcPoEdit(c, poId, [], data?.id');
-    expect(between(poSource, "catch { /* don't fail the edit on a counter recount */ }", 'return c.json({ ok: true });'))
+    expect(between(poSource, 'try { await recomputeSoPicked(sb, touchedSoItems); }', 'return c.json({ ok: true });'))
       .toContain('queueAcPoEdit(c, poId)');
-    expect(between(poSource, "catch { /* line already deleted", 'return c.body(null, 204);'))
+    expect(between(poSource, 'try { await recomputeSoPicked(sb, [releasedSoItem]); }', 'return c.body(null, 204);'))
       .toContain('queueAcPoEdit(c, poId, retire)');
   });
 

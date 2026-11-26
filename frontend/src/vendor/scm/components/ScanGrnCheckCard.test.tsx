@@ -62,7 +62,6 @@ describe('the row dropdowns', () => {
     expect(o.map((x) => x.value)).toEqual(['line:pi-1', 'line:pi-2', 'gift:PILLOW-1']);
     expect(o[2].group).toMatch(/free gift/);
   });
-  // HOOKKA DO-2611-035: one code on two PO lines, COVE-13 and COVE-09.
   it('a SKU shows its PO line colour, so a row tied to the wrong colour is visible', () => {
     const pillows = [
       { poItemId: 'c13', poNumber: 'HC-PO-2609-235', supplierId: 's1', supplierSku: null, itemCode: 'HOK-SQUARE PILLOW', colour: 'COVE-13', name: null, remaining: 2, warehouse: 'KL' },

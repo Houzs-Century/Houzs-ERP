@@ -33,20 +33,16 @@
 // ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
-// HOUZS VENDOR — Link + useSearchParams live on 'react-router-dom' in
-// react-router v6 (the version Houzs ships); 2990 used v7 where they're on the
-// unified 'react-router'. Only the import specifier changed.
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, FileText, Pencil, Plus, Trash2, Printer, Save, Ban, ArrowRightLeft,
   ChevronDown, RotateCcw, History, Check, Download, Send,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDate, fmtDateTime, fmtMoneySen } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
+import { buildVariantSummary, fmtDate, fmtDateTime, fmtMoneySen } from '@2990s/shared';
 import { poDisplayNumber } from '../../vendor/scm/lib/po-status';
 import { convertToLink } from '../../lib/convertScope';
 
-/* dd/mm/yyyy — the one rule, under the name this file already uses. */
 const fmtDmy = fmtDate;
 import { formatPhone } from '@2990s/shared/phone';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
@@ -115,9 +111,6 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   return fmtMoneySen(v, currency);
 };
 
-/* Draft state shapes (#194). HeaderDraft mirrors the editable header fields.
-   Mig 0026 — supplier-revised header delivery dates ride through on save and
-   fan down to lines that don't carry their own revised date. */
 type HeaderDraft = {
   supplierId: string;
   poDate: string;
@@ -136,9 +129,6 @@ type HeaderDraft = {
    each draft against the server row on Save and calls add / update / delete. */
 type EditLine = PoLineDraft & { itemId?: string; deliveryDateOverridden?: boolean };
 
-/* The three supplier-revised date slots (mig 0026). Both the header draft and
-   every line draft key them identically, which is what lets "Apply to all"
-   copy one to the other by key. */
 type SupplierDateKey = 'supplierDeliveryDate2' | 'supplierDeliveryDate3' | 'supplierDeliveryDate4';
 const SUPPLIER_DATE_KEYS: readonly SupplierDateKey[] = [
   'supplierDeliveryDate2', 'supplierDeliveryDate3', 'supplierDeliveryDate4',
@@ -149,13 +139,6 @@ const SUPPLIER_DATE_LABEL: Record<SupplierDateKey, string> = {
   supplierDeliveryDate4: 'Supplier Date 4',
 };
 
-/* An unfilled <input type="date"> holds '', and the header draft is spread
-   straight into the PATCH — so a blank Supplier Date 2/3/4 posted "" and the
-   whole save came back 500 "invalid input syntax for type date" (production,
-   2026-08-17). The BACKEND is the fix (scm/lib/date-coerce coerces this on every
-   date write, and the mobile app and any direct API caller never pass through
-   this form at all); this is the second layer, so the payload says what it
-   means: a cleared date is NULL. */
 const blankDateToNull = (v: string | null | undefined): string | null => {
   const s = (v ?? '').trim();
   return s === '' ? null : s;
@@ -173,10 +156,6 @@ const headerSnapshot = (p: any): HeaderDraft => ({
   purchaseLocationId:    p.purchase_location_id ?? '',
 });
 
-/* Map a persisted PO line → an editable PoLineCard draft. item_group is the
-   PO's lowercase category convention; variants ride through untouched so the
-   variant editor + Description-2 recompute see the full spec. Mig 0026 — the
-   per-line supplier-revised dates are read so they round-trip on edit. */
 const draftFromItem = (it: PoItemRow): EditLine => ({
   rid:            `i${it.id}`,
   itemId:         it.id,
@@ -184,9 +163,6 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   materialKind:   it.material_kind,
   itemCode:   it.item_code,
   materialName:   it.material_name,
-  /* Per-line remarks (scm.purchase_order_items.notes). Seeded so Edit SHOWS
-     what is stored instead of blanking it on save — and this column is where
-     the AutoCount migration parked the book's own Description 2. */
   notes:          it.notes ?? '',
   supplierSku:    it.supplier_sku ?? undefined,
   qty:            it.qty,
@@ -200,18 +176,10 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   warehouseId:    it.warehouse_id ?? undefined,
   category:       it.item_group ?? undefined,
   variants:       (it.variants as Record<string, unknown> | null) ?? {},
-  /* Migration 0098 — the stored source SO line. Seeded so Edit can SHOW the
-     existing binding (and change it) instead of silently dropping it: without
-     this the draft always read null, so the Save diff could never tell a bound
-     line from an unbound one. */
   soItemId:       it.so_item_id ?? null,
-  /* An existing line's stored price is authoritative — don't let the cost
-     auto-recompute clobber it on enter-edit. Editing the variants re-arms it. */
   priceTouched:   true,
 });
 
-/* Whole-line diff against the loaded row: an existing line is sent only when
- *  something on it changed. */
 const lineChanged = (d: EditLine, it: PoItemRow | undefined): boolean =>
   !!it && (
     d.itemCode !== it.item_code ||
@@ -242,7 +210,6 @@ export const PurchaseOrderDetail = () => {
   const addLineHandoff = useAddLineHandoff();
   const detail = usePurchaseOrderDetail(id ?? null);
   const updateHeader = useUpdatePurchaseOrderHeader();
-  // PR-DRAFT-removal — Submit button removed (POs are SUBMITTED on create).
   const { cancelPo, isPending: cancelling } = usePoCancelAction();
   const confirm = useConfirmPurchaseOrder();
   const reopen = useReopenPurchaseOrder();
@@ -258,23 +225,9 @@ export const PurchaseOrderDetail = () => {
     if (!id) return;
     void cancelPo(id, poNumber);
   };
-  // PR #102 — PO PDF (AutoCount layout) needs the Purchase Location's
-  // human-readable name; the header only carries the warehouse id. Load
-  // warehouses once at the top so the print handler can resolve it.
   const warehousesQTop = useWarehouses();
-  /* Candidate source SO lines for the per-line binder (2026-07-31). REUSES the
-     stock-aware shortage view the From-SO picker and MobileConvertWizard read
-     (GET /mfg-purchase-orders/outstanding-so-items) rather than a second query:
-     it is already company-scoped, already drops cancelled / draft / on-hold SOs
-     and already hides lines with no remaining shortage, which is exactly the
-     "still short" rule this picker needs. */
   const outstandingSoQ = useOutstandingSoItems();
 
-  /* Phase 1-C — SO-amendment workflow (approve-po / send gates + revisions
-     list). The green "Revision ready" banner hosts Approve PO (at SO_APPROVED)
-     then Send + Download Revised PO (at PO_APPROVED); the Revisions tab lists
-     prior PO snapshots. Buttons are gated on the Houzs scm.amendment.approve_po
-     permission (the server 403 stays the real gate). */
   const { can, pageAccess } = useHouzsAuth();
   /* LINE PHOTOS ON THE EDIT CARD (owner 2026-08-28: 「还是不能添加照片啊」).
      #2759 put the strip on the PO's TABLE view and gave the server its upload
@@ -298,19 +251,11 @@ export const PurchaseOrderDetail = () => {
   };
   const approvePo = useApprovePo();
   const sendAmendment = useSendAmendment();
-  /* Main content tab — 'order' = the existing detail view; 'revisions' lists
-     prior PO snapshots read-only. Default 'order' so never-revised POs are
-     unchanged. */
   const [activeTab, setActiveTab] = useState<'order' | 'revisions'>('order');
 
   const po = detail.data?.purchaseOrder ?? null;
-  /* Memoised so the edit-mode seed + cost-recompute effects don't re-fire on
-     every render (detail.data?.items is a fresh array each time otherwise). */
   const items = useMemo(() => detail.data?.items ?? [], [detail.data?.items]);
 
-  /* View → Edit gate (Commander 2026-05-29) — default is read-only View; click
-     Edit to flip into draft mode. The PO list's right-click "Edit" lands here
-     with ?edit=1, so open straight into Edit in that case. */
   const [searchParams] = useSearchParams();
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
 
@@ -345,7 +290,6 @@ export const PurchaseOrderDetail = () => {
   );
   const masterMaintQ = useMaintenanceConfig('master');
   const maint = supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
-  /* Dropdown options follow master; the supplier overlay only prices them (BUG-60). */
   const pickerMaint = useMemo(
     () => withMasterPickerPools(maint, masterMaintQ.data?.data ?? null),
     [maint, masterMaintQ.data?.data],
@@ -361,20 +305,10 @@ export const PurchaseOrderDetail = () => {
     return { bedframe: pick('BEDFRAME'), sofa: pick('SOFA') };
   }, [specialAddonsQ.data]);
 
-  /* code → category (lowercased) lookup, mirroring Create's categoryForCode.
-     Tags a line with which variant editor to show when a SKU is picked. */
   const categoryForCode = (code: string): string | undefined =>
     allSkus.find((p) => p.code === code)?.category.toLowerCase();
 
-  // PR-DRAFT-removal — POs are always SUBMITTED on create (no DRAFT). Header
-  // edits stay open while the PO can still be received (SUBMITTED / PARTIALLY_RECEIVED).
-  // Tier 2 downstream-lock — also lock once a non-cancelled GRN exists; the GRN
-  // must be cancelled / deleted before editing again. Partial receiving (more
-  // GRNs) is still allowed via the list's Convert-to-GRN action.
   const hasChildren = Boolean(po?.has_children);
-  /* Draft/Confirmed — a DRAFT PO is also editable (review + correct before
-     confirming), alongside SUBMITTED / PARTIALLY_RECEIVED. A DRAFT never has a
-     GRN child, so hasChildren can't lock it. RECEIVED / CANCELLED stay locked. */
   const isEditableStatus = po ? (po.status === 'DRAFT' || po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') : false;
   /* Owner 2026-08-20 (§8 GAP-1) — a GRN no longer freezes the WHOLE PO. The
      lock is now field-level (matching the backend po-identity-lock):
@@ -389,9 +323,6 @@ export const PurchaseOrderDetail = () => {
   const isLocked = po ? purchaseOrderLinesLocked({ status: po.status, has_children: po.has_children ?? null }) : true;
   const lockedDueToChildren = po ? (isEditableStatus && hasChildren) : false;
 
-  /* Only a HARD lock (Received / Cancelled) drops us out of Edit — a PO with a
-     GRN stays editable for its own-stage fields, so children must NOT kick us
-     back to View. */
   useEffect(() => {
     if (hardLocked && isEditing) {
       setIsEditing(false);
@@ -410,11 +341,6 @@ export const PurchaseOrderDetail = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, items]);
 
-  /* Cost auto-recompute (mirrors Create) — resolve a line's supplier price
-     matrix + maintenance surcharges into a unit cost. Defined above the early
-     returns (rules-of-hooks) since the effect below depends on them; they only
-     close over bindings / fabrics / maint, none of which need `po`. A
-     manually-touched line (priceTouched) keeps its typed value. */
   const fabricTierForLine = (line: EditLine): MfgFabricTier | null => {
     const code = String(line.variants.fabricCode ?? '');
     if (!code) return null;
@@ -453,10 +379,6 @@ export const PurchaseOrderDetail = () => {
     return breakdown.unitPriceSen;
   };
 
-  /* Cost auto-recompute effect — re-price every non-touched editLine off the
-     supplier matrix + maintenance surcharges whenever a binding / variant /
-     the maint or fabrics data changes. Only writes lines whose computed cost
-     differs, so it doesn't loop. Gated to Edit mode. */
   useEffect(() => {
     if (!isEditing) return;
     setEditLines((prev) => {
@@ -476,35 +398,15 @@ export const PurchaseOrderDetail = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, bindings, fabrics, maint, editLines]);
 
-  /* Client-side PO PDF generator. Shared by the header "Print PDF" and the
-     amendment banner's "Download Revised PO" — the same generator, just an
-     optional docTitle so the revised copy prints "Revised Purchase Order". The
-     operator downloads / prints / WhatsApps it themselves (Houzs's "Send" only
-     marks the amendment SENT — mirroring 2990, no server email here).
-
-     HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
-     until 2026-08-17, so the loading render called fewer hooks than the loaded
-     one and React threw #310 ("rendered more hooks than during the previous
-     render") the moment the query resolved — a blank "Something went wrong
-     loading this page." on every direct URL / refresh of a PO. Arriving from
-     the list hid it: react-query already had the detail cached, so the
-     isPending branch never rendered first. The generator therefore has to
-     tolerate a null po; it can only ever be CALLED from a button that does not
-     exist until the record has loaded. */
   const generatePoPdf = (docTitle?: string, action: PdfAction = 'save') => {
     if (!po) return;
-    // PR #102 — pre-resolve purchase_location name (PDF can't hit the API).
     const wh = (warehousesQTop.data ?? []).find((w) => w.id === po.purchase_location_id);
     const headerForPdf = {
       ...po,
       // Owner 2026-07-24: DELIVER TO shows the warehouse CODE only (was the
       // dual "code · name", which read as a duplicated warehouse name).
       purchase_location_name: wh ? wh.code : null,
-      // #1 (Commander 2026-06-18) — deliver-to address = the bound warehouse's
-      // location text, so the supplier knows where to ship.
       delivery_address: wh?.location ?? null,
-      // your_ref_no / source_so_doc_no don't have columns yet; pass through
-      // when present on po (forward-compat). Schema follow-up adds them.
       your_ref_no:      (po as unknown as { your_ref_no?: string | null }).your_ref_no      ?? null,
       source_so_doc_no: (po as unknown as { source_so_doc_no?: string | null }).source_so_doc_no ?? null,
     };
@@ -529,7 +431,6 @@ export const PurchaseOrderDetail = () => {
     );
   }
 
-  /* ── Draft helpers (po is guaranteed non-null past the guards above) ── */
   /* Owner 2026-06-19 — View shows the live server items; Edit drives editLines
      (one PoLineCard per line). Deletes are immediate server actions (they move
      SO quota), so a removed line's draft is dropped immediately and the delete
@@ -537,12 +438,6 @@ export const PurchaseOrderDetail = () => {
      until the single top Save. */
   const visibleItems = items;
 
-  /* Source-SO-line options for one draft line. Only lines for the SAME SKU are
-     offered (the server refuses a mismatch anyway, and offering one would just
-     be a trap), and only lines the shortage view still reports as short. A line
-     that is ALREADY bound keeps its own option even when it has dropped off the
-     shortage view — otherwise a controlled select would fall back to the
-     placeholder and the operator would read a real binding as "none". */
   const soLinkOptionsFor = (l: EditLine): Array<{ value: string; label: string }> => {
     const code = l.itemCode.trim().toUpperCase();
     const opts: Array<{ value: string; label: string }> = [];
@@ -563,10 +458,6 @@ export const PurchaseOrderDetail = () => {
     return opts;
   };
 
-  /* SO→PO drift (Commander 2026-06-16) — lines whose source SO was edited AFTER
-     this PO was raised, so the PO no longer matches the live SO. Only actionable
-     while the PO is still open (pre-receipt): a received / cancelled PO can't be
-     re-sent anyway, so we hide the warning there. */
   const driftCount = visibleItems.filter((it) => it.so_drift).length;
   /* While the order is with the supplier the purchaser can still sync + re-send;
      once it is RECEIVED the goods came in to the PO's spec, so the drift is
@@ -577,16 +468,11 @@ export const PurchaseOrderDetail = () => {
   const driftActionable = driftMode === 'actionable';
   const driftReceived = driftMode === 'received';
   const showDrift = driftActionable || driftReceived;
-  /* Totals — in Edit, sum the live editLines (incl. unsaved variant/qty/price
-     edits) so the rail can't drift; in View, the stored line totals. */
   const itemsSubtotal = isEditing
     ? editLines.reduce((s, d) => s + Math.max(0, d.qty * d.unitPriceSen - (d.discountSen ?? 0)), 0)
     : visibleItems.reduce((s, it) => s + (it.line_total_sen ?? 0), 0);
   const grandTotal = itemsSubtotal + (po.tax_sen ?? 0);
 
-  /* Per-line "Received" cell (View only) — which Goods Receipt took how much off
-     this line, plus the live balance still outstanding. Mirrors the SO
-     "Delivered" column. Cancelled GRNs are already excluded server-side. */
   const renderReceived = (it: PoItemRow) => {
     const receipts = it.receipts ?? [];
     if (receipts.length === 0) return <span className={styles.muted}>—</span>;
@@ -624,10 +510,6 @@ export const PurchaseOrderDetail = () => {
     if (k === 'supplierId' && v !== headerView.supplierId) {
       setEditLines((prev) => prev.map((d) => ({ ...d, bindingId: undefined, supplierSku: undefined, priceTouched: false })));
     }
-    /* A new ship-to warehouse takes the lines that were on the old one (the
-       server does the same on the header PATCH), so a line edited in this same
-       save does not send the old warehouse back. A line set to another
-       warehouse keeps it. */
     if (k === 'purchaseLocationId' && v && v !== headerView.purchaseLocationId) {
       const prevWh = headerView.purchaseLocationId;
       if (prevWh) setEditLines((prev) => prev.map((d) => (d.warehouseId === prevWh ? { ...d, warehouseId: v } : d)));
@@ -639,10 +521,6 @@ export const PurchaseOrderDetail = () => {
       // Last edit wins (owner 2026-10-06): a hand-set line follows the header again.
       setEditLines((prev) => prev.map((d) => ({ ...d, deliveryDate: v || undefined, deliveryDateOverridden: false })));
     }
-    /* Mig 0026 — header supplier-revised dates fan down to every line that
-       doesn't already carry its own value for that slot. Lines that DO carry
-       one are left alone here on purpose (a line can be revised on its own);
-       to overwrite every line use "Apply to all" — see applySupplierDateToAll. */
     if (k === 'supplierDeliveryDate2') {
       setEditLines((prev) => prev.map((d) => (d.supplierDeliveryDate2 ? d : { ...d, supplierDeliveryDate2: v || undefined })));
     }
@@ -664,17 +542,14 @@ export const PurchaseOrderDetail = () => {
      silently flattened by someone touching the header. */
   const applySupplierDateToAll = (k: SupplierDateKey): number => {
     const v = (headerView[k] ?? '').trim();
-    if (!v) return 0;                     // nothing to apply; the button is disabled too
+    if (!v) return 0;
     setEditLines((prev) => prev.map((d) => ({ ...d, [k]: v })));
     return editLines.length;
   };
 
-  /* Patch one editLine by rid (mirrors Create's setLine). */
   const patchLine = (rid: string, patch: Partial<EditLine>) =>
     setEditLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
 
-  /* Adopt a supplier binding into a line (mirrors Create's pickBinding) — fills
-     code + name + SKU + price + category and re-arms supplier-price auto-fill. */
   const pickBinding = (rid: string, b: BindingRow) =>
     patchLine(rid, {
       bindingId:      b.id,
@@ -687,10 +562,6 @@ export const PurchaseOrderDetail = () => {
       priceTouched:   false,
     });
 
-  /* Patch one variant key + auto-compute bedframe Total Height (= Divan + Leg +
-     Gap, from vendor/shared/total-height.ts — the one home, no longer a copy of
-     Create's). Editing a variant re-arms the cost auto-recompute
-     (priceTouched ← false) so the line re-prices off the new spec. */
   const setVariant = (rid: string, k: string, v: unknown) =>
     setEditLines((prev) => prev.map((l) => {
       if (l.rid !== rid) return l;
@@ -701,9 +572,6 @@ export const PurchaseOrderDetail = () => {
       return { ...l, variants, priceTouched: false };
     }));
 
-  /* Append a fresh blank PoLineCard (mirrors SalesOrderDetail.startAddLine) —
-     seeded with the PO's default ship-to + expected delivery so the new line
-     inherits the header context. Committed by the page-level Save. */
   const startAddLine = () =>
     setEditLines((prev) => [...prev, {
       ...emptyPoLine(),
@@ -712,9 +580,6 @@ export const PurchaseOrderDetail = () => {
     }]);
   addLineHandoff.current = { enabled: isEditing && !isLocked, onTrigger: startAddLine };
 
-  /* Remove a line. A persisted line fires the delete mutation immediately (it
-     releases SO quota back to the From-SO picker — same as the old trash
-     handler); a never-saved blank card just drops from the draft array. */
   const removeLine = async (rid: string) => {
     const l = editLines.find((x) => x.rid === rid);
     if (!l) return;
@@ -745,7 +610,6 @@ export const PurchaseOrderDetail = () => {
      touched) and drop back to View. */
   const handleSave = async () => {
     if (savingDraft) return;
-    // Guard: every line must reference a product before Save.
     const blankLine = editLines.find((d) => !d.itemCode.trim());
     if (blankLine) {
       notify({ title: 'Every line needs a product', body: 'Pick a product for each line, or remove the empty one before saving.', tone: 'error' });
@@ -755,19 +619,11 @@ export const PurchaseOrderDetail = () => {
     try {
       const byId = new Map(items.map((it) => [it.id, it]));
       const lineWork = editLines.some((d) => !d.itemId || lineChanged(d, byId.get(d.itemId)));
-      /* The header PATCH goes first and carries the version this screen loaded
-         (sister review G6), so a buyer whose screen is older than someone
-         else's Save is refused before any line is written. With no header
-         change it sends the version alone. */
       if (headerDraft) {
         await updateHeader.mutateAsync({
           id: po.id,
           expectedUpdatedAt: po.updated_at,
           ...(headerDraft as Record<string, unknown>),
-          /* Only the three OPTIONAL slots are nulled here. `po_date` is
-             `date DEFAULT now() NOT NULL` (scm-schema/2990s-full-schema.sql)
-             and both poDate and expectedAt are required inputs on this form, so
-             nulling them would trade one refusal for another. */
           supplierDeliveryDate2: blankDateToNull(headerDraft.supplierDeliveryDate2),
           supplierDeliveryDate3: blankDateToNull(headerDraft.supplierDeliveryDate3),
           supplierDeliveryDate4: blankDateToNull(headerDraft.supplierDeliveryDate4),
@@ -777,7 +633,6 @@ export const PurchaseOrderDetail = () => {
       }
       for (const d of editLines) {
         if (!d.itemId) {
-          // New line — full insert payload.
           await addItem.mutateAsync({
             poId: po.id,
             materialKind:   d.materialKind,
@@ -791,7 +646,6 @@ export const PurchaseOrderDetail = () => {
             discountSen:  d.discountSen,
             deliveryDate:   d.deliveryDate || undefined,
             lineDeliveryDateOverridden: d.deliveryDateOverridden ?? false,
-            /* Mig 0026 — per-line supplier-revised delivery dates. */
             supplierDeliveryDate2: d.supplierDeliveryDate2 || undefined,
             supplierDeliveryDate3: d.supplierDeliveryDate3 || undefined,
             supplierDeliveryDate4: d.supplierDeliveryDate4 || undefined,
@@ -808,7 +662,6 @@ export const PurchaseOrderDetail = () => {
           poId: po.id, itemId: d.itemId,
           itemCode:   d.itemCode,
           materialName:   d.materialName || d.itemCode,
-          /* Always sent, so CLEARING a remark actually reaches the server. */
           notes:          d.notes ?? '',
           supplierSku:    d.supplierSku,
           qty:            d.qty,
@@ -816,15 +669,12 @@ export const PurchaseOrderDetail = () => {
           discountSen:  d.discountSen ?? 0,
           deliveryDate:   blankDateToNull(d.deliveryDate),
           lineDeliveryDateOverridden: d.deliveryDateOverridden ?? false,
-          /* Mig 0026 — per-line supplier-revised delivery dates. */
           supplierDeliveryDate2: blankDateToNull(d.supplierDeliveryDate2),
           supplierDeliveryDate3: blankDateToNull(d.supplierDeliveryDate3),
           supplierDeliveryDate4: blankDateToNull(d.supplierDeliveryDate4),
           warehouseId:    d.warehouseId ?? null,
           itemGroup:      d.category,
           variants:       d.variants ?? {},
-          /* Explicit null UNBINDS; the key is always sent so a cleared picker
-             actually reaches the server (an absent key means "keep"). */
           soItemId:       d.soItemId ?? null,
         });
       }
@@ -838,13 +688,6 @@ export const PurchaseOrderDetail = () => {
     }
   };
 
-  /* ── SO-amendment banner state (Phase 1-C) ─────────────────────────────────
-     The bound PO detail stamps `open_amendment` when its source SO has an
-     in-flight amendment (status NOT IN SENT/REJECTED). Once the SO revision is
-     approved the amendment reaches SO_APPROVED → the Approve PO gate (revises
-     this PO in place, bumps `revision`, snapshots the prior version to
-     po_revisions) → PO_APPROVED → Send (marks SENT) + Download Revised PO. Perm
-     gate is FE-hint only; the server 403 is the real gate. */
   const openAmendment = (po as unknown as { open_amendment?: { id: string; status: string; amendment_no: string } | null }).open_amendment ?? null;
   const canAmendAction = can('scm.amendment.approve_po');
 
@@ -859,12 +702,6 @@ export const PurchaseOrderDetail = () => {
       if (!ok) return;
       approvePo.mutate({ id: openAmendment.id }, {
         onError: (e) => {
-          /* approve-po may 409 with { code:'received_floor', poItemId, revisedQty,
-             receivedQty } — the revised qty on a line is below what's already been
-             received, so a Purchase Return must clear the excess first. Read the
-             structured body off the thrown error (authed-fetch rides err.body /
-             err.status) and render ONE plain sentence naming the line — never the
-             raw JSON. Any other error falls back to its humanised message. */
           const body = (e as { body?: Record<string, unknown> }).body ?? null;
           if (body && body.code === 'received_floor') {
             /* Name the line by its MATERIAL, not by `poItemId.slice(0,8)` — a
@@ -890,10 +727,6 @@ export const PurchaseOrderDetail = () => {
           notify({ title: 'Could not approve the PO', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' });
         },
         onSuccess: (res) => {
-          /* The revision succeeded, but reconciliation may have left something for
-             a human: an already-received removed line kept on the PO, an added
-             item whose supplier has no open PO, or a PO now with no lines. Show
-             those plain-language notes rather than a bare "approved". */
           const warns = (res as { warnings?: string[] } | undefined)?.warnings ?? [];
           if (warns.length) {
             notify({ title: 'PO revision approved — please check a few items', body: warns.join(' '), tone: 'info' });
@@ -922,8 +755,6 @@ export const PurchaseOrderDetail = () => {
 
   return (
     <div className={styles.page}>
-      {/* Commander 2026-05-29 — dropped the GRNs/Invoice/Returns smart-button
-          row + the "PO date · N lines · Expected" subtitle (not needed). */}
 
       {/* ── Header — V2-parity chrome (owner 2026-07-27 "这里设计不对"): the
           edit surface opens with the same header language as the V2 detail
@@ -978,16 +809,10 @@ export const PurchaseOrderDetail = () => {
               </div>
             </div>
           </div>
-          {/* styles.actions / styles.totalRail were RETIRED from the module css
-              ("header chrome is inline Tailwind now") but this page never
-              followed — the classNames resolved to undefined and the whole
-              action row rendered unstyled/overflowing. Real utilities now. */}
           <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
           {/* Total + status pill now live in the title / meta rows (V2-parity
               header, owner 2026-07-27) so this row carries ONLY action buttons
               and stops wrapping a lone Save onto a second line. */}
-          {/* SO-amendment workflow — "Revised · rev N" badge once this PO has been
-              revised in place by an approved amendment (revision > 1). */}
           {((po as unknown as { revision?: number }).revision ?? 1) > 1 && (
             <span style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -1022,9 +847,6 @@ export const PurchaseOrderDetail = () => {
             />
             </>
           )}
-          {/* PR #78 — Transfer from Sales Order. Gated behind Edit mode (it
-              mutates line items). Commander 2026-05-29 — opens the full "Pick
-              Sales Orders for this PO" picker scoped to this PO's supplier. */}
           {isEditing && (po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
             <Button
               variant="ghost"
@@ -1035,9 +857,6 @@ export const PurchaseOrderDetail = () => {
               <span>From Sales Order</span>
             </Button>
           )}
-          {/* Draft/Confirmed — a DRAFT PO shows a primary Confirm. Confirming
-              flips DRAFT -> SUBMITTED (commits the SO-quota advance + makes the
-              PO live MRP supply / GRN-receivable). Hidden once committed. */}
           {po.status === 'DRAFT' && !isEditing && (
             <Button variant="primary" size="md"
               onClick={async () => {
@@ -1096,26 +915,18 @@ export const PurchaseOrderDetail = () => {
               endpoint (owner rule 2026-08-11: 不可以删只可以 cancel). Cancel is
               the terminal state; the record stays so AutoCount can be
               reconciled against it. */}
-          {/* PR — Phase 2: "Receive Goods" → /grns/new?poId=X. */}
           {(po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
             <Button variant="primary" size="md"
               onClick={() => navigate(`/scm/grns/new?poId=${po.id}`)}>
               <span>Receive Goods</span>
             </Button>
           )}
-          {/* PR — Phase 4: "Raise Return" available once any qty has been
-              received. Pre-fills the return page with this PO's lines +
-              supplier. */}
           {(po.status === 'PARTIALLY_RECEIVED' || po.status === 'RECEIVED') && (
             <Button variant="ghost" size="md"
               onClick={() => navigate(convertToLink('poToPr', po.id))}>
               <span>Raise Return</span>
             </Button>
           )}
-          {/* View → Edit gate (Commander 2026-05-29). Default View shows a
-              primary Edit button (disabled while the PO is locked). Editing
-              flips into draft mode; the button becomes the single "Save" that
-              commits the whole draft. Back (top-left) discards. */}
           {!isEditing ? (
             <Button variant="primary" size="md" onClick={enterEdit} disabled={hardLocked}>
               <Pencil {...ICON} />
@@ -1131,14 +942,6 @@ export const PurchaseOrderDetail = () => {
         </div>
       </div>
 
-      {/* ── Revision-ready banner (SO-amendment workflow, Phase 1-C) ───────────
-          Once the source SO revision is approved the amendment reaches SO_APPROVED
-          → this green banner hosts Approve PO (revises this PO in place). After
-          Approve PO the amendment is PO_APPROVED → the banner swaps to Send (marks
-          SENT — no server email) + Download Revised PO (the operator prints /
-          WhatsApps it themselves). Perm gate is FE-hint only; server 403 is the
-          real gate. Hidden for other amendment states (those are driven from the
-          SO detail). Mirrors SalesOrderDetail's amendment-pending banner. */}
       {openAmendment && (openAmendment.status === 'SO_APPROVED' || openAmendment.status === 'PO_APPROVED') && (
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -1202,10 +1005,6 @@ export const PurchaseOrderDetail = () => {
         </div>
       )}
 
-      {/* ── Tab strip (SO-amendment workflow) — Order vs Revisions ────────────
-          The Revisions tab lists prior PO snapshots read-only. Default is the
-          Order view so nothing changes for never-revised POs. Mirrors the SO
-          detail tab strip. */}
       <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--line)' }}>
         {(['order', 'revisions'] as const).map((t) => (
           <button key={t} type="button" onClick={() => setActiveTab(t)}
@@ -1226,11 +1025,6 @@ export const PurchaseOrderDetail = () => {
       ) : (
       <>
 
-      {/* ── DRAFT banner + Confirm (Draft/Confirmed two-state) ──────────────
-          A DRAFT PO is uncommitted: it does NOT count as MRP supply, does NOT
-          lock its source SO lines, and is NOT GRN-receivable until confirmed.
-          Review + correct, then Confirm to make it live. Mirrors the SO detail
-          DRAFT banner. */}
       {po.status === 'DRAFT' && (
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -1265,9 +1059,6 @@ export const PurchaseOrderDetail = () => {
         </div>
       )}
 
-      {/* Tier 2 downstream-lock — once any GRN is created from this PO the page
-          becomes read-only + un-cancellable. Partial receiving (more GRNs) is
-          still allowed via the list's Convert-to-GRN. */}
       {lockedDueToChildren && (
         <div className={styles.bannerWarn} style={{ marginBottom: 'var(--space-3)' }}>
           <strong>Locked — has a Goods Receipt.</strong>{' '}
@@ -1276,10 +1067,6 @@ export const PurchaseOrderDetail = () => {
         </div>
       )}
 
-      {/* ── Supplier / dates / currency / notes ─────────────────── */}
-      {/* In View the card renders read-only text; in Edit it shows inputs bound
-          to the draft (committed by the single top Save — the card no longer
-          has its own Save button). */}
       <SupplierCard
         po={po}
         draft={headerView}
@@ -1290,7 +1077,6 @@ export const PurchaseOrderDetail = () => {
         isEditing={isEditing}
       />
 
-      {/* ── Line items ──────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Items ({isEditing ? editLines.length : visibleItems.length})</h2>
@@ -1305,16 +1091,8 @@ export const PurchaseOrderDetail = () => {
           )}
         </header>
 
-        {/* SO→PO drift banner — the source SO changed after this PO was raised.
-            We never auto-edit a PO that may already be with the supplier; the
-            purchaser syncs + re-sends. (Commander 2026-06-16.) */}
         {showDrift && driftCount > 0 && (
-          /* English copy (owner UI rule: no Chinese ships in the interface;
-             swept 2026-07-27 while fixing the missing edit-mode redline). */
           <div className={styles.bannerWarn} style={{ margin: 'var(--space-2) var(--space-3)' }}>
-            {/* bannerWarn is a COLUMN flex — bare text + <strong> children become
-                separate flex rows (the old Chinese copy broke the same way), so
-                the whole sentence rides in ONE span. */}
             {driftActionable ? (
               <span>
                 ⚠ <strong>{driftCount}</strong> line{driftCount === 1 ? "'s" : 's'} source SO changed after this
@@ -1374,9 +1152,6 @@ export const PurchaseOrderDetail = () => {
                   <PoLineCard
                     index={idx}
                     line={l}
-                    /* Per-line Remarks box — this parent carries `notes` in both
-                       the add-item and the update-item payload below, which is
-                       what the prop's contract requires. */
                     showRemarks
                     currency={po.currency}
                     supplierId={poSupplierId}
@@ -1386,24 +1161,14 @@ export const PurchaseOrderDetail = () => {
                     maint={pickerMaint}
                     fabrics={fabrics}
                     specialsPools={specialsPools}
-                    /* Typing a line date by hand marks it hand-set, until the next header date change. */
                     onChange={(patch) => patchLine(l.rid, 'deliveryDate' in patch ? { ...patch, deliveryDateOverridden: true } : patch)}
                     onPickBinding={(b) => pickBinding(l.rid, b)}
                     onSetVariant={(k, v) => setVariant(l.rid, k, v)}
-                    /* Item-first reverse lookup is a Create-only affordance (no
-                       supplier to narrow on an existing PO) — no-op here. */
                     onPendingItemPick={() => {}}
                     onRemove={() => removeLine(l.rid)}
                     disabled={isLocked}
                     soLinkOptions={soLinkOptionsFor(l)}
                     photos={
-                      /* A LINE THAT IS NOT SAVED YET HAS NOWHERE TO PUT A
-                         PHOTO. The keys are `po-items/<po>/<item id>/…`, so
-                         the item id is not a detail — it is the address. A
-                         brand-new card therefore says so instead of showing a
-                         control that would throw: silently omitting the rail
-                         is what sent the owner looking for it in the first
-                         place. Save the line, then attach. */
                       l.itemId ? (
                         <div style={{ display: 'grid', gap: 4 }}>
                           <span className={styles.fieldLabel}>Photos</span>
@@ -1453,9 +1218,6 @@ export const PurchaseOrderDetail = () => {
             <thead>
               <tr>
                 <th>Item</th>
-                {/* Supplier-facing dual-code rule (Commander) — the supplier's
-                    own code prints on every purchasing doc; surface the
-                    snapshotted line supplier_sku here too. */}
                 <th>Supplier Code</th>
                 <th>Group</th>
                 <th className={styles.tableRight}>Qty</th>
@@ -1474,8 +1236,6 @@ export const PurchaseOrderDetail = () => {
               {visibleItems.map((it) => (
                 <tr key={it.id}>
                   <td>
-                    {/* Commander 2026-05-29 — show the item CODE only; the
-                        variant summary stays (that's WHAT was ordered). */}
                     <div className={styles.codeCell}>{it.item_code}</div>
                     {(() => {
                       const summary = buildVariantSummary(it.item_group, it.variants as Record<string, unknown> | null)
@@ -1493,10 +1253,6 @@ export const PurchaseOrderDetail = () => {
                         {!it.so_drift.itemChanged && it.so_drift.specSo !== it.so_drift.specPo && (
                           <div>⚠ SO spec now: {it.so_drift.specSo || '—'} ({driftReceived ? 'ordered and received' : 'this PO still'}: {it.so_drift.specPo || '—'})</div>
                         )}
-                        {/* Staff #12 — SO line's ship-from warehouse moved after this PO
-                            was raised; the PO still points at the old warehouse. Rebind
-                            via Edit → change this line's warehouse → Save (the line PATCH
-                            is GRN-gated, so a received PO can't be rebound). */}
                         {it.so_drift.warehouseChanged && (
                           <div>⚠ SO warehouse moved — this PO still points at the old one. Edit → change this line's warehouse to the SO's → Save (blocked once received).</div>
                         )}
@@ -1518,15 +1274,11 @@ export const PurchaseOrderDetail = () => {
         )}
       </section>
 
-      {/* ── Totals ────────────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Totals</h2>
         </header>
         <div className={styles.cardBody}>
-          {/* Commander 2026-05-29 — subtotal/total computed LIVE from the visible
-              line items (incl. unsaved draft edits) so they can never drift.
-              Tax stays the stored header value. */}
           <div className={styles.totalsGrid}>
             <div className={styles.totalRow}>
               <span className={styles.totalLabel}>Subtotal</span>
@@ -1549,35 +1301,22 @@ export const PurchaseOrderDetail = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Supplier / header card — controlled by the page's draft (#194)
-   ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
   po, draft, onField, onApplySupplierDateToAll, locked, identityLocked = false, isEditing = true,
 }: {
   po: any;
-  /** Draft header values (page-owned). In View these mirror the saved PO. */
   draft: HeaderDraft;
-  /** Update a single header field on the page draft. */
   onField: (k: keyof HeaderDraft, v: string) => void;
-  /** Overwrite this supplier-date slot on EVERY line. Returns the line count. */
   onApplySupplierDateToAll: (k: SupplierDateKey) => number;
-  /** Hard lock — Received / Cancelled: every field read-only. */
   locked: boolean;
   /** A live GRN exists: the INHERITED fields (supplier / currency / purchase
    *  location) freeze because a GRN was received against them, but the PO's own
    *  dates + notes stay editable (owner 2026-08-20, §8 GAP-1). */
   identityLocked?: boolean;
-  /** View → Edit gate. When false the card renders read-only display text. */
   isEditing?: boolean;
 }) => {
-  // Inherited fields freeze on EITHER a hard lock or a live GRN; own fields on
-  // the hard lock only.
   const inheritedLocked = locked || identityLocked;
-  /* "Applied to N lines" acknowledgement. Deliberately an inline flash and not
-     a NotifyDialog: the dialog is modal with an OK button, which would turn a
-     one-tap batch into two taps for something the line cards show anyway. */
   const [appliedFlash, setAppliedFlash] = useState<{ key: SupplierDateKey; count: number } | null>(null);
   useEffect(() => {
     if (!appliedFlash) return;
@@ -1587,11 +1326,8 @@ const SupplierCard = ({
 
   const suppliersQ = useSuppliers();
   const suppliers = suppliersQ.data ?? [];
-  // PR #77 — header Purchase Location dropdown options.
   const warehousesQ = useWarehouses();
   const warehouses = warehousesQ.data ?? [];
-  // PR #75 — auto-fill supplier info card from /suppliers/:id. In Edit follow
-  // the draft's picked supplier; in View follow the saved PO.
   const supplierIdForDetail = isEditing ? (draft.supplierId || null) : (po.supplier_id ?? null);
   const supplierDetail = useSupplierDetail(supplierIdForDetail);
   const supplier: SupplierRow | null = supplierDetail.data?.supplier ?? null;
@@ -1600,12 +1336,9 @@ const SupplierCard = ({
     <section className={styles.card}>
       <header className={styles.cardHeader}>
         <h2 className={styles.cardTitle}>Supplier · Dates · Notes</h2>
-        {/* Commander 2026-05-29 — the card's own Save is gone; the single top
-            "Save" commits the whole PO draft (header + line edits). */}
       </header>
       <div className={styles.cardBody}>
         {!isEditing ? (
-          /* View mode — read-only display text sourced from the saved PO. */
           <div
             style={{
               display: 'grid',
@@ -1623,8 +1356,6 @@ const SupplierCard = ({
             <div />
             <InfoCell label="PO Date" value={po.po_date || null} />
             <InfoCell label="Expected Delivery" value={po.expected_at || null} />
-            {/* Mig 0026 — supplier-revised header delivery dates (shown only
-                when the supplier has pushed a revised date). */}
             {po.supplier_delivery_date_2 && <InfoCell label="Supplier Date 2" value={po.supplier_delivery_date_2} />}
             {po.supplier_delivery_date_3 && <InfoCell label="Supplier Date 3" value={po.supplier_delivery_date_3} />}
             {po.supplier_delivery_date_4 && <InfoCell label="Supplier Date 4" value={po.supplier_delivery_date_4} />}
@@ -1683,13 +1414,6 @@ const SupplierCard = ({
                 options={[
                   { value: 'MYR', label: 'MYR' },
                   { value: 'RMB', label: 'RMB' },
-                  /* CNY is the ISO code for the same currency as RMB. Both are
-                     listed because the AutoCount book states CNY and the
-                     migration copies the book's value rather than translating
-                     it (mig 20260907T2330). A stored value missing from this
-                     list renders the select BLANK and the next save silently
-                     rewrites it — which is why the code has to be here, not
-                     only in the DB enum. */
                   { value: 'CNY', label: 'CNY' },
                   { value: 'USD', label: 'USD' },
                   { value: 'SGD', label: 'SGD' },
@@ -1705,8 +1429,6 @@ const SupplierCard = ({
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Expected Delivery</span>
-            {/* Commander 2026-05-29 — changing this cascades to every line's
-                Delivery Date (handled in the page's setHeaderField). */}
             <DateField
               fullWidth
               className={styles.fieldInput}
@@ -1724,9 +1446,6 @@ const SupplierCard = ({
             <label className={styles.field} key={k}>
               <span className={styles.fieldLabelRow}>
                 <span className={styles.fieldLabel}>{SUPPLIER_DATE_LABEL[k]}</span>
-                {/* "Apply to all" overwrites every LINE, which is locked once a
-                    GRN exists — hide it then, though the header date field stays
-                    editable (own-stage). */}
                 {!inheritedLocked && (
                   appliedFlash?.key === k ? (
                     <span className={styles.applyAllDone} role="status">
@@ -1741,7 +1460,7 @@ const SupplierCard = ({
                         ? `Overwrite ${SUPPLIER_DATE_LABEL[k]} on every line of this PO`
                         : `Pick a ${SUPPLIER_DATE_LABEL[k]} first`}
                       onClick={(e) => {
-                        e.preventDefault();          // never let the <label> re-target the click
+                        e.preventDefault();
                         const n = onApplySupplierDateToAll(k);
                         if (n > 0) setAppliedFlash({ key: k, count: n });
                       }}
@@ -1757,8 +1476,6 @@ const SupplierCard = ({
                 onChange={(iso) => onField(k, iso)}/>
             </label>
           ))}
-          {/* PR #77 — Purchase Location: default ship-to warehouse for
-              every line on this PO. */}
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Purchase Location</span>
             <span className={styles.selectWrap}>
@@ -1784,8 +1501,6 @@ const SupplierCard = ({
         </>
         )}
 
-        {/* PR #75 — supplier-info auto-fill card. Read-only display sourced
-            from /suppliers/:id. */}
         {supplier && (
           <div
             style={{
@@ -1822,7 +1537,6 @@ const SupplierCard = ({
   );
 };
 
-/* PR #75 — Read-only label/value cell for the supplier auto-fill card. */
 function InfoCell({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div>
@@ -1838,14 +1552,7 @@ function InfoCell({ label, value }: { label: string; value: string | null | unde
   );
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   Phase 1-C — PO-amendment Revisions tab. HOUZS VENDOR port of 2990's
-   PoRevisionsTab / PoRevisionSnapshot.
-   ════════════════════════════════════════════════════════════════════════ */
 
-/* Read-only Revisions tab — lists prior PO snapshots (newest first) via
-   usePoRevisions. Clicking a revision expands its stored snapshot as read-only
-   detail. Mirrors SalesOrderDetail's RevisionsTab; no writes. */
 const PoRevisionsTab = ({ poId, currency }: { poId: string; currency: string }) => {
   const { data, isLoading, error } = usePoRevisions(poId);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -1910,10 +1617,6 @@ const PoRevisionsTab = ({ poId, currency }: { poId: string; currency: string }) 
   );
 };
 
-/* Read-only render of a PO revision snapshot (header + lines). The snapshot JSON
-   is the full PO at that revision; surface the key header fields + line list and
-   keep the raw values available. Dual-reads snake/camel + snapshot key variants
-   defensively (the approve-po snapshot shape isn't frozen). */
 const PoRevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currency: string }) => {
   const snap = (snapshot ?? {}) as Record<string, unknown>;
   const header = (snap.header ?? snap.purchaseOrder ?? snap) as Record<string, unknown>;

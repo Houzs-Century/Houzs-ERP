@@ -1,8 +1,3 @@
-/* POS Admin > POS Items (layout E1): the furniture SKUs tagged for the booth,
- * their barcodes, price, event price overrides, pre-set (AUTO) discount, FOC
- * rule, max manual discount, stock source and short receipt name. Add from
- * Inventory searches the SKU master; Import Excel / Export round-trip the
- * list. Changes reach devices on the next Prepare / Refresh / Push. */
 import { useMemo, useState } from "react";
 import { Download, PackagePlus, Plus, Trash2, Upload } from "lucide-react";
 import { api } from "../../api/client";
@@ -14,7 +9,7 @@ import { fmtSen } from "../../vendor/shared/format";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { SearchInput } from "../../components/Button";
-import { mfgCategoryLabel } from "../../vendor/shared/product-categories";
+import { mfgCategoryLabel } from "../../vendor/scm/lib/product-categories-store";
 import { PosBoothCategoriesDrawer } from "./PosBoothCategoriesDrawer";
 import { POS_ADMIN, rm, toSen, useAdminItems, useAdminEvents, type PosItem, type SkuCandidate } from "./posAdminApi";
 import { Empty, Field, Pill, Table, Toggle, dangerBtn, errText, ghostBtn, inputCls, primaryBtn, td, th } from "./posAdminUi";
@@ -76,7 +71,6 @@ export function PosItemsTab() {
     });
   }, [items.data, search, activeOnly, eventFilter, categoryFilter]);
   const categories = useMemo(() => [...new Set((items.data ?? []).map((i) => i.category ?? ""))].sort(), [items.data]);
-  /* Only ticks on rows that are shown and still on count; a filter change never removes something out of sight. */
   const picked = useMemo(() => rows.filter((i) => i.active && selected.has(i.id)), [rows, selected]);
   const allShownPicked = rows.length > 0 && rows.every((i) => !i.active || selected.has(i.id));
   const toggleOne = (id: number) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });

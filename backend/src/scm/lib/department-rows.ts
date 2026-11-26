@@ -52,14 +52,10 @@ export type Nature = Department | 'sales';
 export type DeptKey = Department | 'none';
 export const NONE_LABEL = 'No department yet';
 
-/* ── The company's plan: its departments, who sells, what folds into what ───── */
 
 export type DepartmentPlan = {
-  /** The company's departments, in the order its report shows them. */
   departments: Department[];
-  /** The department that sells: sales, cost of sales, sales staff and commission. */
   selling: Department;
-  /** A nature the company has no department for, and where it counts instead. */
   folds: Partial<Record<Department, Department>>;
 };
 /** A company with no plan of its own: every department, Exhibition selling. */
@@ -91,7 +87,6 @@ export function resolveDept(nature: Nature | 'none', plan: DepartmentPlan): Dept
   return plan.departments.includes('ga') ? 'ga' : plan.departments[0]!;
 }
 
-/* ── The Operation sheet ─────────────────────────────────────────────────── */
 
 /** The Operation sheet's three regions: Penang, KL (Singapore goes out of KL), Sabah & Sarawak. */
 export type OpRegion = 'PG' | 'KL' | 'EM';
@@ -117,9 +112,7 @@ const isOpRow = (v: string): v is OpRow => (OP_ROWS as readonly string[]).includ
 /** The sheet's own row for job ads of warehouse posts (not an account's row). */
 export const RECRUITMENT_LABEL = 'Recruitment (job ads)';
 
-/* ── The Chart of Accounts' Department column ───────────────────────────── */
 
-/** Plain values: a nature for the whole account, or Recruitment (by the position named). */
 const PLAIN_ROWS = ['ga', 'exhibition', 'showroom', 'logistics', 'operation', 'sales', 'hire'] as const;
 type PlainRow = (typeof PLAIN_ROWS)[number];
 const PLAIN_LABEL: Record<PlainRow, string> = {
@@ -150,7 +143,6 @@ export function departmentRowLabel(value: string): string {
   return `Operation – ${OP_REGIONS.find((r) => r.code === op.region)!.name} – ${OP_ROW_LABEL[op.row]}`;
 }
 
-/* ── Payroll lines: the team the words name ─────────────────────────────── */
 
 export type ManpowerRow = 'manpower_logistic' | 'manpower_operation' | 'manpower_procurement' | 'manpower_storekeeper';
 export const MANPOWER_LABEL: Record<ManpowerRow, string> = {
@@ -226,7 +218,6 @@ export function hireLineOf(notes: string | null | undefined): Nature {
   return 'ga';
 }
 
-/* ── Other Debtor recharges: the words ───────────────────────────────────── */
 
 export type OpIncome = 'warehouse' | 'charges';
 /** "WAREHOUSE CHARGES - NOV'26" is Warehouse income, "OPERATION CHARGES - SEP'26"
@@ -242,14 +233,12 @@ export function opIncomeOf(text: string | null | undefined): OpIncome | null {
 export const isTransportRecharge = (text: string | null | undefined): boolean =>
   /^\s*(LOGISTICS?|TRANSPORT(ATION)?)\s+(CHARGES?|FEES?|INCOME)\b/i.test(String(text ?? ''));
 
-/* ── Accounts ────────────────────────────────────────────────────────────── */
 
 export type DeptAccount = ChartAccount & { department_row?: string | null; section?: string | null };
 
 export type AccountHome =
   | { dept: 'logistics' | 'ga' | 'exhibition' | 'showroom' | 'sales' }
   | { dept: 'operation'; row: OpRow | null; region: OpRegion }
-  /** Recruitment: each line by the position it names. */
   | { dept: 'hire' }
   | { dept: 'none' };
 
@@ -261,8 +250,6 @@ export function accountHome(a: DeptAccount | undefined): AccountHome {
   const v = a.department_row;
   const op = opRowOf(v);
   if (op) return { dept: 'operation', ...op };
-  /* A plain Operation account (2990's operation charges paid to Houzs): the sheet's
-     warehouse expenses in KL, where a company with an Operation department would read it. */
   if (v === 'operation') return { dept: 'operation', row: 'expenses', region: 'KL' };
   if (v === 'ga' || v === 'exhibition' || v === 'showroom' || v === 'logistics' || v === 'sales' || v === 'hire') return { dept: v };
   return { dept: 'none' };
@@ -284,8 +271,6 @@ export type OpSheetRow = OpRow | ManpowerRow | 'recruitment';
 export type LineHome =
   | { dept: 'logistics' | 'exhibition' | 'showroom' | 'sales' }
   | { dept: 'ga'; team: GaTeam | null }
-  /** `row`: the Operation row an expense fills; `income`: the recharge an income line
-      is. `region` null = shared by the DOs' value. */
   | { dept: 'operation'; row: OpSheetRow | null; region: OpRegion | null; income: OpIncome | null }
   | { dept: 'none' };
 
@@ -298,7 +283,6 @@ export function lineHome(a: DeptAccount | undefined, notes: string | null | unde
     const pay = payLineOf(notes);
     if (pay?.dept === 'operation') return { ...pay, income: null };
     if (pay) return pay;
-    /* No team named: the account's own department, else the selling department. */
     if (home.dept === 'none' || home.dept === 'hire') return { dept: 'sales' };
   }
   if (home.dept === 'hire') {

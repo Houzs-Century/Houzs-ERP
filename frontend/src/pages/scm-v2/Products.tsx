@@ -1,33 +1,3 @@
-// ----------------------------------------------------------------------------
-// Products & Maintenance — manufacturer SKU master + variant config editor.
-//
-// Ported from HOOKKA src/pages/products/index.tsx (~2839 LOC).
-//
-// Reskinned to the app design system (batch 3): the bespoke grey "framed
-// card" .page wrapper is gone — the page is full-bleed on the app background
-// and the header/tab rail ride the shared <PageHeader>. Buttons come from
-// ../../components/Button. Chrome is Tailwind design tokens (bg-surface,
-// border-border, text-ink, bg-primary…); the kept module.css holds only the
-// repeated CONTENT primitives (tables, drawers, modals, fields, maint rows).
-//
-// NOTE the old .page block re-declared --c-cream / --c-paper / --line as a
-// local cascade, so those tokens meant something DIFFERENT inside this page
-// than they do globally (cream and paper are effectively swapped). Removing
-// .page removes the overrides, so every surviving colour is pinned to hex.
-// Do not "restore" them to var(--c-*) — that silently re-themes the page.
-//   - Merriweather title, Poppins body, Raleway eyebrow + caps tracking-loud
-//   - Archivo Black for the price column (--font-mark, 80% stretch)
-//   - Lucide icons stroke 1.75, no emoji
-//   - exactly ONE primary CTA per screen (Edit Prices / Save)
-//   - rounded-only tokens (no literal px on border-radius)
-//
-// Tabs:
-//   [SKU Master] — list of mfg_products, filterable by category, with the
-//       Edit Prices / Export / Import actions in the top-right.
-//   [Maintenance] — left-rail of sub-tabs grouped Bedframe / Sofa / Common,
-//       right-panel list editor for the focused sub-tab. Save opens an
-//       effective-date drawer.
-// ----------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useRef, useState, type HTMLAttributes, type ReactNode } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -98,7 +68,7 @@ import { SkuHistoryTabs } from './SkuHistoryTabs';
 import { AddSupplierBinding } from './AddSupplierBinding';
 import { DeleteBindingButton } from './DeleteBindingButton';
 import { ImportModelsMoved } from '../../vendor/scm/components/ImportModelsMoved';
-import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
+import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { useFabricTrackings } from '../../vendor/scm/lib/fabric-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
@@ -137,10 +107,6 @@ type TopTab = 'sku' | 'modular' | 'maintenance' | 'combos' | 'variants' | 'fabri
 
 
 export const Products = () => {
-  /* URL-state the top tab so deep-links land on the right view (the Variants
-     tab is the new entry — owners coming from the design handoff should be
-     able to bookmark /scm/products?tab=variants). Reads/writes ?tab on every
-     change; the legacy default (no query string) still lands on SKU Master. */
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromUrl = (searchParams.get('tab') ?? 'sku') as TopTab;
   const topTab: TopTab = ['sku', 'modular', 'maintenance', 'combos', 'variants', 'fabric', 'categories'].includes(
@@ -161,45 +127,20 @@ export const Products = () => {
         eyebrow="Master data"
         title="Products"
         actions={
-          /* Tab rail — reskinned to the reference FilterPills slab (same seat
-             the bespoke .tabSwitch had inside the old .headerRow). The tab
-             set, order, labels and ?tab wiring are unchanged; only the chrome
-             moved onto the shared PageHeader. */
           <div
             role="tablist"
             className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-surface p-1 shadow-stone [&>*]:shrink-0"
           >
             {([
               { value: 'sku' as const, label: 'SKU Master' },
-              /* PR #84 — Commander 2026-05-26 wanted a dedicated place to
-                 manage per-Model specs (allowed options, thickness, etc.)
-                 separately from "create code" and SKU adjustments. The
-                 Modular tab routes into the same ProductModels list that
-                 used to live under /product-models — restoring an entry
-                 point (PR #73 removed the old Models tab; this is its
-                 replacement with a clearer name). */
               { value: 'modular' as const, label: 'Modular' },
               { value: 'maintenance' as const, label: 'Maintenance' },
               /* PR #237 — Sofa Combo Pricing (Commander 2026-05-28
                  "去查看 hookka 的 combo module 把整个 copy 过来"). Module-set
                  combo deals that OVERRIDE per-Model compartment pricing. */
               { value: 'combos' as const, label: 'Combo Pricing' },
-              /* PR — Variants editor (design handoff item 5). Lives next to
-                 Combo Pricing because the two work together: combos set the
-                 bundle, this tab tunes the per-SKU enable / price-override on
-                 the underlying variants. Writes go through the same
-                 /mfg-products PATCH the SKU Master grid uses. */
               { value: 'variants' as const, label: 'Variants' },
-              /* Fabric Converter — moved out of the sidebar to sit next to
-                 Combo Pricing (commander 2026-05-28). Renders the existing
-                 FabricTracking page inline; the /fabric-tracking route is kept
-                 for back-compat / direct links. */
               { value: 'fabric' as const, label: 'Fabric Converter' },
-              /* Categories — brought in from the standalone /scm/categories
-                 route (same pattern as Fabric Converter): the standalone
-                 route stays for back-compat / direct links, but this tab is
-                 now the canonical entry so operators managing products can
-                 edit the category tree without leaving the page. */
               { value: 'categories' as const, label: 'Categories' },
             ]).map((t) => (
               <button
@@ -232,14 +173,10 @@ export const Products = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   SKU Master tab
-   ════════════════════════════════════════════════════════════════════════ */
 
-// The tabs are the ONE category list, under the ONE label map (shared/product-categories.ts).
-const CATEGORIES: { value: MfgCategory | 'all'; label: string }[] = [
+const useCategoryTabs = (): { value: MfgCategory | 'all'; label: string }[] => [
   { value: 'all', label: 'All' },
-  ...MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c, label: MFG_CATEGORY_LABELS[c] })),
+  ...useProductCategories().active.map((c) => ({ value: c.code, label: c.name })),
 ];
 
 
@@ -254,14 +191,12 @@ const TIER_CHIPS: { value: Tier; label: string }[] = [
 
 
 
-// Row windowing (Edit Prices legacy table). Past this many rows we render only
-// the slice scrolled into view; short catalogs render in full (byte-identical
-// to before). Mirrors components/DataTable.tsx's window-scroll virtualization.
 const VIRTUAL_ROW_THRESHOLD = 40;
 const VIRTUAL_OVERSCAN = 12;
-const SKU_ROW_HEIGHT_ESTIMATE = 34; // px; corrected at runtime by measuring a real row
+const SKU_ROW_HEIGHT_ESTIMATE = 34;
 
 const SkuMasterTab = () => {
+  const CATEGORIES = useCategoryTabs();
   const [category, setCategory] = useState<MfgCategory | 'all'>('all');
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebouncedValue(search, 300);
@@ -274,16 +209,11 @@ const SkuMasterTab = () => {
   const updatePrices = useUpdateMfgProductPrices();
   const notify = useNotify();
   const askConfirm = useConfirm();
-  // The stored rows, so a change typed back to what is saved un-stages itself.
   const rowsByIdRef = useRef(new Map<string, MfgProductRow>());
   const stageEdit = useCallback((id: string, patch: ProductEditPatch) => {
     setPendingEdits((prev) => stageRowEdit(prev, rowsByIdRef.current.get(id) ?? null, id, patch));
   }, []);
   const dirtyCount = Object.keys(pendingEdits).length;
-  /* Save sends every staged row, then WAITS for the list to reload before
-     leaving edit mode — otherwise the grid repaints from the old cache and the
-     saved text looks lost until the refetch lands. A failed row stays staged
-     and on screen with the reason; only accepted rows are dropped. */
   const saveEdits = async () => {
     const snapshot = pendingEdits;
     const total = Object.keys(snapshot).length;
@@ -321,46 +251,29 @@ const SkuMasterTab = () => {
     setEditMode(false);
   };
   const [tier, setTier] = useState<Tier>('PRICE_2');
-  // PR #39 — Model filter chip row (visible only on Sofa view).
-  // Distinct base_model values pulled from current rows. 'all' = no filter.
   const [modelFilter, setModelFilter] = useState<string>('all');
-  // "No supplier binding" filter — the gap to fill one by one.
   const [noSupplierOnly, setNoSupplierOnly] = useState(false);
 
-  // Unbounded fetch of the full mfg_products set for this category/search; the
-  // DOM is windowed below, but a server-side cap is a separate follow-up.
   const { data: products, isLoading, isFetching, error } = useMfgProducts({
     category: category === 'all' ? undefined : category,
     search: debouncedSearch.trim() || undefined,
-    // B1 — the SKU Master grid shows the derived-cost anchor marker per row.
     anchorState: true,
   });
   const searching =
     search.trim() !== debouncedSearch.trim() || (!isLoading && isFetching);
-  // Company-scoped set of item codes that already have a supplier binding.
   const boundCodes = useMfgProductBoundCodes();
   const config = useMaintenanceConfig('master');
-  // Branding datalist options for the inline Mattress branding edit — pool
-  // first, DISTINCT fallback. Rendered ONCE below (datalist#branding-pool-sku-master)
-  // so every row's BrandingInput can reference it.
   const brandingPool = useBrandingPool();
 
   const allRows = useMemo(() => products ?? [], [products]);
   useEffect(() => { rowsByIdRef.current = new Map(allRows.map((r) => [r.id, r])); }, [allRows]);
   const isSofaView = category === 'SOFA';
   const isMattressView = category === 'MATTRESS';
-  // Memoized so its reference is stable across renders — otherwise the fallback
-  // array literal would change every render and defeat ProductRow's React.memo.
-  // ACTIVE-toggle note: the SKU grid renders a price column for EVERY size
-  // (maintValues, not maintActiveValues) — existing SKUs may carry prices on
-  // a deactivated size and those must stay visible/exportable.
   const sofaSizes = useMemo(
     () => (config.data?.data?.sofaSizes ? maintValues(config.data.data.sofaSizes) : ['24', '26', '28', '30', '32', '35']),
     [config.data],
   );
 
-  // Distinct base_model values for the Model filter. Only SOFA / BEDFRAME /
-  // MATTRESS carry a base_model; ACCESSORY + SERVICE skip it.
   const supportsModelFilter = category === 'SOFA' || category === 'BEDFRAME' || category === 'MATTRESS';
   const categoryModels = useMemo<string[]>(() => {
     if (!supportsModelFilter) return [];
@@ -373,50 +286,36 @@ const SkuMasterTab = () => {
     [allRows],
   );
 
-  // Apply the Model filter (when supported + a specific model is picked), then
-  // the no-supplier gap filter.
   const rows = useMemo(() => {
     let base = allRows;
     if (supportsModelFilter && modelFilter !== 'all') {
       base = base.filter((r) => modelLabelOf(r) === modelFilter);
     }
-    // Gap filter: only SKUs with no supplier binding (no-op until loaded).
     if (noSupplierOnly && boundCodes.data) {
       base = base.filter((r) => !boundCodes.data!.has(r.code));
     }
     return base;
   }, [allRows, supportsModelFilter, modelFilter, noSupplierOnly, boundCodes.data]);
 
-  // How many SKUs in the current view still have no supplier — shown on the toggle.
   const unboundInView = useMemo(
     () => (boundCodes.data ? allRows.reduce((n, r) => n + (boundCodes.data!.has(r.code) ? 0 : 1), 0) : null),
     [allRows, boundCodes.data],
   );
   const { setGridRows, gridEpoch, bumpGridEpoch, shownRows } = useSkuGridOrder(rows);
 
-  // Reset Model filter when leaving a category that doesn't support it
   useEffect(() => {
     if (!supportsModelFilter && modelFilter !== 'all') setModelFilter('all');
   }, [supportsModelFilter, modelFilter]);
 
-  // Drawer + modal state
   const [newSkuOpen, setNewSkuOpen] = useState(false);
   const [suppliersRow, setSuppliersRow] = useState<MfgProductRow | null>(null);
   const [importing, setImporting] = useState(false);
   const [merging, setMerging] = useState(false);
-  // PR #73 — "+ New SKU" now opens the Model creation dialog (with the
-  // active category filter pre-filled). The legacy single-SKU drawer
-  // stays around in `newSkuOpen` for the ACCESSORY / SERVICE fall-back
-  // where a Model template isn't useful.
   const [newModelOpen, setNewModelOpen] = useState(false);
   const qc = useQueryClient();
-  // Map the SKU Master category-filter values to MfgCategory. `all` becomes
-  // undefined so the dialog defaults to SOFA on its own.
   const initialCategoryForDialog: MfgCategory | undefined =
     category === 'all' ? undefined : (category as MfgCategory);
 
-  // PR #82 (Commander 2026-05-26) — multi-select delete. Set<id> tracks
-  // ticked rows; select-all checkbox toggles every visible row.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
   const deleteMut = useDeleteMfgProduct();
@@ -425,8 +324,6 @@ const SkuMasterTab = () => {
   const visibleIds = useMemo(() => shownRows.map((r) => r.id), [shownRows]);
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
   const someSelected = !allSelected && visibleIds.some((id) => selectedIds.has(id));
-  // Stable identity so it can be passed straight to the memoized ProductRow
-  // (no per-row inline closure → only the toggled row re-renders).
   const toggleRow = useCallback((id: string) =>
     setSelectedIds((prev) => {
       const n = new Set(prev);
@@ -443,9 +340,6 @@ const SkuMasterTab = () => {
       }
       return n;
     });
-  // Drop selections that disappeared from the visible list (category /
-  // search change). Prevents "Delete 3" claiming rows that aren't on
-  // screen.
   useEffect(() => {
     setSelectedIds((prev) => {
       if (prev.size === 0) return prev;
@@ -508,10 +402,6 @@ const SkuMasterTab = () => {
     setSelectedIds(new Set());
     if (failed.length === 0) return;
 
-    // PR #94 — Commander 2026-05-26: the "Deleted 0 / 6. 6 failed" alert
-    // hid the actual reason behind a generic message. Surface per-row
-    // errors so commander can see WHAT is blocking (inventory lot,
-    // supplier binding, etc.) and offer Force delete as a follow-up.
     const blockedByRef = failed.filter((f) => /product_in_use|23503|references/i.test(f.err));
     const sample = failed.slice(0, 3).map((f) => `· ${f.err.slice(0, 160)}`).join('\n');
     const overflow = failed.length > 3 ? `\n…and ${failed.length - 3} more.` : '';
@@ -549,31 +439,12 @@ const SkuMasterTab = () => {
     }
   };
 
-  // Total column count (header colspan for loading/empty states):
-  //   PR #82 — leading checkbox column added (+1).
-  //   PR #38 — Configure + History columns removed. Double-click a row to
-  //   open the Suppliers drawer.
-  //   - Sofa: select + code + desc + model + N sizes + unit
-  //   - Mattress: select + code + desc + branding + size + price + unit
-  //   - Other: select + code + desc + category + size + P2 + P1 + unit
   const colCount = 1 + (isSofaView
     ? 3 + sofaSizes.length + 1
     : isMattressView
       ? 6
       : 7);
 
-  // ── Row windowing (Edit Prices legacy table) ────────────────────────────
-  // Normal viewing goes through the shared DataGrid (own virtualization). The
-  // Edit Prices editor keeps this hand-built <table> because DataGrid can't host
-  // the inline PriceInput / BrandingInput cells. It used to mount EVERY ProductRow
-  // (each with inputs) — at ~1141 SKUs, thousands at 10x, that froze the page.
-  // Mirror components/DataTable.tsx: a capturing `window` scroll listener (catches
-  // the .skuScroll container's non-bubbling scroll too) measures the tbody against
-  // the viewport and renders only rows.slice(vStart, vEnd), bracketed by two spacer
-  // <tr>s that reserve the off-screen height so the internal scrollbar + sticky
-  // header behave exactly as before. Row height is measured from a real [data-vrow]
-  // row so the spacers can't drift. Gated to editMode + long lists → short catalogs
-  // and the existing layout stay byte-identical.
   const canVirtualize = editMode && !isLoading && !error && shownRows.length > VIRTUAL_ROW_THRESHOLD;
   const tbodyRef = useRef<HTMLTableSectionElement>(null);
   const rowHeightRef = useRef(SKU_ROW_HEIGHT_ESTIMATE);
@@ -591,7 +462,7 @@ const SkuMasterTab = () => {
       const firstRow = el.querySelector<HTMLElement>('tr[data-vrow]');
       if (firstRow && firstRow.offsetHeight > 0) rowHeightRef.current = firstRow.offsetHeight;
       const rh = rowHeightRef.current || SKU_ROW_HEIGHT_ESTIMATE;
-      const top = el.getBoundingClientRect().top; // tbody top relative to viewport
+      const top = el.getBoundingClientRect().top;
       const vh = window.innerHeight;
       const first = Math.max(0, Math.floor(-top / rh) - VIRTUAL_OVERSCAN);
       const count = Math.ceil(vh / rh) + VIRTUAL_OVERSCAN * 2;
@@ -784,8 +655,6 @@ const SkuMasterTab = () => {
     }
     cols.push(
       {
-        // 0166 — SKU barcode. Shown by default (purchaser request). Edit from
-        // the SKU detail drawer (click a row) or set it when creating a SKU.
         key: 'barcode',
         label: 'Barcode',
         width: '140px',
@@ -817,9 +686,6 @@ const SkuMasterTab = () => {
 
   return (
     <>
-      {/* Branding now uses a hard <select> on each Mattress row (2026-07-23
-          owner rule — no free-text). The datalist that used to render here
-          became dead weight the moment BrandingInput stopped being an input. */}
       <div className="flex flex-wrap items-center justify-between gap-5">
         <div className="flex gap-2">
           {CATEGORIES.map((c) => (
@@ -865,12 +731,7 @@ const SkuMasterTab = () => {
             <Plus {...ICON_PROPS} />
             <span>New SKU</span>
           </Button>
-          {/* PR #82 — only render the bulk Delete button when at least one row
-              is ticked, so the toolbar stays compact in normal use. */}
           {!searching && selectedIds.size > 0 && (
-            /* Was a secondary button tinted red via an inline --c-festive-b
-               style; the design system has a first-class danger variant that
-               carries the same read (err border + err text on surface). */
             <Button
               variant="danger"
               onClick={bulkDelete}
@@ -931,7 +792,6 @@ const SkuMasterTab = () => {
         </div>
       </div>
 
-      {/* Model filter — type-to-filter SearchableSelect, "All models" = no filter. */}
       {supportsModelFilter && categoryModels.length > 1 && (
         <div style={{ marginTop: 'var(--space-2)', width: 300, maxWidth: '100%' }}>
           <SearchableSelect
@@ -971,12 +831,8 @@ const SkuMasterTab = () => {
       )}
 
       <div hidden={editMode}>{
-        /* Normal viewing. Row click (or the truck icon) opens the Suppliers
-           drawer; the checkbox column feeds the bulk Delete / status actions.
-           Search is the server-backed box above, not a table search. */
         <DataTable<MfgProductRow>
           key={gridEpoch} tableId={gridTableId} layoutFamily={gridTableId}
-          /* Opens with NO column filter, every time: a remembered funnel made SKUs look missing. */
           persistFilters={false}
           exportName="sku-master"
           rows={isLoading || searching ? null : rows}
@@ -1002,16 +858,10 @@ const SkuMasterTab = () => {
 
       {editMode && (
       <div className={styles.tableCard}>
-        {/* PR — viewport-fill scroll wrapper (matches DataGrid .scroll). The
-            SKU table used to leave dead space below it; now it stretches to
-            near the full viewport and scrolls internally with a sticky header.
-            The record footer below stays pinned to the card. */}
         <div className={styles.skuScroll}>
         <table className={`${styles.table} ${styles.tableCompact}`}>
           <thead>
             <tr>
-              {/* PR #82 — leading select-all checkbox. Indeterminate when
-                  partial selection on visible rows. */}
               <th style={{ width: 32 }}>
                 <input
                   type="checkbox"
@@ -1137,9 +987,6 @@ const CategoryChip = ({
   onClick: () => void;
   children: React.ReactNode;
 }) => (
-  /* Reskin: was an inline-styled ink/paper pill. Now the design-system
-     filter pill — active fills petrol (same emphasis colour as the tab rail
-     and selected rows) instead of ink-black. */
   <button
     type="button"
     onClick={onClick}
@@ -1155,29 +1002,24 @@ const CategoryChip = ({
 );
 
 
-/* ════════════════════════════════════════════════════════════════════════
-   Maintenance tab
-   ════════════════════════════════════════════════════════════════════════ */
 
 type MaintenanceListKey =
-  | 'bedframeSizes'    // PR #50 — Bedframe size pool (K/Q/S/SS/SK/SP)
+  | 'bedframeSizes'
   | 'divanHeights'
   | 'totalHeights'
   | 'gaps'
   | 'legHeights'
   | 'specials'
-  | 'sofaCompartments' // PR #50 — Sofa compartment pool (1A(LHF), 1A(RHF), 1NA, ...)
+  | 'sofaCompartments'
   | 'sofaSizes'
   | 'sofaLegHeights'
   | 'sofaSpecials'
-  | 'sofaQuickPresets' // PR (Commander 2026-05-28) — module-composition presets
-  | 'mattressSizes'    // PR #50 — Mattress size pool (K/Q/S/SS)
-  | 'brandings'        // Branding pool (HILTON/SEALY/2990S/...) — feeds Branding datalists
-  | 'supplierCategories' // Supply Category pool — feeds Suppliers list chips + supplier form toggles
+  | 'sofaQuickPresets'
+  | 'mattressSizes'
+  | 'brandings'
+  | 'supplierCategories'
   | 'fabrics';
 
-// PR #208 — exported so SupplierDetail can pass a `sectionFilter` prop to
-// the reused MaintenanceTab.
 export type MaintenanceSection = 'Bedframe' | 'Sofa' | 'Common' | 'Products Maintenance';
 
 const MAINTENANCE_TABS: {
@@ -1187,33 +1029,18 @@ const MAINTENANCE_TABS: {
   priced: boolean;
   section: MaintenanceSection;
 }[] = [
-  // ── Bedframe (commander-edited variant pools) ───────────────────────────
   { key: 'divanHeights', label: 'Divan Heights', description: 'Bedframe divan height options with surcharge pricing', priced: true, section: 'Bedframe' },
   { key: 'totalHeights', label: 'Total Heights', description: 'Total height (Divan + Gap + Leg) surcharge pricing', priced: true, section: 'Bedframe' },
   { key: 'gaps', label: 'Gaps', description: 'Bedframe gap height options (inches)', priced: false, section: 'Bedframe' },
   { key: 'legHeights', label: 'Leg Heights', description: 'Bedframe leg height options with surcharge pricing', priced: true, section: 'Bedframe' },
-  // Specials re-surfaced here (Commander 2026-06-16) — edits the SAME special_addons
-  // data as the Special Add-ons tab, filtered to BEDFRAME (selling-price options).
   { key: 'specials', label: 'Specials', description: 'Bedframe special add-ons — selling-price options (shared with POS).', priced: true, section: 'Bedframe' },
 
-  // ── Sofa (commander-edited variant pools) ───────────────────────────────
   { key: 'sofaSizes', label: 'Sizes', description: 'Available sofa seat height sizes (inches)', priced: false, section: 'Sofa' },
   { key: 'sofaLegHeights', label: 'Leg Heights', description: 'Sofa leg height options with surcharge pricing', priced: true, section: 'Sofa' },
-  // Sofa Specials — same special_addons data, filtered to SOFA (Commander 2026-06-16).
   { key: 'sofaSpecials', label: 'Specials', description: 'Sofa special add-ons — selling-price options (shared with POS).', priced: true, section: 'Sofa' },
-  // Quick Presets editor entry retired (Chairman 2026-06-02) — removed from the
-  // Maintenance rail in both apps. The sofaQuickPresets DATA + the shared
-  // DEFAULT_SOFA_QUICK_PRESETS fallback are kept (Sofa Combos reference preset
-  // ids; POS Quick Pick reads sofa_quick_picks, a different table).
 
-  // ── Common (cross-category single pool) ─────────────────────────────────
   { key: 'fabrics', label: 'Fabrics', description: 'Fabric price tier assignment — drives Price 1 / Price 2', priced: false, section: 'Common' },
 
-  // ── Products Maintenance (cross-category, drives Model "+ Add Codes") ──
-  // PR #74 (Commander 2026-05-26): bedframeSizes / mattressSizes / sofaCompartments
-  // live here because they're shared by multiple Models and back the bulk
-  // SKU generator — they're conceptually "Products Maintenance" rather than
-  // per-category variant config.
   { key: 'bedframeSizes',    label: 'Bedframe Sizes',    description: 'Bedframe sizes — edit code · label · dimensions (e.g. K · 6FT · 183X190CM). Used in generated SKU names.', priced: false, section: 'Products Maintenance' },
   { key: 'mattressSizes',    label: 'Mattress Sizes',    description: 'Mattress sizes — edit code · label · dimensions. Used in generated SKU names + width/length placeholders.', priced: false, section: 'Products Maintenance' },
   { key: 'sofaCompartments', label: 'Sofa Compartments', description: 'Sofa compartment pool (1A(LHF), 1A(RHF), 1NA, 2A(LHF), ...). Models tick which they offer.', priced: false, section: 'Products Maintenance' },
@@ -1260,49 +1087,28 @@ export const MaintenanceTab = ({
   const history = useMaintenanceConfigHistory(scope);
   const save = useSaveMaintenanceConfig();
   const renameCompartment = useRenameSofaCompartment();
-  // BRANDING pool — `distinct` (DISTINCT branding across mfg_products +
-  // product_models) is the read-only suggestion shown when the pool is empty
-  // AND the one-click seed for the Edit draft (see startEdit). The pool
-  // itself never gets written without an explicit Save.
   const brandingPool = useBrandingPool();
-  // Specials (Commander 2026-06-16) — re-surfaced in Maintenance editing the
-  // shared special_addons; used for the rail count + the embedded editor.
   const specialAddonsList = useSpecialAddons();
 
-  // PR #208 — when the supplier scope has no row yet, fall through to the
-  // master config so commander can see what's there before deciding to
-  // override. Save still writes back to the prop scope, never to master —
-  // the fallback never silently mutates the global config.
-  // Hoisted so the loading gate below can tell "the fallback is still coming"
-  // apart from "there is genuinely no config" — see the gate for why.
   const wantMasterFallback =
     scope !== 'master' && !resolved.data?.data && !resolved.isLoading;
   const masterFallback = useMaintenanceConfig('master', {
     enabled: wantMasterFallback,
   });
 
-  // PR #208 — sectionFilter restricts which sections show on the left rail.
-  // BEDFRAME-only supplier hides Sofa sub-tabs entirely so commander only
-  // edits surcharges that actually apply to what this supplier supplies.
   const allSections: MaintenanceSection[] = ['Bedframe', 'Sofa', 'Common', 'Products Maintenance'];
   const sections: MaintenanceSection[] = sectionFilter ?? allSections;
   const visibleTabs = useMemo(
     () => MAINTENANCE_TABS.filter((t) =>
       sections.includes(t.section)
-      // Specials edit GLOBAL special_addons (selling price) — show only on the
-      // master Products page, never the per-supplier (cost-overlay) Maintenance.
       && !((t.key === 'specials' || t.key === 'sofaSpecials') && scope !== 'master')),
     [sections, scope],
   );
 
-  // First visible tab — the section filter may have hidden 'divanHeights'.
   const defaultActiveKey: MaintenanceListKey = visibleTabs[0]?.key ?? 'divanHeights';
 
   const [activeKey, setActiveKey] = useState<MaintenanceListKey>(defaultActiveKey);
 
-  // Keep activeKey valid when the section filter changes (e.g. supplier
-  // category switched). Pin to the first visible tab if the current one
-  // got filtered out.
   useEffect(() => {
     if (!visibleTabs.find((t) => t.key === activeKey)) {
       setActiveKey(defaultActiveKey);
@@ -1317,42 +1123,20 @@ export const MaintenanceTab = ({
   const notify = useNotify();
   const askConfirm = useConfirm();
 
-  // Count fabric_trackings rows for the left-rail "Fabrics (N)" badge.
-  // Lightweight query (cached 30s) — uses the same hook as the panel itself.
-  // Retired rows are excluded so the badge counts fabrics you can still use.
-  // Before this it read 827 while 88 of those were supersede tombstones.
   const fabricsList = useFabricTrackings({ includeRetired: false });
   const fabricsCount = fabricsList.data?.length ?? 0;
 
-  // PR #208 — draft beats supplier-scope-resolved beats master-fallback.
-  // Any of those three can be null (commander hasn't seeded yet).
   const config =
     draft ?? resolved.data?.data ?? masterFallback.data?.data ?? null;
   const active = MAINTENANCE_TABS.find((t) => t.key === activeKey) ?? visibleTabs[0];
-  // Specials panel (Commander 2026-06-16) — renders the special_addons editor
-  // filtered to this category instead of the config-pool editor; the config
-  // Edit/Save/History chrome is hidden (special_addons has its own inline CRUD).
   const isSpecials = active?.key === 'specials' || active?.key === 'sofaSpecials';
   const specialsCat = active?.key === 'sofaSpecials' ? 'SOFA' : 'BEDFRAME';
-  // Brandings (Houzs re-sourcing) — branding is maintained CENTRALLY in
-  // Project Maintenance (PMS, project_brands via /api/projects/brands). This
-  // tab is READ-ONLY, mirroring the SO Maintenance "Venues" list: it shows the
-  // PMS brand pool the SCM Branding inputs resolve against, and points editors
-  // at Project Maintenance for add / rename / deactivate. No config draft/Save.
   const isBrandings = active?.key === 'brandings';
 
   const startEdit = () => {
-    // Seed the draft from whichever config we're currently showing — could
-    // be the supplier-scope row or the master fallback. Either way commander
-    // edits a copy; save writes back to `scope`.
     const seed = resolved.data?.data ?? masterFallback.data?.data ?? null;
     if (!seed) return;
     const copy = JSON.parse(JSON.stringify(seed)) as MaintenanceConfig;
-    // Brandings one-click seed: when the master pool is empty, pre-fill the
-    // EDIT DRAFT from the distinct branding values across products + models so
-    // a single Save adopts them. Editor-only — config is never written until
-    // commander explicitly Saves. Master scope only (supplier scopes are
-    // surcharge overlays, never the branding authority).
     if (
       scope === 'master'
       && maintValues(copy.brandings).filter((b) => b.trim().length > 0).length === 0
@@ -1390,16 +1174,7 @@ export const MaintenanceTab = ({
       validate: (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v.trim()) ? null : 'Enter a date as YYYY-MM-DD.'),
     });
     if (!effectiveFrom) return;
-    // Maintenance-is-master cascade (Loo 2026-06-04: "what maintenance change
-    // all will follow"). Detect in-place compartment code RENAMES (same row,
-    // new text, old code gone from the list, new code not previously there)
-    // and run the atomic cascade BEFORE appending the new config row, so the
-    // SKU master, every doc snapshot, Modular ticks, combos and quick picks
-    // all carry the new name the moment the save lands. Master scope only —
-    // supplier scopes are surcharge overlays, never the code authority.
     if (scope === 'master') {
-      // ACTIVE toggles — entries may be { value, active } objects now; the
-      // rename cascade compares VALUES only (an active flip is not a rename).
       const baseline = maintValues(
         resolved.data?.data?.sofaCompartments ?? masterFallback.data?.data?.sofaCompartments,
       );
@@ -1422,9 +1197,6 @@ export const MaintenanceTab = ({
         }
       }
       if (renames.length > 0) {
-        /* Preview first (no write), one company only. A code any SKU, document
-           or stock row still uses is refused: it is part of every SKU code
-           (<MODEL>-<code>), so only an unused code (a typo) may be renamed. */
         const previews: SofaCompartmentRenameResult[] = [];
         for (const r of renames) {
           try {
@@ -1473,9 +1245,6 @@ export const MaintenanceTab = ({
         }
       }
     }
-    // PR #208 — write back to the same scope this tab was mounted with.
-    // Supplier scope (e.g. 'supplier:abc-123') gets its own append-only row;
-    // master scope is unchanged for the SO / selling-price flow.
     save.mutate(
       { scope, config: draft, effectiveFrom },
       {
@@ -1487,18 +1256,6 @@ export const MaintenanceTab = ({
     );
   };
 
-  // The master fallback is a DEPENDENT query: it can only be enabled once
-  // `resolved` has settled with no row. On that first settled render it is
-  // enabled but has not fetched yet, so its data is undefined — and since
-  // isLoading is (isPending && isFetching) it reports FALSE, not true. Gating on
-  // `resolved` alone therefore let that frame fall through to the `!config`
-  // branch and paint "No maintenance config baseline found" before the fallback
-  // had run, then swap to the real config a moment later — the "error first,
-  // then it loads" the owner reported on Supplier > Maintenance. Hold the
-  // loading state while the fallback is genuinely still coming. Guarding
-  // isPending behind wantMasterFallback matters: isPending is also true while a
-  // query is DISABLED, so an unguarded check would hang this spinner forever on
-  // the master scope, where the fallback is permanently disabled.
   if (resolved.isLoading || (wantMasterFallback && masterFallback.isPending)) {
     return <p className={styles.eyebrow}>Loading maintenance config…</p>;
   }
@@ -1530,9 +1287,6 @@ export const MaintenanceTab = ({
     );
   }
 
-  // active falls through to the first visible tab when the section filter
-  // hides the previously-active key. Should never be null when config is set,
-  // but guard anyway.
   if (!active) {
     return (
       <div className={styles.bannerWarn}>
@@ -1541,9 +1295,6 @@ export const MaintenanceTab = ({
     );
   }
 
-  // PR #208 — show "using fallback" hint when the supplier scope is empty
-  // but the master fallback is rendering. Encourages commander to hit Edit
-  // → Save which seeds this supplier's own row.
   const showingMasterFallback =
     scope !== 'master' && !resolved.data?.data && Boolean(masterFallback.data?.data);
 
@@ -1557,7 +1308,6 @@ export const MaintenanceTab = ({
               const count = t.key === 'fabrics'
                 ? fabricsCount
                 : t.key === 'brandings'
-                  // Brandings come from PMS (project_brands), not the config blob.
                   ? brandingPool.pool.length
                   : (t.key === 'specials' || t.key === 'sofaSpecials')
                     ? (specialAddonsList.data ?? []).filter((r) => r.categories.includes(t.key === 'sofaSpecials' ? 'SOFA' : 'BEDFRAME')).length
@@ -1572,9 +1322,6 @@ export const MaintenanceTab = ({
                 >
                   <span>{t.label}</span>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    {/* Priced pools carry a single surcharge cost (the "RM" tag,
-                        mirroring the approved Maintenance mockup); unpriced
-                        pools show only their count. */}
                     {t.priced && <span className={styles.maintRmPill}>RM</span>}
                     <span className={styles.maintCount}>({count})</span>
                   </span>
@@ -1587,10 +1334,6 @@ export const MaintenanceTab = ({
 
       <section className={styles.maintPanel}>
         {isSpecials ? (
-          /* Specials = the scm.special_addons TABLE, but now with TRUE Edit ->
-             Save(effective-date) + History matching the other pools (owner
-             2026-06-22). The panel owns its own header chrome + effective-dated
-             snapshot Save; SO costing still reads the live special_addons table. */
           <SpecialsMaintenancePanel
             key={specialsCat}
             category={specialsCat}
@@ -1646,9 +1389,6 @@ export const MaintenanceTab = ({
         </header>
 
         {isBrandings ? (
-          /* Brandings are maintained CENTRALLY in Project Maintenance (PMS,
-             project_brands). Read-only here — mirrors the SO Maintenance
-             "Venues" list. (Houzs re-sourcing) */
           <BrandingsReadOnlyPanel />
         ) : (
           <MaintenanceList
@@ -1677,18 +1417,10 @@ export const MaintenanceTab = ({
 };
 
 const countItems = (cfg: MaintenanceConfig, key: MaintenanceListKey): number => {
-  if (key === 'fabrics') return 0; // populated from fabric_trackings, not the JSON blob
-  // Quick Presets falls back to DEFAULT_SOFA_QUICK_PRESETS when the
-  // maintenance row hasn't been migrated yet — show the resolved count
-  // so the left-rail badge isn't misleadingly "0".
+  if (key === 'fabrics') return 0;
   if (key === 'sofaQuickPresets') {
     return resolveSofaQuickPresets(cfg.sofaQuickPresets).length;
   }
-  // PR #74 — Code Format tabs removed (Commander 2026-05-26: preset only,
-  // not commander-editable). The cfg.{category}CodeFormat / NameFormat
-  // columns still exist on the JSONB blob but no longer surface in the UI;
-  // the API falls back to its hardcoded templates when those fields are
-  // empty (see apps/api/src/routes/product-models.ts §generate).
   const v = cfg[key as keyof MaintenanceConfig];
   return Array.isArray(v) ? v.length : 0;
 };
@@ -1712,8 +1444,6 @@ type CompartmentMeta = {
   defaultPriceSen?: number;
 };
 
-// Canonicalize any compartment input to the parens form (mirror of the
-// shared normalizeCompartmentCode — kept local so this page stays light).
 const normalizeCompartmentCode = (raw: string): string => {
   const dash = raw.trim().replace(/\(([^)]*)\)/g, '-$1').replace(/-+$/, '');
   const parts = dash.split('-').filter(Boolean);
@@ -1740,7 +1470,6 @@ const SOFA_MODULE_BY_NORM_ID = new Map(
 // Keys are the canonical parens codes (lookups go through
 // normalizeCompartmentCode first, so a stray legacy dash entry still hits).
 const COMPARTMENT_DESCRIPTION_OVERRIDE: Record<string, string> = {
-  // ── 1-Seaters ──────────────────────────────────────────────────────
   '1S':     '1 seat, arms on BOTH sides',
   '1A(LHF)': '1 seat, ONE arm (left)',
   '1A(RHF)': '1 seat, ONE arm (right)',
@@ -1748,8 +1477,6 @@ const COMPARTMENT_DESCRIPTION_OVERRIDE: Record<string, string> = {
   '1B(RHF)': '1 seat — RIGHT is Seat Cushion (bench), no arm on the left',
   '1NA':    '1 seat, NO arms',
 
-  // ── 1-Seater Recliners ────────────────────────────────────────────
-  // (P) = Power Recliner (electric) · (R) = Manual Recliner
   '1A(P)(LHF)': '1 seat + ONE arm (left) — Power Recliner (electric)',
   '1A(P)(RHF)': '1 seat + ONE arm (right) — Power Recliner (electric)',
   '1A(R)(LHF)': '1 seat + ONE arm (left) — Manual Recliner',
@@ -1762,7 +1489,6 @@ const COMPARTMENT_DESCRIPTION_OVERRIDE: Record<string, string> = {
   Console:         'Console — fabric-wrapped console with cup holders',
   'Console/WC':    'Console/WC — wood lid + fabric body, with cup holders',
 
-  // ── 2-Seaters ──────────────────────────────────────────────────────
   '2S':     '2 seats, arms on BOTH sides',
   '2A(LHF)': '2 seats, ONE arm (left)',
   '2A(RHF)': '2 seats, ONE arm (right)',
@@ -1770,32 +1496,17 @@ const COMPARTMENT_DESCRIPTION_OVERRIDE: Record<string, string> = {
   '2B(RHF)': '2 seats — RIGHT is Seat Cushion (bench), no arm on the left',
   '2NA':    '2 seats, NO arms',
 
-  // ── Corner + Accessories ──────────────────────────────────────────
   CNR:     'Corner piece — 90° L-shape connector',
   'WC-45': 'Console (Wood, 45cm) — divider/storage between two seats',
   STOOL:   'Ottoman / stool',
 };
 
-// Extra modules NOT in SOFA_MODULES (the Console/WC alias the shared lib
-// doesn't model directly). Hand-mapped here so the Maintenance UI gets
-// full coverage. Keys are the CANONICAL code (parens form); the value is
-// the SVG filename stem under apps/backend/public/sofa-modules/.
 const EXTRA_MODULE_IMAGE_BY_NORM: Record<string, string> = {
-  // Console = fabric-wrapped (no wood lid). Console/WC = wood lid + fabric body.
-  // Commander 2026-05-28 split the original "Console" into 2 codes — the
-  // existing SVG (wood lid + fabric) reads as wood at a glance, so it moves
-  // to Console-WC; a new fabric-only design lives at Console.
   Console:       'Console',
-  // Legacy dash input 'Console-WC' canonicalizes to 'Console(WC)'.
   'Console(WC)': 'Console-WC',
-  // normalizeCompartmentCode doesn't touch '/' so commander's raw "Console/WC"
-  // input falls through to this key directly (not via canonicalization).
   'Console/WC':  'Console-WC',
 };
 
-// Resolve the seeded default for one compartment code. UI surfaces this
-// when the stored meta has no value of its own — commander overrides
-// land in sofaCompartmentMeta on Save.
 const seedCompartmentMeta = (code: string): CompartmentMeta => {
   const norm = normalizeCompartmentCode(code);
   const mod  = SOFA_MODULE_BY_NORM_ID.get(norm);
@@ -1809,14 +1520,9 @@ const seedCompartmentMeta = (code: string): CompartmentMeta => {
     return {
       imageKey:    `sofa-modules/${mod.id}.svg`,
       description: COMPARTMENT_DESCRIPTION_OVERRIDE[mod.id] ?? mod.label,
-      // SOFA_MODULES carries no base price — POS reads pricing from
-      // product_compartments per Model. Default to 0 here; commander can
-      // type the back-office default into the input.
       defaultPriceSen: 0,
     };
   }
-  // Fallback for codes NOT in SOFA_MODULES (the Console/WC alias). These
-  // have bespoke SVGs hand-drawn to the same style.
   const extraStem = EXTRA_MODULE_IMAGE_BY_NORM[code.trim()] ?? EXTRA_MODULE_IMAGE_BY_NORM[norm];
   if (extraStem) {
     const desc =
@@ -1832,8 +1538,6 @@ const seedCompartmentMeta = (code: string): CompartmentMeta => {
   return {};
 };
 
-// Merge stored override on top of the seed. Empty/undefined fields on
-// the override fall back to the seed value.
 const resolveCompartmentMeta = (
   code: string,
   stored: CompartmentMeta | undefined,
@@ -1857,14 +1561,6 @@ const parseRmToSen = (rm: string): number => {
   return Math.round(n * 100);
 };
 
-/* PR — Commander 2026-05-28: resolve the per-compartment image source.
- * Three cases:
- *   1) imageKey starts with `sofa-compartments/` — uploaded via the API.
- *      Render via the Worker proxy (`{API}/maintenance-config/sofa-compartments/{code}/photo/{key}`)
- *      so the auth-free public route streams the R2 object.
- *   2) imageKey starts with `sofa-modules/` — legacy bundled SVG, render
- *      from /public.
- *   3) imageKey is an http(s) URL — render directly. */
 const SOFA_COMPARTMENT_API_PREFIX = 'sofa-compartments/';
 const resolveCompartmentImageSrc = (
   code: string,
@@ -1879,7 +1575,6 @@ const resolveCompartmentImageSrc = (
       '/api/scm';
     return `${API}/maintenance-config/sofa-compartments/${encodeURIComponent(code)}/photo/${encodeURIComponent(imageKey)}`;
   }
-  // Legacy bundled SVG / PNG from /public.
   return `/${imageKey}`;
 };
 
@@ -1900,11 +1595,6 @@ const SofaCompartmentsList = ({
 }) => {
   const items = config.sofaCompartments ?? [];
   const meta  = config.sofaCompartmentMeta ?? {};
-  /* PR — Commander 2026-05-28: per-row photo upload + delete. Always
-   * available (not gated by edit mode) because the API writes the imageKey
-   * directly to maintenance_config_history without going through the draft
-   * → save cycle. uploadingCode tracks which row is mid-upload so we can
-   * show a "saving…" hint on the right thumbnail. */
   const uploadPhoto = useUploadSofaCompartmentPhoto();
   const deletePhoto = useDeleteSofaCompartmentPhoto();
   const notify = useNotify();
@@ -1988,13 +1678,6 @@ const SofaCompartmentsList = ({
             <span className={styles.maintRowIdx} style={editMode ? { cursor: 'grab' } : undefined}>
               {i + 1}
             </span>
-            {/* 48px thumbnail — click to upload, × to delete (when uploaded).
-                Uploads land in maintenance_config_history.config.sofaCompartmentMeta
-                via the Worker (no draft/save cycle — direct mutation). The
-                legacy bundled SVGs (imageKey starts with `sofa-modules/`) are
-                not deletable since they're shipped in /public; commander
-                replaces them by uploading a new R2 photo, which the resolver
-                prefers automatically. */}
             {(() => {
               const isUploaded = (resolved.imageKey ?? '').startsWith(SOFA_COMPARTMENT_API_PREFIX);
               const isUploading = uploadingCode === code;
@@ -2022,8 +1705,6 @@ const SofaCompartmentsList = ({
                         : 'Click to upload a photo'
                   }
                   onContextMenu={async (e) => {
-                    // Right-click on an uploaded photo = delete (matches
-                    // commander's "Right-click or × → delete" spec).
                     if (!isUploaded || isUploading) return;
                     e.preventDefault();
                     if (!(await askConfirm({
@@ -2061,7 +1742,6 @@ const SofaCompartmentsList = ({
                       disabled={isUploading}
                       onChange={(e) => {
                         const file = e.target.files?.[0];
-                        // Reset the input so re-selecting the same file fires onChange.
                         e.target.value = '';
                         if (!file) return;
                         setUploadingCode(code);
@@ -2113,7 +1793,6 @@ const SofaCompartmentsList = ({
                 </div>
               );
             })()}
-            {/* Code + description column */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
               {editMode ? (
                 <>
@@ -2176,7 +1855,6 @@ const SofaCompartmentsList = ({
                 </>
               )}
             </div>
-            {/* Default price column (RM, edits in centi) */}
             <div
               style={{
                 display: 'flex',
@@ -2295,19 +1973,6 @@ const SofaCompartmentsList = ({
   );
 };
 
-/* ─── Sofa Quick Presets — module-composition shortcuts (Commander 2026-05-28)
- *
- * Each row: drag handle · label input · modules chip-selector · default tier
- * dropdown · active toggle · delete. The modules chip pool reads from
- * config.sofaCompartments (the master list of compartment codes), so when
- * commander adds a new compartment it becomes available as a preset option
- * automatically. Clicking a chip in the picker toggles membership; selected
- * chips appear in order at the top of the row.
- *
- * Display semantics: the list shown here is the override array as-stored.
- * If the user hasn't seeded anything yet, we surface the DEFAULT_SOFA_QUICK_PRESETS
- * (read-only, watermark style) so commander knows what the historical defaults
- * look like — but the first edit lifts them into the real editable list. */
 const SofaQuickPresetsList = ({
   config,
   editMode,
@@ -2320,8 +1985,6 @@ const SofaQuickPresetsList = ({
   dragRowProps: (i: number) => HTMLAttributes<HTMLDivElement>;
 }) => {
   const askConfirm = useConfirm();
-  /* When the override is absent, surface the defaults as the working list so
-     commander can edit them inline. Save persists whatever's in the array. */
   const stored = config.sofaQuickPresets;
   const items: SofaQuickPreset[] = stored && stored.length > 0
     ? stored
@@ -2366,8 +2029,6 @@ const SofaQuickPresetsList = ({
   };
 
   const addPreset = () => {
-    /* Seed a blank row; commander fills in id/label/modules. The id default
-       picks the next "P<N>" so two consecutive adds don't collide. */
     const usedIds = new Set(items.map((p) => p.id));
     let n = items.length + 1;
     while (usedIds.has(`P${n}`)) n += 1;
@@ -2407,7 +2068,6 @@ const SofaQuickPresetsList = ({
           <span className={styles.maintRowIdx} style={editMode ? { cursor: 'grab' } : undefined}>
             {i + 1}
           </span>
-          {/* id input — stable key referenced by combo rules */}
           {editMode ? (
             <input
               type="text"
@@ -2436,7 +2096,6 @@ const SofaQuickPresetsList = ({
               {p.id}
             </span>
           )}
-          {/* label + modules — stack vertically inside the flexible main column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
             {editMode ? (
               <input
@@ -2467,7 +2126,6 @@ const SofaQuickPresetsList = ({
                 {p.label}
               </span>
             )}
-            {/* modules chip rail — selected on top, available below in edit mode */}
             <div style={{
               fontFamily: 'var(--font-mono)',
               fontSize: 'var(--fs-11)',
@@ -2516,7 +2174,6 @@ const SofaQuickPresetsList = ({
               </div>
             )}
           </div>
-          {/* default tier select */}
           {editMode ? (
             <select
               value={p.defaultTier ?? ''}
@@ -2547,7 +2204,6 @@ const SofaQuickPresetsList = ({
               {p.defaultTier ?? '—'}
             </span>
           )}
-          {/* active toggle */}
           {editMode ? (
             <label style={{
               display: 'inline-flex', alignItems: 'center', gap: 4,
@@ -2613,20 +2269,7 @@ const SofaQuickPresetsList = ({
   );
 };
 
-/* ─── Brandings — read-only PMS pool ───────────────────────────────────
-   Houzs re-sourcing: branding is maintained centrally in Project
-   Maintenance (PMS, project_brands via /api/projects/brands?full=1). This
-   panel shows that pool read-only — the SCM Branding inputs (New SKU, bulk
-   New Models, SKU Master inline edit, Model detail) all resolve against it.
-   Mirrors the SO Maintenance "Venues" read-only list. Active brands only,
-   matching what the Branding datalists offer (useBrandingPool). */
 const BrandingsReadOnlyPanel = () => {
-  // Resolve the SAME branding pool the SCM Branding inputs use, so the display
-  // matches what those inputs actually offer. Under HOUZS that is the PMS
-  // project_brands pool; under 2990 the PMS pool is empty (PMS is Houzs-only
-  // and project_brands is now company-scoped), so this falls back to the
-  // DISTINCT brandings on 2990's OWN products/models instead of showing the
-  // other company's brands (or a blank list).
   const { pool, fromConfig, isLoading } = useBrandingPool();
 
   return (
@@ -2677,17 +2320,9 @@ const MaintenanceList = ({
   editMode: boolean;
   onChange: (next: MaintenanceConfig) => void;
   priced: boolean;
-  /** DISTINCT branding values across products + models — rendered as a
-      read-only suggestion list when the Brandings pool is empty. */
   brandingSuggestions?: string[];
 }) => {
-  // Empty draft state for the "add new" row at the bottom of the list when
-  // edit mode is on. Kept local so toggling tabs cancels in-flight adds.
   const [draftValue, setDraftValue] = useState('');
-  /* PR (Commander 2026-06-22) — Bedframe/Mattress size ADD row now carries
-     the full triple (code · label · dimensions), mirroring the inline-edit
-     block. These two drafts feed sizeLabels on add for size pools; unused
-     by every other string pool (single-input add stays as-is). */
   const [draftLabel, setDraftLabel] = useState('');
   const [draftDim, setDraftDim] = useState('');
   const [draftPrice, setDraftPrice] = useState('0.00');
@@ -2709,8 +2344,6 @@ const MaintenanceList = ({
     (next as Record<string, unknown>)[listKey] = arr;
     onChange(next);
   };
-  /* Per-row props factory — returns the draggable handlers + visual hint.
-     Only active in edit mode; otherwise rows are static. */
   const dragRowProps = (i: number): HTMLAttributes<HTMLDivElement> => {
     if (!editMode) return {};
     return {
@@ -2718,8 +2351,7 @@ const MaintenanceList = ({
       onDragStart: (e) => {
         setDragIdx(i);
         e.dataTransfer.effectAllowed = 'move';
-        // Firefox requires data to start a drag
-        try { e.dataTransfer.setData('text/plain', String(i)); } catch { /* noop */ }
+        try { e.dataTransfer.setData('text/plain', String(i)); } catch { }
       },
       onDragOver: (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; },
       onDrop: (e) => {
@@ -2738,20 +2370,7 @@ const MaintenanceList = ({
     return <FabricsMaintenancePanel />;
   }
 
-  // PR #74 — Code Format tab removed (Commander 2026-05-26: preset only).
-  // The CodeFormatPanel component is kept in the file dead-code below in
-  // case we ever want to re-expose it; the API's hardcoded templates take
-  // over when the cfg.{category}CodeFormat / NameFormat fields are blank.
 
-  // ── String[] tabs (gaps, sofaSizes, + PR #50 pool keys) ──────────────
-  // Defaulting to [] avoids the "Cannot read properties of undefined
-  // (reading 'map')" crash when an older maintenance_config row doesn't
-  // carry the new pool keys yet. Editing then saving will materialise the
-  // key in the JSONB blob.
-  // PR #220 (Commander 2026-05-27) — Sofa Compartments gets its own renderer
-  // with image preview + description + default price, ported from the POS
-  // module catalogue (SOFA_MODULES). Falls through to the generic string[]
-  // branch below for every other pool key.
   if (listKey === 'sofaCompartments') {
     return (
       <SofaCompartmentsList
@@ -2790,10 +2409,6 @@ const MaintenanceList = ({
     // Yes/No Active checkbox per row in edit mode.
     const items = (config[listKey] as MaintPoolEntry[] | undefined) ?? [];
 
-    // Brandings seed/fallback: pool empty → surface the DISTINCT branding
-    // values across mfg_products + product_models as a read-only suggestion.
-    // Hitting Edit seeds these into the draft (see MaintenanceTab.startEdit)
-    // so one Save adopts them — nothing is silently written to config.
     const showBrandingSuggestions =
       listKey === 'brandings'
       && !editMode
@@ -2812,15 +2427,9 @@ const MaintenanceList = ({
       const v = draftValue.trim();
       if (!v) return;
       const next = JSON.parse(JSON.stringify(config)) as MaintenanceConfig;
-      // Same defaulting story — the new pool keys (PR #50) may not exist on
-      // old maintenance_config rows yet.
       const arr = (next[listKey] as MaintPoolEntry[] | undefined) ?? [];
       arr.push(v);
       (next as Record<string, unknown>)[listKey] = arr;
-      // PR (Commander 2026-06-22) — for bedframe/mattress size pools the ADD
-      // row also captures label + dimensions. Mirror updateLabel: write into
-      // sizeLabels keyed by code, storing only non-empty fields so untouched
-      // configs stay byte-identical on save.
       if (isSizeRow) {
         const label = draftLabel.trim();
         const dimensions = draftDim.trim();
@@ -2839,9 +2448,6 @@ const MaintenanceList = ({
       setDraftDim('');
     };
 
-    /* PR #40 — Commander 2026-05-26: existing rows must be editable, not
-       just deletable. The string[] flow (gaps / sofaSizes) was missing
-       inline edit — added below. */
     const updateAt = (idx: number, newVal: string) => {
       const next = JSON.parse(JSON.stringify(config)) as MaintenanceConfig;
       const arr = (next[listKey] as MaintPoolEntry[] | undefined) ?? [];
@@ -2850,8 +2456,6 @@ const MaintenanceList = ({
       onChange(next);
     };
 
-    /* ACTIVE toggle — re-activating collapses the entry back to the plain
-       string so untouched configs stay byte-identical on Save. */
     const setActiveAt = (idx: number, active: boolean) => {
       const next = JSON.parse(JSON.stringify(config)) as MaintenanceConfig;
       const arr = (next[listKey] as MaintPoolEntry[] | undefined) ?? [];
@@ -2917,7 +2521,6 @@ const MaintenanceList = ({
             <span className={styles.maintRowValue}>
               {editMode ? (
                 isSizeRow ? (
-                  // PR #92 — Inline 3-input editor (code · label · dimensions)
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                     <input
                       type="text"
@@ -2991,12 +2594,6 @@ const MaintenanceList = ({
                   />
                 )
               ) : (
-                /* PR #77 — enrich bedframe/mattress size codes with their
-                   imperial label + cm dimensions so the bare "K" row reads
-                   as "K · 6FT · 183x190CM". String stored unchanged — only
-                   display is enriched. Other list types (gaps, sofa
-                   compartments, sofa seat sizes) fall back to raw value.
-                   PR #92 — display path now consults sizeLabels override. */
                 isSizeRow
                   ? formatSizeRichWithCfg(v, config)
                   : v
@@ -3055,10 +2652,6 @@ const MaintenanceList = ({
           >
             <span className={styles.maintRowIdx}><Plus {...ICON_PROPS} /></span>
             {isSizeRow ? (
-              /* PR (Commander 2026-06-22) — Bedframe/Mattress ADD row mirrors
-                 the inline 3-input editor (code · label · dimensions) so a new
-                 size can be created complete in one go, not just the bare code.
-                 Writes both the pool array and sizeLabels via addItem. */
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                 <input
                   type="text"
@@ -3144,9 +2737,6 @@ const MaintenanceList = ({
     );
   }
 
-  // ── PricedOption[] tabs (the rest) ────────────────────────────────────
-  // Same defaulting as the string[] branch — old maintenance_config rows
-  // may not yet carry every key the UI now lists.
   const items = (config[listKey] as PricedOption[] | undefined) ?? [];
 
   const removeAt = (idx: number) => {
@@ -3160,9 +2750,6 @@ const MaintenanceList = ({
   const addItem = () => {
     const v = draftValue.trim();
     if (!v) return;
-    /* `Number(draftPrice) || 0` booked an unreadable surcharge as RM 0.00 and
-       added the option anyway — the operator saw their row appear and had no
-       reason to check the price. Refuse and say so instead. */
     const price = parseMoneyToSen(draftPrice, 'That surcharge');
     if (!price.ok) {
       void notify({ title: price.message, tone: 'error' });
@@ -3277,8 +2864,6 @@ const MaintenanceList = ({
                     const next = JSON.parse(JSON.stringify(config)) as MaintenanceConfig;
                     const list = next[listKey] as PricedOption[];
                     if (e.target.checked) {
-                      // Re-activating drops the flag so untouched rows stay
-                      // shape-identical (avoids dirty diffs on save).
                       delete list[i]!.active;
                     } else {
                       list[i]!.active = false;
@@ -3373,21 +2958,7 @@ const MaintenanceList = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Fabrics sub-tab body — embeds the shared FabricsTable so the same editor
-   shows up on /fabric-tracking and Products → Maintenance → Common → Fabrics.
-   Has its own slim search bar so the 122-row list stays usable in-place.
-   ════════════════════════════════════════════════════════════════════════ */
 
-/* ═══════════════════════════════════════════════════════════════════════
-   PR #72 — Per-category code/name format editor (DEAD CODE as of PR #74).
-   Commander 2026-05-26: revert to preset-only templates — the hardcoded
-   ones in apps/api/src/routes/product-models.ts §generate are the source
-   of truth. UI editor below kept as dead code in case we re-expose it;
-   sidebar no longer routes to it (see MaintenanceList). The
-   {category}CodeFormat / NameFormat columns on the JSONB blob are now
-   always read as blank → API template fallback kicks in.
-   ════════════════════════════════════════════════════════════════════════ */
 
 type CodeFormatKey = 'bedframeFormat' | 'sofaFormat' | 'mattressFormat';
 
@@ -3405,9 +2976,6 @@ const FORMAT_FIELDS: Record<CodeFormatKey, FormatFieldMap> = {
     codeKey:     'bedframeCodeFormat',
     nameKey:     'bedframeNameFormat',
     codeDefault: '{model_code}-({size})',
-    // PR #100 — include {model_name} so output matches mattress convention
-    // (e.g. "TRION BEDFRAME (6FT) (183X190CM)"). Mirrors DEFAULT_FORMATS
-    // in ProductModelDetail.tsx and API §BEDFRAME branch.
     nameDefault: '{branding} {model_name} BEDFRAME ({size_label}) ({dimensions})',
     sample: {
       branding:    'HILTON',
@@ -3555,9 +3123,6 @@ const CodeFormatPanel = ({
 
 const FabricsMaintenancePanel = () => {
   const [search, setSearch] = useState('');
-  /* This panel is a working list, not the master admin surface — the Fabric
-     Converter is, and that is where retired rows stay visible (and toggleable).
-     Here they are simply out of the way. */
   const { data, isLoading, error } = useFabricTrackings({
     search: search.trim() || undefined,
     includeRetired: false,
@@ -3590,9 +3155,6 @@ const FabricsMaintenancePanel = () => {
             }}
           />
         </div>
-        {/* PR #43 — Link to Fabric Converter for "+ New Fabric". Same data,
-            same edits. Keeping the create modal on one page only to avoid
-            duplicate UI state. */}
         <a
           href="/scm/fabric-tracking"
           style={{
@@ -3608,21 +3170,13 @@ const FabricsMaintenancePanel = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   New SKU drawer — create a fresh mfg_product. Category drives which
-   fields are shown (mattress hides Price 1, sofa shows Base Model, etc.).
-   ════════════════════════════════════════════════════════════════════════ */
 
 const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
+  const CATEGORIES = useCategoryTabs();
   const create = useCreateMfgProduct();
   const notify = useNotify();
-  // Branding datalist — maintenance pool first, DISTINCT fallback. Free text
-  // stays possible (datalist, not a hard select) so legacy values aren't blocked.
   const brandingPool = useBrandingPool();
   type Cat = MfgCategory;
-  /* 2990 is a trading company — no in-house manufacturing. Production-time
-     tracking dropped (was HOOKKA legacy). DB column production_time_minutes
-     stays for now but the UI no longer collects it. */
   const [form, setForm] = useState<{
     code: string; name: string; category: Cat;
     description: string; baseModel: string; sizeLabel: string;
@@ -3674,10 +3228,6 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
       unitM3Milli: toMilli(form.unitM3),
     }, {
       onSuccess: onClose,
-      // Surface the server refusal (duplicate code, bad category, …) instead of
-      // failing silently. This create was only ever "handled" because a sibling
-      // mutation named `create` in the same file carried an onError; that sibling
-      // (ProductPriceTimeline) now lives in its own file, so make it explicit.
       onError: (e) => notify({ title: e instanceof Error ? e.message : 'Could not create the SKU.', tone: 'error' }),
     });
   };
@@ -3710,9 +3260,7 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
                 </datalist>
               </>
             )}
-            {/* Commander 2026-05-28 — unify fabric/colour term → "Fabrics". Key fabricColor unchanged. */}
             {isSofa && <Field label="Fabrics" value={form.fabricColor} onChange={(v) => set('fabricColor', v)} />}
-            {/* 0166 — optional SKU barcode (free text; scanner-friendly). */}
             <Field label="Barcode" value={form.barcode} onChange={(v) => set('barcode', v)} placeholder="optional" />
             <Field label="Description" value={form.description} onChange={(v) => set('description', v)} fullWidth />
 
@@ -3723,7 +3271,6 @@ const NewSkuDrawer = ({ onClose }: { onClose: () => void }) => {
             )}
             <Field label="Cost Price (RM)" value={form.costPrice} onChange={(v) => set('costPrice', v)} type="number" />
             <Field label="Unit (m³)" value={form.unitM3} onChange={(v) => set('unitM3', v)} type="number" step="0.001" />
-            {/* Production Time field removed — 2990 is a trading company (PR-strip-production). */}
           </div>
         </div>
         <footer className={styles.drawerFooter}>
@@ -3744,7 +3291,6 @@ const Field = ({
   onChange: (v: string) => void;
   type?: string; step?: string; placeholder?: string;
   fullWidth?: boolean;
-  /** Optional <datalist> id — caller renders the datalist itself. */
   list?: string;
 }) => (
   <label className={`${styles.field} ${fullWidth ? styles.formGridFull : ''}`}>
@@ -3761,12 +3307,6 @@ const Field = ({
   </label>
 );
 
-/* ════════════════════════════════════════════════════════════════════════
-   PR #38 — ProductSuppliersDrawer
-   Double-click a product row to see every supplier that carries it,
-   their supplier-side SKU + unit price + lead time. The MAIN supplier
-   (used by default on POs) is starred and pinned to the top.
-   ════════════════════════════════════════════════════════════════════════ */
 
 
 const fmtRmSen = (centi: number): string => fmtSen(centi);
@@ -3776,20 +3316,14 @@ const ProductSuppliersDrawer = ({
   row, onClose,
 }: { row: MfgProductRow; onClose: () => void }) => {
   const q = useMfgProductSuppliers(row.id);
-  // base_model is blank on a 1:1 model (BUG-31), so name the model from its own row.
   const modelQ = useProductModel(row.model_id ?? undefined);
   const suppliers = q.data?.suppliers ?? [];
   const anchor = q.data?.anchor ?? null;
-  // Cost is fixed on the SUPPLIER side (owner ruling); the anchor card's CTA and
-  // an empty-gap "Fix in Binding" jump to that supplier so the price is fixed at
-  // its source. Closing the drawer first keeps the back-stack clean.
   const navigate = useNavigate();
   const openSupplier = (supplierId: string | null) => {
     onClose();
     navigate(supplierId ? `/scm/suppliers/${supplierId}` : '/scm/suppliers');
   };
-  // 0166 — editable SKU barcode. Local draft commits on Enter (no blur-auto-save,
-  // Commander 2026-06-15) via the shared PATCH hook (verified-save reads back).
   const update = useUpdateMfgProductPrices();
   const [barcodeDraft, setBarcodeDraft] = useState(row.barcode ?? '');
   const commitBarcode = () => {
@@ -3811,11 +3345,6 @@ const ProductSuppliersDrawer = ({
           maxHeight: '85vh',
           display: 'flex',
           flexDirection: 'column',
-          /* Clip to the panel so the scroll area (min-height:0 below) shrinks
-             and scrolls inside the 85vh box instead of overflowing it — the
-             pinned footer must never hide the last rows (bottom of the
-             Suppliers table / History / Schedule-price), which the A3 Cost card
-             made worse by adding content height. */
           overflow: 'hidden',
         }}
       >
@@ -3838,8 +3367,6 @@ const ProductSuppliersDrawer = ({
                   </p>
                 </div>
               )}
-            {/* 0166 — barcode lives on the SKU detail drawer (the SKU Master
-                grid column is read-only + default-hidden). Saves on Enter. */}
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
               <span style={{
                 fontSize: 'var(--fs-11)', fontWeight: 700, textTransform: 'uppercase',
@@ -3873,9 +3400,6 @@ const ProductSuppliersDrawer = ({
           </button>
         </header>
 
-        {/* minHeight:0 lets this flex child shrink below its content height so
-            it scrolls inside the panel; paddingBottom keeps the last row clear
-            of the pinned footer. */}
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 'var(--space-4)', paddingBottom: 'var(--space-6)' }}>
           {/* Commander 2026-05-29 — "双击点进去要看到 supplier 和 available 什么
               variant". This drill-in now shows BOTH: the model's allowed variant
@@ -3945,10 +3469,6 @@ const ProductSuppliersDrawer = ({
             </div>
           )}
           {!q.isLoading && suppliers.length > 0 && (
-            /* Let the table scroll horizontally inside the drawer on narrow
-               widths instead of squeezing the columns (the .table min-width
-               kicks in under 600px). The numeric columns stay content-sized
-               and on one line so the Supplier column takes the slack. */
             <div style={{ overflowX: 'auto' }}>
             <table className={styles.table} style={{ width: '100%' }}>
               <thead>
@@ -4067,20 +3587,13 @@ const SpecialsMaintenancePanel = ({
 
   const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState<SpecialAddonInput[] | null>(null);
-  // Rows taken off THIS category but kept alive under their others. They are no
-  // longer in the draft, so the snapshot has to carry them explicitly or /save
-  // would retire a code that is still live elsewhere. See confirmRemove.
   const [detached, setDetached] = useState<SpecialAddonInput[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // The FULL set (every category) is what a snapshot must carry — Save versions
-  // the whole table. The panel only EDITS this category's slice; rows of OTHER
-  // categories ride along untouched so a Sofa Save never drops Bedframe add-ons.
   const allRows = list.data ?? [];
   const inCat = (r: { categories: string[] }) => r.categories.includes(category);
   const viewRows = allRows.filter(inCat);
-  // Latest applied effective date for this set (newest non-pending snapshot).
   const latestApplied = (historyQ.data ?? []).find((h) => !h.isPending) ?? (historyQ.data ?? [])[0] ?? null;
 
   const startEdit = () => {
@@ -4116,7 +3629,6 @@ const SpecialsMaintenancePanel = ({
   const handleSave = async () => {
     if (!draft) return;
     setError(null);
-    // Validate the edited slice.
     const seen = new Set<string>();
     for (const r of draft) {
       if (!r.code.trim() || !r.label.trim()) { setError('Every add-on needs a code and a label.'); return; }
@@ -4128,7 +3640,6 @@ const SpecialsMaintenancePanel = ({
         if (g.choices.length === 0 || g.choices.some((c) => !c.label.trim())) { setError(`"${g.label || 'question'}" needs at least one named choice.`); return; }
       }
     }
-    // No-op guard — identical slice closes without versioning.
     const baseline = viewRows.map(rowToSpecialInput);
     if (JSON.stringify(baseline) === JSON.stringify(draft)) { cancelEdit(); return; }
 
@@ -4142,13 +3653,7 @@ const SpecialsMaintenancePanel = ({
     });
     if (!effectiveFrom) return;
 
-    // Snapshot = the WHOLE table: this category's edited draft + every OTHER
-    // category's rows untouched. Codes can carry multiple categories, so a row
-    // shared across categories is taken from the draft when present (the editor
-    // owns it here), else preserved from the live set.
     const draftByCode = new Map(draft.map((r) => [r.code.trim(), r]));
-    // Detached rows are still inCat in the LIVE set, so otherRows would skip
-    // them; carry them explicitly or /save retires a code that is live elsewhere.
     const detachedByCode = new Map(detached.map((r) => [r.code.trim(), r]));
     const otherRows = allRows
       .filter((r) => !inCat(r) && !draftByCode.has(r.code) && !detachedByCode.has(r.code))
@@ -4168,12 +3673,6 @@ const SpecialsMaintenancePanel = ({
     }
   };
 
-  /* A code carrying more than one category is SHARED by both panels. Dropping it
-     from the draft drops it from the snapshot, and /save retires every live code
-     the snapshot omits - so "remove" on a Sofa add-on that also carries BEDFRAME
-     used to retire it on Sofa as well. Detach the category instead: the row stays
-     active, keeps its other categories, and every order naming the code still
-     resolves it. Only a row that belongs to this category ALONE is a real retire. */
   const confirmRemove = async (i: number, lbl: string) => {
     const row = draft?.[i];
     if (!row) return;
@@ -4248,7 +3747,6 @@ const SpecialsMaintenancePanel = ({
       {list.error ? (
         <div style={{ color: 'var(--hz-c-err)', marginTop: 'var(--space-3)' }}>Failed to load: {String(list.error)}</div>
       ) : !editMode ? (
-        /* VIEW — calm card rows matching the other Maintenance pools. */
         <div style={{ marginTop: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
           {viewRows.map((r, i) => (
             <div
@@ -4281,7 +3779,6 @@ const SpecialsMaintenancePanel = ({
           )}
         </div>
       ) : (
-        /* EDIT — draft rows + follow-up-question editors. Save versions the set. */
         <div style={{ marginTop: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           {(draft ?? []).map((r, i) => (
             <div key={i} style={{ border: '1px solid var(--hz-c-border-strong)', borderRadius: 'var(--radius-lg)', padding: 'var(--space-4)', background: 'var(--hz-c-surface)' }}>
@@ -4360,8 +3857,6 @@ const SpecialsMaintenancePanel = ({
   );
 };
 
-/* Specials history dialog — effective-dated snapshots of the special_addons set,
-   filtered to this category. Mirrors MaintenanceHistoryDialog. */
 const SpecialsHistoryDialog = ({
   activeLabel,
   category,
@@ -4373,7 +3868,6 @@ const SpecialsHistoryDialog = ({
   history: SpecialAddonsHistoryRow[];
   onClose: () => void;
 }) => {
-  // createdBy is a scm.staff uuid — resolve it, never print the id.
   const { actorNameOf } = useStaffLookup();
   return (
   <div className={styles.drawerBackdrop} onClick={onClose}>
@@ -4418,9 +3912,6 @@ const SpecialsHistoryDialog = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Maintenance History dialog — shows config snapshots over time
-   ════════════════════════════════════════════════════════════════════════ */
 
 const MaintenanceHistoryDialog = ({
   activeLabel,
@@ -4433,7 +3924,6 @@ const MaintenanceHistoryDialog = ({
   history: import('../../vendor/scm/lib/mfg-products-queries').MaintenanceHistoryRow[];
   onClose: () => void;
 }) => {
-  // createdBy is a scm.staff uuid — resolve it, never print the id.
   const { actorNameOf } = useStaffLookup();
   return (
   <div className={styles.drawerBackdrop} onClick={onClose}>
@@ -4510,9 +4000,6 @@ const MaintenanceHistoryDialog = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   CSV Export + Import
-   ════════════════════════════════════════════════════════════════════════ */
 
 // PR #104 — Commander 2026-05-26: "fabric_usage_sen / production_time_minutes
 // / fabric_color 全删 不需要这个功能". These manufacturing-specific fields
@@ -4528,11 +4015,8 @@ const MaintenanceHistoryDialog = ({
 // is dropped entirely — it was the zeroing trap on round-trip.
 
 
-/** Normalize a stored seat height to its bare size token so '28"' matches '28'. */
 const normalizeHeight = (h: unknown): string => String(h ?? '').replace('"', '').trim();
 
-/** Fixed leading + trailing columns. The per-size price columns are spliced
- *  in between, derived from the live sofaSizes config at export time. */
 // CSV money columns are written in plain RINGGIT with two decimals (1535.00) —
 // never raw sen (153500 reads like "RM153,500"). The owner's rule of 2026-09-15
 // (every amount reads the way AutoCount prints it) replaces the earlier
@@ -4541,26 +4025,15 @@ const normalizeHeight = (h: unknown): string => String(h ?? '').replace('"', '')
 const priceColForSize = (size: string) => `price_${size}`;
 
 function exportSkusCsv(rows: MfgProductRow[], sofaSizes: string[], tier: SofaPriceTier, category: MfgCategory | 'all'): void {
-  // Columns are TAILORED to the category being exported, so an operator only
-  // sees cells they can actually fill (Wei Siang 2026-06-09):
-  //   • SOFA      → price_tier + one column per sofa size (the per-tier prices)
-  //   • non-SOFA  → base_price + price1 (flat pricing; no sofa size columns)
-  //   • All       → the union of both (mixed-category dump)
   const wantSofa = category === 'all' || category === 'SOFA';
   const wantFlat = category === 'all' || category !== 'SOFA';
   const sizeCols = sofaSizes.map(priceColForSize);
-  // Lean price sheet (Wei Siang 2026-06-15): the match key + the identity
-  // columns the import requires (code/name/category) + size_label for human
-  // readability + the price columns. Descriptive fields (description,
-  // base_model, unit_m3, status, branding) are dropped — a blank/absent cell
-  // never changes them, so a price round-trip doesn't need to carry them.
   const columns = [
     'code', 'name', 'category', 'size_label',
     ...(wantSofa ? ['price_tier', ...sizeCols] : []),
     ...(wantFlat ? ['base_price', 'price1'] : []),
   ];
 
-  // RFC4180: quote if contains comma, quote, or newline.
   const cell = (v: unknown): string => {
     if (v == null) return '';
     const s = guardFormula(String(v));
@@ -4583,9 +4056,6 @@ function exportSkusCsv(rows: MfgProductRow[], sofaSizes: string[], tier: SofaPri
     };
 
     if (r.category === 'SOFA') {
-      // ONE row per sofa for the CURRENTLY SELECTED tier (the P1/P2/P3 toggle) —
-      // matches what the operator filters/edits on screen. Other tiers are left
-      // out of this file and preserved on re-import (backend merges by tier).
       const m = new Map<string, number>();
       for (const e of r.seat_height_prices ?? []) {
         if ((e.tier ?? 'PRICE_2') === tier) m.set(normalizeHeight(e.height), e.priceSen);
@@ -4596,7 +4066,6 @@ function exportSkusCsv(rows: MfgProductRow[], sofaSizes: string[], tier: SofaPri
       }
       emit({ price_tier: tier, ...sizeCells });
     } else {
-      // Bedframe / mattress / accessory / service — flat base + price1.
       emit({
         base_price: priceSheetRinggit(r.base_price_sen),
         price1:     priceSheetRinggit(r.price1_sen),
@@ -4609,9 +4078,6 @@ function exportSkusCsv(rows: MfgProductRow[], sofaSizes: string[], tier: SofaPri
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  // Stamp the active category into the filename (e.g. 2990s-skus-bedframe-…csv)
-  // so a file's contents are obvious — the export only ever holds the rows
-  // currently filtered on screen (Wei Siang 2026-06-09).
   const catTag = category === 'all' ? '' : `${category.toLowerCase()}-`;
   a.download = `2990s-skus-${catTag}${todayMyt()}.csv`;
   a.click();
@@ -4638,7 +4104,6 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
         setBusy(false);
         return;
       }
-      /* The columns as the parser saw them — a row is keyed by header. */
       const headersSeen = Object.keys(parsed[0] ?? {});
 
       const { rows, tierErrors } = buildSkuImportRows(parsed, sofaSizes);
@@ -4663,7 +4128,6 @@ const ImportSkusDialog = ({ sofaSizes, onClose }: { sofaSizes: string[]; onClose
     }
   };
 
-  // Commit the staged rows — the ONLY path that writes to the server.
   const confirmImport = async () => {
     if (!staged) return;
     setBusy(true);

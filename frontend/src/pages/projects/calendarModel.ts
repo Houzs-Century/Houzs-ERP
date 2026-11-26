@@ -18,12 +18,8 @@ export interface CalendarProject {
   end_date: string | null;
   venue: string | null;
   state: string | null;
-  // Section-driven stage (mig 050). Mirrors the list endpoint's
-  // active_section_name + sections_total.
   active_section_name?: string | null;
   sections_total?: number;
-  // Calendar masks the title to the composed default name for solo
-  // event types (backend returns event_type_name on the calendar feed).
   event_type_name?: string | null;
 }
 
@@ -84,7 +80,6 @@ export interface CalendarTask {
   title: string;
   due_date: string;
   status: string;
-  /** Parent project's status — drives the calendar tint. */
   project_status: ProjectStatus | null;
   required_perm: string | null;
   review_status: string | null;
@@ -204,9 +199,6 @@ export function buildProjectsCalendarModel({
   brand: string;
   status: string;
   organizer: string;
-  /** Free-text search — matches venue/organizer/brand/project code/name/event
-   *  type. Empty string = no filter. Defaults to "" so callers pre-dating the
-   *  search box (tests) still pass. */
   q?: string;
   showTasks: boolean;
   expandAll: boolean;
@@ -219,8 +211,6 @@ export function buildProjectsCalendarModel({
     ? allTasks.filter((task) => {
         if (brand && task.brand !== brand) return false;
         if (organizer && (task.organizer || "") !== organizer) return false;
-        // With a search: only render tasks whose parent project passed the
-        // filter — keeps the view consistent (task chips beside their bar).
         if (words.length > 0 && !projectById.has(task.project_id)) return false;
         return !status || projectById.has(task.project_id);
       })

@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// Server-side mfg-SO pricing recompute helper.
-//
-// Loads the product + fabric + maintenance config from Supabase, then defers
-// to the pure `computeMfgLinePrice` function in ../shared. Returns the
-// breakdown + the column values to persist on `mfg_sales_order_items`.
-//
-// Two design choices match the existing route style:
-//   1. The variants column is the source of truth for the line's selections
-//      (fabricCode, divanHeight, legHeight, totalHeight, gap, seatHeight,
-//      specials, sofaLegHeight). Client sends `variants: { ... }` and we
-//      project that into the pure compute input.
-//   2. We accept the maintenance config blob as an injected `MaintenanceConfig`
-//      so the caller can decide which scope (master / customer:<uuid>) won;
-//      route code resolves once per request and threads it through.
-//
-// Drift: caller compares `clientUnitPriceSen` against the returned
-// `unitPriceSen` via `mfgPricingDriftExceeds`. On drift > 0.5% the route
-// returns HTTP 400 with the diff (see CLAUDE.md non-negotiable).
-// ----------------------------------------------------------------------------
 
 import {
   computeMfgLinePrice,
@@ -63,61 +43,33 @@ import { parseDefaultFreeGifts, type DefaultFreeGift, type FreeItemCampaign, par
 
 export type MfgItemVariants = {
   fabricCode?:    string | null;
-  /** fabric_library id (the customer-pickable fabric). Drives the SELLING
-   *  fabric-tier add-on (migration 0124). Distinct from fabricCode (cost). */
   fabricId?:      string | null;
   divanHeight?:   string | null;
   legHeight?:     string | null;
   totalHeight?:   string | null;
-  gap?:           string | null;             // no price contribution
+  gap?:           string | null;
   seatHeight?:    string | null;
-  /** POS sofa vocabulary for the seat size (so-variant-rule: `depth` ≡
-   *  `seatHeight`). The configurator sends `depth`; the Backend editor sends
-   *  `seatHeight`. BOTH must resolve seat-height cost rows (audit 2026-06-11
-   *  C2 — cost previously read only seatHeight, so POS builds always fell to
-   *  the flat base cost). */
   depth?:         string | number | null;
   sofaLegHeight?: string | null;
-  /** Multi-pick specials. HOOKKA-compatible: also accept a single string. */
   specials?:      string[] | string | null;
-  /** Aliases (some POS clients send `special` instead). */
   special?:       string[] | string | null;
-  /** Special Add-ons (migration 0134) — chosen option-group labels per code,
-   *  e.g. { 'Right Drawer': ['10"'] }. Selling extras are summed into the
-   *  per-line pool (buildSpecialsPoolFromAddons); buildVariantSummary renders
-   *  them. Absent on legacy / no-choice lines. */
   specialChoices?: Record<string, string[]> | null;
   /** PWP (换购, migration 0128) — the salesperson toggled "use PWP price" on this
    *  reward line. The route's order-level resolvePwp validates it; only a granted
    *  line actually gets the PWP base. */
   pwp?:           boolean | null;
-  /** Per-line operator remark keyed on the POS product page (spec 2026-06-06).
-   *  Not priced — persisted to mfg_sales_order_items.remark by the route. Since
-   *  2026-06-13 this is the ITEM remark ONLY; it no longer drives custom_specials. */
   remark?:        string | null;
-  /** Special add-on note keyed on the POS product page (Loo 2026-06-13) — the
-   *  free-text label for the declared extra charge. Drives the custom_specials
-   *  composition; never priced (the money rides extraAddonAmountRM). */
   extraAddonNote?: string | null;
-  /** Declared extra charge keyed on the POS product page, WHOLE MYR (spec D1).
-   *  The POS folds it into the line's selling price; the recompute adds the
-   *  same amount to the authoritative figure so the drift gate stays exact.
-   *  Clamped ≥ 0 — this field can never discount. */
   extraAddonAmountRM?: number | null;
 };
 
 export type MfgItemForRecompute = {
   itemCode:       string;
-  itemGroup:      string;          // 'bedframe' | 'sofa' | 'mattress' | 'accessory' | 'others'
+  itemGroup:      string;
   qty:            number;
-  unitPriceSen: number;          // what the client SAID — to be drift-checked
+  unitPriceSen: number;
   variants?:      MfgItemVariants | null;
-  /** The sofa build's compartment codes when `variants.cells` is gone — a
-   *  persisted split module line, whose siblings' item codes still name them
-   *  (tbc-update). An add-on priced by compartment reads them. Absent → the
-   *  codes come from `variants.cells`. */
   buildCompartments?: string[];
-  /** Verified against submitted child SKU lines by validateSofaAccessoryOrder. */
   sofaAccessories?: SofaPricedAccessory[];
 };
 
@@ -125,32 +77,17 @@ export type RecomputedLine = {
   sofaComboMatchedAccessoryIds?: string[];
   sofaComboIds?: string[];
   itemCode:     string;
-  /** Persistable values for mfg_sales_order_items columns. */
   unit_price_sen:       number;
   divan_price_sen:      number;
   leg_price_sen:        number;
-  special_order_sen:    number;     // sum of priced specials
-  /** Persistable as custom_specials jsonb. Mirrors the client breakdown +
-   *  any free-text specials the client wanted to keep verbatim. */
+  special_order_sen:    number;
   custom_specials:      Array<{ description: string; surchargeSen: number }> | null;
-  total_sen:          number;     // qty * unit (minus discount, applied by caller)
+  total_sen:          number;
   breakdown:            MfgPricingBreakdown;
-  /** COST snapshot from `computeMfgLineCost` (Commander 2026-05-28: backend
-   *  `priceSen` tables ARE the cost). `unit_cost_sen` = base + Σ priceSen
-   *  surcharges; `line_cost_sen` = unit_cost_sen × qty. Caller persists these
-   *  onto mfg_sales_order_items.unit_cost_sen / line_cost_sen. Computed
-   *  from the same (product, fabric, config) snapshot so cost stays in
-   *  lockstep with the selling breakdown. NOT drift-checked (cost is a
-   *  server-only snapshot, separate from the selling-total drift validation). */
   unit_cost_sen:        number;
   line_cost_sen:        number;
   costBreakdown:        MfgPricingBreakdown;
-  /** The module costs (sen, by normalized module code) a configurator build's
-   *  cost was summed from; null when it was not (no cells, no module cost rows,
-   *  none costed). The build's split shares its cost by these. */
   sofa_module_costs_sen: Record<string, number> | null;
-  /** Drift signal — true means client's submission diverged > 0.5% from
-   *  server compute. Caller decides HTTP 400 vs warn vs accept. */
   drift:                boolean;
 };
 
@@ -158,46 +95,26 @@ export type FabricRowLite = {
   fabric_code:         string;
   sofa_price_tier:     MfgFabricTier | null;
   bedframe_price_tier: MfgFabricTier | null;
-  /** Legacy fallback (older rows). */
   price_tier:          MfgFabricTier | null;
 };
 
 export type ProductRowLite = {
   code:               string;
-  category:           string;         // 'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE'
+  category:           string;
   base_price_sen:     number | null;
   price1_sen:         number | null;
   cost_price_sen:     number | null;
   seat_height_prices: MfgSeatHeightPrice[] | null;
-  /** Sofa Model grouping — used to scope combos to this Model (Phase 4b), so
-   *  the server matches the SAME combo set the POS did. */
   base_model:         string | null;
-  /** SELLING price — the Master Account store (Phase-1 migration 0109,
-   *  backfilled = base_price_sen). The authoritative customer-facing price the
-   *  D4 drift gate validates a client submission against (non-sofa lines). */
   sell_price_sen:     number | null;
   /** PWP (换购) selling base price (migration 0128). When the order-level PWP
    *  resolution grants this line (passed in as `pwpBaseSen`), its selling base
    *  is this instead of sell_price_sen — fabric Δ still stacks on top. Optional:
    *  the loader always selects it; legacy/test snapshots may omit it. */
   pwp_price_sen?:     number | null;
-  /** product_models.id — the route's resolvePwp matches this against a rule's
-   *  eligible model lists. Optional for the same reason as pwp_price_sen. */
   model_id?:          string | null;
-  /** mfg_products.size_code — POPULATED for mattress/bedframe, NULL for sofa
-   *  modules. The special-delivery-fee `variant` scope (migration 0024) matches
-   *  on it. Optional: legacy/test snapshots may omit it. */
   size_code?:         string | null;
-  /** SO-SKU spec P5 — free-text brand label (mainly MATTRESS SKUs). Snapshotted
-   *  onto each SO line at create so the Detail Listing's Branding column lights
-   *  per line. Optional: legacy/test snapshots may omit it. */
   branding?:          string | null;
-  /** Default Free Gift (migration 0170) — jsonb [{giftProductId, qty,
-   *  campaignName?}]. The SO-create handler reads this to build the free-gift
-   *  trigger map: a non-sofa product whose default_free_gifts is non-empty is a
-   *  trigger for an accessory gift line. SELECTING-only here (the recompute math
-   *  never reads it); parsed via parseDefaultFreeGifts. Optional: legacy/test
-   *  snapshots may omit it. */
   default_free_gifts?: unknown;
 };
 
@@ -214,15 +131,13 @@ export type SofaModuleCostRowLite = {
 };
 
 const toMfgCategory = (group: string, productCategory: string): MfgPricingProduct['category'] => {
-  // Prefer the canonical product category from mfg_products. Fall back to
-  // the item_group string when the product isn't found.
   const c = (productCategory || group || '').toUpperCase();
   if (c.includes('BEDFRAME')) return 'BEDFRAME';
   if (c.includes('SOFA'))     return 'SOFA';
   if (c.includes('MATTRESS')) return 'MATTRESS';
   if (c.includes('ACCESSOR')) return 'ACCESSORY';
   if (c.includes('SERVICE'))  return 'SERVICE';
-  return 'ACCESSORY';  // safest fallback: single-price, no variants.
+  return 'ACCESSORY';
 };
 
 const normalizeSpecials = (s: string[] | string | null | undefined): string[] => {
@@ -232,11 +147,6 @@ const normalizeSpecials = (s: string[] | string | null | undefined): string[] =>
 };
 
 const driftThresholdExceeded = (clientSen: number, serverSen: number): boolean => {
-  // Both columns are sen-equivalent integers (centi == sen × 1 in 2990s).
-  // Commander 2026-05-29 — a client unitPriceSen of 0 means "not provided"
-  // (e.g. the backend SO line editor couldn't resolve the price client-side).
-  // Trust the server's own recompute instead of rejecting the whole SO. The
-  // anti-tamper guard still catches a NON-zero client price below the server's.
   if (clientSen === 0 && serverSen > 0) return false;
   if (serverSen <= 0) return clientSen !== 0;
   const drift = Math.abs(clientSen - serverSen) / serverSen;
@@ -317,9 +227,6 @@ export const erpLineTrust = (
   soIsMigrated: boolean,
 ): TrustSelling => {
   if (posTablet) return false;
-  /* A migrated line's stored price stands, ZERO INCLUDED — that is the whole
-     difference between this mode and a bare `true`, and it also switches off the
-     chargeable-surcharge arm (see isMigratedTrust). */
   if (soIsMigrated) return 'including-zero';
   return unitPriceSen === 0 && zeroPriceIntended === true ? 'operator-zero' : true;
 };
@@ -356,31 +263,9 @@ export function recomputeFromSnapshot(
    *  branch then charges ONLY those combos' pwp_prices_by_height (others stay at
    *  the normal selling price). null/[] → no change. SOFA only. */
   pwpSofaComboIds: string[] | null = null,
-  /** Special Add-ons (migration 0134) defs (active rows, all categories — the
-   *  builder only matches the line's picked codes). When provided, this line's
-   *  specials pool is built from these (base + chosen-choice extras) and
-   *  REPLACES config.specials/.sofaSpecials — so POS add-ons price from the
-   *  special_addons table, not the legacy maintenance pool. null → legacy. */
   specialAddons: SpecialAddonDef[] | null = null,
-  /** COST fix (audit 2026-06-11 C2) — the Model's sofa module SKU rows (cost
-   *  columns + seat_height_prices), loaded by base_model. When present and the
-   *  line is a configurator BUILD (variants.cells), the line's COST is
-   *  recomputed as Σ per-module costs at the build's seat size + fabric tier,
-   *  instead of the first module SKU's flat cost. null / unresolvable → keep
-   *  the legacy single-SKU cost (never a regression). Selling path untouched. */
   sofaModuleCostRows: SofaModuleCostRowLite[] | null = null,
-  /** Per-Model fabric-tier Δ overrides (migration 0172), keyed by model_id.
-   *  When the line's product.model_id has an entry, its non-null tier value
-   *  REPLACES the global Δ for that tier (null = inherit). null map / no entry
-   *  → global (back-compatible). Resolved here so every caller only passes the
-   *  map (loaded once). Selling-only; POS resolves the same map by model_id. */
   modelFabricOverrides: Map<string, FabricTierModelOverride> | null = null,
-  /** Per-compartment fabric-tier Δ overrides (migration 0025), keyed by
-   *  compartment_id. For a SOFA custom build, the effective Δ per tier is the
-   *  MAX over the SET special values (the Model override + every override whose
-   *  compartment code is in the build's cells); resolved via the shared
-   *  resolveFabricTierOverride so POS and server agree. null map → model-only
-   *  path (back-compatible). Quick-Pick bundles + non-sofa lines: model only. */
   compartmentFabricOverrides: Map<string, FabricTierModelOverride> | null = null,
   /** Owner ruling 2026-05-31 (extended): a TRUSTED non-POS author (web/mobile
    *  office or sales staff) prices freely, so a hand-entered selling price is
@@ -397,12 +282,6 @@ export function recomputeFromSnapshot(
   const variants = item.variants ?? {};
   const specials = normalizeSpecials(variants.specials ?? variants.special);
 
-  /* A configurator sofa arrives as ONE line carrying variants.cells. Its
-     compartment codes price an add-on set "by compartment" here and, below,
-     fold the per-compartment fabric Δ (migration 0025). A persisted split
-     module line has lost its cells, so its caller passes the codes
-     (item.buildCompartments). Quick-Pick bundles and non-sofa lines have
-     neither → [] → the add-on's base and the Model-only fabric override. */
   const sofaCells = category === 'SOFA'
     ? (item.variants as { cells?: unknown } | null | undefined)?.cells
     : null;
@@ -412,12 +291,6 @@ export function recomputeFromSnapshot(
     .map((code) => normalizeCompartmentCode(code))
     .filter(Boolean);
 
-  // Special Add-ons (migration 0134): build THIS line's specials pool from the
-  // special_addons defs (base sellingPriceSen — or the build's compartment price
-  // — + Σ chosen-choice extraSen) and use a config whose .specials/.sofaSpecials
-  // IS that pool — the pure engine then prices it unchanged. Falls back to the
-  // legacy maintenance config when no defs are passed (backward-compatible).
-  // cost path reads the pool's priceSen too.
   const specialChoices =
     variants.specialChoices && typeof variants.specialChoices === 'object'
       ? (variants.specialChoices as Record<string, string[]>)
@@ -430,7 +303,6 @@ export function recomputeFromSnapshot(
       ? { ...config, specials: specialsAddonPool, sofaSpecials: specialsAddonPool }
       : config;
 
-  // Resolve fabric tier per-context (sofa_price_tier vs bedframe_price_tier).
   let fabricTier: MfgFabricTier | null = null;
   if (fabric) {
     if (category === 'SOFA') {
@@ -440,7 +312,7 @@ export function recomputeFromSnapshot(
     }
   }
   const fabricInput: MfgPricingFabric | null = fabric
-    ? { tier: fabricTier, surchargeSen: 0 } // optional Fabric pool surcharge — wire when commander's Fabric pool ships.
+    ? { tier: fabricTier, surchargeSen: 0 }
     : null;
 
   const pricingProduct: MfgPricingProduct = {
@@ -451,11 +323,6 @@ export function recomputeFromSnapshot(
     costPriceSen:     product?.cost_price_sen ?? null,
   };
 
-  /* Audit 2026-06-11 C2 — honour the POS `depth` vocabulary as the seat-size
-     source (so-variant-rule: depth ≡ seatHeight; sofaHeightKey reads
-     depth ?? seatHeight). POS configurator lines carry only `depth`, so
-     keying the cost on seatHeight alone always missed the seat-height cost
-     rows and fell to the flat base cost. */
   const depthRaw = variants.depth;
   const depthStr = depthRaw != null && String(depthRaw).trim() !== '' ? String(depthRaw).trim() : null;
   const seatSizeKey = depthStr ?? variants.seatHeight ?? null;
@@ -472,35 +339,12 @@ export function recomputeFromSnapshot(
     sofaLegHeight: variants.sofaLegHeight ?? null,
   };
 
-  /* Commander 2026-05-29 (system-wide) — the SELLING unit price is
-     operator-authored, NOT computed. The product price tables are COST, so
-     `computeMfgLinePrice` now returns a 0 selling base (surcharges only, 0
-     today). We therefore PERSIST the client's manual selling price unchanged
-     and DO NOT drift-check it (there is no computed selling figure to compare
-     against — clobbering the manual price with the computed 0 would be wrong).
-     `breakdown` is still computed so the surcharge component columns
-     (divan/leg/special) reflect any director-set SELLING surcharges. */
   const breakdown = computeMfgLinePrice(pricingInput, effectiveConfig);
   const manualUnitSelling = Math.max(0, Math.round(Number(item.unitPriceSen ?? 0)));
   const safeQty = Math.max(0, Math.floor(item.qty || 0));
 
-  /* Commander 2026-05-28 — COST snapshot. Same (product, fabric, variants,
-     config) snapshot, but `computeMfgLineCost` reads the backend maintenance
-     `priceSen` tables as the cost (base + Σ priceSen surcharges). This is the
-     SEPARATE cost path — UNCHANGED — and is what drives unit_cost_sen /
-     line_cost_sen / line_margin_sen. Never drift-checked (cost is a
-     server-only snapshot). Margin = manual selling − computed cost. */
   const costBreakdown = computeMfgLineCost(pricingInput, effectiveConfig);
 
-  // Project specials → custom_specials column. Each pick keeps its label
-  // for the SO print; surchargeSen comes from the maintenance config.
-  // Commander 2026-05-28: this is the SELLING breakdown persisted on the SO,
-  // so it MUST read `sellingPriceSen` (the Sales-Director-authored selling
-  // surcharge) — NOT `priceSen` (the cost benchmark). This keeps each pick's
-  // persisted surchargeSen consistent with breakdown.specialsSurchargeSen /
-  // special_order_sen (both computed from sellingPriceSen via the shared
-  // computeMfgLinePrice). Unknown / unset picks ride along at 0, preserving
-  // HOOKKA's tolerant behaviour.
   const specialsPool =
     category === 'SOFA'
       ? effectiveConfig?.sofaSpecials ?? []
@@ -523,45 +367,15 @@ export function recomputeFromSnapshot(
      extra add-on note is appended AFTER this sort below, so it trails the picks. */
   pickedSpecials.sort((a, b) => compareSpecialLabels(a.description, b.description));
 
-  /* Declared extra charge (spec 2026-06-06 D1) — whole MYR → sen, clamped ≥ 0.
-     Added to BOTH authoritative branches below, symmetric with the POS folding
-     the same amount into its submitted total. Never applied to the PWP base
-     (it stacks AFTER pwp/combo/fabric folds) and never to the cost path.
-     NaN-safe: a non-numeric variants value (Number('abc') = NaN) collapses to
-     0 instead of poisoning the authoritative figure → no false reject. */
   const rawExtra = Number(variants.extraAddonAmountRM ?? 0);
   const extraSen = (Number.isFinite(rawExtra) ? Math.max(0, Math.round(rawExtra)) : 0) * 100;
 
-  /* Loo 2026-06-13 — the POS product-page "special add-on" (note + extra charge)
-     is a free-text Special Add-on. Append its NOTE to the custom_specials
-     composition so every specials surface (backend SO editor's Special Orders
-     accordion, Detail Listing "Specials" column, the DO/SI copies) lists it next
-     to the picked add-ons. Composition display ONLY — the money rides the
-     authoritative figure via the extraSen fold below; this entry re-prices
-     nothing. The item remark (variants.remark) is SEPARATE: it lands on
-     mfg_sales_order_items.remark via the route and never enters custom_specials. */
   const noteText = typeof variants.extraAddonNote === 'string' ? variants.extraAddonNote.trim() : '';
   if (noteText || extraSen > 0) {
     pickedSpecials.push({ description: noteText || 'Extra add-on', surchargeSen: extraSen });
   }
   const customSpecials = pickedSpecials.length ? pickedSpecials : null;
 
-  /* D4 (Chairman 2026-05-30, Q1) — AUTHORITATIVE selling recompute + drift
-     reject. The Master Account store (mfg_products.sell_price_sen, Phase-1
-     migration 0109) is the customer-facing selling base; add any director-set
-     selling surcharges (`sellingSurchargesSen` below). On a catalog line we
-     charge that authoritative price and flag drift > 0.5% so the route returns
-     HTTP 400 (CLAUDE.md non-negotiable).
-
-       • SOFA is EXCLUDED from this sell_price_sen catalog path — its selling is
-         recomputed from per-Model module-SKU prices just below (SOFA-SELLING-
-         PLAN), which since 2026-08-11 carries the SAME surcharges. A sofa we
-         can't price there keeps the operator's manual price.
-       • A line with neither sell_price_sen NOR a priced surcharge (custom /
-         special order) has no authoritative figure → trust the operator.
-       • A client price of 0 means "not provided" (e.g. the backend SO editor
-         couldn't resolve it client-side) → fill the authoritative price, no
-         drift (driftThresholdExceeded returns false for client 0 vs server>0). */
   const sellBaseSen = Math.max(0, Math.round(Number(product?.sell_price_sen ?? 0)));
   /* PWP (换购, migration 0128) — when the route's order-level voucher claim
      granted this line, charge the granted base instead of sell_price_sen. The
@@ -600,34 +414,11 @@ export function recomputeFromSnapshot(
   const chargeableSurchargesSen = isMigratedTrust ? 0 : sellingSurchargesSen;
 
   const authoritativeSellingSen = effectiveBaseSen + chargeableSurchargesSen;
-  /* A line whose product carries sell_price_sen = 0 used to be exempt from the
-     whole authoritative path, so a priced add-on on it was costed and never
-     charged. A priced surcharge is itself an authoritative figure. */
   const hasAuthoritativeSelling =
     category !== 'SOFA' && (effectiveBaseSen > 0 || chargeableSurchargesSen > 0);
 
-  /* SOFA-SELLING-PLAN (Chairman 2026-05-31) — a configurator sofa arrives as
-     ONE line carrying variants.cells + variants.depth. Recompute its
-     authoritative SELLING total from the SAME per-Model module→price map the
-     POS used (each module = that Model's SKU `sell_price_sen`, passed in as
-     `sofaModulePrices` and loaded by base_model in the route) + combos, via the
-     shared computeSofaSellingSen → computeSofaPrice, so the drift gate can't
-     diverge from the POS submission. Sofa lines WITHOUT cells (a backend manual
-     module row) or with no loaded module prices keep the operator's price — no
-     false reject. (`sofaCells` is read at the top, with the add-ons.) */
   const canPriceSofa = Array.isArray(sofaCells) && sofaCells.length > 0 && sofaModulePrices != null;
 
-  /* ── BUILD COST = Σ module costs (audit 2026-06-11 C2) ─────────────────────
-     A multi-module configurator build arrives as ONE line whose itemCode is
-     the FIRST module's SKU, so `computeMfgLineCost` above priced the whole
-     build at one module's cost — margin overstated by ~(N−1)/N. When the
-     caller supplies the Model's module SKU cost rows, recompute the build's
-     base cost as Σ per-module costs at the build's seat size (depth, like the
-     selling side) + the line's fabric tier (P2 default / P1 — same resolver
-     chain as computeMfgLineCost via sofaModuleCostPricesFromSkus). Line-level
-     cost surcharges (sofa leg / specials) stay on top, counted ONCE per build.
-     Falls back to the legacy single-SKU cost when module costs are
-     unavailable or none of the build's modules is costed. */
   let unitCostSen = costBreakdown.unitPriceSen;
   let effectiveCostBreakdown = costBreakdown;
   let sofaModuleCostsSen: Record<string, number> | null = null;
@@ -636,7 +427,7 @@ export function recomputeFromSnapshot(
     Array.isArray(sofaCells) && sofaCells.length > 0 &&
     sofaModuleCostRows && sofaModuleCostRows.length > 0
   ) {
-    const buildSeatSize = seatSizeKey ?? '24'; // selling side defaults depth '24'
+    const buildSeatSize = seatSizeKey ?? '24';
     const costMap = sofaModuleCostPricesFromSkus(
       sofaModuleCostRows.map((r) => ({
         code:             r.code,
@@ -668,11 +459,6 @@ export function recomputeFromSnapshot(
     }
   }
 
-  // SELLING fabric-tier add-on (migration 0124). Per-item flat Δ (whole MYR →
-  // ×100 centi) from the chosen fabric's per-context selling tier. Folded into
-  // the AUTHORITATIVE sofa price below so the drift gate stays consistent with
-  // the POS (which adds the same Δ via the shared fabricTierAddon). 0 when no
-  // config / tier → default data = no price change. COST path untouched.
   const sellingTier = category === 'SOFA'
     ? (sellingFabricTiers?.sofaTier ?? null)
     : category === 'BEDFRAME'
@@ -681,10 +467,6 @@ export function recomputeFromSnapshot(
   const baseModelOverride = (modelFabricOverrides && product?.model_id)
     ? (modelFabricOverrides.get(product.model_id) ?? null)
     : null;
-  // migration 0025 — fold the Model override with any matching per-compartment
-  // Δ (MAX per tier) over the custom build's cells (`buildCompartments`, read at
-  // the top). Quick-Pick / non-sofa lines have no cells → empty list → resolve
-  // returns the Model override unchanged.
   const modelOverride = resolveFabricTierOverride(
     buildCompartments,
     baseModelOverride,
@@ -694,22 +476,13 @@ export function recomputeFromSnapshot(
     ? fabricTierAddon(category, sellingTier, fabricAddonConfig, modelOverride) * 100
     : 0;
 
-  /* `extraSen` (declared extra charge, spec D1) is parsed above with the
-     custom_specials composition — it feeds BOTH authoritative branches below. */
 
   let sofaComboMatchedAccessoryIds: string[] = [];
   let sofaComboIds: string[] = [];
   let drift: boolean;
   let unitToPersistSen: number;
   if (canPriceSofa) {
-    /* Variants-vocabulary unification (port of 2990 73aeeb1e) — dual-read so a
-       canonical persisted sofa line (seatHeight, no depth) keys its build
-       geometry the same as a raw POS line (depth). Mirrors seatSizeKey above. */
     const sofaDepth = String((item.variants as { depth?: unknown; seatHeight?: unknown } | null | undefined)?.depth ?? (item.variants as { seatHeight?: unknown } | null | undefined)?.seatHeight ?? '24');
-    // Scope combos to this Model's base_model — the POS pre-filters the same
-    // way (useSofaCombos(base_model)); without it the server could match a
-    // same-shape combo from another Model and false-reject. No base_model
-    // (orphan) → consider all, mirroring the POS's null-filter fallback.
     const lineCombos = (sofaCombos ?? []).filter(
       (c) => !product?.base_model || c.baseModel === product.base_model,
     );
@@ -745,17 +518,10 @@ export function recomputeFromSnapshot(
       drift = driftThresholdExceeded(manualUnitSelling, authoritativeSofaSen);
       unitToPersistSen = authoritativeSofaSen;
     } else {
-      // The Model's priced modules don't cover this build (e.g. not yet priced
-      // in Master Admin) → computeSofaSellingSen = 0. NEVER reject a sofa we
-      // can't independently price — trust the operator/client price. The gate
-      // stays inert per-Model until that Model's module SKUs get sell prices.
       drift = false;
       unitToPersistSen = manualUnitSelling;
     }
   } else if (hasAuthoritativeSelling) {
-    // + SELLING fabric-tier Δ (migration 0124). Non-zero only for BEDFRAME (the
-    // shared fabricTierAddon returns 0 for mattress/accessory/service). POS adds
-    // the same Δ so the gate matches; 0 with default data (no tier / no config).
     const authoritativeWithFabric = authoritativeSellingSen + fabricAddonSen + extraSen;
     drift = driftThresholdExceeded(manualUnitSelling, authoritativeWithFabric);
     unitToPersistSen = authoritativeWithFabric;
@@ -764,23 +530,6 @@ export function recomputeFromSnapshot(
     unitToPersistSen = manualUnitSelling;
   }
 
-  /* Owner ruling — a TRUSTED non-POS author prices freely: when a price was
-     actually entered, persist THAT over the authoritative catalog figure.
-     manualUnitSelling === 0 means "not provided" (client couldn't resolve it) ->
-     keep the authoritative fill. `drift` above is unchanged (only a POS caller is
-     rejected on it; a trusted caller's drift is ignored by the route).
-
-     'including-zero' additionally treats a stored 0 as a REAL price rather than
-     "not provided". That distinction only makes sense for a MIGRATED document,
-     and there it is load-bearing: an AutoCount sofa is frequently carried as the
-     whole set price on ONE lead module line with 0 on its siblings, so under
-     plain `true` every sibling would still be handed a catalogue price and the
-     set would be billed several times over. Never use it for a line the operator
-     is authoring now — there a 0 really does mean "not provided".
-
-     'operator-zero' is the one sanctioned way for an authored 0 to survive: the
-     ERP line editor stated that the operator typed it (see TrustSelling). Same
-     effect HERE, deliberately different mode — it must not read as migrated. */
   if (trustOperatorSelling
       && (manualUnitSelling > 0
           || trustOperatorSelling === 'including-zero'
@@ -792,9 +541,6 @@ export function recomputeFromSnapshot(
     itemCode:          item.itemCode,
     sofaComboMatchedAccessoryIds,
     sofaComboIds,
-    // Persist the AUTHORITATIVE selling price on a catalog line (D4) — UNLESS a
-    // trusted non-POS author entered their own price (owner ruling); the
-    // operator's manual price on a sofa / custom / not-found line.
     unit_price_sen:    unitToPersistSen,
     divan_price_sen:   breakdown.divanSurchargeSen,
     leg_price_sen:     breakdown.legSurchargeSen,
@@ -810,34 +556,6 @@ export function recomputeFromSnapshot(
   };
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   PRODUCT LOOKUP BY CODE — `code` IS NOT UNIQUE. PASS THE COMPANY.
-   ═══════════════════════════════════════════════════════════════════════════
-
-   `idx_mfg_products_code` is a plain btree, and both companies keep their own
-   SKU master, so a code can name two different products. On production
-   2026-08-01 SEVENTEEN codes did — CODY / FENRIR / JAGER × (K)(Q)(S)(SK)(SS)
-   plus two mattress codes — HOUZS's manufacturing row and 2990's selling row,
-   and TWELVE of them disagreed on `pwp_price_sen`. Both are legitimate rows;
-   neither can be renamed.
-
-   Unscoped, these two loaders picked between them at the database's whim:
-   `.in()` has no ORDER BY and the Map keeps whichever came back last, and
-   `.eq().maybeSingle()` errors outright on two rows (PGRST116) with the error
-   discarded into `data = null`. That is how a POS order died on
-   `pwp_code_rejected — CODY-(SS): this SKU has no PWP price set (SKU Master)`
-   while the SKU Master, which IS company-scoped, showed RM 490 the whole time.
-   The same wrong row also carries a NULL `sell_price_sen`, so the plain
-   (voucher-free) order fails too — `driftThresholdExceeded` rejects a non-zero
-   client price against a server 0.
-
-   `companyId` follows the house pattern for a read helper that cannot take a
-   Hono Context (validateSoDropdownFields, loadFabricTierAddonConfig): callers
-   pass `activeCompanyId(c)` — or, in createSalesOrderCore, its local
-   `companyId` — and null/undefined DEGRADES to no predicate so a
-   single-company install, a headless job and the tests read exactly as before.
-   Migration 0233 adds UNIQUE (company_id, code), which makes the scoped
-   `.maybeSingle()` below single by construction rather than by luck. */
 
 /** Load a single product row from mfg_products by code, within one company. */
 export async function loadProductByCode(sb: any, code: string, companyId: number | null | undefined): Promise<ProductRowLite | null> {
@@ -848,10 +566,6 @@ export async function loadProductByCode(sb: any, code: string, companyId: number
     .eq('code', code);
   if (companyId != null) q = q.eq('company_id', companyId);
   const { data, error } = await q.maybeSingle();
-  /* Never silent again. Unscoped (or pre-0189) this is where a duplicated code
-     turns into "unknown item code" / a 0 price with nothing in the log to say
-     why — the one symptom that cost a day. Still returns null: callers already
-     handle a miss, and throwing here would fail an order on a diagnostic. */
   if (error) console.error(`[mfg-pricing] loadProductByCode('${code}', company=${companyId ?? 'unscoped'}) failed:`, error.message ?? error);
   if (!data) return null;
   return data as ProductRowLite;
@@ -880,15 +594,10 @@ export async function loadProductsByCodes(sb: any, codes: Array<string | null | 
     : q.in('code', uniq);
   if (companyId != null) q = q.eq('company_id', companyId);
   const { data, error } = await q;
-  /* A read that failed is not "no products": say so rather than pricing/gating
-     on a silent empty (the swallowed error was why 0780 stayed invisible). */
   if (error) {
     console.error(`[mfg-pricing] loadProductsByCodes read failed (company=${companyId ?? 'unscoped'}):`, (error as { message?: unknown }).message ?? error);
   }
   const rows = ((data as ProductRowLite[]) ?? []);
-  /* More rows than codes means a code still resolves to two products in this
-     scope — the Map below would silently keep one. Say so; the pricing that
-     follows is a coin toss until it is fixed. */
   if (rows.length > uniq.length) {
     const dupes = [...new Set(rows.map((r) => r.code).filter((c, i, a) => a.indexOf(c) !== i))];
     console.error(`[mfg-pricing] duplicate mfg_products codes in company=${companyId ?? 'unscoped'}: ${dupes.join(', ')} — pricing picks one arbitrarily`);
@@ -941,12 +650,6 @@ export function compartmentPricesFromRow(raw: unknown): SpecialAddonCompartmentP
  *  reject). Built via the shared `sofaModuleSellingPricesFromSkus` at the SAME
  *  (depth, P1) the POS Configurator uses, so the server map is byte-for-byte
  *  what the POS builds and the drift gate can't diverge. */
-/*  `base_model` is no more unique than `code` — it is a plain text grouping on
- *  the same per-company table, so an unscoped read merges BOTH companies' sofa
- *  SKUs into one module→price map. That is worse than the by-code bug: the map
- *  is keyed by module suffix, so the other company's module silently REPLACES
- *  this one's, and the drift gate then compares the POS's (company-scoped) map
- *  against a mixed one. Same `companyId` contract as loadProductByCode. */
 export async function loadModelSofaModulePrices(
   sb: any,
   baseModel: string | null | undefined,
@@ -998,7 +701,7 @@ export async function loadModelSofaModuleCosts(
   return sofaModulePricesFromSkus(
     (data as Array<{ code: string; base_price_sen: number | null }>).map((r) => ({
       code: r.code,
-      sellPriceSen: r.base_price_sen,   // reuse the SELLING builder; field carries COST here
+      sellPriceSen: r.base_price_sen,
     })),
     baseModel,
   );
@@ -1030,10 +733,6 @@ export async function loadModelSofaModuleCostRows(
 /** Load a single fabric tracking row by code (tier-resolution data only). */
 export async function loadFabricByCode(sb: any, code: string | null | undefined): Promise<FabricRowLite | null> {
   if (!code) return null;
-  // Audit (ported from 2990 20190257) — fabric_code carries only a NON-unique
-  // index, so a duplicate would make .maybeSingle() error → null → the fabric
-  // tier surcharge silently drops in the (non-negotiable) server-side recompute.
-  // Resolve deterministically like the batched twin loadFabricsByCodes instead.
   const { data } = await sb
     .from('fabric_trackings')
     .select('fabric_code, sofa_price_tier, bedframe_price_tier, price_tier')
@@ -1107,10 +806,6 @@ export async function loadFabricSellingTiersByIds(
 ): Promise<Map<string, { sofaTier: FabricTier | null; bedframeTier: FabricTier | null }>> {
   const uniq = Array.from(new Set(ids.map((i) => (i ?? '').trim()).filter(Boolean)));
   if (uniq.length === 0) return new Map();
-  /* chunkIn — sales-analysis hands this the distinct fabricId of every SO line
-     in its window (uuids), while its two sibling reads there were already
-     chunked and this one was not. Keyed by id, so merging batches is a no-op on
-     the result. */
   const { data } = await chunkIn<{ id: string; sofa_tier?: string | null; bedframe_tier?: string | null }>(
     uniq,
     (batch, from, to) => sb
@@ -1131,8 +826,6 @@ export async function loadFabricSellingTiersByIds(
 
 /** Load the singleton fabric-tier add-on Δ config (whole MYR). Missing → all 0. */
 export async function loadFabricTierAddonConfig(sb: any, companyId: number | null | undefined): Promise<FabricTierAddonConfig> {
-  // Key by company_id (each company has one row; 2990's is id=100001, not 1).
-  // When companyId is unresolved (single-company fallback) read the sole row.
   let q = sb
     .from('fabric_tier_addon_config')
     .select('sofa_tier2_delta, sofa_tier3_delta, bedframe_tier2_delta, bedframe_tier3_delta');
@@ -1173,8 +866,6 @@ export async function loadCompartmentFabricTierOverrides(
   const { data, error } = await sb
     .from('compartment_fabric_tier_overrides')
     .select('compartment_id, tier2_delta, tier3_delta');
-  // Intentional model-only fallback on error (table may not exist pre-0025) —
-  // we DON'T throw, but a real misconfiguration must not be silent.
   if (error) console.error('loadCompartmentFabricTierOverrides failed (falling back to model-only delta):', error.message ?? error);
   const rows = (data as Array<{ compartment_id: string; tier2_delta: number | null; tier3_delta: number | null }>) ?? [];
   return new Map(rows.map((r) => [r.compartment_id, { tier2Delta: r.tier2_delta, tier3Delta: r.tier3_delta }]));
@@ -1244,11 +935,6 @@ export async function loadPwpRules(sb: any): Promise<PwpRule[]> {
 export async function recomputeOneLine(
   sb: any,
   item: MfgItemForRecompute,
-  /* Key required, value still nullable — TypeScript forbids a required
-     parameter after an optional one, and `companyId` below is the one that must
-     not be omissible. Passing `null`/`undefined` here keeps the old behaviour
-     (load the config on demand); what is no longer possible is dropping BOTH
-     and silently re-pricing against every company's catalogue. */
   cachedConfig: MaintenanceConfig | null | undefined,
   companyId: number | null | undefined,
   opts?: { trustOperatorSelling?: TrustSelling; asOf?: string | null },
@@ -1262,11 +948,6 @@ export async function recomputeOneLine(
     loadModelFabricTierOverrides(sb),
     loadCompartmentFabricTierOverrides(sb),
   ]);
-  // Stage 3c (flag-gated): when auto-derive is ON and a derived-cost history row
-  // applies for this order's date, override the product COST so the SO/budget
-  // cost reflects the order's date and historical figures don't move. Flag OFF,
-  // no asOf, or no history row -> the flat product cost, byte-identical to
-  // before. A history-read blip degrades to the flat cost (logged), never blocks.
   let product = productLoaded;
   if (productLoaded && companyId != null && opts?.asOf) {
     try {
@@ -1290,9 +971,6 @@ export async function recomputeOneLine(
         loadModelSofaModulePrices(
           sb,
           product.base_model,
-          /* Variants-vocabulary unification (port of 2990 73aeeb1e) — dual-read
-             depth ?? seatHeight so a canonical persisted sofa line loads the
-             same module-price grid as a raw POS line. */
           String((item.variants as { depth?: unknown; seatHeight?: unknown } | null | undefined)?.depth ?? (item.variants as { seatHeight?: unknown } | null | undefined)?.seatHeight ?? '24'),
           companyId,
         ),

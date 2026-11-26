@@ -56,9 +56,6 @@
 import { poAwaitingSupplier } from '../shared/so-po-date-rule';
 import { chunkIn } from './paginate-all';
 
-/** PostgREST `.in()` caps out on URL length. An SO's line count is small (the
- *  widest live order is a handful of rows), but chunk anyway so a pathological
- *  order can't blow the query string. Mirrors so-converted-po.ts. */
 const IN_CHUNK = 200;
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -125,11 +122,11 @@ async function soHasPoInStatus(
       .from('mfg_sales_order_items')
       .select('id')
       .eq('doc_no', docNo);
-    if (lineErr) return true; // fail closed
+    if (lineErr) return true;
     const itemIds = ((lineRows ?? []) as Array<{ id: string | null }>)
       .map((r) => r.id)
       .filter((id): id is string => Boolean(id));
-    if (itemIds.length === 0) return false; // no lines → nothing can be bought
+    if (itemIds.length === 0) return false;
 
     const poIds = new Set<string>();
     for (const part of chunk(itemIds, IN_CHUNK)) {
@@ -138,30 +135,26 @@ async function soHasPoInStatus(
         .select('purchase_order_id')
         .in('so_item_id', part)
         .not('purchase_order_id', 'is', null);
-      if (error) return true; // fail closed
+      if (error) return true;
       for (const r of (data ?? []) as Array<{ purchase_order_id: string | null }>) {
         if (r.purchase_order_id) poIds.add(r.purchase_order_id);
       }
     }
     if (poIds.size === 0) return false;
 
-    /* Status filtered app-side (not `.neq('status','CANCELLED')`) for the same
-       reason so-converted-po.ts does it: a schema without the column would make
-       a server-side predicate silently widen the set, and here that would mean
-       a cancelled PO keeping an SO locked forever. */
     for (const part of chunk([...poIds], IN_CHUNK)) {
       const { data, error } = await sb
         .from('purchase_orders')
         .select('id, status')
         .in('id', part);
-      if (error) return true; // fail closed
+      if (error) return true;
       for (const p of (data ?? []) as Array<{ status: string | null }>) {
         if (counts(p.status ?? '')) return true;
       }
     }
     return false;
   } catch {
-    return true; // fail closed
+    return true;
   }
 }
 
@@ -191,10 +184,6 @@ export async function soPoLockedMany(
   if (docs.length === 0) return locked;
 
   try {
-    /* chunkIn, not a 200-doc loop: 200 orders x their lines passes PostgREST's
-       1,000-row page, and the rows past it were dropped without an error, so an
-       order with a live PO showed as unlocked on the board. chunkIn sizes each
-       batch by URL bytes and pages every batch. */
     const lines = await chunkIn<{ id: string | null; doc_no: string | null }>(docs, (part, from, to) =>
       sb.from('mfg_sales_order_items').select('id, doc_no').in('doc_no', part).order('id').range(from, to));
     if (lines.error || lines.truncated) return locked;

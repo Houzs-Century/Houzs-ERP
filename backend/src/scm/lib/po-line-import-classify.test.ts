@@ -66,7 +66,7 @@ describe('classifyPoLineImport — one row, one verdict', () => {
   test('an untouched export row is unchanged, whatever format the date came back in', () => {
     const p = only([
       row(2, L1, 'PO-000100', { deliveryDate: '01/09/2026', description2: ' col:PC-151-03 ', remarks: '' }),
-      row(3, L2, 'PO-000100', { deliveryDate: 46266 }), // Excel serial for 2026-09-01
+      row(3, L2, 'PO-000100', { deliveryDate: 46266 }),
     ]);
     expect(p.rows.map((r) => r.status)).toEqual(['unchanged', 'unchanged']);
     expect(p.lineChanges).toEqual([]);

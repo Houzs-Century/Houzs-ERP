@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// BankLineTabs — a month's bank lines in the redesign's six tabs (the owner's
-// Claude Design, batch 3): To match · To choose · No entry found ‖ Not on the
-// bank yet ‖ Matched · Set aside. The rows that choose are the file screen's
-// own (OpenLine, DoneLine), so one movement has one set of buttons wherever it
-// is looked at. What sorts a line into a tab is what the matcher already
-// decided; nothing here posts or links unless its own button is pressed.
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { AlertTriangle, Landmark, Link2 } from 'lucide-react';
@@ -55,7 +47,6 @@ const HINT: Record<LineTab, string> = {
   matched: 'Lines you match here can be undone until the month is locked.',
   'set-aside': 'Kept on the statement with a note. Nothing posted.',
 };
-/* What an empty tab says — what it looked for, never a verdict on the month (the empty-state rule). */
 const EMPTY: Record<LineTab, string> = {
   'to-match': 'No line waiting to be matched.', 'to-choose': 'Nothing to choose.', 'no-entry': 'No line without an entry.',
   'not-on-bank': 'No ledger entry waiting for the bank.', cards: 'Every card payment is on a merchant report.', matched: 'Nothing matched yet.', 'set-aside': 'Nothing set aside.',
@@ -98,7 +89,6 @@ export function LineTabs({ tab, counts, locked, onTab }: { tab: LineTab; counts:
   );
 }
 
-/* ── To match: one entry, or one report owed exactly this ─────────────────── */
 
 function ToMatchRow({ line, locked, onNotThis }: { line: BankLine; locked: boolean; onNotThis: () => void }) {
   const book = useBookBankReceipt();
@@ -140,7 +130,6 @@ function ToMatchRow({ line, locked, onNotThis }: { line: BankLine; locked: boole
   );
 }
 
-/* ── Not on the bank yet: what the ledger holds that the bank has not shown ── */
 
 function entryState(e: LedgerEntry, open: BankLine[], chooseAnyway: ReadonlySet<number>, periodTo: string): string | null {
   const offered = open.find((l) => l.entryCandidates.some((c) => c.jeNo === e.jeNo));
@@ -151,8 +140,6 @@ function entryState(e: LedgerEntry, open: BankLine[], chooseAnyway: ReadonlySet<
 }
 
 function NotOnBankYet({ entries, open, chooseAnyway, periodTo }: { entries: LedgerEntry[]; open: BankLine[]; chooseAnyway: ReadonlySet<number>; periodTo: string }) {
-  /* The tick matches entries to the lines ticked under To choose / No entry
-     found; the bar at the foot carries the totals (bank-reconcile-pick). */
   const pick = useReconcilePick();
   return (
     <table className={grid.grid}>
@@ -180,30 +167,23 @@ function NotOnBankYet({ entries, open, chooseAnyway, periodTo }: { entries: Ledg
   );
 }
 
-/* ── The tab's body ──────────────────────────────────────────────────────── */
 
 type TabBodyProps = {
   tab: LineTab; lines: BankLine[]; entries: LedgerEntry[]; locked: boolean; periodTo: string;
   chooseAnyway: ReadonlySet<number>; onNotThis: (lineId: number) => void;
-  /** The card payments no report carries (the Card payments tab). */
   cards: BankCardPayment[];
 };
 
 export function LineTabBody({ accountCode, ...body }: TabBodyProps & {
-  /** The bank account the month is of — its ledger code; Record journal posts its leg there. */
   accountCode?: string;
 }) {
   const { can } = useAuth();
-  /* Record journal (No entry found): the same right as posting a manual journal
-     and matching bank lines, and never on a locked month. */
   const mayRecord = !body.locked && accountCode != null && can('scm.payment_voucher.post');
   const [recording, setRecording] = useState<BankLine | null>(null);
   const toast = useBooksToast();
   return (
     <>
       <TabBody {...body} onRecord={mayRecord ? setRecording : null} />
-      {/* Beside the tab, not inside it: once its journal posts, the line leaves
-          No entry found on the next read while the drawer still has things to say. */}
       {accountCode != null && (
         <BankRecordJournal line={recording} accountCode={accountCode} onClose={() => setRecording(null)} onToast={toast.say} />
       )}
@@ -213,7 +193,6 @@ export function LineTabBody({ accountCode, ...body }: TabBodyProps & {
 }
 
 function TabBody({ tab, lines, entries, locked, periodTo, chooseAnyway, onNotThis, cards, onRecord }: TabBodyProps & {
-  /** Record journal on a No entry found line; null where it is not offered. */
   onRecord: ((line: BankLine) => void) | null;
 }) {
   const pick = useReconcilePick();

@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-sync.ts — the pure half of POST /api/pos-device/sales/batch (layout P14):
-// what an incoming receipt must look like, how it is classified against what
-// the ERP already holds (new / duplicate / void applied / salesman changed /
-// rejected), and the inventory movements it produces. Tested without a
-// database. Money is integer sen; the device's uuid is the identity.
-// ----------------------------------------------------------------------------
 import { isPosPaymentMethod } from "../../scm/shared/pos-vocabulary";
 
 export type IncomingLine = {

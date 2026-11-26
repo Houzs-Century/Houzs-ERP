@@ -65,10 +65,10 @@ describe('scheduleRowRefresh', () => {
       .mockImplementationOnce(() => new Promise<PlanningResponse>((r) => { releaseFirst = r; }))
       .mockResolvedValueOnce(board([row('A', 'PENDING_SCHEDULE', '2026-10-30')]));
     scheduleRowRefresh(qc, ['A']);
-    await vi.advanceTimersByTimeAsync(600);   // first request in flight
+    await vi.advanceTimersByTimeAsync(600);
     scheduleRowRefresh(qc, ['A']);
-    await vi.advanceTimersByTimeAsync(600);   // second request answers 30
-    releaseFirst(board([row('A', 'PENDING_SCHEDULE', '2026-10-28')]));   // the older answer lands late
+    await vi.advanceTimersByTimeAsync(600);
+    releaseFirst(board([row('A', 'PENDING_SCHEDULE', '2026-10-28')]));
     await vi.runAllTimersAsync();
     expect(qc.getQueryData<PlanningResponse>(['delivery-planning', 'ALL', 'OPEN'])!.orders[0]!.amended_delivery_date).toBe('2026-10-30');
   });

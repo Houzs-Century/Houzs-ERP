@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// FleetDayMap — the A4 day-view map: EVERY lorry's route on ONE Google map, each
-// a distinct colour with numbered stops 1->2->3, the depot as origin.
-//
-// Same infra as the Phase-3 ScheduleRouteMap (@vis.gl/react-google-maps + an
-// imperative useMap() overlay, classic raster map so no cloud mapId is needed) —
-// this is the MULTI-route sibling: ScheduleRouteMap draws one order's route, this
-// draws N coloured routes for a whole day and can FOCUS one (the others fade).
-//
-// KEY: reads VITE_GOOGLE_MAPS_API_KEY from the caller. When unset the caller does
-// not mount this at all (the page shows a "map key not configured" note). If the
-// Maps JS fails to load at runtime, onError flips to a graceful in-place fallback.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from 'react';
 import { APIProvider, Map, useMap } from '@vis.gl/react-google-maps';
@@ -30,9 +17,6 @@ export type FleetMapRoute = {
   stops: FleetMapStop[];
 };
 
-/* Imperative overlay: for each route, a depot marker (its colour), numbered stop
-   markers and a depot->stops->depot polyline. Re-drawn whenever the routes or the
-   focus change; every object is torn down on change / unmount so nothing leaks. */
 function RoutesOverlay({ routes, focusedId }: { routes: FleetMapRoute[]; focusedId: string | null }) {
   const map = useMap();
   const objectsRef = useRef<Array<{ setMap: (m: google.maps.Map | null) => void }>>([]);
@@ -114,7 +98,6 @@ function RoutesOverlay({ routes, focusedId }: { routes: FleetMapRoute[]; focused
 
     if (anyPoint && !bounds.isEmpty()) {
       map.fitBounds(bounds, 56);
-      // A single point leaves fitBounds zoomed all the way in — cap it.
       const one = routes.reduce((n, r) => n + r.stops.length + (r.depot ? 1 : 0), 0) <= 1;
       if (one) map.setZoom(14);
     }
@@ -153,7 +136,6 @@ export function FleetDayMap({
     );
   }
 
-  // Centre on the first geocoded point, else KL.
   const first = routes.find((r) => r.depot || r.stops.length > 0);
   const center = first?.depot ?? (first?.stops[0]
     ? { lat: first.stops[0].lat, lng: first.stops[0].lng }

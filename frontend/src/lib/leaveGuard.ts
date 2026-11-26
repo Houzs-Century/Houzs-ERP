@@ -1,15 +1,4 @@
-// leaveGuard — "this page holds typing that leaving would throw away; ask first".
-//
-// Forms hold a guard while they are dirty (hooks/useLeaveGuard). ONE bridge
-// (components/LeaveGuardBridge) consults the holders on every way out of a page:
-// in-app navigation (the router's navigator is wrapped, because this app mounts a
-// plain BrowserRouter and react-router 6 offers `useBlocker` only on a DATA
-// router), the browser's / phone's Back (popstate), and a reload or closed tab
-// (beforeunload). Same approach as Conts-ERP's useLeaveGuard, made a registry so
-// two guarded parts of one screen cannot leave a dead wrapper on the navigator.
 
-// Each holder may name query parameters that address its form (`?form=new` on a
-// list page): a change to one of those is leaving too.
 const holders = new Map<symbol, readonly string[]>();
 
 type Asker = () => Promise<boolean>;

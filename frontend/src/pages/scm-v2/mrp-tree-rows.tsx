@@ -28,9 +28,6 @@ export interface MrpTreeOptions extends MrpLineControls {
   poMode: 'combined' | 'per-so';
 }
 
-/* A fact of the SO header (SO no, SO date, customer, state) shows on a child
-   line only where it varies inside the row; otherwise the parent row already
-   says it once. */
 interface VaryingHeaderFacts {
   hasManySalesOrders: boolean;
   hasManySoDates: boolean;
@@ -97,8 +94,6 @@ function DeliveryDate({ iso }: { iso: string | null }) {
   );
 }
 
-/* Per-shortage-line supplier dropdown (Commander 2026-05-31): each line picks its
-   own supplier, defaulting to the SKU's main one. Unbound SKU → "— none —". */
 function LineSupplierSelect({ suppliers, chosenSupplierId, onSupplierChange }: {
   suppliers: MrpSku['suppliers'];
   chosenSupplierId: string | null;
@@ -152,8 +147,6 @@ function lineSupplierCell(sku: MrpSku, line: MrpLine, controls: MrpLineControls)
   return null;
 }
 
-/* `source === 'po'` guarantees a PO number (allocSourceOf returns 'stock' when
-   there is none), so a PO line without one shows no chip rather than a guess. */
 function coverageCells(line: MrpLine): Cells {
   return {
     stock: line.source === 'stock'
@@ -297,9 +290,6 @@ function varyingHeaderFacts(group: ModelGroup): VaryingHeaderFacts {
 const orderLineRows = (sku: MrpSku, description: ReactNode, facts: VaryingHeaderFacts, controls: MrpLineControls): DataTableChildRow[] =>
   sku.lines.map((line, index) => orderLineRow(sku, line, index, description, facts, controls));
 
-/* The rows under one MRP row, drawn in the table's own columns. Sofa: one row
-   per module of the SO, then its cover / pillow riders. A single-variant model:
-   its SO lines. A multi-variant model: a variant row each, opening to its lines. */
 export function buildMrpChildRows(group: ModelGroup, options: MrpTreeOptions): DataTableChildRow[] {
   const facts = varyingHeaderFacts(group);
   if (options.shape === 'sofa') {

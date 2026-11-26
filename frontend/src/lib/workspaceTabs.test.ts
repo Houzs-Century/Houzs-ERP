@@ -35,7 +35,6 @@ const activeHref = () => {
   const { tabs, activeId } = getWorkspaceTabsSnapshot();
   return tabs.find((t) => t.id === activeId)?.href ?? null;
 };
-/** A sidebar click followed by its navigation. */
 const openVia = (pathname: string, search = "") => {
   markWorkspaceOpenIntent();
   recordWorkspaceVisit(pathname, search);
@@ -82,8 +81,6 @@ describe("browser-model navigation", () => {
   });
 
   it("in-content navigation FOLLOWS in the same tab — hub → group → DO never spawns", () => {
-    // The owner's exact flow: Supply Chain hub → Sales Order group hub →
-    // Delivery Orders. One tab, wandering.
     openVia("/scm", "");
     recordWorkspaceVisit("/scm/sales-order", "");
     recordWorkspaceVisit("/scm/delivery-orders", "");
@@ -113,7 +110,6 @@ describe("browser-model navigation", () => {
     recordWorkspaceVisit("/scm/sales-orders/SO-1", "");
     openVia("/assr", "");
     openVia("/scm/sales-orders", "");
-    // Back on the SO tab (re-pointed to the list — the click asked for it).
     const { tabs, activeId } = getWorkspaceTabsSnapshot();
     expect(tabs).toHaveLength(2);
     expect(activeId).toBe(tabs[0].id);
@@ -123,7 +119,6 @@ describe("browser-model navigation", () => {
   it("an expired open-intent is ignored — a stale flag must not turn a hub click into a spawn", () => {
     openVia("/scm/sales-orders", "");
     markWorkspaceOpenIntent();
-    // Simulate the flag outliving its TTL (no navigation followed the click).
     const realNow = Date.now;
     try {
       const base = realNow();
@@ -142,7 +137,6 @@ describe("browser-model navigation", () => {
     const soTab = getWorkspaceTabsSnapshot().tabs[0];
     expect(activateWorkspaceTab(soTab.id)).toBe("/scm/sales-orders/SO-1");
     expect(activeHref()).toBe("/scm/sales-orders/SO-1");
-    // The navigation that follows re-points nothing — it's already there.
     recordWorkspaceVisit("/scm/sales-orders/SO-1", "");
     expect(hrefs()).toEqual(["/scm/sales-orders/SO-1", "/assr"]);
   });
@@ -152,7 +146,7 @@ describe("browser-model navigation", () => {
     openVia("/assr", "");
     const before = getWorkspaceTabsSnapshot();
 
-    resetWorkspaceTabsForTests(); // module state dies with the old document
+    resetWorkspaceTabsForTests();
     bindBrowserStorageIdentity(1);
     const after = getWorkspaceTabsSnapshot();
     expect(after.tabs).toEqual(before.tabs);
@@ -187,20 +181,19 @@ describe("browser-model navigation", () => {
       JSON.stringify({
         user: 1,
         company: 0,
-        activeId: "t9", // dangling pointer — not one of the surviving tabs
-        nextId: 2, // lies below the real max id — must be re-derived
+        activeId: "t9",
+        nextId: 2,
         tabs: [
-          { id: "t3", href: "//evil.example/phish" }, // protocol-relative
-          { id: "nope", href: "/x" }, // malformed id
-          { id: "t5", href: "/scm/sales-orders" }, // valid
-          { id: "t5", href: "/scm/sales-orders/dup" }, // duplicate id
+          { id: "t3", href: "//evil.example/phish" },
+          { id: "nope", href: "/x" },
+          { id: "t5", href: "/scm/sales-orders" },
+          { id: "t5", href: "/scm/sales-orders/dup" },
         ],
       }),
     );
     const snap = getWorkspaceTabsSnapshot();
     expect(snap.tabs).toEqual([{ id: "t5", href: "/scm/sales-orders" }]);
     expect(snap.activeId).toBeNull();
-    // Next spawn must mint an id ABOVE the surviving t5, not recycle t2.
     openVia("/assr", "");
     expect(getWorkspaceTabsSnapshot().tabs.map((t) => t.id)).toEqual(["t5", "t6"]);
   });
@@ -213,14 +206,14 @@ describe("moveWorkspaceTab", () => {
     openVia("/", "");
     openVia("/scm/sales-orders", "");
     openVia("/assr", "");
-    ids = getWorkspaceTabsSnapshot().tabs.map((t) => t.id); // [/, SO, assr]
+    ids = getWorkspaceTabsSnapshot().tabs.map((t) => t.id);
   });
 
   it("reorders without touching hrefs or the active pointer", () => {
-    moveWorkspaceTab(ids[0], 2); // Overview to the end
+    moveWorkspaceTab(ids[0], 2);
     expect(hrefs()).toEqual(["/scm/sales-orders", "/assr", "/"]);
-    expect(activeHref()).toBe("/assr"); // assr was active and stays active
-    moveWorkspaceTab(ids[2], 0); // assr (active) to the front — still active
+    expect(activeHref()).toBe("/assr");
+    moveWorkspaceTab(ids[2], 0);
     expect(hrefs()).toEqual(["/assr", "/scm/sales-orders", "/"]);
     expect(activeHref()).toBe("/assr");
   });
@@ -231,19 +224,16 @@ describe("moveWorkspaceTab", () => {
     moveWorkspaceTab(ids[0], -5);
     expect(hrefs()).toEqual(["/", "/scm/sales-orders", "/assr"]);
     const before = getWorkspaceTabsSnapshot().tabs;
-    moveWorkspaceTab(ids[1], 1); // already at 1
-    moveWorkspaceTab("t999", 0); // unknown
-    expect(getWorkspaceTabsSnapshot().tabs).toBe(before); // same reference — no emit
+    moveWorkspaceTab(ids[1], 1);
+    moveWorkspaceTab("t999", 0);
+    expect(getWorkspaceTabsSnapshot().tabs).toBe(before);
   });
 
   it("the new order survives a reload and drives close-neighbour semantics", () => {
-    moveWorkspaceTab(ids[2], 0); // assr first: [assr, /, SO]
+    moveWorkspaceTab(ids[2], 0);
     resetWorkspaceTabsForTests();
     bindBrowserStorageIdentity(1);
     expect(hrefs()).toEqual(["/assr", "/", "/scm/sales-orders"]);
-    // assr is still active; closing it now lands on its NEW right neighbour
-    // (it sits first), which is Overview — the reordered layout, not the
-    // creation order.
     const { navigateTo } = closeWorkspaceTab(ids[2]);
     expect(navigateTo).toBe("/");
   });

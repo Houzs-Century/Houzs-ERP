@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { modelFilterLabel, modelLabelOf } from './modelLabel';
 
-// 2990-0022: base_model is the model CODE and is never renamed; the SKU Master
-// shows and filters on the model's live name, falling back to the code.
 describe('modelLabelOf', () => {
   test('uses the live model name over the base_model code', () => {
     expect(modelLabelOf({ base_model: '8210', model_name: 'TANNAH' })).toBe('TANNAH');

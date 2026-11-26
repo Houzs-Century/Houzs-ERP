@@ -313,8 +313,13 @@ if (over.length) {
    `npm --prefix backend run lint` locally still gets exit 1 and the truth. */
 const advisory = process.argv.includes('--advisory');
 if (hardErrors.length) process.exit(1);
+const introduced = over.filter((o) => o.rule.startsWith('houzs/'));
 if (over.length) {
   if (!advisory) process.exit(1);
+  if (introduced.length) {
+    console.error(`[lint] ${appName}: ${introduced.length} houzs/* pair(s) above ceiling. These rules carry no inherited debt, so --advisory does not cover them (PR #6050).`);
+    process.exit(1);
+  }
   console.error(
     `[lint] ${appName}: ADVISORY — ${over.length} pair(s) above ceiling, reported and NOT failed.\n` +
       '  This leg is advisory because its debt is inherited, not introduced here.\n' +

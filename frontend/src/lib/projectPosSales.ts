@@ -1,12 +1,3 @@
-/* The Houzs POS bills of one event, as the project page shows them (layout
- * E9) — the wire shape of GET /api/project-pos-sales/:projectId, the labels
- * the list prints, and the rows its Excel export writes.
- *
- * Shared by the desktop section and the mobile panel so the two cannot
- * disagree. Pure; no fetching here. Money is integer sen on the wire. The
- * vocabularies (payment methods, receipt status word, empty totals) have ONE
- * home, vendor/shared/pos-vocabulary.ts, and are re-exported from here.
- */
 import {
   emptyPosSalesTotals,
   isPosPaymentMethod,
@@ -77,11 +68,9 @@ export type PosSalesFilter = {
 
 export type ProjectPosSalesResponse = {
   project: { id: number; name: string; event_type_slug: string | null } | null;
-  /** The project's type carries POS Sales (Cash & Carry). */
   pos_enabled: boolean;
   data: PosReceipt[];
   totals: PosSalesTotals;
-  /** Bills before the filter — "no bills yet" against "nothing matches". */
   all_count: number;
   options: { terminals: string[]; cashiers: { id: number; name: string }[]; methods: string[] };
 };
@@ -90,7 +79,6 @@ export const EMPTY_POS_FILTER: PosSalesFilter = { date: null, terminal: null, ca
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
-/** Every numeric field of the totals coerced; the method map kept when it is one. */
 function normalizeTotals(raw: unknown): PosSalesTotals {
   const t = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const out = emptyPosSalesTotals();

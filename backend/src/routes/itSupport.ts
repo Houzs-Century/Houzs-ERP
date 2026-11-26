@@ -1,33 +1,3 @@
-// /api/it-support — report a problem to IT, follow it, reply, confirm the fix.
-//
-// The requests do not live in this database. They live in the Houzs IT Hub
-// (support.houzscentury.com), the one inbox the developers work for every
-// system, and this router is the only thing that talks to it, server to server:
-//
-//   browser --session--> /api/it-support/* --Bearer key + X-Reporter-Id--> hub
-//
-// Access: ANY authenticated user, no matrix permission — the same widening as
-// /api/push and /api/notifications, for the same reason: every row is the
-// caller's own. WHO is asking is `c.get("user").id`, never a value from the
-// request; the hub returns a reporter only their own requests, keyed on that
-// id, so an id read from a query string would be everyone's requests one edit
-// away. The service-tier caller (id 0) is refused: it is nobody's inbox.
-//
-// WHICH INBOX follows the active company, like every other document here. The
-// hub keeps one system per company, each with its own key, and the key is DATA:
-// the secret named IT_HUB_API_KEY_<company code> (IT_HUB_API_KEY_HOUZS,
-// IT_HUB_API_KEY_2990). No company is named in this file, so adding a company
-// is adding a secret. A request raised while working in a company lands in that
-// company's inbox and the list shows that company's requests. A company with
-// no key is "not connected" — it never borrows another company's key, which
-// would file its requests in the wrong inbox without anyone noticing.
-//
-// The hub keys never leave the Worker.
-//
-// "Could not ask the hub" is answered as that — 501 when this environment is
-// not connected, 502 when the hub is down or refuses our key — never as an
-// empty list. A hub 401 means OUR key is wrong; passing it through would read
-// to the client as the user's own session having expired and sign them out.
 
 import { Hono, type Context } from "hono";
 import type { Env } from "../types";
@@ -38,19 +8,13 @@ type Ctx = Context<{ Bindings: Env }>;
 
 const HUB_TIMEOUT_MS = 20_000;
 const REQUEST_CODE = /^[A-Z0-9]{2,6}-\d{1,8}$/;
-// A company code becomes part of a secret's NAME, so only a plain code may.
 const COMPANY_CODE = /^[A-Z0-9]{2,12}$/;
 const TYPES = new Set(["bug", "development"]);
 const PRIORITIES = new Set(["urgent", "high", "medium", "low"]);
-// What the browser may set on a new request. Every reporter_* field and
-// user_agent are filled in here from the session and the request. `module` is
-// the part of the ERP it is about (named as the sidebar names it); the hub's
-// Reports group requests by it.
 const REQUEST_FIELDS = ["title", "description", "type", "priority", "page_url", "module", "occurred_at"] as const;
 const MAX_FILES = 5;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const FILE_KINDS = /^(image\/|video\/mp4$|video\/quicktime$|application\/pdf$)/;
-// A .zip goes by its name: browsers label it application/zip, application/x-zip-compressed or nothing.
 const isZip = (f: File) => f.name.toLowerCase().endsWith(".zip");
 
 const NOT_CONNECTED = "IT Support is not connected on this system yet. Please tell IT directly for now.";
@@ -59,17 +23,11 @@ const NOT_FOUND = "That IT request could not be found.";
 
 type Hub = { base: string; key: string; reporterId: string };
 
-/** The hub settings for the signed-in caller, or the response to send instead. */
 function hubFor(c: Ctx): Hub | Response {
-  // Typed as possibly absent on purpose: this check is all that stands between
-  // a mount mistake that skips auth and the hub being asked as "undefined".
   const user = c.get("user") as AuthUser | undefined;
   if (!user || !Number.isInteger(user.id) || user.id <= 0) {
     return c.json({ error: "IT Support is for signed-in staff accounts." }, 403);
   }
-  // companyContext leaves the code unset only when the companies master could
-  // not be read (a cold isolate's first read failing). Guessing a company then
-  // would file one company's request under another, so the caller retries.
   const company = c.get("companyCode");
   if (!company) return c.json({ error: UNREACHABLE }, 503);
   const base = (c.env.IT_HUB_URL ?? "").trim().replace(/\/+$/, "");
@@ -86,10 +44,6 @@ function hubFetch(hub: Hub, path: string, init: RequestInit = {}): Promise<Respo
   return fetch(`${hub.base}/api/v1/sys${path}`, { ...init, headers, signal: AbortSignal.timeout(HUB_TIMEOUT_MS) });
 }
 
-/**
- * One hub call, answered to the browser. `conflict` is our sentence for the
- * hub's 409 (it refuses an action the request's state does not allow).
- */
 async function relay(c: Ctx, call: Promise<Response>, conflict: string | null): Promise<Response> {
   let res: Response;
   try {
@@ -98,8 +52,6 @@ async function relay(c: Ctx, call: Promise<Response>, conflict: string | null): 
     console.warn("[it-support] hub unreachable:", err instanceof Error ? err.message : String(err));
     return c.json({ error: UNREACHABLE }, 502);
   }
-  // A body that is not JSON (a gateway's HTML page) is not an answer: it stays
-  // null and falls through to the 502 below, with the status logged.
   let body: Record<string, unknown> | null = null;
   try {
     body = (await res.json()) as Record<string, unknown>;
@@ -118,7 +70,6 @@ async function relay(c: Ctx, call: Promise<Response>, conflict: string | null): 
   return c.json({ error: UNREACHABLE }, 502);
 }
 
-/** Text fields and files off the browser's form; null when it cannot be read. */
 async function readForm(c: Ctx): Promise<{ fields: Record<string, string | undefined>; files: File[] } | null> {
   const fields: Record<string, string | undefined> = {};
   const files: File[] = [];
@@ -139,7 +90,6 @@ async function readForm(c: Ctx): Promise<{ fields: Record<string, string | undef
   return { fields, files };
 }
 
-/** What is wrong with the attached files, as a sentence, or null. */
 function filesRefusal(files: File[]): string | null {
   if (files.length > MAX_FILES) return `Attach at most ${MAX_FILES} files.`;
   const big = files.find((f) => f.size > MAX_FILE_BYTES);
@@ -148,26 +98,18 @@ function filesRefusal(files: File[]): string | null {
   return odd ? `${odd.name} is not a picture, an MP4 or MOV video, a PDF or a ZIP.` : null;
 }
 
-// ---- Is IT Support connected in this environment? --------------------------
-// The menu row is listed only where this answers true (Sidebar.tsx), so an
-// environment without the hub's settings shows no row leading to a page that
-// could only say "not connected". Not connected is an answer here, not an error.
 app.get("/status", (c) => {
   const hub = hubFor(c);
   if (hub instanceof Response) return hub.status === 501 ? c.json({ connected: false }) : hub;
   return c.json({ connected: true });
 });
 
-// ---- My requests ----------------------------------------------------------
 app.get("/tickets", async (c) => {
   const hub = hubFor(c);
   if (hub instanceof Response) return hub;
   return relay(c, hubFetch(hub, "/tickets"), null);
 });
 
-// ---- How many of my requests IT answered since I last opened them ----------
-// For the red count on the menu row. Answered as `{ count }`, the shape every
-// other sidebar count reads (hooks/useAmendmentApprovals.ts).
 app.get("/unread-count", async (c) => {
   const hub = hubFor(c);
   if (hub instanceof Response) return hub;
@@ -178,7 +120,6 @@ app.get("/unread-count", async (c) => {
   return c.json({ count: Number.isFinite(n) && n > 0 ? n : 0 });
 });
 
-// ---- One request and what IT said on it (the hub marks it seen) ------------
 app.get("/tickets/:code", async (c) => {
   const hub = hubFor(c);
   if (hub instanceof Response) return hub;
@@ -187,7 +128,6 @@ app.get("/tickets/:code", async (c) => {
   return relay(c, hubFetch(hub, `/tickets/${code}`), null);
 });
 
-// ---- Report a problem -------------------------------------------------------
 app.post("/tickets", async (c) => {
   const hub = hubFor(c);
   if (hub instanceof Response) return hub;
@@ -215,7 +155,6 @@ app.post("/tickets", async (c) => {
   return relay(c, hubFetch(hub, "/tickets", { method: "POST", body: out }), null);
 });
 
-// ---- Reply on my request ----------------------------------------------------
 app.post("/tickets/:code/replies", async (c) => {
   const hub = hubFor(c);
   if (hub instanceof Response) return hub;
@@ -238,7 +177,6 @@ app.post("/tickets/:code/replies", async (c) => {
   );
 });
 
-// ---- "Yes, it is fixed": Done -> Closed ------------------------------------
 app.post("/tickets/:code/confirm", async (c) => {
   const hub = hubFor(c);
   if (hub instanceof Response) return hub;
@@ -251,7 +189,6 @@ app.post("/tickets/:code/confirm", async (c) => {
   );
 });
 
-// ---- A file on my request, streamed through so the key stays here ----------
 app.get("/attachments/:id", async (c) => {
   const hub = hubFor(c);
   if (hub instanceof Response) return hub;

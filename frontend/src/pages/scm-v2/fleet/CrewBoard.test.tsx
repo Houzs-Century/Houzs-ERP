@@ -1,7 +1,3 @@
-/* Coverage & Fleet, Drivers and the embedded reference tabs. Renders the REAL screens and
-   query hooks against a mocked authedFetch. Pinned: a driver row shows employer, usual
-   lorry, warehouse and leave; the drawer saves only what changed; a failed load shows the
-   failure, not the empty state; the embedded Residence rules tab still offers New Type. */
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';

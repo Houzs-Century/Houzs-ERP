@@ -26,11 +26,9 @@ const CHART: ChartAccount[] = [
   acc('500-0001', 'SALES - BEDFRAME', 'INCOME', '500-0000', 'SALES'),
   acc('510-0000', 'SALES RETURN', 'INCOME', null, 'SALES ADJUSTMENTS'),
   acc('601-0003', 'PURCHASE OF SOFA', 'EXPENSE', null, 'COST OF GOODS SOLD'),
-  /* Older than the section migration: no section — the default shelf for a 6xx EXPENSE. */
   acc('615-0000', 'CARRIAGE INWARDS', 'EXPENSE', null, null),
   acc('700-0000', 'Other Income', 'INCOME', null, 'OTHER INCOMES'),
   acc('590-0000', 'RENT RECEIVED', 'INCOME', '700-0000', 'OTHER INCOMES'),
-  /* Hangs under 500-0000 on the chart, but its SECTION is other income. */
   acc('530-0000', 'COMMISSION RECEIVED', 'INCOME', '500-0000', 'OTHER INCOMES'),
   acc('900-0000', 'Operating Expense', 'EXPENSE', null, 'EXPENSES'),
   acc('900-A001', 'ACCOUNTING FEE', 'EXPENSE', '900-0000', 'EXPENSES'),
@@ -61,14 +59,12 @@ describe('defaultLayout — the chart as a tree', () => {
       { 'sec:SALES': [{ 'acc:500-0000': ['500-0001'] }] },
       { 'sec:SALES ADJUSTMENTS': ['510-0000'] },
     ]);
-    /* OTHER INCOMES + EXTRA-ORDINARY INCOME — nothing extra-ordinary on this chart. */
     expect(shape(layout.blocks.otherIncome!)).toEqual([
       { 'sec:OTHER INCOMES': ['530-0000', { 'acc:700-0000': ['590-0000'] }] },
     ]);
   });
 
   test('the section files an account: a child whose parent sits elsewhere is a root of its own block', () => {
-    /* 530-0000 hangs under 500-0000 on the chart, yet it is other income. */
     expect(JSON.stringify(layout.blocks.tradingIncome)).not.toContain('530-0000');
     expect(JSON.stringify(layout.blocks.otherIncome)).toContain('530-0000');
   });
@@ -105,7 +101,6 @@ describe('defaultLayout — the chart as a tree', () => {
     ]);
     expect(shape(bs.blocks.liabilities!)).toEqual([{ 'sec:CURRENT LIABILITIES': ['400-0000'] }, { 'sec:LONG TERM LIABILITIES': ['460-0001'] }]);
     expect(shape(bs.blocks.equity!)).toEqual([{ 'sec:CAPITAL': ['100-0000'] }, { 'sec:RETAINED EARNING': ['150-0000'] }]);
-    /* No income or expense account anywhere on it. */
     expect(JSON.stringify(bs)).not.toMatch(/500-0000|900-A001/);
   });
 
@@ -219,7 +214,7 @@ describe('layOutBlock — the period on the tree', () => {
   ];
   const lines = [
     { code: '900-A001', name: 'ACCOUNTING FEE', amountSen: 120_000 },
-    { code: '900-A014', name: 'ADVERTISEMENT - SHOWROOM', amountSen: -15_000 },   // reversed this period
+    { code: '900-A014', name: 'ADVERTISEMENT - SHOWROOM', amountSen: -15_000 },
     { code: '900-O001', name: 'OPERATIING EXPENSE', amountSen: 50_000 },
     { code: '900-N001', name: 'NEW SINCE THE SAVE', amountSen: 7_700 },
   ];
@@ -240,7 +235,6 @@ describe('layOutBlock — the period on the tree', () => {
         ['account', '900-N001 · NEW SINCE THE SAVE', 7_700, 0.8],
       ]],
     ]);
-    /* The block's total is exactly the sum of what is printed. */
     expect(laid.reduce((s, n) => s + n.amountSen, 0)).toBe(lines.reduce((s, l) => s + l.amountSen, 0));
     expect(laidDepth(laid)).toBe(3);
   });
@@ -252,7 +246,6 @@ describe('layOutBlock — the period on the tree', () => {
     expect(forTwo.map((n) => n.label)).toEqual(['900-O001 · OPERATIING EXPENSE', 'Unassigned']);
     expect(forTwo[1]!.children.map((n) => n.code)).toEqual(['900-A001', '900-A014', '900-N001']);
     expect(forTwo.reduce((s, n) => s + n.amountSen, 0)).toBe(162_700);
-    /* The other company still sees it. */
     expect(layOutBlock(ticked, lines, 1, null)[0]!.label).toBe('Operating Expense');
   });
 
@@ -294,7 +287,6 @@ describe('layOutBlock — the period on the tree', () => {
     expect(op.amountSen).toBe(10_000);
     expect(op.cells).toEqual({ '310-0010': 7_000, '320-0000': 3_000 });
     expect(laid[1]).toMatchObject({ kind: 'account', key: '900-O001', label: 'Operating expense — 16.00% of sales', amountSen: 50_000, pct: 50, cells: { '310-0010': 50_000 } });
-    /* A tree with no cells on its lines carries none. */
     expect(layOutBlock(tree, lines, 1, null)[0]!.cells).toBeUndefined();
   });
 
@@ -330,14 +322,12 @@ describe('the Cash Flow tree (owner 2026-09-18)', () => {
     const cf = (accounts: unknown[]): unknown => ({ version: 1, blocks: { accounts } });
     const typed = (...items: unknown[]) => cf([{ kind: 'category', id: 'side:in', label: 'Source of funds', flow: 'in', totalLabel: 'Total Cash In', children: items }]);
     const bad = (raw: unknown) => (validateLayout('rp', raw) as { ok: false; reason: string }).reason;
-    /* Half-marked is not legacy: a typed side beside a bare account is refused, not wrapped. */
     expect(bad(cf([{ kind: 'category', id: 'side:in', label: 'In', flow: 'in', children: [] }, { kind: 'account', code: '300-0000' }]))).toBe('Cash Flow: 300-0000 must sit inside an In or Out category.');
     expect(bad(cf([{ kind: 'category', id: 'side:in', label: 'In', flow: 'in', children: [] }, { kind: 'category', id: 'c', label: 'No side', children: [] }]))).toBe('Cash Flow: No side must be In or Out.');
     expect(bad(typed({ kind: 'category', id: 'c', label: 'Deep', children: [{ kind: 'subtotal', id: 's', label: 'Net' }] }))).toBe('Category Deep: a subtotal line belongs to the Cash Flow layout, at the top level.');
     expect(bad(typed({ kind: 'account', code: '300-0000' }, { kind: 'account', code: '300-0000', flow: 'net' }))).toBe("300-0000's money in is placed twice.");
     expect(bad(typed({ kind: 'account', code: '300-0000', flow: 'out' }, { kind: 'account', code: '300-0000', flow: 'net' }))).toBe("300-0000's money out is placed twice.");
     expect(bad(cf([{ kind: 'subtotal', id: 's', label: '' }]))).toBe('Subtotal s has no name.');
-    /* Good: the same account In and Out, a subtotal at the top, the category's own subtotal name; a sub-category's stray side is dropped. */
     const ok = validateLayout('rp', cf([
       { kind: 'category', id: 'side:in', label: 'Source of funds', flow: 'in', totalLabel: ' Total Cash In ', children: [
         { kind: 'account', code: '300-0000' }, { kind: 'account', code: '300-0000', flow: 'out' },
@@ -355,7 +345,6 @@ describe('the Cash Flow tree (owner 2026-09-18)', () => {
     expect((src.children[2] as LayoutCategory).flow).toBeUndefined();
     expect(((src.children[2] as LayoutCategory).children[0] as { flow?: string }).flow).toBe('net');
     expect(((items[2] as LayoutCategory).children[0] as { flow?: string }).flow).toBe('out');
-    /* Directions belong to the Cash Flow alone. */
     expect((validateLayout('pnl', { version: 1, blocks: { expenses: [{ kind: 'subtotal', id: 's', label: 'x' }] } }) as { reason: string }).reason).toBe('Block expenses: a subtotal line belongs to the Cash Flow layout, at the top level.');
   });
 
@@ -385,7 +374,6 @@ describe('the Cash Flow tree (owner 2026-09-18)', () => {
     ];
     const laid = layOutCashFlow(tree, receipts, payments, 2);
     const flat = (nodes: LaidNode[]): unknown[] => nodes.map((n) => [n.kind, n.label, n.flow ?? null, n.amountSen, n.pct, ...(n.children.length > 0 ? [flat(n.children)] : [])]);
-    /* Money in 155,000, money out 69,700; the tree reads in 134,000 − out 48,700 — the same 85,300. */
     expect(laid.inSen).toBe(134_000);
     expect(laid.outSen).toBe(48_700);
     expect(laid.inSen - laid.outSen).toBe(155_000 - 69_700);
@@ -408,7 +396,6 @@ describe('the Cash Flow tree (owner 2026-09-18)', () => {
     expect(laid.nodes[0]).toMatchObject({ totalLabel: 'Total Cash In', cells: { '310-0010': 89_000 } });
     expect(laid.nodes[2]!.cells).toEqual({ '310-0010': 44_000 });
     expect(laid.nodes[3]!.children[0]!.cells).toEqual({ '310-0010': 60_000, '320-0000': -20_000 });
-    /* One account, two lines, two ids — the monthly merge keys by id. */
     const dep = laid.nodes[0]!.children[0]!;
     expect(dep.children.map((n) => n.id)).toEqual(['in:acc:300-0000', 'out:acc:300-0000']);
     expect(laid.nodes[3]!.children[0]!.id).toBe('net:acc:350-0010');
@@ -469,15 +456,11 @@ describe('Settlement / Deposit on the Cash Flow tree', () => {
     const laid = layOutCashFlow(tree, receipts, payments, 1);
     const sd = (n: LaidNode | undefined): unknown => (n?.sd ? [n.sd.settlementSen, n.sd.depositSen] : null);
     const [cashIn, ops, netOps, tax, after] = laid.nodes;
-    /* The customer's money by its kind, under its own sub-headings; the sales by CASH IN's Deposit. */
     expect(cashIn!.children.map((n) => [n.label, sd(n)])).toEqual([['Deposit', [0, 100_000]], ['Settlement', [40_000, 0]], ['500-0003 · SALES OF SOFA', [0, 9_000]]]);
     expect(sd(cashIn)).toEqual([40_000, 109_000]);
-    /* Cost of funds all Settlement; the warehouse follows OPERATIONS' 1 : 2 — a third, the rest Deposit. */
     expect(ops!.children.map((n) => [n.label, sd(n)])).toEqual([['COST OF FUNDS', [30_000, 0]], ['WAREHOUSE', [3_333, 6_667]]]);
     expect(sd(ops)).toEqual([33_333, 6_667]);
-    /* The running subtotal splits while everything above it does: in less out, column by column. */
     expect([netOps!.amountSen, sd(netOps)]).toEqual([109_000, [6_667, 102_333]]);
-    /* Taxation is not split: one figure, and every subtotal after it the same. */
     expect([tax!.amountSen, sd(tax), sd(tax!.children[0])]).toEqual([5_000, null, null]);
     expect([after!.amountSen, sd(after)]).toEqual([104_000, null]);
   });
@@ -552,23 +535,16 @@ describe('an account line\'s own Settlement / Deposit split', () => {
     ];
     const laid = layOutCashFlow(tree, receipts, payments, 1);
     const [cashIn, ops, netOps, tax, fin] = laid.nodes;
-    /* 300-0000 set to Settlement: its deposit payment stays Deposit by its kind, its other receipts
-       go Settlement; the sales line's own 3 : 1 beats CASH IN's all-Deposit. */
     expect(cashIn!.children.map((n) => [n.label, sd(n)])).toEqual([
       ['Deposit', [0, 100_000]], ['Other receipts (not order payments)', [7_000, 0]], ['500-0003 · SALES OF SOFA', [6_750, 2_250]],
     ]);
     expect(sd(cashIn)).toEqual([13_750, 102_250]);
-    /* Inside the all-Deposit showrooms, the rental set to Settlement; the upkeep follows the group. */
     expect(ops!.children[0]!.children.map((n) => [n.label, sd(n)])).toEqual([
       ['900-R006 · RENTAL - SHOWROOM', [12_000, 0]], ['900-R007 · UPKEEP - SHOWROOM', [0, 6_000]],
     ]);
     expect([sd(ops!.children[0]), sd(ops)]).toEqual([[12_000, 6_000], [12_000, 6_000]]);
-    /* The running subtotal, in less out, column by column. */
     expect([netOps!.amountSen, sd(netOps)]).toEqual([98_000, [1_750, 96_250]]);
-    /* An unsplit group with one line split by its own: the line splits (Settlement rounded to
-       the sen), its neighbour prints whole, so the group prints whole. */
     expect([sd(tax!.children[0]), sd(tax!.children[1]), sd(tax)]).toEqual([[2_501, 2_500], null, null]);
-    /* An unsplit group whose every line has its own: the group sums them. */
     expect([fin!.amountSen, sd(fin)]).toEqual([300, [0, 300]]);
   });
 
@@ -662,7 +638,6 @@ describe('Cash Flow: where an account prints, and a line placed by category', ()
     expect(homes.out.get('900-F000')).toEqual({ id: 'cf:out:fair', label: 'FAIR' });
     expect(homes.out.get('900-F001')).toEqual({ id: 'cf:out:fair', label: 'FAIR' });
     expect(homes.out.get('900-L001')).toEqual({ id: 'cf:out:fair:lorry', label: 'LORRY' });
-    /* A Net line takes both directions where it sits; the In line further down is never reached. */
     expect(homes.in.get('900-F001')).toEqual({ id: 'cf:out:fair', label: 'FAIR' });
     expect(homes.in.has('900-A001')).toBe(false);
     expect(homes.out.has('900-H001')).toBe(false);

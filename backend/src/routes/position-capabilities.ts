@@ -27,11 +27,6 @@ import {
 
 const app = new Hono<{ Bindings: Env }>();
 
-/**
- * GET /api/position-capabilities
- * The whole matrix: capability catalogue + every (position_id, capability)
- * grant row. Positions themselves come from GET /api/positions.
- */
 app.get("/", requirePermission("users.read"), async (c) => {
   const [capRows, positionRows, policyRows] = await Promise.all([
     c.env.DB.prepare(
@@ -48,8 +43,6 @@ app.get("/", requirePermission("users.read"), async (c) => {
   ]);
 
 
-  // The owner-tier answer per Title (by its policy row, then by name for a
-  // Title with no row) so the matrix can lock those rows on.
   const god = Object.fromEntries(
     positionRows.results.map((p) => [p.id, positionGrantsWildcard(p.name, policyRows.get(p.id) ?? null)]),
   );
@@ -60,11 +53,6 @@ app.get("/", requirePermission("users.read"), async (c) => {
   });
 });
 
-/**
- * PUT /api/position-capabilities/:positionId
- * Replace one position's capability set. Body: { capabilities: string[] }.
- * Unknown keys 400 (the catalogue is code — a typo cannot mint a capability).
- */
 app.put("/:positionId", requirePermission("roles.manage"), async (c) => {
   const positionId = parseInt(c.req.param("positionId"), 10);
   if (!Number.isFinite(positionId) || positionId <= 0)

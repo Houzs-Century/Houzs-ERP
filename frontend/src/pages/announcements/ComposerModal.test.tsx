@@ -4,12 +4,6 @@ import type { Department } from "../../types";
 import { EMPTY_AUDIENCE } from "./AudiencePicker";
 import { ComposerModal, buildPostBody, draftStorageKey, readDraft, type ComposerDraft } from "./ComposerModal";
 
-/* ────────────────────────────────────────────────────────────────────────────
-   ComposerModal — the wide composer (design handoff 2026-09-04, screen 4).
-   Pins the request body it builds (targets, requireAck default, schedule,
-   SOP never expires), the draft round-trip, and the rendered form's category
-   → require-acknowledgement default and its guard against posting to nobody.
-   ──────────────────────────────────────────────────────────────────────────── */
 
 const { apiGet, apiPost, toastError, toastSuccess } = vi.hoisted(() => ({
   apiGet: vi.fn(),
@@ -24,7 +18,6 @@ vi.mock("../../hooks/useToast", () => ({
 vi.mock("../../lib/announcementAttachmentUpload", () => ({
   uploadAnnouncementAttachment: vi.fn(),
 }));
-// The contenteditable editor needs execCommand; a plain textarea stands in.
 vi.mock("../../components/AnnouncementRichEditor", () => ({
   AnnouncementRichEditor: ({ value, onChange }: { value: string; onChange: (v: string) => void }) => (
     <textarea aria-label="Message" value={value} onChange={(e) => onChange(e.target.value)} />
@@ -77,7 +70,6 @@ describe("buildPostBody", () => {
       { id: 8, name: "B", email: "b@x", status: "active", department_id: 2, division: "Outbound" },
       { id: 9, name: "C", email: "c@x", status: "active", department_id: 3 },
     ] as unknown as import("../../types").TeamMember[];
-    // Division only + an explicit person + one unticked inside the division.
     const r = buildPostBody(
       {
         ...base,
@@ -85,7 +77,7 @@ describe("buildPostBody", () => {
           ...EMPTY_AUDIENCE,
           divisions: [{ deptId: 2, division: "Inbound" }],
           userIds: [9],
-          excludedUserIds: [7, 8], // 8 is Outbound: not reached, so dropped
+          excludedUserIds: [7, 8],
         },
       },
       false,
@@ -95,7 +87,6 @@ describe("buildPostBody", () => {
     expect(r.ok && r.body.targetDivisions).toEqual([{ deptId: 2, division: "Inbound" }]);
     expect(r.ok && r.body.targetUserIds).toEqual([9]);
     expect(r.ok && r.body.excludedUserIds).toEqual([7]);
-    // A division the selected department already implies is not repeated.
     const both = buildPostBody(
       { ...base, audience: { ...EMPTY_AUDIENCE, deptIds: [2], divisions: [{ deptId: 2, division: "Inbound" }] } },
       false,
@@ -103,13 +94,11 @@ describe("buildPostBody", () => {
     );
     expect(both.ok && both.body.targetDeptIds).toEqual([2]);
     expect(both.ok && both.body.targetDivisions).toBeUndefined();
-    // A division alone is a valid audience.
     const only = buildPostBody(
       { ...base, audience: { ...EMPTY_AUDIENCE, divisions: [{ deptId: 2, division: "Inbound" }] } },
       false,
     );
     expect(only.ok).toBe(true);
-    // Without the roster the exclusion list is passed through as given.
     const noRoster = buildPostBody({ ...base, audience: { ...base.audience, excludedUserIds: [7] } }, false);
     expect(noRoster.ok && noRoster.body.targetDeptIds).toEqual([2]);
     expect(noRoster.ok && noRoster.body.excludedUserIds).toEqual([7]);
@@ -234,18 +223,14 @@ describe("ComposerModal (rendered)", () => {
     await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-ANN-2609-0012"));
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Memo one" } });
     fireEvent.click(screen.getByRole("button", { name: /Warehouse/ }));
-    // ANN by default: no file needed, Submit open.
     expect(screen.queryByTestId("attachment-required-hint")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Change type" }));
     fireEvent.click(screen.getByRole("radio", { name: /Memo/ }));
     await waitFor(() => expect(screen.getByTestId("ref-no-preview").textContent).toContain("OPS-MEMO-2609-0003"));
-    // Numbered under another department: the preview asks for that code and the pick rides the POST.
     fireEvent.change(screen.getByLabelText("Numbered under"), { target: { value: "2" } });
     await waitFor(() => expect(apiGet).toHaveBeenCalledWith(expect.stringContaining("deptCode=WH")));
-    // MEMO demands a file: the hint appears and Submit is held.
     expect(screen.getByTestId("attachment-required-hint")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Submit for approval" }) as HTMLButtonElement).disabled).toBe(true);
-    // Save draft still goes, with the type.
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(onPosted).toHaveBeenCalled());
     expect(apiPost).toHaveBeenCalledWith(
@@ -266,7 +251,6 @@ describe("ComposerModal (rendered)", () => {
         { code: "NTC", label: "Notice", attachmentRequired: false },
       ],
     });
-    // Warning is the default category → WARN; the radios stay folded away.
     expect(screen.getByTestId("numbering-type").textContent).toContain("WARN");
     expect(screen.queryByRole("radio", { name: /Memo/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "SOP" }));
@@ -275,7 +259,6 @@ describe("ComposerModal (rendered)", () => {
     expect(screen.getByTestId("numbering-type").textContent).toContain("NTC");
     fireEvent.click(screen.getByRole("button", { name: "Learning" }));
     expect(screen.getByTestId("numbering-type").textContent).toContain("ANN");
-    // Picked by hand: the category no longer moves it.
     fireEvent.click(screen.getByRole("button", { name: "Change type" }));
     fireEvent.click(screen.getByRole("radio", { name: /Memo/ }));
     fireEvent.click(screen.getByRole("button", { name: "Warning" }));
@@ -338,8 +321,6 @@ describe("ComposerModal (rendered)", () => {
   });
 
   it("a retry after a failed post sends the SAME client key, and a restored draft posts with the key it was saved with", async () => {
-    // The draft the author left behind on 2026-09-06: restored on mount, key
-    // and all, so the post after a reload is the same post.
     values.set("announcements:draft:u9", JSON.stringify({ ...base, savedAt: 1, clientKey: "saved-key-00000001" }));
     apiPost.mockRejectedValueOnce(new Error("504: gateway timeout"));
     apiPost.mockResolvedValue({ success: true });
@@ -347,7 +328,6 @@ describe("ComposerModal (rendered)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Submit for approval" }));
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("504: gateway timeout"));
     expect(onPosted).not.toHaveBeenCalled();
-    // The draft (and its key) survive the failure — the next click is a retry.
     expect(values.has("announcements:draft:u9")).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Submit for approval" }));

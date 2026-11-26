@@ -32,7 +32,6 @@ const NO_PERM = { error: "You don't have permission to post to the general ledge
 const who = (c: Ctx): string | null =>
   (c.get('houzsUser') as { name?: string } | undefined)?.name ?? (c.get('user') as { id?: string } | undefined)?.id ?? null;
 
-/* ── GET /accounting/commission-release ──────────────────────────────────── */
 export const commissionReleaseStatus = async (c: Ctx): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -42,7 +41,6 @@ export const commissionReleaseStatus = async (c: Ctx): Promise<Response> => {
   const st = await loadReleaseSettings(sb, co.companyId);
   if (!st.ok) return c.json({ error: 'load_failed', reason: st.reason }, 500);
   const { current, last } = mytMonths(Date.now());
-  /* Planned through THIS month, so the page shows the month so far; only months that have ended are booked. */
   const data = await loadReleaseData(sb, co.companyId, st.settings.booksStart, current);
   if (!data.ok) return c.json({ error: 'load_failed', reason: data.reason }, 500);
   const plan = planCommissionRelease(data.data.input);
@@ -81,7 +79,6 @@ export const commissionReleaseStatus = async (c: Ctx): Promise<Response> => {
   });
 };
 
-/* ── GET /accounting/commission-release/orders?layer=bill:YYYY-MM|opening ─── */
 export const commissionReleaseOrders = async (c: Ctx): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -99,7 +96,6 @@ export const commissionReleaseOrders = async (c: Ctx): Promise<Response> => {
   return c.json({ layer, through: current, orders: layerOrders(data.data.input, plan, layer) });
 };
 
-/* ── POST /accounting/commission-release/run ─────────────────────────────── */
 export const commissionReleaseRun = async (c: Ctx): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -113,7 +109,6 @@ export const commissionReleaseRun = async (c: Ctx): Promise<Response> => {
   return c.json({ outcomes: r.outcomes }, r.outcomes.some((o) => o.action === 'failed') ? 500 : 200);
 };
 
-/* ── POST /accounting/commission-release/settings {on} ───────────────────── */
 export const commissionReleaseSettings = async (c: Ctx): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -125,7 +120,6 @@ export const commissionReleaseSettings = async (c: Ctx): Promise<Response> => {
   const saved = await saveReleaseSwitch(sb, co.companyId, body.on, who(c));
   if (!saved.ok) return c.json({ error: 'save_failed', reason: saved.reason }, 500);
   if (!body.on) return c.json({ ok: true, on: false, outcomes: [] });
-  /* Turned on: book every month now rather than waiting for tonight. */
   const r = await runCommissionRelease(sb, co.companyId, 'manual');
   if (!r.ok) return c.json({ ok: true, on: true, error: 'run_failed', reason: r.reason, outcomes: [] }, 500);
   return c.json({ ok: true, on: true, outcomes: r.outcomes });

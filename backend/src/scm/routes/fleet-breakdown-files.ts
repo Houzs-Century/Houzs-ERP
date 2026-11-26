@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// /api/fleet-breakdown-files - the scene photos and videos kept ON a Fleet
-// Health breakdown / incident case.
-//
-// scm.lorry_breakdown_cases.media_refs (mig 0204) has been written by the
-// mobile report (one photo, via the SLIPS upload) but nothing ever showed it,
-// and nothing could add a video. Same contract as fleet-work-order-files.ts:
-// raw body with ?ext=&name=, a server-minted key, POD_BUCKET, fleet.read /
-// fleet.write. Unified fleet: owner-checked by case id, not company-scoped.
-// ----------------------------------------------------------------------------
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
 import { requireHouzsPerm } from "../lib/houzs-perms";
@@ -29,9 +19,6 @@ const loadRefs = async (sb: Variables["supabase"], caseId: string) => {
   return { found: !!data, refs: ((data as { media_refs: string[] | null } | null)?.media_refs ?? []), error };
 };
 
-// PUT /:caseId?ext=mp4&name=scene.mp4
-// ponytail: read-modify-write of media_refs, same as work-order files; the
-// screens upload one file at a time.
 fleetBreakdownFiles.put("/:caseId", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - one fleet shared by HOUZS and 2990 (see fleet-maintenance.ts inHouseLorries).
   const caseId = c.req.param("caseId");
@@ -58,7 +45,6 @@ fleetBreakdownFiles.put("/:caseId", requireHouzsPerm("fleet.write"), async (c) =
   return c.json({ key }, 201);
 });
 
-// DELETE /:caseId?key=... - drops the ref; the R2 object too when it is ours.
 fleetBreakdownFiles.delete("/:caseId", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - one fleet shared by HOUZS and 2990 (see fleet-maintenance.ts inHouseLorries).
   const caseId = c.req.param("caseId");
@@ -71,12 +57,10 @@ fleetBreakdownFiles.delete("/:caseId", requireHouzsPerm("fleet.write"), async (c
   const { error } = await sb.from("lorry_breakdown_cases")
     .update({ media_refs: left.length ? left : null, updated_at: new Date().toISOString() }).eq("id", caseId);
   if (error) return c.json({ error: "update_failed", reason: error.message }, 500);
-  // A legacy slips/ key is left in SLIPS: that bucket has its own reaper.
-  if (isBreakdownFileKeyOf(key, caseId)) { try { await c.env.POD_BUCKET.delete(key); } catch { /* harmless orphan */ } }
+  if (isBreakdownFileKeyOf(key, caseId)) { try { await c.env.POD_BUCKET.delete(key); } catch { } }
   return c.json({ ok: true });
 });
 
-// GET /:caseId/file?key=... - stream one file back; the key must be on the case.
 fleetBreakdownFiles.get("/:caseId/file", requireHouzsPerm("fleet.read"), async (c) => {
   // company-scope: unified fleet - one fleet shared by HOUZS and 2990 (see fleet-maintenance.ts inHouseLorries).
   const caseId = c.req.param("caseId");

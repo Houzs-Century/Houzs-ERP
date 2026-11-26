@@ -1,21 +1,6 @@
-// Lightweight SWR-style cache for api.get(): short-TTL memory cache +
-// in-flight request dedup + cross-tab invalidation. Pattern lifted from
-// Hookka ERP's cached-fetch layer, trimmed to what Houzs needs today.
-//
-// Effect: navigating between pages re-renders instantly from cache instead
-// of refetching every panel (the old useQuery refetched on every mount),
-// and double-mounted components share one network request. Mutations
-// (post/patch/put/del in client.ts) invalidate the whole resource family
-// (`/api/projects/123/archive` clears every `/api/projects*` entry) in this
-// tab and, via BroadcastChannel, in every other open tab.
 
 const TTL_MS = 15_000;
 
-// Never cache: auth probes (login state must always be live), the project
-// chat/activity feed (polled every 3s — staleness would delay messages),
-// and presence (who-is-online must stay live).
-// The sidebar's combined counts too: no mutation family covers that path, so a
-// cached copy could outlive the write it should reflect.
 const NEVER_CACHE = [
   /^\/api\/auth\//,
   /\/activity(\?|$)/,
@@ -28,12 +13,6 @@ type Entry = { at: number; data: unknown };
 const store = new Map<string, Entry>();
 const inflight = new Map<string, Promise<unknown>>();
 
-// Monotonic invalidation clock. Each invalidate() bumps it and records the
-// value per resource prefix. A GET captures the clock when it STARTS; if a
-// covering mutation lands before that request resolves, the late response must
-// NOT re-populate the cache with now-stale data (read-after-write safety —
-// otherwise "save then the list shows the old value" can still happen even
-// though the cache was cleared, because an already-in-flight read repopulates it).
 let invalEpoch = 0;
 const invalidatedAt = new Map<string, number>();
 
@@ -57,7 +36,7 @@ try {
     if (e.data && e.data.t === "inv") invalidateLocal(String(e.data.p));
   };
 } catch {
-  bc = null; // older browsers: cache still works, just not cross-tab
+  bc = null;
 }
 
 export function cacheable(path: string): boolean {
@@ -84,8 +63,6 @@ export function getInflight<T>(path: string): Promise<T> | undefined {
 
 export function setInflight(path: string, p: Promise<unknown>): void {
   inflight.set(path, p);
-  /* Only our own entry: an invalidation may already have replaced it with a newer
-     read, and deleting that one sent every later caller to the network again (Hookka #890). */
   p.finally(() => { if (inflight.get(path) === p) inflight.delete(path); }).catch(() => {});
 }
 
@@ -93,8 +70,6 @@ function invalidateLocal(prefix: string): void {
   invalEpoch += 1;
   invalidatedAt.set(prefix, invalEpoch);
   for (const k of store.keys()) if (k.startsWith(prefix)) store.delete(k);
-  // Drop in-flight reads for this family too: a GET that began before the
-  // mutation must not be joined by a later read and then cache stale data.
   for (const k of inflight.keys()) if (k.startsWith(prefix)) inflight.delete(k);
 }
 
@@ -113,13 +88,8 @@ export function clearAll(): void {
   invalidate("/api");
 }
 
-/** Families whose writes change what another family reads: a bill on an event's
- *  sales report is read back through the Books not complete report and the P&L,
- *  both under /api/projects. */
 const ALSO_INVALIDATES: Record<string, string> = { "/api/project-sales-bills": "/api/projects" };
 
-/* Who else hears about a write: lib/queryClient.ts registers here to mark the
-   react-query reads stale, so this module stays free of react-query. */
 const writeListeners = new Set<(path: string) => void>();
 export function onApiWrite(fn: (path: string) => void): () => void {
   writeListeners.add(fn);

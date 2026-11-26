@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// systemNoticeLink — where a system notice in the bell opens, read from its
-// `source` tag. Most machine notices carry no place (a scan result, a service
-// case: the words are the whole message). A payment voucher reminder carries
-// its voucher (backend scm/routes/payment-vouchers-remind.ts, PV_REMIND_SOURCE):
-//
-//   pv_approval:<company id>:<voucher id>  → that voucher
-//   pv_approval:<company id>               → the checked vouchers (one note for several)
-//
-// The company rides along because the bell lists every company's notices while
-// a page reads the tab's own company: a note about another company's voucher
-// opens in a new window on that company — the switcher's own ?company= hand-off
-// (lib/activeCompany.ts consumeCompanyUrlSeed) — never in this tab under the
-// wrong one.
-// ----------------------------------------------------------------------------
 
 export type SystemNoticeLink = { to: string; companyId: number | null };
 

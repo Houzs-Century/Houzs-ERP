@@ -1,21 +1,3 @@
-// What this file pins: assembling a month out of daily files cannot invent a
-// balance it does not have.
-//
-// The two ways this could produce a clean-looking wrong answer, and the two
-// rules that stop it:
-//
-//   • taking a balance off a file that straddles the month edge — the opening
-//     printed on a 28 Aug - 3 Sep file is August's, and using it as September's
-//     is wrong by four days of movement while looking authoritative;
-//
-//   • not noticing a missing day — if he uploads the 1st to the 4th and then
-//     the 8th, the month is short four days of movement, and a reconciliation
-//     that reports the resulting difference as "unexplained" has told him
-//     nothing he can act on.
-//
-// Also pinned: a longer export overlapping a shorter one is NOT a break (it is
-// how he works), and the reconciliation window follows the days actually
-// uploaded rather than the calendar.
 
 import { describe, it, expect } from 'vitest';
 import { assembleMonth, monthWindow, monthOf, previousMonth, nextMonth, printedClosingOf, type MonthStatement } from './bank-month';
@@ -45,7 +27,6 @@ describe('the month window', () => {
   it('ends on the real last day of the month', () => {
     expect(monthWindow('2026-09')).toEqual({ from: '2026-09-01', to: '2026-09-30' });
     expect(monthWindow('2026-02')).toEqual({ from: '2026-02-01', to: '2026-02-28' });
-    /* A leap February is the case a hand-written table gets wrong. */
     expect(monthWindow('2028-02')).toEqual({ from: '2028-02-01', to: '2028-02-29' });
     expect(monthWindow('2026-12')).toEqual({ from: '2026-12-01', to: '2026-12-31' });
   });
@@ -87,7 +68,6 @@ describe('a month covered end to end by daily files', () => {
     expect(a.breaks).toEqual([]);
     expect(a.gaps).toEqual([]);
     expect(a.complete).toBe(true);
-    /* The identity the reconciliation will check: opening + movements = closing. */
     const sum = moves.reduce((s, m) => s + m.amountSen, 0);
     expect(a.statementOpeningSen! + sum).toBe(a.statementClosingSen);
   });
@@ -96,8 +76,6 @@ describe('a month covered end to end by daily files', () => {
     const a = assembleMonth('2026-09', files, moves)!;
     expect(a.monthFrom).toBe('2026-09-01');
     expect(a.monthTo).toBe('2026-09-30');
-    /* Nine-tenths of September has no file. Reconciling to the 30th would put
-       three weeks of ledger against three days of bank. */
     expect(a.periodFrom).toBe('2026-09-01');
     expect(a.periodTo).toBe('2026-09-03');
   });
@@ -112,7 +90,6 @@ describe('a month covered end to end by daily files', () => {
 });
 
 describe('a day he has not uploaded', () => {
-  /* The 5th to the 7th are missing, and RM 200.00 moved on them. */
   const files = [
     stmt({ id: 1, fileName: 'd04.csv', periodFrom: '2026-09-04', periodTo: '2026-09-04', openingBalanceSen: 1000000, closingBalanceSen: 1050000 }),
     stmt({ id: 2, fileName: 'd08.csv', periodFrom: '2026-09-08', periodTo: '2026-09-08', openingBalanceSen: 1070000, closingBalanceSen: 1090000 }),
@@ -133,9 +110,6 @@ describe('a day he has not uploaded', () => {
 });
 
 describe('a longer export overlapping a shorter one', () => {
-  /* How he actually works: a file a day, and the monthly statement on top of
-     the same days. The repeats arrive IGNORED; the balances agree at the
-     start, so this must not read as a missing day. */
   it('is not a break', () => {
     const a = assembleMonth('2026-09', [
       stmt({ id: 1, fileName: 'd01.csv', periodFrom: '2026-09-01', periodTo: '2026-09-01', openingBalanceSen: 1000000, closingBalanceSen: 1050000 }),
@@ -143,7 +117,6 @@ describe('a longer export overlapping a shorter one', () => {
     ], [])!;
     expect(a.breaks).toEqual([]);
     expect(a.complete).toBe(true);
-    /* And the month closes where the LONGER file closes, because it closes last. */
     expect(a.statementClosingSen).toBe(1400000);
     expect(a.closingFrom!.fileName).toBe('acs_month.csv');
   });
@@ -170,8 +143,6 @@ describe('a file that straddles the month end', () => {
       mov({ id: 1, bookedOn: '2026-09-02' }),
       mov({ id: 2, bookedOn: '2026-09-03' }),
     ])!;
-    /* The window follows the movements, not the file: 28-31 August is not
-       September's business. */
     expect(a.periodFrom).toBe('2026-09-02');
     expect(a.periodTo).toBe('2026-09-03');
   });
@@ -188,9 +159,6 @@ describe('a file that straddles the month end', () => {
 });
 
 describe('files that print no balances at all', () => {
-  /* Plenty of daily transaction reports do not. The month then has movements
-     and no balance to check them against — which is a missing figure, not a
-     break, and must not be reported as one. */
   it('reports the missing figures and finds no break', () => {
     const a = assembleMonth('2026-09', [
       stmt({ id: 1, periodFrom: '2026-09-01', periodTo: '2026-09-01', openingBalanceSen: null, closingBalanceSen: null }),
@@ -234,9 +202,6 @@ describe('a month with nothing in it', () => {
 });
 
 describe('a month whose files print no balance, with the figures typed (docs/bugs/0858)', () => {
-  /* Maybank's Account Activity Report: movements only. The owner types the
-     month-end figure off the bank's own statement; the month opens where the
-     previous one closed. The IGNORED movement is a repeat and moves nothing. */
   const files = [stmt({
     id: 1, fileName: 'ACCOUNTACTIVITYREPORT_564418759397.csv',
     periodFrom: '2026-06-02', periodTo: '2026-06-29', openingBalanceSen: null, closingBalanceSen: null,
@@ -259,9 +224,6 @@ describe('a month whose files print no balance, with the figures typed (docs/bug
     expect(a.complete).toBe(true);
   });
 
-  /* THE ONE THAT MATTERS: a typed figure is believed only when the movements
-     reach it. Otherwise a day is missing, or the figure is wrong, and the
-     month says so with the amount rather than closing over it. */
   it('is not whole while the typed closing does not follow from the opening and the movements', () => {
     const a = assembleMonth('2026-06', files, moves, { closing: { ...typedJune, closingSen: 1035000 }, previousClosing: typedMay })!;
     expect(a.complete).toBe(false);
@@ -279,13 +241,11 @@ describe('a month whose files print no balance, with the figures typed (docs/bug
   });
 
   it('lets a figure a file prints win over a typed one', () => {
-    /* A Hong Leong-style file for the 30th that prints the closing. */
     const printed = stmt({ id: 2, fileName: 'd30.csv', periodFrom: '2026-06-30', periodTo: '2026-06-30', openingBalanceSen: null, closingBalanceSen: 1030000 });
     const a = assembleMonth('2026-06', [...files, printed], moves, { closing: { ...typedJune, closingSen: 5 }, previousClosing: typedMay })!;
     expect(a.statementClosingSen).toBe(1030000);
     expect(a.closingFrom).toMatchObject({ statementId: 2, fileName: 'd30.csv' });
     expect(a.closingFrom!.typed).toBeUndefined();
-    /* The opening is still the typed one, and the typed check still runs against it. */
     expect(a.openingFrom).toMatchObject({ typed: { month: '2026-05' } });
     expect(a.complete).toBe(true);
   });

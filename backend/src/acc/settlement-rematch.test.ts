@@ -69,11 +69,9 @@ describe('matching a merchant\'s open lines again', () => {
     expect(r).toEqual({ ok: true, acquirerCode: 'AEON', reports: 2, lines: 2, matched: 1, newlyMatched: 1, released: 0, failed: [] });
     expect(rowOf(sb, 11)).toMatchObject({ bucket: 'MATCHED', match_reason: 'ref', notes: 'Reference 090666 matches SO-A' });
     expect(linksOf(sb, 11)).toEqual(['pA']);
-    /* Confirmed: the ledger's. Set aside: a person's decision. */
     expect(rowOf(sb, 12)).toMatchObject({ bucket: 'MATCHED', confirmed_at: '2026-10-21T03:55:00Z' });
     expect(linksOf(sb, 12)).toEqual(['pC']);
     expect(rowOf(sb, 13).bucket).toBe('IGNORED');
-    /* pA was taken by the first report, so the second only offers what is left. */
     expect(rowOf(sb, 21).bucket).toBe('NEEDS_CONFIRM');
     expect(linksOf(sb, 21)).toEqual([]);
   });
@@ -103,7 +101,6 @@ describe('matching a merchant\'s open lines again', () => {
     const before = JSON.stringify([sb.tables.acc_settlement_rows, sb.tables.acc_settlement_matches]);
     expect(await rematchOpenLines(sb, 1, 'AEON')).toMatchObject({ ok: true, newlyMatched: 0, released: 0, matched: 1 });
     expect(await rematchOpenLines(sb, 1, 'PBB')).toMatchObject({ ok: true, newlyMatched: 0, released: 0, matched: 1 });
-    /* Same answers, same links; only the update stamps could differ, and none were written. */
     expect(JSON.stringify([sb.tables.acc_settlement_rows, sb.tables.acc_settlement_matches])).toBe(before);
   });
 

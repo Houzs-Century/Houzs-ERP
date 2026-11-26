@@ -54,7 +54,6 @@ const STORAGE_KEY = 'pr-g.dr-from-do-lines.layout.v1';
 
 const CONDITIONS = ['NEW', 'OPENED', 'DAMAGED', 'DEFECTIVE'] as const;
 
-/* Compact pill input — mirrors the SO→DO picker's qty input. */
 const QTY_INPUT: CSSProperties = {
   height: 28,
   border: '1px solid var(--line)',
@@ -65,8 +64,6 @@ const QTY_INPUT: CSSProperties = {
   color: 'var(--c-ink)',
 };
 
-/* One distinct customer key per DO line — match the server's same-customer rule:
-   debtor_code when present, else fall back to debtor_name. */
 const custKey = (l: DoRemainingLine): string =>
   (l.debtorCode && l.debtorCode.trim())
     ? `code:${l.debtorCode.trim().toUpperCase()}`
@@ -78,19 +75,12 @@ export const DeliveryReturnFromDo = () => {
   const navigate = useNavigate();
   const linesQ = useReturnableDoLines();
 
-  /* WHICH delivery order the operator came FROM, if any — the same mechanism
-     the SI picker uses, so the Delivery Order list's "Transfer to Delivery
-     Return" lands on the note that was right-clicked instead of on every
-     returnable delivery in the company. No parameter → the full picker, which
-     is what the Delivery Returns list toolbar's own button wants. */
   const [searchParams] = useSearchParams();
   const scope = useMemo(
     () => readConvertScope('doToDr', searchParams, []),
     [searchParams],
   );
 
-  // Map<doItemId, { picked, qty, condition }>. Defaults: picked = false; when
-  // ticked, qty defaults to the line's remaining, condition to NEW.
   const [picks, setPicks] = useState<Record<string, Pick>>({});
   const [dialog, setDialog] = useState<{ title: string; body: string } | null>(null);
 
@@ -108,11 +98,6 @@ export const DeliveryReturnFromDo = () => {
     return m;
   }, [rows]);
 
-  /* A scoped entry pre-ticks the note's returnable lines at their full remaining
-     quantity, so the screen is a ready-to-review draft rather than a filtered
-     list to re-tick by hand — same as the SI picker. Nothing is returned here
-     and no stock moves back IN; Continue only carries the picks to the New
-     Delivery Return form. */
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current) return;
@@ -123,8 +108,6 @@ export const DeliveryReturnFromDo = () => {
     const first = mine[0];
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mine[0] is typed non-optional without noUncheckedIndexedAccess; an empty scope match is real
     if (!first) return;
-    // Honour the one-customer-per-return lock: tick only the first line's
-    // customer, even if the scope somehow spans two.
     const lockTo = custKey(first);
     setPicks(() => {
       const next: Record<string, Pick> = {};
@@ -319,9 +302,6 @@ export const DeliveryReturnFromDo = () => {
       setDialog({ title: 'Nothing picked', body: 'Tick at least one Delivery Order line to return first.' });
       return;
     }
-    // Stash the picked lines (qty + condition) and open the normal New Delivery
-    // Return form prefilled for review. No stock moves back IN until the operator
-    // clicks Create on that screen.
     const stash = picked
       .map(([doItemId, v]) => {
         const r = rowById.get(doItemId);

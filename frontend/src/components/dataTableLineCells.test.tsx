@@ -1,6 +1,3 @@
-/* The ONE way a line column looks on a one-row-per-document grid (owner
- * 2026-09-15): the value, or the first value and "+N", every value in the
- * tooltip; sums for quantities; each line's own cell in the export. */
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import {

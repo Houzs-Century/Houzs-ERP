@@ -1,7 +1,3 @@
-// What each second-level Sales Order list filter asks the database for. The
-// list reads PostgREST, so a filter IS the predicate chain it appends — these
-// record that chain on a fake builder and pin it, column by column, because a
-// filter that reads the wrong column returns plausible rows and says nothing.
 import { describe, expect, it, vi } from 'vitest';
 import {
   applySoListFilters,

@@ -45,7 +45,6 @@ export function OfficialDocActions({ kind, id, state, note, stateTag, buttonClas
 }) {
   const mark = useMarkOfficialDoc();
   const askPrompt = usePrompt();
-  /* Owed, with Finance's remark: blank keeps the one there (or none). */
   const markOwed = async (title: string) => {
     const remark = await askPrompt({ title, body: note ? `Now: ${note}` : undefined, confirmLabel: 'Save', input: REMARK_INPUT });
     if (remark == null) return;

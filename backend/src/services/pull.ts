@@ -19,19 +19,6 @@ export async function runPull(
   env: Env,
   triggerType: "MANUAL" | "SCHEDULED",
   mode: PullMode = "filtered",
-  /* BACKFILL WINDOW. `null` = normal behaviour. A date here makes the pull ask
-     getSince(<that date>) instead of getSince(checkpoint), and the checkpoint is
-     NEITHER read NOR advanced — so a backfill cannot disturb the incremental pull
-     that is working.
-
-     Required as `| null` rather than optional: it decides which window AutoCount
-     is asked for, and CLAUDE.md's rule is that a parameter which decides
-     something must make every caller say so.
-
-     Why this exists: `mode: "all"` calls getAll(), and against ~13,000 orders
-     that KILLED THE WORKER — measured 2026-08-19, 39 seconds then
-     `Worker exceeded resource limits`. A full refresh cannot run in one request,
-     so a backlog has to be collected in windows. */
   since: string | null = null
 ): Promise<PullResult> {
   const rid = crypto.randomUUID();
@@ -40,8 +27,6 @@ export async function runPull(
   const logType = mode === "all" ? `PULL_ALL_${triggerType}` : `PULL_${triggerType}`;
 
   try {
-    // "all" mode: full refresh via /getAll, no checkpoint involvement.
-    // "filtered" mode: incremental via /getSince, advances checkpoint.
     let checkpoint = "";
     if (mode === "filtered" && !since) {
       const cp = await env.DB.prepare(
@@ -73,7 +58,6 @@ export async function runPull(
     let upserted = 0;
     let skipped = 0;
     let failed = 0;
-    // The checkpoint freezes on any failed row, so the log names them (worker console logs expire).
     const failedRows: string[] = [];
 
     for (const o of data) {
@@ -94,9 +78,6 @@ export async function runPull(
 
     let checkpointAdvanced = false;
     let newCheckpoint: string | null = null;
-    // Only the filtered (incremental) mode advances the checkpoint.
-    // `since` never advances the checkpoint: a backfill reaches BACKWARDS, so
-    // writing its window forward would skip everything between.
     if (mode === "filtered" && !since && failed === 0) {
       const last = data[data.length - 1];
       if (last.LastModified) {
@@ -136,44 +117,6 @@ export async function runPull(
   }
 }
 
-/* Upsert one AutoCount SO into the local `sales_orders` MIRROR. Read-only
-   against AutoCount — this only ever writes ERP tables.
-
-   `ac_udf_pdate` (renamed from `processing_date` in mig 0285) is AutoCount's own
-   user-defined field SO.UDF_PDate, copied verbatim for AutoCount's document. It
-   is NOT the ERP's Processing Date and must never be read as one: the ERP has
-   exactly ONE Processing Date, scm.mfg_sales_orders.internal_expected_dd, on a
-   different table for a different document, and nothing joins the two. The old
-   name made this column look like the ERP's field to every reader who met it,
-   which is the confusion the owner has now called out more than three times. */
-/* WHAT THIS STATEMENT WRITES IS THE POSTGRES TABLE, NOT THE OLD D1 ONE.
- *
- * `public.sales_orders` was created by `0000_baseline.sql` with 22 columns and
- * has gained exactly two since (`customer_email`, 0009; `processing_date` renamed
- * to `ac_udf_pdate`, 0285). This INSERT named SEVEN columns that have never
- * existed on it — `transfer_to`, `note`, `inv_addr1..4`, `sync_error` — carried
- * over verbatim from the D1 schema (`src/db/schema.sql`) at the Postgres cutover.
- * Postgres answers an unknown column with 42703 and refuses the whole statement,
- * so EVERY AutoCount sales-order pull threw, `failed` incremented for all of
- * them, and `runPull` only advances `pull_checkpoint` when `failed === 0` — the
- * window is refetched forever and the mirror has taken nothing since the cutover.
- * Nothing surfaced it because the per-row failure is caught and counted.
- *
- * `company_id` is the other half. Migration 0083 added it and set it NOT NULL
- * with no DEFAULT, and this statement never named it, so even with the seven
- * phantom columns removed the first INSERT of a new doc_no would 23502. It is
- * resolved in SQL from the companies master rather than passed in, because that
- * is precisely what 0083's own backfill did (`WHERE code = 'HOUZS'`) and it keeps
- * the value out of reach of a caller that could get it wrong: this mirror is the
- * HOUZS account book by construction — AutoCount is company 1's system, 2990 has
- * its own — so there is no second answer to pick between.
- *
- * The four address fields and the note are NOT quietly dropped data: the columns
- * they were being written to do not exist, so nothing was ever stored in them.
- * `o.InvAddr1..4` / `o.SOUDF_Note` are still read from AutoCount by the puller's
- * caller and are simply not part of this table's shape. If they are wanted, the
- * fix is a migration that adds them, not a statement that pretends they are there.
- */
 export async function upsertSalesOrder(env: Env, o: ACSalesOrder, region: "WEST" | "EAST" | "SG"): Promise<void> {
   await env.DB.prepare(
     `INSERT INTO sales_orders (

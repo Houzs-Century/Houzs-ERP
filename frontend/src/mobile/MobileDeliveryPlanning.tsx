@@ -16,9 +16,6 @@ import {
   type PlanningLineItem,
 } from "../vendor/scm/lib/delivery-planning-queries";
 import { useCreateAmendment } from "../vendor/scm/lib/so-amendment-queries";
-/* The "Delivery details" card, plus the three presentational primitives that
-   moved with it. They live there because BOTH modules need them and this one
-   already imports that file — the other direction would be a cycle. */
 import {
   DeliveryFieldsCard,
   EM,
@@ -86,14 +83,8 @@ type BoardRow = {
   amended_delivery_date: string | null;
   effective_delivery_date: string | null;
   processing_date: string | null;
-  // The lorry run this stop is on (Time Arrangement) — the day it is actually
-  // driven and its place in the run.
   trip_date?: string | null;
   trip_stop_no?: number | null;
-  /* Server-computed: a live (non-cancelled) PO already claims one of this SO's
-     lines (2990 only). NOT derivable here — the feed carries no PO linkage —
-     and it is the second road into the same soft lock, so procLockActive needs
-     it alongside processing_date. Absent reads as false. */
   po_locked?: boolean | null;
   days_left: number | null;
   address: string | null;
@@ -101,19 +92,10 @@ type BoardRow = {
   building_type: string | null;
   house_type: string | null;
   replacement_disposal: string | null;
-  // HC SO-context: the customer's referral / reference tag and the possession
-  // ("move") date — both surfaced on the stop detail when present.
   referral: string | null;
-  // Reference — mfg_sales_orders.ref (AutoCount Ref), the desktop board's "Reference" column. SO rows only.
   so_ref?: string | null;
-  // PO No. — purchase orders raised from the SO (SO rows only).
   po_nos?: string[];
   possession_date: string | null;
-  /* The company this stop's documents belong to ('HOUZS' / '2990'), from the
-     cross-company board feed (PlanningOrder.company_code). The run-sheet is a
-     SHARED queue across both companies, so a driver granted both runs a mixed
-     route — and every per-DO action (Start / Arrived / POD) must act in the
-     STOP's own company, not the tab's active one. Null on non-DO / unresolved. */
   company_code?: string | null;
   region: string | null;
   regions?: string[];
@@ -125,20 +107,14 @@ type BoardRow = {
   time_confirmed?: boolean | null;
   arrival_at?: string | null;
   departure_at?: string | null;
-  // Non-DO stops (Setup/Dismantle, Service Case legs, manual DP jobs) — see MobileJobStop.
   row_type?: string | null;
   dp_job_type?: string | null;
   assr_id?: number | null;
   job_kind?: string | null;
-  // Cross-border (EM/SG) DO-execution dates — provided by /delivery-planning
-  // from the latest DO. Needed so an EM/SG stop's shipout + arriving-port can be
-  // entered on mobile (desktop parity with DeliveryFieldsDrawer).
   shipout_date?: string | null;
   customer_delivered_date?: string | null;
   eta_arriving_port?: string | null;
   delivery_substatus?: string | null;
-  // The latest DO's own document date (= its delivery date). The run-sheet keeps
-  // a delivery only when this matches the order's Delivery Date (runSheetDispatch).
   do_date?: string | null;
   crew: Crew;
   delivery_orders?: DeliveryOrderRef[];
@@ -160,7 +136,6 @@ type BoardResponse = {
   regions?: RegionCfg[];
 };
 
-// ── Day tabs ──
 type Day = "today" | "tomorrow" | "history";
 const DAY_TABS: { key: Day; label: string }[] = [
   { key: "today", label: "Today" },
@@ -168,63 +143,38 @@ const DAY_TABS: { key: Day; label: string }[] = [
   { key: "history", label: "History" },
 ];
 
-// ── Formatters — never render null / undefined / NaN. ──
-// TZ-aware numeric DD/MM/YYYY via the shared helper (returns "—" for blank /
-// unparseable), so date-only strings render in Asia/Kuala_Lumpur without an
-// off-by-one on an off-zone device.
 const dm = (d: string | null | undefined) => formatDate(d);
 // The Malaysian day a date-ish string falls on, not the phone's own zone
 // (owner 2026-11-09: every date filter judges by the Malaysian day).
 const dayKey = (d: string | null | undefined): string => mytDayOfValue(d) ?? "";
 
-/* The effective delivery date the run-sheet buckets on.
-   `job_date` sits beside internal_expected_dd rather than replacing it: a
-   synthetic job row now carries its leg date there instead of in the SO's
-   Processing-Date field. Behaviour is unchanged — a synthetic row always sets
-   effective_delivery_date and customer_delivery_date to the same leg date, so
-   neither tail was ever reached on those rows. */
 const effDateOf = (o: BoardRow): string | null =>
   o.effective_delivery_date ||
   o.customer_delivery_date ||
   o.processing_date ||
   null;
 
-/* The day the stop is actually DRIVEN: its trip's date once Time Arrangement has
-   put it on a lorry run, else the order's own delivery date. Bucketing on the
-   order date alone put a stop under the wrong day whenever the run was moved. */
 const runDateOf = (o: BoardRow): string | null => o.trip_date || effDateOf(o);
 
 /* History reaches back only to the 1st of the CURRENT month (owner 2026-10-21):
    a run-sheet, not a ledger. The month floor is computed in `buckets`. */
 
-// House type — HC raw-data field, falling back to the SO building_type.
 const houseTypeOf = (o: BoardRow): string | null =>
   (o.house_type && o.house_type.trim()) ||
   (o.building_type && o.building_type.trim()) ||
   null;
 
-// The latest (last) DO reference — the crew / status source-of-truth, matching
-// the board's "latest DO wins" convention.
 const latestDo = (o: BoardRow): DeliveryOrderRef | null => {
   const dos = (o.delivery_orders ?? []).filter((d) => d && d.id);
   return dos.length ? dos[dos.length - 1]! : null;
 };
 
-// Stop tracking state derived from REAL data — DO status + timestamps.
-// done    = latest DO is DELIVERED/INVOICED (or a delivered timestamp exists).
-// arrived = an arrival timestamp exists (or done).
-// started = "on the way": DO is IN_TRANSIT/SIGNED/…, a departure/arrival
-//           timestamp exists, or the bucket says DELIVERED.
 type TrackState = "sched" | "otw" | "arrived" | "done" | "late";
 const stopFlags = (
   o: BoardRow,
 ): { started: boolean; arrived: boolean; done: boolean } => {
   const doRef = latestDo(o);
   const st = (doRef?.status ?? "").toUpperCase();
-  /* With a DO, the DO decides. The board's delivery_state reads DELIVERED as
-     soon as every unit has SHIPPED (stock out at dispatch), so a stop still on
-     the lorry showed as done and the driver could not act on it. Without a DO
-     there is nothing else to go on. */
   const done = doRef
     ? st === "DELIVERED" || st === "INVOICED" || st === "SIGNED" || !!o.customer_delivered_date
     : o.delivery_state === "DELIVERED" || !!o.customer_delivered_date;
@@ -238,10 +188,7 @@ const stopFlags = (
   return { started, arrived, done };
 };
 
-// End of the delivery window in minutes, read from the office's free-text
-// time_range ("TIME AROUND 1:30PM TO 3:30PM" → 930) — drives the "late" pill.
 const windowEndMin = (o: BoardRow): number | null => timeSlotEndMin(o.time_range);
-// A today stop is "late" once we're past its delivery window and it isn't done.
 const isLate = (o: BoardRow, isToday: boolean): boolean => {
   if (!isToday) return false;
   if (stopFlags(o).done) return false;
@@ -290,29 +237,20 @@ export function MobileDeliveryPlanning({
 }: {
   onBack: () => void;
   onOpen?: (docNo: string) => void;
-  /* Open the Proof-of-Delivery screen for a DO NUMBER — see onComplete. */
   onPod?: (doNumber: string, companyCode?: string | null) => void;
-  /* The DO whose POD was just confirmed (null when the sheet is opened normally).
-     The sheet then opens the NEXT open stop of today's run, so a driver goes
-     stop 1 -> stop 2 -> ... without returning to the list in between. */
   completedDoNumber: string | null;
 }) {
   const [day, setDay] = useState<Day>("today");
-  // The stop currently open in the detail view (its SO doc_no).
   const [openStop, setOpenStop] = useState<string | null>(null);
 
-  // Board fetch — all regions, all states; we bucket client-side by day.
   const { data, isLoading, error } = useQuery({
     queryKey: ["mobile-delivery-planning", "ALL"],
     queryFn: () =>
       authedFetch<BoardResponse>(`/delivery-planning?region=ALL&state=ALL`),
-    select: (d: BoardResponse) => withSavedCrew(d), // a crew just saved stays shown over a slow / stale reload
+    select: (d: BoardResponse) => withSavedCrew(d),
     staleTime: 30_000,
   });
 
-  /* A non-DO stop's On the way / Arrived / Done live in job_progress, not on a
-     DO; fold them onto the row's own timestamps so stopFlags reads every stop
-     the same way. */
   const progressMap = useJobProgressMap();
   // East Malaysia + Singapore ride their own freight channel, not the local
   // lorry run, so they never belong on a driver's run-sheet (owner 2026-10-25).
@@ -338,10 +276,8 @@ export function MobileDeliveryPlanning({
     [allOrders, driverFilter],
   );
 
-  // today / tomorrow as Malaysian days.
   const { todayKey, tomorrowKey } = useMemo(() => ({ todayKey: todayMyt(), tomorrowKey: todayMyt(1) }), []);
 
-  // Split into the three day-buckets, each ordered by effective date then doc.
   const buckets = useMemo(() => {
     const today: BoardRow[] = [];
     const tomorrow: BoardRow[] = [];
@@ -349,22 +285,15 @@ export function MobileDeliveryPlanning({
     // History = the CURRENT month only (owner 2026-10-21): floor at the 1st.
     const monthFloor = `${todayKey.slice(0, 8)}01`;
     for (const o of shownOrders) {
-      // Only stops actually on a run — a cut DO or an assigned driver. An order
-      // that merely carries today's customer date (no DO, no driver) is not yet
-      // dispatched and stays on the desktop board. See runSheetDispatch.ts.
       if (!isDispatched(o)) continue;
       const k = dayKey(runDateOf(o));
-      /* A finished stop STAYS on its day, so Today reads "3 / 8 delivered"
-         instead of always 0 / n — it used to be moved to History on completion. */
       if (k && k === todayKey) {
         today.push(o);
       } else if (k && k === tomorrowKey) {
         tomorrow.push(o);
       } else if (k && k < todayKey && k >= monthFloor) {
-        // delivered or still-open earlier THIS month (history = current month).
         history.push(o);
       }
-      // else: further-out / undated → left off the run-sheet (desktop owns it).
     }
     // Day first; within a day, the stop's place in its lorry run (Time
     // Arrangement's sequence), else the delivery time slot, else document number
@@ -378,7 +307,6 @@ export function MobileDeliveryPlanning({
     };
     today.sort(bySeq);
     tomorrow.sort(bySeq);
-    // History newest-first.
     history.sort((a, b) => -bySeq(a, b));
     return { today, tomorrow, history };
   }, [shownOrders, todayKey, tomorrowKey]);
@@ -391,17 +319,15 @@ export function MobileDeliveryPlanning({
     const at = run.findIndex((o) => latestDo(o)?.do_number === completedDoNumber);
     const next = run.slice(at + 1).find((o) => !stopFlags(o).done) ?? run.find((o) => !stopFlags(o).done);
     setDay("today");
-    // Nothing left to run: back to the list, not the stop just finished.
     setOpenStop(next ? next.so_doc_no : null);
   }, [completedDoNumber, data, buckets]);
 
-  // Same hand-off for a non-DO job: once its completion shows on the sheet, open the next open stop.
   const [advanceAfter, setAdvanceAfter] = useState<string | null>(null);
   useEffect(() => {
     if (!advanceAfter) return;
     const run = buckets.today;
     const at = run.findIndex((o) => o.so_doc_no === advanceAfter);
-    if (at >= 0 && !stopFlags(run[at]!).done) return; // wait for the refreshed progress
+    if (at >= 0 && !stopFlags(run[at]!).done) return;
     setAdvanceAfter(null);
     const next = run.slice(at + 1).find((o) => !stopFlags(o).done) ?? run.find((o) => !stopFlags(o).done);
     setOpenStop(next ? next.so_doc_no : null);
@@ -416,7 +342,6 @@ export function MobileDeliveryPlanning({
   const total = list.length;
   const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
 
-  // Crew line — from the first stop that carries one (single-lorry run-sheet).
   const crewLine = useMemo(() => {
     for (const o of list) {
       const bits = [o.crew?.driver, o.crew?.helper].filter(Boolean) as string[];
@@ -432,7 +357,6 @@ export function MobileDeliveryPlanning({
   const detailOrder = openStop
     ? (allOrders.find((o) => o.so_doc_no === openStop) ?? null)
     : null;
-  // 1-based sequence within the current day bucket for the open stop.
   const detailSeq = detailOrder
     ? Math.max(
         0,
@@ -440,18 +364,12 @@ export function MobileDeliveryPlanning({
       ) + 1
     : 0;
 
-  // route_date = the date the active day bucket represents (today / tomorrow;
-  // History has no single date, so we fall back to the tab label). MUST be
-  // declared BEFORE the detailOrder early-return below, or opening a stop
-  // renders fewer hooks than the list view and React throws error #300.
   const routeDate = day === "today" ? todayKey : day === "tomorrow" ? tomorrowKey : null;
 
   const detailJob = detailOrder ? jobRefOf(detailOrder) : null;
-  // The open DO stop follows the other crew member's taps (crew-stop-live.ts).
   const liveDo = useLiveDoStop(detailOrder && !detailJob ? (latestDo(detailOrder)?.do_number ?? null) : null).data?.deliveryOrder;
   if (detailOrder && detailJob) {
     return (
-      // Keyed per job: moving to the next stop must not carry the last stop's photos.
       <MobileJobStop key={jobKey(detailJob)} jobRef={detailJob} seq={detailSeq} onBack={() => setOpenStop(null)}
         onDone={() => setAdvanceAfter(detailOrder.so_doc_no)} />
     );
@@ -585,8 +503,6 @@ export function MobileDeliveryPlanning({
           </div>
         )}
 
-        {/* Phase 4 — live location capture. Self-gating: renders + captures only
-            when the driver has an in-progress trip and this page is open. */}
         <MobileTrackingBanner />
 
         <div
@@ -735,7 +651,6 @@ export function MobileDeliveryPlanning({
   );
 }
 
-// Track state → canonical badge variant (spec § States → badge).
 const BADGE_CLASS: Record<TrackState, string> = {
   done: "b-green",
   late: "b-red",
@@ -744,7 +659,6 @@ const BADGE_CLASS: Record<TrackState, string> = {
   sched: "b-amber",
 };
 
-// ── Status pill — canonical .badge tinted per track state. ──
 function StopPill({ o, isToday }: { o: BoardRow; isToday: boolean }) {
   const st = trackState(o, isToday);
   return (
@@ -752,7 +666,6 @@ function StopPill({ o, isToday }: { o: BoardRow; isToday: boolean }) {
   );
 }
 
-// ── A grey pill chip (house type / crew) — mirrors metaChip(). ──
 function MetaChip({ children }: { children: ReactNode }) {
   return (
     <span
@@ -797,11 +710,6 @@ function JobTypeChip({ o }: { o: BoardRow }) {
   );
 }
 
-/* HC "Remark 4" delivery sub-status → pill tone. Mirrors the desktop board's
-   SUBSTATUS_TONE (pages/scm-v2/DeliveryPlanning.tsx) verbatim. The VALUES are
-   already shared via HC_SUBSTATUS_VALUES, but the display tone is desktop-local,
-   so it is replicated here rather than pulling the whole desktop screen into the
-   mobile bundle. Unknown / blank → muted. */
 const SUBSTATUS_TONE: Record<string, string> = {
   "Pending Pickup": "#767b6e",
   "Done Shipout": "#2f5d4f",
@@ -812,7 +720,6 @@ const SUBSTATUS_TONE: Record<string, string> = {
   "Request Hold": "#0c3f39",
 };
 
-// ── Sub-status chip — a MetaChip-shaped pill tinted with the desktop tone. ──
 function SubstatusChip({ value }: { value: string }) {
   const tone = SUBSTATUS_TONE[value] ?? "#767b6e";
   return (
@@ -834,10 +741,6 @@ function SubstatusChip({ value }: { value: string }) {
   );
 }
 
-// ── days_left urgency micro-pill — the desktop board shows days_left in a
-// column; here we raise only the URGENT states so a past-due History row reads
-// as overdue instead of just "Scheduled". Reuses the canonical .badge tints: red
-// for overdue, brand for today / due-soon. Delivered or far-out (>3d) → nothing.
 function DaysLeftChip({ days, done }: { days: number | null; done: boolean }) {
   if (done || days == null || days > 3) return null;
   const overdue = days < 0;
@@ -877,10 +780,6 @@ function StopCard({
   const addr = (o.address && o.address.trim()) || "";
   const pc = (o.postcode && o.postcode.trim()) || "";
 
-  // Designer stop-card layout (planStopCard): seq circle + title + doc sub +
-  // a state-tinted clock time-pill; then the status Badge + house-type / disposal
-  // tag chips; then a pin address line + postcode; then the balance-only block;
-  // then the "View & deliver ›" CTA. Real data + our track-state Late pill.
   return (
     <div
       className="card"
@@ -1067,14 +966,7 @@ function StopCard({
   );
 }
 
-/* ── StopDetail — per-stop job-card detail: late banner, Call / Navigate,
-   Emergency contact, the delivery-info card, goods-to-deliver item list,
-   disposal callout, Setup photo group + 3D floor-plan attach, sales/doc
-   rows, the balance-to-collect block, and the Delivery-tracking timeline
-   (Start → Arrive → Done) wired to the DO status endpoint.
-   ─────────────────────────────────────────────────────────────────────── */
 
-// pdItem — one goods line (name + optional spec + qty). Mirrors pdItem().
 function PdItem({
   n,
   spec,
@@ -1125,8 +1017,6 @@ function PdItem({
   );
 }
 
-// pdPhotoGroup — a capture row (camera tile + placeholder slots). Mirrors
-// pdPhotoGroup(); the real capture lives behind onOpen(doc).
 function PdPhotoGroup({
   title,
   note,
@@ -1198,7 +1088,6 @@ function PdPhotoGroup({
   );
 }
 
-// pdAttach — an attachment row (icon + title + sub). Mirrors pdAttach().
 function PdAttach({
   title,
   sub,
@@ -1284,37 +1173,9 @@ function StopDetail({
   const confirm = useConfirm();
   const localities = useLocalities().data;
   const pcIndex = useMemo(() => postcodeIndex(localities ?? []), [localities]);
-  /* Operating a DO — cutting one (/from-sos) AND advancing its status
-     (/status: IN_TRANSIT / DELIVERED) — is the Office department's job (owner
-     2026-07-17), and the backend 403s the Sales cohort on BOTH. Drivers and
-     Office are unaffected — they are not the Sales cohort. Same ONE helper the
-     desktop board and every other DO control resolve through, so the Convert +
-     Start/Arrived/POD actions share this single gate (was Convert-only, which
-     left the status buttons ungated once a DO existed). */
   const { user, can, pageAccess } = useAuth();
   const canOperateDo = canOperateDeliveryOrders(user, can, pageAccess);
-  /* The driver POD chain (Start → Arrived → POD) also opens for a position
-     holding scm.do.dispatch (a Driver), whose scm.sales.delivery is `none` so
-     canOperateDo is false. The SERVER enforces the DO is their OWN, already-
-     dispatched job. Convert-to-DO stays canOperateDo — cutting a document is
-     Office-only; a driver at a stop with no DO is told to ask Office. */
   const canDoSteps = canOperateDo || canDriverCompleteDelivery(user);
-  /* One key for the one DO this stop can cut (lib/idempotency.ts). NOT on
-     fix/so-idempotency's list — it names the DO hook, and this surface reaches
-     /delivery-orders-mfg/from-sos through a bare authedFetch instead — but it is
-     the same document and the same 4G driver, so it is fixed in the same PR.
-
-     WHY PER-MOUNT IS PER-ORDER HERE, since this component takes `order` as a
-     PROP rather than owning it — that would normally be the collapse trap (React
-     reuses an instance at the same position and a lazy useState would then hand
-     TWO stops ONE key, silently replaying stop A's DO for stop B). It cannot
-     happen: MobileDeliveryPlanning renders this behind an EARLY RETURN (`if
-     (detailOrder) return <StopDetail .../>`, :378), so the board is not mounted
-     while a stop is open, and the only way to reach another stop is onBack →
-     setOpenStop(null) → this unmounts. There is no order-A→order-B prop
-     transition. If that early return is ever replaced by rendering StopDetail
-     inside the list, this key MUST move onto the order identity — the invariant
-     it rests on is that the mount is one stop. */
   const idemKey = useIdempotencyKey();
 
   const { started, arrived, done } = stopFlags(order);
@@ -1332,26 +1193,12 @@ function StopDetail({
   const doneAt = hhmm(order.customer_delivered_date);
   const htype = houseTypeOf(order);
   const moveInDate = order.possession_date ? dm(order.possession_date) : "";
-  // Reference = the order's `ref` (e.g. pg0791). `referral` is the HC referral
-  // channel, empty on every order, and is no longer what this row shows (0934).
   const referral = (order.so_ref && order.so_ref.trim()) || "";
   const disposal =
     (order.replacement_disposal && order.replacement_disposal.trim()) || "";
-  // Booth setup/dismantle POD shows only for a real SETUP/DISMANTLE job (project
-  // window or manual DP order), read off the feed's dp_job_type — NOT off disposal.
-  // A customer delivery with "replace furniture" is still a delivery. See setupDismantleJob.ts.
   const isSetup = isSetupDismantleJob(order);
 
-  // Invalidate the board AND every sibling mobile query that renders the same
-  // DO/SO state, so a convert / start / complete on this board doesn't leave the
-  // mobile POD screen or SO list showing pre-mutation status inside their 15-30s
-  // staleTime window (the desktop board already invalidates all sibling keys).
   const invalidate = () => {
-    // Shared/desktop DO, delivery-planning, inventory and SO caches too, so a
-    // desktop board/list doesn't read stale after a mobile convert/status/deliver.
-    // MobilePOD now reads through the SHARED DO hooks, so invalidateDoShared
-    // reaches it — the ["mobile-do-list-for-pod"] / ["mobile-pod-detail"] keys
-    // this used to bump no longer exist and bumping them refreshed nothing.
     invalidateDoShared(qc);
     invalidateInventoryShared(qc);
     invalidateSoShared(qc);
@@ -1361,10 +1208,6 @@ function StopDetail({
     ]);
   };
 
-  // ── Convert this Sales Order → a Delivery Order (identical endpoint to the
-  // desktop board's Convert-to-DO: resolve the SO's still-deliverable lines via
-  // /deliverable-so-lines, then POST /from-sos with those picks — one DO for
-  // this SO). Unblocks a stop that has no DO cut yet so the driver can start it.
   const convert = useMutation({
     mutationFn: async () => {
       const { lines } = await authedFetch<{
@@ -1390,9 +1233,6 @@ function StopDetail({
     },
   });
 
-  // ── Save the HC delivery fields (identical endpoint to the desktop
-  // DeliveryFieldsDrawer: PATCH /delivery-planning/so/:id/fields) — the
-  // SO-context group plus, once a DO exists, the DO-execution group.
   const saveFields = useMutation({
     mutationFn: (body: Record<string, unknown>) =>
       authedFetch<{ ok: true; no_do_hint: string | null }>(
@@ -1411,15 +1251,6 @@ function StopDetail({
      WHICH lane a save takes; this is the second lane's writer. */
   const createAmendment = useCreateAmendment();
 
-  // "On the way" / "Mark arrived" → IN_TRANSIT. Inventory-idempotent (DO OUT).
-  /* THE SHARED HOOK, not a hand-rolled PATCH. The board used to build this
-     request itself, which is how the DO status endpoint came to have four
-     private implementations and only one of them carrying proof of delivery.
-     IN_TRANSIT is a departure marker and takes no evidence, but it belongs on
-     the same writer so there is exactly one.
-
-     A failed "On the way" said NOTHING before — the hook's own onError now
-     surfaces it, and the per-call onError below keeps the board's wording. */
   const start = useUpdateMfgDeliveryOrderStatus();
 
   /* "Arrived" — stamps delivery_orders.arrival_at with the CURRENT time.
@@ -1436,24 +1267,13 @@ function StopDetail({
     mutationFn: () => {
       if (!doId) throw new Error("no_do");
       return authedFetch<{ deliveryOrder: unknown }>(
-        // Server stamps its own time; this route is open to the crew on the job
-        // (the general PATCH /:id needs office access and refused drivers).
         `/delivery-orders-mfg/${encodeURIComponent(doId)}/arrival`,
-        /* Stamp arrival in the STOP's OWN company, not the tab's active one — on a
-           mixed-company run this DO may belong to the other company the driver is
-           granted, and the route is company-scoped (see companyHeaderFor). Without
-           this, marking arrival on a 2990 stop while the tab reads HOUZS 404s with
-           "that record isn't in the company you're working in". */
         { method: "PATCH", headers: companyHeaderFor(order.company_code) },
       );
     },
     onSuccess: async () => {
       await invalidate();
     },
-    /* A failed "Mark arrived" said NOTHING — the driver taps, the button
-       returns, and the arrival never reaches the customer the owner wanted it
-       for. This file already notifies on the DO-create failures below; this one
-       had no error path at all. */
     onError: async (e) => {
       await notify({
         title: "Couldn't mark arrival",
@@ -1462,23 +1282,7 @@ function StopDetail({
     },
   });
 
-  /* "POD complete" was a raw PATCH `{ status: "DELIVERED" }` from here. It is
-     now a NAVIGATION to the POD screen — what the button has always been
-     labelled ("Take POD photo — complete") and never did. That deletion closes
-     two defects a warning here could not have fixed:
 
-     1. NO EVIDENCE. Signature pad, photo and GPS live on MobilePOD, so the same
-        stop had a signature or had nothing depending on the screen used.
-     2. THE REMEDY IT NAMED DID NOT EXIST. Its confirm said "Open the order
-        afterwards to attach the POD photo and signature" — but MobilePOD
-        withholds its whole capture path once delivered (MobilePOD.tsx, the
-        `!delivered && !cancelled && canOperate` gate). There was no afterwards.
-
-     Nothing is taken from the driver: MobilePOD still closes a delivery the
-     customer will not sign for; it now says so instead of staying quiet. */
-
-  // Offer to CUT the DO on the spot (same endpoint the desktop board uses) when
-  // a stop has none yet, instead of dead-ending at "ask the office".
   const onConvert = async () => {
     if (convert.isPending) return;
     const go = await confirm({
@@ -1502,8 +1306,6 @@ function StopDetail({
 
   const requireDo = async (): Promise<boolean> => {
     if (doId) return true;
-    // Start/Arrive auto-cut the DO when there isn't one. A caller who may not
-    // create a DO must be TOLD, not walked into a 403 they can't read.
     if (!canOperateDo) {
       await notify({
         title: "No delivery order yet",
@@ -1516,12 +1318,9 @@ function StopDetail({
   };
 
   const onStart = async () => {
-    // Advancing DO status is Office-only (backend 403s the Sales cohort). The
-    // button is already withheld for a view-only user; guard the handler too.
     if (!canDoSteps) return;
     if (!(await requireDo())) return;
-    if (!doId) return; // requireDo guarantees this; narrows the type.
-    // Start in the STOP's OWN company (mixed-company run); see companyHeaderFor.
+    if (!doId) return;
     start.mutate({ id: doId, status: "IN_TRANSIT", companyCode: order.company_code }, {
       onSuccess: async () => { await invalidate(); },
       onError: async (e) => {
@@ -1533,9 +1332,6 @@ function StopDetail({
     });
   };
 
-  /* Step 2's own handler. It used to call onStart — so "Mark arrived" re-posted
-     IN_TRANSIT and never stamped arrival_at, which is why the Arrived pill only
-     ever lit up once the delivery was already done. */
   const onArrive = async () => {
     if (!canDoSteps) return;
     if (!(await requireDo())) return;
@@ -1545,8 +1341,6 @@ function StopDetail({
   const onComplete = async () => {
     if (!canDoSteps) return;
     if (!(await requireDo())) return;
-    /* The DO NUMBER, not the id — MobilePOD resolves a document number through
-       the list route. `requireDo()` above guarantees a DO exists by now. */
     const doNumber = doRef?.do_number;
     if (!doNumber || !onPod) {
       await notify({
@@ -1555,8 +1349,6 @@ function StopDetail({
       });
       return;
     }
-    // Carry the stop's company so the POD screen reads + delivers that DO in its
-    // OWN company on a mixed-company run (see companyHeaderFor).
     onPod(String(doNumber), order.company_code ?? null);
   };
 
@@ -1596,7 +1388,6 @@ function StopDetail({
         className="hz-scroll"
         style={{ flex: 1, overflowY: "auto", padding: 12, paddingBottom: 40 }}
       >
-        {/* Late banner (planLateBanner). */}
         {st === "late" && (
           <div
             style={{
@@ -1641,7 +1432,6 @@ function StopDetail({
           </div>
         )}
 
-        {/* Call + Navigate (planCallNav → tel: / maps). */}
         <div style={{ display: "flex", gap: 9, marginBottom: 12 }}>
           {phoneTel ? (
             <a
@@ -1756,7 +1546,6 @@ function StopDetail({
           )}
         </div>
 
-        {/* Delivery-info card (spec: .card + "Delivery" header + .row list). */}
         <div className="card" style={{ marginBottom: 12 }}>
           <div className="card-h">
             <span className="card-t">Delivery</span>
@@ -1773,10 +1562,6 @@ function StopDetail({
             true,
           )}
           {pdRow("House type", htype || EM, true)}
-          {/* Move-in / possession date — HC SO-context field. Real-data
-              discipline: the row is dropped entirely when the feed carries no
-              possession date (the prototype's free-text "Move" has no backing
-              column). */}
           {moveInDate ? pdRow("Move-in date", moveInDate, false) : null}
           {pdRow("Address", order.address || EM, false)}
           {pdRow(
@@ -1793,8 +1578,6 @@ function StopDetail({
           {pdRow("Helper", order.crew?.helper || EM, false, true)}
         </div>
 
-        {/* No DO yet → offer to cut one on the spot (desktop board's Convert-to-DO,
-            identical endpoint) so the driver isn't dead-ended. */}
         {!doId && canOperateDo && (
           <button
             onClick={onConvert}
@@ -1836,13 +1619,6 @@ function StopDetail({
           </button>
         )}
 
-        {/* Delivery details (HC delivery fields) — same endpoint as the desktop
-            DeliveryFieldsDrawer: PATCH /delivery-planning/so/:id/fields.
-            RENDERED ALWAYS, not only when a DO exists: the four SO-context
-            fields (move-in date, house type, referral, replacement / disposal)
-            are saved on the SO header and the desktop drawer keeps them
-            editable with no DO. Only the DO-execution group is gated on
-            `hasDo`, which the card does internally. */}
         <DeliveryFieldsCard
           order={order}
           hasDo={!!doId}
@@ -1871,8 +1647,6 @@ function StopDetail({
                   headerChanges: { replacementDisposal: amendment.disposal },
                 });
               } catch (e) {
-                /* The direct fields DID save — say so, and leave the editor
-                   open so the disposal can be retried without retyping. */
                 await notify({
                   title: "Disposal change NOT submitted",
                   body: `${
@@ -1891,12 +1665,8 @@ function StopDetail({
           }}
         />
 
-        {/* Goods to deliver — per-line item + variant, fetched from the SHARED
-            /delivery-planning/:docNo/lines endpoint (the SAME hook the desktop
-            board's expand-row drill-down uses). See GoodsToDeliverCard. */}
         <GoodsToDeliverCard order={order} />
 
-        {/* Disposal callout. */}
         {disposal && (
           <div
             style={{
@@ -1949,9 +1719,6 @@ function StopDetail({
           </div>
         )}
 
-        {/* Setup & dismantle photos — v4 unified 2-group POD structure: group 1
-            "Overall booth" (on arrival) + group 2 "Setup complete (POD)"
-            (completion proof). Section sub-label "POD · upload on site". */}
         {isSetup && (
           <div className="card" style={{ marginBottom: 12 }}>
             <div className="card-h">
@@ -1978,8 +1745,6 @@ function StopDetail({
           </div>
         )}
 
-        {/* Sales-person + document rows. Sales-rep contact isn't in the feed,
-            so that row is omitted; SO / DO / branding come straight off the row. */}
         <div className="card" style={{ marginBottom: 12 }}>
           {pdRow(
             "Sales Order",
@@ -1991,16 +1756,12 @@ function StopDetail({
             <span className="tnum">{doRef?.do_number || EM}</span>,
             true,
           )}
-          {/* Reference — the order's ref (AutoCount Ref); dropped when the feed carries none. */}
           {referral
             ? pdRow("Reference", <span className="tnum">{referral}</span>, false)
             : null}
-          {/* PO No. — the purchase orders raised from the SO (desktop board parity). */}
           {order.po_nos?.length
             ? pdRow("PO No.", <span className="tnum">{order.po_nos.join(", ")}</span>, false)
             : null}
-          {/* Delivery status — the customer-message workflow status; read-only on
-              the phone (dispatch edits it on the desktop board). */}
           {order.delivery_message_status
             ? pdRow("Delivery status", order.delivery_message_status, false)
             : null}
@@ -2012,7 +1773,6 @@ function StopDetail({
           )}
         </div>
 
-        {/* Balance-to-collect block (balance-only per the new design). */}
         {fullyPaid ? (
           <div
             style={{
@@ -2072,7 +1832,6 @@ function StopDetail({
           </div>
         )}
 
-        {/* Delivery tracking timeline — Start → Arrive → Done (planTracking). */}
         <div className="card" style={{ marginTop: 12 }}>
           <div className="card-h">
             <span className="card-t">Delivery tracking</span>
@@ -2092,8 +1851,6 @@ function StopDetail({
               </div>
             )}
 
-            {/* Step 1 — On the way. Action buttons are Office-only (canOperateDo);
-                a view-only user sees the completed steps but no action. */}
             {started ? (
               <TrackStep
                 tone="teal"
@@ -2109,7 +1866,6 @@ function StopDetail({
               />
             ) : null}
 
-            {/* Step 2 — Arrived. */}
             {arrived ? (
               <TrackStep
                 tone="teal"
@@ -2126,7 +1882,6 @@ function StopDetail({
               />
             ) : null}
 
-            {/* Step 3 — Delivered (POD). */}
             {done ? (
               <TrackStep
                 tone="green"
@@ -2145,8 +1900,6 @@ function StopDetail({
               />
             ) : null}
 
-            {/* View-only (Sales cohort): status writes are the Office team's job.
-                Say so plainly instead of leaving an empty timeline. */}
             {!canDoSteps && !done && (
               <div
                 style={{
@@ -2166,16 +1919,6 @@ function StopDetail({
   );
 }
 
-/* ── GoodsToDeliver — per-line item + variant for the stop, from the SHARED
-   /delivery-planning/:docNo/lines endpoint (the SAME hook the desktop board's
-   expand-row drill-down uses; scoped to the caller's allowed companies so a
-   cross-company row doesn't 404). Cancelled lines are filtered (desktop parity:
-   PlanningExpandedLines filters `!it.cancelled`). Name + variant use the shared
-   orderLineIdentity rule (code dropped, description2 kept) — the same rule the POD
-   checklist + the DO detail use. Falls back to a single branded summary line
-   when the lines can't be read, so this never regresses below the summary-only
-   card it replaced.
-   ─────────────────────────────────────────────────────────────────────────── */
 function GoodsToDeliverCard({ order }: { order: BoardRow }) {
   const linesQ = useDeliveryPlanningLines(order.so_doc_no);
   const lines = ((linesQ.data ?? []) as PlanningLineItem[]).filter((l) => !l.cancelled);
@@ -2205,7 +1948,6 @@ function GoodsToDeliverCard({ order }: { order: BoardRow }) {
   );
 }
 
-// A completed tracking step (stepDone). tone drives the badge colour.
 function TrackStep({
   tone,
   label,
@@ -2286,7 +2028,6 @@ function TrackStep({
   );
 }
 
-// A tracking action button (stepBtn). primary = filled POD button.
 function TrackButton({
   onClick,
   busy,

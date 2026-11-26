@@ -15,7 +15,6 @@ import { describe, expect, test } from 'vitest';
 import { allocSourceOf, allocSourceCoveringPo } from './mrp-alloc-source';
 
 describe('allocSourceOf — is this demand covered, and by what', () => {
-  /* THE REGRESSION. Nothing short, no PO: the goods are here. */
   test('no shortage and no PO is STOCK, not po', () => {
     expect(allocSourceOf(0, null)).toBe('stock');
   });
@@ -28,8 +27,6 @@ describe('allocSourceOf — is this demand covered, and by what', () => {
     expect(allocSourceOf(0, 'HC-PO-2608-001')).toBe('po');
   });
 
-  /* A PO that cannot name itself is MISSING DATA, not an order. Calling it
-     `po` is precisely what left the chip with nothing to print. */
   const UNNAMEABLE: Array<[string, string | null | undefined]> = [
     ['empty', ''], ['whitespace', '   '], ['null', null], ['absent', undefined],
   ];
@@ -42,16 +39,12 @@ describe('allocSourceOf — is this demand covered, and by what', () => {
     expect(allocSourceOf(undefined, 'HC-PO-2608-001')).toBe('po');
   });
 
-  /* Negative shortage is not a surplus signal anywhere else in MRP; it must not
-     become one here. */
   test('a negative shortage is not a shortage', () => {
     expect(allocSourceOf(-2, null)).toBe('stock');
   });
 });
 
 describe('allocSourceCoveringPo — is a PO involved in this line', () => {
-  /* THE DELIBERATE DIFFERENCE. The purchase side asks a different question, and
-     the two rules disagreeing on exactly this input is why both live here. */
   test('a named PO wins even when the line is still short', () => {
     expect(allocSourceCoveringPo(3, 'HC-PO-2608-001')).toBe('po');
     expect(allocSourceOf(3, 'HC-PO-2608-001')).toBe('shortage');

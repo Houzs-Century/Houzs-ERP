@@ -44,8 +44,6 @@ describe('a drill-down cell never states an answer it does not have', () => {
     const { container } = render(
       <DocumentLinesExpansion isLoading={false} coverage="loading" lines={[line]} showAssignment />,
     );
-    /* The whole point of the fix: the goods list is NOT held behind the second
-       query — only the cell that depends on it says it is still working. */
     expect(container.textContent).toContain('TRION');
     expect(screen.queryByText('Loading lines…')).toBeNull();
   });
@@ -64,8 +62,6 @@ describe('a drill-down cell never states an answer it does not have', () => {
 
 describe("the SO Incoming PO chip prefers the line's OWN purchase order (owner 2026-09-22)", () => {
   test("a bound PO wins over the shipped-batch trace (which can be another order's PO)", () => {
-    // SO-013160's HILTON line: its own PO is HC-PO-009863, but its goods shipped
-    // from a FIFO lot received under HC-PO-010095 (another order, AKHC3727).
     render(
       <SoSourceChips
         line={{ bound_source_pos: ['HC-PO-009863'], shipped_source_pos: ['HC-PO-010095'], delivered_qty: 1, remaining_qty: 0 }}
@@ -103,8 +99,6 @@ describe('coverageStateOf maps a query to the three states', () => {
     expect(coverageStateOf({ isLoading: true, isError: true })).toBe('loading');
     expect(coverageStateOf({ isLoading: false, isError: true })).toBe('unavailable');
     expect(coverageStateOf({ isLoading: false, isError: false })).toBe('ready');
-    /* A caller that passes no isError still gets a usable answer rather than
-       silently reading a failure as data. */
     expect(coverageStateOf({ isLoading: false })).toBe('ready');
   });
 });

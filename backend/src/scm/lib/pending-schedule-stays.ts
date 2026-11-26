@@ -38,7 +38,6 @@ export async function stampPendingSchedule(
       sb.from('mfg_sales_orders').update({ delivery_state: 'PENDING_SCHEDULE' }).in('doc_no', docNos.slice(i, i + 200)).is('delivery_state', null),
       c,
     );
-    // Best-effort: the board still answers; the next read stamps what this missed.
     if (error) console.warn(`[delivery-planning] pending-schedule stamp skipped: ${String(error.message).slice(0, 120)}`);
   }
 }
@@ -56,6 +55,6 @@ export async function stampPendingScheduleAfterResponse(
     console.warn(`[delivery-planning] pending-schedule stamp skipped: ${(e instanceof Error ? e.message : String(e)).slice(0, 120)}`);
   });
   let ctx: { waitUntil(p: Promise<unknown>): void } | null = null;
-  try { ctx = c.executionCtx; } catch { /* no execution context (tests) */ }
+  try { ctx = c.executionCtx; } catch { }
   if (ctx) ctx.waitUntil(run); else await run;
 }

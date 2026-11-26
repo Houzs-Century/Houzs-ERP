@@ -1,6 +1,3 @@
-// lib/so-list-column-funnels — the value lists the Sales Order grid offers in
-// each server-run column funnel: every value across the company's orders, in the
-// grid's own cell spelling, never another company's.
 import { describe, expect, it } from 'vitest';
 import { fakeSb } from './fake-postgrest';
 import { buildSoFunnelValues } from './so-list-column-funnels';
@@ -23,7 +20,7 @@ describe('the Sales Order funnel value lists', () => {
       so({ doc_no: 'B', city: null, local_total_sen: 2000, currency: 'USD' }),
       so({ doc_no: 'C', city: 'SECRET', company_id: 2 }),
     ]);
-    expect(v.city).toEqual(['KL', '—']); // the blank entry as the grid keys it
+    expect(v.city).toEqual(['KL', '—']);
     expect(v.amount).toEqual(['1000', '2000']);
     expect(v.currency).toEqual(['MYR', 'USD']);
     expect(v.erp_doc_no).toEqual(['A', 'B']);
@@ -48,8 +45,7 @@ describe('the Sales Order funnel value lists', () => {
     expect(v.doc_no).toEqual(['A', 'SO-AC-1']);
     expect(v.reference).toEqual(['CUST-1', '—']);
     expect(v.salesperson).toContain('ALICE TAN');
-    expect(v.debtor_code).toContain('300-C002'); // a book order with no code
-    // Only warehouses the company's order lines use; never another company's.
+    expect(v.debtor_code).toContain('300-C002');
     expect(v.sales_location).toEqual(['BALAKONG', 'Johor Bahru', '—']);
   });
 

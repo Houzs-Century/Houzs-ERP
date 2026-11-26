@@ -1,7 +1,3 @@
-/* The field crew's view of ONE delivery order: whose job it is, and what the
-   phone's proof-of-delivery screen shows. Lives apart from delivery-planning.ts
-   (the board) so the board file does not grow, and so delivery-orders-mfg.ts can
-   reuse the crew lookup without importing the board. */
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { scopeToAllowedCompanies } from '../lib/companyScope';
@@ -35,16 +31,8 @@ export async function fetchDoCrewAssignment(
   };
 }
 
-/* GET /delivery-planning/do/:doId/pod — the proof-of-delivery screen's read for a
-   field-crew caller. The DO list/detail routes sit behind scm.sales.delivery,
-   which a driver does not hold, so the phone's POD screen could not even load
-   the delivery it was standing in front of. This returns only what that screen
-   renders, and only for a DO the caller is crewed on (scope 'all' sees any DO
-   of the active companies). */
 export const doPodContextHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase');
-  // The phone opens POD by DO NUMBER (that is what a stop card carries); a UUID
-  // is accepted too.
   const doRef = c.req.param('doRef') ?? '';
   const byId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(doRef);
   const { data: header, error } = await scopeToAllowedCompanies(
@@ -65,7 +53,6 @@ export const doPodContextHandler = async (c: Context<{ Bindings: Env; Variables:
     .order('line_no', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: true });
   if (itemsErr) return c.json({ error: 'load_failed', reason: itemsErr.message }, 500);
-  // A line cancelled on its Sales Order is not on the driver's checklist.
   const soItemIds = (items ?? []).map((i: { so_item_id: string | null }) => i.so_item_id).filter(Boolean) as string[];
   const cancelledSoItems = new Set<string>();
   if (soItemIds.length) {
@@ -80,12 +67,6 @@ export const doPodContextHandler = async (c: Context<{ Bindings: Env; Variables:
   });
 };
 
-/* A self-scoped caller's OWN Service Case and Project rows on the delivery board
-   (the board's row scope matches only SO and DP rows). Returns their row keys.
-     assr     the leg's stop sits on a trip the caller is crewed on
-              (trip_stops.assr_case_id + stop_type -> leg)
-     project  the caller is that leg's driver / helper on the project
-              (public user ids — projects keep their own crew) */
 export { ASSR_LEG_BY_STOP };
 export async function ownServiceAndProjectRowKeys(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -93,8 +74,6 @@ export async function ownServiceAndProjectRowKeys(
   env: Env,
   scope: { driverIds: ReadonlySet<string>; helperIds: ReadonlySet<string> },
   userId: number,
-  // The caller's display name — project crew matching needs it (the per-lorry
-  // crew editor stores people as {name,phone} JSON with NO user ids).
   userName: string | null,
   rows: Array<{ row_type: string; so_doc_no: string; assr_id?: number | null; job_kind?: string | null; dp_job_type?: string | null }>,
 ): Promise<Set<string>> {
@@ -140,10 +119,6 @@ export async function ownServiceAndProjectRowKeys(
   return own;
 }
 
-/* GET /delivery-orders-mfg/:id/pod-photo/:n — the n-th proof-of-delivery photo of one DO,
-   for anyone who may read that DO (the route's area guard) in its company. The
-   photo sits in the shared houzs-erp bucket under the key the POD stored; no
-   page could show it before, so a delivered DO read as if it had no evidence. */
 export const doPodPhotoHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase');
   const { data, error } = await scopeToAllowedCompanies(
@@ -159,9 +134,6 @@ export const doPodPhotoHandler = async (c: Context<{ Bindings: Env; Variables: V
   return podPhotoResponse(obj);
 };
 
-/* Last-Modified carries when the photo reached storage, so the photos PDF can
-   print each photo's time: no table records a time per photo, and the crew
-   upload each one the moment it is picked. */
 export function podPhotoResponse(obj: R2ObjectBody): Response {
   const headers: Record<string, string> = {
     'content-type': obj.httpMetadata?.contentType ?? 'image/jpeg',

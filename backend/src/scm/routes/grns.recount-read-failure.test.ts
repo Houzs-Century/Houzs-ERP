@@ -20,7 +20,6 @@ type Query = {
   then<T>(resolve: (v: Result) => T): Promise<T>;
 };
 
-/** A PostgREST stand-in; reads of `failRead` answer with an error. */
 function fakeSb(tables: Record<string, Row[]>, failRead?: string) {
   const from = (table: string): Query => {
     const filters: Array<(r: Row) => boolean> = [];

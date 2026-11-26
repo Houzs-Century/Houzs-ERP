@@ -40,7 +40,6 @@ const REPORT: EventCommission = {
         { docNo: 'HC-SO-2610-002', soDate: '2026-10-03', salesperson: 'Mayson', customer: 'Lee', goodsSen: 500_00, totalSen: 500_00, paidSen: 100_00, paidPct: 20, reachedOn: null, commissionSen: 0, changes: [] },
       ],
     },
-    /* No organizer / venue / state from the server: read off the name. */
     { id: 400, name: 'Johor [ZANOTTI] HOMELOVE @ IOI MALL KULAI', brand: 'NOCARD', startDate: '2026-10-20', endDate: '2026-10-23', ratePct: null, totalSalesRm: null, estimateRm: null, payableSen: 0, sos: [] },
   ],
   adjustments: [
@@ -64,8 +63,6 @@ const REPORT: EventCommission = {
   totals: { payableSen: 140_00, adjustmentsSen: 13_00, totalSen: 153_00 },
 };
 
-/* By SO date: the orders opened in the range under their fairs — one of them on
-   a fair that started in September. */
 const BY_SO_DATE: EventCommission = {
   ...REPORT, basis: 'so_date',
   fairs: [{
@@ -78,7 +75,6 @@ const BY_SO_DATE: EventCommission = {
   totals: { payableSen: 130_00, adjustmentsSen: 0, totalSen: 130_00 },
 };
 const asked: string[] = [];
-/* A test that needs another report (a closed month, the adjustments) sets it here. */
 let current: EventCommission | null = null;
 const closeMonth = vi.fn();
 const reopenMonth = vi.fn();
@@ -103,7 +99,6 @@ vi.mock('../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   useRemoveCommissionLine: () => ({ mutate: removeLine, isPending: false }),
 }));
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({ useConfirm: () => confirmAsk, usePrompt: () => promptAsk }));
-/* The export's writers: what the page hands them is the test; the files themselves are eventCommissionExport.test.ts's. */
 const writers = vi.hoisted(() => ({ xlsx: vi.fn(async (..._a: unknown[]) => undefined), pdf: vi.fn(async (..._a: unknown[]) => undefined) }));
 vi.mock('./eventCommissionXlsx', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./eventCommissionXlsx')>()), downloadEcXlsx: (...a: unknown[]) => writers.xlsx(...a),
@@ -117,13 +112,9 @@ import { MemoryRouter } from 'react-router-dom';
 import { EventCommissionTab } from './EventCommission';
 import { basisOf, brandsOf, cardsOf, earlierShownOf, eventCommissionCsv, eventCommissionSheet, fairLines, fairPlace, fmtRm, forBrand, insideFirstOf, whatOf } from './eventCommissionModel';
 
-/* The report reads the shared range (the report shell's): no dates in the address → This month. */
 const renderTab = (ui: React.ReactElement) => render(<MemoryRouter initialEntries={['/scm/accounting?tab=commission']}>{ui}</MemoryRouter>);
-/** A tile's label and the figure under it (the redesign's tiles: no RM on the figure). */
 const tile = (label: string) => within(screen.getByRole('group', { name: 'Totals' })).getByText(label).parentElement!.textContent;
-/** The tiles' labels, in their order. */
 const tileLabels = () => [...screen.getByRole('group', { name: 'Totals' }).children].map((el) => el.firstElementChild!.textContent);
-/** The cards' keys and figures. */
 const cardSens = (r: EventCommission) => cardsOf(r).map((c) => [c.key, c.sen]);
 
 const tables = () => screen.getAllByRole('table');
@@ -135,10 +126,7 @@ describe('the Event Commission tab', () => {
     renderTab(<EventCommissionTab />);
     const cells = cellsOf(rowOf(tables()[0]!, 'MID VALLEY'));
     for (const t of ['AKEMI', 'BIGHOME', 'MID VALLEY', 'Kuala Lumpur', '14%', '1,500.00', '210.00', '140.00']) expect(cells).toContain(t);
-    /* The event page's typed figure is a hidden column now, not the Total sales. */
     expect(cells).not.toContain('484,746.00');
-    /* A fair with no orders yet is folded away under the table — open it to see
-       it, its place read off its name. */
     expect(within(tables()[0]!).queryByText('no rate card')).toBeNull();
     fireEvent.click(screen.getByText('1 fair with no orders yet'));
     const idle = rowOf(tables()[0]!, 'IOI MALL KULAI');
@@ -166,7 +154,6 @@ describe('the Event Commission tab', () => {
     expect(reached.textContent).toContain('Reached 30%');
     expect(cellsOf(reached)).toEqual(expect.arrayContaining(['1,100.00', '13%', '143.00']));
     expect(cellsOf(rowOf(earlier, 'HC-SO-2609-051'))).toContain('(130.00)');
-    /* Only priced up before 30%: not an earlier order to list here. */
     expect(within(earlier).queryByText('HC-SO-2609-052')).toBeNull();
     expect(within(earlier).queryByText('Latest')).toBeNull();
     expect(earlier.querySelector('tfoot')!.textContent).toContain('13.00');
@@ -174,10 +161,6 @@ describe('the Event Commission tab', () => {
   });
 
   test('an earlier order that reached 30% and was priced in the range shows the reach on its original amount; the change stays in Upsales / Drop sales', () => {
-    /* HC-SO-2609-397's shape: 15,776 dropped to 7,888 before 30%, reached 30% in
-       the range — 1,104.32 on the order; the drop's −1,104.32 is the Upsales /
-       Drop sales table's, so the earlier table shows 2,208.64 on 15,776. And an
-       order reached, then priced up after 30%: the reach alone here. */
     const SHAPED: EventCommission = {
       ...REPORT,
       earlierOrders: [
@@ -201,7 +184,6 @@ describe('the Event Commission tab', () => {
       ['HC-SO-2609-397', 'Reached 30%', '2026-10-21', 2_208_64],
       ['HC-SO-2609-060', 'Reached 30%', '2026-10-08', 130_00],
     ]);
-    /* Marked not counted: nothing either side. */
     const mark = { id: 'm1', kind: 'exclude' as const, month: null, reason: null, markedBy: 'Finance', markedAt: '2026-11-12T10:00:00Z' };
     const marked: EventCommission = {
       ...SHAPED,
@@ -242,7 +224,6 @@ describe('the Event Commission tab', () => {
     expect(row.textContent).not.toContain('not yet 30%');
     expect(tile('Upsales / Drop sales — earlier orders')).toContain('280.00');
     expect(cardSens(current)).toEqual([['inRange', 130_00], ['earlier', 0], ['earlierChanges', 280_00]]);
-    /* One brand: the line with no fair stays under its order's brand, and the cards still add up. */
     const akemi = forBrand(current, 'AKEMI');
     expect(akemi.totals.totalSen).toBe(280_00);
     expect(cardSens(akemi)).toEqual([['inRange', 0], ['earlier', 0], ['earlierChanges', 280_00]]);
@@ -276,7 +257,6 @@ describe('the Event Commission tab', () => {
     ]);
     renderTab(<EventCommissionTab />);
     expect(tileLabels()).toEqual(['Total commission', 'Fairs starting in the range', 'Earlier fairs', 'Upsales / Drop sales — earlier fairs']);
-    /* The tables in the same order, each total the card's figure. */
     const regions = ['Fairs starting in the range', 'Earlier fairs — reached 30% or cancelled in the range', 'Upsales / Drop sales — earlier fairs'];
     expect(screen.getAllByRole('region').map((r) => r.getAttribute('aria-label')).filter((n) => regions.includes(n ?? ''))).toEqual(regions);
     expect(tile('Fairs starting in the range')).toContain('140.00');
@@ -354,7 +334,6 @@ describe('the redesign (batch 6 §5.11)', () => {
     expect(orders.rows.at(-1)).toEqual({ kind: 'total', depth: 0, label: 'Total · 2 orders', cells: ['', '', '', '', '', 1_500_00, '', '', '', 140_00, ''] });
     /* Its own words in English: the PDF's Chinese face has no 补开单, and refused the whole export over it. */
     expect(JSON.stringify(eventCommissionSheet({ ...REPORT, lateBills: ['HC-SO-2610-001'] }, 'October 2026', ''))).not.toMatch(/[\u3000-\u9fff]/);
-    /* By SO date has no fair table: the summary, the orders, the earlier orders, the earlier orders' changes. */
     expect(eventCommissionSheet(BY_SO_DATE, 'October 2026', '').tables.map((t) => t.title))
       .toEqual(['Summary', 'Orders opened in the range (SO date)', 'Earlier orders — reached 30% or cancelled in the range', 'Upsales / Drop sales — earlier orders']);
 
@@ -365,10 +344,8 @@ describe('the redesign (batch 6 §5.11)', () => {
     const link = within(tables()[0]!).getByRole('link', { name: 'HC-SO-2610-001' });
     expect(link.getAttribute('title')).toBe('Open HC-SO-2610-001');
     expect(link.getAttribute('href')).toBe('/scm/sales-orders/HC-SO-2610-001');
-    /* A plain click is the app's own tab; a Ctrl-click (or a right-click) is the browser's. */
     expect(fireEvent.click(link)).toBe(false);
     expect(fireEvent.click(link, { ctrlKey: true })).toBe(true);
-    /* The % says what it is a % of (headers read in Title Case app-wide). */
     expect(within(tables()[0]!).getByText('Paid · % of Order')).toBeTruthy();
   });
 });
@@ -381,7 +358,6 @@ describe('the Event Commission layout', () => {
     const foot = fairs.querySelector('tfoot')!;
     expect(foot.textContent).toContain('1,500.00');
     expect(foot.textContent).toContain('140.00');
-    /* The fair columns carry their own widths; together they fit about 1,250px. */
     const widths = [...fairs.querySelectorAll('thead th')].map((th) => parseFloat((th as HTMLElement).style.width) || 0);
     const total = widths.reduce((s, w) => s + w, 0);
     expect(total).toBeGreaterThan(900);
@@ -458,8 +434,7 @@ describe('closing a month — 关月 (owner 2026-10-26)', () => {
     current = { ...REPORT, closes: { months: [], openFrom: null } };
     renderTab(<EventCommissionTab />);
     expect(screen.getByText('No month closed yet.')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /^Close / })).toBeNull(); // October has not ended
-    /* Last month is one of the shared picker's presets now. */
+    expect(screen.queryByRole('button', { name: /^Close / })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /^Report dates/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Last month' }));
     fireEvent.click(screen.getByRole('button', { name: 'Close 2026/09' }));
@@ -508,7 +483,6 @@ describe('round 3 (owner 2026-11-12)', () => {
     fireEvent.click(within(earlier).getByRole('button', { name: 'Next month' }));
     await waitFor(() => expect(markOrder).toHaveBeenCalledWith({ docNo: 'HC-SO-2609-050', kind: 'defer', month: '2026-10', reason: 'checking the price' }));
     expect(promptAsk).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'Pay HC-SO-2609-050 in 2026/11?' }));
-    /* Cancelled at the prompt: nothing is marked. */
     markOrder.mockClear();
     promptAsk.mockResolvedValueOnce(null);
     fireEvent.click(within(earlier).getByRole('button', { name: "Don't count" }));
@@ -577,7 +551,6 @@ describe('round 3 (owner 2026-11-12)', () => {
 describe('a price change left out, and the SO list\'s columns (owner 2026-11-12)', () => {
   const october = () => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-26T04:00:00Z')); };
   const changeMark = { id: '7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d', kind: 'exclude_change' as const, month: '2026-10', reason: 'typing fix', markedBy: 'Finance Chew', markedAt: '2026-11-12T03:00:00Z' };
-  /* HC-SO-2610-001's upsale of 150.00 left out: it earns on 850.00 (119.00), not on 1,000.00 (140.00). */
   const LEFT_OUT: EventCommission = {
     ...REPORT,
     fairs: REPORT.fairs.map((f) => (f.id !== 363 ? f : {
@@ -622,7 +595,6 @@ describe('a price change left out, and the SO list\'s columns (owner 2026-11-12)
     expect(tile('Upsales / Drop sales — earlier fairs')).toContain('0.00');
     const card = screen.getByRole('region', { name: 'Upsales / Drop sales — fairs starting in the range' });
     const row = within(card).getByText('HC-SO-2610-001').closest('tr')!;
-    /* Its amounts stay; the effect reads "not counted", and the button is now Undo. */
     expect(cellsOf(row)).toEqual(expect.arrayContaining(['850.00', '1,000.00', '+150.00', 'not counted']));
     expect(within(row).queryByRole('button', { name: "Don't count change" })).toBeNull();
     expect(within(row).getByRole('button', { name: 'Undo' }).getAttribute('title')).toBe('Price change not counted · typing fix · by Finance Chew');
@@ -634,7 +606,6 @@ describe('a price change left out, and the SO list\'s columns (owner 2026-11-12)
     expect(confirmAsk).toHaveBeenCalledWith(expect.objectContaining({
       title: 'Take away "Price change not counted"?', body: expect.stringContaining('price change counts again'),
     }));
-    /* The order itself still counts: its own two buttons stay, and its upsale reads as left out. */
     fireEvent.click(within(tables()[0]!).getByText('MID VALLEY'));
     const order = within(tables()[0]!).getByText('HC-SO-2610-001').closest('tr')!;
     expect(within(order).getByRole('button', { name: "Don't count" })).toBeTruthy();
@@ -703,7 +674,6 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     const csv = eventCommissionCsv(withLine);
     expect(csv).toContain('"Added by Finance","1 line","104.00"');
     expect(csv).toContain('"HC-SO-009001","REF1001","ZANOTTI","Sales A","Raised before the order came into the ERP","Finance Chew","800.00","13%","104.00"');
-    /* One brand: its own lines only, and the total with them. */
     expect(forBrand(withLine, 'AKEMI').manualLines).toEqual([]);
     expect(forBrand(withLine, 'ZANOTTI').totals).toMatchObject({ manualSen: 104_00 });
     expect(brandsOf({ ...withLine, fairs: [], adjustments: [], earlierOrders: [], changedOrders: [] })).toEqual(['ZANOTTI']);
@@ -720,11 +690,10 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     expect((add as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(within(form).getByLabelText('Order'), { target: { value: ' hc-so-009002 ' } });
     fireEvent.change(within(form).getByLabelText('Goods (RM)'), { target: { value: '-1,250.50' } });
-    expect((add as HTMLButtonElement).disabled).toBe(true); // no reason yet
+    expect((add as HTMLButtonElement).disabled).toBe(true);
     fireEvent.change(within(form).getByLabelText('Reason'), { target: { value: ' Taken back by hand ' } });
     fireEvent.click(add);
     expect(addLine).toHaveBeenCalledWith({ docNo: 'HC-SO-009002', goodsSen: -1_250_50, reason: 'Taken back by hand', month: '2026-10' }, expect.anything());
-    /* Not an amount, or 0: nothing to send. */
     addLine.mockClear();
     fireEvent.change(within(form).getByLabelText('Goods (RM)'), { target: { value: 'abc' } });
     expect((add as HTMLButtonElement).disabled).toBe(true);
@@ -790,7 +759,6 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     fireEvent.click(excel.getByRole('radio', { name: /^One salesperson/ }));
     expect(excel.getAllByRole('option').map((o) => o.textContent)).toEqual(['Ethan', 'Jason', 'Mayson']);
     fireEvent.change(excel.getByRole('combobox', { name: 'Salesperson' }), { target: { value: 'Ethan' } });
-    /* A file that cannot be made says so, and the dialog stays open. */
     writers.xlsx.mockRejectedValueOnce(new Error('the disk is full'));
     fireEvent.click(excel.getByRole('button', { name: 'Export' }));
     expect((await excel.findByRole('alert')).textContent).toBe('The file could not be made — the disk is full');
@@ -800,9 +768,7 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     expect(fileName).toMatch(/^event-commission-by-fair-.*-ethan\.xlsx$/);
     expect(sheets.map((x) => x.name)).toEqual(['Summary', 'Fairs', 'Fair orders', 'Upsales-drops in range']);
     expect(sheets[0]!.title).toBe('Event commission — Ethan');
-    /* The fairs table's own columns as it shows them (the full name and the typed total are hidden there). */
     expect(sheets[1]!.blocks[0]!.columns.map((c) => c.label)).toEqual(['Brand', 'Organizer', 'Venue', 'State', 'Dates', 'Rate', 'Total sales', 'Estimate', 'Orders', 'Commission']);
-    /* A fair's orders as one list: the order and its fair first; on his own pages, no Salesperson column. */
     expect(sheets[2]!.blocks[0]!.columns.map((c) => c.label).slice(0, 4)).toEqual(['Order', 'Fair (full name)', 'Ref No.', 'SO date']);
     expect(sheets[2]!.blocks[0]!.columns.map((c) => c.label)).not.toContain('Salesperson');
 
@@ -812,7 +778,6 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     fireEvent.click(pdf.getByRole('button', { name: 'Export' }));
     await waitFor(() => expect(writers.pdf).toHaveBeenCalledTimes(1));
     const [sections, opts] = writers.pdf.mock.calls[0] as [Array<{ heading: string | null; newPage: boolean }>, { action: string; meta: Array<{ label: string; value: string }>; fileName: string }];
-    /* Mayson's one order is under 30%: at 0.00, it is left out, and he has no pages. */
     expect(sections.map((x) => [x.heading, x.newPage])).toEqual([[null, false], ['Ethan', true], ['Jason', true]]);
     expect(opts.action).toBe('preview');
     expect(opts.fileName).toMatch(/-by-salesperson\.pdf$/);
@@ -829,7 +794,6 @@ describe("Finance's own lines (owner 2026-11-13)", () => {
     fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
     let excel = within(screen.getByRole('dialog', { name: 'Export to Excel' }));
     fireEvent.click(excel.getByRole('radio', { name: /^Summary only/ }));
-    /* The summary counts the lines that earn either way: no box to tick. */
     expect(excel.queryByRole('checkbox')).toBeNull();
     fireEvent.click(excel.getByRole('button', { name: 'Export' }));
     await waitFor(() => expect(writers.xlsx).toHaveBeenCalledTimes(1));

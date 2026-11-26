@@ -31,10 +31,6 @@ function response(over: Partial<ChangeLogResponse["totals"]> = {}, hours = 168):
 }
 
 describe("the verdict line", () => {
-  /* THE SENTENCE THAT MATTERS. A check written before this one reported "50
-     staff actions on migrated orders" and all fifty were the allocation cron.
-     The owner must never read a system count as a staff count, so the two
-     numbers are always both on screen and the system half is always named. */
   it("says nobody changed anything, and still reports the system's own count", () => {
     const s = clVerdict(response({ changesByPerson: 0, changesBySystem: 550, documents: 0, people: 0 }));
     expect(s).toContain("Nobody changed anything");
@@ -79,9 +75,6 @@ describe("labels", () => {
     expect(clFieldLabel("delivery_address")).toBe("Delivery address");
   });
 
-  /* A verb or a field this page has never met renders as ITSELF. Swallowing it
-     would make a new kind of change invisible on the one page that exists to
-     show changes. */
   it("renders an unknown verb and an unknown field as themselves, never blank", () => {
     expect(clActionLabel("SOME_NEW_VERB")).toBe("SOME_NEW_VERB");
     expect(clFieldLabel("brand_new_column")).toBe("brand_new_column");
@@ -116,9 +109,6 @@ describe("labels", () => {
 });
 
 describe("times are Malaysia local, in the repo's ONE date format", () => {
-  /* The page must never make the owner do timezone arithmetic, and it must
-     never introduce a second date format to avoid it — fmtDateTime already
-     converts to MYT (vendor/shared/format.ts, mytParts). */
   it("renders 06:00 UTC as 14:00 on the same day, dd/mm/yyyy", () => {
     expect(clWhen("2026-09-08T06:00:00.000Z")).toBe("2026/09/08 14:00");
   });

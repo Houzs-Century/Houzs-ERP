@@ -113,7 +113,6 @@ describe('writeNonSoFields (closed case, open sibling job)', () => {
   });
 });
 
-// Remarks on non-SO rows: a service leg, a DP job and a project each save to their own record.
 describe('writeNonSoFields (remarks)', () => {
   it('saves a service-case remark to the named leg column only', async () => {
     const { c, runs } = fakeCtx();
@@ -197,8 +196,6 @@ describe('writeNonSoFields (amend reason)', () => {
   });
 });
 
-/* The leg's delivered / cancelled date is the Malaysian day. 17:30 UTC on 9 Nov
-   is 01:30 on 10 Nov in Malaysia; the UTC date stamped it the day before. */
 describe('writeAssrLegStatus (Malaysian date)', () => {
   afterEach(() => { vi.useRealTimers(); });
 

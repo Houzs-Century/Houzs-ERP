@@ -46,7 +46,6 @@ app.get("/scope-departments", async (c) => {
   return c.json(res.results.map((r) => ({ userId: Number(r.user_id), departmentId: Number(r.department_id) })));
 });
 
-// PUT /scope-departments {userId, departmentIds} - replace one person's ticked departments.
 app.put("/scope-departments", async (c) => {
   if (!isMailAdmin(c.get("user"))) return c.json({ error: DENIED }, 403);
   const body = await c.req
@@ -91,9 +90,6 @@ app.put("/scope-departments", async (c) => {
   return c.json({ ok: true, added: added.length, removed: removed.length });
 });
 
-// GET /sync-status - per active mailbox of the active company: the newest mail
-// received and how many threads it holds. Only facts the ERP has: it cannot see
-// a Gmail account directly, so "never" means no mail has reached the ERP yet.
 app.get("/sync-status", async (c) => {
   if (!isMailAdmin(c.get("user"))) return c.json({ error: DENIED }, 403);
   c.header("Cache-Control", "no-store");

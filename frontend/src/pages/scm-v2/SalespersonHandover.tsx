@@ -60,10 +60,6 @@ type ShareResult = {
   changed: Array<{ docNo: string }>;
   skipped: Array<{ docNo: string; reason: string }>;
 };
-/* Both runs report the same two lists, so one result box renders either. `verb`
-   is what the operator did, because "12 orders" alone does not say whether they
-   were moved or shared — and those are very different things to have just done
-   to a live order book. */
 type BatchResult = {
   verb: string;
   done: Array<{ docNo: string }>;
@@ -74,13 +70,6 @@ const selectCls =
   "h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary disabled:opacity-60";
 
 export function SalespersonHandover() {
-  /* FROM lists WHO HOLDS ORDERS, most first (useSoHandoverHolders — its own
-     comment has the measurement). It used to read the staff roster, which is
-     scoped by a person's company LINK and therefore hid exactly the resigned
-     AutoCount reps this panel exists for.
-     TO still reads the company-scoped ACTIVE list, so an order can never land
-     on a departed or cross-company rep — that direction genuinely wants the
-     roster, and wants it narrow. */
   const holdersQ = useSoHandoverHolders();
   const holders = holdersQ.data ?? [];
   const pickableQ = usePickableStaff();
@@ -97,10 +86,6 @@ export function SalespersonHandover() {
   const [result, setResult] = useState<BatchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  /* Resolves against BOTH lists: the From side comes from holders, the To /
-     share side from the pickable roster, and one id can be in either. Falls
-     back to the staff code and never to a raw uuid — a holder whose staff row
-     has no name is still somebody the operator must be able to identify. */
   const nameOf = (id: string) => {
     const h = holders.find((x) => x.staffId === id);
     if (h) return h.name || h.staffCode || "(unnamed)";
@@ -136,10 +121,6 @@ export function SalespersonHandover() {
     try {
       for (let i = 0; i < docNos.length; i += size) {
         const batch = docNos.slice(i, i + size);
-        /* Typed PARTIAL on purpose: this is the wire, not a local object. The
-           `?? []` below is the guard that keeps a shape surprise from throwing
-           inside the loop and abandoning the batches that follow — declaring the
-           response fully-populated would make that guard read as dead code. */
         const res = await authedFetch<Partial<ApplyResult>>("/so-handover/apply", {
           method: "POST",
           body: JSON.stringify({ fromStaffId: fromId, toStaffId: toId, docNos: batch }),
@@ -157,17 +138,10 @@ export function SalespersonHandover() {
       setBusy(false);
       setProgress(null);
       setResult({ verb: "Moved", done: moved, skipped });
-      /* The moved orders now belong to someone else, so the preview on screen
-         is stale by definition — reload it rather than leave a list that would
-         re-submit no-ops. */
       void loadPreviewSilently(fromId);
     }
   }
 
-  /* Grant or withdraw ACCESS on the same previewed list. Batched and reported
-     exactly like apply(); deliberately does NOT refresh the preview afterwards,
-     because sharing does not change who the orders are attributed to — the list
-     on screen is still true, and blanking it would suggest something moved. */
   async function share(mode: "add" | "remove") {
     if (!preview || shareIds.length === 0) return;
     const docNos = preview.orders.map((o) => o.docNo);
@@ -180,9 +154,6 @@ export function SalespersonHandover() {
     try {
       for (let i = 0; i < docNos.length; i += size) {
         const batch = docNos.slice(i, i + size);
-        /* Partial for the same reason apply()'s is: this is the wire, and the
-           `?? []` is what stops one odd payload abandoning the batches behind
-           it. */
         const res = await authedFetch<Partial<ShareResult>>("/so-handover/share", {
           method: "POST",
           body: JSON.stringify({ staffIds: shareIds, docNos: batch, mode }),
@@ -212,15 +183,10 @@ export function SalespersonHandover() {
       const next = await authedFetch<Partial<Preview>>(
         `/so-handover/preview?from=${encodeURIComponent(staffId)}`,
       );
-      /* Shape-check before replacing a list the operator is looking at: this
-         refresh runs right after a write, and swapping a good list for a
-         half-shaped payload would blank the screen at the worst moment. */
       if (Array.isArray(next.orders) && typeof next.total === "number") {
         setPreview(next as Preview);
       }
     } catch {
-      /* The handover result is what matters here; a failed refresh must not
-         overwrite it with an error the operator cannot act on. */
     }
   }
 
@@ -251,9 +217,6 @@ export function SalespersonHandover() {
               setFromId(v);
               void loadPreview(v);
             }}
-            /* The COUNT is in the label on purpose: this list is ordered by it,
-               and it is the number the operator is about to act on. `inactive`
-               still shows — most people here have left, which is the point. */
             options={holders.map((h) => {
               const who = h.name || h.staffCode || "(unnamed)";
               return {
@@ -281,10 +244,6 @@ export function SalespersonHandover() {
         </label>
       </div>
 
-      {/* The picker stays a single SearchableSelect and ADDS to a chip list,
-          rather than a second multi-select control nobody else in this codebase
-          uses. It reads back to "" after each pick so the same control can add
-          the next person. */}
       <label className="block">
         <span className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
           Also give access to
@@ -343,10 +302,6 @@ export function SalespersonHandover() {
                 </span>
               )}
             </span>
-            {/* Each button is gated by its OWN field, so the one the operator
-                has not filled in cannot fire. `progress` carries the action that
-                owns it, so a running handover cannot make the Share button count
-                orders it is not touching. */}
             <div className="flex flex-wrap items-center gap-2">
               {shareIds.length > 0 && (
                 <>

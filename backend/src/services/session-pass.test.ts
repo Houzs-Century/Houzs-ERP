@@ -78,7 +78,7 @@ describe('session-pass — issue and rebuild the authorization envelope', () => 
   test('the signing secret gate: unset or too short reads as OFF', () => {
     expect(sessionSigningSecret({})).toBeNull();
     expect(sessionSigningSecret({ SESSION_SIGNING_KEY: '' })).toBeNull();
-    expect(sessionSigningSecret({ SESSION_SIGNING_KEY: 'short' })).toBeNull(); // < 16
+    expect(sessionSigningSecret({ SESSION_SIGNING_KEY: 'short' })).toBeNull();
     expect(sessionSigningSecret({ SESSION_SIGNING_KEY: 'x'.repeat(16) })).toBe('x'.repeat(16));
     expect(sessionSigningSecret(undefined)).toBeNull();
   });
@@ -117,8 +117,7 @@ describe('tryPassAuth — verify + bind-to-token + revocation on the request pat
     const token = 'tok';
     const pass = await issueSessionPass(USER, SECRET, NOW, await sidFor(token));
     const env = { SESSION_SIGNING_KEY: SECRET, SESSION_CACHE: fakeKV() };
-    // Same fake-KV-as-Env shape session-revocation.test.ts uses.
-    await revokeUser(env as unknown as Env, USER.id, NOW + 100); // revoke AFTER issue
+    await revokeUser(env as unknown as Env, USER.id, NOW + 100);
     expect(await tryPassAuth(env, pass, token, NOW + 200)).toBeNull();
   });
 

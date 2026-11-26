@@ -45,15 +45,9 @@ export type CostBatchLine = {
 };
 
 export type CostBatchReason =
-  /* no live PO bound to this SO line has received this item */
   | 'no-received-bound-po'
-  /* the bound PO has no open lot in this warehouse under this item + spec */
   | 'own-po-lot-not-here'
-  /* the batch was stamped, but the PO's open lots hold fewer units than the line;
-     the trigger costs the rest from plain FIFO */
   | 'own-po-lot-short'
-  /* another line of this DO ships the same item + spec under a different batch;
-     one OUT row per (DO, item, spec) is a unique index, so both stay as they were */
   | 'shared-bucket';
 
 export type CostBatchNote = {
@@ -119,11 +113,6 @@ export function pickHardBoundCostBatches(input: {
     decided.set(sid, { po: pick.po, line: { ...line, warehouseId: wh } });
   }
 
-  /* One OUT row per (DO, item_code, variant_key) on the first ship
-     (uq_inv_mov_do_source_v2 has no warehouse and no batch in its key). Two lines
-     of that pair under different batches would make the whole insert fail and the
-     stock never leave, so the decision is dropped for that pair. Resync rows carry
-     correction_seq and do not collide. */
   if (input.stamped === null && decided.size > 0) {
     const finalByPair = new Map<string, Set<string>>();
     for (const line of input.lines) {

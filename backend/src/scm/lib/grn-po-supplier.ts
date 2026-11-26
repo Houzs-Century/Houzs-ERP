@@ -1,16 +1,3 @@
-/* A goods receipt has ONE supplier, and every PO line it ticks off must be on a
- * purchase order from that supplier (sister review G3; Hookka ff023df2b).
- *
- * The batch path `/from-pos` refused `mixed_suppliers` and `/from-po-items`
- * groups one GRN per supplier, but the manual create (`POST /`), the add-line
- * (`POST /:id/items`) and the header edit (`PATCH /:id` changing supplierId)
- * compared only the PO's status, hold and company. A receipt for supplier A
- * could then draw down supplier B's PO line: B's PO reads "received" for goods
- * that never came, and A's GRN (and the bill and payable built from it)
- * carries B's goods.
- *
- * A failed read is a 503, never a pass: "could not check" must not be spelled
- * like "checked and fine". */
 import { scopeToCompany, type CompanyScopeCtx } from './companyScope';
 
 export type GrnPoSupplierCheck =

@@ -1,6 +1,3 @@
-// BUG-97: Sim ticked 2B(LHF) / 2B(RHF) on Model 9028 (VERANO). The SKUs were
-// made, but none of the five suppliers that map 9028 got a binding, so their
-// SKU Pricing tabs had no row to price. Shapes below are the real prod ones.
 import { describe, expect, test } from 'vitest';
 import type { BindingRow } from './suppliers-queries';
 import type { MfgProductRow } from './mfg-products-queries';

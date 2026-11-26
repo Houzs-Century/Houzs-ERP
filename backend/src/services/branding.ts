@@ -1,29 +1,6 @@
 import type { Env } from "../types";
 import { bumpConfigVersion } from "./configCache";
 
-// ── Branding (company identity) ───────────────────────────────
-//
-// ONE source of truth for the company name / SSM registration no /
-// address / phone / email / website / optional logo that used to be
-// hardcoded across ~30 files (backend OCR prompts + email + the
-// frontend PDF letterheads / shell chrome). The owner edits it in
-// Settings; every consumer reads it from here.
-//
-// Storage: the existing app_settings key/value JSON store (the same
-// table the email channel toggles live in) under the single key
-// 'branding'. Seeded with the CURRENT hardcoded values by migration
-// 0038 so nothing changes visually on rollout — only centralised.
-//
-// Multi-company (2026-07): each company gets its OWN branding row.
-//   · HOUZS keeps the legacy 'branding' key as its canonical row, so every
-//     untouched getBranding() caller (and the owner's existing edits) keep
-//     working unchanged.
-//   · Every other company reads/writes 'branding:<companyCode>' (e.g.
-//     'branding:2990', seeded by migration 0094 with the company display
-//     name and blank placeholders the owner fills in Settings → Branding).
-// Resolution: company row → per-company code default. A non-HOUZS company
-// NEVER falls back to the HOUZS row — a missing 2990 row must render 2990's
-// name with blank reg/address, not Houzs Century's identity.
 
 export interface Branding {
   companyName: string;
@@ -36,8 +13,6 @@ export interface Branding {
   phone: string;
   email: string;
   website: string;
-  // R2 object key for an optional uploaded logo; "" when none. This is the
-  // ON-SCREEN logo (app chrome + login screen) and the letterhead fallback.
   logoR2Key: string;
   // R2 object key for an optional SECOND logo used on printed documents only
   // (PDF letterheads + the HTML prints); "" = fall back to logoR2Key.
@@ -66,8 +41,6 @@ export interface Branding {
   /** Where an OTHER DEBTOR pays — a different account from the customers'
    *  (给 other debtor 的户口又不一样) — printed on the Other Debtor invoice. */
   debtorPaymentDetails: string;
-  /** Terms & conditions for the Other Debtor invoice, one term per line,
-   *  printed numbered under the payment details. "" omits the block. */
   debtorInvoiceTerms: string;
 }
 
@@ -84,17 +57,11 @@ export function brandingKeyForCompany(companyCode: string): string {
   return code === HOUZS_COMPANY_CODE ? BRANDING_KEY : `branding:${code}`;
 }
 
-// Fallback identical to migration 0038's seed (and the historical
-// hardcodes). Used only if the row is missing (fresh/restored DB before
-// the migration runs) so consumers never get an empty company name.
 export const DEFAULT_BRANDING: Branding = {
   companyName: "Houzs Century Sdn Bhd",
   registrationNo: "202201031135 (1476832-W)",
   address:
     "1831-B, Jalan KPB 1, Kawasan Perindustrian Balakong, 43300 Seri Kembangan, Selangor.",
-  // Mirrors migration 0142's backfill (extracted from the address above). The
-  // address still carries "43300", so composeBrandingAddress leaves the printed
-  // letterhead byte-identical — this only makes the structured value available.
   postcode: "43300",
   phone: "011-1110 8883",
   email: "hello@houzscentury.com",
@@ -108,12 +75,6 @@ export const DEFAULT_BRANDING: Branding = {
   debtorInvoiceTerms: "",
 };
 
-// Default branding for the 2990 company row. companyName mirrors the
-// public.companies master row seeded by migration 0083 ('2990''s Home').
-// Registration no / address / phone / email are DELIBERATELY blank — they are
-// owner-editable placeholders (Settings → Branding with 2990 active in the
-// top-bar company switcher), and the print/PDF letterheads simply omit blank
-// lines. They must NOT fall back to Houzs Century's identity.
 export const DEFAULT_BRANDING_2990: Branding = {
   companyName: "2990's Home",
   registrationNo: "",
@@ -167,7 +128,6 @@ export function composeBrandingAddress(b: {
   const p = (b.postcode || "").trim();
   if (!p || a.includes(p)) return a;
   if (!a) return p;
-  // Drop trailing punctuation so we don't print "…Selangor., 43300".
   return `${a.replace(/[.,\s]+$/, "")}, ${p}`;
 }
 
@@ -198,9 +158,6 @@ export function brandingAddressLines(address: string): string[] {
   return [line1, line2];
 }
 
-// Coerce a parsed JSON blob into a complete Branding, filling any missing
-// field from the given company's default. Tolerates partial rows written by
-// older code.
 function normalize(raw: unknown, defaults: Branding = DEFAULT_BRANDING): Branding {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const str = (v: unknown, fallback: string): string =>
@@ -209,17 +166,12 @@ function normalize(raw: unknown, defaults: Branding = DEFAULT_BRANDING): Brandin
     companyName: str(r.companyName, defaults.companyName),
     registrationNo: str(r.registrationNo, defaults.registrationNo),
     address: str(r.address, defaults.address),
-    // Older rows written before the postcode field existed have no key → "".
     postcode: str(r.postcode, ""),
     phone: str(r.phone, defaults.phone),
     email: str(r.email, defaults.email),
     website: str(r.website, defaults.website),
     logoR2Key: str(r.logoR2Key, defaults.logoR2Key),
-    // Rows written before the print slot existed have no key → "" (blank means
-    // "print the on-screen logo", the pre-2026-08 behaviour).
     printLogoR2Key: str(r.printLogoR2Key, ""),
-    // Rows written before these existed have no key → "" (the line is omitted,
-    // never inherited from another company's default).
     csPhone: str(r.csPhone, ""),
     csEmail: str(r.csEmail, ""),
     customerPaymentDetails: str(r.customerPaymentDetails, ""),
@@ -228,22 +180,10 @@ function normalize(raw: unknown, defaults: Branding = DEFAULT_BRANDING): Brandin
   };
 }
 
-// Read the legacy single branding row — the HOUZS company identity. Reuses
-// the app_settings JSON store via the d1-compat shim (env.DB) so it works from
-// both the public-schema routes and the scm routes (same Env.DB binding).
-// Falls back to DEFAULT_BRANDING when the row is missing or unparseable —
-// never throws. Untouched callers (OCR prompts, Mail Center, cron emails)
-// keep this signature and keep resolving HOUZS.
 export async function getBranding(env: Env): Promise<Branding> {
   return getBrandingForCompany(env, HOUZS_COMPANY_CODE);
 }
 
-// ── Company id → code resolution ──────────────────────────────
-// Print routes hold the DOCUMENT's companies.id (assr_cases.company_id);
-// middleware holds the code. Resolve either to a code. The 2-row companies
-// master is cached for the isolate lifetime with a short TTL (mirrors
-// companyContext's cache). Fail-soft to HOUZS — pre-migration DBs have no
-// companies master and must keep rendering single-company Houzs.
 let companyCodeCache: { at: number; byId: Map<number, string>; codes: Set<string> } | null = null;
 const COMPANY_CODE_TTL_MS = 5 * 60 * 1000;
 
@@ -272,21 +212,13 @@ export async function resolveCompanyCode(
       }
       companyCodeCache = { at: Date.now(), byId, codes };
     }
-    // A known company CODE wins — even a numeric one like '2990', which the old
-    // "all-digits => it's an id" heuristic misread as companies.id 2990 (real id
-    // is 2), so /api/branding fell back to HOUZS and the 2990 chrome/logo showed
-    // Houzs. Check the code set FIRST.
     if (companyCodeCache.codes.has(upper)) return upper;
-    // Otherwise a numeric value is a companies.id.
     const id = Number(raw);
     if (Number.isFinite(id) && id > 0) {
       return companyCodeCache.byId.get(id) ?? HOUZS_COMPANY_CODE;
     }
-    // Non-numeric unknown code — pass it through (compile-time default handles it).
     return /^\d+$/.test(raw) ? HOUZS_COMPANY_CODE : upper;
   } catch {
-    // companies master absent — single-company Houzs. A non-numeric code still
-    // passes through so a hardcoded caller isn't silently rebranded.
     return /^\d+$/.test(raw) ? HOUZS_COMPANY_CODE : upper;
   }
 }
@@ -316,9 +248,6 @@ export async function getBrandingForCompany(
   }
 }
 
-// Upsert a company's branding row. Mirrors email.ts setSetting (same
-// app_settings upsert + datetime('now') TEXT timestamp via the shim).
-// updatedBy is the editing user's id for the audit columns.
 export async function setBrandingForCompany(
   env: Env,
   company: number | string | null | undefined,
@@ -337,9 +266,6 @@ export async function setBrandingForCompany(
   )
     .bind(brandingKeyForCompany(code), json, updatedBy ?? null)
     .run();
-  // EVERY branding writer funnels through here (Settings PUT, logo upload,
-  // logo remove) — so this is the one invalidation point for the GET
-  // /api/branding read cache. Bump AFTER the upsert commits.
   await bumpConfigVersion(env, "branding");
 }
 

@@ -48,7 +48,6 @@ export const UNMATCHED_DEFAULT_DAYS = 180;
 const shiftDays = (day: string, days: number): string =>
   new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
-/** The page's one gate and its one window, for every list on it. */
 const opened = (c: Ctx): { ok: true; companyId: number; from: string; to: string; today: string } | { ok: false; response: Response } => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
     return { ok: false, response: c.json({ error: "You don't have permission to see the reconciliation lists." }, 403) };
@@ -85,7 +84,6 @@ const LINE_FIELDS = 'id, statement_id, line_no, booked_on, description, referenc
 
 const dayOf = (v: unknown): string => String(v ?? '').slice(0, 10);
 
-/** Every OPEN money-in line dated in the window, decided as Bank Recon decides it today. */
 async function loadUnmatchedBankLines(
   sb: any, companyId: number, window: { from: string; to: string; today: string },
 ): Promise<{ ok: true; rows: UnmatchedBankLine[] } | Fail> {
@@ -99,7 +97,6 @@ async function loadUnmatchedBankLines(
     .gte('booked_on', window.from).lte('booked_on', window.to)
     .order('id').range(lo, hi));
   if (read.error) return { ok: false, reason: `bank lines: ${read.error.message}` };
-  /* A repeat of a movement an earlier file recorded is a copy, not money. */
   const open = (read.data ?? []).filter((l) => String(l.kind) !== REPEAT_KIND && accountOf.get(Number(l.statement_id)));
   if (open.length === 0) return { ok: true, rows: [] };
 
@@ -120,7 +117,6 @@ async function loadUnmatchedBankLines(
   const decided: DecidedBankLine[] = [];
   const offersByLine = new Map<number, EntryOffer[]>();
   for (const account of [...new Set(lines.map((l) => accountOf.get(Number(l.statement_id))!))].sort()) {
-    /* What every POSTED line of the account already holds: never offered again. */
     const claimed = await loadClaimedElsewhere(sb, companyId, account, null);
     if (!claimed.ok) return { ok: false, reason: `bank claims on ${account}: ${claimed.reason}` };
     const mine = withQrSales(lines.filter((l) => accountOf.get(Number(l.statement_id)) === account),

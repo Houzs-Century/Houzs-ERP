@@ -1,27 +1,3 @@
-// Vendored SLICE of apps/backend/src/lib/venues-queries.ts — the SO list/detail
-// + SO Maintenance venue reads/CRUD.
-//
-// ── HOUZS RE-SOURCING (2026-06-21) ──────────────────────────────────────────
-// Venues are maintained CENTRALLY in Houzs's Project Maintenance / PMS, not in
-// the SCM. The old `/api/scm/venues` route never existed in the cutover (it
-// 404'd), so these hooks now source from the Houzs-native Project Maintenance
-// API: GET/POST/PATCH/DELETE /api/projects/venues.
-//
-// That endpoint lives OUTSIDE the /api/scm mount, so `authedFetch` (which
-// prepends /api/scm) cannot reach it. We use the Houzs-native `api` client
-// (../../../api/client) which carries the same bearer token but targets the
-// Worker root.
-//
-// Shape adaptation — the projects VenueRow is { id:number, name, state, notes,
-// active } and the GET only returns active venues. We map it onto the SCM
-// `VenueRow` contract the SO/CO consumers already expect:
-//   • id    → String(id)   — the SO pickers match `venue.id === staff.venueId`
-//                            with `===`, and staff.venueId is a STRING. Keeping
-//                            id a string preserves that comparison.
-//   • notes → address      — projects venues have no `address`; `notes` is the
-//                            nearest free-text column (read-only display only).
-//   • state                — carried through so the SO venue picker can read it.
-//   • active → true        — the projects GET only returns active rows.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../api/client';
@@ -31,18 +7,10 @@ export type VenueRow = {
   id: string;
   name: string;
   address: string | null;
-  /** Houzs Project Maintenance tags each venue with a Malaysian state; the SO
-   *  venue picker reads it to pre-fill the customer state. */
   state: string | null;
   active: boolean;
   created_at: string;
-  /** Where this venue comes from. 'PROJECT' = the Project Maintenance venue
-   *  master (an exhibition venue). 'SHOWROOM' = a warehouse flagged as a
-   *  Showroom, contributing its venue_name. The owner asked to be able to tell
-   *  the two apart in the list, so the origin travels with the row instead of
-   *  being guessed from the name. */
   origin: VenueOrigin;
-  /** Set only when origin is 'SHOWROOM' — the source warehouse. */
   warehouseId: string | null;
 };
 
@@ -77,7 +45,6 @@ export type NewVenue = {
   active?: boolean;
 };
 
-// Raw row as returned by GET /api/projects/venues.
 type ProjectVenueRow = {
   id: number | string;
   name: string;
@@ -96,17 +63,12 @@ function mapVenue(r: ProjectVenueRow): VenueRow {
     state: r.state ?? null,
     active: r.active === 1 || r.active === true,
     created_at: '',
-    /* Default to PROJECT only because that is what an un-upgraded backend
-       returns; it is a shape fallback, not a guess about the data. */
     origin: r.origin ?? 'PROJECT',
     warehouseId: r.warehouseId ?? null,
   };
 }
 
 export function useVenues(_opts?: { includeInactive?: boolean }) {
-  // The projects GET only returns active venues; `includeInactive` is accepted
-  // for call-site compatibility but has no effect (central maintenance lives in
-  // Project Maintenance, which is the source of truth for inactive venues).
   return useQuery({
     queryKey: ['venues'],
     queryFn: () =>
@@ -124,8 +86,6 @@ export function useCreateVenue() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: NewVenue) =>
-      // Projects venues carry name + state + notes (no `address`); map the
-      // editor's free-text address onto `notes`.
       api.post<{ id: number; name: string; state: string | null }>(
         '/api/projects/venues',
         { name: body.name, notes: body.address ?? null },

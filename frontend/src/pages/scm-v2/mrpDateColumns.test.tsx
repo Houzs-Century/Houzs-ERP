@@ -48,8 +48,7 @@ const base = (over: Partial<MrpResponse>): MrpResponse => ({
 });
 
 describe('MRP date columns — selectable from the Columns drawer', () => {
-  // Column visibility is persisted per table (dt:hidden:mrp); start each test clean.
-  beforeEach(() => { try { localStorage.clear(); } catch { /* jsdom */ } });
+  beforeEach(() => { try { localStorage.clear(); } catch { } });
 
   test('the three dates are offered in the picker; Delivery shows by default, SO Date does not', () => {
     mrpData = base({ sofaSets: [sofaSet()] });

@@ -22,7 +22,6 @@ import { BackToPile } from '../../vendor/scm/components/BackToPile';
 
 type Bills = Array<{ files: Array<{ name: string; mime: string; dataBase64: string }> }>;
 const extractAsync = vi.fn(async (_bills: Bills) => ({ bills: [] as ExtractedBill[] }));
-/* Each bill's place on the scan queue, as the page is told it (ai-read-job.ts). */
 let stageFor: ((index: number, stage: 'queued' | 'reading') => void) | null = null;
 vi.mock('../../vendor/scm/lib/payment-voucher-queries', () => ({
   useExtractBills: () => ({
@@ -42,33 +41,26 @@ vi.mock('../../vendor/scm/lib/payment-request-queries', async (importOriginal) =
   useBillMatches: (no: string, date: string) => ({ data: { matches: sameBills[`${no}|${date}`] ?? [] } }),
 }));
 
-/* The page cutter is the server's (pinned in backend lib/pdf-split.test.ts);
-   here it answers with the pages a test says the PDF has. */
 const splitPdfPages = vi.fn(async (_f: File): Promise<File[]> => []);
 vi.mock('../../vendor/scm/lib/pdf-split-request', () => ({ splitPdfPages: (f: File) => splitPdfPages(f) }));
 
 import { MAX_PILE_FILES, PaymentVoucherScan } from './PaymentVoucherScan';
 
-/* The reader, one bill per call: each call's answer is looked up by the bill's
-   first file; the page puts it in that bill's place. */
 const answers = (byFile: Partial<Record<string, ExtractedBill>>) => {
   extractAsync.mockImplementation(async (bills: Bills) => {
     const a = byFile[bills[0]!.files[0]!.name];
     return { bills: a ? [{ ...a, index: 0 }] : [] };
   });
 };
-/* Every bill answered: the Read button is back. */
 const readDone = (n: number) => waitFor(() => expect(screen.getByText(`Read ${n} bill(s)`)).toBeTruthy());
 
 beforeEach(() => {
-  /* The pile outlives the page (bill-pile-store) — every test starts on an empty one. */
   clearAllPiles();
   extractAsync.mockReset();
   extractAsync.mockImplementation(async () => ({ bills: [] as ExtractedBill[] }));
   sameBills = {};
 });
 
-/* The landing probe: what /new would receive in location.state. */
 let landedState: unknown = null;
 const NewProbe = () => {
   landedState = useLocation().state;
@@ -137,7 +129,6 @@ describe('the pile for AP invoices', () => {
     expect(screen.queryByText(/Open as ONE voucher/)).toBeNull();
     expect(screen.queryByText('Open as voucher')).toBeNull();
     expect(screen.queryByLabelText(/bills separately/)).toBeNull();
-    /* Nor the petty-cash tick: an AP invoice is one per bill by nature. */
     expect(screen.queryByLabelText(/for one voucher/)).toBeNull();
     expect(screen.queryByText(/Open ticked as ONE voucher/)).toBeNull();
 
@@ -168,7 +159,6 @@ describe('the pile for AP invoices', () => {
     await waitFor(() => expect(screen.getByText('Read 3 bill(s)')).toBeTruthy());
     expect(screen.queryByText('stmt.pdf')).toBeNull();
     expect(screen.getByText(/stmt\.pdf split into 3 bills/)).toBeTruthy();
-    /* A page is already one page — it offers no split of its own. */
     expect(screen.queryByLabelText(/Split stmt p1\.pdf/)).toBeNull();
 
     fireEvent.click(screen.getByText('Read 3 bill(s)'));
@@ -203,17 +193,13 @@ describe('the bill pile', () => {
     const input = screen.getByLabelText('Add bill files');
     fireEvent.change(input, { target: { files: [pdf('page-1.pdf'), pdf('page-2.pdf'), pdf('other.pdf')] } });
 
-    /* Three files, three bills — until the human says two of them are pages. */
     expect(screen.getByText('Read 3 bill(s)')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Select page-1.pdf'));
     fireEvent.click(screen.getByLabelText('Select page-2.pdf'));
-    /* The button says what Merge IS — pages of one bill — since the owner
-       pressed it to put three receipts on one voucher (2026-09-08). */
     fireEvent.click(screen.getByText('These 2 files are pages of ONE bill — merge'));
     fireEvent.click(screen.getByText('Read 2 bill(s)'));
     await readDone(2);
 
-    /* One request per bill — the merged pages travel together as ONE. */
     expect(extractAsync).toHaveBeenCalledTimes(2);
     const sent = extractAsync.mock.calls.map(([bills]) => bills);
     expect(sent.every((bills) => bills.length === 1)).toBe(true);
@@ -248,11 +234,7 @@ describe('the bill pile', () => {
       { description: 'Foshan Chairs INV-1', amountSen: 100000 },
       { description: 'Foshan Chairs INV-2', amountSen: 50000 },
     ]);
-    /* The habit rides along — the New page fills the account from it. */
     expect(state.billPrefill.memory).toMatchObject({ debitAccountCode: '900-F002' });
-    /* And the bills' own BYTES ride the module stash (never location.state —
-       a big PDF would blow the history-entry cap): every member's pages, in
-       bill order, for the New page to attach after save. */
     expect(takePvFiles().map((f) => f.name)).toEqual(['a.pdf', 'b.pdf']);
   });
 
@@ -280,14 +262,11 @@ describe('the bill pile', () => {
   test('case 4: DIFFERENT receipts tick across groups and open as ONE voucher — one line each, no payee, every page attached', async () => {
     landedState = null;
     answers({
-      /* Two goods on one receipt: the line says what was bought, joined. */
       'a.pdf': readBill(0, { vendorName: '99 SPEEDMART S/B', invoiceNumber: 'T0012', totalSen: 1910, lines: [
         { description: '4475 3M SCOTCH BRITE SPAN P', amountSen: 1040 },
         { description: '1953 FEBREZE FABRIK ANTI BA', amountSen: 870 },
       ] }, null),
-      /* Shell has a remembered payee and account — NOT borrowed for the lot. */
       'b.pdf': readBill(1, { vendorName: 'SHELL MALAYSIA', invoiceNumber: 'S-99', totalSen: 5000 }, null, { payeeName: 'Shell', debitAccountCode: '900-M001' }),
-      /* No readable item: the shop + number stands in. */
       'c.pdf': readBill(2, { vendorName: 'WATSONS', invoiceNumber: 'W-1', totalSen: 1200 }, null),
     });
     draw();
@@ -295,7 +274,6 @@ describe('the bill pile', () => {
     fireEvent.click(screen.getByText('Read 3 bill(s)'));
     await readDone(3);
 
-    /* Three shops = three groups, each its own voucher — until ticked together. */
     await waitFor(() => expect(screen.getByText('Open ticked as ONE voucher (0 lines)')).toBeTruthy());
     expect(screen.getAllByText('Open as voucher')).toHaveLength(3);
     fireEvent.click(screen.getByLabelText('Tick T0012 for one voucher'));
@@ -304,8 +282,8 @@ describe('the bill pile', () => {
     await waitFor(() => expect(screen.getByText('NEW PAGE')).toBeTruthy());
 
     const state = landedState as { billPrefill: { extraction: { vendorName: string | null; invoiceNumber: string | null; totalSen: number | null; documentKind: string }; lines: Array<{ description: string | null; amountSen: number | null }>; memory: unknown } };
-    expect(state.billPrefill.extraction.vendorName).toBeNull();     // the payee is the person's to type
-    expect(state.billPrefill.memory).toBeNull();                     // no shop's habit borrowed
+    expect(state.billPrefill.extraction.vendorName).toBeNull();
+    expect(state.billPrefill.memory).toBeNull();
     expect(state.billPrefill.extraction.documentKind).toBe('receipt');
     expect(state.billPrefill.extraction.invoiceNumber).toBe('T0012, W-1');
     expect(state.billPrefill.extraction.totalSen).toBe(3110);
@@ -316,7 +294,6 @@ describe('the bill pile', () => {
       { description: '4475 3M SCOTCH BRITE SPAN P · 1953 FEBREZE FABRIK ANTI BA', amountSen: 1910 },
       { description: 'WATSONS W-1', amountSen: 1200 },
     ]);
-    /* Only the ticked receipts' pages, in bill order — Shell's stays out. */
     expect(takePvFiles().map((f) => f.name)).toEqual(['a.pdf', 'c.pdf']);
   });
 
@@ -348,7 +325,6 @@ describe('the bill pile', () => {
     expect(screen.getByText(/repeats bill 3/)).toBeTruthy();
 
     fireEvent.click(screen.getByText('Tick every receipt'));
-    /* Grab once + two Shopee orders = 3 lines, RM 31.44 + 34.05 + 23.73. */
     fireEvent.click(screen.getByText('Open ticked as ONE voucher (3 lines, RM 89.22)'));
     await waitFor(() => expect(screen.getByText('NEW PAGE')).toBeTruthy());
     const state = landedState as { billPrefill: { extraction: { totalSen: number | null }; lines: Array<{ description: string | null; amountSen: number | null }> } };
@@ -358,7 +334,6 @@ describe('the bill pile', () => {
       { description: 'TNW D24 RGB LED light', amountSen: 3405 },
       { description: 'Kopitiam mugs x2', amountSen: 2373 },
     ]);
-    /* Every page rides along as evidence — the slip and summary too — in pile order. */
     expect(takePvFiles().map((f) => f.name)).toEqual(['summary.pdf', 'slip.pdf', 'grab1.pdf', 'grab2.pdf', 'shopee.pdf']);
   });
 
@@ -418,7 +393,6 @@ describe('the bill pile', () => {
     expect(screen.getByText(/page of the claim's file, on no row \(bill 1\)/)).toBeTruthy();
     expect(screen.getByText(/a claim form's pages go with it/)).toBeTruthy();
     expect(screen.getByText(/the receipts for 3 of 3 rows are in the pile/)).toBeTruthy();
-    /* Only the form is a receipt — the pages behind it add no lines. */
     expect(screen.getAllByText('Open as voucher')).toHaveLength(1);
     fireEvent.click(screen.getByText('Tick every receipt'));
     expect(screen.getByText(/Open ticked as ONE voucher \(3 lines, RM 2,309\.32\)/)).toBeTruthy();
@@ -455,19 +429,16 @@ describe('the bill pile', () => {
     fireEvent.click(screen.getByText('Read 3 bill(s)'));
     await readDone(3);
 
-    /* Grouped by default — no per-bill buttons until the human splits. */
     await waitFor(() => expect(screen.getByText('Open as ONE voucher (2 lines)')).toBeTruthy());
     expect(screen.queryAllByText('Open as voucher')).toHaveLength(0);
     fireEvent.click(screen.getByLabelText('Pay Foshan Chairs bills separately'));
     expect(screen.queryByText(/Open as ONE voucher/)).toBeNull();
     expect(screen.getAllByText('Open as voucher')).toHaveLength(2);
 
-    /* The honest edges: a null total is flagged, a failed bill keeps its reason. */
     expect(screen.getByText('total unreadable — will need typing')).toBeTruthy();
     expect(screen.getByText(/Bill 3 \(c\.pdf\) could not be read: The reader answered/)).toBeTruthy();
     expect(screen.getByText(/1 bill\(s\) could not be read/)).toBeTruthy();
 
-    /* A SPLIT bill stashes only ITS OWN file — never a sibling's. */
     fireEvent.click(screen.getAllByText('Open as voucher')[0]!);
     await waitFor(() => expect(screen.getByText('NEW PAGE')).toBeTruthy());
     expect(takePvFiles().map((f) => f.name)).toEqual(['a.pdf']);
@@ -496,8 +467,6 @@ describe('扫 → bill (owner 2026-09-03: 他是扫 bill, 然后帮我录入 bil
       { description: 'Zhejiang Ju Miao ZJM-88', amountSen: 1644000 },
       { description: 'Zhejiang Ju Miao ZJM-89', amountSen: 100000 },
     ]);
-    /* The supplier's scanned pages ride the stash to the New Purchase Invoice,
-       which attaches them on save; they used to be dropped here. */
     expect(takePvFiles().map((f) => f.name)).toEqual(['a.pdf', 'b.pdf']);
   });
 
@@ -556,10 +525,8 @@ describe('many bills at once', () => {
     expect(screen.getByText('Reading… 0 of 4 done')).toBeTruthy();
     await act(async () => { waiting[0]!(); });
     await waitFor(() => expect(screen.getByText('INV-A')).toBeTruthy());
-    /* The lane that came free took the fourth bill. */
     await waitFor(() => expect(waiting).toHaveLength(4));
     expect(screen.getByText('Reading… 1 of 4 done')).toBeTruthy();
-    /* Opening waits — leaving now would drop the bills still with the reader. */
     expect(screen.getByText('Open as AP invoice').closest('button')!.disabled).toBe(true);
 
     await act(async () => { waiting.slice(1).forEach((go) => { go(); }); });
@@ -568,7 +535,6 @@ describe('many bills at once', () => {
     expect(most).toBe(3);
     expect(extractAsync).toHaveBeenCalledTimes(4);
     expect(extractAsync.mock.calls.every(([bills]) => bills.length === 1)).toBe(true);
-    /* In pile order, whatever order they were answered in. */
     expect(screen.getAllByText(/^INV-[A-D]$/).map((el) => el.textContent)).toEqual(['INV-A', 'INV-B', 'INV-C', 'INV-D']);
   });
 
@@ -627,7 +593,6 @@ describe('many bills at once', () => {
     expect(screen.getByText(`Read ${MAX_PILE_FILES} bill(s)`)).toBeTruthy();
     expect(screen.getByText(new RegExp(`at most ${MAX_PILE_FILES} files — 2 left out`))).toBeTruthy();
     expect(screen.queryByText(`bill-${MAX_PILE_FILES + 1}.pdf`)).toBeNull();
-    /* Full: one more is left out too. */
     add('one-more.pdf');
     expect(screen.queryByText('one-more.pdf')).toBeNull();
   });
@@ -645,10 +610,8 @@ describe('many bills at once', () => {
     const notes = screen.getAllByRole('alert', { name: 'Same bill elsewhere' });
     expect(notes).toHaveLength(1);
     expect(notes[0]!.textContent).toContain('AP invoice HC-API-2610-004 · RM 1,890.00 · draft');
-    /* Beside ITS bill, not the other one. */
     const box = screen.getByText('INV-7').parentElement!.parentElement!;
     expect(within(box).getByRole('alert', { name: 'Same bill elsewhere' })).toBe(notes[0]);
-    /* A warning, never a block. */
     fireEvent.click(within(box).getByText('Open as AP invoice'));
     await waitFor(() => expect(screen.getByText('AP LIST')).toBeTruthy());
     expect(takePvFiles().map((f) => f.name)).toEqual(['a.pdf']);
@@ -679,14 +642,12 @@ describe('the pile stays while the tab lives', () => {
     await readDone(2);
     fireEvent.click(screen.getAllByText('Open as AP invoice')[0]!);
     await waitFor(() => expect(screen.getByText(/AP LIST/)).toBeTruthy());
-    /* The AP page offers the way back, counting what is left. */
     fireEvent.click(screen.getByText('← Back to Scan bills (1 left)'));
     await waitFor(() => expect(screen.getByText('INV-2')).toBeTruthy());
     expect(screen.getByText('INV-1')).toBeTruthy();
     expect(within(screen.getByText('INV-1').closest('span')!).getByText('· opened')).toBeTruthy();
     expect(extractAsync).toHaveBeenCalledTimes(2);
     first.unmount();
-    /* A page drawn afresh — a later visit — finds the same pile. */
     drawAp();
     expect(screen.getByText('INV-2')).toBeTruthy();
     expect(screen.getByText('a.pdf')).toBeTruthy();

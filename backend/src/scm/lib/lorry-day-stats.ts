@@ -19,7 +19,6 @@ import { kmFromFixes, myDayWindow, oneTracker, type Fix } from './lorry-km';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema-parameterised scm client, same alias as geocode.ts
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
-/* ── Pure ───────────────────────────────────────────────────────────────── */
 
 export type Leg = { ref: string | null; distanceM: number; durationS: number };
 export type Stamps = { departedAt: string | null; arrivedAt: string | null; deliveredAt: string | null };
@@ -53,7 +52,6 @@ export type DayStat = {
   date: string; lorryId: string;
   googleM: number; googleS: number; gpsKm: number | null;
   stops: number; timedStops: number;
-  /** Sum of Drive time over the timed stops, and Google's legs into the same stops. */
   driveS: number; googleTimedS: number;
   onSiteS: number; onSiteStops: number;
 };
@@ -95,7 +93,6 @@ export function onSiteByBuilding(rows: ReadonlyArray<{ lorryId: string; building
   return [...acc.values()].sort((a, b) => a.buildingType.localeCompare(b.buildingType) || a.lorryId.localeCompare(b.lorryId));
 }
 
-/* ── Load ───────────────────────────────────────────────────────────────── */
 
 async function need<T>(what: string, p: Promise<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
   const { data, error } = await p;
@@ -111,7 +108,6 @@ export async function loadDayStats(sb: SupabaseClient, from: string, to: string)
       .gte('route_date', from).lte('route_date', to).order('route_date').order('lorry_id').range(lo, hi)));
   const refs = [...new Set(runs.flatMap((r) => (r.legs ?? []).map((l) => l.ref).filter((x): x is string => !!x)))];
 
-  /* The crew's taps live on the SO's DO; the newest DO that is not cancelled wins. */
   const dos = await need('dos', chunkIn<{ id: string; so_doc_no: string; status: string | null; departure_at: string | null; arrival_at: string | null; delivered_at: string | null }>(refs, (b, lo, hi) =>
     sb.from('delivery_orders').select('id, so_doc_no, status, departure_at, arrival_at, delivered_at').in('so_doc_no', b).order('id').range(lo, hi)));
   const stamps = new Map<string, Stamps>();
@@ -126,7 +122,6 @@ export async function loadDayStats(sb: SupabaseClient, from: string, to: string)
   const buildingOf = new Map<string, string | null>();
   for (const s of sos) if (!buildingOf.get(s.doc_no)) buildingOf.set(s.doc_no, s.building_type);
 
-  /* GPS km per lorry and Malaysia day; a lorry-day with no fix stays null. */
   const winFrom = myDayWindow(from)?.from;
   const winTo = myDayWindow(to)?.to;
   const fixesBy = new Map<string, Array<Fix & { device_id: string | null }>>();

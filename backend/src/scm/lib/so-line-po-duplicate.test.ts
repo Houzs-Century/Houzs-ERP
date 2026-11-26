@@ -1,6 +1,3 @@
-/* 2990-0065: 2990-SO-2608-042's sofa lines went on 2990-PO-2611-036 and again on
-   2990-PO-2611-044. A line already on a live PO must be named before another
-   PO is generated for it. */
 import { describe, expect, test } from 'vitest';
 import { soLinesOnLivePo, soHasPoRefusal, soHasPoGate, asksDuplicatePo } from './so-line-po-duplicate';
 
@@ -74,8 +71,6 @@ describe('soHasPoRefusal', () => {
   });
 });
 
-/* 2990-0070 (Sim, 2026-11-23): 2990 asks only for the custom items named in
-   2990-0065 - bedframe, sofa, dining, mattress sized SP or SK. */
 describe('asksDuplicatePo', () => {
   const ask2990 = (item_group: string | null, item_code: string) => asksDuplicatePo(2, { item_group, item_code });
   test.each([

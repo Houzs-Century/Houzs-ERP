@@ -13,13 +13,11 @@ const TODAY = "2026-09-09";
 
 describe("tierFor — the event's own dates decide the bucket", () => {
   it("an event that already ENDED is the worst bucket", () => {
-    // The owner's case: "kalau dah lepas event dia still x buat".
     expect(tierFor(row({ start_date: "2026-09-01", end_date: "2026-09-03" }), TODAY))
       .toBe("past_event");
   });
 
   it("an event ending TODAY is not past yet", () => {
-    // Local date, not UTC — a same-day event must not read as finished.
     expect(tierFor(row({ start_date: "2026-09-07", end_date: TODAY }), TODAY)).toBe("this_week");
   });
 
@@ -39,9 +37,9 @@ describe("buildDigest", () => {
   it("orders groups worst-first and reports the worst tier", () => {
     const d = buildDigest(
       [
-        row({ id: 1, start_date: "2026-10-20", end_date: "2026-10-22" }), // later
-        row({ id: 2, start_date: "2026-08-30", end_date: "2026-09-01" }), // past
-        row({ id: 3, start_date: "2026-09-11", end_date: "2026-09-13" }), // this week
+        row({ id: 1, start_date: "2026-10-20", end_date: "2026-10-22" }),
+        row({ id: 2, start_date: "2026-08-30", end_date: "2026-09-01" }),
+        row({ id: 3, start_date: "2026-09-11", end_date: "2026-09-13" }),
       ],
       TODAY,
     );
@@ -62,7 +60,6 @@ describe("buildDigest", () => {
   });
 
   it("survives a lane that sends no titles at all", () => {
-    // my_pending_titles is only built for SOME lanes; the event must still count.
     const d = buildDigest([row({ my_pending_titles: null })], TODAY);
     expect(d.total).toBe(1);
     expect(d.groups[0].titles).toEqual([]);
@@ -100,7 +97,6 @@ describe("seenKey — the reminder returns by itself tomorrow", () => {
 
 describe("localToday", () => {
   it("reads the MALAYSIAN calendar date, whatever zone the device is in", () => {
-    // 01:30 on 10 Nov in Malaysia is still 9 Nov in UTC and on a device abroad.
     expect(localToday(new Date("2026-11-09T17:30:00Z"))).toBe("2026-11-10");
     expect(localToday(new Date("2026-11-09T16:00:00Z"))).toBe("2026-11-10");
     expect(localToday(new Date("2026-11-09T15:59:59Z"))).toBe("2026-11-09");

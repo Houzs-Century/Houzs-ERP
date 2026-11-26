@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// reportListLook — how the report list (reports/ReportRail) draws each report
-// of reports-catalog: its icon and its one-line description, shown on hover
-// (the owner's Claude Design, batch 6 §4.1).
-//
-// Apart from the catalog on purpose: the sidebar's one Reports entry reads the
-// catalog's names, addresses and gates, and the sidebar ships in the app's
-// first download (scripts/check-bundle-size.mjs). The icons and sentences are
-// only the list's, and the list is loaded with the reports. Keyed by ReportId,
-// so a report the catalog adds without its look fails the typecheck. A P&L's
-// entry, its views folded into it, has its own look (PNL_LOOK).
-// ----------------------------------------------------------------------------
 
 import type { LucideIcon } from 'lucide-react';
 import {

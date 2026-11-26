@@ -1,23 +1,11 @@
-// Malaysian federal public holidays. Seed covers 2024–2027. Where a
-// holiday is movable (Chinese New Year, Hari Raya, Wesak Day, etc.)
-// the date reflects the official gazetted date; weekend-carryover
-// replacement days (common in Malaysia when a holiday falls on a
-// Sunday) are included as separate entries.
-//
-// Not state-specific — state-only holidays (Selangor Sultan's Birthday,
-// Hari Hol Perak, FT Day, etc.) are intentionally omitted to keep the
-// calendar chrome consistent for the whole ops team.
 
 export interface Holiday {
-  /** ISO yyyy-mm-dd */
   date: string;
   name: string;
-  /** "federal" | "observed" (replacement day for a weekend holiday). */
   kind?: "federal" | "observed";
 }
 
 const MY_FEDERAL_HOLIDAYS: Holiday[] = [
-  // ── 2024 ─────────────────────────────────────────────
   { date: "2024-01-01", name: "New Year's Day" },
   { date: "2024-02-10", name: "Chinese New Year" },
   { date: "2024-02-11", name: "Chinese New Year (Day 2)" },
@@ -35,7 +23,6 @@ const MY_FEDERAL_HOLIDAYS: Holiday[] = [
   { date: "2024-10-31", name: "Deepavali" },
   { date: "2024-12-25", name: "Christmas Day" },
 
-  // ── 2025 ─────────────────────────────────────────────
   { date: "2025-01-01", name: "New Year's Day" },
   { date: "2025-01-29", name: "Chinese New Year" },
   { date: "2025-01-30", name: "Chinese New Year (Day 2)" },
@@ -52,7 +39,6 @@ const MY_FEDERAL_HOLIDAYS: Holiday[] = [
   { date: "2025-10-20", name: "Deepavali" },
   { date: "2025-12-25", name: "Christmas Day" },
 
-  // ── 2026 ─────────────────────────────────────────────
   { date: "2026-01-01", name: "New Year's Day" },
   { date: "2026-02-17", name: "Chinese New Year" },
   { date: "2026-02-18", name: "Chinese New Year (Day 2)" },
@@ -69,7 +55,6 @@ const MY_FEDERAL_HOLIDAYS: Holiday[] = [
   { date: "2026-11-08", name: "Deepavali" },
   { date: "2026-12-25", name: "Christmas Day" },
 
-  // ── 2027 ─────────────────────────────────────────────
   { date: "2027-01-01", name: "New Year's Day" },
   { date: "2027-02-06", name: "Chinese New Year" },
   { date: "2027-02-07", name: "Chinese New Year (Day 2)" },

@@ -25,16 +25,11 @@ import {
 } from "../services/fieldPin";
 import type { PositionCohort, PositionProfile } from "../services/positionPolicyRows";
 
-/* Same throwaway record routes/auth.ts uses: a login for a staff code with no
-   PIN still pays the full PBKDF2 derivation, so timing does not say which
-   codes hold a PIN. Never compared against successfully. */
 const TIMING_EQUALISER_HASH =
   "BF3yX+3ocRPnH9KBKydn5A==$5iHFIc7Z3t8/vEm8jA4GuwdjcaL5/yajl4dWitx/PBU=";
 const TOTP_CHALLENGE_TTL_SECONDS = 5 * 60;
 
 export const WRONG_PIN_MESSAGE = "Staff code or PIN is incorrect.";
-/* ONE body for the durable lock and the per-code speed bump, so a locked real
-   account and a hammered unknown code read the same. */
 export const LOCKED_MESSAGE = `Too many wrong PINs. Wait ${FIELD_PIN_LOCK_MINUTES} minutes, or ask the office to set a new PIN.`;
 
 type PinRow = {
@@ -140,8 +135,6 @@ export async function fieldPinLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     if (!kv) return c.json({ error: "Two-factor is temporarily unavailable. Try again shortly." }, 503);
     const challenge = generateToken();
     try {
-      // Third field carries the door through the 2FA step, so the session
-      // /totp/login mints is a field one too — never an unconfined ERP one.
       await kv.put(`2fa:${challenge}`, `${row.id}:0:field`, { expirationTtl: TOTP_CHALLENGE_TTL_SECONDS });
     } catch (e) {
       console.error("[2fa] challenge store failed", e);

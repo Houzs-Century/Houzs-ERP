@@ -1,14 +1,3 @@
-// BUG-66 (Sim 2026-10-07): a stock adjustment became a numbered document that
-// can be opened and edited. This drives the REAL routes through the fake
-// PostgREST client and asserts:
-//   - POST writes ONE header + its lines, and every movement carries the
-//     document's id and number
-//   - an edit moves only the DIFFERENCE per bucket (-3 -> -5 writes one -2)
-//   - an edit that would take out more than the bucket holds is refused
-//     before anything is written (Sim's "-3 edited to -12" example)
-//   - putting written-off stock back enters at the cost it was written off at
-//   - a reason / notes-only edit moves no stock
-//   - another company's document 404s and nothing is written
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -31,7 +20,6 @@ function makeSb() {
           item_group: null, variants: null, description2: null, variant_key: '', batch_no: null, qty: -3,
           reason_code: 'DAMAGE', notes: null },
       ],
-      // The original -3 already went out at RM10 a unit; 7 remain open.
       inventory_movements: [
         { id: 'm-1', movement_type: 'ADJUSTMENT', warehouse_id: 'wh-1', item_code: 'CH-1', variant_key: '', batch_no: null,
           qty: -3, unit_cost_sen: 1000, source_doc_type: 'ADJUSTMENT', source_doc_id: 'sa-1',
@@ -94,7 +82,6 @@ describe('POST /inventory/adjustments — one document', () => {
     expect(body.adjustmentNo).toMatch(/^HC-SA-\d{4}-\d{3}$/);
     expect(docLines(body.id).map((l) => [l.item_code, l.qty])).toEqual([['CH-1', -1], ['CH-2', 2]]);
     const mv = docMovements(body.id);
-    // Found stock first, so a write-off in the same bucket finds the lot.
     expect(mv.map((m) => [m.item_code, m.qty])).toEqual([['CH-2', 2], ['CH-1', -1]]);
     expect(new Set(mv.map((m) => m.source_doc_no))).toEqual(new Set([body.adjustmentNo]));
   });

@@ -17,7 +17,6 @@ import { cn, formatDate } from "../lib/utils";
 import { resolutionLabel, stageLabel } from "../components/StatusDot";
 import type { AssrMetrics } from "../types";
 
-// v3.1 enriched summary (mig 074 stage names + new aggregates)
 type AssrSummaryV31 = {
   total: number;
   by_stage: { stage: string; count: number }[];
@@ -64,8 +63,6 @@ function ncrLabel(k: string) {
   return NCR_LABEL[k] ?? k;
 }
 
-// Drill metric → user-facing panel title. Only metrics listed here
-// (and accepted by the backend /metrics/drill endpoint) are clickable.
 const DRILL_LABELS: Record<string, string> = {
   pending_review: "Pending Review — cases",
   aging: "Aging > 3 days — cases stuck in a stage",
@@ -81,17 +78,10 @@ const DRILL_LABELS: Record<string, string> = {
   over_2_weeks: "Open 14–20 days",
 };
 
-// Drill state — for metric-only drills (e.g. "pending_review") just the
-// metric name is enough. For row-driven drills (Repeat Customers /
-// Items) we also carry the row identity + an override title so the
-// panel header reads the customer's name instead of a generic label.
 type DrillState =
   | { metric: string; title?: string; extra?: Record<string, string> };
 
 
-// Full-width section divider — bold uppercase title + trailing rule.
-// Groups the dashboard into scannable bands (Live / Period / Trends …)
-// instead of one long flat scroll.
 /** Categories typed in different case ("Product defect" / "Product Defect")
  *  are one category. The first spelling seen names it. */
 export function mergeByLabel(rows: Slice[]): Slice[] {
@@ -104,7 +94,6 @@ export function mergeByLabel(rows: Slice[]): Slice[] {
   return [...out.values()];
 }
 
-/** A breakdown as a donut, in the same frame as DashboardBreakdown. */
 function DonutPanel({ title, data, onPick, picked }: { title: string; data: Slice[]; onPick: (label: string) => void; picked: string | null }) {
   const total = data.reduce((a, d) => a + d.value, 0);
   return (
@@ -190,11 +179,6 @@ function SectionHeader({
   );
 }
 
-// Bordered surface card with a bold icon-led header — the shared chrome
-// for every chart / table panel on this page so they read as one family.
-// `flush` = header gets a bottom border and the body owns its own padding
-// (for tables/lists). `flat` = drop the bottom margin (when laid out in a
-// DashboardPanels grid that supplies its own gap).
 function MetricCard({
   icon,
   title,
@@ -257,31 +241,17 @@ export function ServiceMetrics() {
   const setFilter = (k: QualityFilterKey, v: string) => setParams((p) => { const n = new URLSearchParams(p); if (v) n.set(k, v); else n.delete(k); return n; }, { replace: true });
   const companies = useQuery<{ companies: Array<{ id: number; name: string }> }>("/api/companies", () => api.get("/api/companies"));
 
-  // OFF-NOT-HIDE: both /metrics and /summary are ORG aggregates gated behind
-  // `service_cases.read`. This view is reachable via the Service Cases board
-  // (/assr?view=metrics), which a non-director Sales user can open (allowSales
-  // route), so firing these would 403 → "Forbidden" toast for them. Gate the
-  // fetches so they never fire without the permission; the dashboard renders
-  // its empty state instead.
   const canReadMetrics = can("service_cases.read");
   const metrics = useQuery<AssrMetrics>("/api/assr/metrics?from=:&to=:",
     () => api.get(`/api/assr/metrics?from=${period.from}&to=${period.to}${fq}`),
     [period.from, period.to, fq],
     { enabled: canReadMetrics }
   );
-  // v3.1 — pull the enriched /summary alongside the legacy metrics
-  // payload. Both share the same since_days filter so the pulse row
-  // and Stage Funnel narrow with the dropdown. CSAT trend on the
-  // summary is still a fixed 13-week rolling window (it's a trend
-  // chart, not a window-aware stat).
   const summary = useQuery<AssrSummaryV31>("/api/assr/summary?from=:&to=:",
     () => api.get(`/api/assr/summary?from=${period.from}&to=${period.to}${fq}`),
     [period.from, period.to, fq],
     { enabled: canReadMetrics }
   );
-  /* "Where the cases are" shows EVERY open case, whenever it was opened (owner
-     2026-10-17), so the open stages come from an unbounded read; Completed
-     stays the period's own count. */
   const summaryAll = useQuery<AssrSummaryV31>("/api/assr/summary?from=:&to=:#all",
     () => api.get(`/api/assr/summary?from=2000-01-01&to=${today}${fq}`),
     [today, fq],
@@ -388,11 +358,6 @@ function RepeatList({ title, empty, rows }: { title: string; empty: string; rows
   );
 }
 
-// ── Metric drill-down panel ────────────────────────────────────
-//
-// Fetches `/api/assr/metrics/drill?metric=…` and renders the matching
-// cases. Mounted only when `drill` is set so the fetch fires once per
-// open instead of on every render.
 
 type DrillCase = {
   id: number;
@@ -429,8 +394,6 @@ function DrillPanel({
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Serialise `extra` so the effect re-runs when its values change.
-  // String-key form keeps the equality check stable across re-renders.
   const extraKey = drill.extra
     ? Object.entries(drill.extra)
         .map(([k, v]) => `${k}=${v}`)
@@ -547,16 +510,11 @@ function DrillPanel({
   );
 }
 
-// ── Simple trend chart (CSS bar chart, no deps) ─────────────
 
 function Trend({ data }: { data: AssrMetrics["monthly_trend"] }) {
   const max = Math.max(...data.map((d) => Math.max(d.opened, d.closed)), 1);
   return (
     <div className="flex gap-1.5 h-40">
-      {/* Columns: stretched to full parent height (default `items-stretch`)
-          so the bars area below can use `flex-1` to consume all space minus
-          the month label. The earlier `items-end` + child `h-full` combo
-          collapsed bars to 0 because the column had no height to inherit. */}
       {data.map((d) => {
         const openedH = (d.opened / max) * 100;
         const closedH = (d.closed / max) * 100;
@@ -588,13 +546,6 @@ function Trend({ data }: { data: AssrMetrics["monthly_trend"] }) {
   );
 }
 
-// ── Stage funnel — where open cases sit in the pipeline ─────────
-//
-// Each workflow stage is one row. The bar length is the stage's share
-// of the busiest stage (so the fullest stage anchors the scale); within
-// it the on-track vs SLA-breached split is STACKED (not overlaid) so the
-// red segment reads as "of these, N are late". The busiest stage gets a
-// subtle brass tint as the at-a-glance bottleneck marker.
 
 function StageFunnel({ data }: { data: AssrSummaryV31["stage_funnel"] }) {
   const byStage = new Map(data.map((d) => [d.stage, d]));
@@ -608,8 +559,6 @@ function StageFunnel({ data }: { data: AssrSummaryV31["stage_funnel"] }) {
       breached: row?.breached ?? 0,
     };
   });
-  /* Completed is the end of the pipe, not a place cases wait: it is drawn for
-     scale but counts in neither "open", the shares, nor the bottleneck. */
   const openRows = rows.filter((r) => r.stage !== "completed");
   const max = Math.max(...openRows.map((r) => r.total), 1);
   const totalOpen = openRows.reduce((acc, r) => acc + r.total, 0);
@@ -617,7 +566,6 @@ function StageFunnel({ data }: { data: AssrSummaryV31["stage_funnel"] }) {
 
   return (
     <div>
-      {/* Summary strip — the takeaway before scanning rows. */}
       <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
         <span className="text-[11px] text-ink-muted">
           <b className="text-[17px] font-bold text-ink">{totalOpen}</b> open in pipeline
@@ -698,7 +646,6 @@ function StageFunnel({ data }: { data: AssrSummaryV31["stage_funnel"] }) {
         })}
       </div>
 
-      {/* Legend */}
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[10px] text-ink-muted">
         <span className="inline-flex items-center gap-1.5">
           <span className="inline-block h-2 w-2 rounded-sm bg-[#3f6b53]/75" /> On track
@@ -718,12 +665,11 @@ function StageFunnel({ data }: { data: AssrSummaryV31["stage_funnel"] }) {
   );
 }
 
-// ── CSAT 13-week rolling trend (line chart) ────────────────────
 
 function CsatTrend({ data }: { data: AssrSummaryV31["csat_trend"] }) {
   const max = 5;
   const min = 1;
-  const w = 100; // SVG width %; will scale via viewBox
+  const w = 100;
   const h = 60;
   const last13 = data.slice(-13);
   const xStep = last13.length > 1 ? w / (last13.length - 1) : 0;

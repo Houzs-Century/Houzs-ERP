@@ -3,8 +3,6 @@ import { AUTH_TOKEN_KEY } from "../../../lib/authToken";
 import { authedFetch } from "./authed-fetch";
 import { registerDialogService, type ConfirmOpts } from "./dialog-service";
 
-/* BUG-59: a DO cut from Sales Order lines that are not READY must ask first
-   ("Item Not Ready"), and the operator may go back or deliver anyway. */
 
 const notReady409 = () => new Response(JSON.stringify({
   error: "items_not_ready",

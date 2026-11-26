@@ -3,10 +3,6 @@ import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { lineDiscountShare } from './line-discount-share';
 
-/* The partial-delivery discount split has ONE rule and two copies: the server
- * writes it onto DO / invoice lines, and the pickers show it in Line Value and
- * hand it to the New DO / New Invoice form. If they drift, the screen shows one
- * total and the saved document holds another. */
 describe('the two copies of line-discount-share are the same file', () => {
   const norm = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n');
 

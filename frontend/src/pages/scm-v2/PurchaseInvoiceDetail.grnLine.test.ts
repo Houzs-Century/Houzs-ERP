@@ -1,7 +1,3 @@
-// grnItemToEditLine — the one non-trivial mapping behind "Transfer from GRN"
-// on an already-saved Purchase Invoice: a picked OutstandingGrnItem + qty
-// becomes a PoLineCard draft (EditLine) that Save later sends to
-// POST /purchase-invoices/:id/items with grnItemId set.
 import { describe, expect, test } from 'vitest';
 import type { OutstandingGrnItem } from '../../vendor/scm/lib/suppliers-queries';
 import { grnItemToEditLine, pickableGrnLinesForPi } from './PurchaseInvoiceDetail';
@@ -22,7 +18,7 @@ describe('grnItemToEditLine', () => {
     const line = grnItemToEditLine(grnItem({ remaining: 4 }), 2);
     expect(line.grnItemId).toBe('gi-1');
     expect(line.grnLinked).toBe(true);
-    expect(line.qty).toBe(2); // the qty typed in the picker, not the full remaining
+    expect(line.qty).toBe(2);
   });
 
   test('item identity and price come straight off the GRN line', () => {
@@ -30,7 +26,7 @@ describe('grnItemToEditLine', () => {
     expect(line.itemCode).toBe('AK-ULTIMATE MATT (Q)');
     expect(line.materialName).toBe('AKEMI ULTIMATE MATTRESS (152X190X36CM)');
     expect(line.unitPriceSen).toBe(130_000);
-    expect(line.category).toBe('mattress'); // lower-cased, matches PoLineCard's category convention
+    expect(line.category).toBe('mattress');
     expect(line.variants).toEqual({ fabricCode: 'BO315-21' });
   });
 
@@ -55,7 +51,7 @@ describe('pickableGrnLinesForPi — an editable PI pulls in ANY of the supplier\
   test('a same-supplier line for a product the invoice does NOT already carry is still offered (owner 2026-09-18)', () => {
     const items = [
       grnItem({ grnItemId: 'a', itemCode: 'AK-ULTIMATE MATT (Q)' }),
-      grnItem({ grnItemId: 'b', itemCode: 'ZOFIA-(S)' }), // a different product than anything on the PI
+      grnItem({ grnItemId: 'b', itemCode: 'ZOFIA-(S)' }),
     ];
     const out = pickableGrnLinesForPi(items, 's-1', 'MYR', new Set());
     expect(out.map((i) => i.grnItemId).sort()).toEqual(['a', 'b']);

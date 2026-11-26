@@ -1,7 +1,3 @@
-/* Sister review G6: the PO Save carries the version this screen loaded, so a
- * second buyer whose screen is older than someone else's Save is refused before
- * anything is written. Mounts the real page with its data hooks faked; the
- * header PATCH is the seam asserted. */
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -25,7 +21,6 @@ const h = vi.hoisted(() => ({
     }
     return this.supplierDetails.get(id);
   },
-  /* One object for every render: a fresh items array re-fires the page's edit seed forever. */
   detail: {
     data: {
       purchaseOrder: {

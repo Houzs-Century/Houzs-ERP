@@ -19,13 +19,6 @@ export interface AcCreatedLine {
   DtlKey: number;
   ItemCode: string;
   Desc2?: string | null;
-  /**
-   * The SOURCE line this line was transferred from, as AutoCount's own
-   * `DocTransfer` table records it — present only when the host names exactly
-   * one (AcSyncService.cs `CreatedLines`, built 2026-09-14 onward). Absent on a
-   * create, on an added line, and from any host built before that; a caller
-   * must treat absence as "not proved", never as "no source".
-   */
   FromDocDtlKey?: number;
 }
 

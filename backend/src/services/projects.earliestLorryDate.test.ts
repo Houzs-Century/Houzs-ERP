@@ -15,13 +15,13 @@ describe("earliestLorryDate", () => {
     expect(earliestLorryDate(undefined)).toBeNull();
     expect(earliestLorryDate("")).toBeNull();
     expect(earliestLorryDate("{bad json")).toBeNull();
-    expect(earliestLorryDate({ lorry_crew: [] } as unknown)).toBeNull(); // object, not the stored string
+    expect(earliestLorryDate({ lorry_crew: [] } as unknown)).toBeNull();
   });
 
   it("returns null when no lorry carries a date", () => {
     expect(earliestLorryDate(crew([]))).toBeNull();
     expect(earliestLorryDate(crew([{ plate: "VRH1" }, { plate: "VRH2" }]))).toBeNull();
-    expect(earliestLorryDate(crew([{ plate: "VRH1", at: "  " }]))).toBeNull(); // blank is ignored
+    expect(earliestLorryDate(crew([{ plate: "VRH1", at: "  " }]))).toBeNull();
   });
 
   it("returns the lone lorry's date", () => {
@@ -34,7 +34,7 @@ describe("earliestLorryDate", () => {
         crew([
           { plate: "VRH1", at: "2026-10-28T09:00" },
           { plate: "VRH2", at: "2026-10-26T14:00" },
-          { plate: "VRH3" }, // no date — skipped, not treated as earliest
+          { plate: "VRH3" },
         ]),
       ),
     ).toBe("2026-10-26T14:00");

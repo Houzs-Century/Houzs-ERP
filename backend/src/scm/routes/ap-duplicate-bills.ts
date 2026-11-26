@@ -17,8 +17,6 @@ import { groupDuplicateBills, type BillRow } from '../lib/duplicate-supplier-bil
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client and Hono context are untyped everywhere they are passed
 type Row = Record<string, any>;
 
-/* The keys that raise, post and cancel supplier bills (ap-invoices.ts): the
-   people who can act on what this list shows. */
 const REVIEW_KEYS = ['scm.payment_voucher.create', 'scm.payment_voucher.write', 'scm.payment_voucher.post', 'scm.payment_voucher.cancel'];
 
 type Settlement = { kind: 'PV' | 'CN'; id: string; number: string; status: string; amountSen: number };
@@ -85,7 +83,6 @@ export const listDuplicateSupplierBillsHandler = async (c: any): Promise<Respons
   for (const a of pvAllocs) {
     const pv = pvById.get(String(a.pv_id));
     const target = a.pi_id != null ? `purchase_invoices:${a.pi_id}` : `ap_invoices:${a.ap_invoice_id}`;
-    /* A cancelled voucher paid nothing; showing it would read as a payment. */
     if (!pv || String(pv.status).toUpperCase() === 'CANCELLED') continue;
     copyFor.get(target)?.settlements.push({ kind: 'PV', id: String(a.pv_id), number: String(pv.pv_number ?? ''), status: String(pv.status), amountSen: Number(a.amount_sen ?? 0) });
   }
@@ -108,7 +105,6 @@ export const listDuplicateSupplierBillsHandler = async (c: any): Promise<Respons
       supplierCode: sup?.code ?? null,
       supplierName: sup?.name ?? null,
       billKey: g.billKey,
-      /* More than one copy has money against it: the double-payment case. */
       paidMoreThanOnce: rows.filter((r) => r.paidSen > 0 || r.settlements.length > 0).length > 1,
       copies: rows.map((r) => ({
         id: r.id, invoiceNumber: r.invoiceNumber, supplierInvoiceRef: r.supplierInvoiceRef, invoiceDate: r.invoiceDate,

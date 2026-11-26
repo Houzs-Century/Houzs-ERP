@@ -12,8 +12,6 @@ import { itemComplete } from "./checklistDone";
 export const PROJECT_STAGES: { label: string; offset: number; titles: string[]; kind?: "crew" | "driver" }[] = [
   { label: "Floorplan", offset: -21, titles: ["Blank Floorplan"] },
   { label: "3D", offset: -14, titles: ["3D Design"] },
-  // "Stocks Request" retired — the "Stocks Request Listing" item was
-  // removed, so the step is dropped from the tracker.
   { label: "Stocks Transfer", offset: -7, titles: ["Stock Out Transfer Record"] },
   // Driver Info — the delivery crew for the event. Goes green when the Setup &
   // Dismantle crew editor arranges the delivery (names a driver/helper, or an
@@ -24,17 +22,9 @@ export const PROJECT_STAGES: { label: string; offset: number; titles: string[]; 
   // even once the driver/helper were keyed (owner 2026-10-27). That document
   // now lives in the "Stock In" step at the end, where it belongs.
   { label: "Driver Info", offset: -3, titles: [], kind: "driver" },
-  // Setup/Dismantle crew arrangement — not a checklist item; goes green
-  // when the Setup & Dismantle section is filled (kind: "crew").
   { label: "Setup/Dismantle", offset: -2, titles: [], kind: "crew" },
   { label: "Setup Image", offset: 0, titles: ["Setup Image"] },
   { label: "Filled Floorplan", offset: 3, titles: ["Filled Floorplan"] },
-  // "Event Complete" retired — the "Event Complete Image" item was removed from
-  // the templates and every project (mig 173), so the step is dropped from the
-  // tracker.
-  // Stock In Transfer Record — goods returned to the warehouse after dismantle
-  // (template due_offset +2). The last document; it cannot be done before the
-  // event, so it is a post-event step at the end, not a pre-event gate.
   { label: "Stock In", offset: 9, titles: ["Stock In Transfer Record"] },
   { label: "Done", offset: 9, titles: [] },
 ];
@@ -86,9 +76,9 @@ export function projectStage(items: Item[], setupArranged: boolean, driverKeyed:
     const st = PROJECT_STAGES[idx]!;
     if (st.kind === "driver") return driverKeyed;
     if (st.kind === "crew") return setupArranged;
-    if (st.titles.length === 0) return false; // final "Done" handled below
+    if (st.titles.length === 0) return false;
     const present = items.filter((i) => st.titles.includes(i.title));
-    if (present.length === 0) return true; // no signal → pass-through
+    if (present.length === 0) return true;
     return present.every(itemComplete);
   };
   const lastIdx = PROJECT_STAGES.length - 1;

@@ -72,15 +72,10 @@ describe('buildDeliveryFollowUp', () => {
   });
 
   it('resets every attribute the flows read before they write, on every send', () => {
-    // Connect MERGES attributes over the contact's existing ones: without the
-    // reset the previous order's Confirm would lock this order's Amend tap and
-    // a settled balance would print again.
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
       { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05' },
     ], null, CTX);
     for (const key of CONNECT_RESET_ATTRIBUTES) {
-      // orders_json carries the order list whenever there are orders; it is
-      // reset-listed only to clear a prior longer list on a 0-order send (below).
       if (key === 'orders_json') continue;
       expect(contact.attributes[key]).toBe('');
     }
@@ -88,16 +83,15 @@ describe('buildDeliveryFollowUp', () => {
     expect(CONNECT_RESET_ATTRIBUTES).toContain('amount');
     expect(CONNECT_RESET_ATTRIBUTES).toContain('order_amount');
     expect(CONNECT_RESET_ATTRIBUTES).toContain('orders_json');
-    // Reset so a prior order's company can't route this send's balance (merge).
     expect(CONNECT_RESET_ATTRIBUTES).toContain('company_code');
   });
 
   it('amount = the owed sum over EVERY bundled order, formatted RM, only when > 0', () => {
     const contact = buildDeliveryFollowUp('+60123', 'Wong', [
       { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05', balanceSen: 150000 },
-      { ref: 'B2', orderRef: 'HC 11002', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06', balanceSen: -5000 }, // over-paid: ignored
+      { ref: 'B2', orderRef: 'HC 11002', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06', balanceSen: -5000 },
       { ref: 'C3', orderRef: 'HC 11003', branding: 'GOODNITE', deliveryDate: '2026/10/07', balanceSen: null },
-      { ref: 'D4', orderRef: 'HC 11004', branding: 'VONO', deliveryDate: '2026/10/08', balanceSen: 2550 }, // 4th order still counts
+      { ref: 'D4', orderRef: 'HC 11004', branding: 'VONO', deliveryDate: '2026/10/08', balanceSen: 2550 },
     ], null, CTX);
     expect(contact.attributes.amount).toBe('1,525.50');
   });
@@ -115,8 +109,6 @@ describe('buildDeliveryFollowUp', () => {
       { ref: 'A1', orderRef: 'HC 11001', branding: 'AKEMI', deliveryDate: '2026/10/05', totalSen: 150000 },
       { ref: 'B2', orderRef: 'HC 11002', branding: 'SLUMBERLAND', deliveryDate: '2026/10/06', totalSen: 357265 },
     ], null, CTX);
-    // Panel-only, so no thousands separators (Connect's Number()/money() parses
-    // it) — unlike `amount`, which formatRm would render as '5,072.65'.
     expect(contact.attributes.order_amount).toBe('5072.65');
   });
 
@@ -136,7 +128,6 @@ describe('buildDeliveryFollowUp', () => {
       { so: 'A1', ref: 'HC 11001', amount: '1500.00' },
       { so: 'B2', ref: 'HC 11002', amount: '3572.65' },
     ]);
-    // The per-order amounts sum to the grand total order_amount.
     expect(contact.attributes.order_amount).toBe('5072.65');
   });
 
@@ -149,8 +140,8 @@ describe('buildDeliveryFollowUp', () => {
     ], null, CTX);
     const list = JSON.parse(contact.attributes.orders_json);
     expect(list).toHaveLength(4);
-    expect(list[3]).toEqual({ so: 'D4', ref: '', amount: '400.00' }); // blank customer ref → ""
-    expect(contact.attributes.ref_4).toBeUndefined(); // the template still carries only 3 lines
+    expect(list[3]).toEqual({ so: 'D4', ref: '', amount: '400.00' });
+    expect(contact.attributes.ref_4).toBeUndefined();
   });
 
   it('no bundled orders → orders_json is the empty reset, so a prior delivery list cannot leak', () => {
@@ -175,7 +166,6 @@ describe('buildDeliveryFollowUp', () => {
     expect(contact.attributes.button_status).toBeUndefined();
     expect(contact.attributes.last_button).toBeUndefined();
     expect(contact.attributes.amount).toBe('10.00');
-    // No order total supplied and no reset: order_amount is genuinely unset.
     expect(contact.attributes.order_amount).toBeUndefined();
   });
 
@@ -259,8 +249,6 @@ describe('buildDeliveryFollowUp', () => {
   });
 
   it('company_code + the per-company profile carry the SAME (order) company, never the sender', () => {
-    // A 2990 order sent by HOUZS staff: both the code and the bank/signature
-    // must be 2990's, or the balance paragraph bills the wrong account.
     const profile2990: ConnectCompanyProfile = {
       signature: "2990's Home",
       bankBlock: '2990 bank\nAcc: 222',
@@ -296,8 +284,6 @@ describe('buildServiceCaseReceived', () => {
   });
 
   it('the automation name matches the Connect flow, byte-for-byte', () => {
-    // Connect matches the automation BY NAME; a drift here silently stops the
-    // acknowledgement (empty `triggered`), so pin the exact string.
     expect(CONNECT_SERVICE_CASE_AUTOMATION).toBe('Service Case Received');
   });
 
@@ -376,8 +362,6 @@ describe('buildSyncHeadline', () => {
   });
 
   it('the sync sentinel matches no real Connect automation, so an upsert fires nothing', () => {
-    // A send names a real automation; the sync names this sentinel on purpose so
-    // handleErpWebhook (name-matched) triggers nothing and only stores the fields.
     expect(CONNECT_SYNC_AUTOMATION).toBe('__erp_contact_sync__');
     expect(CONNECT_SYNC_AUTOMATION).not.toBe(CONNECT_DELIVERY_AUTOMATION);
   });

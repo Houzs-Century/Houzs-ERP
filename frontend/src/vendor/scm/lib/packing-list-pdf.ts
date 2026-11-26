@@ -50,7 +50,6 @@ const QR_MM = 14;
 
 const qty = (n: number): string => (Number.isInteger(n) ? String(n) : String(n));
 
-/** "12 units", singular-aware. Never printed for a stop we could not read. */
 const unitsLabel = (n: number): string => `${qty(n)} ${n === 1 ? 'unit' : 'units'}`;
 
 /**
@@ -104,15 +103,10 @@ export async function renderPackingListInto(
     ],
   });
 
-  /* The one instruction on the sheet. It is the reason the order looks wrong
-     to anyone who has not loaded a lorry before. */
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(0);
   doc.text('Load in this order — top of the sheet goes in first, deepest into the lorry.', MARGIN, y);
   y += 7;
 
-  /* Header fields, ONE THING EACH. The combined "Stops / DOs" form was shown to
-     the owner and rejected as too complex, so the delivery-order count lives on
-     the screen and this sheet states the four numbers a loader uses. */
   const total = [unitsLabel(list.units), fmtM3(list.m3_milli)].filter(Boolean).join(' · ');
   const fields: Array<[string, string]> = [
     ['Lorry', list.lorry_plate ?? '—'],
@@ -136,15 +130,10 @@ export async function renderPackingListInto(
     y = drawSection(doc, autoTable, y, section.load_no, section.stop);
   }
 
-  /* Signatures. The two people this sheet passes between: whoever loaded the
-     lorry and whoever drives it away. */
   const sigY = y + 2 > 240 ? (doc.addPage(), MARGIN) : y + 2;
   let ty = drawSignatureBoxes(doc, sigY, 'Loaded By', 'Driver Signature');
 
   if (opts.runUrl) {
-    /* Bottom-right, for the WHOLE run. Placed under the signature boxes, or on
-       its own page if they ran to the foot of this one — never on top of the
-       page footer at y=290. */
     if (ty + QR_MM + 6 > 282) { doc.addPage(); ty = MARGIN; }
     drawQrIntoPdf(doc, opts.runUrl, rightEdge - QR_MM, ty, QR_MM);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(110);
@@ -163,7 +152,6 @@ export async function renderPackingListInto(
   }
 }
 
-/* One loading section: the band, then the goods. */
 function drawSection(
   doc: import('jspdf').jsPDF,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -177,9 +165,6 @@ function drawSection(
   let y = startY;
   if (y > 250) { doc.addPage(); y = MARGIN; }
 
-  /* Left: "N · Customer". Right: the unit count for this drop. Wrapped into
-     what the right-hand figure leaves, so a long customer name cannot run
-     under it. */
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
   const unitsText = stop.do_missing ? '' : unitsLabel(stop.units);
   const unitsW = unitsText ? doc.getTextWidth(unitsText) + 4 : 0;
@@ -201,8 +186,6 @@ function drawSection(
   doc.setTextColor(0);
 
   if (stop.do_missing) {
-    /* The company predicate did its job. Saying so is the honest line; printing
-       an empty goods table under it would read as "nothing to load". */
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(110);
     doc.text('This stop\'s delivery order is not in the companies you can see. Nothing is listed for it.', MARGIN, y);
     doc.setTextColor(0);
@@ -264,8 +247,6 @@ export async function generatePackingListPdf(
   const { jsPDF } = await import('jspdf');
   const autoTable = (await import('jspdf-autotable')).default;
   const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
-  /* The token is fetched here, in the one place that renders a whole sheet, so
-     no print call site has to remember to arm it. */
   const { armPackingScanToken } = await import('./packing-scan-token-arm');
   const runUrl = typeof window !== 'undefined'
     ? packingRunUrl(window.location.origin, await armPackingScanToken(list.trip_id))

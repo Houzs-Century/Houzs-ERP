@@ -13,34 +13,6 @@ import { CalendarSearchStrip, useCalendarSearch } from "../pages/projects/Calend
 import { type CalendarMatch, matchStart, monthPeriod, pickAdjacentMatch } from "../pages/projects/calendarSearch";
 import "./mobile.css";
 
-/**
- * Mobile Calendar screen — 1:1 with the owner's mobile design prototype,
- * wired to the same feed the desktop Projects calendar uses.
- *
- * Data source: GET /api/projects/calendar/events?from=YYYY-MM-DD&to=YYYY-MM-DD
- * (backend/src/routes/projects.ts, gated by projects.calendar page access,
- * row-scoped by PIC + brand). Returns { projects, tasks }:
- *
- *   project: { id, code, name, stage, status ("confirmed"|"pending"|
- *     "cancelled"), brand, organizer, start_date, end_date, venue, state,
- *     active_section_name, sections_total, event_type_name }
- *   task:    { id, project_id, project_code, project_name, brand, organizer,
- *     title, due_date, status, project_status, owner_name, is_overdue }
- *
- * The brand / section / organizer selects are wired to the SAME lookup
- * endpoints the desktop Projects calendar uses — /api/projects/brands,
- * /api/projects/sections-distinct and /api/projects/organizers — so the
- * dropdowns list every configured value (not only the ones that happen to
- * fall in the visible month). The confirmed / pending / cancelled legend maps
- * onto project.status. Projects render as event bars on their start_date;
- * tasks render when the "Tasks" toggle is on (keyed off due_date).
- *
- * The "My holidays" toggle overlays Malaysian federal public holidays, sourced
- * from the SAME local table the desktop Projects calendar uses
- * (src/lib/holidays.ts → getHolidaysOn); no backend feed is involved. Holidays
- * render as purple event bars (matching the design's #7a5c86) and bypass the
- * brand/section/organizer filters (they are not project-scoped).
- */
 
 type CalProject = {
   id: number;
@@ -74,16 +46,12 @@ type CalTask = {
   is_overdue: number | null;
 };
 
-// A normalized event on the grid — either a project bar or a task chip.
 type CalEvent = {
   key: string;
   kind: "project" | "task" | "holiday";
-  projectId: number; // tapping a project/task drills into this project (0 for holidays)
-  date: string; // YYYY-MM-DD
-  label: string; // day-sheet title (unchanged mobile design)
-  // Compact grid-bar caption. For a project this leads with the STATE
-  // (the desktop calendar's "SEL"/"JOH" pill), mirroring the desktop bar
-  // exactly; tasks/holidays reuse their label.
+  projectId: number;
+  date: string;
+  label: string;
   barLabel: string;
   color: string;
   brand: string | null;
@@ -91,12 +59,8 @@ type CalEvent = {
   organizer: string | null;
   status: string | null;
   sub: string | null;
-  // State + venue carried for the shared day-cell sort (compareCalendarEvents);
-  // null on tasks/holidays so they fall after the state-ordered project bars.
   state: string | null;
   venue: string | null;
-  // Task-only presentation extras, mirroring the desktop task chip: is_overdue
-  // reds the bar, project_status colours a status dot, owner_name -> initials.
   overdue?: boolean;
   dot?: string;
   initials?: string;
@@ -108,7 +72,6 @@ const MONTHS = [
 ];
 const WEEKDAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 
-// Status → bar colour, mirroring the prototype legend.
 const STATUS_COLOR: Record<string, string> = {
   confirmed: "#2f8a5b",
   pending: "#cf9a2e",
@@ -117,23 +80,11 @@ const STATUS_COLOR: Record<string, string> = {
 const TASK_COLOR = "#a16a2e";
 const HOLIDAY_COLOR = "#7a5c86";
 const statusColor = (s: string | null) => STATUS_COLOR[(s ?? "").toLowerCase()] ?? "#5a6b7a";
-// Overdue task bar colour — the mobile "cancelled / late" red token (--red),
-// reused so a late task reads in the same family as a cancelled bar.
 const OVERDUE_COLOR = "#b23a3a";
 
-// Up-to-two-letter owner initials for the task-bar badge (desktop task chip).
 const ownerInitials = (name: string | null): string =>
   (name || "").split(/\s+/).filter(Boolean).slice(0, 2).map((s) => s[0]).join("").toUpperCase();
 
-// Project bar caption — byte-for-byte the desktop Projects calendar's bar text
-// (pages/Projects.tsx: composeDefaultProjectName + the solo / non-solo split at
-// the bar render). A SOLO event is composed live as "{state} [{brand}] SOLO @
-// {venue}" so the bar leads with the STATE — the brown-tinted "SEL"/"JOH" pill
-// the owner sees on desktop; every other event shows its own project name,
-// which the New Project form already defaults to the same state-first shape.
-// Pure formatter over fields already on the shared /api/projects/calendar/events
-// row — it derives no new data and re-uses the exact desktop logic so the two
-// surfaces read identically.
 function composeDefaultProjectName(p: {
   state?: string | null;
   brand?: string | null;
@@ -188,14 +139,11 @@ function projectBarLabel(p: CalProject): string {
 const pad = (n: number) => String(n).padStart(2, "0");
 const iso = (y: number, m: number, d: number) => `${y}-${pad(m + 1)}-${pad(d)}`;
 const dayOf = (d: string) => Number(d.slice(8, 10));
-// Owner-locked numeric DD/MM/YYYY (mobile date format — never month names),
-// matching MobileSalesOrders and the Build Spec's DDMMYYYY rule.
 const ddmmyyyy = (y: number, m: number, d: number) => `${pad(d)}/${pad(m + 1)}/${y}`;
 
-// Monday-first week matrix for a month, matching the prototype's calWeeks().
 function monthWeeks(y: number, m: number): (number | null)[][] {
   const first = new Date(y, m, 1);
-  const lead = (first.getDay() + 6) % 7; // Mon = 0
+  const lead = (first.getDay() + 6) % 7;
   const days = new Date(y, m + 1, 0).getDate();
   const cells: (number | null)[] = [];
   for (let i = 0; i < lead; i++) cells.push(null);
@@ -214,26 +162,15 @@ export function MobileCalendar({
   focusProjectId,
 }: {
   onOpenProject?: (projectId: number) => void;
-  /** Open the system-wide search palette (header magnifying-glass). */
   onOpenSearch?: () => void;
-  /** Jump the calendar to a specific month on mount (search → calendar jump). */
   initialYear?: number;
-  initialMonth?: number; // 0-11
-  /** Visually highlight this project's bar (paired with initialYear/Month). */
+  initialMonth?: number;
   focusProjectId?: number;
 } = {}) {
   const todayIso = todayMyt();
   const today = { year: Number(todayIso.slice(0, 4)), month: Number(todayIso.slice(5, 7)) - 1, day: Number(todayIso.slice(8, 10)) };
 
-  // Header brand lockup — company-aware, mirroring the login/profile pattern.
-  // HOUZS keeps the historic literal ("HOUZS" / "CENTURY · ERP") verbatim; any
-  // other active company derives from its short name: first word as the bold
-  // mark, the remaining words + "· ERP" as the spaced eyebrow (so a 2990
-  // session never shows the Houzs brand).
   const { pageAccess } = useAuth();
-  // Same capability the desktop Projects → Calendar sub-tab uses. Gate every
-  // /api/projects/* read so none fires a 403 for a user without calendar access
-  // (OFF, not hide) — defence-in-depth on top of the shell's tab gating.
   const canViewCalendar = pageAccess("projects.calendar") !== "none";
   const branding = useBranding();
   const isHouzsBrand = branding.companyCode === HOUZS_COMPANY_CODE;
@@ -261,35 +198,22 @@ export function MobileCalendar({
   const setBrandF = (v: string) => patchCalFilter({ brand: v });
   const setSectionF = (v: string) => patchCalFilter({ section: v });
   const setOrgF = (v: string) => patchCalFilter({ org: v });
-  // Free-text search, same rule as the desktop calendar (venue initials too).
   const searchQ = calFilter.q;
   const setSearchQ = (v: string) => patchCalFilter({ q: v });
   const [showTasks, setShowTasks] = useState(false);
-  // My-holidays toggle — overlays Malaysian federal public holidays from the
-  // local src/lib/holidays.ts table (same source as the desktop calendar); no
-  // backend feed needed. Rendered as a day-cell tint + name (see MonthGrid).
-  // Defaults ON to match the desktop Projects calendar, which always overlays
-  // federal holidays.
   const [showHolidays, setShowHolidays] = useState(true);
   // Owner 2026-07-23: always expand every week's bars (no cap, no "+N more");
   // the Expand-all toggle was removed. Kept as a const so MonthGrid's prop and
   // the (now-unreachable) overflow handler still type-check.
   const expand = true;
-  // Day-detail sheet — opened by tapping a date cell or a "+N more" overflow
-  // link, mirroring the desktop CalendarDayModal. Holds the tapped day (1-31)
-  // so the sheet can list that day's project/task bars + public holidays.
   const [daySheet, setDaySheet] = useState<number | null>(null);
 
-  // Search → calendar jump: when the shell re-mounts the Calendar tab with a new
-  // target month (the tapped project's start_date), snap to it. Keyed on the
-  // incoming values so a subsequent manual nav is not clobbered.
   useEffect(() => {
     if (initialYear != null) setYear(initialYear);
     if (initialMonth != null) setMonth(initialMonth);
     if (initialYear != null || initialMonth != null) setMode("month");
   }, [initialYear, initialMonth]);
 
-  // Fetch the full month in one call, keyed by month so navigation refetches.
   const from = iso(year, month, 1);
   const to = iso(year, month, new Date(year, month + 1, 0).getDate());
   const { data, isLoading, error } = useQuery({
@@ -304,10 +228,6 @@ export function MobileCalendar({
   const projects = data?.projects ?? [];
   const tasks = data?.tasks ?? [];
 
-  // Filter option lists come from the SAME lookup endpoints the desktop
-  // Projects calendar uses, so every configured brand / section / organizer is
-  // selectable — not just the ones that happen to land in the visible month.
-  // All three are gated by `projects` page access (same as the events feed).
   const { data: brandsData } = useQuery({
     queryKey: ["mobile-calendar-brands"],
     queryFn: () => api.get<{ data: string[] }>("/api/projects/brands"),
@@ -333,20 +253,8 @@ export function MobileCalendar({
     [organizersData]
   );
 
-  // Normalize projects (+ optionally tasks) into grid events, then filter.
   const events = useMemo<CalEvent[]>(() => {
     const out: CalEvent[] = [];
-    // A project occupies EVERY day from start_date through end_date, not just
-    // its start day — the desktop Projects calendar spans the same range
-    // (Projects.tsx: s = start_date, e = end_date || start_date; its day modal
-    // matches projects where s <= day && e >= day). The mobile grid draws one
-    // bar per day (no spanning bars), so we emit an event for each in-range day;
-    // this is what makes tapping day 11/12/13 of a 10–13 fair surface it instead
-    // of reading "no projects that day". Clamp to the visible month so a fair
-    // straddling a month boundary paints only its in-month days (and a day
-    // number can't collide with the adjacent month), and key by day so the
-    // per-day bars carry unique React keys. end_date is inclusive and falls back
-    // to start_date for a single-day event.
     const monthFirst = iso(year, month, 1);
     const lastDom = new Date(year, month + 1, 0).getDate();
     const monthLast = iso(year, month, lastDom);
@@ -356,7 +264,7 @@ export function MobileCalendar({
       searched.add(p.id);
       const start = p.start_date.slice(0, 10);
       const end = (p.end_date || p.start_date).slice(0, 10);
-      if (start > monthLast || end < monthFirst) continue; // no overlap this month
+      if (start > monthLast || end < monthFirst) continue;
       const fromDom = start > monthFirst ? dayOf(start) : 1;
       const toDom = end < monthLast ? dayOf(end) : lastDom;
       for (let dom = fromDom; dom <= toDom; dom++) {
@@ -381,7 +289,6 @@ export function MobileCalendar({
     }
     if (showTasks) {
       for (const t of tasks) {
-        // With a search, a task shows only beside its matching project (desktop rule).
         if (searchQ.trim() && !searched.has(t.project_id)) continue;
         out.push({
           key: `t-${t.id}`,
@@ -412,8 +319,6 @@ export function MobileCalendar({
       if (orgF !== "all" && (e.organizer ?? "") !== orgF) return false;
       return true;
     });
-    // Holidays overlay the whole month regardless of the project filters — they
-    // are federal, not project-scoped (mirrors the design's holiday layer).
     if (showHolidays) {
       const days = new Date(year, month + 1, 0).getDate();
       for (let d = 1; d <= days; d++) {
@@ -460,9 +365,6 @@ export function MobileCalendar({
     return map;
   }, [events]);
 
-  // Search → calendar jump: once the target month's data is in, surface the
-  // focused project by opening its day sheet (so it's visible even when its bar
-  // sits under a "+N more" overflow). Runs once per focus target + load.
   useEffect(() => {
     if (!focusProjectId) return;
     const p = projects.find((x) => x.id === focusProjectId);
@@ -497,7 +399,6 @@ export function MobileCalendar({
     const start = matchStart(m);
     setYear(Number(start.slice(0, 4)));
     setMonth(Number(start.slice(5, 7)) - 1);
-    // Mobile week view has no week navigation, so a jump always lands in month.
     setMode("month");
     setSearchFocusId(m.id);
     setFlash((f) => ({ id: m.id, n: (f?.n ?? 0) + 1 }));
@@ -534,8 +435,6 @@ export function MobileCalendar({
   };
 
   const isThisMonth = year === today.year && month === today.month;
-  // Day-of-month to mark with the brown "today" badge — only when the grid is
-  // showing the current month (null otherwise so no cell is falsely marked).
   const todayDay = isThisMonth ? today.day : null;
   let weeks = monthWeeks(year, month);
   if (mode === "week") {
@@ -545,8 +444,6 @@ export function MobileCalendar({
 
   return (
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--hz-c-surface)" }}>
-      {/* Header — brand lockup + search, matching the v7 calendar chrome. The
-          month nav / mode / filters live in the scroll body (below), per spec. */}
       <header className="hdr">
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ lineHeight: 1 }}>
@@ -569,7 +466,6 @@ export function MobileCalendar({
           page edge widens all 7 day columns, which is what lets a long event
           name finish on one line inside its bar. */}
       <div className="scroll" style={{ padding: "12px 7px", paddingBottom: 120, background: "var(--hz-c-surface)" }}>
-        {/* Month nav — ‹ · Today · › · right-aligned month title (v7 lockup) */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11 }}>
           <button onClick={() => nav(-1)} aria-label="Previous month" className="cal-navbtn">‹</button>
           <button onClick={goToday} className="cal-today">Today</button>
@@ -577,14 +473,12 @@ export function MobileCalendar({
           <div style={{ flex: 1, fontSize: 17, fontWeight: 800, color: "var(--hz-c-ink)", textAlign: "right" }}>{MONTHS[month]} {year}</div>
         </div>
 
-        {/* Month / Week segmented toggle */}
         <div style={{ display: "flex", background: "var(--bg)", border: "1px solid var(--line-card)", borderRadius: 10, padding: 3, marginBottom: 10 }}>
           {(["month", "week"] as const).map((mo) => (
             <button key={mo} onClick={() => setMode(mo)} className={`cal-seg${mode === mo ? " on" : ""}`}>{mo === "month" ? "Month" : "Week"}</button>
           ))}
         </div>
 
-        {/* Filters — populated from the live feed (native selects hold many dynamic values) */}
         <div style={{ display: "flex", flexDirection: "column", gap: 7, marginBottom: 10 }}>
           <input
             type="search"
@@ -617,12 +511,10 @@ export function MobileCalendar({
           </div>
         </div>
 
-        {/* Tasks / My holidays / Expand toggles */}
         <div style={{ display: "flex", gap: 7, marginBottom: 10, flexWrap: "wrap" }}>
           <button onClick={() => setShowTasks((v) => !v)} className={`cal-tog${showTasks ? " on" : ""}`}>{showTasks ? "●" : "○"} Tasks</button>
           <button onClick={() => setShowHolidays((v) => !v)} className={`cal-tog${showHolidays ? " on" : ""}`}>{showHolidays ? "●" : "○"} My holidays</button>
         </div>
-        {/* Legend */}
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 6, padding: "0 2px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ width: 9, height: 9, borderRadius: "50%", background: STATUS_COLOR.confirmed }} />
@@ -657,10 +549,6 @@ export function MobileCalendar({
         {isLoading && <div style={emptyBox}>Loading…</div>}
         {error && <div style={{ ...emptyBox, color: "var(--red)" }}>Couldn't load the calendar. Pull to retry.</div>}
 
-        {/* Month AND Week share the prototype's single .wk grid — week mode just
-            renders the one week containing today (computed above) with every bar
-            uncapped, exactly as the prototype's calRender() does. No separate
-            agenda list (the prototype has none). */}
         {!isLoading && !error && !(noMatches && searchQ.trim()) && (
           <div ref={gridWrapRef}>
             <MonthGrid weeks={weeks} byDay={byDay} expand={expand} onExpandAll={() => {}} onOpenDay={setDaySheet} empty={events.length === 0} onOpen={onOpenProject} focusProjectId={flash?.id ?? focusProjectId} todayDay={todayDay} />
@@ -668,9 +556,6 @@ export function MobileCalendar({
         )}
       </div>
 
-      {/* Day-detail sheet — tapping a date cell or a "+N more" link surfaces
-          every event on that day (projects, tasks and public holidays),
-          mirroring the desktop CalendarDayModal. */}
       {daySheet != null && (
         <DaySheet
           year={year}
@@ -694,12 +579,10 @@ function MonthGrid({ weeks, byDay, expand, onExpandAll, onOpenDay, empty, onOpen
   empty: boolean;
   onOpen?: (projectId: number) => void;
   focusProjectId?: number;
-  /** Day-of-month to badge as "today", or null when not viewing this month. */
   todayDay: number | null;
 }) {
   return (
     <>
-      {/* Weekday header */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", border: "1px solid var(--line-card)", borderBottom: "none", borderRadius: "8px 8px 0 0", overflow: "hidden" }}>
         {WEEKDAYS.map((w, i) => (
           <div key={w} style={{ padding: "7px 0", textAlign: "center", fontSize: 9, fontWeight: 700, letterSpacing: ".08em", color: "var(--mut)", borderRight: i < 6 ? "1px solid var(--line2)" : "none" }}>{w}</div>
@@ -732,12 +615,9 @@ function MonthGrid({ weeks, byDay, expand, onExpandAll, onOpenDay, empty, onOpen
             else barMap.set(id, { e, startIdx: idx, endIdx: idx });
           });
         });
-        // Earliest-starting first, then the shared STATE->venue rule (matches the
-        // desktop calendar's grouping).
         const bars = [...barMap.values()].sort(
           (a, b) => a.startIdx - b.startIdx || compareCalendarEvents(a.e, b.e),
         );
-        // Up to 4 bars per week (all when Expand-all is on); overflow "+N more".
         const cap = expand ? bars.length : 4;
         const overflow = bars.length - cap;
         return (
@@ -768,13 +648,6 @@ function MonthGrid({ weeks, byDay, expand, onExpandAll, onOpenDay, empty, onOpen
                 );
               })}
             </div>
-            {/* Bars grid — 7 columns aligned to the day numbers above; each bar
-                spans grid-column start..end so it sits on its real dates. Each
-                bar keeps its own row so overlapping fairs stack (no packing). */}
-            {/* overflow hidden: bar labels are allowed to spill right past
-                their tinted box into that row's empty columns (owner
-                2026-07-30, so long names read on one line) — this clips the
-                spill at the week's right edge so no text escapes the grid. */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", rowGap: 2, padding: "2px 0", overflow: "hidden" }}>
               {bars.slice(0, cap).map(({ e, startIdx, endIdx }, i) => {
                 const focused = focusProjectId != null && e.kind === "project" && e.projectId === focusProjectId;
@@ -811,10 +684,6 @@ function MonthGrid({ weeks, byDay, expand, onExpandAll, onOpenDay, empty, onOpen
   );
 }
 
-// Day-detail bottom sheet — lists every event on a tapped day (projects,
-// tasks and public holidays). Reuses the app's bottom-sheet chrome from
-// mobile.css (.sheet-bd / .sheet / .grab / .sheet-head / .sheet-x /
-// .sheet-scroll). Mirrors the desktop CalendarDayModal.
 function DaySheet({ year, month, day, events, onClose, onOpen }: {
   year: number;
   month: number;
@@ -823,7 +692,6 @@ function DaySheet({ year, month, day, events, onClose, onOpen }: {
   onClose: () => void;
   onOpen: (projectId: number) => void;
 }) {
-  // Weekday name + owner-locked numeric DD/MM/YYYY (never a month name).
   const weekday = new Date(year, month, day).toLocaleDateString("en-GB", { weekday: "long" });
   const heading = `${weekday} · ${ddmmyyyy(year, month, day)}`;
   const holidays = events.filter((e) => e.kind === "holiday");

@@ -27,11 +27,9 @@ import { DateField } from "../vendor/scm/components/DateField";
 
 const SALES_FILTER_KEYS = ["status", "search", "date_from", "date_to", "view"] as const;
 
-// ── Types ─────────────────────────────────────────────────────
 
 export type EntryStatus = "draft" | "submitted" | "pushed" | "void";
 
-// A queued edit awaiting Director approval (sales_entry_change_requests).
 type ChangeRequest = {
   id: number;
   entry_id: number;
@@ -76,14 +74,6 @@ export interface SalesEntry {
   deposit_payment_type: PaymentType | null;
   currency: string;
   occurred_at: string;
-  /* NOT the Sales Order's Processing Date. This is a plain date on a
-     `sales_entries` row — the legacy native Sales module's own document, which
-     has no SO row and none of the SCM Processing-Date rules (no deposit gate, no
-     elapsed-date lock, no remove-permission, no stock allocation). The SCM SO's
-     Processing Date has exactly ONE storage, scm.mfg_sales_orders.internal_expected_dd;
-     never coalesce or unify the two. The name is kept only because renaming it
-     would silently drop the field from already-queued sales change requests —
-     the full reasoning is on SO_FORM_TEXT_FIELDS in backend/src/routes/sales.ts. */
   processing_date: string | null;
   delivery_date: string | null;
   status_2: string | null;
@@ -142,9 +132,6 @@ interface ListResponse {
     amount: number;
     count: number;
     by_status: { draft: number; submitted: number; pushed: number };
-    // Mig 064 (quick-log workflow) — count of draft rows still
-    // sitting on the "(quick log)" sentinel customer_name. Drives the
-    // badge on the Quick Logs tab.
     quick_log_pending?: number;
   };
 }
@@ -156,27 +143,16 @@ export const STATUS_BADGE: Record<EntryStatus, { label: string; cls: string }> =
   void:      { label: "Void",      cls: "bg-err/10 text-err" },
 };
 
-// ── Page ──────────────────────────────────────────────────────
 
 export function Sales() {
   const { user: me } = useAuth();
   const salesAccess = usePageAccess("sales");
   const toast = useToast();
   const dialog = useDialog();
-  // Page-access model (mig 073): "full" = manage/void/push; "partial"
-  // = own entries only, no manage. The route's <PageGuard> already
-  // rejected "none", so writes are always allowed here.
   const canManage = salesAccess === "full";
   const canWrite = salesAccess !== "none";
 
-  // Filter state lives in the URL — `?status=draft&search=abc` —
-  // mirrored to localStorage via useStickyFilters so navbar away-and-back
-  // restores the last view. Bookmark / share / refresh / back-button all
-  // work because the URL itself is the source of truth.
   const [params, setParams] = useStickyFilters("sales", SALES_FILTER_KEYS);
-  // ?view= drives the tab selector. "quicklogs" narrows to drafts on
-  // the QUICK_LOG_SENTINEL; "all" (default) is the existing list with
-  // quick-logs excluded so the dedicated tab owns those rows.
   const view =
     params.get("view") === "quicklogs"
       ? "quicklogs"
@@ -202,9 +178,6 @@ export function Sales() {
   const [creating, setCreating] = useState(false);
   const [fieldsOpen, setFieldsOpen] = useState(false);
 
-  // Fixed page size, matching the /api/sales/entries server default. Page is a
-  // transient cursor kept in local state (not the URL — it's not a shareable
-  // filter) and resets to 1 whenever the active filters change.
   const PER_PAGE = 50;
   const [page, setPage] = useState(1);
 
@@ -214,14 +187,11 @@ export function Sales() {
     if (debouncedSearch) p.set("search", debouncedSearch);
     if (dateFrom) p.set("date_from", dateFrom);
     if (dateTo) p.set("date_to", dateTo);
-    // Quick Logs tab → only quick-log rows.
-    // All tab → exclude quick-logs (the dedicated tab owns them).
     if (view === "quicklogs") p.set("quick_log", "1");
     else p.set("quick_log", "0");
     return p.toString();
   }, [status, debouncedSearch, dateFrom, dateTo, view]);
 
-  // qs is filter-only (page excluded) so a filter change lands here → page 1.
   useEffect(() => {
     setPage(1);
   }, [qs]);
@@ -243,8 +213,6 @@ export function Sales() {
     hasData: list.data !== null,
     hasError: Boolean(list.error),
   });
-  // Pending edit-approval queue (managers only). Drives the Approvals tab +
-  // its badge; reps don't see this surface.
   const approvals = useQuery<{ requests: ChangeRequest[] }>("/api/sales/entries/change-requests?status=pending",
     () =>
       canManage
@@ -384,8 +352,6 @@ export function Sales() {
       align: "right",
       render: (e) => {
         const isMine = e.created_by === me?.id;
-        // Reps may edit their own draft OR submitted entries — a submitted-entry
-        // edit is routed to the Director approval queue by the backend (202).
         const canEdit =
           canManage || (isMine && (e.status === "draft" || e.status === "submitted"));
         const needsApproval = !canManage && isMine && e.status === "submitted";
@@ -483,7 +449,6 @@ export function Sales() {
         }
       />
 
-      {/* Summary tiles */}
       <div className="mb-4 grid grid-cols-2 divide-x divide-border-subtle overflow-hidden rounded-md border border-border bg-surface shadow-stone sm:grid-cols-4">
         <Tile label="Total" value={formatCurrency(list.data?.totals.amount ?? 0)} />
         <Tile label="Entries" value={String(list.data?.totals.count ?? 0)} />
@@ -498,10 +463,6 @@ export function Sales() {
         />
       </div>
 
-      {/* Tabs — All Sales vs the dedicated Quick Logs queue. The
-          quick_log_pending count comes back on every list response
-          (computed independently of the current filter), so the
-          badge stays live whichever view is active. */}
       <TabStrip
         value={view}
         onChange={(v) => patchParams({ view: v === "all" ? "" : v })}
@@ -535,7 +496,6 @@ export function Sales() {
         />
       ) : (
       <>
-      {/* Filters */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {view === "all" && (
           <select
@@ -585,7 +545,6 @@ export function Sales() {
         )}
       </div>
 
-      {/* List */}
       {list.data && list.data.data.length === 0 && !list.loading && !searchTransition.resultsAreStale ? (
         <EmptyState
           message={
@@ -692,7 +651,6 @@ function Tile({
   );
 }
 
-// ── Entry create/edit panel ──────────────────────────────────
 
 export function EntryPanel({
   mode,
@@ -708,22 +666,13 @@ export function EntryPanel({
   udfFields: UdfField[];
   onClose: () => void;
   onSaved: () => void;
-  /** When set, the project picker is replaced by a read-only label and
-   *  every saved entry is force-linked to this project. Used by the
-   *  in-project Sales section so reps can't accidentally re-target an
-   *  entry to a different exhibition. */
   lockedProjectId?: number;
   lockedProjectLabel?: string;
 }) {
   const toast = useToast();
   const auth = useAuth();
   const today = todayInAppTz();
-  // Quick-log rows carry the literal "(quick log)" sentinel in
-  // customer_name. Strip it so the rep sees an empty input and types
-  // a real name into it; the gating below blocks Save & submit until
-  // they do.
   const isQuickLog = entry?.customer_name === "(quick log)";
-  // ── Header
   const [docNo] = useState(entry?.doc_no || "");
   const [orderDate, setOrderDate] = useState(
     entry?.occurred_at?.slice(0, 10) || today,
@@ -736,7 +685,6 @@ export function EntryPanel({
   );
   const [status1, setStatus1] = useState(entry?.status === "draft" ? "" : (entry?.status as string) || "");
   const [status2, setStatus2] = useState(entry?.status_2 || "MATTRESS/ACC");
-  // ── Customer
   const [customerName, setCustomerName] = useState(
     isQuickLog ? "" : entry?.customer_name || "",
   );
@@ -751,7 +699,6 @@ export function EntryPanel({
   const [warehouse, setWarehouse] = useState(entry?.warehouse || "KL");
   const [refNo, setRefNo] = useState(entry?.ref_no || "");
   const [source, setSource] = useState(entry?.source || "External");
-  // ── Right column
   const [salesPersonId, setSalesPersonId] = useState<string>(
     entry?.sales_person_id != null
       ? String(entry.sales_person_id)
@@ -764,11 +711,9 @@ export function EntryPanel({
   const [poDocNo, setPoDocNo] = useState(entry?.po_doc_no || "");
   const [paymentStatus, setPaymentStatus] = useState(entry?.payment_status || "Unchecked");
   const [notes, setNotes] = useState(entry?.notes || "");
-  // ── Items / payments / footer
   const [items, setItems] = useState<SalesItemLine[]>([]);
   const [payments, setPayments] = useState<SalesPaymentLine[]>([]);
   const [remarks, setRemarks] = useState(entry?.remarks || "");
-  // ── Misc
   const [currency, setCurrency] = useState(entry?.currency || "MYR");
   const [projectId, setProjectId] = useState<string>(
     lockedProjectId
@@ -776,20 +721,15 @@ export function EntryPanel({
       : entry?.project_id ? String(entry.project_id) : ""
   );
   const [custom, setCustom] = useState<Record<string, string>>({});
-  // Full edit history (sales_entry_activity) — who created/edited this entry, when.
   const [activity, setActivity] = useState<
     { id: number; action: string; user_name: string | null; created_at: string }[]
   >([]);
   const [busy, setBusy] = useState(false);
 
-  // Sales-person picker. Defaults to the logged-in user (admins keying
-  // an entry on behalf of a rep change this). Falls back gracefully if
-  // /api/users is forbidden for the role — the picker simply hides.
   const usersQ = useQuery<{ users: Array<{ id: number; name: string | null; email: string }> }>("/api/users#tolerant",
     () => api.get<{ users: Array<{ id: number; name: string | null; email: string }> }>("/api/users").catch(() => ({ users: [] }))
   );
 
-  // Brand list — same source the projects + sales-team modules use.
   type BrandRow = { id: number; name: string; hex_color: string | null };
   const brandsQ = useQuery<{ data: BrandRow[] }>("/api/projects/brands?full=1",
     () =>
@@ -798,7 +738,6 @@ export function EntryPanel({
         .catch<{ data: BrandRow[] }>(() => ({ data: [] })),
   );
 
-  // Hydrate custom field values, items, payments if editing.
   useEffect(() => {
     if (mode !== "edit" || !entry) return;
     let cancelled = false;
@@ -847,7 +786,6 @@ export function EntryPanel({
           );
         }
       } catch {
-        // silent — form already usable with the row we have
       }
     })();
     return () => {
@@ -855,12 +793,6 @@ export function EntryPanel({
     };
   }, [mode, entry]);
 
-  /* Live totals derived from items + payments. These run through the SAME
-     parser the save does, so the figure on screen and the figure that gets
-     written can never come from two different opinions about what "1,200"
-     means — the disagreement fx-rate.ts was written to end. An unreadable
-     amount contributes nothing here AND blocks the save below, so the total
-     is never a confident number standing on a value nobody could read. */
   const itemsTotal = useMemo(() => {
     let sen = 0;
     for (const it of items) {
@@ -916,13 +848,8 @@ export function EntryPanel({
 
     const parsedPayments = payments.map((p, idx) => {
       const amount = parseMoneyToSen(p.amount, `Payment amount on row ${idx + 1}`);
-      /* An untouched row that was added and never filled is not a problem — it
-         is just an empty row, and it gets dropped below exactly as before. */
       const untouched = !p.payment_method && (amount.ok && amount.empty);
       if (!untouched && !amount.ok) problems.push(amount.message);
-      /* A real amount with no method chosen used to be dropped by the old
-         `p.payment_method && ...` filter, so the payment silently disappeared.
-         Same family of loss, so it is reported the same way. */
       if (!untouched && amount.ok && amount.sen > 0 && !p.payment_method) {
         problems.push(`Choose a payment method for the payment on row ${idx + 1}.`);
       }
@@ -930,14 +857,10 @@ export function EntryPanel({
     });
 
     if (problems.length > 0) {
-      // De-duplicated so three bad lines with the same mistake read as one
-      // instruction rather than a wall of repeats.
       toast.error(Array.from(new Set(problems)).join("\n"));
       return;
     }
 
-    // Total derived from items if any; else 0 (lets users save a draft
-    // header before keying lines).
     const amt = items.length > 0 ? itemsTotal : 0;
     setBusy(true);
     try {
@@ -1030,7 +953,6 @@ export function EntryPanel({
     }
   }
 
-  // ── Item / payment line helpers
   function addItem() {
     setItems((prev) => [
       ...prev,
@@ -1050,21 +972,10 @@ export function EntryPanel({
     setItems((prev) => {
       const next = [...prev];
       const merged = { ...next[idx], ...patch };
-      /* Auto-recompute amount when qty / unit_price change unless the user is
-         typing into the amount field directly.
-
-         When either input cannot be read we LEAVE the amount alone instead of
-         writing "0.00" over it. The old `|| 0` did the opposite: a half-typed
-         or pasted price stamped a confident RM 0.00 into the amount box, which
-         then went to the server as the line total. Leaving the previous amount
-         standing keeps the mistake visible and lets submit() name the field
-         that is actually wrong. */
       if ("qty" in patch || "unit_price" in patch) {
         const q = parseQuantity(merged.qty);
         const u = parseMoneyToSen(merged.unit_price);
         if (q.ok && u.ok) {
-          // Integer sen throughout: qty is scaled by 1000, price by 100, so the
-          // product is scaled by 100000 and rounds back to sen exactly once.
           const amountSen = Math.round((q.sen * u.sen) / 1000);
           merged.amount = senToRm(amountSen).toFixed(2);
         }
@@ -1163,9 +1074,7 @@ export function EntryPanel({
         </div>
       }
     >
-      {/* Two-column header grid mirrors the boss mockup. */}
       <div className="grid grid-cols-1 gap-x-6 gap-y-3 lg:grid-cols-2">
-        {/* Left column */}
         <div className="space-y-3">
           <Field label="Order Date">
             <DateField fullWidth value={orderDate} onChange={(iso) => setOrderDate(iso)} className={inputCls}/>
@@ -1238,7 +1147,6 @@ export function EntryPanel({
             </select>
           </Field>
         </div>
-        {/* Right column */}
         <div className="space-y-3">
           <Field label="Salesperson">
             <select value={salesPersonId} onChange={(e) => setSalesPersonId(e.target.value)} className={selectCls}>
@@ -1284,9 +1192,6 @@ export function EntryPanel({
               placeholder="Anything the accounts team should know"
             />
           </Field>
-          {/* Project picker — preserved (locked or selectable). Keeps the
-              quick-log + in-project flow working even though the boss
-              mockup doesn't show this field. */}
           <Field label="Project">
             {lockedProjectId ? (
               <div className="flex h-9 items-center rounded-md border border-border bg-bg/40 px-3 text-[12px] text-ink-secondary">
@@ -1309,7 +1214,6 @@ export function EntryPanel({
         </div>
       </div>
 
-      {/* Items section */}
       <div className="mt-6 rounded-md border border-border bg-surface">
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
           <h3 className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Items</h3>
@@ -1421,7 +1325,6 @@ export function EntryPanel({
         </div>
       </div>
 
-      {/* Remarks */}
       <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Field label="Remarks">
           <input value={remarks} onChange={(e) => setRemarks(e.target.value)} className={inputCls} placeholder="—" />
@@ -1433,7 +1336,6 @@ export function EntryPanel({
         </Field>
       </div>
 
-      {/* Payments section */}
       <div className="mt-6 rounded-md border border-border bg-surface">
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
           <h3 className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Payments</h3>
@@ -1574,7 +1476,6 @@ export function EntryPanel({
         </PanelSection>
       )}
 
-      {/* Edit history (sales_entry_activity) — who created / edited this entry, when. */}
       {mode === "edit" && activity.length > 0 && (
         <PanelSection title={`Edit history (${activity.length})`}>
           <div className="space-y-1 font-mono text-[11px]">
@@ -1606,7 +1507,6 @@ export function EntryPanel({
   );
 }
 
-// ── Field shell — icon-prefixed label like the boss mockup ─
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[110px_1fr] items-center gap-3">
@@ -1618,7 +1518,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-// ── Static option lists (V1 — promote to lookup tables later) ───
 const STATE_OPTIONS = [
   "Selangor",
   "Kuala Lumpur",
@@ -1714,7 +1613,6 @@ function DynamicField({
   );
 }
 
-// ── Field configuration panel (admin-only) ───────────────────
 
 function FieldConfigPanel({
   udf,
@@ -1885,9 +1783,6 @@ function FieldConfigPanel({
   );
 }
 
-// ── Approvals queue (Director) ───────────────────────────────
-// Pending edit-approval requests: each parked rep edit shows what it touches;
-// Approve re-applies it to the entry, Reject discards it.
 function ApprovalsView({
   requests,
   loading,

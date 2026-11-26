@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// model-default-variants — the variant a new line starts with when a Model's
-// SKU is picked (Weisiang 2026-10-07).
-//
-// Two readers: the Model PATCH route (refuses a default outside the Model's
-// allowed options) and the line pickers (SoLineCard, MobileNewSO) that pre-fill
-// it. The browser copy is frontend/src/vendor/shared/model-default-variants.ts,
-// held byte-identical by model-default-variants.canonical.test.ts.
-//
-// Defaults are keyed like a line's variants. Only single-value axes a person
-// picks from the Model's own pool can default; fabric (a set of identity keys),
-// specials (multi-pick, priced) and computed / SKU-level axes cannot.
-// ----------------------------------------------------------------------------
 
 import { normaliseTypographicQuotes } from './mfg-pricing';
 
@@ -22,7 +9,6 @@ export const MODEL_DEFAULT_AXES: Readonly<Record<string, Readonly<Record<string,
 
 const axesFor = (category: string) => MODEL_DEFAULT_AXES[category.toUpperCase()] ?? {};
 const fold = (s: string) => normaliseTypographicQuotes(s).trim();
-/* Empty / absent pool = no restriction, the same reading the save gate uses. */
 const inPool = (pool: unknown, value: string) =>
   !Array.isArray(pool) || pool.length === 0 || pool.some((p) => fold(String(p)) === fold(value));
 const str = (v: unknown) => (typeof v === 'string' && v.trim() !== '' ? v : null);

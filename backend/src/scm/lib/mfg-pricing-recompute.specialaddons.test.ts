@@ -74,9 +74,6 @@ const SOFA: ProductRowLite = {
 };
 const MODULE_PRICES = { '3S': 300000, CNR: 150000, '2A(RHF)': 250000 };
 
-/* recomputeFromSnapshot(item, product, fabric, config, sofaCombos,
-     sofaModulePrices, sellingFabricTiers, fabricAddonConfig, pwpBaseSen,
-     pwpSofaComboIds, specialAddons, sofaModuleCostRows, ...) */
 const runBuild = (moduleIds: string[], clientSen: number) =>
   recomputeFromSnapshot(
     {

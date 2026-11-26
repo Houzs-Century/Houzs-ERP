@@ -54,10 +54,6 @@ describe("soRowStatus", () => {
     expect(r.storedLabel).toBeNull();
   });
 
-  /* MISSING IS NOT "NOTHING SHIPPED". An older cached bundle carries neither
-     field, and reading that as delivery_state 'none' would assert a fact about
-     the goods that nobody established — the same refusal shipped-progress.ts
-     makes with its own `unknown`. */
   it("a payload with neither field falls back to the stored status, with no marker", () => {
     const r = row();
     expect(r.label).toBe("In Production");
@@ -86,9 +82,6 @@ describe("soRowStatus", () => {
     }
   });
 
-  /* THE REGRESSION THIS FILE EXISTS FOR, stated as the two cells rather than as
-     an implementation. If the pill ever goes back to reading the stored column,
-     this is the assertion that fails. */
   it("the pill and the Delivered column cannot disagree about a fully shipped order", () => {
     /* ONE ROW, BOTH CELLS, BOTH REAL FUNCTIONS. The Delivered column runs
        shippedProgressOf over shipped_qty / deliverable_qty (#2864); the pill

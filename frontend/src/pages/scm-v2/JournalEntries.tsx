@@ -45,7 +45,6 @@ import { useBooksToast } from './books/BooksToast';
 import tokens from './finance/finance-ui.module.css';
 import s from './books/Books.module.css';
 
-/* The five journals, AutoCount's own vocabulary — the segments and the label. */
 export const JOURNALS: readonly LedgerJournal[] = ['SALES', 'PURCHASE', 'BANK', 'CASH', 'GENERAL'];
 const isJournal = (j: string): j is LedgerJournal => (JOURNALS as readonly string[]).includes(j);
 /** The journal's word for a class the server stamped; the class itself when it is not one of the five. */
@@ -72,7 +71,6 @@ export const journalParamsFromSearch = (params: URLSearchParams): JournalPagePar
 /** A contra — the entry that undid another — is named by its source type. */
 export const isContra = (r: Pick<JournalEntryGrouped, 'source_type'>): boolean => /_REVERSAL$/.test(r.source_type);
 
-/** What the search box reads of an entry: its head, its references, its accounts and parties. */
 const haystack = (r: JournalEntryGrouped, nameOf: (code: string) => string): string =>
   [r.je_no, r.entry_date, fmtDate(r.entry_date), r.source_type, sourceLabel(r.source_type), r.doc ?? '', r.doc2 ?? '', r.narration ?? '', r.who ?? '', journalWord(r.journal_class), jeStatus(r),
     ...r.lines.flatMap((l) => [l.account_code, nameOf(l.account_code), l.party_name ?? '', l.notes ?? ''])]
@@ -87,16 +85,13 @@ export const filterEntries = (rows: JournalEntryGrouped[], journal: string, sear
 /** The page's columns — ONE home for the grid, the CSV and the widths. */
 export const JOURNAL_COLUMNS = ['Date', 'Entry', 'Journal', 'Ref. 1', 'Ref. 2', 'Description', 'Debit', 'Credit', 'Status'] as const;
 const RIGHT = [false, false, false, false, false, false, true, true, false];
-/* The design's tracks (Finance-1a-Reports, CW.je); dates, numbers and amounts never narrower than they read. */
 const WIDTHS: ColumnWidthSpec = {
   defaults: ['78px', '108px', '60px', '108px', '96px', 'minmax(200px,1fr)', '96px', '96px', '116px'],
   min: [60, 72, 40, 48, 48, 80, 56, 56, 64],
   fit: [true, true, true, false, false, false, true, true, true],
   gap: 12,
 };
-/** Entries drawn at a time; "Show more" adds the next lot of what loaded. */
 const PAGE = 100;
-/** The server's own cap on one period's read (accounting.ts journalEntriesList). */
 const LOADED_LIMIT = 500;
 
 const csvCell = (raw: string): string => {
@@ -154,7 +149,6 @@ const Group = ({ r, nameOf, template, onOpen }: { r: JournalEntryGrouped; nameOf
   );
 };
 
-/** The header's ⋯: what the design does not show and the ERP keeps. */
 function MoreMenu({ items }: { items: Array<{ label: string; onClick: () => void; disabled?: boolean }> }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -192,7 +186,6 @@ export const JournalTab = () => {
     return (code: string) => m.get(code) ?? '';
   }, [accounts.data]);
 
-  /* Every filter change is written to the URL — the page has no state of its own but the search box. */
   const update = (patch: Partial<JournalPageParams>) => {
     const next = { ...p, ...patch };
     const q = new URLSearchParams(params);

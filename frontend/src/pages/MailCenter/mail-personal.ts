@@ -1,7 +1,3 @@
-// Personal mail (DEV-03 P3): the default company address and the shape of
-// GET /api/mail-center/visibility. The default mirrors the server's
-// defaultPersonalLocalPart (backend/src/lib/mail-provision.ts); the server
-// still picks the final address and adds a number when it is taken.
 
 export function defaultPersonalLocalPart(name: string | null | undefined): string | null {
   const words = (name ?? "")

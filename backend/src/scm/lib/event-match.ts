@@ -26,16 +26,11 @@ export type EventSuggestion = { id: number; score: number; reasons: string[]; ev
    fair onto a payment request). */
 const isCancelledEvent = (e: EventRow): boolean => String(e.status ?? '').trim().toLowerCase() === 'cancelled';
 
-/* Letters and digits only, upper case — "Setia SPICE Conv. Centre" and
-   "SETIA SPICE CONVENTION CENTRE" compare on what they spell. */
 const fold = (s: string | null | undefined): string => String(s ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
 const tokens = (s: string | null | undefined): string[] => fold(s).split(' ').filter(Boolean);
 
-/* Booth numbers as tokens: "1129-1132, 1139-1142" → 1129 1132 1139 1142;
-   "Y17 & Y10a" → Y17 Y10A. A one-character token is too common to count. */
 const boothTokens = (s: string | null | undefined): Set<string> => new Set(tokens(s).filter((t) => t.length >= 2));
 
-/* Venue words that name no place on their own. */
 const VENUE_NOISE = new Set(['CONVENTION', 'CENTRE', 'CENTER', 'EXHIBITION', 'HALL', 'MALL', 'THE', 'AND', 'OF', 'AT', 'EXPO', 'INTERNATIONAL', 'KUALA', 'LUMPUR', 'LEVEL', 'FLOOR']);
 const placeWords = (s: string | null | undefined): string[] => tokens(s).filter((t) => t.length >= 3 && !VENUE_NOISE.has(t) && !/^\d+$/.test(t));
 
@@ -50,14 +45,12 @@ export function scoreEvent(
   const reasons: string[] = [];
   let score = 0;
 
-  // Booth — the strongest tie: a number both the bill and the event carry.
   if (hint?.booth && e.boothNo) {
     const ours = boothTokens(e.boothNo);
     const hit = [...boothTokens(hint.booth)].find((t) => ours.has(t));
     if (hit) { score += 40; reasons.push(`booth ${hit}`); }
   }
 
-  // Venue — the printed venue (or event name) sharing the event's place words.
   const placeOfEvent = placeWords(e.venue);
   if (placeOfEvent.length > 0) {
     const printed = new Set([...placeWords(hint?.venue), ...placeWords(hint?.name)]);
@@ -67,14 +60,12 @@ export function scoreEvent(
     }
   }
 
-  // Organiser — "MLE EVENTS SDN BHD" issuing a bill for an MLE fair.
   const org = fold(e.organizer);
   if (org && org.length >= 2 && !['SOLO', 'MALL MGT', 'MALL MGMT'].includes(org)) {
     const printed = ` ${fold(input.vendorName)} ${fold(hint?.name)} `;
     if (printed.includes(` ${org} `)) { score += 20; reasons.push(`organiser ${e.organizer ?? ''}`.trim()); }
   }
 
-  // Days — the printed event days overlapping the event's own.
   const start = e.startDate;
   const end = e.endDate ?? e.startDate;
   if (start && end && hint?.dateFrom) {
@@ -82,7 +73,6 @@ export function scoreEvent(
     if (hint.dateFrom <= end && to >= start) { score += 25; reasons.push('same days'); }
   }
 
-  // Brand — the event row is one brand; a bill that names it points at that row.
   const brand = fold(e.brand);
   if (brand && brand.length >= 3) {
     const printed = ` ${fold(input.lineText)} ${fold(hint?.name)} `;
@@ -91,8 +81,6 @@ export function scoreEvent(
 
   if (score === 0) return null;
 
-  // Nearness — a small nudge toward the event closest to the bill's date, so
-  // two equally matched fairs a year apart are not a coin toss.
   if (start && input.billDate) {
     const d = Math.abs(dayDiff(start, input.billDate));
     score += Math.max(0, 5 - Math.floor(d / 30));

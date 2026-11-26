@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { description2InputsChanged } from './po-line-description2';
 
-/* The PO line PATCH rebuilt Description 2 from the spec on EVERY save, so the
-   editor's full-line save of a delivery date erased a Description 2 that is not a
-   spec summary — the book's migrated Desc2, or one set by the PO line import. */
 describe('description2InputsChanged', () => {
   const stored = { item_group: 'bedframe', variants: { fabricCode: 'BF-01', gapInches: 12 } };
 

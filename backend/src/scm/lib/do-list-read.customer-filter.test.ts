@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readDoListParams, filterDoList, type DoListParams } from './do-list-read';
 
-// Recording PostgREST-builder fake: records (method, col, vals), returns itself.
 function recorder() {
   const calls: Array<{ m: string; col: string; vals: unknown }> = [];
   const self: Record<string, unknown> = {};

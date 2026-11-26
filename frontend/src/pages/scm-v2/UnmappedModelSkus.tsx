@@ -5,10 +5,6 @@ import type { MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { findModelSkuGaps, gapToNewBinding } from '../../vendor/scm/lib/supplier-model-gaps';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 
-/* BUG-97: a compartment added to a Model this supplier already maps has no row
-   in this tab until it is bound, so there is nowhere to put its price. Nothing
-   is pre-ticked: a supplier may leave some of a Model's codes out on purpose
-   (a STOOL it does not make), and those stay listed here until someone maps them. */
 export const UnmappedModelSkus = ({
   supplierId,
   bindings,

@@ -1,12 +1,3 @@
-/* "Add line" on the phone document detail must actually WRITE the line, offer
- * itself only where the desktop would, and keep a refusal on screen.
- *
- * FAILS ON THE PRE-FIX CODE — the component did not exist.
- *
- * Drives the REAL component and the REAL vendored add-item hooks. Faked: only
- * `authedFetch` (so the requests are the assertions), `useAuth` (the access
- * matrix under test), and the SKU picker sheet (the catalog is not under test).
- */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

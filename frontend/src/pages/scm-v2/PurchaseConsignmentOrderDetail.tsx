@@ -89,9 +89,6 @@ type HeaderDraft = {
   purchaseLocationId: string;
 };
 
-/* Whole-line edit (T12) — Edit mode drives one PcLineCard per line, the SAME rich
-   editor as Create. EditLine = the shared PcLineDraft + the persisted item id
-   (absent on a freshly-added blank card). */
 type EditLine = PcLineDraft & { itemId?: string };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -104,8 +101,6 @@ const headerSnapshot = (p: any): HeaderDraft => ({
   purchaseLocationId:    p.purchase_location_id ?? '',
 });
 
-/* Map a persisted PCO line → an editable PcLineCard draft. mig-0181: Houzs lacks
-   supplier_delivery_date_2/3/4 on the line, so we don't read them here. */
 const draftFromItem = (it: PoItemRow): EditLine => ({
   rid:            `i${it.id}`,
   itemId:         it.id,
@@ -122,8 +117,6 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   category:       it.item_group ?? undefined,
   variants:       (it.variants as Record<string, unknown> | null) ?? {},
   notes:          it.notes ?? '',
-  /* An existing line's stored price is authoritative — don't let the cost
-     auto-recompute clobber it on enter-edit. Editing variants re-arms it. */
   priceTouched:   true,
 });
 
@@ -141,17 +134,9 @@ export const PurchaseConsignmentOrderDetail = () => {
   const notify = useNotify();
 
   const po = detail.data?.purchaseOrder ?? null;
-  /* Backend (purchase-consignment-orders detail) returns pc_number, not the
-     PO's po_number — the PoHeaderRow type is shared with real POs. Read
-     pc_number first with a po_number fallback so the doc number renders. */
   const pcNo = (po as { pc_number?: string } | null)?.pc_number ?? po?.po_number ?? '';
-  /* Memoised so the edit-mode seed + cost-recompute effects don't re-fire on
-     every render. */
   const items = useMemo(() => detail.data?.items ?? [], [detail.data?.items]);
 
-  /* ── Whole-line editor data (T12) — the SAME lookups Create uses so PcLineCard
-     renders identically in Edit. Bindings come from the PCO's supplier; allSkus
-     is the catalogue fallback; maint + fabrics drive the variant dropdowns. */
   const poSupplierId = po?.supplier_id ?? '';
   const supplierDetailQ = useSupplierDetail(poSupplierId || null);
   const bindings = useMemo(() => supplierDetailQ.data?.bindings ?? [], [supplierDetailQ.data?.bindings]);
@@ -165,7 +150,6 @@ export const PurchaseConsignmentOrderDetail = () => {
   );
   const masterMaintQ = useMaintenanceConfig('master');
   const maint = supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
-  /* Dropdown options follow master; the supplier overlay only prices them (BUG-60). */
   const pickerMaint = useMemo(
     () => withMasterPickerPools(maint, masterMaintQ.data?.data ?? null),
     [maint, masterMaintQ.data?.data],
@@ -201,17 +185,12 @@ export const PurchaseConsignmentOrderDetail = () => {
     }
   }, [hardLocked, isEditing]);
 
-  /* Seed/clear the whole-line drafts (T12) — entering Edit populates a PcLineCard
-     draft for EVERY current line; leaving Edit wipes them. */
   useEffect(() => {
     if (!isEditing) { setEditLines([]); return; }
     setEditLines(items.map(draftFromItem));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, items]);
 
-  /* Cost auto-recompute (mirrors Create) — resolve a line's supplier price
-     matrix + maintenance surcharges into a unit cost. A manually-touched line
-     keeps its typed value. */
   const fabricTierForLine = (line: EditLine): MfgFabricTier | null => {
     const code = String(line.variants.fabricCode ?? '');
     if (!code) return null;
@@ -266,18 +245,8 @@ export const PurchaseConsignmentOrderDetail = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, bindings, fabrics, maint, editLines]);
 
-  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
-     until 2026-08-17, so the loading render called fewer hooks than the loaded
-     one and React threw #310 ("rendered more hooks than during the previous
-     render") the moment the query resolved — a blank "Something went wrong
-     loading this page." on a direct URL / refresh. Arriving from the list hid
-     it: react-query already had the detail cached, so the isPending branch
-     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
-     po; it can only ever be CALLED from the preview dialog, which does not
-     exist until the record has loaded. */
   const deliverPrintPdf = (action: PdfAction) => {
     if (!po) return;
-    /* The PO generator prints po_number, which a PCO record does not carry (DEV-57). */
     const pdfHeader = { ...po, po_number: pcNo };
     const purchaseLocation = warehousesForLines.find((w) => w.id === po.purchase_location_id)?.code ?? null;
     return import('../../vendor/scm/lib/purchase-order-pdf')
@@ -304,8 +273,6 @@ export const PurchaseConsignmentOrderDetail = () => {
 
   const visibleItems = items;
 
-  /* Per-line "Received" drill-down — which PC Receive took how much (backend
-     attaches `receipts` per item via pcoLineReceipts). Mirrors the PO detail. */
   const renderReceived = (it: PoItemRow) => {
     const row = it as unknown as {
       qty?: number;
@@ -332,7 +299,6 @@ export const PurchaseConsignmentOrderDetail = () => {
     );
   };
 
-  /* Totals — in Edit, sum the live editLines; in View, the stored line totals. */
   const itemsSubtotal = isEditing
     ? editLines.reduce((s, d) => s + Math.max(0, d.qty * d.unitPriceSen - (d.discountSen ?? 0)), 0)
     : visibleItems.reduce((s, it) => s + (it.line_total_sen ?? 0), 0);
@@ -346,17 +312,14 @@ export const PurchaseConsignmentOrderDetail = () => {
        NOT fan down into the line drafts — that would dirty a locked line and Save
        would 409 on the line PATCH (owner 2026-08-20, §8 GAP-1). */
     if (lockedDueToChildren) return;
-    // Header Expected Delivery cascades to every line's delivery date.
     if (k === 'expectedAt') {
       setEditLines((prev) => prev.map((d) => ({ ...d, deliveryDate: v || undefined })));
     }
   };
 
-  /* Patch one editLine by rid (mirrors Create's setLine). */
   const patchLine = (rid: string, patch: Partial<EditLine>) =>
     setEditLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
 
-  /* Adopt a supplier binding into a line (mirrors Create's pickBinding). */
   const pickBinding = (rid: string, b: BindingRow) =>
     patchLine(rid, {
       bindingId:      b.id,
@@ -369,9 +332,6 @@ export const PurchaseConsignmentOrderDetail = () => {
       priceTouched:   false,
     });
 
-  /* Patch one variant key + auto-compute bedframe Total Height (from
-     vendor/shared/total-height.ts — the one home, no longer a copy of
-     Create's). Editing a variant re-arms the cost auto-recompute. */
   const setVariant = (rid: string, k: string, v: unknown) =>
     setEditLines((prev) => prev.map((l) => {
       if (l.rid !== rid) return l;
@@ -382,8 +342,6 @@ export const PurchaseConsignmentOrderDetail = () => {
       return { ...l, variants, priceTouched: false };
     }));
 
-  /* Append a fresh blank PcLineCard (PCO is the free-entry head) — seeded with
-     the header's default ship-to + expected delivery. Committed by the page Save. */
   const startAddLine = () =>
     setEditLines((prev) => [...prev, {
       ...emptyPcLine(),
@@ -391,8 +349,6 @@ export const PurchaseConsignmentOrderDetail = () => {
       deliveryDate: headerView.expectedAt || undefined,
     }]);
 
-  /* Remove a line. A persisted line fires the delete mutation immediately; a
-     never-saved blank card just drops from the draft array. */
   const removeLine = async (rid: string) => {
     const l = editLines.find((x) => x.rid === rid);
     if (!l) return;
@@ -416,14 +372,6 @@ export const PurchaseConsignmentOrderDetail = () => {
     setIsEditing(true);
   };
 
-  /* Single Save (T12) — whole-line diff. For each draft:
-       · no itemId → ADD (full payload incl. variants / itemCode / SKU)
-       · itemId + changed any field → UPDATE (full payload)
-     Deletes already fired server-side in removeLine. Then commit the header (if
-     touched) and drop back to View.
-
-     HOUZS mig-0181: no supplier_delivery_date_2/3/4 in the payload (those
-     columns don't exist on Houzs's consignment schema). */
   const handleSave = async () => {
     if (savingDraft) return;
     const blankLine = editLines.find((d) => !d.itemCode.trim());
@@ -499,7 +447,6 @@ export const PurchaseConsignmentOrderDetail = () => {
 
   return (
     <div className="space-y-4">
-      {/* ── Header ──────────────────────────────────────────────── */}
       <PageHeader back
         eyebrow="Procurement"
         title={`${pcNo} — ${po.supplier?.name ?? po.supplier?.code ?? '—'}`}
@@ -554,14 +501,12 @@ export const PurchaseConsignmentOrderDetail = () => {
             {/* A "Permanently delete" button used to sit here on CANCELLED.
                 It and its endpoint are gone (owner rule 2026-08-11: 不可以删
                 只可以 cancel) — CANCELLED is terminal and the record stays. */}
-            {/* Receive Goods → /scm/purchase-consignment-receives/new?fromPcOrder=X */}
             {(po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (
               <Button variant="primary" size="md"
                 onClick={() => navigate(`/scm/purchase-consignment-receives/new?fromPcOrder=${po.id}`)}>
                 <span>Receive Goods</span>
               </Button>
             )}
-            {/* Raise Return → /scm/purchase-consignment-returns/new?fromPcOrder=X */}
             {(po.status === 'PARTIALLY_RECEIVED' || po.status === 'RECEIVED') && (
               <Button variant="ghost" size="md"
                 onClick={() => navigate(`/scm/purchase-consignment-returns/new?fromPcOrder=${po.id}`)}>
@@ -590,7 +535,6 @@ export const PurchaseConsignmentOrderDetail = () => {
         </div>
       )}
 
-      {/* ── Supplier / dates / currency / notes ─────────────────── */}
       <SupplierCard
         po={po}
         draft={headerView}
@@ -600,12 +544,9 @@ export const PurchaseConsignmentOrderDetail = () => {
         isEditing={isEditing}
       />
 
-      {/* ── Line items ──────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Items ({isEditing ? editLines.length : visibleItems.length})</h2>
-          {/* T12 — Edit mode restores the Create UI: a "+ Add item" that appends a
-              blank PcLineCard (PCO is the free-entry head). Hidden while locked. */}
           {isEditing && !isLocked && (
             <Button variant="primary" size="sm" onClick={startAddLine}>
               <Plus {...ICON} />
@@ -615,9 +556,6 @@ export const PurchaseConsignmentOrderDetail = () => {
         </header>
 
         {isEditing ? (
-          /* Whole-line inline edit (T12) — every line is a PcLineCard (the SAME
-             editor as Create). The ONE page-level Save diffs each draft and
-             add/update/deletes. */
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', padding: 'var(--space-3)' }}>
             {editLines.map((l, idx) => (
               <PcLineCard
@@ -698,7 +636,6 @@ export const PurchaseConsignmentOrderDetail = () => {
         )}
       </section>
 
-      {/* ── Totals ────────────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Totals</h2>
@@ -724,9 +661,6 @@ export const PurchaseConsignmentOrderDetail = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Supplier / header card — controlled by the page's draft.
-   ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
   po, draft, onField, locked, identityLocked = false, isEditing = true,
@@ -735,7 +669,6 @@ const SupplierCard = ({
   po: any;
   draft: HeaderDraft;
   onField: (k: keyof HeaderDraft, v: string) => void;
-  /** Hard lock — a non-editable status: every field read-only. */
   locked: boolean;
   /** A live PC Receive exists: the inherited fields (supplier / currency /
    *  purchase location) freeze; the PCO's own dates + notes stay editable
@@ -783,8 +716,6 @@ const SupplierCard = ({
                 value={[supplier?.address, supplier?.area, supplier?.postcode].filter(Boolean).join(', ') || null} />
             </div>
             <InfoCell label="Date" value={po.po_date || null} />
-            {/* HOUZS mig-0181: plain expected_at — no effectiveDelivery "revised"
-                display (Houzs lacks the supplier_delivery_date_2/3/4 columns). */}
             <InfoCell label="Expected Delivery" value={po.expected_at || null} />
             <InfoCell label="Purchase Location"
               value={(() => {

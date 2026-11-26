@@ -32,11 +32,6 @@ import {
 import { TeamMemberProfile } from "./TeamMemberProfile";
 import { TeamInviteModal } from "./TeamInviteModal";
 
-/* Directory — the redesigned Team home (design handoff screen 01).
- * Department tree pinned left, dense member table right, dark bulk-action
- * bar when rows are checked. Replaces the flat Members list as the primary
- * "find a person / manage a roster" screen; the classic Members tab stays
- * URL-reachable at /team?tab=members during the transition. */
 
 type RailSelection =
   | { kind: "all" }
@@ -104,8 +99,6 @@ export function TeamDirectory({
   );
   const attention = useMemo(() => attentionCounts(users), [users]);
 
-  // Rail selection — ?dept=<id> deep-links a department (Departments cards
-  // navigate here with it).
   const [selection, setSelection] = useState<RailSelection>(() => {
     const deep = parseInt(params.get("dept") ?? "", 10);
     return Number.isFinite(deep) && deep > 0
@@ -113,8 +106,6 @@ export function TeamDirectory({
       : { kind: "all" };
   });
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  // Departments that can expand (have at least one team) — drives the rail's
-  // one-click Expand all / Collapse all toggle.
   const expandableDeptIds = useMemo(
     () => deptNodes.filter((n) => n.divisions.length > 0).map((n) => n.dept.id),
     [deptNodes],
@@ -132,7 +123,6 @@ export function TeamDirectory({
   const [bulkValue, setBulkValue] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  // Keep the ?dept= param in sync so a selected department is shareable.
   useEffect(() => {
     const next = new URLSearchParams(params);
     if (selection.kind === "dept") next.set("dept", String(selection.id));
@@ -146,7 +136,6 @@ export function TeamDirectory({
     setSelectedIds(new Set());
   }
 
-  // Members in the current rail scope (before the status pill + search).
   const scoped = useMemo(() => {
     switch (selection.kind) {
       case "all":
@@ -216,7 +205,6 @@ export function TeamDirectory({
       : companyName
   ).toUpperCase();
 
-  // ── Impersonation (same probe + flow as the classic Members tab) ──
   const [canImpersonate, setCanImpersonate] = useState(false);
   useEffect(() => {
     if (!canManage) return;
@@ -225,8 +213,6 @@ export function TeamDirectory({
       .get<{ enabled: boolean }>("/api/users/impersonation-enabled")
       .then((r) => alive && setCanImpersonate(!!r.enabled))
       .catch(() => {
-        // Probe unreachable or refused — fail closed: the Login-as button
-        // stays hidden, which is the designed answer for "not enabled".
         if (alive) setCanImpersonate(false);
       });
     return () => {
@@ -259,7 +245,6 @@ export function TeamDirectory({
     }
   }
 
-  // ── Bulk actions ──
   const selectedMembers = useMemo(
     () => users.filter((u) => selectedIds.has(String(u.id))),
     [users, selectedIds],
@@ -309,8 +294,6 @@ export function TeamDirectory({
     setSelectedIds(new Set());
   }
 
-  // Company names for the optional Company column. Empty grant set fail-opens
-  // to every company (companyContext semantics) — shown as "All companies".
   function companyNamesOf(u: TeamMember): string {
     const list = companiesQ.data?.companies ?? [];
     if (!u.company_ids || u.company_ids.length === 0) return "All companies";
@@ -322,7 +305,6 @@ export function TeamDirectory({
     );
   }
 
-  // ── Table columns ──
   const columns: Column<TeamMember>[] = useMemo(
     () => [
       {
@@ -370,7 +352,6 @@ export function TeamDirectory({
         getValue: (u) => u.position_name ?? "",
         sortValue: (u) => u.position_name ?? "~",
       },
-      /* ── Employee basics — off by default, available from the Columns panel ── */
       {
         key: "emp_id",
         label: "Employee ID",
@@ -542,7 +523,6 @@ export function TeamDirectory({
 
   return (
     <div className="flex items-start gap-4">
-      {/* ── Left rail: search + department tree + needs-attention ── */}
       <aside className="sticky top-4 hidden w-[280px] flex-none flex-col self-start overflow-hidden rounded-lg border border-border bg-surface-2 shadow-stone md:flex xl:w-[320px]">
         <div className="border-b border-border-subtle p-3">
           <SearchInput
@@ -707,7 +687,6 @@ export function TeamDirectory({
         </div>
       </aside>
 
-      {/* ── Right pane: scope header + filters + table + bulk bar ── */}
       <section className="min-w-0 flex-1">
         <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
           <div className="flex flex-wrap items-end justify-between gap-3 px-5 pb-3 pt-4">
@@ -849,7 +828,6 @@ export function TeamDirectory({
         )}
       </section>
 
-      {/* Bulk "change field" picker */}
       <Panel
         open={bulkField != null}
         onClose={() => setBulkField(null)}
@@ -934,9 +912,6 @@ export function TeamDirectory({
               onChange={setBulkValue}
               options={[
                 { value: "none", label: "No manager (top level)" },
-                /* Bulk change can't exclude each row's own downline the way the
-                   single-member picker does — the server-side cycle guard
-                   rejects any loop, so offer everyone and let it referee. */
                 ...users
                   .filter((m) => m.status === "active" && !selectedIds.has(String(m.id)))
                   .map((m) => ({

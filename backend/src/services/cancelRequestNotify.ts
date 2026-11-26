@@ -51,7 +51,6 @@ const NOUN: Record<CancelNotifyDocType, string> = { SO: "Sales Order", PO: "Purc
 const cleanIds = (ids: Array<number | null | undefined>): number[] =>
   Array.from(new Set(ids.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n > 0)));
 
-/** Free text flattened and clipped so a paste cannot swamp the card. */
 function shortReason(reason: string | null | undefined): string {
   const r = (reason ?? "").replace(/\s+/g, " ").trim();
   if (!r) return "";
@@ -62,13 +61,10 @@ export type CancelNotifyOpts = {
   docType: CancelNotifyDocType;
   docNumber: string;
   reason?: string | null;
-  /** The approver's own remark on THIS signature (level1 / approved only). */
   remark?: string | null;
   companyId?: number | string | null;
-  /** users.id of the person who raised the request. */
   requesterUserId?: number | null;
   requesterName?: string | null;
-  /** users.id of whoever performed THIS step — excluded from every audience. */
   actorUserId?: number | null;
   actorName?: string | null;
 };
@@ -87,7 +83,7 @@ export async function notifyCancelRequest(env: Env, event: CancelNotifyEvent, op
     if (event === "raised" || event === "level1") {
       const level = event === "raised" ? 1 : 2;
       const perm = CANCEL_APPROVE_PERM[opts.docType][level];
-      if (!perm) return; // this document has no such level — nobody to tell
+      if (!perm) return;
       const twoLevels = CANCEL_APPROVE_PERM[opts.docType][2] != null;
       const approvers = await usersHoldingPermission(env, perm, { companyId: opts.companyId ?? null });
       const audience = cleanIds(approvers).filter((id) => id !== actor);

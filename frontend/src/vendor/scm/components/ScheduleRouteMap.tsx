@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// ScheduleRouteMap — the interactive Google Map for the Phase 3 scheduling
-// drawer. Renders the depot + numbered stop pins + the route polyline for the
-// CURRENT order (reorder happens in the drawer's stop list; this map reflects
-// it). Uses the Maps JavaScript API through @vis.gl/react-google-maps.
-//
-// KEY: reads the BROWSER key from import.meta.env.VITE_GOOGLE_MAPS_API_KEY. When
-// that env var is unset, this component is not mounted at all (the drawer shows a
-// "map key not configured" note instead). If the Maps JS fails to load at runtime
-// (bad key, referrer block, network), onError flips to a graceful in-place
-// fallback rather than crashing the drawer.
-//
-// Markers + polyline are drawn IMPERATIVELY via useMap() so the map needs no
-// cloud-configured mapId (classic raster map, numbered circle markers) — it works
-// with any Maps-enabled key out of the box.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from "react";
 import { APIProvider, Map, useMap } from "@vis.gl/react-google-maps";
@@ -27,9 +11,6 @@ export type RoutePoint = {
   violated?: boolean;
 };
 
-/* Imperative overlay: markers + a polyline for depot -> stops (in order) ->
-   depot, re-drawn whenever the order changes, with the viewport fit to the
-   points. Cleans every object up on change / unmount so no marker leaks. */
 /** Where the lorry is now (Fleet Health's lorry page) — a dark marker on top. */
 export type RouteVehicle = { lat: number; lng: number; label: string };
 
@@ -40,7 +21,6 @@ function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: n
   vehicleRef.current = vehicle;
   const markerRef = useRef<google.maps.Marker | null>(null);
 
-  /* Moves the one vehicle marker; never refits the map, so playback does not re-zoom. */
   useEffect(() => {
     if (!map || typeof google === "undefined") return;
     if (!vehicle) { markerRef.current?.setMap(null); markerRef.current = null; return; }
@@ -59,7 +39,6 @@ function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: n
 
   useEffect(() => {
     if (!map || typeof google === "undefined") return;
-    // Clear previous overlay objects.
     for (const o of objectsRef.current) o.setMap(null);
     objectsRef.current = [];
 
@@ -109,7 +88,6 @@ function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: n
       objectsRef.current.push(marker);
     }
 
-    /* Where deliveries actually happened (POD GPS): orange, not part of the planned line. */
     for (const s of drops) {
       const p = { lat: s.lat, lng: s.lng };
       bounds.extend(p);
@@ -125,7 +103,6 @@ function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: n
 
     if (depot && stops.length > 0) path.push({ lat: depot.lat, lng: depot.lng });
 
-    /* The route actually driven (GPS fixes) — grey under the planned blue line. */
     if (track.length >= 2) {
       for (const p of track) bounds.extend(p);
       objectsRef.current.push(new google.maps.Polyline({
@@ -133,7 +110,6 @@ function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: n
       }));
     }
 
-    /* The vehicle marker has its own effect (it moves on playback); it only frames the first fit. */
     if (vehicleRef.current) bounds.extend({ lat: vehicleRef.current.lat, lng: vehicleRef.current.lng });
 
     if (path.length >= 2) {
@@ -150,7 +126,6 @@ function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: n
 
     if (!bounds.isEmpty()) {
       map.fitBounds(bounds, 48);
-      // A single point leaves fitBounds zoomed all the way in — cap it.
       if (path.length <= 1) map.setZoom(14);
     }
 

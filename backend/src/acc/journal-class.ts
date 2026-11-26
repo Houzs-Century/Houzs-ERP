@@ -26,7 +26,7 @@ export const JOURNAL_CLASSES: readonly JournalClass[] = ['SALES', 'PURCHASE', 'B
 const FIXED: Record<string, JournalClass> = {
   SI: 'SALES',
   PI: 'PURCHASE',
-  API: 'PURCHASE', // the non-stock supplier bill is purchase history too
+  API: 'PURCHASE',
 
   CASHUP: 'CASH',
   SETTLE: 'BANK',
@@ -35,10 +35,10 @@ const FIXED: Record<string, JournalClass> = {
   SETTLECARD: 'BANK', // card payments a bank movement took in itself (owner 2026-11-17)
   SETTLEFOR: 'BANK', // another company's card sale swiped on this terminal (owner 2026-11-17)
   STOCKADJ: 'GENERAL',
-  COMMREL: 'GENERAL', // the monthly commission release (acc/commission-release.ts)
+  COMMREL: 'GENERAL',
   MANUAL: 'GENERAL',
   SOCONV: 'GENERAL', // money moved from a cancelled order to a new one (docs/bugs/0927)
-  OPENING: 'GENERAL', // the books' opening balances (Houzs 31/08/2026, from AutoCount)
+  OPENING: 'GENERAL',
 };
 
 const MONEY_SIDE = new Set(['SOPAY', 'SIPAY', 'PV']);
@@ -48,8 +48,6 @@ export function classifyJournal(
   accountCodes: readonly string[],
   cashAccountCode: string,
 ): JournalClass {
-  // A reversal belongs to its original's journal — the contra of a sales
-  // invoice is still sales history.
   const base = String(sourceType ?? '').replace(/_REVERSAL$/, '');
   const fixed = FIXED[base];
   if (fixed) return fixed;

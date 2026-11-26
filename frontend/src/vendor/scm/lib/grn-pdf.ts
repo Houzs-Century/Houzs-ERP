@@ -1,11 +1,3 @@
-// Goods Receipt Note PDF — printable for warehouse / supplier reconciliation.
-// Dual-code layout (Commander): supplier sees THEIR code first, ours alongside;
-// fabric specs show the supplier's colour code with our internal code in ().
-//
-// 2026-06-19 — adopts the unified "Hookka-tidy" layout shared with SO/PO/DO/SI:
-// real letterhead header, the drawInfoColumns info block (SUPPLIER label-gutter +
-// GRN DETAILS colon-aligned), and the consistent footer (doc no · portal · page
-// n of m) on every page. A4 portrait, pure B&W. No field dropped.
 import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
@@ -34,19 +26,12 @@ type GrnItem = {
   item_code: string; material_name: string;
   qty_received: number; qty_accepted: number; qty_rejected: number;
   rejection_reason: string | null; unit_price_sen: number;
-  /* Dual-code extras — all optional so older call sites keep compiling. */
   supplier_sku?: string | null;
   item_group?: string | null;
   description?: string | null;
   variants?: Record<string, unknown> | null;
 };
 
-/* Draw ONE GRN's content into `doc` (letterhead → info → codes note → table →
-   signature → footer). Mirrors renderPurchaseOrderInto: the per-doc supplier
-   lookup stays inside, but `new jsPDF` / `doc.save` belong to the caller, so
-   several GRNs can share one doc (batch "Export PDF"). The footer loop runs over
-   THIS doc's own pages (startPage…current) so a combined doc footers each GRN's
-   page span without re-footering earlier GRNs. */
 export async function renderGrnInto(
   doc: import('jspdf').jsPDF,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -55,9 +40,6 @@ export async function renderGrnInto(
   items: GrnItem[],
   opts?: { docTitle?: string; docNoLabel?: string },
 ): Promise<void> {
-  /* Before ANY drawing: a customer / supplier name, address or remark that
-     carries CJK needs the font embedded up front, or helvetica silently paints
-     the whole field as mojibake. No-op for a pure-WinAnsi document. */
   await ensurePdfCjkFont(doc, [header, items]);
 
   const pageW = doc.internal.pageSize.getWidth();
@@ -72,11 +54,6 @@ export async function renderGrnInto(
     ],
   });
 
-  /* Load supplier master + dual-code lookups BEFORE the info block so the
-     canonical SUPPLIER block can include address / tel / attn / terms — the
-     GRN's own header carries only { code, name } (endpoint economy), the
-     top-up comes from GET /suppliers/:id. loadSupplierDocData is a single
-     parallel round; moving it forward doesn't add a request. */
   const { skuMap, fabricMap, fabricDescMap, supplier: sFull } = await loadSupplierDocData(header.supplier_id, items);
   const supplierAddressLines = [
     sFull?.address,
@@ -87,8 +64,6 @@ export async function renderGrnInto(
 
   const statusText = statusLabel('grn', header.status);
   y = drawInfoColumns(doc, y,
-    /* Canonical supplier block via the shared helper — matches PO / PI / PR
-       so the four purchasing docs read the same rows in the same order. */
     supplierBlock({
       name: header.supplier?.name ?? sFull?.name,
       code: header.supplier?.code ?? sFull?.code,
@@ -114,17 +89,11 @@ export async function renderGrnInto(
     },
   );
 
-  // Codes note (dual-code lookups already loaded above with the supplier
-  // top-up, so the block prints with a full supplier profile in one round).
   doc.setFont('helvetica', 'italic'); doc.setFontSize(8); doc.setTextColor(80);
   doc.text('Codes shown are SUPPLIER codes; our reference in second column.', margin, y);
   doc.setFont('helvetica', 'normal'); doc.setTextColor(0);
   y += 4;
 
-  /* Canonical SKU/build order (sofa modules LHF→NA→RHF, mains→accessories→
-     services) — mirror the sales side. The shared helper keys on `item_code`;
-     GRN lines expose `item_code`, so sort a shimmed view that carries the
-     original row back unchanged (render-time only, no persistence touched). */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
       items.map((it) => ({ ...it, item_code: it.item_code, __row: it })),
@@ -172,7 +141,6 @@ export async function renderGrnInto(
 
   drawSignatureBoxes(doc, lastY, 'Warehouse Received By', 'Supplier Driver Signature');
 
-  // Footer: doc no · portal · page n of m on every page of THIS GRN's span.
   const pageCount = doc.getNumberOfPages();
   for (let p = startPage; p <= pageCount; p += 1) {
     doc.setPage(p);
@@ -184,8 +152,6 @@ export async function renderGrnInto(
   }
 }
 
-/* Single GRN → its own file (unchanged behaviour — reused by the GRN detail
-   page and PurchaseConsignmentReceiveDetail with its CONSIGNMENT RECEIVE opts). */
 export async function generateGrnPdf(
   header: GrnHeader,
   items: GrnItem[],
@@ -198,8 +164,6 @@ export async function generateGrnPdf(
   deliverPdf(doc, `${header.grn_number}-${safeName(header.supplier?.name ?? 'supplier')}.pdf`, opts?.action);
 }
 
-/* Several GRNs → ONE combined file, each GRN starting on a new page. For the
-   batch "Export PDF" action on the Goods Received list. */
 export async function generateCombinedGrnPdf(
   docs: Array<{ header: GrnHeader; items: GrnItem[] }>,
   opts?: { fileName?: string; docTitle?: string; docNoLabel?: string; action?: PdfAction },

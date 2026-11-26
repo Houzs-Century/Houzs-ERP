@@ -42,7 +42,6 @@ export type Ratios = {
 };
 export type DashboardPeriod = {
   key: string; label: string; from: string; to: string; months: string[];
-  /** Not finished as of today — the running month, a quarter not yet ended, or a future period. */
   partial: boolean;
   actual: DashboardFigures | null;
   forecast: DashboardFigures | null;
@@ -52,9 +51,7 @@ export type DashboardPeriod = {
   cashFlow: DashboardCashFlow | null;
   balanceSheet: BalanceSummary | null;
   ratios: Ratios;
-  /** The Forecast Balance Sheet at the period's last month-end: from the current month on. */
   forecastBalanceSheet: BalanceSummary | null;
-  /** The same six ratios off the Forecast P&L and the Forecast Balance Sheet; null without a Forecast P&L row. */
   forecastRatios: Ratios | null;
   stock: { closingProvisional: boolean };
 };
@@ -85,7 +82,6 @@ export const useFinanceDashboard = (p: DashboardParams) => useQuery({
   retry: retryUnlessClientError,
 });
 
-/* ── A past month's forecast, back-calculated (step 7 of the forecast port, part 3) ── */
 
 export type DashboardForecastMonth = { month: string; balanceSheet: BalanceSummary | null; ratios: Ratios | null };
 

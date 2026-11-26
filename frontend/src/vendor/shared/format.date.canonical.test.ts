@@ -3,21 +3,12 @@ import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { fmtDate, fmtDateTime, fmtDateOrDash, fmtTime, fmtDayMonth, fmtDayMonthRange } from './format';
 
-/* The date rule had five spellings in this tree and the owner was shown two of
-   them on one screen. These tests pin the ONE rule, and specifically pin the
-   cases that made the previous body wrong rather than only the happy path. */
 
 describe('fmtDate — DD/MM/YYYY, always', () => {
   test('a date-only column renders day-first', () => {
     expect(fmtDate('2026-08-16')).toBe('2026/08/16');
   });
 
-  /* THE BUG THAT MADE THIS WORK NECESSARY, and the one a Malaysian developer
-     cannot see locally. `new Date('2026-08-16')` is UTC midnight; the old body
-     handed that to toLocaleDateString with no timeZone, so west of Greenwich it
-     rendered 2026/08/15. Malaysia is UTC+8, so the office always saw the right
-     day and nobody could reproduce it. Asserted here by forcing the process
-     into a negative-offset zone for the length of the test. */
   test('a date-only value does NOT shift a day in a negative-offset zone', () => {
     const before = process.env.TZ;
     try {
@@ -34,9 +25,6 @@ describe('fmtDate — DD/MM/YYYY, always', () => {
     expect(fmtDate('2026-08-16T14:30:00Z')).toBe('2026/08/16');
   });
 
-  /* A real instant is converted ONCE, to Malaysian time. 17:00 UTC on the 16th
-     is 01:00 on the 17th in KL, and the ERP must say the 17th — this is the
-     "late-night UTC creation rolls over correctly" case. */
   test('a zoned instant is shown in Malaysian time, not the viewer time', () => {
     expect(fmtDate('2026-08-16T17:00:00Z')).toBe('2026/08/17');
     expect(fmtDate('2026-08-16T15:59:59Z')).toBe('2026/08/16');
@@ -123,11 +111,8 @@ describe('fmtDayMonth / fmtDayMonthRange — the year dropped, the shape kept', 
   });
 
   test('a range renders BOTH ends in full', () => {
-    /* "08/13 - 17" would save three characters and cost the reader the month on
-       the end most likely to differ. */
     expect(fmtDayMonthRange('2026-08-13', '2026-08-17')).toBe('08/13 - 08/17');
     expect(fmtDayMonthRange('2026-08-30', '2026-09-02')).toBe('08/30 - 09/02');
-    /* Across New Year, which a 28-day window reaches every December. */
     expect(fmtDayMonthRange('2026-12-30', '2027-01-02')).toBe('12/30 - 01/02');
   });
 
@@ -137,14 +122,11 @@ describe('fmtDayMonth / fmtDayMonthRange — the year dropped, the shape kept', 
   });
 
   test('an unreadable end falls back to the start, never "08/13 - —"', () => {
-    /* A dash on the end reads as a fair that never finished. */
     expect(fmtDayMonthRange('2026-08-13', 'not-a-date')).toBe('08/13');
     expect(fmtDayMonth(null)).toBe('—');
   });
 
   test('does not shift a date-only value across a timezone', () => {
-    /* The bug the whole date rule exists for: `new Date('2026-08-16')` is UTC
-       midnight, so anything west of Greenwich renders the day before. */
     const tz = process.env.TZ;
     try {
       process.env.TZ = 'America/Los_Angeles';
@@ -155,15 +137,9 @@ describe('fmtDayMonth / fmtDayMonthRange — the year dropped, the shape kept', 
   });
 });
 
-/* The frontend VENDORS the backend module rather than importing it, so the two
-   can drift silently — that is the mechanism check-shared-mirrors.mjs exists
-   for. This asserts the date rule specifically, byte for byte, so a fix applied
-   to one side and forgotten on the other fails here rather than in production.
-   phone.canonical.test.ts is the precedent and the reason phone normalisation
-   has never drifted. */
 describe('the backend copy carries the identical rule', () => {
   const slice = (text: string): string => {
-    const start = text.indexOf('/* ── THE ONE DATE RULE');
+    const start = text.indexOf('const MYT_OFFSET_MS');
     const end = text.indexOf('export const fmtDateOrDash');
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);

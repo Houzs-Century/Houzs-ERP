@@ -24,7 +24,6 @@ export const fleetPlanService = new Hono<{ Bindings: Env; Variables: Variables }
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
-// Auth on THIS route only: a use("*") here would run for every fleet request mounted after it.
 fleetPlanService.post("/plans/:planId/service", supabaseAuth, requireHouzsPerm("fleet.write"), async (c) => {
   const sb = c.get("supabase");
   const planId = c.req.param("planId");
@@ -66,8 +65,6 @@ fleetPlanService.post("/plans/:planId/service", supabaseAuth, requireHouzsPerm("
   }).select("id, wo_no").single();
   if (wErr || !wo) return c.json({ error: "insert_failed", reason: wErr?.message ?? "no row" }, 500);
 
-  /* The plan moves forward only: a back-dated record of an older service must
-     not pull "last done" (and so the next due) backwards. */
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (!p.last_done_date || doneDate >= String(p.last_done_date).slice(0, 10)) patch.last_done_date = doneDate;
   if (km != null && (p.last_done_km == null || km >= p.last_done_km)) patch.last_done_km = km;

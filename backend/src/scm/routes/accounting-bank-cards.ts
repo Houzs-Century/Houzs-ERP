@@ -31,7 +31,6 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
-/* ── GET /bank/card-payments — what a movement may take in ─────────────────── */
 
 export const bankCardPayments = bankGuard(async (c: Ctx) => {
   const co = requireActiveCompanyId(c);
@@ -70,14 +69,12 @@ export const bankCardPayments = bankGuard(async (c: Ctx) => {
   });
 });
 
-/* ── POST /bank/lines/:id/match-with-cards — entries AND card payments ─────── */
 
 export const bankLineMatchWithCards = bankGuard(async (c: Ctx) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const lineId = Number(c.req.param('id'));
   if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
-  /* A closed month refuses this, asked before the row is read (accounting-bank). */
   const shut = await refuseIfLineLocked(c, co.companyId, lineId, 'matching this movement');
   if (shut) return shut;
 
@@ -123,8 +120,6 @@ export const bankLineMatchWithCards = bankGuard(async (c: Ctx) => {
   const account = await accountOfStatement(sb, co.companyId, Number(line.statement_id));
   if (!account.ok) return c.json({ error: 'load_failed', reason: account.reason }, 500);
 
-  /* The entries, by what the ledger says they are — never the screen's amount —
-     and none another movement of this bank already accounts for. */
   const entries: EntryForMatch[] = [];
   if (jeNos.length > 0) {
     const ledger = await loadAccountLedger(sb, co.companyId, account.accountCode, '9999-12-31');

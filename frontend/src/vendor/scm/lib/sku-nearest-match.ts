@@ -45,9 +45,6 @@ export function normaliseSkuCode(code: string): string {
   return code.toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
-/* Levenshtein with a ceiling — it returns early once every cell in a row is
-   past `max`, so a long code compared against a whole catalog stays cheap. The
-   caller only ever cares whether the distance is within budget. */
 function boundedDistance(a: string, b: string, max: number): number {
   if (a === b) return 0;
   if (Math.abs(a.length - b.length) > max) return max + 1;
@@ -67,12 +64,6 @@ function boundedDistance(a: string, b: string, max: number): number {
   return prev[b.length];
 }
 
-/* How wrong a code may be before we stop guessing. One edit for a short code,
-   two for anything catalog-sized — enough for a dropped character, a doubled
-   one, or a single misread digit, and not enough to turn one product into a
-   different one. Tuned against the real catalog shape (BOOQIT-1A(LHF),
-   2990 AKKA-FIRM MATTRESS (183X190X31CM), CODY-(K)) where distinct SKUs differ
-   by at least a whole token. */
 function distanceBudget(len: number): number {
   if (len <= 4) return 0;
   if (len <= 8) return 1;
@@ -93,34 +84,25 @@ export function findNearestSku<T extends NearestSkuCandidate>(
   const raw = (candidate ?? '').trim();
   if (!raw || skus.length === 0) return NO_MATCH;
 
-  // 1. Exact, case-insensitive.
   const upper = raw.toUpperCase();
   const exact = skus.filter((s) => s.code.toUpperCase() === upper);
   if (exact.length === 1) return { sku: exact[0], source: 'exact' };
-  // Two catalog rows with the same code is a catalog fault, not something to
-  // resolve by picking one of them.
   if (exact.length > 1) return NO_MATCH;
 
   const target = normaliseSkuCode(raw);
   if (!target) return NO_MATCH;
   const normalised = skus.map((s) => ({ s, n: normaliseSkuCode(s.code) }));
 
-  // 2. Same code once punctuation and spacing stop mattering.
   const normHits = normalised.filter((x) => x.n === target);
   if (normHits.length === 1) return { sku: normHits[0].s, source: 'normalised' };
   if (normHits.length > 1) return NO_MATCH;
 
-  /* 3. The reader dropped a suffix. Only when exactly one catalog code starts
-        with what it read — "BOOQIT1A" against both BOOQIT-1A(LHF) and
-        BOOQIT-1A(RHF) names two different physical products and must refuse.
-        Guarded on length so a two-character read cannot claim a SKU. */
   if (target.length >= 4) {
     const prefixHits = normalised.filter((x) => x.n.startsWith(target));
     if (prefixHits.length === 1) return { sku: prefixHits[0].s, source: 'prefix' };
     if (prefixHits.length > 1) return NO_MATCH;
   }
 
-  // 4. Nearest by edit distance, and only when it is strictly the nearest.
   const budget = distanceBudget(target.length);
   if (budget === 0) return NO_MATCH;
   let best: { s: T; d: number } | null = null;
@@ -135,7 +117,6 @@ export function findNearestSku<T extends NearestSkuCandidate>(
       runnerUp = d;
     }
   }
-  // A tie means the slip does not say which product it is. Refuse.
   if (!best || runnerUp === best.d) return NO_MATCH;
   return { sku: best.s, source: 'distance' };
 }

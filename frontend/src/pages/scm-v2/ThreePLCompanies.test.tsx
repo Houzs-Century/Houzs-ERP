@@ -54,9 +54,6 @@ const bodyOf = (method: string, nth = 0): { path: string; body: Record<string, u
   return { path, body: JSON.parse(init.body) as Record<string, unknown> };
 };
 
-/* A block body on purpose: a function RETURNED from beforeEach is run as its
-   cleanup, and mockReset() returns the mock, so the arrow shorthand would call
-   authedFetch() with no path after every test. */
 beforeEach(() => { authedFetch.mockReset(); });
 
 describe('3PL companies: the supplier link', () => {

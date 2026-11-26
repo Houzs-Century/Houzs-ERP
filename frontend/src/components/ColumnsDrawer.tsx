@@ -66,62 +66,38 @@ export interface DrawerColumn {
   group: string;
   visible: boolean;
   canHide: boolean;
-  /** Effective width in px (user override or the column's own default). */
   width: number;
-  /** Which edge it is frozen to, if any. */
   pinned: "left" | "right" | null;
 }
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  /** Eyebrow, e.g. "Sales Orders". Rendered as `Document · <docLabel>`. */
   docLabel?: string;
-  /** Movable columns in TABLE order (alwaysVisible ones are not listed). */
   columns: DrawerColumn[];
   onToggle: (key: string) => void;
-  /** Move `key` into `targetKey`'s slot — same single rule the table header
-   *  drag uses, so the two gestures cannot disagree. */
   onReorder: (key: string, targetKey: string) => void;
   onTogglePin: (key: string) => void;
   onSetWidth: (key: string, px: number) => void;
   onShowAll: () => void;
   onReset: () => void;
-  /** Named layouts for the picker (company defaults today). */
   layouts?: LayoutPresetOption[];
   onApplyLayout?: (id: string) => void;
-  /* Layout CRUD (mig 0239). Absent when the layout server isn't up, so the
-     controls never appear where they can't work. */
   onSaveLayout?: (name: string) => Promise<void>;
   onDuplicateLayout?: (id: string, name: string) => Promise<void>;
-  /** Renames whichever row the id names — the caller decides whether that is
-   *  a saved layout or the company default. */
   onRenameLayout?: (id: string, name: string) => Promise<void>;
   onDeleteLayout?: (savedId: number) => Promise<void>;
-  /** Replace the named layout's columns with what is on screen. Works for the
-   *  company default too — the caller routes it. */
   onUpdateLayout?: (id: string) => Promise<void>;
-  /** Drop a page seed's company-shared override, reverting it to the code
-   *  default (only offered on an overridden seed). */
   onResetLayout?: (id: string) => Promise<void>;
-  /** Publish a personal saved layout to the whole company, so every member can
-   *  pick it. Offered on a personal row only, and only for a layout manager. */
   onShareLayout?: (id: string) => Promise<void>;
-  /** Stop sharing a team-published layout, removing it from everyone's picker.
-   *  Offered on a shared row only, and only for a layout manager. */
   onUnshareLayout?: (id: string) => Promise<void>;
   defaultManager?: LayoutDefaultManager;
-  /** True when the columns no longer match the active layout. */
   dirty?: boolean;
-  /** When set, the Custom fields group header grows a "New field" button that
-   *  reveals the UDF editor at the foot of the list. */
   udf?: UseUdfResult;
   udfTableLabel?: string;
-  /** Payload for "Export column config". */
   onExport?: () => void;
 }
 
-/** Case-insensitive match split into <mark>ed parts. */
 function highlight(label: string, query: string) {
   if (!query) return label;
   const at = label.toLowerCase().indexOf(query.toLowerCase());
@@ -170,7 +146,6 @@ export function ColumnsDrawer({
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const [popover, setPopover] = useState<null | "layout" | "more">(null);
-  /** Which layout row has its ⋮ menu open. The list stays visible behind it. */
   const [rowMenu, setRowMenu] = useState<string | null>(null);
   const [editingWidth, setEditingWidth] = useState<string | null>(null);
   const [widthDraft, setWidthDraft] = useState("");
@@ -178,7 +153,6 @@ export function ColumnsDrawer({
   const [overKey, setOverKey] = useState<string | null>(null);
   const [udfOpen, setUdfOpen] = useState(false);
 
-  // A drawer that reopens on a stale search reads as "my columns are gone".
   useEffect(() => {
     if (!open) {
       setQuery("");
@@ -191,7 +165,6 @@ export function ColumnsDrawer({
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      // Escape peels one layer at a time — a popover first, the drawer last.
       if (popover) setPopover(null);
       else if (editingWidth) setEditingWidth(null);
       else onClose();
@@ -202,7 +175,6 @@ export function ColumnsDrawer({
 
   const visibleCount = columns.filter((c) => c.visible).length;
 
-  /** Groups in first-appearance order — the order the page declared them. */
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
     const order: string[] = [];
@@ -225,14 +197,10 @@ export function ColumnsDrawer({
         total: totals.get(name) ?? 0,
         shown: (byGroup.get(name) ?? []).filter((c) => c.visible).length,
       }))
-      // A group whose every column was filtered out drops away; its header
-      // would be a promise of rows that aren't there.
       .filter((g) => g.columns.length > 0);
   }, [columns, query]);
 
   const nothingMatches = groups.length === 0;
-  /* One group is no grouping: a five-column list would gain a header that
-     says only "everything below". Headers earn their space from CONTRAST. */
   const showGroupHeaders = groups.length > 1;
 
   function commitWidth(key: string) {
@@ -248,10 +216,6 @@ export function ColumnsDrawer({
     toast?.success("Column config exported");
   }
 
-  /* Naming goes through the app dialog rather than an inline field: the
-     popover is 6px of padding around a list, and a text input in a row that
-     also carries a radio and a ⋮ is a row that does three things. Without a
-     dialog host (a bare test render) the action simply doesn't run. */
   async function promptForName(title: string, defaultValue: string) {
     if (!dialog) return null;
     const name = await dialog.prompt({
@@ -282,7 +246,6 @@ export function ColumnsDrawer({
     .filter(Boolean)
     .join(" · ");
 
-  // ── Row ───────────────────────────────────────────────────────────────────
   const renderRow = (col: DrawerColumn) => {
     const isDragging = dragKey === col.key;
     const isDropTarget = overKey === col.key && dragKey !== null && dragKey !== col.key;
@@ -297,18 +260,12 @@ export function ColumnsDrawer({
           try {
             e.dataTransfer.setData("text/plain", col.key);
           } catch {
-            // Locked-down dataTransfer — our own state carries the payload.
           }
         }}
         onDragOver={(e) => {
-          // Reorder is WITHIN a group: group order is the page's, not the
-          // operator's, so a drop across groups has no meaning to honour.
           if (!dragKey) return;
           const from = columns.find((c) => c.key === dragKey);
           if (!from || from.group !== col.group) return;
-          // Nor across freeze sides: the table renders the left run, the
-          // scrolling middle and the right run as three blocks, so a drop
-          // between them would rewrite the order and change nothing on screen.
           if (from.pinned !== col.pinned) return;
           e.preventDefault();
           if (overKey !== col.key) setOverKey(col.key);
@@ -343,8 +300,6 @@ export function ColumnsDrawer({
             className="pointer-events-none absolute inset-x-1 -top-px z-10 h-[2px] rounded-full bg-primary"
           />
         )}
-        {/* Handle sits on the THUMB side on a phone (right), by the checkbox
-            on a pointer device (left). */}
         {!isSmallViewport && (
           <span
             className="flex cursor-grab p-0.5 text-border-strong group-hover/row:text-ink-muted active:cursor-grabbing"
@@ -372,8 +327,6 @@ export function ColumnsDrawer({
         <button
           type="button"
           onClick={() => { if (col.canHide) onToggle(col.key); }}
-          /* Explicit: the search highlight splits the label into text + <mark>,
-             and a name computed from those children reads as "Tot al". */
           aria-label={col.label}
           className={cn(
             "min-w-0 flex-1 truncate text-left",
@@ -383,8 +336,6 @@ export function ColumnsDrawer({
         >
           {highlight(col.label, query.trim())}
         </button>
-        {/* Freeze: none → left → right → none. One button, because the three
-            states are one axis — a column is frozen to an edge or it isn't. */}
         <button
           type="button"
           onClick={() => onTogglePin(col.key)}
@@ -446,7 +397,6 @@ export function ColumnsDrawer({
     );
   };
 
-  // ── List ──────────────────────────────────────────────────────────────────
   const list = nothingMatches ? (
     <div className="px-4 py-8">
       <EmptyState
@@ -519,7 +469,6 @@ export function ColumnsDrawer({
     })
   );
 
-  // ── Chrome ────────────────────────────────────────────────────────────────
   const header = (
     <div className="flex flex-none items-start justify-between gap-3 border-b border-border-subtle px-[18px] pb-3.5 pt-[18px]">
       <div className="min-w-0">
@@ -706,7 +655,6 @@ export function ColumnsDrawer({
           )}
         </button>
       ))}
-      {/* Row menu — the layout list stays visible behind it, as designed. */}
       {rowMenu && (
         <div className="mt-1 rounded-[10px] border border-border bg-surface p-1 shadow-[0_10px_28px_rgba(34,31,32,0.16)]">
           {(() => {
@@ -940,7 +888,6 @@ export function ColumnsDrawer({
 
   if (!open) return null;
 
-  // ── Mobile: bottom sheet ──────────────────────────────────────────────────
   if (isSmallViewport) {
     return createPortal(
       <div className="fixed inset-0 z-[60]" role="dialog" aria-modal="true" aria-label="Columns">
@@ -1036,7 +983,6 @@ export function ColumnsDrawer({
     );
   }
 
-  // ── Desktop: right drawer ─────────────────────────────────────────────────
   return createPortal(
     <div className="fixed inset-0 z-[60]" role="dialog" aria-modal="true" aria-label="Columns">
       <div className="absolute inset-0 bg-[rgba(17,20,15,0.18)]" onClick={onClose} />
@@ -1056,7 +1002,6 @@ export function ColumnsDrawer({
           )}
         </div>
         {footer}
-        {/* Popovers stop the click that would close them via the panel handler. */}
         <div onClick={(e) => e.stopPropagation()}>
           {layoutPopover}
           {morePopover}

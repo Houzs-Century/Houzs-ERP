@@ -13,7 +13,6 @@ import { PICKUP_STATUS_OPTIONS, pickupTrackingLabel } from "../../vendor/scm/lib
 import { CaseSection } from "./CaseSection";
 import { LogisticsConfirmedNote } from "./LogisticsConfirmedNote";
 
-// Re-exported so the mobile case page takes the whole Pickup / Return set from one import (it is at its size ceiling).
 export { PICKUP_STATUS_OPTIONS, pickupTrackingLabel, pickupTrackingOptions } from "../../vendor/scm/lib/assr-pickup-tracking";
 
 export interface PickupTrackingRow {
@@ -31,9 +30,6 @@ export interface PickupTrackingFieldsProps {
   patch: (body: Record<string, string | null>) => Promise<void>;
 }
 
-// Own team pickup (stored 'customer') = our logistics goes to the customer's
-// house, which syncs the PICKUP leg to the HC Delivery sheet; Supplier direct =
-// the supplier collects it themselves and it never reaches the sheet.
 export const PICKUP_BY_OPTIONS = [
   { value: "customer", label: "Own team pickup" },
   { value: "supplier", label: "Supplier direct" },

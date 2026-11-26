@@ -70,7 +70,6 @@ describe("the footer under each message", () => {
     expect(screen.getByTestId("msg-11").textContent).toContain("In sales report · 2 bills · RM 6,171.00");
     expect(screen.getByTestId("msg-12").textContent).toContain("Set Total Sales = RM 48,185.00");
     expect(screen.getByTestId("msg-12").textContent).toContain("days add up to RM 48,365.00");
-    /* The days are shown, never offered as the figure. */
     expect(screen.queryByText(/use this/)).toBeNull();
     expect(screen.getByTestId("msg-13").textContent).toBe("Void");
     expect(screen.getByTestId("msg-14").textContent).toBe("");

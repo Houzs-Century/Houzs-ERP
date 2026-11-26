@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// autocount-read — the ERP reads the write-back composes FROM, and the one rule
-// they all share: a read that FAILED must never look like a read that found
-// nothing.
-//
-// SPLIT OUT OF autocount-outbox.ts on 2026-08-15, when the BALANCE UDF (module
-// guide 7q) pushed that file back over the 2,000-line cap. It is the same kind
-// of seam `autocount-masters.ts` was: `readOrThrow` and `AcReadError` are one
-// self-contained idea that everything else in the outbox depends on, and
-// `readSoOutstandingSen` is the only DB read in that module that is about
-// MONEY — which is precisely the read worth being able to find.
-// ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { poTransferShape, type PoTransferShape } from '../shared/po-transfer-shape';
 import { soOutstandingSen } from '../shared/so-outstanding';
@@ -113,13 +101,6 @@ export async function readSoOutstandingSen(
   sb: Sb,
   h: Record<string, unknown>,
 ): Promise<number | null> {
-  /* THE TOTAL, with the SAME fallback the SCREEN uses (soDisplayTotalSen in
-     so-outstanding.ts): `total_revenue_sen` when recomputeTotals has run, else
-     `local_total_sen` — the only total an AutoCount-imported order carries. The
-     header block above says WHY the write-back may take this fallback since
-     2026-09-12 (AutoCount is push-only). REFUSE only when NEITHER column has a
-     positive total: 0 is "unknown", and 0 into a ledger is a false "owes
-     nothing". `!(total > 0)` so NULL / NaN / negative refuse in both columns. */
   const totalRevenueSen = Number(h.total_revenue_sen);
   const total = totalRevenueSen > 0 ? totalRevenueSen : Number(h.local_total_sen);
   if (!(total > 0)) return null;
@@ -276,14 +257,6 @@ export async function readPoTransferFacts(
      transfer is addressed by DtlKey alone, so a purchase line naming a
      sales line for a different bed would have transferred the wrong book row.
      Both selects were already being taken; this adds one column to each. */
-  /* IN THE COMPOSER'S ORDER, and that is a money rule, not tidiness. The keys
-     this returns become `DtlKeys`, which composeSoToPo zips BY INDEX with the
-     details enqueuePoCreate composed from `inAcLineOrder` rows, and the host
-     applies each Detail's Qty and UnitPrice to the line transferred from that
-     Detail's DtlKey. This read had no ORDER BY, so production handed the rows
-     back in another order: HC-PO-2609-032 told the book CROWN (SS+S) x2 and
-     STAR (SS) x1, each at the other's cost (probe run 34826755295). The drain's
-     backfill for a `wait` row zips the same way. */
   const rows = ((await readOrThrow('purchase_order_items',
     inAcLineOrder(sb.from('purchase_order_items').select('id, so_item_id, item_code').eq('purchase_order_id', poId)))) ?? []) as Array<Record<string, unknown>>;
   if (!rows.length) return [];

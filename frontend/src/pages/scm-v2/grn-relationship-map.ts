@@ -1,23 +1,3 @@
-// grn-relationship-map — the ONE builder for the Goods Received (GRN)
-// Relationship Map, the receipt-side sibling of po-relationship-map.ts /
-// sales-doc-relationship-map.ts. Every node is read from the LIVE
-// `/document-flow` graph (the same company-scoped source every other map uses),
-// never a hand-built literal chain. Chain, from the GRN's perspective (owner
-// 2026-09-18 — the GRN was the one procurement document with no relationship
-// map, so staff could not see what it converted to/from):
-//   Sales Order ▶ Purchase Order ▶ GRN (current), then billing follows receipt:
-//   Purchase Invoice ▶ Purchase Return.
-//
-// ANCHORED traversal, exactly like the PO map: the graph resolves the whole
-// document family off the root SO(s), which can hold SIBLING purchase documents
-// (an SO covered by several POs, a PO received on several GRNs). A sibling GRN's
-// invoice must not paint THIS GRN's PI node done, so the PO / PI / PR nodes are
-// walked along the graph's edges from this GRN's anchor key
-// (po ▶ grn:{id} ▶ pi/pr), which are the real FKs (grns.purchase_order_id,
-// purchase_invoices.grn_id, purchase_returns.grn_id). The Sales Order node is
-// the family's root SO(s) — resolved through the parent PO, so the chain reads
-// SO ▶ PO ▶ GRN ▶ PI/PR, the same span the PO map shows. A GRN has no
-// amendments, so this hook carries no amendments row (unlike the PO map).
 
 import { useCallback, useMemo } from 'react';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
@@ -110,15 +90,9 @@ export function buildGrnChainNodes(
 export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
   nodes: ChainNode[];
   onNodeClick: (n: ChainNode) => boolean;
-  /* The SO ▶ PO hop is PROVENANCE — "bought for", muted, never an execution
-     binding (same rule as the PO / DO maps). No floating hop: this map is keyed
-     by a receipt, not a purchase doc, so there is no live MRP pairing to show. */
   pairing: { kind: PairingKind } | null;
 } & DocChoiceApi {
   const notify = useNotify();
-  /* Several documents in one slot open a chooser whose every row clicks through
-     (2026-08-03) — naming them and pointing at a list the doc no cannot be
-     searched in left the operator copying numbers by hand. */
   const openDoc = useOpenDocInTab();
   const { choice, openChoice, closeChoice, pickChoice } = useDocChoice();
   const { can, pageAccess } = useAuth();
@@ -126,10 +100,6 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
   const grnId = header?.id ?? null;
   const flow = useDocumentFlow('grn', grnId);
 
-  /* Edge-walk off this GRN's anchor (see header comment): its parent PO, then
-     the invoices / returns it became. The family root SOs are read whole (the
-     graph descends from THIS GRN's PO's root SOs, so every so node in it is a
-     source of this GRN). */
   const { soNodes, poNodes, piNodes, prNodes } = useMemo(() => {
     const nodes: FlowNode[] = flow.data?.nodes ?? [];
     const edges: FlowEdge[] = flow.data?.edges ?? [];
@@ -149,9 +119,6 @@ export function useGrnRelationshipMap(header: GrnRelationshipHeader | null): {
 
   const soLabels = useMemo(() => soNodes.map((n) => n.label), [soNodes]);
 
-  /* Route-gate mirrors (same OR-shape as ScmGuard): the SO detail route mounts
-     on scm.sales.orders, PO / PI / PR on their procurement areas — never hand
-     the operator a node that navigates straight into <Forbidden>. */
   const canOpenSo = can('scm.access') || pageAccess('scm.sales.orders') !== 'none';
   const canOpenPo = can('scm.access') || pageAccess('scm.procurement.po') !== 'none';
   const canOpenPi = can('scm.access') || pageAccess('scm.procurement.pi') !== 'none';

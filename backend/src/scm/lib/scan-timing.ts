@@ -25,18 +25,15 @@ export function scanTimer(kind: string) {
   const parts: Record<SavePart, number> = { sample: 0, dup: 0, create: 0, tail: 0 };
   let createAttempts = 0;
   return {
-    /** The time since the previous mark (or start) is charged to `stage` (and `part`, if given). */
     mark(stage: Stage, part?: SavePart): void {
       const now = Date.now();
       ms[stage] += now - last;
       if (part) parts[part] += now - last;
       last = now;
     },
-    /** One createDraftSalesOrder call (the SO job retries a refused create once, as loose lines). */
     createAttempt(): void {
       createAttempts += 1;
     },
-    /** `id` joins lines of one scan (e.g. the SO job id); null when there is none. */
     done(env: Metrics, id: string | null, outcome: 'ok' | 'error'): void {
       const total = Date.now() - t0;
       const line: Record<string, unknown> = { event: 'scan_timing', kind, id: id ?? '', outcome, total_ms: total };
@@ -51,7 +48,6 @@ export function scanTimer(kind: string) {
           doubles: [total, ...STAGES.map((s) => ms[s]), ...SAVE_PARTS.map((p) => parts[p]), createAttempts],
         });
       } catch {
-        /* never let observability break a scan */
       }
     },
   };
