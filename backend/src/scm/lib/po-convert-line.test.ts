@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// The two convert arms build the SAME purchase-order line.
-//
-// `convertSosToPosCore` appends to an existing PO and creates new ones, and
-// until 2026-09-10 each arm carried its own copy of the row literal. Nothing
-// checked that they agreed, and they had already drifted in their comments; a
-// field added to one and not the other is invisible until a document is missing
-// it in production. The shape is one function now, and this is what says so.
 import { describe, expect, test } from 'vitest';
 import { buildVariantSummary } from '../shared';
 import { poConvertLineRow, type PoConvertLine } from './po-convert-line';
@@ -27,10 +19,6 @@ const line: PoConvertLine = {
 
 describe('poConvertLineRow', () => {
   test('writes exactly the columns the convert has always written', () => {
-    /* Spelled out rather than snapshotted: a column added here has to be added
-       to this list on purpose, which is the review this extraction exists to
-       make possible. `line_no` is deliberately ABSENT — stampPoLineNos adds it
-       after the caller has ordered the payload (lib/po-line-order.ts). */
     expect(Object.keys(poConvertLineRow('po-1', line, false, line.itemGroup)).sort()).toEqual([
       'delivery_date', 'description2', 'from_mrp', 'item_code', 'item_group',
       'line_total_sen', 'material_kind', 'material_name', 'notes', 'photo_urls',
@@ -57,8 +45,6 @@ describe('poConvertLineRow', () => {
   });
 
   test('the photo array is the line’s OWN, never shared or deduplicated', () => {
-    /* One sofa build is many compartment lines sharing one build photo; folding
-       them would blank every compartment but the first (mig 0274). */
     const a = poConvertLineRow('po-1', line, false, line.itemGroup);
     const b = poConvertLineRow('po-1', { ...line, soItemId: 'si-2' }, false, line.itemGroup);
     expect(a.photo_urls).toEqual(line.photoUrls);

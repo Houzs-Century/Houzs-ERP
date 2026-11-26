@@ -34,9 +34,7 @@ const closeBtn: CSSProperties = { border: 'none', background: 'none', cursor: 'p
 export const Modal = ({ title, onClose, width = 'min(1100px, 100%)', actions, children, ariaLabel }: {
   title: ReactNode;
   onClose: () => void;
-  /** CSS width of the panel; the default suits a document with a lines table. */
   width?: string;
-  /** Buttons for the header's right side, before the close cross. */
   actions?: ReactNode;
   children: ReactNode;
   ariaLabel?: string;

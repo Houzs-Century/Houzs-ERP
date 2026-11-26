@@ -26,24 +26,9 @@ interface UserOption {
   email: string;
 }
 
-/**
- * Service Maintenance — admin home for the QMS module. Mirrors the
- * Project Maintenance pattern: pickers, defaults, and rate cards
- * consolidated under one page so config doesn't scatter.
- *
- * Mounted as a sub-view of /assr (Quality Management → Service
- * Maintenance sidebar entry). Surfaces:
- *   - Default case assignee
- *   - Issue Categories (mig 065 lookup)
- *   - Resolution Methods (mig 065 lookup)
- *   - Priorities (mig 065 lookup, with optional SLA hours)
- *   - Issue Categories (mig 065 lookup, formerly "NCR")
- */
 type SettingsTab = "general" | "lead_time";
 
 export function ServiceSettingsView() {
-  // Tab state in the URL so the back button + sidebar deep-links work.
-  // ?view=settings stays — &tab=... drives the sub-tab.
   const [params, setParams] = useSearchParams();
   const rawTab = params.get("tab");
   const tab: SettingsTab = rawTab === "lead_time" ? "lead_time" : "general";
@@ -82,8 +67,6 @@ function GeneralTab() {
     <>
       <DefaultAssigneeSection />
 
-      {/* Two-up grid on wide screens, single column on narrow. Same
-          packing pattern as Project Maintenance keeps the page tight. */}
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
         <LookupManager
           apiPath="/api/assr/lookups/issue-categories"
@@ -116,17 +99,9 @@ function GeneralTab() {
   );
 }
 
-// ── Default assignee ────────────────────────────────────────────
 
 function DefaultAssigneeSection() {
   const toast = useToast();
-  // OFF-NOT-HIDE: ServiceCases.tsx no longer mounts this view without
-  // `service_cases.manage`, so this is the query layer of the same gate rather
-  // than a second rule. It matters because the read is the ONE thing the server
-  // does not stop: GET /api/assr/settings needs only `service_cases.read`
-  // (assr.ts:218) while the nav entry and the PUT both need `.manage` — so
-  // anyone who could read a case could read this config. Never fire it without
-  // the permission the page is actually for.
   const { can } = useAuth();
   const canManageService = can("service_cases.manage");
   const settings = useQuery<ServiceSettingsResponse>("/api/assr/settings",
@@ -136,8 +111,6 @@ function DefaultAssigneeSection() {
   );
   const [saving, setSaving] = useState(false);
 
-  // One picker, two slots: first pick = primary assignee, second =
-  // co-assignee. Removing the first promotes the second.
   async function setDefaults(ids: number[]) {
     setSaving(true);
     try {
@@ -159,9 +132,6 @@ function DefaultAssigneeSection() {
     settings.data?.default_assignee2_id,
   ].filter((n): n is number => n != null);
 
-  // Resolve the selected chips from the settings payload itself (it carries the
-  // assignee names/emails), so the picker no longer needs the full users list —
-  // it self-fetches its dropdown via server typeahead.
   const selectedItems: UserOption[] = [
     settings.data?.default_assignee_id != null
       ? {

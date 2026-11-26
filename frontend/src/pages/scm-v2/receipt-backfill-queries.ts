@@ -1,7 +1,3 @@
-// Official receipts owed to history — the plan and the run behind Self-check's
-// "Official receipts" row (once ReceiptBackfillCard). The plan (what the run
-// would take, per month and series) is read on mount; nothing is written
-// until the run is pressed and confirmed.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';

@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// Supplier bindings — CSV / Excel export + import.
-//
-// Extracted from SupplierDetail.tsx (2026-09-17, B3) so the importer could grow
-// an auto-create path without pushing that file past its size ceiling. Exports
-// exportBindingsCsv + ImportBindingsDialog, plus the pure parsers/builders (used
-// by both the dialog and the unit test).
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { X } from 'lucide-react';
@@ -27,61 +19,20 @@ import { guardFormula } from '../../lib/csv';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/* ════════════════════════════════════════════════════════════════════════
-   Bindings CSV Export + Import (Commander 2026-05-28).
-
-   EXPORT is tidy LONG format — header:
-     internal_code, supplier_sku, category, height, tier, price_rm,
-     lead_time_days, moq, is_main_supplier
-
-   Per binding kind:
-     • other (mattress/accessory/service) → ONE row: category=other, blank
-       height/tier, price_rm = unit_price.
-     • bedframe → one row per tier present (P1/P2): category=bedframe, blank
-       height, tier=P1|P2.
-     • sofa → one row per (height × tier) present: category=sofa, height=24…,
-       tier=P1|P2|P3.
-   A binding with no price set still emits ONE row (blank price) so it round-
-   trips and stays editable. The per-binding scalars (supplier_sku / lead /
-   moq / main) repeat on every row for that binding — standard long-format
-   redundancy; import reads them from the binding's rows (last non-blank wins).
-
-   Sofa seat-heights come from the master maintenance config (same source the
-   sofa SKU mappings table reads), so the export always reflects the current
-   pool. Long format means adding a seat-height no longer changes the column
-   set — it just adds rows.
-
-   IMPORT accepts BOTH formats (back-compat): the new LONG layout AND the old
-   WIDE matrix. We sniff the header — a `price_rm` column ⇒ long; any
-   `sofa_<h>_<t>` / `bedframe_P1` / `unit_price_rm` column ⇒ wide. Suppliers'
-   previously-exported wide CSVs still load unchanged.
-
-   Import (B3, 2026-09-17): rows matching an existing binding are PATCHed; rows
-   whose internal_code is NOT yet bound are CREATED via the company-scoped
-   `POST /suppliers/:id/bindings/batch` endpoint (which skips any code already
-   bound and stamps the active company). A dry-run PREVIEW lists exactly what
-   will be created and updated before any write — money-sensitive, so nothing
-   is written until the operator confirms.
-   ════════════════════════════════════════════════════════════════════════ */
 
 const SOFA_TIERS_FOR_EXPORT: readonly ('P1' | 'P2' | 'P3' | 'P4')[] = ['P1', 'P2', 'P3', 'P4'];
 
-/** RFC4180 quote when a cell contains comma / quote / newline. */
 function csvCell(v: unknown): string {
   if (v == null) return '';
   const s = guardFormula(String(v));
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** Sen → RM (2dp). Treat `0`/`null` as blank so the CSV doesn't write
- *  "0.00" into every cell that's never been filled. */
 function fmtRmCell(centi: number | null | undefined): string {
   if (centi == null || centi === 0) return '';
   return (centi / 100).toFixed(2);
 }
 
-/** Read centi from a parsed CSV cell. Empty string / "—" → null (skip).
- *  Anything else gets coerced through Number; non-finite → null. */
 function parseRmCell(raw: string | undefined): number | null {
   if (!raw) return null;
   const t = raw.trim();
@@ -91,9 +42,6 @@ function parseRmCell(raw: string | undefined): number | null {
   return Math.round(n * 100);
 }
 
-/** Classify a binding's underlying mfg_product so we know which optional
- *  matrix columns it should populate. Mirrors SupplierOverviewPanel.classify
- *  but returns the smaller set the CSV cares about. */
 function bindingKindForCsv(
   binding: BindingRow,
   productByCode: Map<string, MfgProductRow>,
@@ -105,7 +53,6 @@ function bindingKindForCsv(
   return 'other';
 }
 
-/** Long-format header — fixed column set regardless of the seat-height pool. */
 const BINDINGS_LONG_HEADER: readonly string[] = [
   'internal_code',
   'supplier_sku',
@@ -129,8 +76,6 @@ export function exportBindingsCsv(
     products.map((p) => [p.code, p]),
   );
 
-  // Tidy LONG format — one row per binding × price-point. Adding a seat-height
-  // adds rows, never columns, so the file shape is stable across pool edits.
   const lines: string[] = [BINDINGS_LONG_HEADER.map(csvCell).join(',')];
   const scalar = (b: BindingRow) => ({
     internal_code: b.item_code,
@@ -164,7 +109,6 @@ export function exportBindingsCsv(
           if (cell) { emit(b, 'sofa', h, t, cell); emitted += 1; }
         }
       }
-      // No prices set yet → still emit one anchor row so the binding round-trips.
       if (emitted === 0) emit(b, 'sofa', '', '', '');
     } else if (kind === 'bedframe') {
       const matrix = (b.price_matrix ?? {}) as BedframePriceMatrix;
@@ -175,7 +119,6 @@ export function exportBindingsCsv(
       }
       if (emitted === 0) emit(b, 'bedframe', '', '', '');
     } else {
-      // mattress / accessory / service — a single flat unit price.
       emit(b, 'other', '', '', fmtRmCell(b.unit_price_sen));
     }
   }
@@ -202,11 +145,6 @@ export function bindingsHeader(raw: readonly string[], sofaHeights: readonly str
   return resolveImportHeaders(raw, [...BINDINGS_LONG_HEADER, ...wide], BINDINGS_ALIASES);
 }
 
-/* ── Import format detection + per-format patch builders (#6 back-compat) ──
-   Both builders accumulate into a Map<bindingId, AccumPatch>, so the executor
-   below is format-agnostic. A binding's scalar fields take the last non-blank
-   value seen; the price matrix is layered cell-by-cell onto the binding's
-   CURRENT matrix (wholesale send) so a partial sheet never wipes other cells. */
 
 export type ImportFormat = 'long' | 'wide';
 type AccumPatch = { binding: BindingRow; patch: Partial<NewBinding> };
@@ -232,9 +170,6 @@ function csvKindForProduct(product: MfgProductRow | undefined): CsvKind {
       : 'other';
 }
 
-/** Apply the shared scalar columns (supplier_sku / lead / moq / main) from one
- *  parsed row onto an accumulating patch. Diffs against the binding so no-op
- *  values aren't sent. Returns true if anything changed. */
 function applyScalarCols(
   r: string[],
   cols: { supSku: number; lead: number; moq: number; main: number },
@@ -313,8 +248,6 @@ export function buildWidePatches(
       if (sen != null && sen !== binding.unit_price_sen) patch.unitPriceSen = sen;
     }
 
-    // Price matrix updates are wholesale (send the merged matrix) so a partial
-    // sheet doesn't wipe other categories' data.
     if (kind === 'sofa') {
       const next: SofaPriceMatrix = { ...((binding.price_matrix ?? {}) as SofaPriceMatrix) };
       let changed = false;
@@ -378,8 +311,6 @@ export function buildLongPatches(
   const scalarCols = { supSku: idx('supplier_sku'), lead: idx('lead_time_days'), moq: idx('moq'), main: idx('is_main_supplier') };
 
   const patches = new Map<string, AccumPatch>();
-  // Track the running merged matrix per binding so successive long rows layer
-  // onto the SAME object (not the binding's pristine matrix each time).
   const sofaMatrices = new Map<string, SofaPriceMatrix>();
   const bedMatrices = new Map<string, BedframePriceMatrix>();
   const sofaTouched = new Set<string>();
@@ -396,8 +327,6 @@ export function buildLongPatches(
     patches.set(binding.id, acc);
     applyScalarCols(r, scalarCols, binding, acc.patch);
 
-    // Prefer the row's own `category` column; fall back to the product's kind
-    // (lets a hand-written sheet omit category for non-matrix items).
     const catCell = colCategory >= 0 ? (r[colCategory] ?? '').trim().toLowerCase() : '';
     const kind: CsvKind =
       catCell === 'sofa' ? 'sofa'
@@ -410,8 +339,6 @@ export function buildLongPatches(
     const height = colHeight >= 0 ? (r[colHeight] ?? '').trim() : '';
 
     if (kind === 'other') {
-      // Flat unit price. Blank price on an "other" row = no change (don't zero
-      // a price just because an anchor row carried no value).
       if (sen != null && sen !== binding.unit_price_sen) acc.patch.unitPriceSen = sen;
     } else if (kind === 'bedframe') {
       if (tier === 'P1' || tier === 'P2') {
@@ -420,8 +347,7 @@ export function buildLongPatches(
         bedMatrices.set(binding.id, m);
         bedTouched.add(binding.id);
       }
-      // tier blank → anchor row for an empty binding; nothing to layer.
-    } else { // sofa
+    } else {
       if (height && (tier === 'P1' || tier === 'P2' || tier === 'P3' || tier === 'P4')) {
         const m = sofaMatrices.get(binding.id) ?? { ...((binding.price_matrix ?? {}) as SofaPriceMatrix) };
         const inner = { ...(m[height] ?? {}) } as { P1?: number; P2?: number; P3?: number; P4?: number };
@@ -434,7 +360,6 @@ export function buildLongPatches(
     }
   }
 
-  // Fold the merged matrices into each binding's patch (wholesale send).
   for (const id of sofaTouched) {
     const acc = patches.get(id);
     if (!acc) continue;
@@ -448,16 +373,12 @@ export function buildLongPatches(
     acc.patch.priceMatrix = Object.keys(m).length === 0 ? null : m;
   }
 
-  // Drop bindings whose accumulated patch ended up empty (anchor-only rows).
   for (const [id, acc] of patches) {
     if (Object.keys(acc.patch).length === 0) patches.delete(id);
   }
   return { patches, skippedUnknown: skippedCodes.size };
 }
 
-/* A blank binding for an unknown code — the empty BASE the shared builders
-   layer a create's prices/sku onto, so the create parse reuses the exact same
-   money/matrix logic as the update parse (no second, divergent parser). */
 const NEW_ID_PREFIX = 'NEW::';
 function blankBinding(code: string, product: MfgProductRow | undefined): BindingRow {
   return {
@@ -484,12 +405,6 @@ function blankBinding(code: string, product: MfgProductRow | undefined): Binding
   };
 }
 
-/* B3 (2026-09-17) — build CREATE rows for internal_codes in the sheet that this
-   supplier is NOT yet bound to. Runs the SAME builder over a blank base binding
-   per unknown code, then converts the resulting patch to a NewBinding. A create
-   always carries a non-empty materialName + supplierSku (batch create requires
-   them): fall back to the catalogue name / composed sku, else the code itself.
-   Exported for the unit test. */
 export function buildCreates(
   dataRows: string[][],
   header: string[],
@@ -578,8 +493,6 @@ export const ImportBindingsDialog = ({
 
   const fmtRm = (sen: number | undefined) => `RM ${((sen ?? 0) / 100).toFixed(2)}`;
 
-  // Parse + classify WITHOUT writing anything — money-sensitive, so the operator
-  // sees exactly what will be created and updated before committing.
   const doPreview = async () => {
     if (!file || parsing || running) return;
     setParsing(true);
@@ -611,8 +524,6 @@ export const ImportBindingsDialog = ({
     try {
       let created = 0;
       let createFailed = 0;
-      // Auto-create the missing bindings via the company-scoped batch endpoint
-      // (it skips any code already bound and stamps the active company).
       if (preview.creates.length > 0) {
         try {
           const res = await batch.mutateAsync({ supplierId, bindings: preview.creates });

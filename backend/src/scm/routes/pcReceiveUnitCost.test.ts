@@ -25,7 +25,6 @@ describe('resolvePcReceiveUnitCostSen — tiered consignment IN cost', () => {
   });
 
   it('lets a present-but-0 on-hand cost win over history (preserves the prior ?? semantics)', () => {
-    // An open lot really is carried at 0 — do not silently re-cost it from history.
     expect(resolvePcReceiveUnitCostSen(0, 0, 5000)).toBe(0);
   });
 });

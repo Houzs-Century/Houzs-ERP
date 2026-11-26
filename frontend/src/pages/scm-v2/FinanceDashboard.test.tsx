@@ -75,7 +75,6 @@ const SEP: DashboardPeriod = {
     { key: 'dining', label: 'Dining', spendSen: 0, purchaseSen: 0, closingStockSen: 0 },
   ] },
   cashFlow: { inSen: 5_000_000, outSen: 200_000, netSen: 4_800_000, openingSen: 12_700_000, closingSen: 17_500_000, tree: [] },
-  /* September is the current month: its month-end forecast beside its actual. */
   forecastBalanceSheet: { assetsSen: 14_000_000, liabilitiesSen: 7_000_000, equitySen: 5_000_000, earningsSen: 2_000_000, currentAssetsSen: 14_000_000, currentLiabilitiesSen: 7_000_000, inventorySen: 1_000_000, debtToAssetPct: 50, checkSen: 0 },
   forecastRatios: { grossMarginPct: 40, netMarginPct: 18.3, currentRatio: 2, quickRatio: 1.86, roePct: 31.4, roaPct: 15.7 },
   stock: { closingProvisional: true },
@@ -93,7 +92,6 @@ const PAYLOAD: DashboardPayload = {
   periods: [AUG, SEP, OCT],
 };
 const lastParams: { value: DashboardParams | null } = { value: null };
-/* A past month's back-calculated forecast (step 7, part 3): August's, when asked. */
 const pastAsked: { value: readonly string[] } = { value: [] };
 const PAST_AUG = {
   month: '2026-08',
@@ -105,7 +103,6 @@ vi.mock('../../vendor/scm/lib/dashboard-queries', async (importOriginal) => ({
   useFinanceDashboard: (p: DashboardParams) => { lastParams.value = p; return { data: PAYLOAD, isLoading: false, isFetching: false, isError: false, error: null }; },
   useDashboardForecastMonths: (months: readonly string[]) => { pastAsked.value = months; return months.map((m) => ({ data: m === '2026-08' ? PAST_AUG : undefined })); },
 }));
-/* The Cash Flow's two forecasts (step 7): the P&L forecast for August to October, Orders & bills for October only. */
 const fm = (month: string, inSen: number, outSen: number) => ({
   month, future: false,
   report: {
@@ -122,16 +119,12 @@ vi.mock('../../vendor/scm/lib/cash-flow-forecast-queries', async (importOriginal
   ...(await importOriginal() as object),
   useCashFlowForecast: (from: string, to: string) => { forecastAsked.value = [from, to]; return { data: CASH_FORECAST, isLoading: false }; },
 }));
-/* The page sits in the Finance report shell, whose report list reads the
-   sidebar's gates (reports/ReportRail). */
 vi.mock('../../auth/AuthContext', () => ({ useAuth: () => ({ user: null, can: () => true, pageAccess: () => 'full' }) }));
 const { FinanceDashboard } = await import('./FinanceDashboard');
 
 const rowText = (id: string): string => String((document.querySelector(`[data-row="${id}"]`) as HTMLElement).textContent);
-/** The chart nodes inside one card, by the card's title. */
 const inCard = (title: string, selector: string): number => screen.getByLabelText(title).querySelectorAll(selector).length;
 const cells = (id: string): string[] => [...(document.querySelector(`[data-row="${id}"]`) as HTMLElement).querySelectorAll('td')].slice(1).map((c) => String(c.textContent));
-/** A side-by-side row's cells, per period and reading: the figure, then its grey % when it has one. */
 const side = (id: string): string[] => [...(document.querySelector(`[data-row="${id}"]`) as HTMLElement).querySelectorAll('td[data-cell]')]
   .map((c) => [c.querySelector('[data-v]')?.textContent, c.querySelector('[data-pct]')?.textContent].filter((t): t is string => !!t).join(' '));
 
@@ -140,16 +133,12 @@ beforeEach(() => { lastParams.value = null; });
 describe('the Financial Dashboard page', () => {
   test('reads the periods as labelled, marks the unfinished ones, and names the provisional stock', () => {
     render(<MemoryRouter><FinanceDashboard /></MemoryRouter>);
-    /* The Income Statement's table carries every line of the statement now, not one metric (2026-09-29). */
     const table = screen.getByLabelText('Income statement figures');
-    /* A month as the redesign names it (batch 6 step 15), " *" while not finished, " (F)" when it is
-       all forecast — no actual yet (the forecast port, step 7). */
     expect(within(table).getByText('Aug 2026')).toBeTruthy();
     expect(within(table).getByText('Sep 2026 *')).toBeTruthy();
     expect(within(table).getByText('Oct 2026 (F)')).toBeTruthy();
     expect(screen.getByText(/not finished — a small figure is not a fall/)).toBeTruthy();
     expect(screen.getByText(/Closing stock for Sep 2026 \* is what the shelves hold today/)).toBeTruthy();
-    /* The hover names a period that is not finished, and one that holds only a forecast. */
     const tips = [...document.querySelectorAll('title')].map((x) => x.textContent);
     expect(tips.some((x) => x.startsWith('Sep 2026 · Not finished · Actual Revenue'))).toBe(true);
     expect(tips.some((x) => x.startsWith('Oct 2026 · Forecast only · Forecast Revenue'))).toBe(true);
@@ -164,27 +153,22 @@ describe('the Financial Dashboard page', () => {
     const table = screen.getByLabelText('Income statement figures');
     expect([...table.querySelectorAll('th[data-source]')].map((h) => h.textContent)).toEqual(['Actual', 'Forecast', 'Actual', 'Forecast', 'Actual', 'Forecast']);
     expect([...table.querySelectorAll('tbody tr[data-row^="is:"]')].map((r) => r.getAttribute('data-row'))).toEqual(['is:revenue', 'is:cogs', 'is:gp', 'is:staff', 'is:other', 'is:net']);
-    /* Revenue carries no %; every other line its share of THAT reading's revenue — an actual of actual, a forecast of forecast. */
     expect(side('is:revenue')).toEqual(['100,000.00', '—', '50,000.00', '120,000.00', '—', '150,000.00']);
     expect(side('is:cogs')).toEqual(['58,000.00 58.0%', '—', '30,000.00 60.0%', '72,000.00 60.0%', '—', '90,000.00 60.0%']);
     expect(side('is:gp')).toEqual(['42,000.00 42.0%', '—', '20,000.00 40.0%', '48,000.00 40.0%', '—', '60,000.00 40.0%']);
     expect(side('is:staff')).toEqual(['20,000.00 20.0%', '—', '0.00 0.0%', '20,000.00 16.7%', '—', '0.00 0.0%']);
     expect(side('is:other')).toEqual(['5,000.00 5.0%', '—', '2,000.00 4.0%', '6,000.00 5.0%', '—', '0.00 0.0%']);
     expect(side('is:net')).toEqual(['19,000.00 19.0%', '—', '18,000.00 36.0%', '22,000.00 18.3%', '—', '60,000.00 40.0%']);
-    /* The tab's metric keeps its gaps, one figure a period, named for the metric. */
     expect(cells('vs-forecast')).toEqual(['—', '(70,000.00)', '—']);
     expect(cells('vs-last')).toEqual(['—', '-50.0%', '—']);
     expect(rowText('vs-forecast')).toContain('Revenue vs Forecast (RM)');
-    /* The old stacked rows are gone. */
     expect(document.querySelector('[data-row="actual"]')).toBeNull();
     expect(document.querySelector('[data-row="forecast-pct"]')).toBeNull();
-    /* The forecast's line has one segment (Sep → Oct) and two points: August has no forecast, so nothing is drawn there. */
     expect(document.querySelectorAll('[data-segment="forecast"]').length).toBe(1);
     expect(document.querySelectorAll('[data-point="forecast"]').length).toBe(2);
     expect(inCard('Income Statement', '[data-group="actual"]')).toBe(2);
     fireEvent.click(screen.getByRole('tab', { name: 'Net Profit' }));
     expect(rowText('vs-forecast')).toContain('Net Profit vs Forecast (RM)');
-    /* Net profit under forecast is worse: red; a cost under forecast would be green. */
     const gapCell = (document.querySelector('[data-row="vs-forecast"]') as HTMLElement).querySelectorAll('td')[2]!;
     expect(gapCell.textContent).toBe('(4,000.00)');
     expect(gapCell.style.color).toContain('--fin-late-fg');
@@ -192,7 +176,6 @@ describe('the Financial Dashboard page', () => {
     const cogsGap = (document.querySelector('[data-row="vs-forecast"]') as HTMLElement).querySelectorAll('td')[2]!;
     expect(cogsGap.textContent).toBe('(42,000.00)');
     expect(cogsGap.style.color).toBe('rgb(47, 138, 91)');
-    /* The rows do not change with the tab — the whole statement stays on the table. */
     expect(side('is:net')).toEqual(['19,000.00 19.0%', '—', '18,000.00 36.0%', '22,000.00 18.3%', '—', '60,000.00 40.0%']);
   });
 
@@ -214,11 +197,9 @@ describe('the Financial Dashboard page', () => {
   test('the Performance card: actual and performance bars side by side, the forecast a line; the table puts the readings side by side under each period, a row a group; a group narrows everything; gross profit and GP % compare the orders with the forecast', () => {
     render(<MemoryRouter><FinanceDashboard /></MemoryRouter>);
     const table = screen.getByLabelText('Performance figures');
-    /* Each period splits into the three readings, left to right. */
     expect([...table.querySelectorAll('th[data-source]')].map((h) => h.textContent)).toEqual([
       'Actual (P&L)', 'Performance (SO)', 'Forecast', 'Actual (P&L)', 'Performance (SO)', 'Forecast', 'Actual (P&L)', 'Performance (SO)', 'Forecast',
     ]);
-    /* A row a group — its share of the column's sales in grey — then the total. */
     expect(side('perf:sofa')).toEqual([
       '80,000.00 80.0%', '300,000.00 75.0%', '—',
       '50,000.00 100.0%', '200,000.00 100.0%', '100,000.00 83.3%',
@@ -232,21 +213,17 @@ describe('the Financial Dashboard page', () => {
     expect(side('perf:dining')).toEqual(['—', '—', '—', '0.00 0.0%', '0.00 0.0%', '20,000.00 16.7%', '—', '—', '—']);
     expect(side('perf:total')).toEqual(['100,000.00', '400,000.00', '—', '50,000.00', '200,000.00', '120,000.00', '—', '—', '150,000.00']);
     expect([...table.querySelectorAll('tbody tr[data-row^="perf:"]')].map((r) => r.getAttribute('data-row'))).toEqual(['perf:sofa', 'perf:bedding', 'perf:dining', 'perf:total']);
-    /* The gaps: one figure per period. */
     expect(cells('actual-vs-forecast')).toEqual(['—', '(70,000.00)', '—']);
     expect(cells('actual-vs-forecast-pct')).toEqual(['—', '-58.3%', '—']);
     expect(cells('performance-vs-forecast')).toEqual(['—', '+80,000.00', '—']);
     expect(cells('actual-vs-performance')).toEqual(['(300,000.00)', '(150,000.00)', '—']);
-    /* The old stacked rows are gone. */
     expect(document.querySelector('[data-row="actual-sales"]')).toBeNull();
     expect(document.querySelector('[data-row="sofa-performance"]')).toBeNull();
-    /* The actual bar beside the performance stack; the forecast line only where a period has one. */
     const PERF = 'Performance vs forecast by product group';
     expect(inCard(PERF, '[data-group="actual"]')).toBe(2);
     expect(inCard(PERF, '[data-group="sofa"]')).toBe(2);
     expect(inCard(PERF, '[data-group="bedding"]')).toBe(1);
     expect(inCard(PERF, '[data-point="forecast-sales"]')).toBe(2);
-    /* One group: its row alone, with its share; the gaps are that group's. */
     fireEvent.click(screen.getByRole('tab', { name: 'Bedding' }));
     expect(side('perf:bedding')).toEqual([
       '20,000.00 20.0%', '100,000.00 25.0%', '—',
@@ -257,7 +234,6 @@ describe('the Financial Dashboard page', () => {
     expect(document.querySelector('[data-row="perf:total"]')).toBeNull();
     expect(cells('actual-vs-forecast')).toEqual(['—', '0.00', '—']);
     expect(inCard(PERF, '[data-group="performance"]')).toBe(1);
-    /* Gross profit: the orders against the forecast, the margin in grey; the cost under the total. */
     fireEvent.click(screen.getByRole('tab', { name: 'All' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Gross profit' }));
     expect([...screen.getByLabelText('Performance figures').querySelectorAll('th[data-source]')].map((h) => h.textContent)).toEqual([
@@ -292,7 +268,6 @@ describe('the Financial Dashboard page', () => {
     expect(pill('Bedding').getAttribute('aria-pressed')).toBe('false');
     expect(inCard(COST, '[data-group="bedding"]')).toBe(0);
     expect(rowText('bedding')).toContain('8,000.00');
-    /* The line follows the pills: Bedding off changes nothing (its forecast is 0); Sofa off too leaves Dining's September alone; Show all brings the total back; Clear empties the chart, line included. */
     expect(cells('forecast-purchase')).toEqual(['—', '72,000.00', '90,000.00']);
     fireEvent.click(pill('Sofa'));
     expect(cells('forecast-purchase')).toEqual(['—', '12,000.00', '—']);
@@ -319,7 +294,6 @@ describe('the Financial Dashboard page', () => {
     expect(document.querySelectorAll('[data-group="out"]').length).toBe(2);
     expect(screen.queryByText('Receipts')).toBeNull();
     fireEvent.click(screen.getByText('Detail'));
-    /* Each category, each period Actual | Forecast: the P&L forecast by default, Orders & bills on the switch. */
     expect(side('cat:side:in')).toEqual(['103,000.00', '100,000.00', '0.00', '60,000.00', '—', '70,000.00']);
     fireEvent.click(screen.getByRole('tab', { name: 'Orders & bills' }));
     expect(side('cat:side:in')).toEqual(['103,000.00', '—', '0.00', '—', '—', '65,000.00']);
@@ -341,7 +315,6 @@ describe('the Financial Dashboard page', () => {
 
   test('the balance sheet and the ratios', () => {
     render(<MemoryRouter><FinanceDashboard /></MemoryRouter>);
-    /* October is ahead: its Forecast Balance Sheet stands in, faded, under "Oct 2026 (F)". */
     expect(cells('assets')).toEqual(['137,000.00', '137,000.00', '150,000.00']);
     expect(cells('equity')).toEqual(['69,000.00', '69,000.00', '75,000.00']);
     expect(cells('debt-to-asset')).toEqual(['49.6%', '49.6%', '50.0%']);
@@ -363,7 +336,6 @@ describe('the Financial Dashboard page', () => {
   test('the forecast beside the balance sheet and the ratios: a month that has happened against its forecast, a month ahead its forecast faded', () => {
     render(<MemoryRouter><FinanceDashboard /></MemoryRouter>);
     expect(screen.getAllByText('Oct 2026 (F)').length).toBeGreaterThan(0);
-    /* August's is back-calculated (the past-month test), September's is this month's, October is ahead. */
     expect(cells('fc-assets')).toEqual(['135,000.00', '140,000.00', '—']);
     expect(cells('vs-assets')).toEqual(['2,000.00', '(3,000.00)', '—']);
     expect(cells('vs-liabilities')).toEqual(['(1,000.00)', '(2,000.00)', '—']);

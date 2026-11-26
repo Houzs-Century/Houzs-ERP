@@ -9,8 +9,6 @@ import { PlanServiceForm } from "./PlanServiceForm";
 afterEach(() => { vi.useRealTimers(); post.mockClear(); });
 
 describe("PlanServiceForm", () => {
-  /* 17:30 UTC on 9 Nov is 01:30 on 10 Nov in Malaysia: a service recorded then
-     was dated the 9th off the UTC clock. */
   it("defaults the service date to today in Malaysia", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-09T17:30:00Z"));

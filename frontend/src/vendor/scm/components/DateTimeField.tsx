@@ -27,14 +27,11 @@ import { useState, useRef, useEffect, type CSSProperties } from 'react';
 import { DateField } from './DateField';
 
 export type DateTimeFieldProps = {
-  /** Wall-clock `YYYY-MM-DDTHH:mm` (or '' for empty). */
   value: string;
-  /** Emits wall-clock `YYYY-MM-DDTHH:mm` (or '' when incomplete/cleared). */
   onChange: (value: string) => void;
   className?: string;
   style?: CSSProperties;
   disabled?: boolean;
-  /** Stretch to fill the parent (form fields / drawer rows). */
   fullWidth?: boolean;
   title?: string;
   'aria-label'?: string;
@@ -73,16 +70,7 @@ export function DateTimeField({
   title,
   'aria-label': ariaLabel,
 }: DateTimeFieldProps) {
-  /* The two halves are held locally, not derived from `value` on every render.
-     A half-filled control emits '' (see joinDateTimeLocal), so deriving would
-     make the date the operator just picked disappear the instant it round-
-     tripped through the parent — while a native datetime-local keeps a
-     half-filled segment on screen. Local state is what preserves that. */
   const [parts, setParts] = useState(() => splitDateTimeLocal(value));
-  /* What we last sent up. An incoming `value` equal to it is our own echo and
-     must NOT re-derive the halves (that is the wipe described above); anything
-     else is a genuine external change — a form reset, a different row — and
-     must. */
   const lastEmitted = useRef(value);
 
   useEffect(() => {
@@ -91,18 +79,6 @@ export function DateTimeField({
     setParts(splitDateTimeLocal(value));
   }, [value]);
 
-  /* HALF-FILLED DISCLOSURE. joinDateTimeLocal emits '' unless BOTH halves are
-     present — native parity, deliberate, and asserted in this component's test.
-     That contract is NOT changed here. What it lacked was a way to tell the
-     operator, because the halves live in local state: the date they picked
-     stays on screen while '' is what the form sends, so the screen and the
-     payload disagree with nothing marking the difference.
-
-     Found on the PMS stock-transfer form (2026-08-21): a date with a blank time
-     saved a transfer with no date at all, and its auto-created schedule task
-     with no due date. Flagging the EMPTY half makes the disagreement visible
-     without inventing a time the operator never chose — which is the trade this
-     component's own header refuses to make, and still refuses. */
   const incomplete = !!parts.date !== !!parts.time;
   const flagDate = incomplete && !parts.date;
   const flagTime = incomplete && !parts.time;

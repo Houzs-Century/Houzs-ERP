@@ -33,18 +33,11 @@ import { buildDeliveryFollowUp, chatCallbackUrl, postConnectContact } from '../.
 
 export type AssrLeg = keyof typeof ASSR_CONFIRMED_COL;
 
-/** Connect automation NAME -> the Delivery Message Status a successful ASSR send
- *  lands the leg on, mirroring the SO side's KIND_AFTER_STATUS so an ASSR
- *  postpone / reminder / driver send reads the same "Done X" the SO row would.
- *  Service Arrangement has no SO status (not in KIND_AFTER_STATUS), so a send of
- *  it falls through to the generic 'Done Send' at the read site. */
 const ASSR_SEND_STATUS_BY_AUTOMATION: Record<string, string> = Object.fromEntries(
   (Object.keys(KIND_AFTER_STATUS) as Array<keyof typeof KIND_AFTER_STATUS>)
     .map((k) => [KIND_AUTOMATION[k], KIND_AFTER_STATUS[k]]),
 );
 
-/** Service's own (requested) date column per leg — the confirmed one is
- *  ASSR_CONFIRMED_COL. Same pairing assrBoardLegs reads. */
 const REQUESTED_COL: Record<AssrLeg, 'customer_pickup_at' | 'inspection_visit_at' | 'do_date'> = {
   customer_pickup: 'customer_pickup_at',
   inspection: 'inspection_visit_at',
@@ -58,7 +51,6 @@ export const ASSR_LEG_CUSTOMER_LABEL: Record<AssrLeg, string> = {
   delivery: 'service item delivery',
 };
 
-/** What staff read on the timeline — the board's own names (ASSR_JOB_KIND_LABEL). */
 const ASSR_LEG_STAFF_LABEL: Record<AssrLeg, string> = {
   customer_pickup: 'Pickup',
   inspection: 'Inspection',
@@ -96,11 +88,8 @@ export function assrLegDate(row: Partial<Record<string, unknown>>, leg: AssrLeg)
   return s || null;
 }
 
-/** dd/mm/yyyy for the timeline sentence. */
 const dmy = (iso: string | null): string => (iso ? fmtDate(iso) : 'no date');
 
-/** The case-timeline line each ASSR send writes (logActivity), phrased for the
- *  kind so staff read what the customer was actually sent. */
 function assrSendSentence(
   kind: MessageKind,
   phone: string,
@@ -180,14 +169,7 @@ export async function sendAssrArrangement(
     const date = assrLegDate(row, leg);
     if (!date) { skipped.push({ docNo: key, reason: 'no_job_date' }); continue; }
 
-    // The shared leg bundle every ASSR send carries: what we arranged, which leg,
-    // the Sales Order (ref_2) and the case number (assr_no).
     const extra: Record<string, string> = { service_job: ASSR_LEG_CUSTOMER_LABEL[leg], assr_leg: leg, ref_2: String(row.doc_no ?? ''), assr_no: assrNo };
-    // Driver Info and Postpone read the SAME per-kind attributes the SO sender
-    // builds (kindAttributes), off the leg's own fields — the driver the operator
-    // picked, or the leg's Amend Reason + confirmed ("Delivery Date") vs requested
-    // date. A leg missing what the kind needs is skipped with that reason, never
-    // sent with a blank — exactly the SO rule. The other kinds carry no extra.
     if (kind === 'driver_info' || kind === 'postpone') {
       const pseudoRow = kind === 'postpone'
         ? {
@@ -201,31 +183,20 @@ export async function sendAssrArrangement(
       Object.assign(extra, perKind.attributes);
     }
     if (sentByEmail) extra.sent_by_email = sentByEmail;
-    // The date the bundle names (delivery_date_1): the confirmed/new date for
-    // postpone (new_delivery_date rides in extra too), the scheduled leg date
-    // otherwise.
     const contact = buildDeliveryFollowUp(
       phone,
       String(row.customer_name ?? ''),
-      // ref_1 stays the case number (assrNo): the flow's amend confirmation and
-      // the Confirm/Amend callback both key on it. The case number ALSO rides in
-      // assr_no (extra) so the template shows it from the dedicated ASSR No field;
-      // the Sales Order rides in ref_2.
       [{ ref: assrNo, orderRef: '', branding: '', deliveryDate: templateDate(date), balanceSen: null }],
       null,
       {
         callbackUrl,
         automation: KIND_AUTOMATION[kind],
         extra,
-        // Only the openers (Service Arrangement, Postpone — OPENER_KINDS) start a
-        // fresh Confirm / Amend; a Driver Info or Reminder sent to a customer who
-        // already confirmed must not blank their Delivery Lock.
         resetConversation: OPENER_KINDS.has(kind),
       },
     );
     const result = await postConnectContact(c.env, contact);
 
-    // Best-effort, like the SO sender's log: the WhatsApp has left either way.
     try {
       await sb.from('wa_message_log').insert({
         batch_id: crypto.randomUUID(),
@@ -262,7 +233,6 @@ export async function sendAssrArrangement(
 type AnySchemaClient = SupabaseClient<any, any, any, any, any>;
 
 export interface AssrTapInput {
-  /** HOUZS id resolved by the route (null only in the single-company state). */
   companyId: number | null;
   assrNo: string;
   leg: AssrLeg;
@@ -295,7 +265,6 @@ export async function recordAssrChatTap(
   if (!row) return null;
   const docNo = `${assrNo}#${leg}`;
 
-  // Idempotency — the same contract recordChatTap keeps for an SO.
   if (callbackId) {
     let dupeQuery = sb.from('wa_message_log').select('id')
       .eq('source', 'chat-callback').eq('doc_no', docNo)
@@ -306,9 +275,6 @@ export async function recordAssrChatTap(
     if (dupe && dupe.length > 0) return { docNo, id: (dupe[0] as { id: string }).id, duplicate: true };
   }
 
-  // Timeline first, then the log row that marks the tap as handled: a log
-  // failure makes chat retry, which at worst repeats one history line; the
-  // other order would let a retry skip the history for good.
   const label = ASSR_LEG_STAFF_LABEL[leg];
   const iso = normDate(requestedDate);
   const sentence = event === 'confirm'
@@ -369,11 +335,6 @@ export function assrChatStateFromLog(rows: LogRow[]): Map<string, AssrChatState>
     }
     if (r.source === 'delivery-planning') {
       if (!r.success) continue;
-      // Each automation lands the leg on the SAME "Done X" the SO row would
-      // (ASSR_SEND_STATUS_BY_AUTOMATION, from KIND_AFTER_STATUS): Driver Info ->
-      // Done Driver Information, Postpone -> Done Postpone Reason, Reminder N ->
-      // Done Remind (N). Service Arrangement has no SO status, so it reads the
-      // generic 'Done Send'.
       const status = (p.automation && ASSR_SEND_STATUS_BY_AUTOMATION[p.automation]) || 'Done Send';
       out.set(r.doc_no, { delivery_message_status: status, amend_date_from_customer: null, amend_reason_from_customer: null });
       continue;
@@ -395,9 +356,6 @@ export function assrChatStateFromLog(rows: LogRow[]): Map<string, AssrChatState>
  *  the board caller treats that as "no state", never as a broken board. */
 export async function loadAssrChatState(sb: AnySchemaClient, rowKeys: string[]): Promise<Map<string, AssrChatState>> {
   if (rowKeys.length === 0) return new Map();
-  /* chunkIn, not one read capped at 1,000 rows: the newest rows of busy cases
-     crowded out the rest, and a case whose last WhatsApp event fell past them
-     read as having none. Newest first within each batch; a key lives in one. */
   const { data, error, truncated } = await chunkIn<LogRow>(rowKeys, (part, from, to) =>
     sb.from('wa_message_log')
       .select('doc_no, source, success, payload, created_at')

@@ -35,9 +35,6 @@ type Sb = SupabaseClient;
  *  rebuild safe — the same rule venue-binding.ts and autocount-relink.ts apply.
  */
 export async function poRaisedFromSo(sb: Sb, soDocNo: string): Promise<boolean> {
-  /* Through the SO's own line ids: `purchase_order_items.so_item_id` is the
-     stored link (mig 0235's fast path), and its allocations table supersedes it
-     only for the finer-grained answer — either one existing is enough here. */
   const { data: items, error: itemErr } = await sb
     .from('mfg_sales_order_items').select('id').eq('doc_no', soDocNo);
   if (itemErr) throw new Error(`so-po-raised: ${itemErr.message}`);

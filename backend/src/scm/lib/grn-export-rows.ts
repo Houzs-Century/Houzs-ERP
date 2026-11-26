@@ -38,16 +38,8 @@ import { bookSpellingOrOwn } from '../../services/autocount-writeback';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank, type RawSoDisplayLine } from '../shared/so-line-display';
 
-/* Which purchase invoices count as having billed a receipt line: the rule
-   recomputeGrnInvoiced (routes/purchase-invoices.ts) recounts the stored
-   counter by — a DRAFT consumes nothing until confirmed, a CANCELLED one gave
-   its quantity back. */
 export const GRN_INVOICED_EXCLUDED_PI_STATUSES: ReadonlySet<string> = new Set(['DRAFT', 'CANCELLED']);
 
-/* The list's header columns and the two embeds its grid reads (supplier, PO),
-   plus the AutoCount number columns. NOT the list's FK-hinted warehouse embed:
-   no grid column reads it (Location comes per line, below), and the read-only
-   production check's PostgREST stand-in cannot run an FK hint. */
 export const GRN_EXPORT_ROWS_SELECT =
   `${GRN_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address), purchase_order:purchase_orders(id, po_number), ` +
   'linked_ac_docno, linked_ac_gr_docno, migrated_no_stock';
@@ -59,9 +51,6 @@ const LINE_COLS =
 
 export type GrnExportLine = {
   id: string;
-  /** The book's Item Description / Item Group / UOM for this line's item
-   *  (services/autocount-book-item.ts), the ERP's own values where the book has
-   *  no item for the code. */
   book_description: string | null;
   book_item_group: string | null;
   book_uom: string | null;
@@ -150,18 +139,10 @@ const day = (v: unknown): string | null => {
   return s ? s.slice(0, 10) : null;
 };
 
-/* WHICH COLUMN HOLDS THE AUTOCOUNT GR NUMBER. On a receipt migrated from the
-   book (`migrated_no_stock`), `linked_ac_docno` holds the AutoCount PURCHASE
-   ORDER number and the GR number sits in `linked_ac_gr_docno` (migration
-   20260907T2345_grn_linked_ac_gr_docno.sql); on a receipt the ERP created,
-   `linked_ac_docno` IS the GR number. A migrated receipt with no GR number
-   has none, never its PO number. Measured 2026-09-15: 791 / 791 paired lines
-   equal AutoCount's Doc No. */
 export function grnAcDocNo(h: Record<string, unknown>): string | null {
   return h.migrated_no_stock === true ? text(h.linked_ac_gr_docno) : text(h.linked_ac_docno);
 }
 
-/* The receipt detail page's line order: creation, category rank, sofa build. */
 function inDetailOrder(lines: RawLine[]): RawLine[] {
   const byCreation = [...lines].sort((a, b) => {
     const ac = a.created_at ?? '';
@@ -246,8 +227,6 @@ export async function attachGrnLines<H extends HeaderRow>(sbIn: unknown, c: Comp
       .in('id', batch).order('id', { ascending: true }).range(from, to) as Rows<{ id: string; code: string | null; name: string | null }>);
   if (wh.error) return { error: `warehouses: ${wh.error}` };
 
-  /* The write-back's item-code resolution: the bindings for each receipt's
-     supplier (its own supplier's binding wins), then resolveAcItemCode. */
   const companyId = activeCompanyId(c) ?? null;
   const bookItem = new Map<string, BookLineItem>();
   const bySupplier = new Map<string, RawLine[]>();

@@ -27,15 +27,9 @@ import {
 import { lockSoCommandLease } from './pg-supabase-transaction';
 
 describe('the lock covers one save, not an editing session', () => {
-  /* The frontend reserves the lease, acts, and releases it in a `finally`
-     (so-versioned-mutation.ts). Opening an order takes no lock at all, so the
-     expiry only has to outlast one round trip. Everything beyond that is time a
-     document spends locked for nothing after a save dies. */
   test('it is one minute, and long enough for a save round trip', () => {
     expect(SO_EDIT_LEASE_MS).toBe(60_000);
     expect(SO_EDIT_LEASE_MS).toBeGreaterThanOrEqual(30_000);
-    /* THE REGRESSION. Five minutes is what locked the owner out of his own
-       order after one timed-out save. */
     expect(SO_EDIT_LEASE_MS).toBeLessThan(5 * 60_000);
   });
 
@@ -46,13 +40,7 @@ describe('the lock covers one save, not an editing session', () => {
 });
 
 describe('the refusal says which of the three, and never guesses a person', () => {
-  /* ONE MESSAGE FOR FOUR STATES is what sent him looking for a colleague who
-     was not there. The row records a token and an expiry; it does not record
-     WHO, so no message may assert another screen. */
   test('only HELD may speak of another person, and the other two never do', () => {
-    /* Since mig 0348 the holder is recorded and the same person takes their own
-       lock back, so a refusal that reaches `held` really is somebody else. The
-       other two are about THIS screen and must not blame anyone. */
     for (const reason of ['expired', 'missing'] as const) {
       const m = soEditLeaseRefusal(reason).message;
       expect(m, `${reason} blames another screen`).not.toMatch(/another screen|someone else/i);
@@ -64,7 +52,6 @@ describe('the refusal says which of the three, and never guesses a person', () =
     expect(soEditLeaseRefusal('held').message).toMatch(/wait/i);
     expect(soEditLeaseRefusal('expired').message).toMatch(/reload/i);
     expect(soEditLeaseRefusal('missing').message).toMatch(/reload/i);
-    /* Their changes survive a refusal, and saying so is what stops a retype. */
     for (const reason of ['held', 'expired', 'missing'] as const) {
       expect(soEditLeaseRefusal(reason).message).toMatch(/changes are still here/i);
     }
@@ -92,8 +79,6 @@ describe('lockSoCommandLease tells the three apart', () => {
     expect(r).toEqual({ ok: false, reason: 'lease', lease: 'missing' });
   });
 
-  /* THE CASE THAT WAS MISREPORTED. His own dead save's lock had lapsed, and the
-     screen was told somebody else was saving. */
   test('a lapsed lock is EXPIRED, not held', async () => {
     const r = await lockSoCommandLease(
       rowSql({ version: 3, edit_lease_token: 'mine', edit_lease_expires_at: dead() }),
@@ -129,8 +114,6 @@ describe('the same person takes their own lock back — mig 0348', () => {
      save is not a colleague editing, and waiting it out protects nobody. */
   test('same holder, different token, is allowed', () => {
     expect(soEditLeaseTakeoverAllowed(7, 7)).toBe(true);
-    /* bigint arrives as a STRING from the driver; both shapes must work or the
-       takeover silently stops applying in production only. */
     expect(soEditLeaseTakeoverAllowed('7', 7)).toBe(true);
     expect(soEditLeaseTakeoverAllowed(7, '7')).toBe(true);
   });
@@ -139,8 +122,6 @@ describe('the same person takes their own lock back — mig 0348', () => {
     expect(soEditLeaseTakeoverAllowed(7, 8)).toBe(false);
   });
 
-  /* ABSENCE IS THE STRICTER ANSWER. A lock written before 0348, or by a path
-     with no authenticated user, has no holder and is never taken over. */
   test('an unknown holder or an unknown caller is never taken over', () => {
     expect(soEditLeaseTakeoverAllowed(null, 7)).toBe(false);
     expect(soEditLeaseTakeoverAllowed(7, null)).toBe(false);

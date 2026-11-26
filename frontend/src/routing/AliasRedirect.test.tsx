@@ -33,8 +33,6 @@ describe("AliasRedirect", () => {
   });
 });
 
-/* Money in's Official receipts folded into Receipts (Claude Design, batch 5
-   §1): a bookmark or a To do link lands on the kind, its status and month kept. */
 describe("FoldRedirect", () => {
   it("sets the folded page's own params over the ones the old address carried", () => {
     expect(foldRedirectTarget("/scm/receipts", { kind: "official" }, "?status=DRAFT&month=2026-09", ""))

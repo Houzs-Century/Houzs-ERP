@@ -65,14 +65,6 @@ export const purchaseConsignmentOrders = new Hono<{ Bindings: Env; Variables: Va
 
 purchaseConsignmentOrders.use('*', supabaseAuth);
 
-/* ── PC Order child-lock guard (Tier 2 — downstream lock) ────────────────────
-   A PC Order locks (read-only — no header edit / no line edit / no cancel) once
-   it has ANY non-cancelled PC Receive. Mirrors poHasDownstream in
-   apps/api/src/routes/mfg-purchase-orders.ts, but points at
-   purchase_consignment_receives instead of the real grns table. Returns the
-   blocking JSON, or null if the PC Order is free to edit. */
-/* Header field-level lock — column set + labels from the ONE rulebook
-   (shared/document-policy.ts); mirrors the mfg PO. */
 const PCO_IDENTITY_LOCK_COLS = PCO_LOCK_COLS;
 const PCO_IDENTITY_LABELS = PCO_LOCK_LABELS;
 
@@ -81,26 +73,15 @@ async function pcoHasDownstream(sb: any, pcoId: string): Promise<{ error: string
     .select('id', { head: true, count: 'exact' })
     .eq('purchase_consignment_order_id', pcoId)
     .neq('status', 'CANCELLED');
-  /* A failed count is not zero (mirrors scm/lib/downstream-lock.ts). Dropping
-     the error made `count ?? 0` read as "no PC Receive", which is the very
-     absence that authorises the cancel / line edit this guard exists to refuse.
-     A failed read must never read as an absence when the absence is what
-     authorises the write — so an unreadable count locks too. */
   if (error) {
     return { error: 'downstream_check_failed', message: `Could not check whether this PC Order has a Consignment Receive, so it is locked for safety — try again (${error.message}).` };
   }
   if ((count ?? 0) > 0) {
-    /* "cancel it first", not "delete it": a PC Receive has no delete either
-       (only PATCH /:id/cancel), so the old "delete or cancel" wording told the
-       user to do something the API does not offer. */
     return { error: 'pco_has_downstream', message: 'PC Order has a Consignment Receive — cancel it first to edit' };
   }
   return null;
 }
 
-/* VALID_STATUSES is NOT shared with the Purchase Order: a PCO has no DRAFT
-   state — it is raised straight to SUBMITTED. See purchase-doc-vocab.ts and
-   tests/purchaseDocVocab.test.ts. */
 const VALID_STATUSES = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED']);
 
 const HEADER_COLS =
@@ -110,22 +91,17 @@ const HEADER_COLS =
   'purchase_location_id, ' +
   /* the product request this order was raised from (owner 2026-10-06) */
   'source_product_request_id, ' +
-  /* supplier-revised header delivery dates (migration 0181) */
   'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
 
 const ITEM_COLS =
   'id, purchase_consignment_order_id, binding_id, material_kind, item_code, material_name, ' +
   'supplier_sku, qty, unit_price_sen, line_total_sen, received_qty, notes, created_at, ' +
-  /* variant fields (migration 0056) */
   'item_group, description, description2, uom, discount_sen, unit_cost_sen, ' +
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
   'custom_specials, line_suffix, special_order_price_sen, variants, ' +
-  /* per-line delivery date + ship-to warehouse */
   'delivery_date, warehouse_id, ' +
-  /* supplier-revised per-line delivery dates (migration 0181) */
   'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
 
-// ── List ──────────────────────────────────────────────────────────────
 purchaseConsignmentOrders.get('/', async (c) => {
   const status = c.req.query('status');
   const supplierId = c.req.query('supplierId');
@@ -141,14 +117,11 @@ purchaseConsignmentOrders.get('/', async (c) => {
 
   if (status && VALID_STATUSES.has(status)) q = q.eq('status', status);
   if (supplierId) q = q.eq('supplier_id', supplierId);
-  q = scopeToCompany(q, c); // multi-company: isolate to the active company
+  q = scopeToCompany(q, c);
 
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  /* Tier 2 downstream-lock — stamp has_children on every PC Order row from the
-     distinct PC-order ids that have any non-cancelled PC Receive, so the list
-     grid can hide Edit / Cancel from locked rows. */
   const rows = (data ?? []) as Array<{ id: string } & Record<string, unknown>>;
   const childIds = new Set<string>();
   if (rows.length > 0) {
@@ -166,11 +139,6 @@ purchaseConsignmentOrders.get('/', async (c) => {
   return c.json({ purchaseOrders: purchaseConsignmentOrdersList });
 });
 
-/* Per-line receive breakdown — which PC Receive(s) each PC Order line was
-   received into (one entry per receive line), carrying the receive number + net
-   qty + status. The PC Order counterpart of poLineReceipts. Cancelled receives
-   are excluded. Net qty = qty_accepted − returned_qty; zero/negative nets are
-   dropped. Read-only display aid — no inventory. */
 export type PcoLineReceipt = { receiveNumber: string; qty: number; status: string };
 async function pcoLineReceipts(
   sb: any,
@@ -194,7 +162,7 @@ async function pcoLineReceipts(
   for (const r of rows) {
     if (!r.pc_order_item_id) continue;
     const meta = recvMeta.get(r.pc_receive_id);
-    if (!meta) continue; // cancelled receive — excluded
+    if (!meta) continue;
     const net = Number(r.qty_accepted ?? 0) - Number(r.returned_qty ?? 0);
     if (net <= 0) continue;
     const arr = out.get(r.pc_order_item_id) ?? [];
@@ -204,7 +172,6 @@ async function pcoLineReceipts(
   return out;
 }
 
-// ── Detail ────────────────────────────────────────────────────────────
 purchaseConsignmentOrders.get('/:id', async (c) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
@@ -221,8 +188,6 @@ purchaseConsignmentOrders.get('/:id', async (c) => {
   if (headerRes.error) return c.json({ error: 'load_failed', reason: headerRes.error.message }, 500);
   if (!headerRes.data) return c.json({ error: 'not_found' }, 404);
 
-  /* Tier 2 downstream-lock — stamp has_children on the detail header so the PC
-     Order Detail page can lock once any non-cancelled PC Receive exists. */
   const { count: childCount } = await supabase.from('purchase_consignment_receives')
     .select('id', { head: true, count: 'exact' })
     .eq('purchase_consignment_order_id', id)
@@ -243,13 +208,6 @@ purchaseConsignmentOrders.get('/:id', async (c) => {
     productRequest,
   };
 
-  /* Per-line receive breakdown so the PC Order list expansion can show a
-     "Received" column (which PC Receive took how much). */
-  /* Canonical SKU/build order at READ (sofa modules LHF→NA→RHF, mains→
-     accessories→services), mirroring the SO detail GET. The shared helper keys
-     on `item_code`; PC lines expose `item_code`, so sort a shimmed view
-     that carries the original row back unchanged. `.order('created_at')` above
-     stays as the stable tiebreaker — pure ordering, no persistence touched. */
   type PcoItemRow = Record<string, unknown> & { id: string; item_code: string };
   const itemRows = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
@@ -268,18 +226,10 @@ purchaseConsignmentOrders.get('/:id', async (c) => {
   return c.json({ purchaseOrder: purchaseConsignmentOrder, items });
 });
 
-// ── Linked docs (Smart Buttons fan-out) ─────────────────────────────
-// Returns the PC Receives + PC Returns that descend from this PC Order.
 purchaseConsignmentOrders.get('/:id/linked', async (c) => {
   const id = c.req.param('id');
   const sb = c.get('supabase');
 
-  /* Prove the PC Order belongs to the active company BEFORE fanning out. This
-     read was the only one on the router with no company scope, so a caller in
-     one company could resolve another company's PCO to its receive/return
-     numbers by id (found 2026-08-12 by code read; the module guide claimed
-     scoping that was absent). 404 rather than 403: an unreachable row must not
-     confirm its own existence. */
   const owner = await scopeToCompany(
     sb.from('purchase_consignment_orders').select('id').eq('id', id),
     c,
@@ -307,11 +257,6 @@ purchaseConsignmentOrders.get('/:id/linked', async (c) => {
   });
 });
 
-// ── Create ────────────────────────────────────────────────────────────
-// body: {
-//   supplierId, currency?, expectedAt?, purchaseLocationId?, notes?,
-//   items: [{ materialKind, itemCode, materialName, supplierSku?, qty, unitPriceSen, bindingId? }]
-// }
 purchaseConsignmentOrders.post('/', async (c) => {
   /* company-scope: the only by-id write here is the ROLLBACK — the header this
      handler inserted moments earlier is deleted when the child insert fails.
@@ -348,22 +293,16 @@ purchaseConsignmentOrders.post('/', async (c) => {
     sourceRequest = loaded.request;
   }
 
-  // Allow blank-draft creation (no items) — add lines on the detail page.
   const items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
 
   const currency = ((body.currency as string) ?? 'MYR').toUpperCase();
   if (!VALID_CURRENCIES.has(currency)) return c.json({ error: 'invalid_currency' }, 400);
 
-  // PC Order number. Format: PCO-YYMM-NNN. max(suffix)+1 (NEVER count+1) so a
-  // deleted mid-month row can't make the counter re-mint a surviving number
-  // forever — see doc-no.ts.
   const supabase = c.get('supabase');
   const user = c.get('user');
 
   const yymm = yymmFor();
 
-  // Minted inside insertWithDocNoRetry below so a concurrent-create collision
-  // (23505 on pc_number) re-derives the next free number instead of 500ing.
   const p = companyDocPrefix(c);
   const nextPcNumber = async (): Promise<string> =>
     mintMonthlyDocNo(supabase, 'purchase_consignment_orders', 'pc_number', `${p}PCO-${yymm}`);
@@ -372,7 +311,6 @@ purchaseConsignmentOrders.post('/', async (c) => {
      create path, po-gates.ts). Copy-as-new carries old lines through this door. */
   { const inactive = await poInactivePickRefusal(supabase, activeCompanyId(c) ?? null, items); if (inactive) return c.json(inactive, 409); }
 
-  // Compute totals.
   let subtotal = 0;
   const itemRows = items.map((it) => {
     const kind = it.materialKind as string;
@@ -406,9 +344,8 @@ purchaseConsignmentOrders.post('/', async (c) => {
     };
   });
 
-  // PC Order is created SUBMITTED directly (no DRAFT — migration 0154 default).
   const headerInsert: Record<string, unknown> = {
-    company_id: activeCompanyId(c), // multi-company: stamp the active company
+    company_id: activeCompanyId(c),
     supplier_id: supplierId,
     status: 'SUBMITTED',
     submitted_at: new Date().toISOString(),
@@ -437,14 +374,6 @@ purchaseConsignmentOrders.post('/', async (c) => {
   );
 
   if (hErr) {
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (hErr.code === '42501') return c.json({ error: 'forbidden', reason: hErr.message }, 403);
     return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   }
@@ -455,20 +384,11 @@ purchaseConsignmentOrders.post('/', async (c) => {
     const itemsToInsert = itemRows.map((r) => ({ ...r, purchase_consignment_order_id: header.id }));
     const { error: iErr } = await supabase.from('purchase_consignment_order_items').insert(stampCompany(itemsToInsert, c));
     if (iErr) {
-      /* CREATE-TIME ROLLBACK, not a document delete — keep it. supabase-js has
-         no transaction, so this compensating delete is the only thing standing
-         between a failed line insert and a headerless orphan PC Order. It
-         removes a document that never successfully existed. The owner's
-         no-delete rule (see the removed DELETE /:id at the end of this file)
-         is about documents that DID exist. */
       await supabase.from('purchase_consignment_orders').delete().eq('id', header.id);
       return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500);
     }
   }
 
-  /* The order stands; now the request reads PCO_ISSUED. Said, never undone: a
-     request another order claimed a moment ago leaves this order as it is and
-     the caller is told it is not linked. */
   let requestClaimed: boolean | null = null;
   if (sourceRequest) {
     const co = requireActiveCompanyId(c);
@@ -481,7 +401,6 @@ purchaseConsignmentOrders.post('/', async (c) => {
   return c.json({ id: header.id, pcNumber: header.pc_number, ...(sourceRequest ? { productRequestId: String(sourceRequest.id), requestClaimed } : {}) }, 201);
 });
 
-/* ── PATCH header (po_date, expected_at, currency, notes, supplier, location) ── */
 purchaseConsignmentOrders.patch('/:id', async (c) => {
   const id = c.req.param('id');
   let body: Record<string, unknown>;
@@ -500,8 +419,6 @@ purchaseConsignmentOrders.patch('/:id', async (c) => {
   ] as const) {
     if (body[from] !== undefined) updates[to] = body[from];
   }
-  /* A cleared supplier date posts "" and this loop wrote it through to a date
-     column, which Postgres rejects and 500s the save. */
   coerceEmptyDates(updates);
   /* Tier-2 lock — FIELD-LEVEL (owner 2026-08-20, §8 GAP-1): once a live PC Receive
      exists only the columns it inherits (supplier / currency / purchase location)
@@ -524,19 +441,10 @@ purchaseConsignmentOrders.patch('/:id', async (c) => {
   return c.json({ purchaseConsignmentOrder: data });
 });
 
-/* ── PC Order line items: add / edit / delete ───────────────────────────
-   Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
-   recomputeTotals (mfg-sales-orders.ts), which carries the full rationale.
-   See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputePcoTotals(sb: any, pcoId: string) {
   const { data: items, error: itemsErr } = await sb.from('purchase_consignment_order_items')
     .select('line_total_sen')
     .eq('purchase_consignment_order_id', pcoId);
-  /* A failed READ is not an empty order, and `?? []` cannot tell them apart — it
-     folded a transient blip into subtotal_sen / total_sen ZERO on an order
-     whose lines were intact. The ERROR is the signal, never the emptiness: a
-     genuinely empty order resolves error === null with data === [] and MUST still
-     fall through to zero the header. */
   if (itemsErr) {
     /* eslint-disable-next-line no-console */
     console.error('[pco-recompute] item read failed — header left unchanged:', pcoId, itemsErr.message);
@@ -564,11 +472,8 @@ purchaseConsignmentOrders.post('/:id/items', async (c) => {
   const sb = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  /* The child is stamped with the active company; the parent it hangs off must
-     be this company's too, or a line lands on another company's PC Order. */
   const { data: parent } = await scopeToCompanyId(sb.from('purchase_consignment_orders').select('id').eq('id', pcoId), co.companyId).maybeSingle();
   if (!parent) return c.json(NOT_THIS_COMPANY, 404);
-  /* Tier 2 downstream-lock — line-add is blocked once a PC Receive exists. */
   const childLock = await pcoHasDownstream(sb, pcoId);
   if (childLock) return c.json(childLock, 409);
 
@@ -625,7 +530,6 @@ purchaseConsignmentOrders.patch('/:id/items/:itemId', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  /* Tier 2 downstream-lock — line-edit is blocked once a PC Receive exists. */
   const childLock = await pcoHasDownstream(sb, pcoId);
   if (childLock) return c.json(childLock, 409);
 
@@ -665,8 +569,6 @@ purchaseConsignmentOrders.patch('/:id/items/:itemId', async (c) => {
     if (it[from] !== undefined) updates[to] = it[from];
   }
   coerceEmptyDates(updates);
-  /* Description 2 is server-owned: recompute from the effective itemGroup +
-     variants (incoming patch, else stored row). */
   {
     const effGroup = (it.itemGroup ?? (prev as { item_group?: string }).item_group) as string | null | undefined;
     const effVariants = (it.variants ?? (prev as { variants?: unknown }).variants) as Record<string, unknown> | null | undefined;
@@ -685,7 +587,6 @@ purchaseConsignmentOrders.delete('/:id/items/:itemId', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  /* Tier 2 downstream-lock — line-delete is blocked once a PC Receive exists. */
   const childLock = await pcoHasDownstream(sb, pcoId);
   if (childLock) return c.json(childLock, 409);
 
@@ -697,9 +598,6 @@ purchaseConsignmentOrders.delete('/:id/items/:itemId', async (c) => {
   return c.body(null, 204);
 });
 
-// ── Submit / cancel ──────────────────────────────────────────────────
-// POST creates SUBMITTED directly. This endpoint is kept as an idempotent
-// no-op so legacy callers still work.
 purchaseConsignmentOrders.patch('/:id/submit', async (c) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
@@ -735,22 +633,11 @@ export const cancelPurchaseConsignmentOrderHandler = async (c: any) => {
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const curStatus = (cur as { status: string }).status;
   if (curStatus === 'RECEIVED') return c.json({ error: 'cannot_cancel', message: 'PC Order already received' }, 409);
-  // Advisory only: this read cannot see a cancel that lands after it. The atomic
-  // gate on the UPDATE below is what decides, and answers with the same body.
   if (curStatus === 'CANCELLED') return c.json({ purchaseConsignmentOrder: { id, status: 'CANCELLED' } });
 
-  /* Tier 2 downstream-lock — can't cancel a PC Order that has a downstream PC
-     Receive; the receive must be CANCELLED first (it has no delete either). */
   const childLock = await pcoHasDownstream(supabase, id);
   if (childLock) return c.json(childLock, 409);
 
-  /* ATOMIC ACTIVE->CANCELLED, the same conditional UPDATE the six sibling cancels
-     carry (grns.ts:2566 has the full note). Two concurrent cancels race on the row
-     and exactly one flips it; the loser gets no row back and echoes. Nothing here
-     moves money — a PC Order never reaches AutoCount (mig 0277 pins the outbox
-     doc_type vocabulary to SO/PO/DO/IV/GR/PI) and there is no inventory reversal
-     on this path — so what the gate buys is one cancelled_at and one honest
-     response per cancel, instead of a second write silently restamping the time. */
   const { data: updRow, error: updErr } = await scopeToCompanyId(supabase
     .from('purchase_consignment_orders')
     .update({ status: 'CANCELLED', cancel_reason: reason, cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })

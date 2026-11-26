@@ -90,7 +90,6 @@ describe("the header's right-click export", () => {
     const own = vi.fn();
     render(<DataTable tableId="hx-3" exportLabel="Export all" onExport={own} columns={columns} rows={rows} getRowKey={(r) => r.id} />);
     menuOn(/Document/);
-    /* The toolbar's button says the same words; the menu's line is the later of the two. */
     const [, inTheMenu] = screen.getAllByRole("button", { name: "Export all" });
     fireEvent.click(inTheMenu!);
     expect(own).toHaveBeenCalledTimes(1);

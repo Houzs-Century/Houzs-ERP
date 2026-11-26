@@ -83,9 +83,7 @@ describe("URL column filters: the table", () => {
       </BrowserRouter>,
     );
     await waitFor(() => expect(drawn()).toEqual(["a", "c"]));
-    // The router builds the new address from its own copy: the cf. param is gone...
     act(() => go("/list?tab=paid"));
-    // ...and the table writes it back.
     await waitFor(() => expect(param("url-d")).toBe('{"status":["Open"]}'));
     expect(new URLSearchParams(window.location.search).get("tab")).toBe("paid");
   });

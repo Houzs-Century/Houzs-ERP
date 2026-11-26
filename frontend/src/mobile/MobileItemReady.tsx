@@ -1,7 +1,3 @@
-// Pending Item Ready on the phone (Operation Dept 2026-11-09): the same four
-// sections as desktop (ItemReadyFields), laid out as one column of cards. The
-// current trip is read-only here and edited in Pickup / Return; its QC Result is
-// the trip's own qc_result. Lives outside MobileServiceCase.tsx (size ceiling).
 import { useState, type CSSProperties, type ReactElement, type ReactNode } from "react";
 import { api } from "../api/client";
 import { DateField } from "../vendor/scm/components/DateField";

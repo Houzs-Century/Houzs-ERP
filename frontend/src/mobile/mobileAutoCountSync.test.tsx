@@ -1,11 +1,3 @@
-// The phone surface of AutoCount Sync.
-//
-// The point of this file is the PAIRING: mobile must show the same states, the
-// same headline, the same two filter strips and the same three-part reason as
-// the desktop page, because they are one product with one logic layer. Fixing a
-// rule on one surface and not the other is a recurring bug class here — so most
-// of what is asserted below is asserted against the SHARED helper rather than
-// against a copy of its output, which is what would catch the two drifting.
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -23,8 +15,6 @@ import {
 } from "../lib/autocountOutbox";
 
 afterEach(cleanup);
-/* Braces, not a concise arrow — see the comment in pages/autoCountSync.test.tsx
-   and the BUG-HISTORY entry. A returned mock becomes vitest's teardown. */
 beforeEach(() => { apiGet.mockReset(); apiPost.mockReset(); });
 
 const row = (over: Partial<AcOutboxRow> = {}): AcOutboxRow => ({
@@ -59,9 +49,6 @@ const payload = (over: Partial<AcOutboxResponse> = {}): AcOutboxResponse => ({
   counts_complete: true,
   meta: {
     max_attempts: 6,
-    /* Kept in the fixture even though the page no longer prints it — otherwise
-       the "no coding words" test below would pass because the server said
-       nothing, not because the page refused to repeat it. */
     state_meaning: { pending: "Queued. The 5-minute cron will send it." },
     skip_kinds: [{ kind: "keyless-line", remedy: "backfill linked_ac_dtlkey" }],
   },
@@ -82,23 +69,14 @@ async function mount(body: AcOutboxResponse | Error) {
 
 const chip = (name: RegExp) => screen.getByRole("button", { name });
 
-/* `data-ac-row`, not `.card`: the list is windowed now and the windowing
-   component owns the element wrapping each card. */
 const cardOf = (docNo: string) =>
   screen.getByText(docNo).closest("[data-ac-row]") as HTMLElement;
 
-/** Open a card by its always-visible reason line — the line IS the opener. */
 async function openRow(docNo: string) {
   await userEvent.click(within(cardOf(docNo)).getAllByRole("button", { expanded: false })[0]!);
   return cardOf(docNo);
 }
 
-/**
- * A card's text WITHOUT the collapsed technical block. jsdom applies no
- * user-agent stylesheet, so a closed `<details>` still contributes everything it
- * holds to `textContent` — "not on screen" has to be asked structurally. Same
- * helper, same reasoning, as the desktop suite.
- */
 const plainTextOf = (el: HTMLElement): string => {
   const copy = el.cloneNode(true) as HTMLElement;
   for (const n of copy.querySelectorAll("[data-ac-technical]")) n.remove();
@@ -135,8 +113,6 @@ describe("MobileAutoCountSync — the same product, one surface over", () => {
   it("surfaces a switched-off sync in the headline", async () => {
     const off = payload({ writeback: { value: "On ", on: false, scope: "off" } });
     await mount(off);
-    /* The dedicated switch line was removed in the 2026-08-21 declutter; the
-       headline still carries the off status, which is the one that matters. */
     expect(await screen.findByText(acHeadline(off).text)).toBeTruthy();
   });
 
@@ -169,8 +145,6 @@ describe("MobileAutoCountSync — the same product, one surface over", () => {
 });
 
 describe("MobileAutoCountSync — the reason is on the row here too", () => {
-  /* The headline is on the card with no click — the same rule the desktop page
-     follows, and the one the owner rejected an earlier design for breaking. */
   it("shows the same headline the desktop page shows, before any click", async () => {
     await mount(busy);
     const copy = AC_REASON_COPY["missing-location"]!;
@@ -199,9 +173,6 @@ describe("MobileAutoCountSync — the reason is on the row here too", () => {
     expect(within(failed).getByText(/FK_SO_SalesAgent/)).toBeTruthy();
   });
 
-  /* Behind the fold since 2026-08-16, on this surface too — see the replaced
-     block at the bottom of this file. Everything it says is unchanged, except
-     the words, which no longer read as an order to press Send again. */
   it("marks a replaced refusal as a record, not an open item", async () => {
     await mount(busy);
     await screen.findByText("SO-F");
@@ -243,8 +214,6 @@ describe("MobileAutoCountSync — the failures it must not swallow", () => {
   });
 });
 
-/* Send again exists on BOTH surfaces or the pairing is broken. A control on the
-   desktop page and not the phone is the recurring bug class this repo names. */
 describe("MobileAutoCountSync — Send again", () => {
   const answer = (over: Record<string, unknown> = {}) => ({
     accepted: true,
@@ -291,9 +260,6 @@ describe("MobileAutoCountSync — Send again", () => {
 });
 
 describe("MobileAutoCountSync — an accepted re-send stops giving orders about the old refusal", () => {
-  /* "To fix: go and change it in AutoCount" on a document that has just been
-     sent back to the queue is a FALSE instruction, and it would sit there for a
-     whole round trip waiting on the re-read. It comes off immediately. */
   it("takes the old reason off the row the moment the document is on its way", async () => {
     apiPost.mockResolvedValue({
       accepted: true, code: "requeued",
@@ -312,7 +278,6 @@ describe("MobileAutoCountSync — an accepted re-send stops giving orders about 
     const after = cardOf("SO-F");
     expect(within(after).queryByText("To fix")).toBeNull();
     expect(within(after).queryByText("AutoCount replied")).toBeNull();
-    /* Replaced by what to do NOW, keyed by the outcome code. */
     expect(within(after).getByText("To do")).toBeTruthy();
     expect(within(after).getByText(/next five-minute send/)).toBeTruthy();
   });
@@ -335,9 +300,6 @@ describe("MobileAutoCountSync — an accepted re-send stops giving orders about 
   });
 });
 
-/* The same four things the desktop page's last describe block guards, asserted
-   here because desktop and mobile are one product and a simplification landing
-   on one surface only is the recurring bug class this repo names. */
 describe("MobileAutoCountSync — a thousand documents", () => {
   const manyRows = (n: number): AcOutboxRow[] =>
     Array.from({ length: n }, (_, i) => row({
@@ -429,7 +391,6 @@ describe("MobileAutoCountSync — the same four fixes, one surface over", () => 
     expect(plainTextOf(card)).not.toContain("AddPartialTransferDetail");
     expect(card.querySelector("[data-ac-technical]")?.textContent)
       .toContain("AddPartialTransferDetail");
-    /* The distinction he asked for by name is untouched. */
     expect(within(card).getByText("AutoCount was not asked")).toBeTruthy();
   });
 
@@ -511,8 +472,6 @@ describe("MobileAutoCountSync — one document, one card", () => {
 
   it("renders one sales order once, however many times it was sent", async () => {
     await mount(hisScreen);
-    /* The phone opens on Needs attention, as the desktop does — these five are
-       all in AutoCount, so the chip is how they are reached. */
     await userEvent.click(await screen.findByRole("button", { name: /In AutoCount\s*2/ }));
     await screen.findAllByText("HC-SO-2608-002");
     expect(document.querySelectorAll("[data-ac-row]").length).toBe(2);
@@ -549,15 +508,7 @@ describe("MobileAutoCountSync — one document, one card", () => {
   });
 });
 
-/* SEND NOW, one surface over. A control on the desktop and not the phone is the
-   recurring bug class this repo names, and the owner uses the phone on the
-   floor — a document that has to go out NOW is exactly the case he is standing
-   in front of when he wants it. */
 describe("MobileAutoCountSync — Send now", () => {
-  /* ITS OWN PAYLOAD, not a row bolted onto `busy`. The shared fixture's counts
-     are asserted verbatim by the filter-strip test one describe up, so adding a
-     row to it fails a test that has nothing to do with this button. A fixture
-     shared by thirty assertions is not a free place to put a thirty-first. */
   const waiting = payload({
     counts: { pending: 1, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, archived: 0, total: 1 },
     rows: [
@@ -583,7 +534,6 @@ describe("MobileAutoCountSync — Send now", () => {
     await mount(waiting);
     await screen.findByText("SO-P");
     expect(within(cardOf("SO-P")).getByRole("button", { name: "Send now" })).toBeTruthy();
-    /* And never beside Send again: the two server predicates are disjoint. */
     expect(within(cardOf("SO-F")).queryByRole("button", { name: "Send now" })).toBeNull();
     expect(within(cardOf("SO-P")).queryByRole("button", { name: "Send again" })).toBeNull();
   });
@@ -647,16 +597,6 @@ describe("MobileAutoCountSync — Send now", () => {
   });
 });
 
-/* ───────────────────────────────────────────────────────────────────────────
-   WHAT CROSSED OVER FROM THE 2026-08-21 REGISTER, AND WHAT DID NOT.
-
-   The desktop became an eight-column table; this screen kept its cards, because
-   a table does not fit 375 px. That is a PRESENTATION difference and it is
-   allowed. What is not allowed is a VERDICT or a CONTROL living on one surface
-   only — the recurring bug class this repo names — so the mismatch flag, the day
-   buckets, the date range and the closing line all had to come with it, from the
-   same helpers in lib/autocountRegister.
-   ─────────────────────────────────────────────────────────────────────────── */
 describe("MobileAutoCountSync — the register's verdicts, on a phone", () => {
   const booked = (over: Partial<AcOutboxRow>): AcOutboxRow => row({
     status: "sent", state: "sent", sent_at: "2026-08-15T01:00:00.000Z", ...over,
@@ -671,15 +611,12 @@ describe("MobileAutoCountSync — the register's verdicts, on a phone", () => {
     ],
   });
 
-  /* THE OWNER USES THIS SCREEN ON THE FLOOR. A flag he only gets at his desk is
-     a flag he does not get, and this one went three days unseen already. */
   it("flags a document the account book filed under its own number", async () => {
     await mount(twoBooked);
     await userEvent.click(chip(/In AutoCount/));
     await screen.findByText("HC-PO-2608-001");
     const card = cardOf("HC-PO-2608-001");
     expect(within(card).getByText("Different number")).toBeTruthy();
-    /* A phone has no hover, so the sentence is ON the card, not in a title. */
     expect(within(card).getAllByText(/PO-009968/).length).toBeGreaterThan(0);
   });
 
@@ -690,10 +627,6 @@ describe("MobileAutoCountSync — the register's verdicts, on a phone", () => {
     expect(cardOf("HC-SO-2608-009").querySelector("[data-ac-book-flag]")).toBeNull();
   });
 
-  /* A document already in the account book has nothing to OPEN — the ruling is
-     the same on both surfaces, and the flag must not smuggle an opener in.
-     Asserted on the OPENERS since 2026-09-08: the card now carries Clear, which
-     opens nothing and takes a finished document off the list. */
   it("flags it without giving the card anything to open", async () => {
     await mount(twoBooked);
     await userEvent.click(chip(/In AutoCount/));
@@ -703,9 +636,6 @@ describe("MobileAutoCountSync — the register's verdicts, on a phone", () => {
     expect(within(card).queryByRole("button", { expanded: true })).toBeNull();
   });
 
-  /* THE PHONE GETS THE SAME CONTROL AS THE DESKTOP. A control on one surface
-     only is the recurring bug class this repo names, and the owner reads this
-     page on the floor. */
   it("offers Clear on the phone for a document whose work is finished", async () => {
     await mount(twoBooked);
     await userEvent.click(chip(/In AutoCount/));
@@ -728,10 +658,6 @@ describe("MobileAutoCountSync — the register's verdicts, on a phone", () => {
     expect(screen.getByText("Showing 1–3 of 3 documents")).toBeTruthy();
   });
 
-  /* THE DATE RANGE IS A FILTER, and a filter on one surface only is the split
-     the shared layer exists to stop. It is component state here — the mobile
-     shell has no router — so what proves it works is the list changing without
-     the server being asked again. */
   it("carries the date range the desktop has, and applies it without a refetch", async () => {
     await mount(twoBooked);
     await userEvent.click(chip(/In AutoCount/));

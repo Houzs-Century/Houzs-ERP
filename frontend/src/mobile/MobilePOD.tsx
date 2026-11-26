@@ -64,16 +64,8 @@ type DoItem = {
   qty: number | null;
   cancelled?: boolean;
 };
-/* How many rows the docNo lookup asks for. The server's `q` is NOT a do_number
-   lookup — it is a substring OR across eight columns (do_number, so_doc_no,
-   debtor_name, debtor_code, ref, branding, sales_location, driver_name;
-   delivery-orders-mfg.ts:2082) — so a DO number can incidentally match another
-   row (a `ref` that cites it, say). do_number itself is unique, so the exact
-   match below is what decides; this is only the window that match must land in. */
 const DOC_NO_LOOKUP_ROWS = 20;
 
-/* A DO whose status is already a terminal delivered/invoiced state is done —
-   the primary action is hidden and the header pill reads accordingly. */
 const isDelivered = (status: string | null): boolean => {
   const s = (status ?? "").toUpperCase();
   return s === "DELIVERED" || s === "INVOICED" || s === "SIGNED";
@@ -82,28 +74,12 @@ const isCancelled = (status: string | null): boolean => (status ?? "").toUpperCa
 
 /** Proof of Delivery — full-height overlay. `docNo` is a Delivery Order NUMBER;
  *  we resolve it to the DO UUID via the list route, then read the detail. */
-/* `companyCode` PINS every DO request here (lookup, detail, deliver) to the
-   stop's OWN company — the run-sheet is a cross-company queue, so a driver
-   granted both companies opens a 2990 DO while the tab reads HOUZS; without it
-   the per-company list/detail/status route 404s the other company's DO. Null
-   (opened from a non-run-sheet surface) keeps the tab's active company. */
 export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo: string; companyCode?: string | null; onBack: () => void; onDone?: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const updateStatus = useUpdateMfgDeliveryOrderStatus();
-  /* DO OPERATE gate — mirrors the desktop DeliveryOrderDetailV2 `canWriteDo`
-     (canOperateDeliveryOrders) and the SAME gate the delivery-planning board +
-     MobileModuleDetail status actions use. Confirming a delivery DEDUCTS STOCK +
-     SYNCS THE SO, so a view-only user (the Sales cohort) must not reach it — the
-     Confirm action is gated on this; reads stay
-     open (off, not hide). MobileApp already withholds the POD entry for these
-     users, so this is the defence-in-depth layer on the actions themselves. */
   const { user, can, pageAccess } = useAuth();
   const canOperate = canOperateDeliveryOrders(user, can, pageAccess);
-  /* The driver on the job (scm.do.dispatch) confirms their OWN delivery. The
-     DO list/detail reads need office access a driver does not hold, so a driver
-     reads through the crew-scoped /delivery-planning/do/:ref/pod instead, and the
-     server re-checks ownership on the status write. */
   const isCrew = !canOperate && canDriverCompleteDelivery(user);
   const canComplete = canOperate || isCrew;
   const crewQ = useQuery({
@@ -111,33 +87,15 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
     queryFn: () => authedFetch<{ deliveryOrder: DoHeader; items: DoItem[] }>(`/delivery-planning/do/${encodeURIComponent(docNo)}/pod`),
     enabled: isCrew,
     staleTime: 30_000,
-    /* The crew share the stop: while it is open and not finished, ask again so
-       the other crew member's Start / Arrived / Delivered shows here too. */
     refetchInterval: (query) => {
       const st = query.state.data?.deliveryOrder.status ?? null;
       return isDelivered(st) || isCancelled(st) ? false : CREW_STOP_POLL_MS;
     },
   });
 
-  /* Resolve docNo (a DO number) → the DO row (carries the UUID every other route
-     keys on). ASK THE SERVER FOR THE ONE DOCUMENT, don't scan the org's DOs on a
-     phone: the no-param branch of this route is capped at `.limit(500)` newest-first
-     (delivery-orders-mfg.ts:2047), so it shipped ~500 wide header rows over mobile
-     data to read a single id — and once the org passes 500 DOs, a REAL DO older than
-     the newest 500 simply was not in the answer, so this screen told the driver it
-     "could not be found. Please refresh" — advice that can never come true, on a
-     delivery they are standing in front of. Paging + `q` narrows it to the match.
-
-     The shared hooks (and their shared query keys) are deliberate, not incidental:
-     the private ["mobile-do-list-for-pod"] / ["mobile-pod-*"] keys these replace were
-     a second cache over the same URLs, invisible to invalidateDoShared — so a write
-     from the desktop or the planning board left this screen stale, and this screen's
-     own writes left theirs stale. One namespace, one logic layer. */
   const listQ = useMfgDeliveryOrdersPaged({ enabled: !isCrew, page: 0, pageSize: DOC_NO_LOOKUP_ROWS, q: docNo, companyCode });
   const doId = useMemo(() => {
     const rows = listQ.data?.deliveryOrders;
-    // No rows yet (pending, or the read failed) is NOT "no such DO" — leave it
-    // null and let the render tell those two apart. See `notFound` below.
     if (isCrew) return crewQ.data?.deliveryOrder.id ?? null;
     if (!rows) return null;
     return (rows.find((d: DoHeader) => (d.do_number ?? "") === docNo)?.id ?? null) as string | null;
@@ -147,26 +105,16 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
   const podData = isCrew ? crewQ.data : detailQ.data;
 
   const h = podData?.deliveryOrder as DoHeader | undefined;
-  /* CANCELLED lines are excluded from the driver checklist AND the "delivered
-     X/N" count — desktop parity: DeliveryOrderDetailV2 filters `!l.cancelled`.
-     Without this a cancelled line entered the tick-list and inflated N, so a
-     fully-delivered DO could never read 100%. Filtering here fixes both the
-     render and `deliveredCount`/`items.length` below in one place. */
   const items = ((podData?.items ?? []) as DoItem[]).filter((l) => !l.cancelled);
 
-  // Checklist — which line items the driver has ticked as delivered.
   const [ticked, setTicked] = useState<Record<string, boolean>>({});
   const deliveredCount = items.reduce((n, it) => n + (ticked[it.id] ? 1 : 0), 0);
 
-  // Signature pad + GPS + photo (captured locally — see file header).
   const sigRef = useRef<HTMLCanvasElement | null>(null);
   const [hasSignature, setHasSignature] = useState(false);
   const [sigClearNonce, setSigClearNonce] = useState(0);
   const [gps, setGps] = useState<{ lat: number; lng: number; accuracyM: number | null; atIso: string } | null>(null);
   const [gpsState, setGpsState] = useState<"idle" | "asking" | "ok" | "denied">("idle");
-  // A delivery takes several photos (goods off the lorry, installed, the signed note).
-  // Each uploads as soon as it is taken; the backend claims at most 20 per POD (pod-photo-claim.ts MAX_POD_KEYS).
-  // After a page reload the photos already uploaded for this DO come back from the server.
   const photoContext = doId ? fieldPhotoContext({ kind: "do", doId }) : null;
   const photos = useFieldPhotos({
     stampLabel: null, // no time watermark on photos (owner 2026-11-11)
@@ -177,8 +125,6 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
 
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  /* "Delivered with issue": the crew ticks the problem and it is sent AFTER the
-     delivery is saved, so a problem never blocks the delivery (A2). */
   const [issueOn, setIssueOn] = useState(false);
   const [issueDraft, setIssueDraft] = useState<DeliveryIssueDraft>(EMPTY_ISSUE_DRAFT);
   const crewIssuesQ = useRunDeliveryIssues({ do: [docNo] }, isCrew, CREW_STOP_POLL_MS);
@@ -189,14 +135,10 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
   const cancelled = h ? isCancelled(h.status) : false;
 
   const confirmDelivered = async () => {
-    // Defence-in-depth: the Confirm button is already withheld for a view-only
-    // user, but the delivery write (stock + SO sync) must never fire without the
-    // operate gate even if the button is somehow reached.
     if (busy || !doId || !h || !canComplete) return;
     /* Every job closes with a photo (owner, 2026-10-07: 每个 Job 都必须上传 POD).
        The customer signs the paper delivery note for now, so a photo of that
        signed note is the POD; the on-screen signature stays optional. */
-    // Photos upload as they are taken; only the uploaded ones go with the delivery.
     const gate = photos.gate("Take a POD photo first - a photo of the signed delivery note is fine.");
     if (!gate.ok) {
       setActionError(gate.reason);
@@ -208,12 +150,6 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
     if (deliveredCount < items.length) {
       notes.push(`Only ${deliveredCount} of ${items.length} items are ticked.`);
     }
-    /* NAMED, NOT REFUSED. A customer can decline to sign and a phone can be
-       denied a location fix indoors — the server already treats a bad reading
-       as droppable rather than fatal, so blocking the close here would be
-       stricter than the rule the business actually runs on. What was wrong was
-       the SILENCE: this screen offered a signature pad and then filed the
-       delivery either way without saying which had happened. */
     if (!hasSignature) notes.push("No customer signature has been captured.");
     if (issueOn) notes.push("The problem will be reported and a service case opened.");
     if (!(await confirm({
@@ -224,69 +160,28 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
     setActionError(null);
     setBusy(true);
     try {
-      // Deliver action — the DO status endpoint persists the POD signature
-      // (base64 PNG) onto delivery_orders.signature_data, the delivery photo's
-      // R2 key onto delivery_orders.pod_r2_key, and (since mig 0249) the GPS
-      // reading onto pod_lat / pod_lng / pod_accuracy_m / pod_located_at. The
-      // last sentence here used to read "GPS stays client-side (no server
-      // column)", which stopped being true at 0249 and is corrected in place
-      // rather than left to teach the next reader the old shape.
-      // The photos are already in R2 (uploaded on pick); the gate above refused
-      // while any was still uploading or failed, so these keys are all stored.
       const podKeys = gate.keys;
       const podKey = podKeys[0];
-      /* `hasSignature` — NOT the canvas — decides whether a signature is sent.
-         An untouched pad is a sized, fully transparent bitmap, so
-         `toDataURL("image/png")` returns a perfectly valid non-empty data URL
-         for it; `sig ? …` was therefore true on EVERY confirm once the pad had
-         mounted, and every delivery stored a blank PNG into
-         `delivery_orders.signature_data`. The screen said "Ask the customer to
-         sign above" and filed the delivery as signed anyway — worse than storing
-         nothing, because a blank image is indistinguishable from a real POD that
-         failed to render, and it is the only customer-side evidence the DO
-         carries. `hasSignature` is set by the pad's own `start()` on the first
-         pointerdown (and cleared by Clear), so it is the one flag that means a
-         human drew something. `podKey` and `gps` in the same object literal were
-         already gated on real capture; this brings the third field in line. */
       const sig = hasSignature
         ? (() => { try { return sigRef.current?.toDataURL("image/png") ?? ""; } catch { return ""; } })()
         : "";
-      /* THROUGH THE SHARED HOOK, not a raw fetch. This call used to bypass
-         `useUpdateMfgDeliveryOrderStatus` because that hook was typed
-         `{ id, status }` and could not carry any of the three fields below —
-         which is exactly why the desktop detail page, the desktop list drawer
-         and MobileDeliveryPlanning all closed deliveries with no evidence at
-         all. The hook now takes `evidence`, so the capability lives in one
-         place and every surface can reach it. See DoDeliveryEvidence. */
       await updateStatus.mutateAsync({
         id: doId,
         status: "DELIVERED",
-        // Deliver in the stop's OWN company (mixed-company run); see the prop doc.
         companyCode,
         evidence: {
           signatureData: sig || undefined,
           podKey,
           podKeys,
-          /* Mig 0249. This reading was taken and thrown away on every delivery
-             since this screen shipped — the header used to end "GPS stays
-             client-side (no server column)". Sent only when the driver actually
-             captured one; a denial or an indoor dead spot must never block a
-             delivery from closing. */
           ...(gps ? { podLat: gps.lat, podLng: gps.lng, podAccuracyM: gps.accuracyM ?? undefined, podLocatedAt: gps.atIso } : {}),
         },
       });
       await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
-      // Delivering moves stock + flips the DO + touches SO readiness — refresh
-      // the shared/desktop DO, inventory and SO caches too. This screen's own
-      // reads are shared keys, so invalidateDoShared's DO_ROOTS prefix-match
-      // already covers them (list + detail) — there is no private mobile key
-      // left to refresh separately.
       invalidateDoShared(qc);
       invalidateInventoryShared(qc);
       invalidateSoShared(qc);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
-      // The other crew member may have just completed it: show this stop as it is now.
       invalidateDoShared(qc);
       if (isCrew) void crewQ.refetch();
       setBusy(false);
@@ -300,9 +195,6 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
     onDone?.();
   };
 
-  /* Sends the problem report. The DO is already delivered when this runs (from
-     Confirm, or later on a delivered DO); a failure keeps the form so the crew
-     can send it again. */
   const sendIssue = async (failPrefix: string): Promise<boolean> => {
     try {
       await reportDoDeliveryIssue(h?.do_number ?? doId ?? docNo, issueDraft);
@@ -336,12 +228,7 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
         setGps({
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
-          /* Kept because two coordinates look equally authoritative whether they
-             came from GPS on a clear street or a wifi guess inside a warehouse.
-             The radius is what tells them apart. */
           accuracyM: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null,
-          /* The reading's OWN time, not the moment the driver finishes the
-             paperwork — those can be minutes apart. */
           atIso: new Date(pos.timestamp || Date.now()).toISOString(),
         });
         setGpsState("ok");
@@ -351,29 +238,16 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
     );
   };
 
-  // isPending, not isLoading: isLoading is (isPending && isFetching), so it is
-  // FALSE while a query is pending-but-not-fetching — which is exactly what a
-  // driver's phone does when it drops off the carrier for a moment (the query
-  // PAUSES). On isLoading the notFound branch then painted "could not be found"
-  // in red before any fetch had run. detailQ is enabled:!!doId, and a disabled
-  // query stays isPending forever, so its check must stay behind the doId guard.
   const loading = isCrew ? crewQ.isPending : listQ.isPending || (!!doId && detailQ.isPending);
-  // `!listQ.error` is load-bearing: without it a FAILED lookup (no rows, so no
-  // doId) fell into this branch and told the driver the delivery "could not be
-  // found" — stating as fact something we had not learned. A read that did not
-  // answer must fall through to loadError below and say so.
   const notFound = isCrew
     ? crewQ.isError && /not_found|could not be found/i.test(String(crewQ.error))
     : !listQ.isPending && !listQ.error && !doId;
   const loadError = isCrew ? (notFound ? null : crewQ.error) : listQ.error || detailQ.error;
   const pillLabel = cancelled ? "Cancelled" : delivered ? "Delivered" : "Arrived";
-  // Header status badge → canonical .badge variant (spec: DISPATCHED/arrived =
-  // brand, DELIVERED = green, cancelled = red).
   const pillClass = cancelled ? "b-red" : delivered ? "b-green" : "b-brand";
 
   return (
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
-      {/* .hdr — back-to-DO + "Proof of Delivery" + status pill (design POD header) */}
       <header className="hdr">
         <div className="hdr-row">
           <button className="back" onClick={onBack}>
@@ -398,7 +272,6 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
 
         {!loading && !notFound && !loadError && h && (
           <>
-            {/* Items to deliver · N — .fld-l label + list-note + tickable cards */}
             <div className="fld-l" style={{ marginBottom: 8 }}>
               Items to deliver · {items.length}
               {items.length > 0 ? ` · ${deliveredCount} of ${items.length} delivered` : ""}
@@ -407,9 +280,6 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {items.length ? items.map((it) => {
                 const on = !!ticked[it.id];
-                // Item CODE + variant (description2); description dropped —
-                // mirror DeliveryOrderDetailV2's
-                // `orderLineIdentity({ code, description, variant: l.description2 })`.
                 const ident = orderLineIdentity({ code: it.item_code, description: it.description, variant: it.description2 });
                 return (
                   <div
@@ -446,12 +316,10 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
               }) : <div style={{ fontSize: 11.5, color: "var(--mut2)", padding: "9px 2px" }}>No items on this delivery.</div>}
             </div>
 
-            {/* Delivery photos — each uploads the moment it is taken (FieldPhotos). */}
             <div style={{ margin: "18px 0 0" }}>
               <FieldPhotos api={photos} disabled={busy || delivered} title="Delivery photos" />
             </div>
 
-            {/* Customer signature — design signature pad (canvas keeps the real capture). */}
             <div className="fld-l" style={{ margin: "18px 0 8px" }}>Customer signature</div>
             <SignaturePad canvasRef={sigRef} onChange={setHasSignature} clearNonce={sigClearNonce} />
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
@@ -464,7 +332,6 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
               </span>
             </div>
 
-            {/* Delivery location — saved with the POD since mig 0249. */}
             <div className="fld-l" style={{ margin: "18px 0 8px" }}>Delivery location</div>
             <div style={{ background: "var(--card)", border: "1px solid var(--line-card)", borderRadius: 13, padding: "13px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
               <span className="tnum" style={{ fontSize: 12, color: gpsState === "ok" ? "var(--ink)" : "var(--mut)", minWidth: 0 }}>
@@ -486,9 +353,7 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
               </button>
             </div>
 
-            {/* Delivered with issue — reported problems, then the form. */}
             <div className="fld-l" style={{ margin: "18px 0 8px" }}>Problem with this delivery?</div>
-            {/* The crew reports; the office opens the case from the DO / SO screen. */}
             <MobileDeliveryIssues issues={reportedIssues} canCreateCase={false} />
             {!cancelled && canComplete && (
               !issueOn ? (
@@ -512,15 +377,12 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
         )}
       </div>
 
-      {/* .actbar — primary confirm action (design POD footer) */}
       <footer className="actbar">
         {!loading && !notFound && !loadError && h && !delivered && !cancelled && canComplete && (
           <button type="button" className="btn" disabled={busy} onClick={confirmDelivered} style={{ opacity: busy ? 0.6 : 1, cursor: busy ? "default" : "pointer" }}>
             {busy ? "Working…" : issueOn ? "Confirm delivered with issue →" : "Confirm delivered →"}
           </button>
         )}
-        {/* View-only (Sales cohort): confirming a delivery is the Office team's
-            job. State it plainly instead of showing a button the backend 403s. */}
         {!loading && !notFound && !loadError && h && !delivered && !cancelled && !canComplete && (
           <div style={{ textAlign: "center", fontSize: 11.5, color: "var(--mut2)", padding: 6 }}>
             You can view this delivery, but confirming it is handled by the Office team.
@@ -542,17 +404,6 @@ export function MobilePOD({ docNo, companyCode = null, onBack, onDone }: { docNo
   );
 }
 
-/** Canvas signature pad — pointer/touch strokes; exposes hasSignature to the
- *  parent, which reads the strokes with canvasRef.current.toDataURL() and sends
- *  them as `signatureData`. Bumping `clearNonce` wipes the pad and re-arms the
- *  "signed" latch.
- *
- *  This used to end "when a backend field to persist them exists (none today)",
- *  which stopped being true on 2026-07-14 — the DO status handler has persisted
- *  `signature_data` since then. A stale sentence in a JSDoc is worse than none:
- *  it tells the next reader the capture is decorative and there is nothing to
- *  protect. `onChange` is the ONLY thing that lets a signature through, so
- *  MobilePodSignatureCapture.test.tsx pins it in both directions. */
 function SignaturePad({ canvasRef, onChange, clearNonce }: {
   canvasRef: React.MutableRefObject<HTMLCanvasElement | null>;
   onChange: (hasSignature: boolean) => void;
@@ -562,7 +413,6 @@ function SignaturePad({ canvasRef, onChange, clearNonce }: {
   const last = useRef<{ x: number; y: number } | null>(null);
   const drew = useRef(false);
 
-  // Wipe the pad + re-arm the latch when the parent's Clear bumps the nonce.
   useEffect(() => {
     if (clearNonce === 0) return;
     const canvas = canvasRef.current;
@@ -572,8 +422,6 @@ function SignaturePad({ canvasRef, onChange, clearNonce }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clearNonce]);
 
-  // Size the backing store to the element's CSS box (device-pixel aware) so
-  // strokes aren't stretched. Runs once on mount.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -603,10 +451,8 @@ function SignaturePad({ canvasRef, onChange, clearNonce }: {
     e.preventDefault();
     drawing.current = true;
     last.current = point(e);
-    // First mark of a fresh (or freshly-cleared) pad flags a signature. The
-    // parent resets its own flag on Clear; we re-flag on the next real stroke.
     if (!drew.current) { drew.current = true; onChange(true); }
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* older browsers */ }
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { }
   };
   const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!drawing.current) return;

@@ -1,5 +1,3 @@
-// Order-state pure functions. Lifted from prototype per PORT_DESIGN.md §11.2.
-// Implementations TODO — port during Phase 3 (order lifecycle).
 
 export interface LaneCondition { lane: string; require: ('paid_full' | 'slip_verified' | 'driver_assigned' | 'do_signed')[] }
 
@@ -30,15 +28,11 @@ export const PROCESSING_DATE_PAID_THRESHOLD = 0.30;
  *  either side may pass its own representation. */
 export interface ProceedGateInput {
   hasCustomerName: boolean;
-  /** Delivery address line 1 present. A "Fill in later" handover leaves this
-   *  (and the postcode) blank, so the gate fails — exactly the case that must
-   *  keep an order in Order Placed. */
   hasAddress: boolean;
   hasPostcode: boolean;
   hasDeliveryDate: boolean;
   paid: number;
   total: number;
-  /** Active company ('HOUZS' | '2990') — picks the deposit fraction. */
   companyCode?: CompanyCode | string | null;
 }
 
@@ -136,10 +130,6 @@ export const proceedGateFailures = (i: ProceedGateInput): ProceedGateCondition[]
   if (!i.hasAddress) out.push('address');
   if (!i.hasPostcode) out.push('postcode');
   if (!i.hasDeliveryDate) out.push('delivery_date');
-  /* Absent for a free order, and that absence is the whole point of this file
-     changing. `paid` / `total` here are ratio-only (see ProceedGateInput); a
-     caller that wants to PRINT the shortfall must hand centi to
-     so-save-problems.ts, which fixes the unit because it formats currency. */
   if (!meetsDepositGate(i.paid, i.total, i.companyCode)) out.push('deposit');
   return out;
 };
@@ -186,9 +176,7 @@ export const PROCEED_DATE_UNREADABLE = {
 } as const;
 
 export type ProceedDateInput = {
-  /** The date the CALLER is proceeding with, if this request carries one. */
   supplied?: string | null;
-  /** internal_expected_dd as it stands on the order (date or timestamp). */
   stored?: string | null;
 };
 
@@ -199,9 +187,6 @@ export type ProceedDateResolution =
   | { ok: true; date: string; write: boolean }
   | { ok: false; refusal: typeof PROCEED_NEEDS_DATE | typeof PROCEED_DATE_UNREADABLE };
 
-/** 'YYYY-MM-DD' out of a date or a timestamp column, else null. Mirrors how
- *  soProcessingLocked reads the same column — internal_expected_dd is a DATE in
- *  Postgres but reaches us as a string from several shapes of client. */
 const ymdOrNull = (v?: string | null): string | null => {
   const ymd = String(v ?? '').trim().slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(ymd) ? ymd : null;

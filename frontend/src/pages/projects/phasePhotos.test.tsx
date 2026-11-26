@@ -1,6 +1,3 @@
-/* Phase Photos on the project detail page: crew uploads grouped by phase, image
- * thumbnails through the authenticated blob fetch, and a delete that only
- * refreshes the grid when the server actually removed the file. */
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

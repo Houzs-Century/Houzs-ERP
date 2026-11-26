@@ -16,11 +16,6 @@ import {
  * offers — went unbillable until 0243.
  */
 
-/* These run in workerd (vitest-pool-workers), which has no filesystem — so they
-   check the CODE's view of the world. The other half of the guarantee, that this
-   view still matches the migrations, is `npm run audit:job-types`, wired into
-   the backend-typecheck job beside audit:routes. Neither half is sufficient
-   alone: a pure test over a stale constant proves nothing. */
 
 describe('the rate card prices the jobs we dispatch', () => {
   it('every dispatchable job type can be priced by some rule', () => {
@@ -31,8 +26,6 @@ describe('the rate card prices the jobs we dispatch', () => {
   });
 
   it('an exemption is never also priced — one or the other, never both', () => {
-    // Otherwise "we do not bill this" and a live rate rule would sit side by
-    // side, and which one is true depends on who reads which file.
     const priced = new Set(pricedJobTypes());
     for (const j of NON_BILLABLE_JOB_TYPES) {
       expect(priced.has(j), `${j} is exempt from pricing but a rule prices it`).toBe(false);
@@ -81,15 +74,10 @@ describe('the taxonomy is complete', () => {
 
 describe('the add-ons are absent by decision, not by oversight', () => {
   it('DISPOSE is deliberately not a job type', () => {
-    // It rides whatever job carried it. Recorded so the next reader does not
-    // "fix" it by inventing a DISPOSE trip stop.
     expect(RULE_JOB_TYPE.DISPOSE).toBeNull();
   });
 
   it('TRANSFER stopped being an add-on and now names its job type', () => {
-    // Mig 0243 read TRANSFER as a line on whatever job carried it. The owner's
-    // 2026-08-03 job-type list made "Transfer item" a job the fleet is
-    // dispatched to do (mig 0250), so the rule of the same name points at it.
     expect(RULE_JOB_TYPE.TRANSFER).toBe('TRANSFER');
     expect(DISPATCHABLE_JOB_TYPES).toContain('TRANSFER');
   });
@@ -97,7 +85,7 @@ describe('the add-ons are absent by decision, not by oversight', () => {
   it('the delivery group prices DELIVERY through three cooperating rules', () => {
     const delivery = (['POSITIONAL_TIER', 'OVERAGE', 'SOFA_BRACKET'] as RateRuleType[]);
     for (const t of delivery) expect(RULE_JOB_TYPE[t]).toBe('DELIVERY');
-    expect(RULE_CATEGORY.DISPOSE).toBe('DELIVERY'); // grouped with it, but not a job
+    expect(RULE_CATEGORY.DISPOSE).toBe('DELIVERY');
   });
 
   it('outstation is a surcharge on any job, never a job of its own', () => {

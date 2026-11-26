@@ -9,8 +9,6 @@ import {
   type ProceedGateInput,
 } from './order-rules';
 
-/* Complete on every non-money condition, so a verdict below is the MONEY
-   verdict and nothing else. */
 const complete = (paid: number, total: number, companyCode?: string | null): ProceedGateInput => ({
   hasCustomerName: true,
   hasAddress: true,
@@ -37,21 +35,16 @@ describe('meetsDepositGate', () => {
   });
 
   it('falls back to the LOOSER 30% for an unknown / absent company', () => {
-    // Over-gating blocks the shop floor with no signal; under-gating is
-    // recoverable because the money is still owed before delivery.
     expect(meetsDepositGate(30_00, 100_00, null)).toBe(true);
     expect(meetsDepositGate(30_00, 100_00, undefined)).toBe(true);
     expect(meetsDepositGate(30_00, 100_00, 'FUTURE-CO')).toBe(true);
   });
 
   it('is vacuously met on a zero-total order', () => {
-    // A Free Item Campaign giveaway has nothing to collect, and 0/0 would be NaN.
     expect(meetsDepositGate(0, 0)).toBe(true);
   });
 });
 
-/* The collapse itself: whatever the money says, both gates say it. If this ever
-   fails, some path has grown its own threshold again. */
 describe('meetsProceedGate asks meetsDepositGate the money question', () => {
   const cases: Array<[string | null, number, number]> = [
     ['HOUZS', 0, 100_00], ['HOUZS', 29_99, 100_00], ['HOUZS', 30_00, 100_00],
@@ -88,8 +81,6 @@ describe('resolveProceedProcessingDate', () => {
   });
 
   it('refuses rather than guessing today', () => {
-    // The whole point: a guessed date releases a real order to purchasing on the
-    // wrong day, and nothing would ever show that the date was guessed.
     const r = resolveProceedProcessingDate({ supplied: '   ', stored: '' });
     expect(r.ok).toBe(false);
   });
@@ -105,9 +96,6 @@ describe('resolveProceedProcessingDate', () => {
   });
 
   it('never MOVES a date the order already has', () => {
-    // Rescheduling is a different act, owned by the header PATCH because that is
-    // where the processing lock and the full save gate live. Proceeding must not
-    // be the road around them.
     expect(resolveProceedProcessingDate({ supplied: '2026-12-25', stored: '2026-09-01' }))
       .toEqual({ ok: true, date: '2026-09-01', write: false });
   });
@@ -125,8 +113,6 @@ describe('resolveProceedProcessingDate', () => {
   });
 
   it('falls through an unreadable STORED value to the supplied date', () => {
-    // A row we cannot read a day out of is not a date anyone can be released
-    // against, so it must not silently stand in for one.
     expect(resolveProceedProcessingDate({ supplied: '2026-09-01', stored: 'unknown' }))
       .toEqual({ ok: true, date: '2026-09-01', write: true });
   });

@@ -25,7 +25,6 @@ export function forecastSpan(periods: ReadonlyArray<{ months: readonly string[] 
   return span < FORECAST_SPAN_MONTHS ? { from, to } : { from: '', to: '' };
 }
 
-/** One forecast's figures for a period: the sum of its months, or nothing when a month is missing. */
 function sumOf(months: readonly string[], list: readonly MonthReport[]): CashFigures | null {
   if (months.length === 0) return null;
   const by = new Map(list.map((m) => [m.month, m.report.totals]));
@@ -52,7 +51,6 @@ export const pickCash = (f: CashFigures | null, tab: string): number | null => (
 /** Actual less forecast, where both are there. */
 export const gapOf = (actual: number | null, forecast: number | null): number | null => (actual == null || forecast == null ? null : actual - forecast);
 
-/* ── The Cash Flow card's Detail: each category, Actual | Forecast (part 3) ── */
 
 type TreeNode = { id: string; kind: string; label: string; amountSen: number; children: TreeNode[] };
 const isCategory = (n: TreeNode): boolean => n.kind === 'category' || n.kind === 'unassigned' || n.kind === 'subtotal';

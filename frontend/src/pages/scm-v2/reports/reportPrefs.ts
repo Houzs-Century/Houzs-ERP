@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// reportPrefs — what the Finance reports remember in the browser, in one file
-// (lib/browserStorageRegistry lists it as the caller and its keys):
-//
-//   · fin-reports-rail-pinned (localStorage) — the report list pinned open
-//     ('1' / '0'), a per-device layout preference (the design's own key);
-//   · fin-report-range (sessionStorage) — the last date range picked on a
-//     report, so a report opened without dates in its address follows it
-//     (batch 6 §4.3: the range lives in the URL; this is the fallback);
-//   · fin-reports-colw-v2 (localStorage) — the statement column widths a
-//     person dragged, per view (the design's own key).
-//
-// Every read and write is wrapped: a private window or blocked storage only
-// means nothing is remembered.
-// ----------------------------------------------------------------------------
 
 import { isIsoDay } from '../../../lib/dateRangePresets';
 import type { ReportRange } from '../reports-catalog';
@@ -31,7 +16,7 @@ export function readRailPinned(): boolean {
 export function writeRailPinned(on: boolean): void {
   try {
     window.localStorage.setItem(PINNED_KEY, on ? '1' : '0');
-  } catch { /* nothing remembered */ }
+  } catch { }
 }
 
 /** The last range picked on a report in this browser tab, or null. */
@@ -42,14 +27,14 @@ export function readSavedRange(): ReportRange | null {
       const { from, to } = v as Record<string, unknown>;
       if (typeof from === 'string' && typeof to === 'string' && isIsoDay(from) && isIsoDay(to) && from <= to) return { from, to };
     }
-  } catch { /* a stale or unreadable value — none */ }
+  } catch { }
   return null;
 }
 
 export function saveRange(range: ReportRange): void {
   try {
     window.sessionStorage.setItem(RANGE_KEY, JSON.stringify(range));
-  } catch { /* nothing remembered */ }
+  } catch { }
 }
 
 /** The statement column widths a person dragged, per view: the account
@@ -82,11 +67,9 @@ export function writeStatementWidths(all: StatementWidths): void {
   try {
     if (Object.keys(all).length === 0) window.localStorage.removeItem(WIDTHS_KEY);
     else window.localStorage.setItem(WIDTHS_KEY, JSON.stringify(all));
-  } catch { /* nothing remembered */ }
+  } catch { }
 }
 
-/** A Finance table's layout (FinanceGrid): fin-grid-v1:<table> (localStorage),
- *  its column widths, order, hidden and frozen columns. Null when none is kept. */
 const GRID_KEY = 'fin-grid-v1:';
 export function readGridLayout(table: string): unknown {
   try {
@@ -99,5 +82,5 @@ export function writeGridLayout(table: string, layout: unknown): void {
   try {
     if (layout == null) window.localStorage.removeItem(GRID_KEY + table);
     else window.localStorage.setItem(GRID_KEY + table, JSON.stringify(layout));
-  } catch { /* nothing remembered */ }
+  } catch { }
 }

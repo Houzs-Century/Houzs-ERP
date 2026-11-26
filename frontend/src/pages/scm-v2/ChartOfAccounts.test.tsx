@@ -18,8 +18,6 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import * as XLSX from 'xlsx';
 
-/* The server's section vocabulary (one home: backend lib/account-sections.ts),
-   as the union hands it down — the page never carries a copy. */
 const SECTIONS = [
   { section: 'CAPITAL', type: 'EQUITY' },
   { section: 'CURRENT ASSETS', type: 'ASSET' },
@@ -98,15 +96,11 @@ describe('parseChartXlsx — the AutoCount report shape', () => {
 
     expect(p.rows).toHaveLength(5);
     const mbb = p.rows.find((r) => r.code === '310-0010')!;
-    /* The heading travels with the row now — the server stores it. */
     expect(mbb).toMatchObject({ parentCode: '310-0000', accMoney: true, accountType: 'ASSET', section: 'CURRENT ASSETS', shared: false, specialType: 'SBK' });
     const parent = p.rows.find((r) => r.code === '310-0000')!;
     expect(parent).toMatchObject({ parentCode: null, accMoney: false, shared: true });
     expect(p.rows.find((r) => r.code === '900-A002')).toMatchObject({ accountType: 'EXPENSE', shared: true });
-    /* 460 = borrowings: named counterparties of ONE company. */
     expect(p.rows.find((r) => r.code === '460-0001')).toMatchObject({ accountType: 'LIABILITY', shared: false });
-    /* An unknown section falls back to EXPENSE, carries NO section (the server
-       shelves it by type) and is NAMED for the operator. */
     expect(p.rows.find((r) => r.code === '999-0001')).toMatchObject({ accountType: 'EXPENSE', section: null });
     expect(p.unknownSections).toEqual(['MYSTERY SECTION']);
   });
@@ -145,7 +139,6 @@ describe('the tick grid', () => {
     tickAsync.mockClear();
     draw();
     expect(screen.getAllByText('header').length).toBeGreaterThan(0);
-    /* Tick 310-0010 ON for 2990 — the empty cell of the second company. */
     fireEvent.click(screen.getByLabelText('310-0010 for 2990'));
     await waitFor(() => expect(tickAsync).toHaveBeenCalledWith({ companyId: 2, code: '310-0010', active: true }));
   });
@@ -183,7 +176,7 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     const cells = (code: string) => [...rowOf(container, code).children] as HTMLElement[];
     expect(cells('310-0000')[1]!.style.paddingLeft).toBe('10px');
     expect(cells('310-0000')[2]!.style.paddingLeft).toBe('10px');
-    expect(cells('310-0010')[1]!.style.paddingLeft).toBe('28px'); // 10 + depth 1 × 18
+    expect(cells('310-0010')[1]!.style.paddingLeft).toBe('28px');
     expect(cells('310-0010')[2]!.style.paddingLeft).toBe('28px');
     expect(cells('310-0010')[1]!.querySelector('[aria-hidden="true"]')).not.toBeNull();
     expect(cells('310-0000')[1]!.querySelector('[aria-hidden="true"]')).toBeNull();
@@ -202,9 +195,7 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     const headers = [...container.querySelectorAll('tbody td[data-section]')]
       .map((td) => td.getAttribute('data-section'));
     expect(headers).toEqual(['CURRENT ASSETS', 'CURRENT LIABILITIES', 'SALES', 'OTHER INCOMES', 'EXPENSES']);
-    /* Each in sentence case with its type and count. */
     expect(screen.getByText('ASSET · 2 accounts')).toBeTruthy();
-    /* Fold a section: its rows vanish, the header stays. */
     fireEvent.click(screen.getByLabelText('Collapse section CURRENT ASSETS'));
     expect(screen.queryByText('310-0010')).toBeNull();
     expect(screen.getByText('Current assets')).toBeTruthy();
@@ -216,12 +207,10 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     updateAsync.mockClear(); confirmFn.mockClear(); notifyFn.mockClear();
     const { container } = draw();
     const sectionRow = (section: string) => screen.getByLabelText(`Collapse section ${section}`).closest('tr') as HTMLElement;
-    /* 500-0000 SALES → OTHER INCOMES: confirm, then the update names the section. */
     fireEvent.dragStart(rowOf(container, '500-0000'));
     fireEvent.drop(sectionRow('OTHER INCOMES'));
     await waitFor(() => expect(updateAsync).toHaveBeenCalledWith({ code: '500-0000', section: 'OTHER INCOMES' }));
     expect((confirmFn.mock.calls[0]![0] as { title: string }).title).toBe('Move 500-0000 SALES to Other incomes?');
-    /* A child (310-0010 under 310-0000) does not move on its own. */
     updateAsync.mockClear();
     fireEvent.dragStart(rowOf(container, '310-0010'));
     fireEvent.drop(sectionRow('CURRENT LIABILITIES'));
@@ -232,8 +221,6 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
 
   test('the LIST scrolls inside its card and the header row sticks (owner 2026-09-04: 往下滑时看不到 header / 按 edit 时要跑回上去)', () => {
     const { container } = draw();
-    /* The table's scroll container is the card body, not the page — that is
-       what gives sticky a scroll context .card{overflow:hidden} can't swallow. */
     const scroller = container.querySelector('table')!.parentElement as HTMLElement;
     expect(scroller.style.overflowY).toBe('auto');
     expect(scroller.style.maxHeight).not.toBe('');
@@ -243,8 +230,6 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
        mis-offsets sticky th cells under collapsed borders. */
     expect(scroller.style.padding).toBe('0px');
     expect((container.querySelector('table') as HTMLElement).style.borderCollapse).toBe('separate');
-    /* Every header cell sticks with a solid background — a transparent
-       sticky th lets rows show through it. */
     const ths = [...container.querySelectorAll('thead th')] as HTMLElement[];
     expect(ths.length).toBeGreaterThan(0);
     for (const th of ths) {
@@ -262,17 +247,14 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     fireEvent.click(quick);
     expect(quick.getAttribute('aria-checked')).toBe('true');
 
-    /* Leaf untick — straight through, no dialog. */
     fireEvent.click(screen.getByLabelText('310-0010 for HOUZS'));
     await waitFor(() => expect(tickAsync).toHaveBeenCalledWith({ companyId: 1, code: '310-0010', active: false }));
     expect(confirmFn).not.toHaveBeenCalled();
 
-    /* Delete — straight through too; the server's guard is the net. */
     fireEvent.click(screen.getByLabelText('Delete 310-0010'));
     await waitFor(() => expect(deleteAsync).toHaveBeenCalledWith('310-0010'));
     expect(confirmFn).not.toHaveBeenCalled();
 
-    /* A HEADER untick sweeps children — it asks even in quick mode. */
     fireEvent.click(screen.getByLabelText('310-0000 for HOUZS'));
     await waitFor(() => expect(confirmFn).toHaveBeenCalled());
     expect(JSON.stringify(confirmFn.mock.calls[0]![0])).toMatch(/child/);
@@ -285,7 +267,6 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     const dialog = screen.getByRole('dialog');
     expect(dialog.getAttribute('aria-label')).toBe('Edit 310-0010');
     expect(within(dialog).getByText('A new code moves every journal line, voucher, settlement link and role binding with it.')).toBeTruthy();
-    /* A stray click outside must not discard a half-typed rename. */
     fireEvent.click(dialog.parentElement as HTMLElement);
     expect(screen.getByRole('dialog')).toBeTruthy();
     fireEvent.click(within(dialog).getByText('Cancel'));
@@ -384,9 +365,8 @@ describe('fold / edit / delete — the owner points 1, 2 and 4', () => {
     fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'AHMAD BIN ALI' } });
     fireEvent.change(screen.getByLabelText('New account parent'), { target: { value: '310-0000' } });
     expect((screen.getByLabelText('New account section') as HTMLSelectElement).value).toBe('CURRENT ASSETS');
-    fireEvent.click(screen.getByLabelText('new account for 2990')); // untick 2990 → HOUZS only
+    fireEvent.click(screen.getByLabelText('new account for 2990'));
     fireEvent.click(within(dialog).getByText('Add account'));
-    /* The payload names the SECTION; the server derives the type from it. */
     await waitFor(() => expect(createAsync).toHaveBeenCalledWith({
       code: '305-0010', name: 'AHMAD BIN ALI', section: 'CURRENT ASSETS',
       parentCode: '310-0000', accMoney: false, companyIds: [1],
@@ -459,7 +439,6 @@ describe('the upload preview', () => {
     await waitFor(() => expect(screen.getByText(/chart\.xlsx · 4 accounts read/)).toBeTruthy());
     expect(screen.getByText(/1 is new and 3 are already in the chart/)).toBeTruthy();
     expect(screen.getByText(/stay HOUZS-only \(1\)/)).toBeTruthy();
-    /* The new rows are listed with their section and where they go. */
     expect(screen.getByText('NEW THING')).toBeTruthy();
 
     fireEvent.click(screen.getByText('Import'));

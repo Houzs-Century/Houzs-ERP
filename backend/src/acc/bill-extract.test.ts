@@ -1,14 +1,3 @@
-/* The bill reader's pure halves — coercion, JSON tolerance, the supplier
- * fuzzy match — and the one vision call with fetch injected. What is pinned:
- *
- *   • an unreadable field arrives null and STAYS null — never invented,
- *     never computed (the scan-so discipline, kept);
- *   • RM figures become integer sen exactly once, here;
- *   • supplier matching is code, not prompt: SDN BHD tails and punctuation
- *     do not defeat it, and below its two confidence rungs it returns
- *     NOTHING — a wrong supplier pre-selected is worse than none;
- *   • API trouble comes back as a sentence, not a throw.
- */
 import { describe, expect, it } from 'vitest';
 import {
   coerceBillJson, parseModelJson, extractOneBill, matchSupplier, normalizeVendor,
@@ -37,7 +26,7 @@ describe('coerceBillJson', () => {
   it('garbage in, nulls out — a finance screen never crashes on a bad photo', () => {
     const out = coerceBillJson({ documentKind: 'poem', invoiceDate: '01/09/2026', totalRm: 'a lot', lines: 'none' });
     expect(out.documentKind).toBe('unknown');
-    expect(out.invoiceDate).toBeNull();   // non-ISO refused, not re-parsed
+    expect(out.invoiceDate).toBeNull();
     expect(out.totalSen).toBeNull();
     expect(out.lines).toEqual([]);
   });
@@ -87,7 +76,6 @@ describe('coerceBillJson', () => {
 
   it('an account number the model sent as a JSON number is kept only while it is exact', () => {
     expect(coerceBillJson({ payTo: { accountNo: 12345678901 } }).payTo).toEqual({ bankName: null, accountNo: '12345678901', accountName: null });
-    /* 17 digits cannot survive a JSON number — no account beats a wrong one. */
     expect(coerceBillJson({ payTo: { bankName: 'Maybank', accountNo: 51234567890123456 } }).payTo).toEqual({ bankName: 'Maybank', accountNo: null, accountName: null });
   });
 
@@ -182,7 +170,6 @@ describe('matchSupplier', () => {
     expect(normalizeVendor('HOOKKA INDUSTRIES SDN BHD')).toBe('HOOKKA INDUSTRIES');
     expect(normalizeVendor('HOOKKA INDUSTRIES SDN. BHD.')).toBe('HOOKKA INDUSTRIES');
     expect(normalizeVendor('Hookka Industries S/B')).toBe('HOOKKA INDUSTRIES');
-    // A stored key (acc_vendor_memory.vendor_key): BERHAD and LTD stay as they always did.
     expect(normalizeVendor('Tenaga Nasional Berhad')).toBe('TENAGA NASIONAL BERHAD');
     expect(matchSupplier('HOOKKA INDUSTRIES SDN BHD', SUPPLIERS)).toMatchObject({ supplier: { id: 's1' }, confidence: 'exact' });
   });

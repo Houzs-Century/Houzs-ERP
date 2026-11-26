@@ -1,18 +1,3 @@
-// ---------------------------------------------------------------------------
-// mcp-brief.ts — the AI Connector's daily_brief ("What do I need to look at
-// today?"), services/mcp-round3.ts. Pure: it shapes the replies of at most six
-// ERP reads made in parallel AS THE PERSON (routes/mcp.ts readValue), so every
-// item is something the ERP already shows them:
-//   1. GET /api/badge-counts?sources=…   approvals waiting + Mail Center waiting
-//      + unread meetings / IT replies (the sidebar's own red counts; counts only,
-//      the connector never reads mail itself)
-//   2. GET /api/scm/mfg-sales-orders/mine  their sales orders, by customer delivery date
-//   3. GET /api/scm/mfg-purchase-orders?status=outstanding  open POs by supplier date
-//      (purchasing; anyone else is told they have no access)
-//   4. GET /api/assr/my-cases              their service cases, by deadline
-//   5. GET /api/attendance/leave           leave requests waiting for their approval
-//   6. GET /api/announcements/banner       notices they have not acknowledged
-// ---------------------------------------------------------------------------
 
 import { SO_TERMINAL_STATES } from "../scm/shared/so-terminal-states";
 
@@ -65,7 +50,6 @@ export function briefApprovals(body: unknown): { title: string; count: number }[
     .filter((x) => x.count > 0);
 }
 
-/** Not waiting to go out: the ERP's own terminal set (scm/shared/so-terminal-states.ts). */
 const SO_DONE = new Set<string>(SO_TERMINAL_STATES);
 
 /** Their sales orders whose customer delivery date is past or within DUE_SOON_DAYS and not yet delivered. */

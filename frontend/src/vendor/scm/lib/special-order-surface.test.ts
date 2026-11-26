@@ -1,15 +1,3 @@
-/*
- * The owner asked where a custom pillow's COLOUR and an SP mattress's SIZE go
- * (2026-09-10). Before this module the answer was "nowhere": the Sales Order
- * only rendered a Special Order panel when the catalogue happened to define a
- * tickable add-on for that category, and it defines none for mattress and none
- * that reach accessories.
- *
- * These tests pin BOTH halves of the answer — the panel opens, and the checkbox
- * picker stays shut on the categories whose stock pools by code, because a
- * ticked add-on joins the variant key (`special=`) and would split the bucket
- * while the free text cannot.
- */
 import { describe, it, expect } from 'vitest';
 import { specialOrderSurface } from './special-order-surface';
 

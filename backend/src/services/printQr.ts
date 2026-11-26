@@ -1,18 +1,4 @@
-/**
- * QR helpers for the ASSR print routes.
- *
- * - `qrSvg(text)` renders a black-on-white SVG QR code as a string,
- *   ready to drop into HTML. Inline SVG (not a data URI / image src)
- *   prints crisp at any size without an external request and survives
- *   PDF rasterisation cleanly.
- * - `getOrIssueCustomerPortalToken` reuses the existing idempotent
- *   `issueStaffToken` (mig 064 era — `case_track_tokens` with
- *   30-day TTL) so the QR on Customer Print encodes the same URL
- *   the "Copy portal link" button produces. No duplicate tokens.
- */
 // @ts-ignore — qrcode-generator ships its own .d.ts but the typings
-// don't always resolve cleanly under Workers' resolver. Library is
-// pure JS and stable.
 import qrcode from "qrcode-generator";
 import type { Env } from "../types";
 import { issueStaffToken } from "./caseTracking";
@@ -35,9 +21,6 @@ export function qrSvg(text: string, cellSizePx = 4): string {
   const count = qr.getModuleCount();
   const size = count * cellSizePx;
 
-  // Build the SVG by hand instead of using the library's
-  // createSvgTag — gives us control over inline styling, viewBox,
-  // and removes the library's outer whitespace.
   const cells: string[] = [];
   for (let r = 0; r < count; r++) {
     for (let c = 0; c < count; c++) {

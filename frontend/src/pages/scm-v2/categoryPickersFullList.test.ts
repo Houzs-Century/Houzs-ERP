@@ -12,21 +12,15 @@ const SRC = join(__dirname, '..', '..');
 const BACKEND_SRC = join(__dirname, '..', '..', '..', '..', 'backend', 'src');
 const CODE = /['"](SOFA|BEDFRAME|MATTRESS|ACCESSORY|SERVICE)['"]/gi;
 
-/* Lists that are NOT the product-category list, each with why. */
 const ALLOWED: Record<string, string> = {
-  // Supplier type pool fallback (maintained in Products Maintenance), not a product category.
   'vendor/scm/lib/supplier-categories.ts#DEFAULT_SUPPLIER_CATEGORIES': 'supplier type',
-  // SO list filter: the server's normCategory buckets, not product categories.
   'vendor/shared/so-list-filter-model.ts#SO_CATEGORY_CHOICES': 'SO list buckets',
-  // Supplier type (its own column, includes MIXED), not a product category.
   'pages/scm-v2/SupplierDetail.tsx#SUPPLIER_CATEGORIES': 'supplier type',
-  // SO branding buckets (fold every other category into OTHERS on purpose).
   'vendor/shared/so-branding-label.ts#normBuckets': 'branding buckets',
   'backend/scm/shared/so-branding-label.ts#normBuckets': 'branding buckets',
   // MRP's four fixed tabs + Others (owner ruling 2026-09-10, mrp-views.ts).
   'pages/scm-v2/mrp-views.ts#BASE': 'MRP tabs',
   'backend/scm/shared/so-list-filter-model.ts#SO_CATEGORY_CHOICES': 'SO list buckets',
-  // Report buckets the owner set, each folding the rest into Others.
   'backend/acc/performance-pnl.ts#PERFORMANCE_GROUPS': 'P&L groups',
   'backend/scm/lib/procurement-overview.ts#PROCUREMENT_CATEGORIES': 'procurement sheet groups',
 };
@@ -45,7 +39,6 @@ function handTypedLists(): string[] {
   for (const file of [...walk(SRC), ...walk(BACKEND_SRC)]) {
     const src = readFileSync(file, 'utf8');
     const rel = (file.startsWith(BACKEND_SRC) ? `backend/${relative(BACKEND_SRC, file)}` : relative(SRC, file)).replace(/\\/g, '/');
-    // An array literal with no nested array, up to ~600 chars, named by what precedes it.
     for (const m of src.matchAll(/(\w+)\s*(?::[^=\n]*)?=?\s*:?\s*\[([^[\]]{0,600})\]/g)) {
       const codes = new Set([...m[2].matchAll(CODE)].map((x) => x[1].toUpperCase()));
       if (codes.size < 4) continue;
@@ -59,5 +52,5 @@ function handTypedLists(): string[] {
 describe('product category lists', () => {
   it('are all read from the registry, never typed by hand', () => {
     expect(handTypedLists()).toEqual([]);
-  }, 60_000); // reads every frontend and backend source file
+  }, 60_000);
 });

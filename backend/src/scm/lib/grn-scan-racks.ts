@@ -1,10 +1,3 @@
-// ---------------------------------------------------------------------------
-// grn-scan-racks — the rack the warehouse handwrote beside a delivery-order row
-// ("R11-2"), put on the scanned DRAFT's line when it names a rack of that GRN's
-// warehouse ("Rack R11.2"). A draft's rack is placement only (grn-line-rack.ts
-// row_only), so this moves no stock; posting places the goods. Unreadable or
-// unknown racks are left blank for the warehouse to pick. Sim, 2026-10-20.
-// ---------------------------------------------------------------------------
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { scopeToCompanyIdOrOpen } from './companyScope';
@@ -14,8 +7,6 @@ import { rackSplitError, type RackSplit } from '../shared/rack-split';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped service client every scm route uses (grn-scan-load.ts)
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
-// After the L / R only digits follow, so a handwritten digit read as a
-// look-alike letter is that digit: 2990 DO-2610-077's "L16.2" came back "L1b-2".
 const DIGIT_LOOKALIKE: Record<string, string> = { b: '6', G: '6', S: '5', s: '5', O: '0', o: '0', I: '1', l: '1', '|': '1', Z: '2', z: '2' };
 
 /** "R7-2", "R:11-2", "L-19-2", "L1b-2", "R6·2", "Rack L19.2" -> "R7.2" style; anything else null. */
@@ -77,7 +68,7 @@ export async function applyScanRacks(
     const wh = whOf.get(it.grn_id);
     if (written.length === 0 || !wh) continue;
     out.written += 1;
-    const shares = new Map<string, number>(); // rack id -> qty
+    const shares = new Map<string, number>();
     let unknown = false;
     for (const [w, q] of written) {
       const rack = resolveRack(w, rackList.filter((r) => r.warehouse_id === wh));
@@ -91,7 +82,6 @@ export async function applyScanRacks(
       out.filled += 1;
       continue;
     }
-    // Never more on the racks than the line received.
     let left = Number(it.qty_accepted ?? 0);
     const split: RackSplit[] = [];
     for (const [rackId, q] of shares) { const take = Math.min(q, left); if (take > 0) split.push({ rackId, qty: take }); left -= take; }

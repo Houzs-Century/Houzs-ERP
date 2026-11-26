@@ -1,22 +1,3 @@
-// ----------------------------------------------------------------------------
-// AR aging snapshot — the pure core shared by GET /outstanding/summary's live
-// path and its ?snapshot=1 fast path (backed by the scm.mv_ar_aging
-// materialized view, migration 0151).
-//
-// WHY A SNAPSHOT AT ALL. The summary loops seven Outstanding modules and, per
-// module, SUMs/counts every outstanding doc (scm-scaling-audit.md flagged it as
-// "the worst time-bomb": is_outstanding is a computed CASE column, not
-// indexable, so each module is a full scan). Correct today; O(rows) as debtor
-// data grows. The materialized view pre-computes exactly that rollup, one row
-// per (company_id, module), refreshed nightly.
-//
-// WHY THIS FILE IS DEPENDENCY-FREE. The MV SQL itself can only be exercised
-// against Postgres, and the vitest harness runs on an isolated SQLite D1 that
-// never applies migrations-pg. So the SQL-vs-live byte-equality is verified by a
-// staging before/after diff (perf-optimization-plan.md rule 2), and the parts
-// that CAN be unit-tested — the reduce + the always-seven-keys shape — live here
-// where a test can reach them without a database.
-// ----------------------------------------------------------------------------
 
 /** The seven Outstanding modules, in display order. The summary always reports
  *  all seven keys — a module with no outstanding rows reports 0, never absent. */

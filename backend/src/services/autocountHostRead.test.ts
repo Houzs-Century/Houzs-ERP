@@ -10,11 +10,6 @@ const res = (status: number, body: string, type = 'application/json') =>
 
 describe('callAcRead — the read-only host routes', () => {
   test('a read route is NOT an AcOp, and the two vocabularies stay disjoint', () => {
-    /* THE POINT OF THE SEPARATE CALLER. Every AcOp names something an outbox
-       ROW can be — a document with a status, attempts and a retry policy. A log
-       read is none of those. If a name ever appears in both maps, the queue's
-       switches on `op` have quietly acquired a member that is not a document,
-       which is the one-name-two-meanings defect this file exists to avoid. */
     const write = new Set(Object.keys(AC_ROUTE));
     for (const name of Object.keys(AC_READ_ROUTE)) {
       expect(write.has(name), `${name} is in BOTH AC_ROUTE and AC_READ_ROUTE`).toBe(false);
@@ -69,29 +64,8 @@ describe('callAcRead — the read-only host routes', () => {
   });
 });
 
-/* ---------------------------------------------------------------------------
-   REQUEUE_DOC_TYPES — the ERP's ONE list of AutoCount document types, pinned
-   against the host's own.
-
-   Named for the sweep because that is where it was first needed, but the
-   question it answers is "which six documents does this ERP sync with
-   AutoCount", and `/book-doc` asks the same one. The first draft of that route
-   declared a `BOOK_DOC_TYPES` of its own; `audit:duplicated-decisions` refused
-   it as a fifth home for one decision, correctly. This test is what makes the
-   shared list safe to share: it proves the single answer still matches the
-   book's.
-
-   `/doc-read` turns this value into a TABLE NAME (`SO` -> `SO` + `SODTL`), so a
-   list that drifts from the host's is not a cosmetic mismatch: it is either a
-   400 for a document type the book can read, or a request the host has to
-   refuse. The host guards itself; this pins that the ERP's copy still says the
-   same thing, which is what makes the route's own 400 a real answer rather than
-   a guess forwarded to a 500.
-   ------------------------------------------------------------------------ */
 describe('the document types the account book will read', () => {
   test('the ERP list matches AcSyncService.DocTypes exactly, in order', () => {
-    /* READ OFF THE HOST'S SOURCE, not retyped. `?raw` rather than node:fs —
-       backend/tsconfig.json types Workers only. */
     const m = acSyncSrc.match(/static readonly string\[\] DocTypes = \{([^}]*)\}/);
     expect(m, 'AcSyncService.DocTypes not found — did the host rename it?').toBeTruthy();
     const theirs = (m as RegExpMatchArray)[1]
@@ -100,10 +74,6 @@ describe('the document types the account book will read', () => {
   });
 
   test('every type is a table the host can name', () => {
-    /* No lower case, no spaces, no punctuation: the host concatenates this into
-       `[" + docType + "DTL]`, so anything else is a SQL identifier it never
-       meant to build. The host also upper-cases the caller's value, and the
-       route does the same, so the stored list must already be upper. */
     for (const t of REQUEUE_DOC_TYPES) expect(t).toMatch(/^[A-Z]{2}$/);
   });
 });

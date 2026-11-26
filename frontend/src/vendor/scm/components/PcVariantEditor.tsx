@@ -43,17 +43,8 @@ export const PcVariantEditor = ({
      variant dropdowns offer ONLY what the Model permits (owner 2026-07-15,
      parity with SoLineCard). Optional: absent/unknown ⇒ no restriction. */
   itemCode?: string;
-  /* Hard lock — the whole document is locked / read-only. Freezes both the
-     variant dropdowns and the Special Orders block. */
   disabled?: boolean;
-  /* This line inherits from a parent doc (e.g. a receive / return sourced from
-     a Purchase Consignment Order). The dropdowns stay frozen and the Special
-     Orders block renders read-only with an explicit Override, so the parent's
-     special order is carried through, not silently re-entered. A manual line
-     passes false and is directly editable. */
   sourceLinked?: boolean;
-  /* Parent-doc name for the source-linked banner, e.g. "Purchase Consignment
-     Order". */
   sourceLabel?: string;
 }) => {
   const allowOpts = useModelAllowedOptionsByCode(itemCode || undefined).data ?? null;
@@ -73,16 +64,10 @@ export const PcVariantEditor = ({
       .sort((a, b) => a.sortOrder - b.sortOrder || (a.code ?? '').localeCompare(b.code ?? ''));
   }, [specialAddonsQ.data, category]);
 
-  // SpecialOrders owns the specials / specialChoices / specialLabels / extra*
-  // derive logic and emits ONE patch per action; fan it out onto the line's
-  // variant bag through the existing per-key setter (each parent's setVariant is
-  // a functional setState updater, so sequential writes accumulate safely).
   const applySpecialsPatch = (patch: Record<string, unknown>) => {
     for (const [k, v] of Object.entries(patch)) onChange(k, v);
   };
 
-  // Sourced/locked lines freeze the variant dropdowns (the Special Orders block
-  // manages its own read-only + Override below).
   const locked = disabled || sourceLinked;
 
   const specialsBlock = (
@@ -90,8 +75,6 @@ export const PcVariantEditor = ({
       options={specialsPool}
       variants={variants}
       onPatch={applySpecialsPatch}
-      /* Consignment is a procurement / cost document (like PO / GRN) — the
-         selling surcharge is not shown or set here. */
       showPrices={false}
       disabled={disabled}
       sourceLinked={sourceLinked}

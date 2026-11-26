@@ -38,9 +38,6 @@ export function LazySlot({
   fallback,
   children,
 }: {
-  /** Anything that changes when the operator moves away from this slot — a
-   *  pathname, a tab name, a document id, the gate's current screen. A crash
-   *  clears when it changes, so this is what makes the slot escapable. */
   resetKey: string;
   fallback: ReactNode;
   children: ReactNode;

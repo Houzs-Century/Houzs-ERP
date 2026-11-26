@@ -29,7 +29,6 @@ export type SiColumnRow = {
   lines?: SiListLine[];
 };
 
-/* The list's columns that hold SEN: exported as ringgit. */
 const SEN_COLUMN_KEYS = new Set([
   "outstanding", "amount", "so_deposit", "paid",
   "mattress_sofa_sen", "bedframe_sen", "accessories_sen", "others_sen", "service_sen",
@@ -74,12 +73,10 @@ export function siGridColumns<T extends SiColumnRow>(erpColumns: Column<T>[]): C
       key: "currency", label: SI_LABELS.currCode, width: "90px", disableSort: true,
       getValue: (r) => r.currency ?? "", render: (r) => <span className="text-[12.5px] text-ink-secondary">{r.currency || "—"}</span>,
     },
-    /* A sales invoice here has no exchange rate on its header: ringgit at 1. */
     exchange_rate: {
       key: "exchange_rate", label: SI_LABELS.currRate, width: "90px", disableSort: true, exportFormat: "number",
       getValue: () => 1, render: () => <span className="text-[12.5px] text-ink-secondary">1</span>,
     },
-    /* This ERP keeps no tax-inclusive flag on the document: blank, never a guess. */
     inclusive: blankCol("inclusive", SI_LABELS.inclusive),
     subtotal: {
       key: "subtotal", label: SI_LABELS.subTotalEx, width: "128px", align: "right", disableSort: true,

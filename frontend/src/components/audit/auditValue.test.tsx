@@ -1,6 +1,3 @@
-/* Gap review P18: the History drawer printed an inline picture's base64 and long
-   texts in full. A picture now reads "[image]"; text past AUDIT_VALUE_MAX is cut
-   with "…" and the full text stays in the tooltip. */
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { fmtSen } from '@2990s/shared';
@@ -83,7 +80,6 @@ describe('a record id reads as the record (HC-GRN-2611-149, owner 2026-11-17)', 
     expect(screen.getByText('400-N001 · NICE FUTURE MARKETING SDN. BHD.')).toBeTruthy();
     expect(screen.getByText('Supplier')).toBeTruthy();
     expect(document.body.textContent).not.toContain(SUP);
-    // No name came back for this one: the value is still shown rather than hidden.
     expect(document.body.textContent).toContain('ffffffff-0000-4000-8000-000000000000');
   });
 });

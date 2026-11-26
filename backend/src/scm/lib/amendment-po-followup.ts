@@ -37,7 +37,6 @@ type Sb = any;
 
 export type PoFollowUpResult = {
   followUps: Array<{ poId: string; poNumber: string; amendmentId: string; amendmentNo: string }>;
-  /** Plain-language notes for the approver's toast + the SO audit trail. */
   warnings: string[];
 };
 
@@ -50,10 +49,6 @@ export type SoAmendLine = {
   new_unit_price_sen: number | null;
 };
 
-/* A line change the bound PO cares about. QTY / ADD / REMOVE always reshape the
-   PO; a SPEC edit does when it changes WHAT the item is (code or variants) —
-   a sell-price-only SPEC edit changes what the CUSTOMER pays, which the PO
-   (supplier cost) does not carry. */
 export const poRelevant = (l: SoAmendLine): boolean => {
   const t = String(l.change_type ?? '').toUpperCase();
   if (t === 'ADD' || t === 'REMOVE' || t === 'QTY') return true;
@@ -96,9 +91,9 @@ export const serviceOnlyChange = (
   const after = l.new_item_code != null
     ? isServiceLine({ itemCode: l.new_item_code, category: categoryOf(l.new_item_code) })
     : null;
-  if (before == null && after == null) return false;   // no identity to judge — escalate
-  if (before == null) return after === true;           // ADD: the new code decides
-  if (after == null) return before;                    // QTY / REMOVE / variant-only SPEC
+  if (before == null && after == null) return false;
+  if (before == null) return after === true;
+  if (after == null) return before;
   return before && after;
 };
 
@@ -110,13 +105,11 @@ export async function raisePoFollowUps(
     soAmendmentNo: string;
     soDocNo: string;
     reason: string | null;
-    /** scm.staff uuid of the approver — the follow-up is THEIR to-do. */
     requesterStaffId: string;
   },
 ): Promise<PoFollowUpResult> {
   const none: PoFollowUpResult = { followUps: [], warnings: [] };
 
-  // (1) The amendment's own line changes — no PO-relevant change, no follow-up.
   const { data: lineRows, error: lineErr } = await sb.from('so_amendment_lines')
     .select('sales_order_item_id, change_type, new_item_code, new_variants, new_qty, new_unit_price_sen')
     .eq('amendment_id', args.soAmendmentId);
@@ -124,8 +117,6 @@ export async function raisePoFollowUps(
   const changedLines = ((lineRows ?? []) as SoAmendLine[]).filter(poRelevant);
   if (changedLines.length === 0) return none;
 
-  // (2) The pre-apply snapshot (written by applySoAmendment moments ago in this
-  //     same transaction) — previous line ids + the frozen SO→PO links.
   const { data: snapRow, error: snapErr } = await sb.from('so_revisions')
     .select('snapshot')
     .eq('amendment_id', args.soAmendmentId)
@@ -138,16 +129,6 @@ export async function raisePoFollowUps(
     .map((r) => String(r.id ?? '')).filter((x) => x.length > 0));
   const poLinks = (snap?.poLinks ?? {}) as Record<string, string[]>;
 
-  // (3) Current (post-apply) SO line ids → live PO links for surviving lines.
-  /* CANCELLED IS REMOVED. `removed = prevLineIds \ currentIdSet` is what
-     orphans the PO line a since-deleted SO line was bound to, and it is the
-     only warning the supplier side ever gets. A retained cancelled row would
-     stay in currentIdSet forever, so the customer's cancellation would never
-     reach the supplier and the factory would keep building the item. The hard
-     delete gives this for free today; the filter is what keeps it true once a
-     removal becomes a soft cancel. Filtered in JS rather than SQL so a NULL —
-     which the column default forbids but a partial row shape does not — reads
-     as LIVE, never as removed. */
   const { data: soItemRows, error: soItemErr } = await sb.from('mfg_sales_order_items')
     .select('id, cancelled, item_code, item_group').eq('doc_no', args.soDocNo);
   if (soItemErr) throw new Error(`raisePoFollowUps: SO items load failed: ${soItemErr.message}`);
@@ -155,9 +136,6 @@ export async function raisePoFollowUps(
   const soItemIds = soItemRowsTyped.filter((r) => r.cancelled !== true).map((r) => r.id);
   const currentIdSet = new Set(soItemIds);
 
-  /* (3b) Drop the SERVICE-only changes. A removed line is gone from
-     mfg_sales_order_items, so its identity comes from the snapshot frozen a
-     moment ago. Nothing PO-relevant left = nothing for purchasing to sign. */
   const identityById = new Map<string, SoLineIdentity>();
   for (const r of ((snap?.lines ?? []) as Array<{ id?: string } & SoLineIdentity>)) {
     if (r.id) identityById.set(String(r.id), { item_code: r.item_code, item_group: r.item_group });
@@ -173,10 +151,6 @@ export async function raisePoFollowUps(
   type PoItem = {
     id: string; purchase_order_id: string | null; so_item_id: string | null;
     item_code: string | null; material_name: string | null;
-    // The full "before" the reviewer's preview diff renders against. Without the
-    // spec fields (qty / variants / item_group / description2) the PO-amendment
-    // card could not show what a SPEC change actually moved, and an unrecorded
-    // old qty rendered as a phantom "Qty - -> N" (docs/bugs).
     qty: number | null; unit_price_sen: number | null; delivery_date: string | null;
     variants: unknown; item_group: string | null; description2: string | null;
   };
@@ -192,7 +166,6 @@ export async function raisePoFollowUps(
     livePoItems = (poItemRows ?? []) as PoItem[];
   }
 
-  // (4) Orphaned PO lines — removed SO lines' frozen links, read fresh.
   const removedSoItemIds = [...prevLineIds].filter((id) => !currentIdSet.has(id));
   const orphanPoItemIds = [...new Set(removedSoItemIds.flatMap((id) => poLinks[id] ?? []))];
   let orphanItems: PoItem[] = [];
@@ -257,9 +230,6 @@ export async function raisePoFollowUps(
   const warnings: string[] = [];
   const followUps: PoFollowUpResult['followUps'] = [];
 
-  /* (5b) Each changed line with no live PO home, resolved to its MAIN supplier the
-     way reviseBoundPo resolves an ADD at confirm — through the shared reader so a
-     mattress code's inch-mark cannot silently drop the row (pgrest-in-list). */
   const isAdd = (l: SoAmendLine) => String(l.change_type).toUpperCase() === 'ADD';
   const isHomeless = (l: SoAmendLine) =>
     isAdd(l) || !(l.sales_order_item_id && linkedSoItemIds.has(l.sales_order_item_id));
@@ -275,7 +245,6 @@ export async function raisePoFollowUps(
     const { data: bRows, error: bErr } = await readMfgProductBindings<{ item_code: string; supplier_id: string }>(
       sb, { codes: homelessCodes, companyId: activeCompanyId(c), select: 'item_code, supplier_id, is_main_supplier' });
     if (bErr) throw new Error(`raisePoFollowUps: added-line supplier binding load failed: ${bErr.message}`);
-    // is_main_supplier DESC (the reader's order) → first row seen per code is main.
     for (const b of bRows) {
       if (!supplierByCode.has(b.item_code)) supplierByCode.set(b.item_code, b.supplier_id);
       const arr = bindingsByCode.get(b.item_code) ?? [];
@@ -284,11 +253,6 @@ export async function raisePoFollowUps(
     }
   }
 
-  /* (5c) An ADD escalates only the bound PO(s) whose supplier can make it — its
-     main supplier, else an alternate bound supplier that already has a PO here
-     (pickAddLineBinding, the same pick reviseBoundPo makes at confirm). An ADD no
-     bound supplier serves warns to raise a fresh PO rather than revise a PO the
-     supplier does not serve. */
   const boundSupplierIds = new Set(boundPos.map((p) => p.supplier_id).filter((x): x is string => Boolean(x)));
   const addSupplierByCode = new Map<string, string>();
   for (const l of soLines.filter(isAdd)) {
@@ -305,9 +269,6 @@ export async function raisePoFollowUps(
   const addSupplierIds = new Set(addSupplierByCode.values());
   const supplierMatchedPoIds = new Set(boundPos
     .filter((p) => p.supplier_id && addSupplierIds.has(p.supplier_id)).map((p) => p.id));
-  /* A changed EXISTING line with no PO home and a real supplier is new goods the
-     confirm cannot place — warn so purchasing raises a PO; a homeless line with no
-     binding is a stock/non-purchased line, left silent. */
   for (const hl of homelessLines.filter((l) => !isAdd(l))) {
     const code = codeOf(hl);
     if (code && supplierByCode.get(code)) {
@@ -318,7 +279,6 @@ export async function raisePoFollowUps(
   const candidateIdSet = new Set<string>([...touchedPoIds, ...supplierMatchedPoIds]);
   const livePos = boundPos.filter((p) => candidateIdSet.has(p.id));
   if (livePos.length === 0) {
-    // Nothing survives to escalate — every relevant lane was warned above.
     return { followUps: [], warnings };
   }
 
@@ -330,11 +290,6 @@ export async function raisePoFollowUps(
     poItemsByPo.set(pi.purchase_order_id, arr);
   }
 
-  /* The PO line's CURRENT state, the "before" the reviewer's diff renders
-     against. Carries the spec fields (variants / item_group / description2) so
-     the card can show what a SPEC change moved -- the SO-amendment card reads the
-     same shape (so-amendment-line-diff.ts: variants + item_group + description2).
-     preview:true marks these rows advisory: the confirm re-derives from the SO. */
   const beforeSnapshot = (item: PoItem) => ({
     preview: true as const,
     source_so_amendment_no: args.soAmendmentNo,
@@ -349,9 +304,6 @@ export async function raisePoFollowUps(
   });
 
   for (const po of livePos) {
-    // (6) One OPEN request per PO — the module's own rule. An open follow-up
-    //     already covers this PO (its confirm re-reads the SO's CURRENT truth);
-    //     an open MANUAL request must not be silently displaced.
     const { data: priorRows, error: priorErr } = await sb.from('po_amendments')
       .select('id, status, source_so_amendment_id, source_so_amendment_no')
       .eq('po_id', po.id);
@@ -381,7 +333,6 @@ export async function raisePoFollowUps(
       source_so_amendment_no: args.soAmendmentNo,
     }).select('id').single();
     if (insErr) {
-      // The partial unique index raced us — treat exactly like the open-row case.
       if (/uq_po_amendment_open|duplicate key/i.test(insErr.message)) {
         warnings.push(`${po.po_number} already has an open amendment — it will carry this change when confirmed.`);
         continue;
@@ -390,18 +341,12 @@ export async function raisePoFollowUps(
     }
     const amendmentId = (created as { id: string }).id;
 
-    /* (7) PREVIEW lines — what the reviewer sees. The confirm re-derives from
-       the Sales Order, so these rows are labelled preview and carry the target
-       line's identity + the requested change, never a computed cost. */
     const itemsHere = poItemsByPo.get(po.id) ?? [];
     const bySoItemId = new Map(itemsHere.filter((i) => i.so_item_id).map((i) => [i.so_item_id as string, i]));
     const previewRows: Array<Record<string, unknown>> = [];
     for (const l of soLines) {
       const t = String(l.change_type).toUpperCase();
       if (t === 'ADD') {
-        // Attach the ADD preview only on a PO whose supplier can make it — the
-        // same supplier pick reviseBoundPo applies at confirm. A line no bound
-        // supplier serves was warned above and escalates nothing.
         const addSupplier = addSupplierByCode.get(codeOf(l));
         if (addSupplier && po.supplier_id === addSupplier) {
           previewRows.push({
@@ -430,7 +375,6 @@ export async function raisePoFollowUps(
         }
         continue;
       }
-      // QTY / SPEC on a surviving line — only if its bound line lives on THIS PO.
       const item = l.sales_order_item_id ? bySoItemId.get(l.sales_order_item_id) : undefined;
       if (!item) continue;
       previewRows.push({
@@ -439,9 +383,6 @@ export async function raisePoFollowUps(
         change_type: t === 'QTY' ? 'QTY' : 'SPEC',
         new_item_code: l.new_item_code,
         new_variants: l.new_variants ?? null,
-        // Only a QTY change moves the qty. Carrying the unchanged qty on a SPEC
-        // row made the preview render a phantom "Qty - -> N" and misroute the
-        // change as Quantity (docs/bugs).
         new_qty: t === 'QTY' ? l.new_qty : null,
         old_snapshot: beforeSnapshot(item),
       });

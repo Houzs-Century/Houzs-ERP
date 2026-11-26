@@ -48,10 +48,8 @@ export type LedgerLine = {
   lineId: string;
   date: string;
   jeNo: string;
-  /** The entry's id — what its card opens by; null when the read missed it. */
   jeId: string | null;
   journal: JournalClass;
-  /** The other side of the entry: the one other account, or the largest one and how many more. */
   counter: { code: string; name: string; more: number } | null;
   doc: string | null;
   doc2: string | null;
@@ -59,9 +57,7 @@ export type LedgerLine = {
   who: string | null;
   debitSen: number;
   creditSen: number;
-  /** Running balance on the account's natural side, after this line. */
   balanceSen: number;
-  /** Which side of a reversal pair the line is on — '' for a line the books count. */
   reversal: 'reversed' | 'contra' | '';
 };
 
@@ -80,7 +76,6 @@ export type LedgerReport = {
   from: string;
   to: string;
   showReversed: boolean;
-  /** The accounts asked for — every active account when none was named. */
   scope: { codes: string[]; fromCode: string | null; toCode: string | null; all: boolean };
   blocks: LedgerBlock[];
   totals: { debitSen: number; creditSen: number };
@@ -124,7 +119,6 @@ export function counterOf(line: GlLine, entryLines: GlLine[]): LedgerLine['count
 const byDateThenEntry = (a: GlLine, b: GlLine): number =>
   a.entry_date.localeCompare(b.entry_date) || a.je_no.localeCompare(b.je_no) || Number(a.line_no) - Number(b.line_no);
 
-/* ── GET /accounting/gl/ledger?from&to&accounts=a,b&fromAccount&toAccount&showReversed=1 ── */
 export const ledgerReport = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -140,7 +134,6 @@ export const ledgerReport = async (c: any): Promise<Response> => {
   const showReversed = ['1', 'true'].includes(String(c.req.query('showReversed') ?? ''));
   const sb = c.get('supabase');
 
-  /* The chart: which accounts the ledger prints, in code order. */
   const { data: chartRaw, error: chartErr } = await sb.from('accounts')
     .select('account_code, account_name, account_type, is_active')
     .eq('company_id', co.companyId);
@@ -157,12 +150,8 @@ export const ledgerReport = async (c: any): Promise<Response> => {
   const all = picked.length === 0 && !fromCode && !toCode;
   const codes = scoped.map((a) => a.account_code);
   const codeSet = new Set(codes);
-  /* A range that names most of the chart reads the whole ledger once rather
-     than send hundreds of codes down the URL. */
   const readAll = all || codes.length > 200;
 
-  /* Every posted line on those accounts up to the period's end — the ones
-     before `from` are the balance brought forward. */
   const ledger = await paginateAll<GlLine>((f, t) => {
     let q = sb.from('v_gl_entries').select(SELECT).eq('company_id', co.companyId).lte('entry_date', to);
     if (!readAll) q = q.in('account_code', codes.length > 0 ? codes : ['—none—']);
@@ -173,8 +162,6 @@ export const ledgerReport = async (c: any): Promise<Response> => {
   const period = lines.filter((l) => l.entry_date >= from);
   const counted = (l: GlLine): boolean => !isReversalPair(l);
 
-  /* The other side of each entry of the period: every line of those entries.
-     When the whole chart is in scope the read above already holds them. */
   const jeNoSet = new Set(period.map((l) => l.je_no));
   const jeNos = [...jeNoSet];
   const entryLines = new Map<string, GlLine[]>();
@@ -189,8 +176,6 @@ export const ledgerReport = async (c: any): Promise<Response> => {
     }
   }
 
-  /* What each entry is called: the narration, the document handles, the who —
-     and its id, so a line opens the entry's card. */
   const narration = new Map<string, string | null>();
   const entryId = new Map<string, string>();
   for (const ns of chunks(jeNos)) {

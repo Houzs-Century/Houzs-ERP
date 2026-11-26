@@ -1,9 +1,3 @@
-// The DINING gate the PO quick-view uses to decide which line shows its Remark.
-// The trap it guards: `purchase_order_items.notes` is populated on NON-dining
-// lines too (in prod: bedframe / sofa / mattress lines all carry notes), so a
-// panel that read `notes` directly would leak every sofa note into this slot.
-// Mirrors the backend `isDiningGroup` (backend po-dining-remark.ts) so the
-// on-screen remark and the printed "Remark:" agree on which lines qualify.
 import { describe, expect, test } from "vitest";
 import { isDiningGroup, diningLineRemark } from "./po-dining-remark";
 

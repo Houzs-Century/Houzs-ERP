@@ -35,7 +35,6 @@ const scopeLabel = (scopeType: string, scopeValue: string | null): string => {
   return 'All SKUs';
 };
 
-/** RM a variance line is worth, in sen; null when no cost basis to value it. */
 const lineValueSen = (l: StockTakeLine): number | null =>
   l.variance == null || l.est_unit_cost_sen == null ? null : l.variance * l.est_unit_cost_sen;
 
@@ -68,7 +67,6 @@ function Body({ row, onClose }: { row: StockTakeRow; onClose: () => void }) {
   const canDecide = open && (viewer?.canSupervise ?? false);
   const busy = approve.isPending || reject.isPending;
 
-  // Only the lines that actually moved — the review is about the variance.
   const varianceLines = lines.filter((l) => (l.variance ?? 0) !== 0);
   const netQty = varianceLines.reduce((s, l) => s + (l.variance ?? 0), 0);
   const netSen = varianceLines.reduce((s, l) => s + (lineValueSen(l) ?? 0), 0);

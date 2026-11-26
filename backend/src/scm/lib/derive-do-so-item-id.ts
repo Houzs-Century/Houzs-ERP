@@ -104,8 +104,6 @@ export async function fillMissingSoItemIds(
     .select('id, doc_no, item_code, qty, variants, description2')
     .eq('doc_no', soDocNo)
     .eq('cancelled', false);
-  /* A failed read is not an empty sales order. Leaving the link null here would
-     reintroduce the very defect this exists to prevent, so say so instead. */
   if (error) {
     return {
       ok: false,
@@ -129,8 +127,6 @@ export async function fillMissingSoItemIds(
     soLines,
   );
 
-  /* Only an ambiguity WITHIN the sales order is a refusal. "no SO line with
-     this item code" is the ad-hoc line, which keeps its null. */
   const blocking = unresolved.filter((u: { reason: string }) => u.reason !== 'no SO line with this item code');
   if (blocking.length > 0) {
     const which = blocking.map((u: { item_code: string }) => u.item_code).join(', ');

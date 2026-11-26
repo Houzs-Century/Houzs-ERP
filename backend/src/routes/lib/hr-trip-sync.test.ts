@@ -1,6 +1,3 @@
-// The nightly Trip Pay read: which days it touches (yesterday, plus older days
-// whose source changed or whose stops differ) and what it writes (new stops in,
-// changed stops updated, HR's edits and removals kept, gone stops flagged).
 import { describe, expect, test } from "vitest";
 import type { SourceRow } from "./hr-trip-store";
 import { nightlyMonths, planSync, selectSyncDays, type StoredRow } from "./hr-trip-sync";
@@ -143,7 +140,6 @@ describe("nightly change detection", () => {
     expect([...days]).toEqual(["2026-11-17"]);
     expect(seen[0]).toMatch(/JOIN scm\.delivery_orders d ON d\.id = r\.id\s+LEFT JOIN scm\.delivery_order_crew cr ON cr\.do_id = d\.id/);
     expect(seen[0]).toMatch(/d\.updated_at > /);
-    // Keyed on the run date's candidates (doRunDate picks one), not the DO date alone.
     expect(seen[0]).toMatch(/VALUES \(r\.so_due_date\), \(r\.delivered_day\), \(r\.do_date\)/);
   });
 });

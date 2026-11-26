@@ -67,7 +67,6 @@ vi.mock('./finance/finance-todo-queries', () => ({
 import { DailyBank } from './DailyBank';
 import { accountLines } from './DailyBankAccounts';
 
-/** Where the page has put the address — the view lives in it. */
 const Where = () => <span data-testid="where">{useLocation().search}</span>;
 const renderAt = (search: string) => render(<MemoryRouter initialEntries={[`/scm/daily-bank${search}`]}><DailyBank /><Where /></MemoryRouter>);
 

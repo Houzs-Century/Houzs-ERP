@@ -1,7 +1,3 @@
-/* BUG-101 on the phone editor — the same rule as
- * SalesOrderDetail.processingPoLock.test.tsx: a live PO freezes the Processing
- * Date, the Delivery Date stays open.
- */
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +15,6 @@ vi.mock("../vendor/scm/lib/authed-fetch", async (orig) => ({
 vi.mock("../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => vi.fn() }));
 vi.mock("../vendor/scm/components/ConfirmDialog", () => ({ useConfirm: () => vi.fn(), usePrompt: () => vi.fn() }));
 vi.mock("../vendor/scm/components/PromptDialog", () => ({ usePrompt: () => vi.fn() }));
-/* Every grant except the PO exception, unless a test turns it on. */
 vi.mock("../auth/AuthContext", () => ({
   useAuth: () => ({ user: { id: 1, name: "Desk" }, can: (p: string) => p !== "scm.so.override_po_processing_date" || auth.override }),
 }));
@@ -62,7 +57,7 @@ describe("phone SO editor — Processing Date under a live PO", () => {
     mount({ ...header, processing_date_po_locked: true });
     await waitFor(() => expect(screen.getByDisplayValue("2027/01/10")).toBeTruthy());
     expect((screen.getByDisplayValue("2027/01/10") as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getAllByDisplayValue("2027/01/20")[0] as HTMLInputElement).disabled).toBe(false); // header first, the line card after
+    expect((screen.getAllByDisplayValue("2027/01/20")[0] as HTMLInputElement).disabled).toBe(false);
     expect(screen.getByText(/only a purchaser can change this date/i)).toBeTruthy();
   });
 

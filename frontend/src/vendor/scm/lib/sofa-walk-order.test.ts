@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-// The letterhead is fetched for the tab's company before drawing (BUG-111).
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 import { purchaseOrderPdfBase64 } from './purchase-order-pdf';
 import { splitBackendSofa } from './sofa-walk-order';
@@ -58,7 +57,6 @@ describe('PO PDF prints a mis-keyed backend sofa in walking order', () => {
     expect(at('SOFFIO 1A\\(LHF\\)')).toBeLessThan(at('SOFFIO Console'));
     expect(at('SOFFIO Console')).toBeLessThan(at('SOFFIO 1A\\(RHF\\)'));
     expect(at('SOFFIO 1A\\(RHF\\)')).toBeLessThan(at('SOFFIO 2S'));
-    // Two diagrams: the three-piece sofa, then the 2S on its own.
     expect(raw).toContain('Console + 1A\\(RHF\\)');
     expect(raw).not.toContain('1A\\(RHF\\) + Console');
     expect(raw).not.toContain('+ 2S');

@@ -34,7 +34,7 @@ describe('compareByDeliveryDate — default ordering', () => {
   test('earliest effective date first, no-date rows last', () => {
     const noDate = row(null, null);
     const oct = row('2026-10-20', null);
-    const sep = row(null, '2026-09-05'); // customer-date fallback
+    const sep = row(null, '2026-09-05');
     const aug = row('2026-08-01', '2026-12-31');
     const sorted = [noDate, oct, sep, aug].slice().sort(compareByDeliveryDate);
     expect(sorted.map(effectiveDeliveryDay)).toEqual(['2026-08-01', '2026-09-05', '2026-10-20', null]);

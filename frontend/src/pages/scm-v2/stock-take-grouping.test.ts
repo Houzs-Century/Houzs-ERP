@@ -24,7 +24,7 @@ describe('groupByModel', () => {
     expect(cody.countedLines).toBe(2);
     const bf = groups[1];
     expect(bf.lines).toHaveLength(1);
-    expect(bf.countedLines).toBe(1); // an explicit '0' IS a count
+    expect(bf.countedLines).toBe(1);
     expect(bf.countedTotal).toBe(0);
   });
 
@@ -51,7 +51,7 @@ describe('groupByModel', () => {
     const [g] = groupByModel([
       line({ id: '1', itemCode: 'X', countedQtyInput: '' }),
       line({ id: '2', itemCode: 'X', countedQtyInput: 'abc' }),
-      line({ id: '3', itemCode: 'X', countedQtyInput: '2.9' }), // floors to 2
+      line({ id: '3', itemCode: 'X', countedQtyInput: '2.9' }),
     ]);
     expect(g.countedTotal).toBe(2);
     expect(g.countedLines).toBe(1);

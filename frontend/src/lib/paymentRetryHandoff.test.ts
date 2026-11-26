@@ -115,10 +115,6 @@ describe("payment retry handoff", () => {
   });
 
   test("SURVIVES A 401 — an expired session must not delete collected money", () => {
-    // AuthContext's 401 path runs exactly this sequence (resetSessionCaches).
-    // These drafts are payments the operator has already taken at the counter
-    // and the server has not accepted yet; a routine session expiry is not
-    // permission to destroy the only record of them.
     bindBrowserStorageIdentity(7);
     const draft = { ...newPaymentDraft(), amountSen: 45_000 };
     writePaymentRetryHandoff("so", "SO-1", [draft]);
@@ -126,8 +122,6 @@ describe("payment retry handoff", () => {
     clearAllScmHandoffs();
     clearBrowserStorageIdentity();
 
-    // Signing back in restores the same user + company scope, so the intents
-    // are readable again — nothing was thrown away in between.
     bindBrowserStorageIdentity(7);
     expect(readPaymentRetryHandoff("so", "SO-1")?.drafts).toEqual([draft]);
   });
@@ -139,11 +133,10 @@ describe("payment retry handoff", () => {
     const draft = { ...newPaymentDraft(), amountSen: 12_500 };
     writePaymentRetryHandoff("si", "SI-9", [draft]);
 
-    // The switcher's sequence: drop the transient handoffs, then change tenant.
     clearAllScmHandoffs();
     setActiveCompanyId(4);
     bindBrowserStorageIdentity(7);
-    expect(readPaymentRetryHandoff("si", "SI-9")).toBeNull(); // scoped out, not deleted
+    expect(readPaymentRetryHandoff("si", "SI-9")).toBeNull();
 
     setActiveCompanyId(3);
     bindBrowserStorageIdentity(7);

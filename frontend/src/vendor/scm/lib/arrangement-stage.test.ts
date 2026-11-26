@@ -39,8 +39,6 @@ describe('timeArrangementOf — the Delivery Time Arrangement split', () => {
   test('only date-confirmed orders exist for the Time page', () => {
     expect(timeArrangementOf({ arrangement_stage: 'PENDING_TIME' })).toBe('PENDING_TIME');
     expect(timeArrangementOf({ arrangement_stage: 'TIME_ARRANGED' })).toBe('TIME_ARRANGED');
-    /* An order still awaiting its date belongs to Date Arrangement — the Trips
-       inbox shows it only as an "awaiting date" count. */
     expect(timeArrangementOf({ arrangement_stage: 'PENDING_DATE' })).toBeNull();
     expect(timeArrangementOf({ arrangement_stage: null })).toBeNull();
   });

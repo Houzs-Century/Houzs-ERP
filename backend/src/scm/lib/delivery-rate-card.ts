@@ -63,15 +63,11 @@ export interface PlaceSpec {
 export interface DeliveryStop {
   zone: string | null;
   addressText: string | null;
-  /** The job done at this address (a `scm.trip_stop_type` name). Absent or null
-   *  = a delivery order, which is every stop any caller sent before job types. */
   jobType?: string | null;
 }
 
 /** The card-level dimensions the calculator needs (a subset of the stored card). */
 export interface RateCardSpec {
-  /** Price by ITEM or by SET (set = frame + mattress). Selects which fact the
-   *  positional tiers count over. */
   basis: 'ITEM' | 'SET';
   /**
    * WHAT THE TIER LADDER COUNTS (mig 0244). Owner, 2026-08-02, describing all
@@ -89,14 +85,11 @@ export interface RateCardSpec {
    *              charging unit, so tier 1 is the flat trip price.
    */
   aggregation?: AggregationUnit;
-  /** Optional envelope applied to the summed cost. */
   minChargeSen?: number | null;
   capSen?: number | null;
   rounding?: 'NONE' | 'NEAREST_10C' | 'NEAREST_RM' | null;
   rules: readonly RateRuleSpec[];
-  /** The card's priced areas (see AREAS above). Absent or empty: none. */
   areas?: readonly RateAreaSpec[];
-  /** The company's places (see PLACES above), read with facts.stops. */
   places?: readonly PlaceSpec[];
 }
 
@@ -126,44 +119,25 @@ export type RateRuleType =
 
 export interface RateRuleSpec {
   ruleType: RateRuleType;
-  /** POSITIONAL_TIER: the 1-based position (3 = "3rd and beyond"). OVERAGE: the
-   *  cap N (max units/drop before the overage rate kicks in). */
   tierPosition?: number | null;
-  /** SOFA_BRACKET: compartment band [min, max]; max null = open-ended "min+". */
   bracketMin?: number | null;
   bracketMax?: number | null;
-  /** OUTSTATION: destination area zone this surcharge applies to. */
   zone?: string | null;
-  /** The area this rule prices in (RateAreaSpec.id); null or absent = the card's own rule. */
   areaId?: string | null;
-  /** OUTSTATION / OUTSTATION_TRIP: the jobs this surcharge adds to. Absent or
-   *  empty = OUTSTATION_DEFAULT_APPLIES_TO (delivery orders), what it reached
-   *  before the setting existed. */
   appliesTo?: readonly string[] | null;
-  /** The price, integer sen. DO_CHARGE: the amount per delivery order. */
   amountSen: number;
-  /** DO_CHARGE: its share of the goods value, in basis points (100 = 1%). */
   bps?: number | null;
-  /** DO_CHARGE: its name on the card and on the cost line ("SST", "Permit"). */
   label?: string | null;
 }
 
 /** A drop/trip's delivery facts. The caller derives these; the tiers count over
  *  setCount (basis SET) or itemCount (basis ITEM), which EXCLUDE sofas. */
 export interface DeliveryFacts {
-  /** Charging units when basis === 'SET' (sofas excluded — priced by bracket). */
   setCount?: number | null;
-  /** Charging units when basis === 'ITEM' (sofas excluded — priced by bracket). */
   itemCount?: number | null;
-  /** One entry per sofa: its compartment count. Each maps to one SOFA_BRACKET. */
   sofaCompartments?: readonly number[] | null;
-  /** Delivery orders on this trip. Read when aggregation is DROP. */
   dropCount?: number | null;
-  /** Distinct (customer + address) on this trip. Read when aggregation is
-   *  CUSTOMER — two drops to one doorstep are ONE customer, which is the whole
-   *  point of that mode. */
   customerCount?: number | null;
-  /** Destination area zone (from the A1 classifier) for the outstation surcharge. */
   destinationZone?: string | null;
   /**
    * EVERY zone this trip touches, when it touches more than one.
@@ -176,23 +150,10 @@ export interface DeliveryFacts {
    * used unchanged — the single-drop case is unaffected.
    */
   destinationZones?: readonly (string | null | undefined)[] | null;
-  /** The delivery address(es), free text. An OUTSTATION rule may name a TOWN
-   *  instead of a postcode zone (3PL quotes price by town: "Rawang RM22.50",
-   *  "Seremban RM40"); it applies when that town appears as a word here. Two
-   *  towns in one Klang Valley postcode zone could not be told apart otherwise. */
   addressText?: string | null;
-  /** The area to price in, when the caller knows it (the Price check names one);
-   *  otherwise the address decides (areaOf). */
   areaId?: string | null;
-  /** Every address the drop or trip reaches, each with its postcode zone. When
-   *  given, town and area names are read per address (see PLACES above) and
-   *  destinationZone(s) / addressText are not read for them. */
   stops?: readonly DeliveryStop[] | null;
-  /** The job being priced when no stops are given (the Price check names one).
-   *  Absent = a delivery order. Only an outstation rule's appliesTo reads it. */
   jobType?: string | null;
-  /** The goods value of the delivery orders priced, in sen: their own lines
-   *  without the service ones (do-goods.ts). Read by DO_CHARGE. */
   goodsValueSen?: number | null;
   disposeCount?: number | null;
   setupCount?: number | null;
@@ -208,16 +169,13 @@ export interface CostLine {
   ruleType: RateRuleType | 'MIN_CHARGE' | 'CAP' | 'ROUNDING';
   label: string;
   amountSen: number;
-  /** Optional structured detail (unit index, zone, compartment band, count). */
   detail?: Record<string, unknown>;
 }
 
 export interface CostBreakdown {
   totalSen: number;
-  /** The sum BEFORE the min/cap/rounding envelope — the raw priced lines. */
   subtotalSen: number;
   lines: CostLine[];
-  /** The area the delivery was priced in, when the card has one for it. */
   area?: { id: string; name: string } | null;
 }
 
@@ -227,8 +185,6 @@ function intOf(v: number | null | undefined): number {
   return Math.floor(n);
 }
 
-/** The positional tier amount for the Nth unit: the greatest-position tier whose
- *  position is <= n (so tier 3 prices the 3rd unit and every unit beyond). */
 function tierAmountForPosition(tiers: readonly RateRuleSpec[], n: number): RateRuleSpec | null {
   let best: RateRuleSpec | null = null;
   for (const t of tiers) {
@@ -254,16 +210,10 @@ export function chargingUnitCount(
 ): number {
   switch (card.aggregation) {
     case 'TRIP':
-      /* One trip IS the charging unit, so tier 1 is the flat trip price and
-         nothing about the load changes it. A trip that carried nothing still
-         costs a trip. */
       return 1;
     case 'DROP':
       return intOf(facts.dropCount);
     case 'CUSTOMER':
-      /* Falls back to drops when the caller could not resolve customers — one
-         customer per drop is the pessimistic reading and never under-counts,
-         which for a COST is the safe direction. */
       return intOf(facts.customerCount) || intOf(facts.dropCount);
     default:
       return card.basis === 'ITEM' ? intOf(facts.itemCount) : intOf(facts.setCount);
@@ -306,16 +256,13 @@ export function farthestZone(
   places?: readonly PlaceSpec[],
 ): string | null {
   if (facts.stops && facts.stops.length > 0) {
-    /* Per address (see PLACES): the dearest rule some stop reaches, once. */
     const homes = placeZones(places);
     let found: { zone: string; amount: number } | null = null;
     for (const r of rules) {
       const z = String(r.zone ?? '').trim().toUpperCase();
       if (r.ruleType !== ruleType || !z) continue;
-      /* A stop counts only for a job the rule applies to (Applies to). */
       if (!facts.stops.some((s) => outstationApplies(r, s.jobType) && reaches(z, s, homes))) continue;
       const amount = intOf(r.amountSen);
-      /* Ties keep the first rule, so a re-run prices the same. */
       if (!found || amount > found.amount) found = { zone: z, amount };
     }
     return found ? found.zone : null;
@@ -333,8 +280,6 @@ export function farthestZone(
     if (!z) continue;
     const rule = rules.find((r) => r.ruleType === ruleType && String(r.zone ?? '').toUpperCase() === z && outstationApplies(r, facts.jobType));
     const amount = rule ? intOf(rule.amountSen) : 0;
-    /* Ties keep the FIRST seen so the result is deterministic — the whole point
-       is that the same trip must not reconcile differently on a re-run. */
     if (!best || amount > best.amount) best = { zone: z, amount };
   }
   return best ? best.zone : null;
@@ -343,7 +288,6 @@ export function farthestZone(
 /** Rule zones (towns) that appear as a whole word in the address. A postcode
  *  zone name that happens to appear (MELAKA in "Jalan Melaka") just adds a
  *  candidate that farthestZone already weighs — the highest charge still wins. */
-// ponytail: plain word match on the address text; a town column on the SO if spellings drift ("Sri Petaling" vs "Seri Petaling").
 export function townsInAddress(
   rules: readonly RateRuleSpec[],
   ruleType: 'OUTSTATION' | 'OUTSTATION_TRIP',
@@ -360,7 +304,6 @@ export function townsInAddress(
     });
 }
 
-/** The job a stop or a Price check names; absent = a delivery order. */
 const jobOf = (j: string | null | undefined): string => (j ? String(j).trim().toUpperCase() : 'DELIVERY');
 
 /** Whether an outstation rule adds to this job: the jobs it names, or the
@@ -374,7 +317,6 @@ export function outstationApplies(rule: Pick<RateRuleSpec, 'appliesTo'>, jobType
 
 const asWords = (v: unknown): string => ` ${String(v ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim()} `;
 
-/** The company's places as name → home zone (null = in no zone). PURE. */
 function placeZones(places: readonly PlaceSpec[] | undefined): ReadonlyMap<string, string | null> {
   return new Map((places ?? []).map((p) => [p.name.trim().toUpperCase(), p.zone ? p.zone.trim().toUpperCase() : null]));
 }
@@ -414,8 +356,6 @@ export function areaOf(
   const areas = card.areas ?? [];
   if (areas.length === 0) return null;
   if (facts.areaId) return areas.find((a) => a.id === facts.areaId) ?? null;
-  /* An area is found by the delivery orders' addresses, as it was before stops
-     carried other jobs; a setup stop in an area town does not move the ladder. */
   const stops = (facts.stops ?? []).filter((s) => jobOf(s.jobType) === 'DELIVERY');
   const homes = placeZones(card.places);
   const text = asWords(facts.addressText);
@@ -431,7 +371,6 @@ export function areaOf(
       .filter((r) => r.areaId === a.id && r.ruleType === 'POSITIONAL_TIER')
       .sort((x, y) => intOf(x.tierPosition) - intOf(y.tierPosition))[0];
     const sen = first ? intOf(first.amountSen) : 0;
-    /* Ties keep the first area listed, so a re-run prices the same. */
     if (sen > bestSen) { best = a; bestSen = sen; }
   }
   return best;
@@ -439,18 +378,6 @@ export function areaOf(
 
 /** How the caller is pricing: one DROP, or a whole TRIP. */
 export interface CostOptions {
-  /**
-   * Include the FIXED per-trip outstation fee (OUTSTATION_TRIP rules).
-   *
-   * It used to be bolted on by the reconcile AFTER this function returned,
-   * which put it OUTSIDE the min/cap/rounding envelope — so a card with a
-   * charge cap could still bill above it, and the fee never appeared in the
-   * UI calculator at all because /compute never added it. Pricing a trip and
-   * pricing a drop are the same computation with one extra line; making that
-   * a flag keeps ONE envelope instead of two places that cap.
-   *
-   * Defaults to false, which is the per-DROP reading.
-   */
   perTrip?: boolean;
 }
 
@@ -465,20 +392,16 @@ export interface CostOptions {
  */
 export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, opts: CostOptions = {}): CostBreakdown {
   const lines: CostLine[] = [];
-  /* The card's own rules; town surcharges below read only these. */
   const rules = (card.rules ?? []).filter((r) => r.areaId == null);
   const area = areaOf(card, facts);
   const inArea = area ? (card.rules ?? []).filter((r) => r.areaId === area.id) : [];
 
-  /* A rule type the area prices is the area's; any other type is the card's own. */
   const rulesOf = (t: RateRuleType) => {
     const mine = inArea.filter((r) => r.ruleType === t);
     return mine.length > 0 ? mine : rules.filter((r) => r.ruleType === t);
   };
-  /* A line priced by the area says so: "1st set · Bintulu / Tatau". */
   const at = (r: RateRuleSpec): string => (area && r.areaId === area.id ? ` · ${area.name}` : '');
 
-  // ── Charging-unit positional tiers (+ cap/overage) ────────────────────────
   const unitCount = chargingUnitCount(card, facts);
   const tiers = rulesOf('POSITIONAL_TIER');
   const overage = rulesOf('OVERAGE')[0] ?? null;
@@ -506,7 +429,6 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
     }
   }
 
-  // ── Sofa compartment brackets (one per sofa, additive) ────────────────────
   const sofaBrackets = rulesOf('SOFA_BRACKET');
   for (const comp of facts.sofaCompartments ?? []) {
     const c = intOf(comp);
@@ -527,13 +449,6 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
     }
   }
 
-  // ── Outstation destination-zone surcharge — ONCE, for the FARTHEST zone ───
-  // The reconcile used to hand over whichever zone came FIRST out of the
-  // query, which is not the first stop on the route — it is arbitrary, so the
-  // same trip could reconcile differently on a re-run. A Melaka->Johor trip
-  // could be charged Melaka's RM300 when the lorry went to Johor.
-  /* Only the surcharges that apply to a job this drop or trip does (Applies to):
-     with every rule on its default that is every rule, as before. */
   const homes = placeZones(card.places);
   const appliesHere = (r: RateRuleSpec): boolean => (facts.stops && facts.stops.length > 0
     ? facts.stops.some((st) => outstationApplies(r, st.jobType) && reaches(String(r.zone ?? ''), st, homes))
@@ -552,7 +467,6 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
     }
   }
 
-  // ── Occurrence charges (rate x count) ─────────────────────────────────────
   const occurrence: Array<[RateRuleType, number, string]> = [
     ['DISPOSE', intOf(facts.disposeCount), 'Dispose'],
     ['SETUP', intOf(facts.setupCount), 'Setup'],
@@ -597,7 +511,6 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
     });
   }
 
-  // ── The fixed per-TRIP outstation fee (once per trip, not per drop) ───────
   if (opts.perTrip) {
     const tripZone = farthestZone(surcharges, 'OUTSTATION_TRIP', facts, card.places);
     const tripFee = tripOutstationFeeSen(surcharges, tripZone);
@@ -611,7 +524,6 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
     }
   }
 
-  // ── Subtotal → min / cap / rounding envelope ──────────────────────────────
   const subtotalSen = lines.reduce((s, l) => s + l.amountSen, 0);
   let total = subtotalSen;
 
@@ -631,13 +543,6 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
   if (rounding !== 'NONE' && total > 0) {
     const step = rounding === 'NEAREST_RM' ? 100 : 10;
     let rounded = Math.round(total / step) * step;
-    /* ROUNDING MUST NOT BREACH THE CAP. Half-up rounding after a cap could push
-       the charge back ABOVE the ceiling the card sets — RM499.96 capped at
-       RM500 then rounded to the nearest ringgit came out at RM500, which is
-       fine, but a cap of RM495 with 10-sen rounding on RM494.96 produced
-       RM495.00 and a cap of RM494.95 produced RM495.00 too: over the cap, on a
-       line labelled "cap". A cap that a later step can exceed is not a cap.
-       Round DOWN instead when up would breach it. */
     if (capSen != null && rounded > capSen) rounded = Math.floor(total / step) * step;
     if (rounded !== total) {
       lines.push({ ruleType: 'ROUNDING', label: `Rounding (${rounding === 'NEAREST_RM' ? 'nearest RM' : 'nearest 10 sen'})`, amountSen: rounded - total, detail: { rounding } });
@@ -648,13 +553,6 @@ export function computeDeliveryCost(card: RateCardSpec, facts: DeliveryFacts, op
   return { totalSen: total, subtotalSen, lines, area: area ? { id: area.id, name: area.name } : null };
 }
 
-// ── WS4c: fixed per-TRIP outstation surcharge ────────────────────────────────
-// The owner's outstation charge has two layers: a per-ORDER surcharge (the
-// existing OUTSTATION rule, applied inside computeDeliveryCost per costing unit)
-// AND a FIXED fee per TRIP by destination zone. The trip fee applies ONCE per
-// trip regardless of drop count, so it lives OUTSIDE computeDeliveryCost — the
-// reconcile adds it once after summing the trip's expected cost. This is why
-// computeDeliveryCost never processes OUTSTATION_TRIP. Pure, unit-tested.
 export function tripOutstationFeeSen(
   rules: readonly RateRuleSpec[],
   destinationZone: string | null | undefined,

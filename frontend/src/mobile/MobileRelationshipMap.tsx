@@ -51,7 +51,6 @@ const cardStatus = (c: MobileMapCard): string => {
   return docType ? statusLabel(docType, c.status) : humaniseStatusKey(c.status);
 };
 
-/* Chip dress — lockstep with ./source-chips.tsx. */
 const chipBase: React.CSSProperties = {
   fontFamily: "monospace", fontSize: 11, fontWeight: 700, color: "var(--hz-c-primary-ink)",
   background: "var(--hz-dk-surface-2, #eef3f1)", border: "1px solid #d7e2de", borderRadius: 5, padding: "1px 6px",
@@ -68,9 +67,6 @@ const eyebrowStyle: React.CSSProperties = {
   color: "var(--hz-c-accent)", margin: "2px 2px 8px",
 };
 
-/* One document card. Tappable only when a mobile screen exists AND the shell
-   says this position may open it (nav.can — the same fail-closed gate the menu
-   rows use); everything else renders inert, matching "off, not hide". */
 function MapCard({ card, nav, onClose }: { card: MobileMapCard; nav?: FlowNav; onClose: () => void }) {
   const target = card.nav && nav && nav.can(card.nav) ? card.nav : null;
   const open = target ? () => { onClose(); nav!.open(target); } : undefined;
@@ -114,9 +110,6 @@ function MapCard({ card, nav, onClose }: { card: MobileMapCard; nav?: FlowNav; o
   );
 }
 
-/* The solid vertical connector between consecutive stages — every vertical hop
-   is an execution FK (anchored history); the only non-chain hop, SO ▸ PO, is
-   the pairing section instead. */
 function ChainConnector() {
   return (
     <div aria-hidden title={CHAIN_LEGEND} style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 24, marginLeft: 14 }}>
@@ -147,17 +140,12 @@ function ChainSection({ title, groups, nav, onClose }: {
 
 export function MobileRelationshipMap({ type, id, label, onClose, nav }: {
   type: FlowNodeType;
-  /** document-flow anchor id: the SO doc_no for `so`, the uuid for the rest. */
   id: string;
-  /** Header title — the anchor's document number. Falls back to the id. */
   label?: string;
   onClose: () => void;
-  /** Screen navigation, provided by MobileApp. Absent → every node is inert. */
   nav?: FlowNav;
 }) {
   const flowQ = useDocumentFlow(type, id);
-  /* Coverage ONLY for purchase anchors, on the SAME query key the document
-     detail already fetched — cache hit, zero added load (see file header). */
   const covType = type === "po" || type === "grn" || type === "pi" ? type : null;
   const covQ = usePoSoCoverage(covType, covType ? id : null);
   const model = useMemo(
@@ -219,8 +207,6 @@ export function MobileRelationshipMap({ type, id, label, onClose, nav }: {
                           <span style={{ color: "#b3b8ac", fontSize: 10 }}>{"▸"}</span>
                           <span style={floating ? floatingChip : mutedChip} title={title}>{p.poLabel}</span>
                         </div>
-                        {/* No hover on a phone — the identity wording the desktop
-                            carries as a tooltip renders as a visible caption. */}
                         <div style={{ fontSize: 10, color: "var(--hz-c-ink-soft)", marginTop: 3, lineHeight: 1.4 }}>{title}</div>
                       </div>
                     );
@@ -235,8 +221,6 @@ export function MobileRelationshipMap({ type, id, label, onClose, nav }: {
               <div style={{ marginBottom: 16 }}>
                 <div style={eyebrowStyle}>Amendments</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {/* Display-only on the phone (the amendment job cards are
-                      desktop pages / their own list screens). */}
                   {amendments.map((a) => (
                     <span key={`soa-${a.id}`} style={mutedChip}>
                       {String(a.amendmentNo ?? "").trim() || `Amendment ${a.soDocNo}`}

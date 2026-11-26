@@ -48,7 +48,6 @@ const shiftDate = (date: string, days: number): string => {
   return d.toISOString().slice(0, 10);
 };
 
-/** Which Daily Bank: the original, from the ledger, or the owner's cash book. */
 type Book = 'ledger' | 'cashbook';
 type DailyBankView = 'board' | 'accounts' | 'close' | 'entries';
 const VIEWS: Record<Book, Array<[DailyBankView, string]>> = {
@@ -57,8 +56,6 @@ const VIEWS: Record<Book, Array<[DailyBankView, string]>> = {
 };
 const isDay = (v: string | null): v is string => !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
-/** The view and the day live in the address (the redesign: Money today opens the
-    Board and stays lit while it shows). A missing or unknown view becomes Board. */
 function useDailyBankAddress(book: Book) {
   const [params, setParams] = useSearchParams();
   const views = VIEWS[book];
@@ -88,7 +85,6 @@ function DailyBankFrame({ book, nav, q }: { book: Book; nav: ReturnType<typeof u
   const { view, date, setView, setDate } = nav;
   const [focus, setFocus] = useState<string | null>(null);
   const board = q.data ?? null;
-  /* Print opens the day's sheet (or the count sheet); Export image its picture. */
   const [printing, setPrinting] = useState(false);
   const [imaging, setImaging] = useState(false);
   const future = date > todayMyt();

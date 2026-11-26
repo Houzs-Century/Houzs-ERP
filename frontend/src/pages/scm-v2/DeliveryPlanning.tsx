@@ -1,32 +1,3 @@
-// ----------------------------------------------------------------------------
-// Delivery Planning — STAGE 4 (the core) of the Delivery / TMS module.
-//
-// The planning board: which live Sales Orders still need delivering, organised
-// by a top row of 4 DELIVERY-STATE tabs (Pending Delivery / Pending Schedule /
-// Overdue / Delivered, each with a live count) and a region chip row of
-// CONFIG-DRIVEN buckets classified by customer STATE (All · KL/SEL ·
-// Northern · Southern · East Coast · East Malaysia — owner-maintained in
-// Delivery Regions).
-// Both the active state tab and the active region (bucket key) live in the URL
-// (useSearchParams) so a link / refresh keeps the view.
-//
-// The board itself — the region chip row, the state-tab rail, the bulk bar, the
-// inline cell editors, the SO line-item drill-down and the full HC column set —
-// now lives in the SHARED <DeliveryPlanningBoard> (vendor/scm/components), so the
-// exact same board is reused by the Trips "To schedule" panel (scoped to
-// PENDING_SCHEDULE). This page owns the data fetch (region stays server-side),
-// the selection, the drawers, and the page header.
-//
-// Backend-derived: delivery_state, region grouping, readiness, crew, and
-// days_left all come from GET /delivery-planning — this page only filters by
-// the active state/region and renders. Schedule editing calls the PATCH
-// endpoints via the queries hook.
-//
-// SHARED-QUEUE NOTE (multi-company): the board reads BOTH companies' SOs. Row
-// expand uses useDeliveryPlanningLines (GET /delivery-planning/:docNo/lines,
-// scoped to ALLOWED companies) — NOT the per-company SO detail hook, which 404s
-// a cross-company row. A default-visible Company column tags each row.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useRef, useState } from 'react';
 import { JobDetailPanel, panelTargetOf, rowDocumentPath, type JobPanelTarget } from '../../components/scm-v2/JobDetailPanel';
@@ -81,23 +52,15 @@ import { useLorries } from '../../vendor/scm/lib/lorries-queries';
 import { useAuth } from '../../auth/AuthContext';
 import { canOperateDeliveryOrders } from '../../auth/salesAccess';
 
-/* The sends that name a date with Confirm / Amend; a Service Case job has its own. */
 const ASSR_DATE_KINDS: ReadonlySet<SendMessageKind> = new Set<SendMessageKind>(['delivery', 'amend']);
 
-/* Sends a Service Case leg takes AS THEMSELVES (no conversion to Service
-   Arrangement): Postpone reads the leg's own Amend Reason + new date, and the
-   three Reminders are a plain nudge. Must match the backend's ASSR_LEG_SEND_KINDS
-   (plus driver_info, handled on its own line). */
 const ASSR_DIRECT_KINDS: ReadonlySet<SendMessageKind> = new Set<SendMessageKind>(['postpone', 'reminder_1', 'reminder_2', 'reminder_3']);
 
-/* Every kind a Service Case leg row can receive from the board — used to grey the
-   SO-only sends when only ASSR rows are ticked. */
 const assrCapableKind = (k: SendMessageKind): boolean =>
   k === 'assr_arrangement' || k === 'driver_info' || ASSR_DATE_KINDS.has(k) || ASSR_DIRECT_KINDS.has(k);
 
 export const DeliveryPlanning = () => {
   const navigate = useNavigate();
-  // Single click opens the job panel; double click goes to the document.
   const [jobPanel, setJobPanel] = useState<JobPanelTarget | null>(null);
   const askConfirm = useConfirm();
   const notify = useNotify();
@@ -116,7 +79,6 @@ export const DeliveryPlanning = () => {
   const activeState = (params.get('state') ?? 'ALL').toUpperCase();
   const activeRegion = (params.get('region') ?? 'ALL').toUpperCase();
 
-  /* The order whose HC fields are being edited (drawer open when non-null). */
   const [editing, setEditing] = useState<PlanningOrder | null>(null);
   /* Manual colour marks (owner 2026-09-26): a row's context menu opens the
      palette; the board tints the row from the same shared query. */
@@ -139,7 +101,6 @@ export const DeliveryPlanning = () => {
       cmp(rowIdOf(a), rowIdOf(b)) || compareByDeliverySlot(a, b);
   }, [rowOrder]);
   const [showNewDp, setShowNewDp] = useState(false);
-  /* The DP job being scheduled (Schedule drawer open when non-null). */
   const [schedulingDp, setSchedulingDp] = useState<PlanningOrder | null>(null);
   /* A service case's date is confirmed from its row menu (one-field drawer). An
      SO's date, driver and lorry are set in their own cells, so its row menu no
@@ -147,8 +108,6 @@ export const DeliveryPlanning = () => {
   const [datingAssr, setDatingAssr] = useState<PlanningOrder | null>(null);
   const cancelDp = useCancelDpOrder();
 
-  /* Cancel a DP job. The row's so_doc_no is the synthetic `DP:<id>` key, so the
-     id comes back off it. Confirm first — cancelling drops its trip stop too. */
   const cancelDpRow = async (o: PlanningOrder) => {
     const id = String(o.so_doc_no ?? '').replace(/^DP:/, '');
     if (!id) return;
@@ -165,8 +124,6 @@ export const DeliveryPlanning = () => {
       if (res?.stopRemoved?.failed) {
         notify({ title: 'Cancelled, but the trip stop stayed', body: res.stopRemoved.reason ?? 'Remove it from the trip manually.', tone: 'error' });
       } else if (res?.lorryUnblocked?.failed) {
-        // A cancelled lorry service that kept its availability window holds a
-        // free lorry off the board, and nothing else would ever report it.
         notify({ title: 'Cancelled, but the lorry is still blocked', body: `Clear its unavailable window in Fleet Maintenance: ${res.lorryUnblocked.reason ?? 'unknown error'}.`, tone: 'error' });
       } else {
         notify({ title: 'Job cancelled', body: 'It is off the board and off its trip.' });
@@ -176,28 +133,15 @@ export const DeliveryPlanning = () => {
     }
   };
 
-  /* Multi-select → bulk actions. Selection keys are prefixed (`so:<docNo>` /
-     `assr:<id>` / `dp:<id>`) — the DataGrid rowKey. */
   const [sel, setSel] = useState<Set<string>>(new Set());
   const convertSos = useConvertSosToDo();
 
-  /* Phase-2 scheduling drawer (resizable): open from the multiselect bar. It
-     schedules the selected SO orders onto a lorry-day trip via the existing
-     schedule path — no leaving the board. */
   const [scheduling, setScheduling] = useState(false);
 
-  /* Inline-cell + bulk-edit write path (shared). The backend schedule endpoint
-     already accepts scheduleDate / deliveryState / driverId / lorryId. */
   const sched = useScheduleDelivery();
-  /* Option lists for the Driver / Lorry inline selects + the bulk value control.
-     Active-only (the pickers offer current crew); an existing off-list assignment
-     stays selectable via the cell's fallback <option>. */
   const { data: drivers = [] } = useDrivers();
   const { data: lorries = [] } = useLorries();
 
-  /* Convert a set of SOs → DOs (single row or the bulk selection). Skips SOs
-     with no deliverable remaining (already fully delivered); reports the result
-     via the in-app NotifyDialog. Reused by the row action + the selection bar. */
   const runConvert = async (docNos: string[]) => {
     const wanted = [...new Set(docNos.filter(Boolean))];
     if (wanted.length === 0 || convertSos.isPending) return;
@@ -224,7 +168,6 @@ export const DeliveryPlanning = () => {
     }
   };
 
-  /* Single-row convert (context-menu action). */
   const convertOne = (o: PlanningOrder) => { void runConvert([o.so_doc_no]); };
   const moveState = async (o: PlanningOrder, state: 'PENDING_SCHEDULE' | null) => {
     try {
@@ -240,13 +183,7 @@ export const DeliveryPlanning = () => {
     }
   };
 
-  /* Open a row's underlying document: an ASSR row goes to the SERVICE CASE detail
-     (/assr/:id, keyed on the numeric case id); an SO row keeps its Sales Order
-     route. Shared by the row double-click + the context-menu "Open" action. */
   const openRow = (o: PlanningOrder) => {
-    // DP-Order rows have no SO/ASSR document to open (their so_doc_no is a
-    // synthetic `DP:<id>` key) — no navigation.
-    // A project leg opens its project; a manual DP job has no document — its panel.
     if (isProject(o)) { const to = rowDocumentPath(o); if (to) navigate(to); return; }
     if (isDp(o)) { setJobPanel(panelTargetOf(o)); return; }
     if (isAssr(o)) {
@@ -256,11 +193,8 @@ export const DeliveryPlanning = () => {
     }
   };
 
-  /* Selection keys are prefixed (`so:<docNo>` / `assr:<id>`). The bulk actions
-     (Convert-to-DO, Schedule, Send) are SO-only, so extract the SO doc_nos. */
   const selectedSoDocNos = (): string[] => soDocNosFromSelection(sel);
 
-  /* Bulk convert (selection bar) — confirm first (useConfirm, no window.*). */
   const convertSelected = async () => {
     const docNos = selectedSoDocNos();
     if (docNos.length === 0) return;
@@ -280,20 +214,13 @@ export const DeliveryPlanning = () => {
      old per-region fetch re-ran the whole server board assembly on every chip
      click, so the region row felt frozen (owner 2026-10-19 "filter 没反应");
      locally it is instant and the region chip no longer triggers a load. */
-  /* The working tabs skip Delivered rows (72% of the payload, re-downloaded on
-     every edit - 2026-10-26). Rows arrive in date bands, within 15 days of today
-     first, the rest in the background; counts come first (delivery-board-bands.ts). */
   const needsDelivered = activeState === 'ALL' || activeState === 'DELIVERED';
-  // Others' changes within 30 s; every band re-read every 5 min and on the triggers in board-change-poll.ts.
   const boardRefresh = useBoardRefresh({ changeFeed: true, countsState: needsDelivered ? 'ALL' : 'OPEN' });
   const bands = useBandedBoard({ state: needsDelivered ? 'ALL' : 'OPEN', first: 1 });
   const serverCounts = useBoardCounts(true).data?.counts_by_region;
   const isLoading = bands.firstLoading;
   const error = bands.parts.length === 0 && bands.failed ? bands.failed.error : null;
 
-  /* Region chips = the CONFIG-DRIVEN buckets from the API master (+ "All"
-     prepended). Falls back to the five geographic defaults if the API hasn't
-     returned the list yet. */
   const regionTabs = useMemo(() => regionTabsFrom(bands.regions), [bands.regions]);
   const activeRegionLabel = regionTabs.find((r) => r.key === activeRegion)?.label ?? 'All';
 
@@ -307,8 +234,6 @@ export const DeliveryPlanning = () => {
     if (r === 'ALL') next.delete('region'); else next.set('region', r);
     setParams(next, { replace: true });
   };
-  /* Toolbar "Reset layout": back to All / All. The grid clears its own funnels
-     and search box in the same click. */
   const resetView = () => {
     const next = new URLSearchParams(params);
     next.delete('state');
@@ -316,51 +241,33 @@ export const DeliveryPlanning = () => {
     setParams(next, { replace: true });
   };
 
-  /* Every fetched order (all regions). The active region chip filters this
-     locally; valid region keys come from the chip list (an unknown/stale key is
-     a defensive no-op, never an empty board). */
   const fetchedOrders = bands.orders;
   const regionKeys = useMemo(() => new Set(regionTabs.map((r) => r.key)), [regionTabs]);
   const allOrders = useMemo<PlanningOrder[]>(
     () => filterOrdersByRegion(fetchedOrders, activeRegion, regionKeys),
     [fetchedOrders, activeRegion, regionKeys],
   );
-  /* State-tab badges over the region-filtered set, so they reflect the active
-     region exactly as the server's region-scoped counts did. */
   const counts = useMemo<PlanningCounts>(() => {
-    // Until every band is in, the server's counts (every order, counted before the rows).
     const server = serverCounts?.[regionKeys.has(activeRegion) ? activeRegion : 'ALL'];
     if (!bands.complete && server) return server;
     const c = planningCountsFrom(allOrders);
     if (needsDelivered) return c;
-    // OPEN bands: Delivered rows were left out, each band counted its own.
     const d = sumDelivered(bands.parts);
     const delivered = activeRegion === 'ALL' ? d.total : (d.byRegion[activeRegion] ?? 0);
     return { ...c, DELIVERED: delivered, ALL: c.ALL + delivered };
   }, [allOrders, serverCounts, bands.complete, bands.parts, activeRegion, regionKeys, needsDelivered]);
 
-  /* The SO order objects behind the current selection — fed to the scheduling
-     drawer as its ordered stop list. Resolved from the region-scoped board (all
-     states) by so_doc_no, so a selection made under one state tab still resolves
-     after a tab switch. */
   const selectedOrders = useMemo<PlanningOrder[]>(() => {
     const docs = new Set(selectedSoDocNos());
     return allOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no));
-    // selectedSoDocNos reads `sel`; recompute when either the board or the
-    // selection changes.
   }, [allOrders, sel]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* Latest WhatsApp (Seampify) send per SO — drives the "Message" column.
-     Doc list from the WHOLE region fetch (not the state tab) so switching tabs
-     never refires the statuses query. */
   const soDocNos = useMemo(
     () => allOrders.filter((o) => o.row_type === 'so' || o.row_type === 'assr').map((o) => o.so_doc_no).sort(),
     [allOrders],
   );
   const { data: msgStatuses } = useDeliveryMessageStatuses(soDocNos);
 
-  /* The rows the Send-Message modal previews (open when non-null). SO-only,
-     like every bulk action on this board. */
   const [sendingRows, setSendingRows] = useState<PlanningOrder[] | null>(null);
   const [sendKind, setSendKind] = useState<SendMessageKind>('delivery');
   const [sendMenuOpen, setSendMenuOpen] = useState(false);
@@ -373,13 +280,9 @@ export const DeliveryPlanning = () => {
   const sendCount = selectedSoDocNos().length + selectedAssrRows.length;
   const openSendModal = (kind: SendMessageKind) => {
     const docs = new Set(selectedSoDocNos());
-    /* With only Service Case jobs ticked, Send Now / Amend Now are their date
-       message: Service Arrangement carries the same Confirm / Amend. */
     if (kind === 'assr_arrangement' || (ASSR_DATE_KINDS.has(kind) && docs.size === 0)) {
       setSendKind('assr_arrangement'); setSendingRows(selectedAssrRows); return;
     }
-    // Driver Info and the Reminders also go to a Service Case job (Postpone has
-    // its own no-modal path). ASSR_DIRECT_KINDS covers the reminders here.
     const assr = (kind === 'driver_info' || ASSR_DIRECT_KINDS.has(kind)) ? selectedAssrRows : [];
     if (docs.size === 0 && assr.length === 0) return;
     setSendKind(kind);
@@ -408,8 +311,6 @@ export const DeliveryPlanning = () => {
       const key = phoneKey(o.phone) || o.so_doc_no;
       byPhone.set(key, [...(byPhone.get(key) ?? []), o.so_doc_no]);
     }
-    // A Service Case leg postpones on its own — one message per leg, keyed by its
-    // row key (its so_doc_no IS the key); the backend reads the case, not an SO.
     for (const o of selectedAssrRows) byPhone.set(o.so_doc_no, [o.so_doc_no]);
     setPostponing(true);
     const res = await sendInChunks(sendMsg.mutateAsync, 'postpone', [...byPhone].map(([phone, docNos]) => ({ phone, docNos })));
@@ -461,13 +362,7 @@ export const DeliveryPlanning = () => {
         title="Delivery Planning"
         description={`Orders that need delivering · grouped by region (customer state) · ${counts.ALL} in ${activeRegionLabel}`}
         primaryAction={
-          /* Wraps: on a narrow desktop window the three buttons ran off the
-             right edge, because this group is ONE item in PageHeader's
-             wrapping rail and could not break itself. */
           <span style={{ display: 'inline-flex', flexWrap: 'wrap', maxWidth: '100%', gap: 'var(--space-2)' }}>
-            {/* Send Message — standing header button (owner picked design B,
-                2026-07-22): always visible, WhatsApp green, counts the selected
-                SO rows; disabled until something is ticked. */}
             <div ref={sendMenuAnchorRef}>
               <Button
                 variant="primary"
@@ -497,13 +392,8 @@ export const DeliveryPlanning = () => {
                   }}
                 >
                   {(() => {
-                    /* Service Arrangement, Driver Info, the two date sends, Postpone
-                       and the Reminders reach a Service Case job (assrCapableKind);
-                       the rest read a Sales Order, so with only ASSR rows ticked
-                       they are greyed instead of doing nothing. */
                     const soOnlyIdle = (k: SendMessageKind) =>
                       !assrCapableKind(k) && selectedSoDocNos().length === 0;
-                    // SO + ASSR ticked: an SO-only send leaves the ASSR rows out, so say so.
                     const assrLeftOut = (k: SendMessageKind) =>
                       !assrCapableKind(k) && selectedAssrRows.length > 0 && selectedSoDocNos().length > 0;
                     const renderKind = (
@@ -587,8 +477,6 @@ export const DeliveryPlanning = () => {
                 </AnchoredMenu>
               )}
             </div>
-            {/* New DP Order — manual setup / dismantle / supplier-pickup jobs (and
-                any ad-hoc delivery), created straight onto the board. */}
             <Button variant="primary" onClick={() => setShowNewDp(true)}>
               <Plus size={16} strokeWidth={1.75} />
               New DP Order
@@ -664,8 +552,6 @@ export const DeliveryPlanning = () => {
                     /* Opens UP: the bulk bar floats at the screen's bottom edge, and a
                        menu dropped below it showed only a sliver of Schedule (HC-0164). */
                     position: 'absolute', bottom: 'calc(100% + 4px)', right: 0, zIndex: 41, minWidth: 240,
-                    /* Short today, but cap + scroll so it can't fall off-screen either
-                       if more bulk actions are added (twin of the Send Message menu). */
                     maxHeight: '70vh', overflowY: 'auto',
                     background: 'var(--hz-c-surface)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md, 10px)',
                     boxShadow: '0 8px 28px rgba(34, 31, 32, 0.14)', padding: 4,
@@ -735,8 +621,6 @@ export const DeliveryPlanning = () => {
         }}
       />
 
-      {/* Per-row HC fields editor (right-click → Edit HC fields). SO-context
-          always editable; DO-execution editable only when the order has a DO. */}
       {showNewDp && <NewDpOrderDrawer onClose={() => setShowNewDp(false)} />}
 
       {schedulingDp && (

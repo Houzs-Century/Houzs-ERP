@@ -16,7 +16,6 @@ const readAsync = vi.fn(async (_b: Body) => ({
   ok: true,
   bill: { billNo: 'INV-8812', billDate: '2026-10-01', totalSen: 1_272_000, vendorName: 'MITEC SDN BHD', dueDate: '2026-10-10' },
   hasEvents: true, eventBill: true,
-  /* The reader's own guess is another fair — the row's event still stands. */
   eventSuggestions: [{ id: 349, code: 'E-349', name: 'Putrajaya [AKEMI] @ IOI CITY MALL', startDate: '2026-10-20', endDate: '2026-10-26', status: 'confirmed', archived: false, venue: null, brand: 'AKEMI', organizer: null, boothNo: null, score: 0.9, reasons: [] }],
   matches: [],
 }));
@@ -57,7 +56,6 @@ describe('the request form from a PMS row', () => {
     await waitFor(() => expect((screen.getByLabelText('Pay to') as HTMLInputElement).value).toBe('MITEC SDN BHD'));
     expect(readAsync).toHaveBeenCalledTimes(1);
     expect(readAsync).toHaveBeenCalledWith({ files: [{ name: 'MITEC rental invoice.pdf', mime: 'application/pdf', dataBase64: 'b64:MITEC rental invoice.pdf' }] });
-    /* The event: the row's, shown — no picker, no other fair suggested. */
     expect(screen.getByRole('note', { name: 'Event' }).textContent).toBe('Kuala Lumpur [ZANOTTI] REX @ MITEC');
     expect(screen.queryByRole('combobox', { name: 'Event' })).toBeNull();
     expect(screen.queryByText(/IOI CITY MALL/)).toBeNull();

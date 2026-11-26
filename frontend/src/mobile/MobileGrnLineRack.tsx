@@ -199,9 +199,6 @@ function RackRow({ grnId, header, line, onSaved }: { grnId: string; header: Head
   );
 }
 
-/* Opens the camera on mount and stays open until a sticker of THIS receipt's
-   warehouse is read; any other QR only explains itself, so the storekeeper can
-   just aim at the right shelf. */
 function RackScanPanel({ racks, onRack, onClose }: {
   racks: ReadonlyArray<{ id: string; rack: string }>;
   onRack: (rackId: string) => void;

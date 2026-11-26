@@ -1,20 +1,3 @@
-/* ----------------------------------------------------------------------------
-   Fetching and rendering ONE document, by type.
-
-   TWO THINGS ARE PINNED HERE, and both have already cost this repo a document.
-
-   1. THE ADDRESS. `GET /mfg-sales-orders/:docNo` is keyed by the document
-      NUMBER; every other detail route is `.eq('id', ...)`. Swapping them
-      compiles, reads fine and 404s at the printer, so the URL each type builds
-      is asserted literally.
-
-   2. "PRINT NOW" GOES THROUGH THE PDF. The global `@media print` block in
-      index.css hides `body *` and reveals only `.org-print-area`, so
-      `window.print()` from a list prints a BLANK SHEET — which is exactly what
-      the Delivery Order's own Print now did before PrintPreviewModal existed.
-      So every generator is asserted to receive the `action`, and `window.print`
-      is asserted never to be called.
-   ---------------------------------------------------------------------------- */
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -59,9 +42,6 @@ describe("each document type is fetched at ITS OWN address", () => {
     expect(b.payments).toEqual([{ amount_sen: 100 }]);
   });
 
-  /* The payments read used to be `.catch(() => ({ payments: [] }))`. That turns
-     "the read failed" into "nothing was paid" on a document the CUSTOMER is
-     handed. It must propagate; the caller shows an error and no document. */
   test("a failed payments read stops the Sales Order print rather than claiming nothing was paid", async () => {
     authedFetch.mockImplementation((p: string) =>
       p.endsWith("/payments")
@@ -83,7 +63,6 @@ describe("each document type is fetched at ITS OWN address", () => {
     authedFetch.mockResolvedValue(body);
     await fetchPrintBundle(t(doc, "HUMAN-NUMBER-1", "the-uuid"));
     expect(authedFetch.mock.calls[0]?.[0]).toBe(`/${path}/the-uuid`);
-    // The human number is for the MENU. It must never reach the URL.
     expect(authedFetch.mock.calls[0]?.[0]).not.toContain("HUMAN-NUMBER-1");
   });
 
@@ -97,8 +76,6 @@ describe("each document type is fetched at ITS OWN address", () => {
     expect(b.header).toMatchObject({ purchase_location_name: "HQ", delivery_address: "1 Road, Ipoh" });
   });
 
-  /* A failed warehouse read must NOT become "no warehouse" — that prints the
-     supplier's copy of the PO telling them to ship nowhere in particular. */
   test("a failed warehouse read stops the Purchase Order print, it does not blank the address", async () => {
     authedFetch.mockImplementation((p: string) =>
       p.startsWith("/inventory/warehouses")
@@ -114,12 +91,6 @@ describe("each document type is fetched at ITS OWN address", () => {
     expect(authedFetch.mock.calls.map((c) => c[0])).toEqual(["/mfg-purchase-orders/po-uuid"]);
   });
 
-  /* Was `loadScanId === "do-uuid"` until 2026-08-26. The QR encodes the PUBLIC
-     page now (/d/<token>, no login — the owner's call), so the header carries a
-     minted TOKEN instead of the row id, fetched from the authed mint endpoint.
-     The property is unchanged and is still the one worth pinning: the DO branch
-     of this fetcher is where the QR gets armed, so no print call site has to
-     remember to. */
   test("a Delivery Order's header carries the PUBLIC scan token, which arms the print's QR", async () => {
     authedFetch.mockImplementation((p: string) =>
       p.endsWith("/scan-token")
@@ -130,8 +101,6 @@ describe("each document type is fetched at ITS OWN address", () => {
     expect(authedFetch.mock.calls.map((c) => c[0])).toContain("/delivery-orders-mfg/do-uuid/scan-token");
   });
 
-  /* A print must never be blocked by the QR. The operator asked for the
-     document; an unreachable mint endpoint costs the code, not the paper. */
   test("a failed mint still prints the Delivery Order, with no QR", async () => {
     authedFetch.mockImplementation((p: string) =>
       p.endsWith("/scan-token")
@@ -155,8 +124,6 @@ describe("Print now renders the PDF — never window.print()", () => {
     await renderPrintBundle(t(doc, "X-1", "k"), { header: {}, items: [] }, "print");
     expect(gen[doc]).toHaveBeenCalledTimes(1);
     const args = gen[doc].mock.calls[0]!;
-    /* The Sales Order generator takes `action` positionally (4th); the other
-       seven take it on an options object. Either way it must ARRIVE. */
     const carried = args.includes("print") || args.some((a) => a && typeof a === "object" && (a as { action?: string }).action === "print");
     expect(carried).toBe(true);
     expect(printSpy).not.toHaveBeenCalled();
@@ -176,10 +143,6 @@ describe("Print now renders the PDF — never window.print()", () => {
 });
 
 describe("the Delivery Return mapping, which the generator cannot do without", () => {
-  /* Migration 0102 put the DO-clone address block on the DR record and the
-     printout ignored it, so a Delivery Return left the building with no customer
-     address on it (owner UI audit, Item #9). Every one of those fields is
-     threaded here, and `customer_state` is the one whose NAME changes. */
   test("the address block is carried, with customer_state mapped to state", () => {
     const { header } = deliveryReturnPdfBundle({
       deliveryReturn: {

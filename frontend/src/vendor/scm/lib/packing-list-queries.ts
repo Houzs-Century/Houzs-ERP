@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// packing-list-queries — the day's PACKING LISTS read hook.
-//
-// `GET /trips/packing?date=&warehouseId=` returns ONE ENTRY PER TRIP for the
-// picked day, because a packing list IS a trip: one lorry, one day (owner
-// 2026-08-25). Three lorries out = three lists; a six-day week with one lorry
-// a day = six lists on six dates. Nothing here writes — Delivery Time
-// Arrangement sequences the stops and Last Mile Delivery crews them; this is a
-// render of what they produced.
-//
-// Same pattern as the sibling fleet-day-queries: TanStack Query + authedFetch,
-// rows as the API emits them. Stops arrive in DELIVERY order (stop_no
-// ascending); the LOADING order is packing-list-model.ts's business.
-// ----------------------------------------------------------------------------
 
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -21,10 +7,7 @@ export type PackingItem = {
   item_code: string;
   description: string | null;
   qty: number;
-  /** The rack(s) this LINE left from as locked when it shipped; before that the
-   *  explicit pick, or null when no pick was made. */
   rack: string | null;
-  /** True when `rack` is the rack(s) stamped at dispatch, not a pick. */
   rack_locked?: boolean;
 };
 
@@ -36,7 +19,6 @@ export type PackingStop = {
   do_id: string | null;
   do_number: string | null;
   do_status: string | null;
-  /** The stop names a delivery order outside the companies you hold a grant for. */
   do_missing: boolean;
   units: number;
   items: PackingItem[];
@@ -53,7 +35,6 @@ export type PackingListRow = {
   stop_count: number;
   do_count: number;
   units: number;
-  /** Null — never 0 — when no member delivery order carries a volume. */
   m3_milli: number | null;
   stops: PackingStop[];
 };

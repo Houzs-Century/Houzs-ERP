@@ -1,8 +1,3 @@
-/* PiBackfillCard — "Purchase invoices in the ledger", the owner-pressed door on
-   the item-3 backfill, in the redesign (Finance-1a-Setup, batch 6 §6.2): dry
-   run first, the write loop drains `remaining`, and a pass that completes
-   NOTHING stops the loop with the failures on screen (no spinning on a wall
-   of unbound groups). Server half: tests/piPeriodicBackfill.test.ts. */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
@@ -30,7 +25,6 @@ describe('the backfill card', () => {
     render(<PiBackfillCard />);
     expect(screen.getByText('Purchase invoices in the ledger')).toBeTruthy();
     expect(screen.getByText('Dr each group’s purchase account, Cr Trade creditors. Dry run first; the write is yours.')).toBeTruthy();
-    /* Nothing to write before the dry run has spoken. */
     expect(screen.queryByText(/^Write/)).toBeNull();
     fireEvent.click(screen.getByText('Dry run'));
     await waitFor(() => expect(screen.getByText(
@@ -58,10 +52,8 @@ describe('the backfill card', () => {
     await waitFor(() => expect(screen.getByText('2 done · every purchase invoice is current now')).toBeTruthy());
     expect(screen.getAllByText('Written')).toHaveLength(2);
     expect(screen.getByText('HC-JE-2610-0002')).toBeTruthy();
-    /* dry + two write passes + the refresh. */
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/accounting/backfill/pi-periodic?limit=25');
-    /* Nothing left: no Write button on the after-state. */
     expect(screen.queryByText(/^Write \d/)).toBeNull();
   });
 
@@ -75,11 +67,9 @@ describe('the backfill card', () => {
     await waitFor(() => expect(screen.getByText('Write 2')).toBeTruthy());
     fireEvent.click(screen.getByText('Write 2'));
     await waitFor(() => expect(screen.getByText(`0 done · 1 failed: ${UNBOUND}`)).toBeTruthy());
-    /* The server's sentence also sits on the invoice's own row, which stays Missing. */
     expect(screen.getByText(UNBOUND).closest('tr')?.textContent).toContain('PI-001');
     expect(screen.getByText('Missing')).toBeTruthy();
     expect(screen.queryByText('Written')).toBeNull();
-    /* dry + ONE write pass (stall guard) + the refresh — never a second write. */
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

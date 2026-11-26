@@ -84,7 +84,6 @@ describe('company 2 — untouched', () => {
   });
 });
 
-/* ── the DRAFT -> live wrapper ───────────────────────────────────────────── */
 
 type Row = { doc_no: string; sales_location: string | null; customer_state: string | null };
 const makeSb = (rows: Row[], reads: { n: number }) => ({

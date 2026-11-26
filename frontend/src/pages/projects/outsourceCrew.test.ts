@@ -41,9 +41,9 @@ describe("mergeCrewOptions", () => {
       { id: 1 as unknown as string, name: "Ali", phone: null, user_type: "helper", role_name: "Helper" },
     ];
     const extra = [
-      helperToCrew({ id: "h1", name: "ali", contact: null, in_house: false }), // duplicate (case)
+      helperToCrew({ id: "h1", name: "ali", contact: null, in_house: false }),
       helperToCrew({ id: "h2", name: "Siti", contact: "+6", in_house: false }),
-      helperToCrew({ id: "h3", name: "   ", contact: null, in_house: false }), // blank
+      helperToCrew({ id: "h3", name: "   ", contact: null, in_house: false }),
     ];
     expect(mergeCrewOptions(base, extra).map((m) => m.name)).toEqual(["Ali", "Siti"]);
   });

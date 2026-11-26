@@ -2,9 +2,6 @@ import { describe, expect, test } from 'vitest';
 import { buildVariantSummary, withFabricSupplierCode } from './variant-summary';
 import { variantsForCompare } from '../lib/amendment-noop-lines';
 
-/* 2990-0067: SO-2611-041 was amended from EZ-002 to EZ-011, but the line kept
-   the supplier code saved for EZ-002, so SO and PO printed
-   "EZ-011 Light Grey (M2402-4)" instead of EZ-011's own M2402-18. */
 describe('supplier code stamp follows the fabric it was looked up for', () => {
   const ez002 = withFabricSupplierCode({ fabricCode: 'EZ-002', colourLabel: 'EZ-002 Sand', seatHeight: '28' }, 'M2402-4');
 

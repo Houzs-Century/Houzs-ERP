@@ -23,7 +23,6 @@ import {
 import { defaultSectionFor } from '../lib/account-sections';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
-/* The scm client the middleware attaches — typed off the request variables, never a loose any. */
 type Sb = Variables['supabase'];
 const requirePerm = (c: Ctx): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to arrange the financial statements." };
@@ -63,9 +62,6 @@ export async function loadChartUnion(sb: Sb, ids: number[]): Promise<{ ok: true;
         name: String(raw.account_name ?? code),
         type: String(raw.account_type ?? ''),
         parentCode: raw.parent_code == null ? null : String(raw.parent_code),
-        /* The default shelf for an unsectioned row — the same rule the
-           statements file it by, so the editor's Unassigned list agrees with
-           the report's. */
         section: raw.section == null ? defaultSectionFor(String(raw.account_type ?? ''), code) : String(raw.section),
         definedBy: companyId,
         perCompany: { ...(cur?.perCompany ?? {}), [companyId]: { active: raw.is_active === true } },
@@ -117,7 +113,6 @@ const BAD_REPORT = { error: 'bad_report', message: `report must be one of: ${Obj
 const companiesOf = (c: Ctx, ids: number[]): Array<{ id: number; code: string }> =>
   (c.get('companies') ?? []).filter((co) => ids.includes(co.id)).map((co) => ({ id: co.id, code: co.code }));
 
-/* ── GET /accounting/reports/layout?report=pnl ──────────────────────────── */
 export const reportLayoutGet = async (c: Ctx): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const report = reportOf(c);
@@ -140,7 +135,6 @@ export const reportLayoutGet = async (c: Ctx): Promise<Response> => {
   });
 };
 
-/** Every category of a tree, by id — for carrying ticks across a save. */
 const categoriesOf = (items: LayoutItem[], into = new Map<string, number[]>()): Map<string, number[]> => {
   for (const it of items) {
     if (it.kind !== 'category') continue;
@@ -150,7 +144,6 @@ const categoriesOf = (items: LayoutItem[], into = new Map<string, number[]>()): 
   return into;
 };
 
-/* ── PUT /accounting/reports/layout?report=pnl  {layout} ────────────────── */
 export const reportLayoutPut = async (c: Ctx): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const report = reportOf(c);
@@ -163,9 +156,6 @@ export const reportLayoutPut = async (c: Ctx): Promise<Response> => {
   if (!checked.ok) return c.json({ error: 'bad_layout', message: checked.reason }, 400);
   const sb = c.get('supabase');
 
-  /* A tick belongs to its company: the caller sets the ticks of the
-     companies in their grants, and the ticks of any other company ride
-     through the save untouched. */
   const before = await resolveLayout(sb, ids, report);
   if (!before.ok) return c.json({ error: 'load_failed', reason: before.reason }, 500);
   const kept = before.stored ? categoriesOf(Object.values(before.layout.blocks).flat()) : new Map<string, number[]>();
@@ -189,7 +179,6 @@ export const reportLayoutPut = async (c: Ctx): Promise<Response> => {
   return c.json({ ok: true, report, stored: true, layout: checked.layout, updatedAt: now, updatedBy: who(c) });
 };
 
-/* ── DELETE /accounting/reports/layout?report=pnl — back to the chart ───── */
 export const reportLayoutReset = async (c: Ctx): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const report = reportOf(c);

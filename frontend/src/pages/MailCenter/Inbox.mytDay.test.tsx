@@ -1,7 +1,3 @@
-/* The inbox row shows the clock for a message from TODAY and the date for an
-   older one. "Today" is the Malaysian day: at 01:30 on 10 Nov (Malaysia), a
-   message from 23:30 on the 9th is yesterday's, even on a machine whose clock
-   zone is UTC, where both instants share 9 Nov. Run with TZ=UTC to see it. */
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThreadList } from "./Inbox";
@@ -48,7 +44,7 @@ const mount = (lastMessageAt: string) =>
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-11-09T17:30:00Z")); // 01:30 on 10 Nov in Malaysia
+  vi.setSystemTime(new Date("2026-11-09T17:30:00Z"));
 });
 afterEach(() => {
   cleanup();

@@ -1,9 +1,3 @@
-// ----------------------------------------------------------------------------
-// po-amendment-diff-card — one PO amendment line as WAS / REQUESTING, the card
-// the PO amendment job card (PoAmendmentDetailV2) renders per line. Its own
-// module for the same reason as so-amendment-diff-card: the PO queue's quick
-// view shows the same card, without the job card's PDF generator.
-// ----------------------------------------------------------------------------
 
 import { fmtMoneySen } from "@2990s/shared";
 import { amendmentVariantSummaries } from "../../vendor/scm/lib/so-amendment-line-diff";
@@ -11,7 +5,6 @@ import { poLineFieldKinds, type PoAmendmentLine } from "../../vendor/scm/lib/po-
 import { RowRoutingChips } from "../../vendor/scm/components/AmendmentRouting";
 import { cn, formatDate } from "../../lib/utils";
 
-/* PO amendment prices are stored in centi (1/100 MYR). */
 const fmtSen = (centi: number | null | undefined): string => fmtMoneySen(centi);
 
 const changeTypeLabel = (t: string): string =>
@@ -22,15 +15,12 @@ const changeTypeLabel = (t: string): string =>
   t === "ADD" ? "Added line" :
   t === "REMOVE" ? "Removed line" : t;
 
-/* Read the old_snapshot blob a PO amendment line records. */
 type PoOldSnapshot = {
   item_code?: string | null;
   material_name?: string | null;
   qty?: number | null;
   unit_price_sen?: number | null;
   delivery_date?: string | null;
-  // Spec fields — the follow-up preview records these so the card can show what a
-  // SPEC change moved (variant summary), rendered via amendmentVariantSummaries.
   variants?: unknown;
   item_group?: string | null;
   description2?: string | null;
@@ -53,10 +43,6 @@ export function PoAmendmentDiffCard({ line }: { line: PoAmendmentLine }) {
   const priceChanged = !isAdd && !isRemove && line.new_unit_price_sen != null && line.new_unit_price_sen !== (old.unit_price_sen ?? null);
   const deliveryChanged = !isAdd && !isRemove && line.new_delivery_date != null && line.new_delivery_date !== (old.delivery_date ?? null);
 
-  /* The variant SUMMARY each side renders — a colour/fabric/special change (the
-     common SO-driven follow-up) moves no item_code, so it only shows here.
-     Group-aware via the shared SO helper so a bedframe line reads its own axes.
-     Guarded on new_variants so a QTY row's null blob never reads as a cleared spec. */
   const spec = amendmentVariantSummaries({
     change_type: line.change_type,
     new_variants: line.new_variants,
@@ -78,7 +64,6 @@ export function PoAmendmentDiffCard({ line }: { line: PoAmendmentLine }) {
         <RowRoutingChips kinds={poLineFieldKinds(line)} />
       </div>
       <div className="grid grid-cols-2 divide-x divide-border-subtle">
-        {/* Before */}
         <div className="p-3">
           <div className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
             Was
@@ -113,7 +98,6 @@ export function PoAmendmentDiffCard({ line }: { line: PoAmendmentLine }) {
             </>
           )}
         </div>
-        {/* After */}
         <div className="p-3">
           <div className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
             Requesting
@@ -153,7 +137,6 @@ export function PoAmendmentDiffCard({ line }: { line: PoAmendmentLine }) {
   );
 }
 
-/* Header change labels — the AMENDABLE_HEADER trust boundary keys. */
 const HEADER_LABEL: Record<string, string> = {
   supplier_id: "Supplier",
   expected_at: "Delivery date",

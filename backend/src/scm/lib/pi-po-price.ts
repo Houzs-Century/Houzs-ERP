@@ -48,7 +48,6 @@
 import { poRefByPiLine, poRefByPoItemId } from './line-po-ref';
 import { piPriceDifferenceSummary } from './pi-po-price-rule';
 
-/* The pure rule lives in its own mirrored file; re-exported so existing importers keep one door. */
 export { comparePiLinePrice, defaultPiUnitPriceSen, piPriceDifferenceSummary, type PiLinePriceComparison } from './pi-po-price-rule';
 
 /**
@@ -85,22 +84,8 @@ export const poUnitPriceByPiLine = (
   return out;
 };
 
-/* ── The one read, done once ───────────────────────────────────────────────
-   Both facts a PI line borrows from its GRN line — the supplier's own code and
-   the price we ordered at — come off the same row, so they are fetched
-   together: one `grn_items` read per DOCUMENT plus one `purchase_order_items`
-   read, never one per line.
-
-   It MUTATES `items` in place because that is what the detail route already
-   does with every other enrichment, and a second shape would be a second thing
-   to keep in step. A failed hop is logged by the caller and leaves both fields
-   null — a purchase invoice must still open when an auxiliary read fails. */
 export type PiLineEnrichable = Record<string, unknown> & { id: string; grn_item_id?: string | null };
 
-/* The narrowest shape this needs. PromiseLike, not Promise: PostgREST's filter
-   builder is thenable but is not a Promise, and typing it as one makes the real
-   client fail to assign ("missing catch, finally"). Structural rather than
-   importing SupabaseClient so the helper stays testable with a stub. */
 type MinimalPgrest = {
   from: (t: string) => {
     select: (cols: string) => {
@@ -109,13 +94,6 @@ type MinimalPgrest = {
   };
 };
 
-/* ── The trail, taken once ─────────────────────────────────────────────────
-   Migration 20260914T0200 stores the ordered price ON the invoice line. Every
-   insert path calls this on the rows it is about to write, so the value comes
-   from the server's own link at that moment — a `po_unit_price_sen` in a
-   request body is overwritten, and a line with no purchase order behind it is
-   null. A failed read THROWS: an invoice written with a silent trail of nulls
-   would look exactly like "no purchase order", which is the wrong answer. */
 export async function stampPoPriceSnapshot(sb: MinimalPgrest, rows: Array<Record<string, unknown>>): Promise<void> {
   const grnItemIds = [...new Set(rows.map((r) => r.grn_item_id).filter((v): v is string => typeof v === 'string' && !!v))];
   for (const r of rows) r.po_unit_price_sen = null;
@@ -155,10 +133,6 @@ export async function withPoPriceSnapshot<R extends { error: { message: string }
 
 export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnrichable[]): Promise<void> {
   const grnItemIds = [...new Set(items.map((r) => r.grn_item_id).filter((v): v is string => !!v))];
-  /* The stored trail (20260914T0200) as the detail read returned it, taken
-     BEFORE the fields are reset. `po_price_source` tells the screen which one
-     it is looking at: 'snapshot' | 'live' (a line written before the column
-     existed) | 'none'. */
   const stored = new Map<string, number>();
   for (const it of items) {
     if (typeof it.po_unit_price_sen === 'number') stored.set(it.id, it.po_unit_price_sen);
@@ -170,11 +144,6 @@ export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnricha
   }
   if (!grnItemIds.length) return;
 
-  /* Bind the error and THROW rather than reading `data ?? []` as "none": a
-     failed read and an empty result are different facts, and collapsing them
-     would quietly report every line as having no purchase order behind it —
-     which is exactly the wrong answer to show a person checking a bill. The
-     caller catches, logs, and leaves both fields null. */
   const { data: gis, error: gErr } = await sb.from('grn_items')
     .select('id, supplier_sku, purchase_order_item_id').in('id', grnItemIds);
   if (gErr) throw new Error(`grn_items read failed: ${String((gErr as { message?: string }).message ?? gErr)}`);
@@ -186,9 +155,6 @@ export async function attachGrnLineFacts(sb: MinimalPgrest, items: PiLineEnricha
   for (const g of grnRows) if (g.supplier_sku) skuByGrnItem.set(g.id, g.supplier_sku);
 
   const poiIds = [...new Set(grnRows.map((g) => g.purchase_order_item_id).filter((v): v is string => !!v))];
-  /* The same PO-line read carries the line's own purchase order (#26), so the
-     PO number beside a line and the PO price beside it can never come from two
-     different rows. */
   type PoItemRow = { id: string; unit_price_sen: number | null; purchase_order_id: string | null; po?: { po_number?: string | null } | null };
   const poItems: PoItemRow[] = [];
   if (poiIds.length) {

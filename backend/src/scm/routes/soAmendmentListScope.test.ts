@@ -51,7 +51,6 @@ const STAFF = (): Row[] => [
 
 const ORDERS = (): Row[] => [
   { doc_no: 'SO-A', company_id: CO, salesperson_id: 'staff-a', access_staff_ids: ['staff-a'], open_to_all: false, ref: null, customer_so_no: null },
-  // Imported, open to all, sold by rep B — the shape that leaked.
   { doc_no: 'SO-OPEN', company_id: CO, salesperson_id: 'staff-b', access_staff_ids: ['staff-b'], open_to_all: true, ref: null, customer_so_no: null },
   { doc_no: 'SO-SHARED', company_id: CO, salesperson_id: 'staff-b', access_staff_ids: ['staff-b', 'staff-a'], open_to_all: false, ref: null, customer_so_no: null },
 ];

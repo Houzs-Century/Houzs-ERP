@@ -205,8 +205,6 @@ attendance.post("/punch", async (c) => {
         .returning({ id: hr_attendance.id });
       if (action === "CLOCK_OUT" && closed && inserted[0]) await syncDayFromPunch(db, co.companyId, inserted[0].id);
     } catch (e) {
-      /* Two taps racing: the unique (employee, work date) row already exists, and
-         the second tap is the no-op it would have been a second later. */
       if ((e as { code?: string } | null)?.code !== "23505" && !String((e as Error | null)?.message ?? "").includes("duplicate key")) throw e;
     }
   }
@@ -242,9 +240,6 @@ attendance.get("/me/photo/:id", async (c: Ctx) => {
   return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "image/jpeg", "cache-control": "private, max-age=300" } });
 });
 
-/* My pay (Hookka's worker pay screen): this month's running estimate (the
-   same pipeline as Generate, nothing stored) and the slips HR has approved.
-   A draft slip is not shown: the figures can still change. */
 attendance.get("/me/pay", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -321,9 +316,6 @@ const canConfirmOt = (c: Ctx): boolean => {
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- tests build AuthUser without permissions_set
   return hasPermission(u.permissions_set ?? u.permissions, "hr.ot.confirm");
 };
-// A confirmer pinned to specific employees (hr-confirmer-scope) only ever sees
-// or reviews their own; an unrestricted confirmer gets `undefined` here, which
-// drizzle's and() drops, so the query is company-wide as before.
 const otScopeCond = (c: Ctx) => {
   const scope = scopedEmployeeIds(c.get("user").id);
   return scope ? inArray(hr_ot_claims.employee_id, [...scope]) : undefined;
@@ -397,10 +389,6 @@ attendance.post("/ot", async (c: Ctx) => {
   const seg = parseOtSegment(String(body.startHHMM ?? ""), String(body.endHHMM ?? ""));
   if (!seg.ok) return c.json({ error: "bad_segment", message: seg.message }, 400);
   const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : "";
-  /* A reported window and the punch-derived AUTO claim must never both pay for
-     one day. The AUTO claim is removed below; but if a supervisor already
-     CONFIRMED it, the day's overtime is settled — refuse the report and send
-     the worker to HR rather than silently voiding an approved figure. */
   const confirmedAuto = (
     await db
       .select({ id: hr_ot_claims.id })
@@ -413,9 +401,6 @@ attendance.post("/ot", async (c: Ctx) => {
     .insert(hr_ot_claims)
     .values({ company_id: co.companyId, employee_id: emp.id, work_date: workDate, start_min: seg.startMin, end_min: seg.endMin, note, status: "PENDING", source: "REPORTED", created_by: userId })
     .returning({ id: hr_ot_claims.id });
-  /* A reported window is the precise record for the day, so the crude punch-
-     derived AUTO claim steps aside — removed here too (not only on the next
-     punch sync) so the two never both reach a supervisor for one day. */
   await db
     .delete(hr_ot_claims)
     .where(and(eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.employee_id, emp.id), eq(hr_ot_claims.work_date, workDate), eq(hr_ot_claims.source, "AUTO"), eq(hr_ot_claims.status, "PENDING")));
@@ -522,8 +507,6 @@ attendance.post("/punch-fix", async (c: Ctx) => {
   const fix = parsePunchFix(workDate, String(body.clockIn ?? ""), String(body.clockOut ?? ""), todayMyt());
   if (!fix.ok) return c.json({ error: "bad_fix", message: fix.message }, 400);
   const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 500) : "";
-  // One open request per day: a re-filing replaces the pending one (a reviewed
-  // one stays, for the record).
   await db
     .delete(hr_punch_corrections)
     .where(and(eq(hr_punch_corrections.company_id, co.companyId), eq(hr_punch_corrections.employee_id, emp.id), eq(hr_punch_corrections.work_date, workDate), eq(hr_punch_corrections.status, "PENDING")));
@@ -563,7 +546,6 @@ attendance.post("/punch-fix/:id/review", async (c: Ctx) => {
   const db = getDb(c.env);
   const at = new Date().toISOString();
   const by = c.get("user").id;
-  // Claim the pending row atomically, so two approvers cannot both act on it.
   const claimed = await db
     .update(hr_punch_corrections)
     .set({
@@ -578,8 +560,6 @@ attendance.post("/punch-fix/:id/review", async (c: Ctx) => {
   const pc = claimed.at(0) as PcRow & { employee_id: number } | undefined;
   if (!pc) return c.json({ error: "not_found", message: "That request is gone or already reviewed." }, 404);
   if (decision === "approve") {
-    // Write the day's attendance like an HR correction: PRESENT, the stated
-    // times (MANUAL), and re-sync the working hours the day pays from.
     const inAt = pc.req_in_min != null ? instantOnWorkDate(pc.work_date, pc.req_in_min).toISOString() : null;
     const outAt = pc.req_out_min != null ? instantOnWorkDate(pc.work_date, pc.req_out_min).toISOString() : null;
     const existing = (
@@ -649,9 +629,6 @@ attendance.get("/leave", async (c: Ctx) => {
       .orderBy(asc(hr_leave_requests.start_date), asc(hr_leave_requests.id));
     pending = rows.map((r) => ({ ...lrOut(r.c as LrRow), employeeName: r.name, empNo: r.emp_no }));
   }
-  // Team history: the reviewed team requests (approved / rejected) an approver
-  // can look back on, with who reviewed them. The pending queue above stays the
-  // actionable list; this is the record. Additive — the phone ignores it.
   let teamHistory: Array<ReturnType<typeof lrOut> & { employeeName: string; empNo: string }> = [];
   if (canApprove) {
     const rows = await db
@@ -714,10 +691,7 @@ attendance.post("/leave/:id/review", async (c: Ctx) => {
   const db = getDb(c.env);
   const at = new Date().toISOString();
   const by = c.get("user").id;
-  // Stamp the reviewer's name now: reviewed_by is a user id in a different store
-  // than this table, so the name cannot be joined back later.
   const byName = (c.get("user").name ?? "").trim().slice(0, 120) || null;
-  // Claim the pending row atomically, so two approvers cannot both act on it.
   const claimed = await db
     .update(hr_leave_requests)
     .set({ status: decision === "approve" ? "APPROVED" : "REJECTED", reject_reason: decision === "reject" ? rejectReason || null : null, reviewed_by: by, reviewed_by_name: byName, reviewed_at: at, updated_at: at })
@@ -726,8 +700,6 @@ attendance.post("/leave/:id/review", async (c: Ctx) => {
   const lr = claimed.at(0) as (LrRow & { employee_id: number }) | undefined;
   if (!lr) return c.json({ error: "not_found", message: "That request is gone or already reviewed." }, 404);
   if (decision === "approve") {
-    // Stamp each day as the leave status, no times — payroll reads the status,
-    // and a leave day carries no worked hours and no short-hour dock.
     const parsed = parseLeaveRequest(lr.leave_status, lr.start_date, lr.end_date);
     const days = parsed.ok ? parsed.days : [];
     for (const d of days) {

@@ -67,7 +67,6 @@ export async function readFairTrips(
       const starts = [...new Set((own.results ?? []).map((r) => day(r.startdate)).filter((d): d is string => !!d))];
       const ends = [...new Set((own.results ?? []).map((r) => day(r.enddate)).filter((d): d is string => !!d))];
       if (starts.length === 0 && ends.length === 0) return { ok: true, fairs: [], trips: [] };
-      /* Every fair on those days: booths at one venue on one day share a trip. */
       const conds = [
         ...(starts.length ? [`p.start_date IN (${marks(starts.length)})`] : []),
         ...(ends.length ? [`p.end_date IN (${marks(ends.length)})`] : []),
@@ -82,8 +81,6 @@ export async function readFairTrips(
     const ids = fairs.map((f) => f.id);
     const lco = companyId != null ? ' AND l.company_id = ?' : '';
     const dead = `upper(coalesce(d.status::text, '')) NOT IN ('CANCELLED', 'REJECTED', 'VOID')`;
-    /* What was outsourced on the fairs: a 3PL bill line on the fair, or a line on a
-       fair-transport account (the chart's Transport Setup & Dismantle row) of a live bill or voucher. */
     const covered = await db.prepare(
       `SELECT l.project_id AS projectid, l.kind AS kind, l.text AS words
          FROM scm.threepl_bill_lines l
@@ -109,7 +106,6 @@ export async function readFairTrips(
       outsourced.set(id, s);
     }
 
-    /* Finance's own ticks and rates — the company's. */
     const rates = new Map<string, number | null>();
     const ticks = new Map<string, boolean>();
     if (companyId != null) {

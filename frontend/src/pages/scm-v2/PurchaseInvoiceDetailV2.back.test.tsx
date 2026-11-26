@@ -59,7 +59,6 @@ const mount = (start: string) =>
     </QueryClientProvider>,
   );
 
-/* The desktop header's round Back (the phone header carries the same name). */
 const backButton = (name: string | RegExp) => screen.getAllByRole("button", { name })[0]!;
 
 beforeEach(() => {

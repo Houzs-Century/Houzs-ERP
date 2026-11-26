@@ -101,9 +101,6 @@ const lineOf = (sb: any) => sb.tables['mfg_sales_order_items'][0];
 
 describe('company-1 hard binding: the pool is never a bound line\'s evidence', () => {
   test('a C1 bedframe with NO PO stays PENDING even with matching pooled stock (HC-SO-013253)', async () => {
-    /* Blank variants on BOTH sides — the exact production shape the census
-       caught: the line's blank key met the migrated stock's blank key and the
-       pooled walk lit it with no purchase order anywhere. */
     const sb = world({ company: 1, group: 'bedframe', code: 'JAGER-(Q)', pooledQty: 5 });
     const res = await recomputeSoStockAllocation(sb);
     expect(res.ok).toBe(true);

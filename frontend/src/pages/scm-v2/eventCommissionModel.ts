@@ -75,7 +75,6 @@ export const NOT_COUNTED: Record<NonNullable<CommissionChange['notCounted']>, st
 /** An upsale / drop Finance left out (「这次改价不算」), beside the change. */
 export const LEFT_OUT_NOTE = 'left out by Finance, not counted';
 
-/* The words each basis puts on the page. */
 export const BASIS_WORDS: Record<CommissionBasis, { toggle: string; part1: string; card1: string; part1Empty: string; part2: string; part2Empty: string; inRange: string; earlier: string }> = {
   fair: {
     toggle: 'By fair', part1: 'Fairs starting in the range', card1: 'Fairs starting in the range', part1Empty: 'No fair starts in this range.',
@@ -89,18 +88,13 @@ export const BASIS_WORDS: Record<CommissionBasis, { toggle: string; part1: strin
   },
 };
 
-/* A report from a server older than the toggle carries no basis — it is by fair. */
 export const basisOf = (r: EventCommission): CommissionBasis => r.basis ?? 'fair';
-/* A report from a server before 2026-10-26 has no per-order lists — read as empty. */
 export const earlierOf = (r: EventCommission): CommissionEarlierOrder[] => r.earlierOrders ?? [];
 export const changedOf = (r: EventCommission): CommissionChangedOrder[] => r.changedOrders ?? [];
-/* A report from a server before 2026-10-27 carries no closed-month adjustments. */
 export const monthAdjOf = (r: EventCommission): CommissionMonthAdjustment[] => r.monthAdjustments ?? [];
-/* Nor, before 2026-11-12, late bills, marks or anything moved from last month. */
 export const lateOf = (r: EventCommission): Set<string> => new Set(r.lateBills ?? []);
 export const markedOf = (r: EventCommission): CommissionMarkedOrder[] => r.marked ?? [];
 export const deferredInOf = (r: EventCommission): CommissionDeferredIn[] => r.deferredIn ?? [];
-/* Nor, before 2026-11-13, a line typed by Finance. */
 export const manualOf = (r: EventCommission): CommissionManualLine[] => r.manualLines ?? [];
 /** The earlier orders as the page lists them (owner 2026-11-12: 「earlier order 我只
     想显示reached 30% 和cancelled」, 「这样drop up sales 就不需要算cancelled 了」): only
@@ -142,7 +136,6 @@ export const markWords = (m: Pick<CommissionMarkInfo, 'kind' | 'month'>): string
 export function fairLines(name: string): { title: string; detail: string; brand: string | null; organizer: string; venue: string; state: string } {
   const m = /^\s*(.*?)\s*\[([^\]]+)\]\s*(.*?)\s*(?:@\s*(.*?))?\s*$/.exec(name);
   if (!m) return { title: name, detail: '', brand: null, organizer: '', venue: '', state: '' };
-  /* The venue part is optional: with no "@" its group is undefined. */
   const [, rawState = '', rawBrand = '', rawOrganizer = '', rawVenue = ''] = m;
   const state = rawState.trim().toLowerCase().replace(/(^|\s)\p{L}/gu, (c) => c.toUpperCase());
   const brand = rawBrand.trim();
@@ -182,7 +175,6 @@ export const brandsOf = (r: EventCommission | undefined): string[] => {
 export const forBrand = (r: EventCommission, brand: string): EventCommission => {
   if (!brand) return r;
   const fairs = r.fairs.filter((f) => brandOfFair(f) === brand);
-  /* An earlier line's brand: its fair's, read off the name; with no fair, its order's — so the cards add up under one brand too. */
   const placeBrand = new Map([...earlierOf(r), ...changedOf(r)].map((o) => [o.docNo, brandOfOrder(o)]));
   const adjustments = r.adjustments.filter((a) => (fairLines(a.fairName).brand ?? placeBrand.get(a.docNo) ?? null) === brand);
   const earlierOrders = earlierOf(r).filter((o) => brandOfOrder(o) === brand);
@@ -190,12 +182,10 @@ export const forBrand = (r: EventCommission, brand: string): EventCommission => 
   const monthAdjustments = monthAdjOf(r).filter((a) => brandOfOrder(a) === brand);
   const marked = markedOf(r).filter((o) => brandOfOrder(o) === brand);
   const deferredIn = deferredInOf(r).filter((o) => brandOfOrder(o) === brand);
-  /* Finance's own lines: only a report that has some carries the list and its figure. */
   const manual = r.manualLines ? { manualLines: manualOf(r).filter((o) => brandOfOrder(o) === brand) } : {};
   return withTotals({ ...r, fairs, adjustments, earlierOrders, changedOrders, monthAdjustments, marked, deferredIn, ...manual });
 };
 
-/** A narrowed report's totals: the server's sums over exactly the lines it still holds. */
 const withTotals = (r: EventCommission): EventCommission => {
   const payableSen = sum(r.fairs, (f) => f.payableSen);
   const adjustmentsSen = sum(r.adjustments, (a) => a.commissionSen);
@@ -384,7 +374,6 @@ export const earningOnly = (r: EventCommission): EventCommission => {
     }];
   });
   const changedOrders = changedOf(r).filter((o) => o.effectSen !== 0);
-  /* An earlier order earns what the Earlier table shows of it: its upsales / drops are the changes table's. */
   const shown = new Map(earlierShownOf(r).map((o) => [o.docNo, o.commissionSen]));
   const earlierOrders = earlierOf(r).filter((o) => (shown.get(o.docNo) ?? 0) !== 0);
   const kept = new Set([...earlierOrders, ...changedOrders].map((o) => o.docNo));
@@ -408,7 +397,6 @@ export const earningOnly = (r: EventCommission): EventCommission => {
     inside. Goods null: the line has none to show (what last month moved here). */
 export type SummaryLine = { label: string; count: number; goodsSen: number | null; ratePct: number | null; commissionSen: number };
 export type SummaryTab = { key: CardKey; total: SummaryLine; brands: SummaryLine[]; inside: SummaryLine[] };
-/** A line that earns: its brand, its rate, the goods it earns on, what it earns. */
 type Earned = { brand: string | null; ratePct: number | null; goodsSen: number | null; commissionSen: number };
 
 export const NO_BRAND = '(no brand)';
@@ -416,7 +404,6 @@ const goodsOfLines = (rows: ReadonlyArray<{ goodsSen: number | null }>): number 
   (rows.some((x) => x.goodsSen != null) ? sum(rows, (x) => x.goodsSen ?? 0) : null);
 const lineOf = (label: string, rows: readonly Earned[], ratePct: number | null): SummaryLine =>
   ({ label, count: rows.length, goodsSen: goodsOfLines(rows), ratePct, commissionSen: sum(rows, (x) => x.commissionSen) });
-/** A line per brand and rate, the one that earns most first. */
 const brandLines = (rows: readonly Earned[]): SummaryLine[] => {
   const groups = new Map<string, Earned[]>();
   for (const x of rows) {
@@ -428,7 +415,6 @@ const brandLines = (rows: readonly Earned[]): SummaryLine[] => {
     .map((g) => lineOf(g[0]!.brand ?? NO_BRAND, g, g[0]!.ratePct))
     .sort((a, b) => b.commissionSen - a.commissionSen || a.label.localeCompare(b.label));
 };
-/** +1 an earlier order reaching 30% here, -1 one cancelled here (it takes back), 0 both. */
 const signOf = (o: CommissionEarlierOrder): number =>
   (o.events.some((e) => e.kind === 'reached') ? 1 : 0) - (o.events.some((e) => e.kind === 'cancelled') ? 1 : 0);
 
@@ -450,7 +436,6 @@ export function summaryTabsOf(r: EventCommission): SummaryTab[] {
       .map((m) => ({ brand: brandOfOrder(m), ratePct: m.ratePct, goodsSen: m.goodsSen, commissionSen: m.commissionSen })),
     earlierChanges: changesEarlierOf(r).filter((o) => o.effectSen !== 0).map(ofChange),
   };
-  /* What the first tab holds inside, as the cards' "of which" lines: not added again. */
   const late = lateOf(r);
   const inside = (): SummaryLine[] => [
     ...(r.fairs.some(isNoFair) ? [lineOf('of which No fair', earning.filter((s) => isNoFair(s.fair)).map(ofSo), null)] : []),
@@ -477,16 +462,13 @@ const left = (label: string, width?: number): SheetColumn => ({ label, kind: 'te
 const right = (label: string): SheetColumn => ({ label, kind: 'text', align: 'right' });
 const row = (label: string, cells: SheetValue[], depth = 0): SheetRow => ({ kind: 'row', depth, label, cells });
 const foot = (label: string, cells: SheetValue[]): SheetRow => ({ kind: 'total', depth: 0, label, cells });
-/** A column summed for the foot, else left blank there. */
 const footCells = <T,>(columns: Array<((x: T) => number) | null>, rows: readonly T[]): SheetValue[] =>
   columns.map((pick) => (pick ? sum(rows, pick) : ''));
 const brandText = (o: { brand: string | null; fairName: string }): SheetValue => brandOfOrder(o) ?? null;
-/** An upsale / drop's state in a few words, as the row on the page reads it. */
 const changeNote = (o: CommissionChangedOrder): string => (o.mark ? markWords(o.mark)
   : o.reachedOn == null && !o.oldOrder ? 'not yet 30%'
     : o.changeMark && o.effectSen === 0 ? 'not counted' : '');
 
-/** The orders of the first table, one row each: as the SO list reads, plus the rate. */
 function ordersTable(title: string, rows: Array<CommissionSoRow & { fair: CommissionFairRow }>): SheetTable {
   const brand = (o: CommissionSoRow & { fair: CommissionFairRow }) => (isNoFair(o.fair) ? o.fair.brand?.toUpperCase() ?? null : fairPlace(o.fair).brand);
   return {
@@ -506,7 +488,6 @@ function ordersTable(title: string, rows: Array<CommissionSoRow & { fair: Commis
   };
 }
 
-/** A table of upsales / drop sales, each order once, as the page's. */
 function changesTable(title: string, rows: CommissionChangedOrder[]): SheetTable {
   return {
     title, labelHeader: 'Order',
@@ -531,7 +512,6 @@ export function eventCommissionSheet(r: EventCommission, period: string, brand: 
   const cards = cardsOf(r);
   const tables: SheetTable[] = [];
 
-  /* The summary: the cards, the first one's "of which" under it, the total. */
   const inside = insideFirstOf(r);
   tables.push({
     title: 'Summary',
@@ -545,10 +525,8 @@ export function eventCommissionSheet(r: EventCommission, period: string, brand: 
     ],
   });
 
-  /* 1 — the orders opened in the range; by fair, its fairs first. */
   const listed = r.fairs.flatMap((f) => f.sos.map((s) => ({ ...s, fair: f })));
   if (byFair) {
-    /* A server before 2026-11-12 sent no goods per fair: the typed figures stand in, on the rows and in the total alike. */
     const goodsOf = (f: CommissionFairRow) => f.goodsSen ?? (f.totalSalesRm == null ? null : Math.round(f.totalSalesRm * 100));
     const timesRateOf = (f: CommissionFairRow) => f.estimateSen ?? (f.estimateRm == null ? null : Math.round(f.estimateRm * 100));
     tables.push({
@@ -566,7 +544,6 @@ export function eventCommissionSheet(r: EventCommission, period: string, brand: 
     tables.push(ordersTable(`${words.part1} — their orders`, listed));
   } else tables.push(ordersTable(words.part1, listed));
 
-  /* 2 — the earlier orders: reaching 30% or cancelled. */
   const earlier = earlierShownOf(r);
   tables.push({
     title: words.part2, labelHeader: 'Order',
@@ -579,7 +556,6 @@ export function eventCommissionSheet(r: EventCommission, period: string, brand: 
     ],
   });
 
-  /* 3 — what changed for a closed month's orders, with the goods and rate its Now is worked on. */
   const monthAdj = monthAdjOf(r);
   if (monthAdj.length > 0) {
     tables.push({
@@ -594,7 +570,6 @@ export function eventCommissionSheet(r: EventCommission, period: string, brand: 
     });
   }
 
-  /* 4 — what the month before moved here. */
   const moved = deferredInOf(r);
   if (moved.length > 0) {
     tables.push({
@@ -607,7 +582,6 @@ export function eventCommissionSheet(r: EventCommission, period: string, brand: 
     });
   }
 
-  /* 5 — Finance's own lines. */
   const manual = manualOf(r);
   if (manual.length > 0) {
     tables.push({
@@ -620,12 +594,10 @@ export function eventCommissionSheet(r: EventCommission, period: string, brand: 
     });
   }
 
-  /* 6 — the earlier orders' upsales / drop sales (the last card); 7 — those inside the first table. */
   tables.push(changesTable(changesTitle(words.earlier), changesEarlierOf(r)));
   const inRange = changesInRangeOf(r);
   if (inRange.length > 0) tables.push(changesTable(`${changesTitle(words.card1)} (inside ${words.card1}, not added again)`, inRange));
 
-  /* Not in the total: the orders under 30%, and what Finance's marks took out. */
   const below = belowDepositOf(r);
   if (below.length > 0) {
     tables.push({
@@ -668,7 +640,6 @@ export const eventCommissionCsv = (r: EventCommission, period = '', brand = ''):
   for (const t of sheet.tables) {
     if (t.title) out.push(line([t.title]));
     out.push(line([t.labelHeader ?? '', ...t.columns.map((c) => c.label)]));
-    /* Nothing is a blank cell here: a dash would read as a formula to the guard. */
     for (const rw of t.rows) out.push(line([rw.label, ...t.columns.map((c, i) => { const v = rw.cells[i]; return v == null || v === '' ? '' : sheetText(c, v, fmtRm); })]));
     out.push('');
   }

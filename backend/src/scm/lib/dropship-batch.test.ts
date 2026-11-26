@@ -1,16 +1,9 @@
-// Unit tests for the drop-ship expected-batch resolver hardening
-// (audit 2026-06-26 fixes H1 + H3), driven through a minimal fake PostgREST
-// client. Route-level coverage is not possible in this repo's test harness
-// (scm rides Supabase Postgres, the harness rebuilds only the D1 side), so
-// these pin the pure resolution rules the movement/guard paths rely on.
 import { describe, expect, test } from 'vitest';
 import { resolveExpectedBatchBySoItem, buildDropshipOffenders } from './dropship-batch';
 import { sofaNoCompleteBatchResponse } from './sofa-batch-guard';
 
 type Row = Record<string, unknown>;
 
-/** Minimal chainable, awaitable PostgREST stand-in for the two reads
- *  resolveExpectedBatchBySoItem performs. */
 function fakeSb(tables: Record<string, Row[]>) {
   class Q {
     rows: Row[];
@@ -24,13 +17,6 @@ function fakeSb(tables: Record<string, Row[]>) {
       if (op === 'is' && val === null) this.rows = this.rows.filter((r) => r[col] != null);
       return this;
     }
-    /* Both reads are batched + paged now (chunkIn), so the stub has to answer
-       the same two calls PostgREST does. Without `range` the stub returned every
-       row on every page and paginateAll would never terminate; without `order`
-       the chain threw on undefined and the resolver's own try/catch turned the
-       whole thing into "no PO", which is the LENIENT answer — the tests here
-       went green-to-red rather than silently passing, but only because they
-       assert a PO is found. */
     order(col: string) {
       this.rows = [...this.rows].sort((a, b) => String(a[col] ?? '').localeCompare(String(b[col] ?? '')));
       return this;
@@ -83,8 +69,6 @@ describe('resolveExpectedBatchBySoItem — H1 dead-PO filter', () => {
   });
 
   test('a dead PO never wins the most-recent pick over an older live one', async () => {
-    // Old behaviour picked the most-recently created link REGARDLESS of PO
-    // status — a cancelled newer PO would shadow the live older one.
     const sb = fakeSb({
       purchase_order_items: [
         poi('so-1', 'po-live', '2026-06-01'),
@@ -123,12 +107,6 @@ describe('resolveExpectedBatchBySoItem — H3 multi-live-PO', () => {
     expect(out.get('so-1')).toEqual({ poNumber: null, eta: null, multiPo: true });
   });
 
-  /* The mode is REQUIRED — omitting it used to mean 'latest', so H3 (refuse an
-     ambiguous batch) applied only to the callers that opted in. These two tests
-     are what fails without the parameter: the modes disagree on the SAME
-     fixture, so no default can be right for both, and the directive below stops
-     being used the moment the parameter goes back to optional
-     (optional-param-noop sweep 2026-08-13). */
   test('the two modes disagree on the same line — so neither can be a silent default', async () => {
     const latest = await resolveExpectedBatchBySoItem(fakeSb(tables), ['so-1'], { onMultiPo: 'latest' });
     const block = await resolveExpectedBatchBySoItem(fakeSb(tables), ['so-1'], { onMultiPo: 'block' });
@@ -138,10 +116,6 @@ describe('resolveExpectedBatchBySoItem — H3 multi-live-PO', () => {
   });
 
   test('omitting the mode is a COMPILE error (pins the parameter as required)', () => {
-    // Never invoked: the point is that the call does not compile. Making the
-    // parameter optional again leaves the directive unused, which
-    // `npm run typecheck` reports as TS2578 — the alarm the itemCode
-    // half-application never got.
     // @ts-expect-error
     const omitted = () => resolveExpectedBatchBySoItem(fakeSb(tables), ['so-1']);
     expect(omitted).toBeInstanceOf(Function);

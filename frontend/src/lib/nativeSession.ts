@@ -38,12 +38,8 @@
 // mirror the plugin's own definitions, narrowed to what is used here.
 // ---------------------------------------------------------------------------
 
-/* authToken, NOT api/client's tokenStore: client.ts imports authToken, so going
-   through the store would put a cycle on the boot path. Same two functions the
-   store delegates to. */
 import { readAuthToken, writeAuthToken } from "./authToken";
 
-/** Keychain service name. Constant — changing it orphans every saved session. */
 const KEYCHAIN_SERVER = "erp.houzscentury.com";
 
 export const BIOMETRIC_FLAG_KEY = "native:biometric-session";
@@ -88,7 +84,7 @@ export function setBiometricSessionEnabled(on: boolean): void {
   try {
     if (on) localStorage.setItem(BIOMETRIC_FLAG_KEY, "1");
     else localStorage.removeItem(BIOMETRIC_FLAG_KEY);
-  } catch { /* private mode — the feature simply stays off */ }
+  } catch { }
 }
 
 /** Device capability alone — in the app, plugin present, a biometric enrolled —
@@ -129,8 +125,6 @@ export async function restoreNativeSession(): Promise<boolean> {
     const p = plugin();
     if (!p || !biometricSessionEnabled()) return false;
 
-    // A token already present wins: a fresh login, an SSO hand-off or a
-    // view-as token must not be overwritten by a stale vault entry.
     if (readAuthToken()) return false;
 
     if ((await p.isAvailable()).isAvailable !== true) return false;
@@ -146,12 +140,9 @@ export async function restoreNativeSession(): Promise<boolean> {
     const token = creds?.password ?? "";
     if (!token) return false;
 
-    // persistent: true — the point of the vault is a session that survives.
     writeAuthToken(token, true);
     return true;
   } catch {
-    // Cancelled, not enrolled, nothing saved, plugin missing — all the same
-    // outcome: the app boots exactly as it does today.
     return false;
   }
 }

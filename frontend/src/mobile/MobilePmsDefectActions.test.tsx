@@ -1,17 +1,3 @@
-/* A rejected defect action must not disappear silently on the phone.
- *
- * Desktop toasts the failure (Projects.tsx saveAction -> toast?.error). Mobile's
- * catch was bare, holding only a comment about keeping the draft — so
- * someone could stamp a defect photo "Done", have the server refuse it, watch
- * the spinner stop, and walk away believing the defect was closed.
- *
- * This is REACHABLE, not theoretical: the canReview / canPurchase derivations
- * that decide whether the buttons render are re-derived on the client from
- * position_name / role_name regexes with no backend capability behind them, so
- * the button can appear for someone the server will refuse.
- *
- * FAILS ON THE PRE-FIX CODE: nothing was called, so the notify spy saw nothing.
- */
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -39,8 +25,6 @@ function mount(canReview = true) {
   );
 }
 
-/** Stamp "Done Clean" (the reviewer's resolve) and press Save — the exact
- *  sequence from the symptom. */
 async function stampDone(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "Done Clean" }));
   await user.click(screen.getByRole("button", { name: "Save" }));
@@ -56,7 +40,6 @@ describe("a defect action the server refuses", () => {
 
     await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
     expect(notify.mock.calls[0][0]).toMatchObject({ tone: "error" });
-    // The server's own words reach the operator, not a generic shrug.
     expect(String(notify.mock.calls[0][0].body)).toContain("You don't have permission");
   });
 
@@ -70,7 +53,6 @@ describe("a defect action the server refuses", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(notify).toHaveBeenCalled());
-    // Draft survives the failure — the original comment's intent, preserved.
     expect((screen.getByPlaceholderText(/Add a remark/i) as HTMLTextAreaElement).value).toBe("cushion torn");
     expect(reload).not.toHaveBeenCalled();
   });
@@ -109,7 +91,6 @@ describe("the photo's Model + Reason are shown to every viewer", () => {
     expect(screen.getByText(/AKEMI Elevation/)).toBeDefined();
     expect(screen.getByText("Reason:")).toBeDefined();
     expect(screen.getByText(/Dented corner/)).toBeDefined();
-    // A plain viewer gets no action buttons — only the remark.
     expect(screen.queryByRole("button", { name: "Done Clean" })).toBeNull();
   });
 

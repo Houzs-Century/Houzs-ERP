@@ -41,7 +41,6 @@ function captureTextDraws(doc: JsPdf): TextDraw[] {
   return draws;
 }
 
-/* Ordinary ASCII in the fixture: no CJK font fetch, no logo fetch, no network. */
 const setUpBranding = () => setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
 
 afterEach(() => {
@@ -89,13 +88,11 @@ const has = (draws: TextDraw[], needle: string): boolean =>
 
 describe('the payment voucher sheet', () => {
   /* Owner 2026-11-08: the bank a row each under PAY TO, then what the money is for. */
-  /* 2026-11-09: the typed words are the Remark (the Description is what the lines say). */
   test('PAY TO prints the bank, the account number and name, and the Remark, a row each', async () => {
     const draws = await render({ pay_bank: 'MAYBANK', pay_account_no: '5140 1234 5678', pay_account_name: 'ABC FREIGHT SDN BHD', notes: 'Freight October' });
     for (const label of ['Bank', 'Account no.', 'Acc. name', 'Remark']) expect(draws.some((d) => d.text === label)).toBe(true);
     for (const value of ['MAYBANK', '5140 1234 5678', 'ABC FREIGHT SDN BHD', 'Freight October']) expect(has(draws, value)).toBe(true);
     expect(draws.some((d) => d.text === 'Note')).toBe(false);
-    /* No bank on file: no empty rows. */
     const bare = await render({ pay_bank: null, pay_account_no: null, pay_account_name: null });
     expect(bare.some((d) => d.text === 'Bank' || d.text === 'Acc. name')).toBe(false);
   });
@@ -108,22 +105,16 @@ describe('the payment voucher sheet', () => {
     expect(has(draws, 'Ah Hua')).toBe(true);
     expect(has(draws, 'Mei Ling')).toBe(true);
     expect(has(draws, 'The Boss')).toBe(true);
-    /* The empty box keeps its placeholder — one 'Name / Date' for the one
-       unsigned cell (the other three carry real dates instead). */
     expect(draws.filter((d) => d.text === 'Name / Date')).toHaveLength(1);
   });
 
   test('the status word comes from the one home — POSTED prints as statusLabel says, not as the raw status', async () => {
     const draws = await render();
     expect(has(draws, statusLabel('pv', 'POSTED'))).toBe(true);
-    /* And the essentials around it. */
     expect(has(draws, 'PAYMENT VOUCHER')).toBe(true);
     expect(has(draws, 'HC-PV-2609-012')).toBe(true);
     expect(has(draws, 'ABC Freight Forwarding')).toBe(true);
-    /* Paid From stays ONE joined string… */
     expect(has(draws, '310-0010 · Bank — Maybank')).toBe(true);
-    /* …but the TABLE gives code and name their OWN columns (owner
-       2026-09-04): both drawn, never as the joined pair. */
     expect(has(draws, 'Account Code')).toBe(true);
     expect(has(draws, 'Account Name')).toBe(true);
     expect(has(draws, '900-A002')).toBe(true);

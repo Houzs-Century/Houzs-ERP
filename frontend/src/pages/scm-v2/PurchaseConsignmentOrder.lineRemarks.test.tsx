@@ -1,9 +1,3 @@
-/**
- * 2990-0040 (Sim 2026-11-05): a Dining line's model / size / colour lives only in
- * the request line's remark. Raising a PC Order piled every remark into the header
- * Notes and left each order line blank, so the remark has to land on its own line,
- * survive Create, show on Detail, and stay editable.
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -65,7 +59,6 @@ const PCO = {
   notes: null,
   total_sen: 0,
 };
-/* Stable references: the pages' effects key on these. */
 const ITEMS = [ITEM];
 const DETAIL = { data: { purchaseOrder: PCO, items: ITEMS }, isPending: false, isError: false };
 const NO_COPY = { data: undefined };

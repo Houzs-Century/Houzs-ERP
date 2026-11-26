@@ -30,15 +30,12 @@ const AMENDABLE_HEADER_FIELDS: Record<string, string> = soAmendableHeaderFields(
 
 export const soAmendmentLanePreview = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-// Every SCM sub-router mounts its own auth bridge (scmRouterBridge.test.ts); the
-// route reads c.get('supabase'), which this middleware sets.
 soAmendmentLanePreview.use('*', supabaseAuth);
 
 soAmendmentLanePreview.post('/:docNo/amendments/lane-preview', async (c) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
 
-  /* Same submit gate as POST /:docNo/amendments — whoever may raise may ask. */
   const isLaneApprover =
     hasHouzsPerm(c, 'scm.amendment.approve_lines') || hasHouzsPerm(c, 'scm.amendment.approve_delivery');
   if (!hasHouzsPerm(c, 'scm.amendment.create') && !isSalesCaller(c) && !isLaneApprover) {
@@ -51,8 +48,6 @@ soAmendmentLanePreview.post('/:docNo/amendments/lane-preview', async (c) => {
   };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  /* Own keys only, same trust boundary as the submit route: an unknown key is
-     refused, not classified — classifyHeaderKey throws on one. */
   const headerChanges: Record<string, string | null> = {};
   const raw = body.headerChanges;
   if (raw && typeof raw === 'object') {
@@ -75,9 +70,6 @@ soAmendmentLanePreview.post('/:docNo/amendments/lane-preview', async (c) => {
     newDiscountSen: typeof l?.newDiscountSen === 'number' ? l.newDiscountSen : null,
   }));
 
-  /* Same two steps as the submit route, in the same order: drop the lines that
-     ask for nothing, then split what is left. A no-op line must not be shown as
-     a desk the submit will never ask. */
   const noopSplit = await dropNoopAmendmentLines(sb, docNo, rawLines);
   if (!noopSplit) return c.json(LINE_BUILD_ERRORS.unreadable, 500);
   // Price-lane carve-out is 2990's alone (owner 2026-09-21). Read the ACTIVE

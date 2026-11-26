@@ -47,7 +47,8 @@ describe("read mark stamp", () => {
 
   it("POST /projects/:id/read writes the stamp, not datetime('now')", () => {
     const src = readFileSync(resolve(__dirname, "../src/routes/projects.ts"), "utf8");
-    const route = src.slice(src.indexOf('app.post("/:id/read"'), src.indexOf("// ── Archive / restore"));
+    const start = src.indexOf('app.post("/:id/read"');
+    const route = src.slice(start, src.indexOf("app.post(", start + 1));
     expect(route).toContain("readMarkStamp(Date.now())");
     expect(route).not.toContain("datetime('now')");
   });

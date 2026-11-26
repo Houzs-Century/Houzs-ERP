@@ -15,15 +15,6 @@ import type { Position } from "../../types";
 import { Eyebrow, SegmentedTabs } from "./teamShared";
 import { TeamTitlesPolicy, type TitlePolicyPayload } from "./TeamTitlesPolicy";
 
-/* Roles & Permissions — three sections, one question each:
- *   Roles   — what a role may DO (the flat permission keys, Roles.tsx).
- *   Titles  — what a Title's members SEE: cohort / profile / money / config /
- *             fleet, one position_policy row per Title (TeamTitlesPolicy).
- *   Actions — the delivery-line verbs a Title may perform (load / dispatch /
- *             revert / invoice), rows in position_capabilities.
- * The per-page SCM override tabs (position_page_overrides) were removed on
- * 2026-09-16: never used in production, and the Titles cohort answers the same
- * question. Owner-tier Titles always pass and stay locked in the matrix. */
 
 type CapabilityDef = {
   key: string;
@@ -37,7 +28,6 @@ type MatrixPayload = {
   grants: Array<{ position_id: number; capability: string }>;
 };
 
-/** Department display order: Management first, then Sales, then Operation. */
 function deptRank(name: string | null): number {
   const n = (name ?? "").toLowerCase();
   if (n.includes("management")) return 0;
@@ -60,9 +50,6 @@ export function TeamRolesV2() {
   const matrixQ = useQuery<MatrixPayload>("/api/position-capabilities", () =>
     api.get("/api/position-capabilities"),
   );
-  // The per-Title policy rows (Titles tab). Also the one source for "this Title
-  // is owner tier" — the matrix locks those rows on, read from the server's
-  // answer rather than a slug list kept here.
   const policyQ = useQuery<TitlePolicyPayload>("/api/position-policy", () =>
     api.get("/api/position-policy"),
   );
@@ -102,8 +89,6 @@ export function TeamRolesV2() {
   const isMatrix = tab === "matrix";
   const isTitles = tab === "titles";
 
-  // Drafts — seeded from the server, edited optimistically; a failed PUT
-  // rolls the row back to the last server truth.
   const [capDraft, setCapDraft] = useState<Map<number, Set<string>>>(new Map());
   const [savingId, setSavingId] = useState<number | null>(null);
   useEffect(() => {
@@ -136,9 +121,6 @@ export function TeamRolesV2() {
     }
   }
 
-  // The Roles and Matrix sections have their own loading states (RolesTab /
-  // RoleMatrixTab); only the Titles + Actions sections wait for the position +
-  // capability queries.
   if (!isRoles && !isMatrix && (positionsQ.loading || matrixQ.loading || policyQ.loading)) return <ListSkeleton rows={5} />;
   if (isTitles && policyQ.error)
     return (
@@ -200,7 +182,6 @@ export function TeamRolesV2() {
         <>
       <div className="overflow-x-auto">
         <div className="min-w-[760px] overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
-          {/* Header row */}
           <div
             className="grid items-end gap-2 border-b border-border bg-surface-2 px-5 py-2"
             style={{ gridTemplateColumns: gridTemplate }}

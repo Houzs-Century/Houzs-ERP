@@ -91,16 +91,12 @@ export type FairCheckRow = FairPendingRow & {
   check: FairCheck;
   note: string;
   target?: FairCheckTarget | null;
-  /** REPORT_ELSEWHERE: the booth the order is under now; null with none. */
   current?: FairCheckBooth | null;
-  /** REPORT_ELSEWHERE with no target: the booths whose reports both list it. */
   candidates?: FairCheckBooth[];
 };
 
 type ScanJob = { so_doc_no: string; houzs_user_id: number | string | null; created_at: string | null };
-/** One History row of a fair change (fair-audit.ts). */
 type FairChange = { so_doc_no: string; source: string | null; field_changes: unknown; created_at: string | null };
-/** The order as read here; its Ref No. is what the evening reports list. */
 type CheckedOrder = FairPendingRow;
 
 /** "AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)": one booth, as Fair Links
@@ -121,8 +117,6 @@ export function boothLines(id: number, row: FairProjectRow | undefined): FairChe
   return { projectId: id, title: brand ? `[${brand}] ${event}` : event, detail: `${fair.venue} · ${fmtDayMonthRange(fair.startDate, fair.endDate)}` };
 }
 
-/** The REPORT_ELSEWHERE row for one order, or null when the reports do not
- *  put it elsewhere. */
 function reportRow(o: CheckedOrder, v: ReportVerdict, booths: ReadonlyMap<number, FairProjectRow>): FairCheckRow | null {
   const nowId = o.project_id != null ? Number(o.project_id) : null;
   const now = nowId != null ? `the order is under ${boothText(nowId, booths.get(nowId))}` : 'the order has no event';
@@ -156,10 +150,6 @@ export function decidedAfterReports(decidedOn: string | undefined, sightings: re
   return decidedOn >= lastReport.slice(0, 10);
 }
 
-/** The MYT day a person last moved each order's fair on Fair Links: its latest
- *  fair change, when that was a Link ('settle') or a Transfer. A Put aside or
- *  Bring back row moves no fair and does not count; a later move by the system
- *  or an edit undoes the decision. Null when History cannot be read. */
 async function decidedOnFairLinks(sb: any, scope: FairPendingScope, docNos: readonly string[]): Promise<Map<string, string> | null> {
   const res = await chunkIn<FairChange>(docNos, (batch, from, to) =>
     scope(sb.from('mfg_so_audit_log').select('so_doc_no, source, field_changes, created_at').eq('action', 'UPDATE_FAIR').in('so_doc_no', batch))
@@ -207,14 +197,12 @@ export async function loadFairChecks(args: {
     const orders = (linked.data ?? []).filter((o) => o.project_id != null);
     const evidence = await loadReportEvidence(db, companySql, { since: REPORTS_FROM });
 
-    /* What the evening reports say about each order, linked or not. */
     const verdicts = new Map<string, ReportVerdict>();
     for (const o of [...orders, ...(unlinked.data ?? [])]) verdicts.set(o.doc_no, reportVerdict(o, evidence));
     const reported = [...orders, ...(unlinked.data ?? [])].filter((o) => {
       const k = verdicts.get(o.doc_no)?.kind;
       return k === 'elsewhere' || k === 'conflict';
     });
-    /* Settled on Fair Links with the report in: a person's decision (above). */
     const decided = await decidedOnFairLinks(sb, scope, reported.map((o) => o.doc_no));
     if (!decided) return { ok: false };
     const elsewhere = reported.filter((o) => !decidedAfterReports(decided.get(o.doc_no), sightingsOf(o, evidence)));
@@ -232,7 +220,6 @@ export async function loadFairChecks(args: {
     const attendCandidates = orders.filter((o) => !inReport.has(o.doc_no)
       && (o.status === 'DRAFT' || String(o.so_date ?? '') >= SCAN_RULE_FROM));
 
-    /* Who scanned which order — the latest job per order wins (a re-scan). */
     const docNos = [...new Set([...differs, ...attendCandidates].map((o) => o.doc_no))];
     const jobs = await chunkIn<ScanJob>(docNos, (batch, from, to) =>
       scope(sb.from('scan_jobs').select('so_doc_no, houzs_user_id, created_at').in('so_doc_no', batch)).range(from, to),
@@ -251,7 +238,6 @@ export async function loadFairChecks(args: {
 
     const rows: FairCheckRow[] = [];
 
-    /* The evening report puts it at another fair. */
     for (const o of elsewhere) {
       const row = reportRow(o, verdicts.get(o.doc_no)!, booths);
       if (row) rows.push(row);

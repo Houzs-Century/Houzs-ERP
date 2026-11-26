@@ -28,9 +28,6 @@ import {
   stockTakeRowMenu,
 } from "./row-menus";
 
-/* The identity fields are what a print entry is BUILT from: the row's own
-   document is `Print`, and a related one needs an address. Present here with no
-   chain fields at all, which is the case that must offer exactly `Print`. */
 type Row = {
   status?: string | null;
   id: string;
@@ -38,14 +35,10 @@ type Row = {
   return_number: string;
 };
 const labels = (m: RowMenuItem[]) => m.map((x) => (x.divider ? "—" : x.label));
-/* Fills the identity fields every row really has, so each test still says only
-   what it is about — a status. None of these rows carries a CHAIN field, which
-   is the case that must offer exactly one print entry, `Print`. */
 const R = (o: { status?: string | null } = {}): Row =>
   ({ id: "row-id", invoice_number: "PI-0001", return_number: "PR-0001", ...o });
 const noop = () => {};
 
-/* ── Purchase Invoice ─────────────────────────────────────────────────────── */
 /* THE GAP THIS PINS. When this menu was written the hold was still a STATUS
    being converted into a flag, so it carried the note "Hold follows" and no
    entry. Migration 0324 then mounted `PATCH /purchase-invoices/:id/hold` and the
@@ -138,12 +131,7 @@ describe("purchaseInvoiceRowMenu", () => {
     ]);
   });
 
-  /* The server refuses a cancel once any money has been paid, so offering it
-     would be a menu entry whose only possible outcome is a 409. */
   test("a PAID invoice cannot be cancelled from the menu", () => {
-    /* Hold survives: a hold is a MARKER, not a step, and marking a paid invoice
-       paused is a legitimate thing to want (document-hold-route.ts deliberately
-       does not gate on status). Only the CANCEL goes. */
     expect(labels(piMenu()(R({ status: "PAID" })))).toEqual(["Open", "Edit", "Copy as new", "Print", "—", "Put On Hold"]);
   });
 
@@ -160,7 +148,6 @@ describe("purchaseInvoiceRowMenu", () => {
   });
 });
 
-/* ── Purchase Return ──────────────────────────────────────────────────────── */
 
 const prMenu = () =>
   purchaseReturnRowMenu<Row>({
@@ -180,9 +167,6 @@ describe("purchaseReturnRowMenu", () => {
     ]);
   });
 
-  /* The drawer's action slot is an if/else chain, so a POSTED return renders
-     Complete and never Cancel — while the server accepts the cancel. The menu
-     is a separate group and offers what the server allows. */
   test("a POSTED return can still be cancelled, which the drawer never showed", () => {
     expect(labels(prMenu()(R({ status: "POSTED" })))).toEqual([
       "Open", "Edit", "Print", "—", "Cancel Purchase Return",
@@ -194,7 +178,6 @@ describe("purchaseReturnRowMenu", () => {
   });
 });
 
-/* ── Delivery Return ──────────────────────────────────────────────────────── */
 
 const drMenu = () =>
   deliveryReturnRowMenu<Row>({
@@ -206,8 +189,6 @@ const drMenu = () =>
   });
 
 describe("deliveryReturnRowMenu", () => {
-  /* No Confirm on this document at all: a Delivery Return is RECEIVED on
-     create and has no draft step, so there is no transition to offer. */
   test("a live return gets Open / Edit / Print and Cancel, and no Confirm", () => {
     expect(labels(drMenu()(R({ status: "RECEIVED" })))).toEqual([
       "Open", "Edit", "Print", "—", "Cancel Delivery Return",
@@ -218,14 +199,11 @@ describe("deliveryReturnRowMenu", () => {
     expect(labels(drMenu()(R({ status: "INSPECTED" })))).toContain("Cancel Delivery Return");
   });
 
-  /* Un-cancelling is refused by the server — the cancel's stock drain would be
-     left in place — so a second Cancel is a dead entry, not a no-op. */
   test("a cancelled return is final", () => {
     expect(labels(drMenu()(R({ status: "CANCELLED" })))).toEqual(["Open", "Edit", "Print"]);
   });
 });
 
-/* ── Stock Transfer ───────────────────────────────────────────────────────── */
 
 const stMenu = () =>
   stockTransferRowMenu<Row>({
@@ -236,9 +214,6 @@ const stMenu = () =>
   });
 
 describe("stockTransferRowMenu", () => {
-  /* Still no Edit — the detail page is read-only post-0078, so there is no
-     `?edit=1` route to point at. Print landed 2026-08-22 with the generator
-     that gave it something to call (`vendor/scm/lib/stock-transfer-pdf.ts`). */
   test("Open, Print and Cancel", () => {
     expect(labels(stMenu()(R({ status: "POSTED" }))))
       .toEqual(["Open", "Print", "—", "Cancel Stock Transfer"]);
@@ -249,7 +224,6 @@ describe("stockTransferRowMenu", () => {
   });
 });
 
-/* ── Stock Take ───────────────────────────────────────────────────────────── */
 
 const stkMenu = () =>
   stockTakeRowMenu<Row>({
@@ -265,23 +239,16 @@ describe("stockTakeRowMenu", () => {
       .toEqual(["Open", "Print", "—", "Cancel Stock Take"]);
   });
 
-  /* Undoing a POSTED take is a different route (/reverse) with its own words,
-     and it stays on the detail page. */
   test("a POSTED take is not offered Cancel", () => {
     expect(labels(stkMenu()(R({ status: "POSTED" })))).toEqual(["Open", "Print"]);
   });
 
-  /* Print reads; it never writes. There is no state of this document in which
-     a person may not have it on paper — including a cancelled one. */
   test("Print is offered on every status, cancelled included", () => {
     for (const status of ["OPEN", "POSTED", "CANCELLED"]) {
       expect(labels(stkMenu()(R({ status }))), status).toContain("Print");
     }
   });
 
-  /* Posting books an ADJUSTMENT per variance line, and the detail page's
-     confirmation shows the variance first. The row carries no such number, so
-     Confirm is deliberately not here. */
   test("Confirm is not offered — posting needs the variance summary a row cannot show", () => {
     expect(labels(stkMenu()(R({ status: "OPEN" })))).not.toContain("Confirm");
   });
@@ -314,7 +281,6 @@ describe("stockTakeRowMenu", () => {
   });
 });
 
-/* ── The two invariants that would otherwise rot one list at a time ───────── */
 
 const EVERY_MENU: ReadonlyArray<{ name: string; menu: (r: Row) => RowMenuItem[]; statuses: string[] }> = [
   { name: "Purchase Invoice", menu: piMenu(),  statuses: ["DRAFT", "POSTED", "PARTIALLY_PAID", "PAID", "CANCELLED"] },
@@ -334,15 +300,11 @@ describe("every one of the five menus, on every status that document has", () =>
         expect(cancels.length, `${name} / ${status}`).toBe(1);
         expect(items[items.length - 1]?.label, `${name} / ${status}`).toBe(cancels[0]!.label);
         expect(cancels[0]!.danger, `${name} / ${status}`).toBe(true);
-        // Alone: the entry immediately before it is the group separator.
         expect(items[items.length - 2]?.divider, `${name} / ${status}`).toBe(true);
       }
     }
   });
 
-  /* Only Confirm and Cancel are ever offered to a person. Inspected, Refunded,
-     Complete, Mark Paid, Received and Shipped are either machine-derived or
-     need a figure the row does not carry, and they stay on the drawer. */
   test("no menu offers a status a machine derives, or a 'Mark X' entry", () => {
     const FORBIDDEN = /^(Mark |Set )|Inspected|Refunded|Credit note|Complete|Received|Shipped|Delivered|Ready to Ship/i;
     for (const { name, menu, statuses } of EVERY_MENU) {
@@ -366,15 +328,6 @@ describe("every one of the five menus, on every status that document has", () =>
     }
   });
 
-  /* A RATCHET on printability. This block used to open by quoting two owner
-     rulings; neither is in any message he sent in the session that produced the
-     change (see row-menus.ts), so the quotes are gone and the ratchet stays —
-     what it locks is a fact about the code, which needs no citation.
-
-     Every document in the
-     system can be printed now; the Stock Transfer and the Stock Take were the
-     last two that could not. Asserted over EVERY status of every list so a
-     later predicate cannot quietly take Print away from one state. */
   test("every list offers Print, on every status that document has", () => {
     for (const { name, menu, statuses } of EVERY_MENU) {
       for (const status of statuses) {
@@ -383,8 +336,6 @@ describe("every one of the five menus, on every status that document has", () =>
     }
   });
 
-  /* An unknown status must not crash the menu — the row's status comes from the
-     server and a list renders whatever it is handed. */
   test("an unrecognised or missing status still produces a usable menu", () => {
     for (const { name, menu } of EVERY_MENU) {
       for (const status of [null, undefined, "", "SOMETHING_NEW"]) {

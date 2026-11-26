@@ -1,14 +1,3 @@
-// ---------------------------------------------------------------------------
-// /api/mcp-admin — the AI Connector page (frontend pages/AiConnector.tsx) and
-// the "Allow?" screen (frontend pages/AiConnect.tsx). Mounted BELOW the auth gate.
-//
-//   staff:  GET /me, POST /me/request, POST /me/revoke
-//           GET /consent/:id, POST /consent/:id      (the OAuth "Allow?" step)
-//   admin:  GET /admin/overview, POST /admin/requests/:id/:decision,
-//           POST /admin/access, DELETE /admin/access/:userId, POST /admin/revoke,
-//           POST /admin/leak-check, POST /admin/actions  ("Allow AI actions", default OFF)
-// Admin = holds ai_connector.manage (the Owner via "*").
-// ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../types";
@@ -49,7 +38,6 @@ function denyUnlessAdmin(c: Context<HonoEnv>): Response | null {
 const connectorUrl = (c: Context<HonoEnv>): string =>
   `${publicOrigin(c.req.header("x-forwarded-host"), (c.env as Env & { MCP_PUBLIC_ORIGIN?: string }).MCP_PUBLIC_ORIGIN || new URL(c.req.url).origin)}/api/mcp`;
 
-// ── staff ───────────────────────────────────────────────────────────────────
 
 app.get("/me", async (c) => {
   const u = c.get("user");
@@ -88,7 +76,6 @@ app.post("/me/request", async (c) => {
     .bind(id, u.id, typeof body.reason === "string" ? body.reason.slice(0, 300) : null, new Date().toISOString())
     .run();
   await audit(c, { action: "ai_connector.request", entityType: "ai_connector", entityId: u.id, summary: `${u.name} asked for AI Connector access` });
-  // Bell notice to every AI Connector admin (literal key holders + the Owner's "*"). Never fails the request.
   try {
     const [lit, wild] = await Promise.all([usersHoldingPermission(c.env, MCP_ADMIN_PERMISSION, {}), usersHoldingPermission(c.env, "*", {})]);
     const audience = [...new Set([...lit, ...wild].map(Number))].filter((n) => n > 0 && n !== u.id);
@@ -114,9 +101,7 @@ app.post("/me/revoke", async (c) => {
   return c.json({ ok: true, revoked: n });
 });
 
-// ── the OAuth "Allow?" step ─────────────────────────────────────────────────
 
-/** Only an ordinary signed-in session may approve (not a POS / crew PIN session). */
 function ordinarySession(c: Context<HonoEnv>): boolean {
   return !c.get("sessionOrigin");
 }
@@ -163,7 +148,6 @@ app.post("/consent/:id", async (c) => {
   return c.json({ redirect: back.toString() });
 });
 
-// ── admin ───────────────────────────────────────────────────────────────────
 
 app.get("/admin/overview", async (c) => {
   const denied = denyUnlessAdmin(c);
@@ -295,8 +279,6 @@ app.post("/admin/revoke", async (c) => {
   return c.json({ ok: true, revoked: n });
 });
 
-// "Allow AI actions (meetings, email)": propose_* / confirm_action answer
-// "switched off" until this is on (routes/mcp.ts). Default OFF.
 app.post("/admin/actions", async (c) => {
   const denied = denyUnlessAdmin(c);
   if (denied) return denied;
@@ -307,10 +289,6 @@ app.post("/admin/actions", async (c) => {
   return c.json({ ok: true, actionsEnabled: body.enabled });
 });
 
-// ── leak check ──────────────────────────────────────────────────────────────
-// Runs the connector's real read path AS the chosen staff account over every
-// parameter-free list endpoint, a page at a time (the page loops `offset`
-// until `done`). Field NAMES and outcomes only, never values.
 
 export type LeakRow = { path: string; outcome: "opened" | "refused" | "error"; status: number; hidden: string[]; sensitive: string[] };
 const LEAK_CLIENT_ID = "mcpc_leak_check";

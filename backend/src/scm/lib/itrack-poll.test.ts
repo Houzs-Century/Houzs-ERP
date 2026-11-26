@@ -8,7 +8,6 @@ describe('itrackSignature', () => {
   });
 });
 
-// Shape from the iTrack doc's /api/track demo (2.2).
 const rec = {
   imei: '358899123456789', course: 195, gpstime: 1419906052, speed: 40,
   longitude: 101.886634, latitude: 2.703637, accstatus: 1, datastatus: 2,

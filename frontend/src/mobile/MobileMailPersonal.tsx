@@ -1,5 +1,3 @@
-// Phone side of DEV-03 R12 "What may I see"; the desktop twin is
-// VisibilityPanel in pages/MailCenter/mail-sidebar.tsx.
 import { useMailVisibility } from "../pages/MailCenter/mail-sidebar";
 import { LEVEL_LABEL, REACH_LABEL } from "../pages/MailCenter/mail-personal";
 import { useMailClaim } from "../pages/MailCenter/mail-claim";

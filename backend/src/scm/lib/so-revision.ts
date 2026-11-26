@@ -83,11 +83,6 @@ import { readSoLineFreeze, soLineWriteRefusal } from './downstream-lock';
 import { isPoLineOverReceived } from './qty-cap';
 import { SO_IDENTITY_LOCK_COLS } from '../shared/so-identity-lock';
 
-/* The routable field atoms an SO amendment moves — lines + header — for the audit
-   routing note. Mirrors the frontend amendmentLineFieldKinds / soHeaderFieldKind
-   so the recorded accountability matches what the detail page and PDF show. All
-   amendable SO header keys are scheduling / delivery-address (WHEN / WHERE) →
-   DELIVERY. */
 function soAmendmentFieldKinds(
   lines: Array<{ change_type: string; new_item_code: string | null; new_variants: Record<string, unknown> | null; new_qty: number | null; new_unit_price_sen: number | null; old_snapshot: Record<string, unknown> | null }>,
   headerChanges: Record<string, unknown> | null,
@@ -98,15 +93,12 @@ function soAmendmentFieldKinds(
     if (change === 'ADD' || change === 'REMOVE') { kinds.push('LINE'); continue; }
     const old = l.old_snapshot ?? {};
     if (l.new_item_code != null && String(l.new_item_code) !== String(old.item_code ?? old.itemCode ?? '')) kinds.push('SPEC');
-    /* Compared without the `remark` side channel and in canonical key order —
-       a remark copied into variants is not a spec change (HC-SO-011410, 2026-09-15). */
     if (l.new_variants != null && variantsForCompare(l.new_variants) !== variantsForCompare(old.variants ?? null)) kinds.push('VARIANT');
     if (l.new_qty != null && Number(l.new_qty) !== Number(old.qty ?? NaN)) kinds.push('QTY');
     if (l.new_unit_price_sen != null && Number(l.new_unit_price_sen) !== Number(old.unit_price_sen ?? old.unitPriceSen ?? NaN)) kinds.push('PRICE');
   }
   if (headerChanges) {
     for (const key of Object.keys(headerChanges)) {
-      // Every amendable SO header key is a delivery/scheduling change -> Logistics.
       if (key === 'notes') continue;
       kinds.push('DELIVERY');
     }
@@ -114,17 +106,8 @@ function soAmendmentFieldKinds(
   return kinds;
 }
 
-/* The Supabase client threaded through the routes is loosely typed (`any` in
-   every sibling helper — see mfg-pricing-recompute.ts / so-audit callers). Keep
-   the same shape so this file composes with them without a type fight. */
 type Sb = any;
 
-/* The amendment audit rows below stamp the pinned SCM system `userId` as actor_id
-   (the bridge pins every caller to one super_admin row — see scm/middleware/auth).
-   Left to look itself up, recordSoAudit would snapshot the SYSTEM row's name, so
-   "who approved" would read as the system for SO_APPROVED / PO_REVISED. Resolve
-   the REAL Houzs caller's name off the request context and pass it explicitly, the
-   way the sibling gate audits in routes/so-amendments.ts already do. */
 function realActorName(c?: Context<any>): string | null {
   if (!c) return null;
   const houzs = c.get('houzsUser') as { name?: string | null } | undefined;
@@ -138,33 +121,13 @@ type AmendmentRow = {
   so_doc_no: string;
   status: string;
   amendment_no?: string | null;
-  /* staff id of who asked, and when: the record names them, and finds the
-     submission's other halves by them (so-product-change-record.ts). */
   requested_by?: string | null;
   reason?: string | null;
   created_at?: string | null;
-  /* mig 0119 — the HEADER half of the request: { camelCaseKey: newValue|null }
-     for the frozen columns only. NULL on a line-only amendment. */
   header_changes?: Record<string, string | null> | null;
 };
 
-/* ── assertNotMirrored — the last gate before either engine mutates ─────────
-   Both engines below rewrite a Sales Order and its bound PO from an amendment
-   id. If that SO is 2990's, the next 2990 mirror drain re-applies 2990's
-   version over the top — header upsert plus delete-then-reinsert of every line
-   — so the whole re-derivation vanishes with no error and no alarm, and the
-   operator is left believing an approval landed that did not (see the
-   MIRRORED_COMPANY_CODE block in lib/companyScope.ts).
-
-   The route gate in routes/so-amendments.ts already refuses these, so this is
-   defence in depth — but it belongs HERE too, because these are exported
-   library functions reachable from any future caller, and because the doc-no
-   marker needs no Context: the guard still holds on the `c`-less call the
-   signature allows, where a company_id lookup would silently no-op. */
 function assertNotMirrored(docNo: string, fn: string, c?: Context<any>): void {
-  // Flip-gated (task #15): post-flip (HOUZS_OWNS_2990) Houzs owns the 2990-
-  // namespace and its revision engines may rewrite these SOs/POs. c is absent in
-  // the unit tests → guard stays active (pre-flip default).
   if (isMirroredDocNo(docNo) && !houzsOwns2990(c?.env)) {
     throw new Error(`${fn}: ${docNo} belongs to 2990 and cannot be revised from Houzs`);
   }
@@ -187,7 +150,7 @@ const AMENDABLE_HEADER_FIELDS: Record<string, string> = soAmendableHeaderFields(
 type AmendmentLineRow = {
   id: string;
   sales_order_item_id: string | null;
-  change_type: string;                 // SPEC | QTY | ADD | REMOVE
+  change_type: string;
   new_item_code: string | null;
   new_variants: Record<string, unknown> | null;
   new_qty: number | null;
@@ -195,28 +158,11 @@ type AmendmentLineRow = {
   /* HC-0095 — the operator TYPED the requested 0. False on every row before the
      column, so a queued seeded 0 cannot zero a priced line on approval. */
   zero_price_intended: boolean | null;
-  /* Mig 0280 — the requested REMARK. NULL = the request does not touch it (every
-     row created before 0280, and every line whose remark did not move); '' = a
-     real request to clear it. The `!= null` test at the write is the ONE gate,
-     so approving an old amendment can never blank a remark typed since. */
   new_remark: string | null;
-  /* Mig 0317 — the requested DISCOUNT in sen, same NULL semantics as new_remark.
-     The sanctioned lever for reducing a derived price (the delivery fee), and
-     the one money field the amendment road did not carry. */
   new_discount_sen: number | null;
   old_snapshot: Record<string, unknown> | null;
 };
 
-/* ── snapshotSo ─────────────────────────────────────────────────────────────
-   Freeze the SO's CURRENT state (header + all items) into a `so_revisions` row
-   at the SO's CURRENT `revision`, so the version being replaced stays immutable.
-   Returns the NEXT revision number (current + 1) for the caller to stamp on the
-   SO after applying the diffs.
-
-   Idempotent-safe: the `uq_so_revision (so_doc_no, revision)` unique index means
-   a re-run at the same revision no-ops on conflict (ignoreDuplicates) rather
-   than doubling the snapshot — so an Approve-SO retry after a mid-apply failure
-   can't create two snapshots at the same counter. */
 export async function snapshotSo(
   sb: Sb,
   docNo: string,
@@ -244,20 +190,6 @@ export async function snapshotSo(
     .order('line_no', { ascending: true, nullsFirst: true });
   if (lErr) throw new Error(`snapshotSo: lines load failed: ${lErr.message}`);
 
-  /* Freeze the SO line -> bound-PO line linkage NOW, while it is still intact.
-     purchase_order_items.so_item_id is a FK with ON DELETE SET NULL (verified on
-     the live schema), so the instant applySoAmendment REMOVEs an SO line the
-     database wipes that PO line's ONLY trace of which SO line it served — the
-     line survives, unlinked, and keeps ordering + billing an item the customer
-     no longer has. This snapshot runs BEFORE any line is removed, so it is the
-     one moment that mapping still exists; the Approve-PO gate (reviseBoundPo)
-     reads it back to find and reconcile the orphaned PO line. Keyed
-     SO-line-id -> [bound PO line ids]; empty when no PO is bound yet.
-
-     Idempotent by construction: this whole row upserts with ignoreDuplicates on
-     (so_doc_no, revision), so an Approve-SO retry (which runs AFTER the removal,
-     when the link is already gone) cannot overwrite the good pre-removal
-     capture — the first snapshot wins. */
   const lineIds = ((lines ?? []) as Array<{ id: string }>).map((r) => r.id);
   const poLinks: Record<string, string[]> = {};
   if (lineIds.length > 0) {
@@ -288,7 +220,6 @@ export async function snapshotSo(
         snapshot,
         amendment_id: amendmentId ?? null,
         created_by:   userId ?? null,
-        // company_id: active company (mig 0080 nullable column); no-op pre-activation.
         company_id:   c ? activeCompanyId(c) : undefined,
       },
       { onConflict: 'so_doc_no,revision', ignoreDuplicates: true },
@@ -298,48 +229,11 @@ export async function snapshotSo(
   return currentRevision + 1;
 }
 
-/* ── SoAmendmentApproval — the signature a requested PRICE rides in on ───────
-   `so_amendment_lines.new_unit_price_sen` is written straight from the browser
-   at submit time and is validated nowhere (mig 0080 gives it a bare nullable
-   `integer`; amendment-lines.ts copies `l.newUnitPriceSen` verbatim, unlike
-   itemGroup and remark which it re-reads from the record). It is a REQUEST, not
-   a fact, and the submit gate is deliberately wide — `scm.amendment.create` OR
-   any Sales-org user OR a lane approver (mfg-sales-orders.ts).
-
-   So the thing that makes a requested price payable is not the payload. It is
-   the APPROVE gate: `PATCH /so-amendments/:id/approve-so` checks
-   `scm.amendment.approve_lines` / `approve_delivery` / `approve_so` and a legal
-   status transition before it calls this engine. This value is that gate's
-   receipt, constructed only there, and it is a REQUIRED argument with no
-   default — a future caller cannot inherit price authority by forgetting to
-   think about it, it has to write `null` and take the catalogue behaviour.
-
-   `null` = no approval is being claimed: the requested price is not read at
-   all, and the line re-prices from the catalogue exactly as it did before. */
 export type SoAmendmentApproval = {
-  /** The user the approve gate authenticated. */
   approvedByUserId: string;
-  /** The permission key that gate demanded, so the audit records which
-   *  signature the price rode in on. */
   approvalPermission: string;
 };
 
-/* ── applySoAmendment ───────────────────────────────────────────────────────
-   The Approve-SO engine. Load the amendment + its line diffs + the SO; snapshot
-   the current SO; apply each diff to mfg_sales_order_items carrying ALL variant
-   columns; re-run the honest-pricing recompute on every surviving line via the
-   SAME shared path POST /mfg-sales-orders uses; re-derive the delivery fee +
-   header totals; bump the SO's revision; write an audit row.
-
-   Returns the applied revision + the affected SO doc_no. Throws on a hard
-   failure (load / write) — the caller (approve-so route) leaves the amendment
-   status unchanged so the operator can retry.
-
-   `c`, `concurrency` and `approval` are all REQUIRED-with-an-explicit-empty
-   value rather than optional: each of them DECIDES something (company scope,
-   the optimistic lock, whether a requested price is payable), and CLAUDE.md's
-   rule is that such a parameter must fail to compile when it is forgotten
-   instead of silently taking the old behaviour. */
 export async function applySoAmendment(
   sb: Sb,
   amendmentId: string,
@@ -348,7 +242,6 @@ export async function applySoAmendment(
   concurrency: { soVersion: number; leaseToken: string } | null,
   approval: SoAmendmentApproval | null,
 ): Promise<{ soDocNo: string; revision: number; addedLineIds: string[] }> {
-  // (1) Load amendment + lines + SO header.
   const { data: amdRow, error: amdErr } = await sb
     .from('so_amendments')
     .select('id, so_doc_no, status, header_changes, amendment_no, requested_by, reason, created_at')
@@ -385,33 +278,18 @@ export async function applySoAmendment(
       throw new Error(`This Sales Order now has a Delivery Order / Sales Invoice, so customer, address and contact changes can no longer be applied (${lockedCols.join(', ')}).`);
     }
   }
-  /* `null` = every line is frozen (a downstream line names no SO line): no cascade at all. */
   const frozenLineFilter: string | null = !freezeRead.ok || freezeRead.freeze.unlinked
     ? null
     : `(${[...freezeRead.freeze.frozenLineIds].map((id) => `"${id}"`).join(',')})`;
   const skipFrozen = <Q extends { not: (col: string, op: string, v: string) => Q }>(q: Q): Q =>
     frozenLineFilter && frozenLineFilter !== '()' ? q.not('id', 'in', frozenLineFilter) : q;
 
-  // (2) Snapshot the CURRENT SO before touching a single line. Returns the next
-  //     revision to stamp once the diffs land.
   const nextRevision = await snapshotSo(sb, docNo, amendmentId, userId, c);
 
-  // Multi-company: an ADD-line diff inserts a new mfg_sales_order_items row —
-  // it inherits the SO header's company (NOT the request's active company: an
-  // amendment may be approved while another company is active).
-  /* Throws, like every other load in this function (and per its docblock) — the
-     approve-so route catches it, leaves the amendment status unchanged and lets the
-     operator retry; snapshotSo's upsert is idempotent on (so_doc_no, revision), so
-     the retry is clean. This read was the one exception, and `?? null` does not
-     fail closed: the ADD-line insert below OMITS company_id when this is null, and
-     mig 0091 gave the column a HOUZS DEFAULT — so a blip books a 2990 order's new
-     line to Houzs, silently, exactly as the note on that insert warns. */
   const { data: soHdrCo, error: soHdrCoErr } = await sb.from('mfg_sales_orders')
     .select('company_id, linked_ac_docno, so_date, created_at, status, processing_date, customer_delivery_date, sales_exemption_expiry').eq('doc_no', docNo).maybeSingle();
   if (soHdrCoErr) throw new Error(`applySoAmendment: SO company load failed: ${soHdrCoErr.message}`);
   const soCompanyId = (soHdrCo as { company_id?: number | null } | null)?.company_id ?? null;
-  // Stage 3c: re-price a bound line's COST as-of the order's own date (auto-derive,
-  // flag-gated in recomputeOneLine). Null when the header carries no date.
   const soAsOf = (soHdrCo as { so_date?: string | null } | null)?.so_date ?? null;
   /* Rule 2 (owner 2026-11-23): approved after the order's opening day, a PRODUCT
      change is costed on the day it is approved (the change day), unchanged lines
@@ -427,31 +305,13 @@ export async function applySoAmendment(
     }
     : null;
   const ruleTwo: OrderDays | null = soCompanyId != null && isLaterChange(hdrDays, changeDay) ? hdrDays : null;
-  /* A header-only amendment (a delivery date, an address) changes no line: no record. */
   const changeWindow: ChangeWindow | null = ruleTwo && soCompanyId != null && amendmentLines.length > 0
     ? { companyId: soCompanyId, docNo, route: 'AMENDMENT', windowKey: await amendmentSubmissionKey(sb, amendment) }
     : null;
   const changeWindowId = changeWindow ? await openChangeWindow(sb, changeWindow, changeDay) : null;
-  /* The sofa sets this amendment changes, and its lines costed on the change day. */
   const ruleTwoModels = new Set<string>();
   const ruleTwoLineIds: string[] = [];
 
-  /* Is this order MIGRATED from AutoCount? `linked_ac_docno` is the marker that
-     actually exists on the SO header (migration 0271); `migrated_no_stock` lives
-     only on scm.grns / scm.delivery_orders and is NOT available here.
-
-     It decides whether an approved amendment may re-price the line. For a NATIVE
-     order the answer stays what it has always been — re-price to the current
-     catalogue, the owner's authoritative default. For a MIGRATED order it must
-     not: that unit price is what AutoCount recorded as negotiated with the
-     customer, and mfg_products.sell_price_sen is in no sense a better answer for
-     an order this ERP never priced. Approving even a QTY-ONLY amendment used to
-     overwrite it.
-
-     'including-zero' rather than plain `true` because a migrated sofa is
-     routinely carried as the whole-set price on ONE lead module line with 0 on
-     its siblings. Plain `true` reads a stored 0 as "not provided" and hands the
-     sibling a catalogue price anyway, which bills the set several times over. */
   /* THE PAIR, through the one home. `linked_ac_docno IS NOT NULL` was the test
      here too, and it is equally wrong here: the write-back stamps that column on
      an order the ERP priced itself, which would then be trusted as "the BOOK's
@@ -522,34 +382,10 @@ export async function applySoAmendment(
     ? 'including-zero'
     : (approval !== null ? 'operator-zero' : false);
 
-  /* An ADD line is authored NOW, so 'including-zero' must never reach it even on
-     a migrated order — that flag is a statement about a price AutoCount already
-     recorded, and a line typed today has no such history (mfg-pricing-recompute's
-     own note on the flag says so). Same approval gate.
-
-     DELIBERATELY NOT 'operator-zero', unlike amendTrust above (2026-08-19). An
-     ADD line still reads 0 as "not provided" and takes the catalogue figure.
-     so-revision.amendmentPrice.test.ts pins that for a migrated order in as many
-     words, and it is a real protection rather than an accident of the old flag:
-     an ADD line names a SKU and nothing else about it is established yet, so a 0
-     there is far likelier to be an unfilled field than an intended giveaway.
-     Editing an EXISTING line is the opposite case — the line already carries a
-     price, and moving it to 0 is a deliberate act on a known amount.
-
-     So Add and Edit differ on 0, on purpose. A gift that genuinely belongs on a
-     locked order goes through the free-item path, not a hand-typed 0. Revisit
-     only with the owner, and update that test in the same breath. */
   const addLineTrust: TrustSelling = approval !== null;
 
-  // Config loaded ONCE and threaded into every per-line recompute (the create
-  // path's `cachedConfig` — one maintenance_config read for the whole apply).
   const cachedConfig = await loadMaintenanceConfig(sb, soCompanyId);
 
-  /* (3) Apply each line diff to mfg_sales_order_items, carrying ALL variant
-     columns. SPEC rewrites item_code + variants (+ optional qty/price); QTY
-     rewrites qty; ADD inserts a new line; REMOVE deletes the line. Each write
-     that changes/adds a priced line is followed by (4) the honest-pricing
-     recompute so unit/cost/margin/breakdown columns stay authoritative. */
   const touched: Array<{ change: string; itemCode: string; qty: number }> = [];
   /* Row ids of the lines this apply INSERTED (an ADD diff). They carry no
      AutoCount DtlKey yet, so the write-back edit queued after this must declare
@@ -609,8 +445,6 @@ export async function applySoAmendment(
          re-check covers amendments raised before that gate existed and any
          non-route writer. Company-scoped to the SO's own company — code is
          only unique per company. */
-      /* The same row also supplies the line's NAME and CATEGORY (owner
-         2026-08-11) — see the two stamps below. One read, three uses. */
       let prodName: string | null = null;
       let prodCategory: string | null = null;
       {
@@ -640,11 +474,6 @@ export async function applySoAmendment(
       ).toLowerCase();
       const qty = Math.max(1, Number(diff.new_qty ?? 1));
 
-      /* Recompute the new line (same path as POST /). `addLineTrust` is what
-         stops an APPROVED added line being re-priced to the catalogue: this call
-         used to pass no trust at all, so the fourteenth positional argument
-         defaulted to false and the price the approver signed for a brand-new
-         line was discarded on every order, migrated or not. */
       const rec = await recomputeOneLine(sb, {
         itemCode,
         itemGroup,
@@ -667,12 +496,6 @@ export async function applySoAmendment(
          is never blocked by a missing state mapping. */
       const addLineWarehouseId = await soWarehouseIdForDoc(sb, docNo, soCompanyId);
 
-      /* Mig 0165: the SO, DO and invoice list lines by line_no with NULLS LAST,
-         so an added line written without one sank below every numbered line in
-         no fixed order. Continue the order's numbering, as the add-line route
-         does; a pre-0165 order (max NULL) stays un-numbered so its lines keep
-         one ordering regime. Read per ADD so two adds in one amendment take
-         consecutive numbers. */
       const { data: maxNoRow, error: maxNoErr } = await scopeToCompanyIdOrOpen(
         sb.from('mfg_sales_order_items').select('line_no').eq('doc_no', docNo),
         soCompanyId,
@@ -680,9 +503,6 @@ export async function applySoAmendment(
       if (maxNoErr) throw new Error(`applySoAmendment: line number read failed: ${maxNoErr.message}`);
       const maxLineNo = (maxNoRow as { line_no?: number | null } | null)?.line_no;
 
-      // Multi-company (mig 0083/0091): company_id is NOT NULL with a HOUZS
-      // DEFAULT — an unstamped insert silently books the line to HOUZS, so the
-      // ADD line explicitly inherits the SO header's company.
       const { data: insRow, error: insErr } = await sb.from('mfg_sales_order_items').insert({
         ...(soCompanyId != null ? { company_id: soCompanyId } : {}),
         ...(typeof maxLineNo === 'number' ? { line_no: maxLineNo + 1 } : {}),
@@ -719,12 +539,7 @@ export async function applySoAmendment(
         special_order_price_sen: rec.special_order_sen,
         custom_specials:        rec.custom_specials ?? null,
         stock_status:           'PENDING',
-        warehouse_id:           addLineWarehouseId,   // follows the SO — see above
-        /* Mig 0280 — the requested REMARK rides onto the added line. This insert
-           used to omit it entirely, so a SVC-ADDON line added purely to carry an
-           instruction ("Please take back Cody Bedframe (King Size) 2 units")
-           landed as an RM0 line saying nothing, and the person meant to execute
-           it had no way to read the job. NULL stays NULL. */
+        warehouse_id:           addLineWarehouseId,
         remark:                 diff.new_remark,
       }).select('id').single();
       if (insErr) throw new Error(`applySoAmendment: ADD insert failed: ${insErr.message}`);
@@ -734,8 +549,6 @@ export async function applySoAmendment(
         ruleTwoLineIds.push(String(insRow.id));
       }
       lineChanges.push({ field: `line_added_${itemCode}`, from: null, to: `qty ${qty}` });
-      /* The remark is its OWN audit row — an added line's note is the request in
-         a service line's case, so "qty 1" alone would not say what was approved. */
       if ((diff.new_remark ?? '').trim()) {
         lineChanges.push({ field: `line_added_${itemCode}_remark`, from: null, to: diff.new_remark });
       }
@@ -743,7 +556,6 @@ export async function applySoAmendment(
       continue;
     }
 
-    // SPEC / QTY — mutate an existing line in place, then recompute it.
     if (!diff.sales_order_item_id) continue;
 
     const { data: existing, error: exErr } = await sb
@@ -753,7 +565,7 @@ export async function applySoAmendment(
       .eq('doc_no', docNo)
       .maybeSingle();
     if (exErr) throw new Error(`applySoAmendment: line load failed: ${exErr.message}`);
-    if (!existing) continue; // line already gone — nothing to amend
+    if (!existing) continue;
 
     const row = existing as Record<string, unknown>;
     const itemCode = change === 'SPEC' && diff.new_item_code
@@ -768,7 +580,6 @@ export async function applySoAmendment(
       (codeMoved ? groupOf({ materialKind: 'mfg_product', itemCode }) : null) ?? row.item_group ?? 'others',
     ).toLowerCase();
     const qty = diff.new_qty != null ? Math.max(1, Number(diff.new_qty)) : Math.max(1, Number(row.qty ?? 1));
-    // SPEC carries new variants; QTY leaves the existing variants untouched.
     const variants = change === 'SPEC' && diff.new_variants != null
       ? (diff.new_variants as Record<string, unknown>)
       : (row.variants as Record<string, unknown> | null) ?? null;
@@ -789,14 +600,6 @@ export async function applySoAmendment(
       ? Number(requestedUnit)
       : Number(row.unit_price_sen ?? 0);
 
-    /* amendTrust — see where it is derived. MIGRATED: 'including-zero', so the
-       price AutoCount recorded (or the explicit new_unit_price_sen when the
-       amendment supplies one) survives, zeros included. NATIVE: `true` when an
-       approver signed this amendment, so the approved price persists instead of
-       being normalised to the catalogue; `false` with no approval, which is the
-       behaviour this path had for every native order until 2026-08-16. Either
-       way a SPEC change does not silently re-price: if the new spec should cost
-       differently, the amendment carries new_unit_price_sen. */
     const rec = await recomputeOneLine(sb, {
       itemCode,
       itemGroup,
@@ -806,23 +609,12 @@ export async function applySoAmendment(
     }, cachedConfig, soCompanyId, { trustOperatorSelling: amendTrust, asOf: soAsOf });
 
     const unit = rec.unit_price_sen;
-    /* Mig 0317 — the request may carry a new discount; otherwise the line keeps
-       the one it has. Clamped HERE, where the final qty and unit are known (both
-       can change in this same amendment): an approved discount can never exceed
-       the line's gross or push its total negative — the same bound the fee
-       editor enforces client-side (feeDiscountForAmount). */
     const discount = diff.new_discount_sen != null
       ? Math.min(Math.max(Math.round(Number(diff.new_discount_sen)), 0), qty * unit)
       : Number(row.discount_sen ?? 0);
     const lineTotal = (qty * unit) - discount;
     let unitCost = rec.unit_cost_sen;
     let lineCost = unitCost * qty;
-    /* Rule 2 (see changeDay above). Not a product change (colour, fabric, side,
-       price, discount, a quantity whose selling amount stays): the line keeps the
-       cost it carries; the extra units of a quantity that moves the selling amount
-       take the change day's cost. A product change (another SKU or model, a leg,
-       an option, a seat height whose two heights cost differently that day) is
-       costed on the change day. A line with no cost yet is priced as before. */
     let lineCostDay: string | null = null;
     if (ruleTwo) {
       const prevUnitCost = Math.max(0, Math.round(Number(row.unit_cost_sen) || 0));
@@ -877,15 +669,11 @@ export async function applySoAmendment(
        rather than blocking an approved amendment over a display field (the ADD
        branch refuses a brand-new line with no catalog row; a SPEC line already
        exists and its code passed the submit gate). */
-    let specDescription: string | null | undefined;   // undefined = leave as-is
+    let specDescription: string | null | undefined;
     if (change === 'SPEC') {
       let pq = sb.from('mfg_products').select('name').eq('code', itemCode);
       if (soCompanyId != null) pq = pq.eq('company_id', soCompanyId);
       const { data: prodRows, error: prodErr } = await pq.limit(1);
-      // Bind the read error (audit:swallowed-reads): a real failure ABORTS the
-      // apply — it is NOT "no such code". An EMPTY result is "unknown code" and
-      // stays fail-soft below (the stored name is kept), so a DB blip can never
-      // masquerade as a missing catalogue row and blank/keep a name by accident.
       if (prodErr) throw new Error(`applySoAmendment: SPEC name lookup failed for ${itemCode}: ${prodErr.message}`);
       const prod = prodRows?.[0] as { name?: string | null } | undefined;
       if (prod) specDescription = (prod.name ?? '').trim() || null;
@@ -908,28 +696,12 @@ export async function applySoAmendment(
       leg_price_sen:           rec.leg_price_sen,
       special_order_price_sen: rec.special_order_sen,
       custom_specials:         rec.custom_specials ?? null,
-      /* NAME follows the code on a SPEC; QTY leaves it (item_code unchanged).
-         description2 is the server-built variant summary — the single source of
-         truth POST / and the ADD branch use — rebuilt from the applied variants. */
       ...(specDescription !== undefined ? { description: specDescription } : {}),
       ...(change === 'SPEC' ? { description2: buildVariantSummary(itemGroup, variants) || null } : {}),
-      /* Mig 0280 — write the REMARK only when the request carries one. NULL is
-         "not requested", so spreading it conditionally is what stops an
-         amendment raised last week (or any row created before 0280, where the
-         column is NULL by definition) from blanking a remark somebody typed on
-         the line in the meantime. '' IS a request — clear it. */
       ...(diff.new_remark != null ? { remark: diff.new_remark } : {}),
-      /* Mig 0317 — same conditional-write rule as the remark: NULL is "not
-         requested", so a pre-0317 amendment approving today cannot clear a
-         discount booked on the line since it was raised. */
       ...(diff.new_discount_sen != null ? { discount_sen: discount } : {}),
     }).eq('id', diff.sales_order_item_id);
     if (updErr) throw new Error(`applySoAmendment: ${change} update failed for line ${diff.sales_order_item_id}: ${updErr.message}`);
-    /* Keyed by the line's ORIGINAL item code so the drawer reads as one line's
-       history rather than a flat list of fields. `variants` is compared as its
-       rendered summary, built with the line's REAL item group — the same group
-       the amendment card now renders with, so the trail and the card agree on
-       what the spec said. */
     {
       const wasCode = String(row.item_code ?? '');
       const key = wasCode || String(diff.sales_order_item_id);
@@ -942,9 +714,7 @@ export async function applySoAmendment(
         buildVariantSummary(itemGroup, (row.variants as Record<string, unknown> | null) ?? null),
         buildVariantSummary(itemGroup, variants ?? null),
       );
-      // Mig 0280 — only when the request touched it (noteChange drops a no-op).
       if (diff.new_remark != null) noteChange(`line_${key}_remark`, row.remark, diff.new_remark);
-      // Mig 0317 — audit the CLAMPED value actually written, not the raw request.
       if (diff.new_discount_sen != null) noteChange(`line_${key}_discount_sen`, row.discount_sen, discount);
     }
     touched.push({ change, itemCode, qty });
@@ -962,27 +732,14 @@ export async function applySoAmendment(
      Every key is re-checked against AMENDABLE_HEADER_FIELDS — the create route
      already rejects an unlisted key, this is defence in depth on the last step
      before the write. */
-  /* CANONICALISE THE STORED KEYS FIRST.
-     `header_changes` is a jsonb written at REQUEST time and read here at APPROVE
-     time — days later, across any number of deploys. The loop below `continue`s
-     on a key the allow-list does not have, so a payload-key rename would make an
-     already-pending amendment approve cleanly, audit cleanly, and never write
-     its value. Rewriting legacy spellings onto today's keys before anything
-     reads them is what stops that; it is an identity map until a rename lands.
-     See shared/so-processing-date.ts for the removal condition. */
   const soHdrNow = (soHdrCo ?? {}) as { status?: string | null; processing_date?: unknown; customer_delivery_date?: unknown; sales_exemption_expiry?: string | null };
   const storedHeaderChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
-  /* A Processing Date removal clears the Delivery Date with it — the same cascade
-     the direct header PATCH runs (soDatePairCascadeColumns), so the order never
-     keeps a Delivery Date promised against a Processing Date it no longer has. */
   const headerChanges = storedHeaderChanges && withProcessingRemovalCascade(storedHeaderChanges, {
     processingDate: soHdrNow.processing_date, deliveryDate: soHdrNow.customer_delivery_date,
   });
   const headerApplied: string[] = [];
   if (headerChanges && Object.keys(headerChanges).length > 0) {
     const headerUpdates: Record<string, unknown> = {};
-    /* THE DATE IS THE ANSWER, BOTH WAYS — the status follows the Processing Date
-       exactly as on the header PATCH (so-proceed-status-change). */
     if ('processingDate' in headerChanges) {
       const nextStatus = await soStatusAfterProcessingDateChange(sb, docNo, {
         currentStatus: soHdrNow.status,
@@ -992,21 +749,9 @@ export async function applySoAmendment(
       if (nextStatus) headerUpdates['status'] = nextStatus;
     }
     for (const [key, value] of Object.entries(headerChanges)) {
-      // hasOwnProperty, NOT `in` / a bare lookup — a stored key of "constructor"
-      // would otherwise resolve to an inherited value and write a garbage column.
       if (!Object.prototype.hasOwnProperty.call(AMENDABLE_HEADER_FIELDS, key)) continue;
       const col = AMENDABLE_HEADER_FIELDS[key];
       headerUpdates[col] = value === '' ? null : value;
-      /* A delivery-date amendment ALSO stamps `amended_delivery_date`, not only the
-         `customer_delivery_date` it replaces. The visible surfaces render the raw
-         `customer_delivery_date` (the SO detail's "Delivery Date" and the HC
-         delivery sheet both read it directly), so the approved date has to land
-         there to be SEEN. But every AutoCount -> ERP delivery-date re-sync skips a
-         header ONLY when `amended_delivery_date` is set, so without also stamping it
-         those syncs clobbered the approved reschedule back to the AutoCount book
-         value (BUG-HISTORY 2026-09-22, HC-SO-011177). The customer's ORIGINAL date
-         is preserved in the amendment's `old_header_snapshot` and the
-         `AMENDMENT_SO_APPROVED` audit row, so replacing it stays fully auditable. */
       if (key === 'customerDeliveryDate') headerUpdates['amended_delivery_date'] = value === '' ? null : value;
       /* HC-0122: the first date an order ever gets may arrive through an amendment;
          freeze it as the Sales Exemption Expiry exactly as create / header PATCH do. */
@@ -1017,17 +762,9 @@ export async function applySoAmendment(
       headerApplied.push(`${col}=${value ?? 'cleared'}`);
     }
 
-    /* State cascade — mirrors the header PATCH (mfg-sales-orders.ts) exactly:
-       customer_country + sales_location follow the new State. Reuses the SAME
-       exported derive helpers rather than re-deriving, so the mapping can't
-       drift between the two write paths. */
     if ('customerState' in headerChanges) {
       const newState = headerChanges['customerState'] ?? null;
       headerUpdates['customer_country'] = await deriveCountryFromState(sb, newState);
-      /* `c` is optional on this function's signature (it threads the active
-         company into the scoped reads) — the only caller, the approve-so route,
-         always passes it, but deriveSalesLocationFromState dereferences it, so
-         guard rather than throw mid-apply. */
       if (c) {
         const derivedLocation = await deriveSalesLocationFromState(sb, newState, c);
         if (derivedLocation) headerUpdates['sales_location'] = derivedLocation;
@@ -1042,22 +779,9 @@ export async function applySoAmendment(
       if (hUpdErr) throw new Error(`applySoAmendment: header change apply failed: ${hUpdErr.message}`);
     }
 
-    /* Delivery-date master-follower cascade — every line takes the new date so the
-       SO detail's per-line date matches the header, and the override flag is set
-       TRUE (not cleared): an approved amendment IS a deliberate date, and marking it
-       stops the book LINE re-sync (which reverts non-overridden lines to the
-       AutoCount value) from re-opening the header/line split — the line-level twin
-       of `amended_delivery_date` protecting the header. See BUG-HISTORY 2026-09-22
-       (HC-SO-011177). */
     if ('customerDeliveryDate' in headerChanges && frozenLineFilter !== null) {
       const { error: cascErr } = await skipFrozen(sb.from('mfg_sales_order_items')
         .update({
-          /* Coerced, not `?? null`: the header loop twenty lines up already
-             assumes a stored change can be blank (`value === '' ? null : value`),
-             and the follower must not be stricter than the master it copies —
-             the same asymmetry fixed at consignment-orders.ts:1299. This cascade
-             is non-fatal outside atomic mode, so a 500 here would commit the
-             header amendment and silently leave every line on its OLD date. */
           line_delivery_date: dateOrNull(headerChanges['customerDeliveryDate']),
           line_delivery_date_overridden: true,
         })
@@ -1102,9 +826,6 @@ export async function applySoAmendment(
     }
   }
 
-  /* Rule 2 for the sofa sets this amendment changed: re-costed on the change day
-     before the roll-up below (lib/so-set-change-cost.ts). A failure leaves the
-     order-date spread, as before the rule; an atomic command rethrows. */
   if (ruleTwo && soCompanyId != null && ruleTwoModels.size > 0) {
     const set = await costChangedSofaSets(sb, {
       docNo, companyId: soCompanyId, orderDay: ruleTwo.orderDay, changeDay,
@@ -1114,11 +835,6 @@ export async function applySoAmendment(
     if (!set.ok) console.error('[so-rule-2] set re-cost failed — the order-date spread stands:', docNo, set.reason);
   }
 
-  /* (4-continued) Re-derive the delivery fee (rebuilds SVC-DELIVERY* lines on
-     the authoritative computeSoDeliveryFee) AND fold header totals — the same
-     helper the create + add-line paths call after a line change; it internally
-     runs recomputeTotals. Legacy callers are best-effort; atomic commands
-     rethrow so the enclosing transaction rolls back. */
   try {
     await rederiveDeliveryFee(sb, docNo, c);
   } catch (e) {
@@ -1130,7 +846,6 @@ export async function applySoAmendment(
      header and its fair booth exactly as a direct line edit does. Non-fatal. */
   if (c) await restampHeaderBranding(sb, docNo, c);
 
-  // (5) Bump the SO's revision + updated_at.
   let bump = sb
     .from('mfg_sales_orders')
     .update({
@@ -1150,7 +865,6 @@ export async function applySoAmendment(
   if (bumpErr) throw new Error(`applySoAmendment: revision bump failed: ${bumpErr.message}`);
   if (!bumped) throw new Error('applySoAmendment: Sales Order version changed during amendment apply');
 
-  // (6) Audit — best-effort, keyed on the SO doc_no like every other SO mutation.
   const routingSummary = routingNote(soAmendmentFieldKinds(amendmentLines, headerChanges as Record<string, unknown> | null));
   await recordSoAudit(sb, {
     docNo,
@@ -1162,18 +876,8 @@ export async function applySoAmendment(
       { field: 'revision', from: nextRevision - 1, to: nextRevision },
       { field: 'lines_applied', to: touched.length },
       ...(headerApplied.length > 0 ? [{ field: 'header_applied', to: headerApplied.join(', ') }] : []),
-      /* Which signature made the requested prices payable. Recorded because from
-         2026-08-16 an approved amendment can move MONEY on a locked SO, and the
-         drawer has to be able to say under whose authority — the per-line
-         `..._unit_price_sen` rows below say what moved, this says why it could. */
       ...(approval ? [{ field: 'price_authority', to: approval.approvalPermission }] : []),
-      /* Accountability: the type/department routing this single approval covers.
-         The apply stays single-signature — this records WHICH routed fields the
-         approver signed for, it does not split the gate. */
       ...(routingSummary ? [{ field: 'routing', to: routingSummary }] : []),
-      /* The per-line from -> to the drawer needs to answer "what did this line
-         say before the amendment rewrote it". Appended AFTER the summary rows so
-         the existing header of the entry is unchanged for any reader used to it. */
       ...lineChanges,
     ],
     note: `Amendment applied: ${[
@@ -1183,14 +887,8 @@ export async function applySoAmendment(
     ].filter(Boolean).join('; ') || 'no diffs'}`,
   });
 
-  /* An approved ADD on a DELIVERED order is goods still to ship — the same
-     re-open the direct add-line route runs (DELIVERED -> READY_TO_SHIP). Only
-     when a line was actually added: a price or header amendment changes no
-     coverage and must not pay for the reconciler's reads. */
   if (addedLineIds.length > 0) await syncSoDeliveredFromDo(sb, [docNo], userId);
 
-  /* Finance's record of the change (lib/so-product-change-record.ts): who asked,
-     who approved, and the order's product lines before and after. */
   if (changeWindow && changeWindowId) {
     await closeChangeWindow(sb, changeWindow, changeWindowId, {
       changedBy: await staffNameOf(sb, amendment.requested_by ?? null),
@@ -1203,7 +901,6 @@ export async function applySoAmendment(
   return { soDocNo: docNo, revision: nextRevision, addedLineIds };
 }
 
-/** A staff member's name, or null. */
 async function staffNameOf(sb: Sb, staffId: string | null): Promise<string | null> {
   if (!staffId) return null;
   const { data, error } = await sb.from('staff').select('name').eq('id', staffId).maybeSingle();
@@ -1211,14 +908,6 @@ async function staffNameOf(sb: Sb, staffId: string | null): Promise<string | nul
   return ((data as { name?: string | null } | null)?.name ?? '').trim() || null;
 }
 
-/* ── snapshotPo ─────────────────────────────────────────────────────────────
-   Mirror of snapshotSo for a Purchase Order. Freeze the PO's CURRENT state
-   (header + all items) into a `po_revisions` row at the PO's CURRENT `revision`,
-   so the version being replaced stays immutable. Returns the NEXT revision
-   number (current + 1) for the caller to stamp on the PO after re-deriving.
-
-   Idempotent-safe: the `uq_po_revision (po_id, revision)` unique index means a
-   re-run at the same revision no-ops on conflict (ignoreDuplicates). */
 export async function snapshotPo(
   sb: Sb,
   poId: string,
@@ -1263,7 +952,6 @@ export async function snapshotPo(
         snapshot,
         amendment_id: amendmentId ?? null,
         created_by:   userId ?? null,
-        // company_id: active company (mig 0080 nullable column); no-op pre-activation.
         company_id:   c ? activeCompanyId(c) : undefined,
       },
       { onConflict: 'po_id,revision', ignoreDuplicates: true },
@@ -1273,65 +961,12 @@ export async function snapshotPo(
   return currentRevision + 1;
 }
 
-/* ── reviseBoundPo ──────────────────────────────────────────────────────────
-   The Approve-PO engine. For an amendment whose SO has already been revised
-   (Approve-SO ran first), reconcile every bound PO so its line SET matches the
-   NOW-REVISED SO, using the SAME derivation "Create PO from SO" uses. Three
-   moves, because an amendment can change the line SET, not just a line's fields:
-
-     • RE-DERIVE a surviving line — each PO line is 1:1 with a SO line via
-       `purchase_order_items.so_item_id`; carry the SO line's qty / variants /
-       item_group / description2 / per-line warehouse + delivery date and
-       re-derive the supplier COST (`unit_price_sen`) from the revised spec
-       (deriveMfgPoUnitCost — a fabric/spec swap re-prices; never carry the old
-       figure). Scope note: the create path additionally re-spreads a SOFA-COMBO
-       total across a matched module set; that group step is NOT reproduced here.
-
-     • REMOVE an orphaned line — when an amendment REMOVEs an SO line, its bound
-       PO line is otherwise left ordering + billing an item the customer no longer
-       has (the company eats the cost). It CANNOT be found by so_item_id: that FK
-       is ON DELETE SET NULL (verified on the live schema), so deleting the SO
-       line already wiped the PO line's only link. Instead we read the SO→PO
-       linkage snapshotSo froze at Approve-SO — the one moment before removal —
-       and delete exactly those PO lines. A line already (partly) received is NOT
-       deleted (goods already received are not ours to discard); it is left in
-       place and surfaced as a plain-language warning for manual handling.
-
-     • ADD a missing line — when an amendment ADDs an SO line, no PO line exists
-       for it (item sold but never ordered → stock shortfall). We insert one on
-       the live bound PO whose supplier matches the added line's main-supplier
-       binding (else an alternate binding's, pickAddLineBinding), priced with the SAME deriveMfgPoUnitCost and carrying the same
-       per-line warehouse/date the create path stamps. If no open bound PO belongs
-       to that supplier (or the SKU has no supplier bound), we do NOT invent a new
-       PO here — raising one is the create path's decision — and warn instead.
-
-   Only THEN is the existing PO subtotal recompute correct: the line SET matches.
-
-   Houzs note: the SO line's per-line delivery date column is `line_delivery_date`
-   (2990's was `delivery_date`); the bound PO line's own column stays
-   `delivery_date`.
-
-   Bound PO discovery: the surviving SO lines' so_item_id ∪ the snapshot's frozen
-   links for removed lines → distinct non-cancelled purchase_orders. No bound PO
-   ⇒ NO-OP.
-
-   Received floor: BEFORE mutating anything, any SURVIVING PO line whose revised
-   SO qty would drop below its already-received_qty ABORTS the whole revision
-   (receivedFloorViolation). An orphaned (removed) line already received is warned,
-   not aborted.
-
-   Idempotency: re-running Approve-PO cannot double anything — an added line is
-   skipped once a PO line already carries its so_item_id, an orphan delete no-ops
-   once the line is gone, and snapshotPo upserts idempotently on (po_id, revision). */
 export type ReviseBoundPoResult = {
   revisedPoIds: string[];
   perPo: Array<{
     poId: string; poNumber: string; revision: number;
     linesRederived: number; linesRemoved: number; linesAdded: number;
   }>;
-  /* Plain-language notes for the operator about anything that needs a human hand:
-     an orphaned line left in place because it was already received, an added item
-     whose supplier has no open PO, or a PO left with no lines at all. */
   warnings: string[];
   /* AutoCount keys of the PO lines deleted here, read before the delete, so the
      caller's AutoCount edit retires them — as applyPoAmendment's REMOVE does (HC-0121). */
@@ -1387,15 +1022,10 @@ export async function reviseBoundPo(
   amendmentId: string,
   userId: string | null,
   c?: Context<any>,
-  /* onlyPoId — revise ONE bound PO instead of all (two-lane rework 2026-07-27):
-     the PO-Amendments confirm gate approves one follow-up at a time, so its
-     apply must not touch the sibling POs still awaiting their own confirms.
-     Unscoped (the legacy approve-po gate) keeps the original revise-all. */
   opts?: { onlyPoId?: string },
 ): Promise<ReviseBoundPoResult> {
   const noop = (): ReviseBoundPoResult => ({ revisedPoIds: [], perPo: [], warnings: [], retired: [] });
 
-  // (1) Load amendment → SO doc_no.
   const { data: amdRow, error: amdErr } = await sb
     .from('so_amendments')
     .select('id, so_doc_no, status')
@@ -1406,13 +1036,6 @@ export async function reviseBoundPo(
   const docNo = (amdRow as AmendmentRow).so_doc_no;
   assertNotMirrored(docNo, 'reviseBoundPo', c);
 
-  /* (2) The SO's company — the ADD-line supplier binding is scoped to it. The SO,
-     and every PO bound to it, belong to this company; the REQUEST's active
-     company may differ (an amendment can be approved while another is active), so
-     scoping the binding by the active company would be the wrong tenant. Scope is
-     applied ONLY when the company is known (REQUIRED-half); a genuinely unset
-     company (pre-migration / single-company) degrades to no filter — never a
-     cross-company `??` default. */
   const { data: soHdr, error: soHdrErr } = await sb
     .from('mfg_sales_orders')
     .select('company_id')
@@ -1421,11 +1044,6 @@ export async function reviseBoundPo(
   if (soHdrErr) throw new Error(`reviseBoundPo: SO company load failed: ${soHdrErr.message}`);
   const soCompanyId = (soHdr as { company_id?: number | null } | null)?.company_id ?? null;
 
-  /* (3) The SO→bound-PO linkage snapshotSo froze at Approve-SO, BEFORE any line
-     was removed. This is the ONLY durable record of which PO line served a
-     since-removed SO line (its so_item_id was SET NULL on the SO line's delete).
-     Loaded by amendment_id — not "latest revision" — so a concurrent amendment on
-     the same SO cannot misdirect the reconciliation. */
   const { data: snapRow, error: snapErr } = await sb
     .from('so_revisions')
     .select('snapshot')
@@ -1442,16 +1060,6 @@ export async function reviseBoundPo(
   );
   const poLinks = (snap?.poLinks ?? {}) as Record<string, string[]>;
 
-  // (4) Current (post-Approve-SO) SO line ids.
-  /* CANCELLED IS REMOVED. `removed = prevLineIds \ currentIdSet` is what
-     orphans the PO line a since-deleted SO line was bound to, and it is the
-     only warning the supplier side ever gets. A retained cancelled row would
-     stay in currentIdSet forever, so the customer's cancellation would never
-     reach the supplier and the factory would keep building the item. The hard
-     delete gives this for free today; the filter is what keeps it true once a
-     removal becomes a soft cancel. Filtered in JS rather than SQL so a NULL —
-     which the column default forbids but a partial row shape does not — reads
-     as LIVE, never as removed. */
   const { data: soItemRows, error: soItemErr } = await sb
     .from('mfg_sales_order_items')
     .select('id, cancelled')
@@ -1461,19 +1069,12 @@ export async function reviseBoundPo(
     .filter((r) => r.cancelled !== true).map((r) => r.id);
   const currentIdSet = new Set(soItemIds);
 
-  /* ADDED   = a current line the pre-amendment snapshot did not have (an ADD diff
-               inserts a brand-new row id; SPEC/QTY reuse the same id).
-     REMOVED = a snapshot line the current SO no longer has.
-     With no snapshot (amendments created before this fix), we cannot classify —
-     degrade to re-derive-only (no inserts, no orphan deletes), the prior
-     behaviour, rather than guess. */
   const addedSoItemIds = prevLineIds.size > 0
     ? soItemIds.filter((id) => !prevLineIds.has(id))
     : [];
   const removedSoItemIds = [...prevLineIds].filter((id) => !currentIdSet.has(id));
   const orphanPoItemIds = [...new Set(removedSoItemIds.flatMap((id) => poLinks[id] ?? []))];
 
-  // (5) Existing bound PO lines for the SURVIVING SO lines (the re-derive set).
   const boundSoItemIdSet = new Set<string>();
   let allPoItems: Array<{
     id: string; purchase_order_id: string | null; so_item_id: string | null;
@@ -1489,9 +1090,6 @@ export async function reviseBoundPo(
     for (const pi of allPoItems) if (pi.so_item_id) boundSoItemIdSet.add(pi.so_item_id);
   }
 
-  /* (6) The orphaned PO lines (removed SO lines' frozen links), read FRESH so
-     received_qty + PO ownership reflect NOW. A link already deleted between the
-     two gates (a re-run, or a manual delete) simply drops out here — idempotent. */
   let orphanRows: Array<{
     id: string; purchase_order_id: string | null; received_qty: number | null;
     item_code: string | null; material_name: string | null;
@@ -1505,9 +1103,6 @@ export async function reviseBoundPo(
     orphanRows = (oRows ?? []) as typeof orphanRows;
   }
 
-  // (7) Candidate POs = those serving a surviving line ∪ those holding an orphan.
-  //     Empty ⇒ no PO is bound to this SO at all ⇒ NO-OP (an added line will be
-  //     picked up when the PO is first raised; a removed line has no orphan).
   const candidatePoIds = [...new Set([
     ...allPoItems.map((r) => r.purchase_order_id),
     ...orphanRows.map((r) => r.purchase_order_id),
@@ -1519,24 +1114,16 @@ export async function reviseBoundPo(
     .select('id, po_number, status, revision, supplier_id, purchase_location_id, company_id')
     .in('id', candidatePoIds);
   if (poHeadErr) throw new Error(`reviseBoundPo: PO headers load failed: ${poHeadErr.message}`);
-  // Exclude cancelled POs — a cancelled PO is not a live obligation (nor billing).
   const livePos = ((poHeaders ?? []) as Array<{
     id: string; po_number: string; status: string; revision: number | null;
     supplier_id: string | null; purchase_location_id: string | null; company_id: number | null;
   }>).filter((p) => String(p.status).toUpperCase() !== 'CANCELLED');
   if (livePos.length === 0) return noop();
 
-  /* Single-PO scope (two-lane rework) — everything downstream keys off
-     scopedPos / scopedPoIds: the re-derive set, the orphan set, the ADD
-     placement and the per-PO apply loop. ADD supplier-matching still consults
-     the FULL livePos so a line whose supplier belongs to a SIBLING po is
-     silently deferred to that PO's own confirm rather than mis-warned here. */
   const scopedPos = opts?.onlyPoId ? livePos.filter((p) => p.id === opts.onlyPoId) : livePos;
   if (scopedPos.length === 0) return noop();
   const livePoIds = new Set(scopedPos.map((p) => p.id));
 
-  // (8) Re-read the NOW-REVISED SO lines keyed by id (the derivation source).
-  //     Houzs: the per-line delivery date column is `line_delivery_date`.
   const { data: revisedSoRows, error: revErr } = await sb
     .from('mfg_sales_order_items')
     .select('id, item_code, item_group, qty, variants, warehouse_id, line_delivery_date, description, photo_urls')
@@ -1557,16 +1144,11 @@ export async function reviseBoundPo(
     });
   }
 
-  // Only the PO items on a LIVE bound PO whose SO line still exists = re-derive set.
   const targetPoItems = allPoItems.filter(
     (pi) => pi.purchase_order_id && livePoIds.has(pi.purchase_order_id)
       && pi.so_item_id && revisedById.has(pi.so_item_id),
   );
 
-  // (9) RECEIVED-FLOOR PRE-CHECK — abort BEFORE any mutation. A SURVIVING PO
-  //     line's revised qty must not drop below what's already received. (An
-  //     orphaned/removed line that is received is handled by warning in (12b),
-  //     not by aborting the whole revision.)
   for (const pi of targetPoItems) {
     const revised = revisedById.get(pi.so_item_id as string)!;
     const receivedQty = Number(pi.received_qty ?? 0);
@@ -1575,14 +1157,6 @@ export async function reviseBoundPo(
     }
   }
 
-  /* (10) Resolve each newly ADDED line (one with no PO line yet) to its supplier
-     and its target bound PO. Supplier = the SKU's main-supplier binding, or —
-     when the main supplier has no PO here — an alternate bound supplier that
-     does (pickAddLineBinding), scoped to the SO's company. Target PO = a live bound PO on this SO whose supplier
-     matches, preferring one whose warehouse matches the line's (mirrors the
-     create path's (warehouse, supplier) bucket). No matching open PO, or no
-     supplier bound at all, is NOT auto-resolved by inventing a PO here — it is
-     warned so the operator raises one. */
   const warnings: string[] = [];
   const retired: AcRetiredLine[] = [];
   const addedNeedingPo = addedSoItemIds.filter((id) => !boundSoItemIdSet.has(id) && revisedById.has(id));
@@ -1593,11 +1167,6 @@ export async function reviseBoundPo(
     )];
     const bindingsByCode = new Map<string, Array<{ supplier_id: string; supplier_sku: string | null }>>();
     if (codes.length > 0) {
-      /* Through the SHARED reader (lib/supplier-bindings.ts): chunked, paged and
-         TOTALLY ordered. The order matters more than the size does here — the
-         loop below takes "the first row seen per code" as that code's main
-         supplier, and `is_main_supplier DESC` alone leaves every tie in
-         planner order, so which alternate wins was never decided by this file. */
       const { data: bRows, error: bErr } = await readMfgProductBindings<{
         item_code: string; supplier_id: string; supplier_sku: string | null;
       }>(sb, {
@@ -1606,7 +1175,6 @@ export async function reviseBoundPo(
         select: 'item_code, supplier_id, supplier_sku, is_main_supplier',
       });
       if (bErr) throw new Error(`reviseBoundPo: added-line supplier binding load failed: ${bErr.message}`);
-      // is_main_supplier DESC → the first row seen per code is its main supplier.
       for (const b of (bRows ?? []) as Array<{ item_code: string; supplier_id: string; supplier_sku: string | null }>) {
         const arr = bindingsByCode.get(b.item_code) ?? [];
         arr.push(b);
@@ -1620,21 +1188,9 @@ export async function reviseBoundPo(
       const label = (line.description || itemCode || 'a new item').trim();
       const codeBindings = itemCode ? (bindingsByCode.get(itemCode) ?? []) : [];
       if (codeBindings.length === 0) {
-        /* No supplier bound at all — this line can reach NO purchase order, so it
-           warns regardless of how many bound POs the recompute scoped. The
-           sibling-PO case (a line whose supplier owns a PO this confirm did not
-           touch) is handled by the out-of-scope `continue` below, never here — so
-           this point is only ever a real gap. It used to be gated on "the scope
-           covers every bound PO", which is never true on a sales order with 2+
-           live POs (the PO-Amendments confirm is always scoped to one), so the
-           buyer was told nothing about an item that would have no order on
-           delivery day. */
         warnings.push(`A newly added item (${label}) has no supplier set, so it could not be added to a purchase order. Set its main supplier, then raise a purchase order for it.`);
         continue;
       }
-      // Supplier match is resolved against the FULL bound set (livePos), so no
-      // pick means no open PO on this SO carries any supplier bound for the code —
-      // a genuine gap, not a scoping artefact — and warns regardless of scope.
       const binding = pickAddLineBinding(codeBindings, boundSupplierIds);
       if (!binding) {
         warnings.push(`A newly added item (${label}) is from a supplier that has no open purchase order on this sales order, so a purchase order still needs to be raised for it.`);
@@ -1643,7 +1199,6 @@ export async function reviseBoundPo(
       const forSupplier = livePos.filter((p) => p.supplier_id === binding.supplier_id);
       const target = forSupplier.find((p) => p.purchase_location_id && p.purchase_location_id === line.warehouse_id)
         ?? forSupplier[0]!;
-      // Out-of-scope target = a sibling PO's line; its own confirm inserts it.
       if (!livePoIds.has(target.id)) continue;
       const arr = addedByPo.get(target.id) ?? [];
       arr.push({ soItemId, line, supplierSku: binding.supplier_sku ?? null });
@@ -1651,7 +1206,6 @@ export async function reviseBoundPo(
     }
   }
 
-  // (11) Group the re-derive + orphan work per PO.
   const matchedByPo = new Map<string, typeof targetPoItems>();
   for (const pi of targetPoItems) {
     const key = pi.purchase_order_id as string;
@@ -1667,15 +1221,6 @@ export async function reviseBoundPo(
     orphansByPo.set(orow.purchase_order_id, arr);
   }
 
-  // (12) Per live bound PO: snapshot, re-derive surviving lines, delete orphaned
-  //      lines (warn if received), insert added lines, recompute totals, bump,
-  //      audit.
-  /* DEV-69 (12c): an ADDED line gets the date Create PO gives it, customer date
-     minus lead days (mfg-purchase-orders.ts, lib/lead-time.ts), not the raw
-     customer date. The lead tables load once per company, only when a PO
-     actually gains a line, and THROW on a read error like the create path: a
-     zero lead day from a failed read would ask the supplier to deliver ON the
-     customer's own date. The approve route returns 500 and the operator retries. */
   type Lead = { base: LeadTimeBase; overrides: LeadOverrides; buffers: LeadBuffers };
   const leadByCompany = new Map<number | null, Promise<Lead>>();
   const leadFor = (companyId: number | null): Promise<Lead> => {
@@ -1700,8 +1245,6 @@ export async function reviseBoundPo(
     let linesRemoved = 0;
     let linesAdded = 0;
 
-    // (12a) RE-DERIVE each surviving line in place from its revised SO line —
-    //       lib/po-line-rederive.ts, the one derivation the realign repair runs too.
     for (const pi of matchedByPo.get(po.id) ?? []) {
       const revised = revisedById.get(pi.so_item_id as string)!;
       const { patch, warnings: lineWarnings } = await rederivePoLineFromSoLine(sb, {
@@ -1716,10 +1259,6 @@ export async function reviseBoundPo(
       linesRederived += 1;
     }
 
-    /* (12b) DELETE each orphaned line whose SO line was removed — UNLESS it has
-       already been (partly) received, in which case deleting it would discard a
-       receipt: leave it in place and warn for manual handling. Idempotent: a
-       re-run finds the line already gone (it dropped out of orphanRows above). */
     for (const orow of orphansByPo.get(po.id) ?? []) {
       const receivedQty = Number(orow.received_qty ?? 0);
       const label = (orow.material_name || orow.item_code || 'a removed item').trim();
@@ -1736,11 +1275,6 @@ export async function reviseBoundPo(
       linesRemoved += 1;
     }
 
-    /* (12c) INSERT a PO line for each added SO line assigned to this PO — same
-       column shape + cost anchor "Create PO from SO" uses. Idempotent: an added
-       line that already carries a PO line was excluded from addedNeedingPo, so a
-       re-run inserts nothing. company_id follows the PO's own company (authoritative
-       in a cross-company approve), not the request's active company. */
     /* Owner 2026-09-10 — added lines go at the END of the purchase order, in
        the order the SALES ORDER holds them (lib/po-line-order.ts). Read once
        per PO and incremented locally: the rows are inserted one at a time, so
@@ -1754,8 +1288,6 @@ export async function reviseBoundPo(
     );
     let nextLineNo = await nextPoLineNo(sb, po.id);
     const lead = addsForPo.length > 0 ? await leadFor(po.company_id) : null;
-    // The learned supplier buffer is keyed on the supplier's business code; only
-    // look it up when the owner has approved any (empty today).
     let supplierCode: string | null = null;
     if (lead && po.supplier_id && Object.keys(lead.buffers.supplierBufferDays).length > 0) {
       const { data: sup, error: supErr } = await sb.from('suppliers').select('code').eq('id', po.supplier_id).maybeSingle();
@@ -1798,7 +1330,6 @@ export async function reviseBoundPo(
         variants,
         description2:      buildVariantSummary(String(itemGroup ?? ''), variants ?? null) || null,
         so_item_id:        add.soItemId,
-        // Migration 0274 — carry the SO line's photo keys (same R2 objects).
         photo_urls:        line.photo_urls ?? [],
         from_mrp:          false,
       });
@@ -1807,18 +1338,6 @@ export async function reviseBoundPo(
       linesAdded += 1;
     }
 
-    // Recompute PO subtotal/total from the live lines and the header expected_at
-    // = earliest non-null line delivery_date (mirrors recomputePoTotals /
-    // recomputePoExpectedAt in mfg-purchase-orders.ts). NOW correct because the
-    // line SET matches the revised SO (orphans gone, added lines present).
-    /* The roll-up zeroing shape (BUG-HISTORY 2026-07-17, fix/zeroing-twins): the
-       read below THROWS on error (unlike the log-and-skip 15), so `?? []` is not
-       hiding a failed read — it is the genuinely-empty case, which is now REAL:
-       an amendment can remove every line a PO served, leaving it with no lines,
-       for which subtotal 0 is the correct total (and (12b) warns the operator the
-       PO may need cancelling). Every load/write here throws; the approve-po route
-       catches, returns 500 and does NOT advance the amendment status, so the
-       operator retries and snapshotPo is idempotent on (po_id, revision). */
     const { data: liveLines, error: liveErr } = await sb
       .from('purchase_order_items')
       .select('line_total_sen, delivery_date')
@@ -1841,7 +1360,6 @@ export async function reviseBoundPo(
     }).eq('id', po.id);
     if (bumpErr) throw new Error(`reviseBoundPo: PO revision bump failed for ${po.id}: ${bumpErr.message}`);
 
-    // Audit — best-effort, keyed on the SO doc_no like every other amendment step.
     await recordSoAudit(sb, {
       docNo,
       action: 'AMENDMENT_PO_REVISED',

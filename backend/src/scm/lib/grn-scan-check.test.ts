@@ -13,7 +13,6 @@ const open = new Map<string, OpenPoLine>([['pi-1', { poItemId: 'pi-1', poId: 'p'
 describe('grn scan check', () => {
   test('matched lines arrive tied to their PO line; unplaced lines arrive untied with what was printed', () => {
     const r = buildReview(parsed, 's1', match, [], [...open.values()], '2026-11-06');
-    // The day of the scan, not the 2026-11-03 printed on the delivery order.
     expect(r).toMatchObject({ supplierId: 's1', supplierRead: 'DIGLANT', doNo: 'DO 77', deliveryDate: '2026-11-06' });
     expect(r.lines.map((l) => [l.poItemId, l.qty, l.rack, l.read?.itemCode ?? null])).toEqual([['pi-1', 2, 'R11-2', 'A1'], [null, 1, null, 'ZZ']]);
   });

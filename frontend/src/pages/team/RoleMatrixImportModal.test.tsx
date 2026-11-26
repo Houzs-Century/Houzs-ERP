@@ -1,8 +1,3 @@
-// RoleMatrixImportModal — the owner imports an edited matrix file: pick → local
-// preview (added/removed/unchanged) → Apply writes the two PR2 APIs per changed
-// role. The file reader is mocked (no real xlsx/File I/O), so the test drives the
-// REAL parse engine + REAL apply, and asserts the exact PATCH payloads. No prod:
-// the page-access API is branch-only and the dev build talks to prod.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PermissionDef, Role } from "../../types";
@@ -14,8 +9,6 @@ vi.mock("../../api/client", () => ({
   api: { get: vi.fn(), patch: apiPatch, post: vi.fn(), put: vi.fn(), del: vi.fn() },
 }));
 
-// The file reader is mocked so the test never touches SheetJS or a real File —
-// `nextSheets` is what the next readMatrixSheets() returns.
 let nextSheets: SheetData[] = [];
 vi.mock("../../lib/roleMatrixExcelFile", () => ({
   readMatrixSheets: () => Promise.resolve(nextSheets),
@@ -74,7 +67,6 @@ describe("RoleMatrixImportModal", () => {
 
     chooseCsv();
 
-    // Preview: one role changes, and its name is shown.
     await waitFor(() => expect(screen.getByText("Test Role")).toBeTruthy());
     expect(screen.getByText("Apply changes to 1 role")).toBeTruthy();
 
@@ -87,13 +79,13 @@ describe("RoleMatrixImportModal", () => {
     const paCall = apiPatch.mock.calls.find((c) => c[0] === "/api/roles/7/page-access")!;
     const entries: Array<{ pageKey: string; level: string }> = paCall[1].entries;
     expect(entries.find((e) => e.pageKey === "scm.sales")?.level).toBe("view");
-    expect(entries.find((e) => e.pageKey === "scm")?.level).toBe("view"); // derived umbrella
+    expect(entries.find((e) => e.pageKey === "scm")?.level).toBe("view");
 
     const permCall = apiPatch.mock.calls.find((c) => c[0] === "/api/roles/7")!;
     const perms: string[] = permCall[1].permissions;
     expect(perms).toContain("projects.read");
     expect(perms).toContain("projects.write");
-    expect(perms).toContain("scm.access"); // reconciled from the SCM page level
+    expect(perms).toContain("scm.access");
 
     expect(onApplied).toHaveBeenCalled();
     await waitFor(() => expect(screen.getByText(/Imported/)).toBeTruthy());

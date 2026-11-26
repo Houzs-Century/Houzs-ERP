@@ -61,27 +61,16 @@
 import type { BankLine } from './bank-parse';
 import { toIsoDate } from './settlement-parse';
 
-/* ── What the bank actually moved ─────────────────────────────────────────── */
 
 export type BankMovement = {
-  /** The line(s) it is made of: one, or a credit and the charge(s) taken back
-      against it. Kept, because a reconciliation has to be able to point at the
-      rows on the statement the operator is holding. */
   lines: BankLine[];
   bookedOn: string;
   description: string;
   reference: string | null;
-  /** The NET of its lines — what the account moved by. Positive is money in. */
   amountSen: number;
-  /** What was taken back out of a credit, when the bank split it. 0 otherwise,
-      so "was this split?" is a number nobody has to infer from the line count. */
   chargeSen: number;
 };
 
-/** What two lines must share to be read as one movement — null when nothing a
-    line carries can be shared safely (see the header). A reference and the day
-    when there is a reference; otherwise the acquirer, merchant, words and day
-    the recognition rules prove. */
 function joinKey(l: BankLine, rules: BankRecognitionRule[]): string | null {
   if (l.reference) return `ref|${l.reference}|${l.bookedOn}`;
   if (rules.length === 0) return null;
@@ -131,20 +120,11 @@ export function groupBankMovements(lines: BankLine[], rules: BankRecognitionRule
   for (const group of buckets.values()) {
     const credits = group.filter((l) => l.amountSen > 0);
     const debits = group.filter((l) => l.amountSen < 0);
-    /* Exactly one credit, at least one debit. Two credits could not be told
-       apart — which charge belongs to which? — so they are left alone and each
-       stands as its own movement. */
     if (credits.length !== 1 || debits.length === 0) continue;
     const credit = credits[0]!;
     const chargeSen = debits.reduce((s, d) => s + -d.amountSen, 0);
-    /* A "charge" bigger than the credit is not a charge; something else is
-       going on and a human should look at it, not this function. Nor is one
-       above a tenth of it — no acquirer keeps that much. */
     if (chargeSen >= credit.amountSen) continue;
     if (chargeSen > credit.amountSen * MAX_CHARGE_SHARE) continue;
-    /* Only an acquirer's payout has a fee taken back against it. A credit no
-       rule recognises is a transfer, a deposit, a refund: the debits beside it
-       are payments of their own, whatever words they share. */
     if (rules.length > 0 && !recogniseAcquirer(rules, credit)) continue;
     for (const l of group) joined.add(l);
     out.push({
@@ -158,35 +138,24 @@ export function groupBankMovements(lines: BankLine[], rules: BankRecognitionRule
   }
 
   for (const l of lines) if (!joined.has(l)) out.push(single(l));
-  /* Statement order, so the screen reads down the page the operator is holding. */
   return out.sort((a, b) => (a.lines[0]!.lineNo - b.lines[0]!.lineNo));
 }
 
-/* ── Which acquirer, from config ──────────────────────────────────────────── */
 
 export type BankRecognitionRule = {
   acquirerCode: string;
-  /** Regex source. From the config table — never a literal in this file. */
   pattern: string;
-  /** Where to look. Default searches the description and the reference. */
   field?: 'description' | 'reference' | 'both' | null;
-  /** Regex whose FIRST capture group is the trading day being settled, e.g.
-      `DATED\s*(\d{8})` for Maybank or `MERCHANT\s+(\d{8})` for Hong Leong.
-      The trading day, not the payout day: they differ by design. */
   tradingDatePattern?: string | null;
-  /** Regex whose first capture group is the merchant/terminal number. */
   merchantPattern?: string | null;
 };
 
 export type Recognised = {
   acquirerCode: string;
-  /** YYYY-MM-DD, or null when the rule does not carry one. */
   tradingDate: string | null;
   merchantNo: string | null;
 };
 
-/** A rule with a broken regex must name ITSELF, not throw somewhere downstream
-    with a stack trace the operator cannot act on (§2.14). */
 const compile = (src: string, who: string): RegExp => {
   try {
     return new RegExp(src, 'i');
@@ -209,9 +178,6 @@ export function recogniseAcquirer(
     let tradingDate: string | null = null;
     if (rule.tradingDatePattern) {
       const m = compile(rule.tradingDatePattern, rule.acquirerCode).exec(hay);
-      /* toIsoDate already tells 17062026 from 20260617 by asking whether the
-         leading four digits can be a year — the same reader the acquirer side
-         uses, so the two sides can never disagree about a date. */
       if (m?.[1]) tradingDate = toIsoDate(m[1]);
     }
     let merchantNo: string | null = null;
@@ -224,7 +190,6 @@ export function recogniseAcquirer(
   return null;
 }
 
-/* ── Which of our statements it settles ───────────────────────────────────── */
 
 /** A reconciled merchant statement, waiting for its money. */
 export type PayableBatch = {
@@ -233,9 +198,7 @@ export type PayableBatch = {
   fileName?: string;
   periodFrom: string;
   periodTo: string;
-  /** What the statement should pay in total. */
   payableSen: number;
-  /** What is still to come — a statement can be paid in several credits. */
   outstandingSen: number;
 };
 
@@ -245,25 +208,16 @@ export type PayoutAdviceForMatch = {
   id: number;
   acquirerCode: string;
   fileName: string | null;
-  /** The advice's own date — usually the day the credit appears. */
   adviceDate: string | null;
-  /** What the bank statement will show as ONE credit. */
   netSen: number;
   days: Array<{ settledOn: string; netSen: number }>;
 };
 
 export type BankMatchKind =
-  /** One statement, exactly this amount. A button. */
   | 'PAYOUT'
-  /** SEVERAL statements that add up to it exactly, and only one way to do it.
-      Public Bank's real shape: one advice of 10 Aug paying for trading on the
-      7th, 8th and 9th. Still a button, because there is nothing to choose. */
   | 'PAYOUT_SPLIT'
-  /** Recognised as a payout, but which statement is a judgement. */
   | 'PAYOUT_UNSURE'
-  /** Recognised as a payout, and no reconciled statement expects it. */
   | 'PAYOUT_NO_BATCH'
-  /** Not an acquirer's money at all — a supplier, a salary, a deposit. */
   | 'OTHER';
 
 export type BankDecision = {
@@ -272,14 +226,9 @@ export type BankDecision = {
   acquirerCode: string | null;
   tradingDate: string | null;
   merchantNo: string | null;
-  /** Set only for PAYOUT: the one statement this settles. */
   batchId: number | null;
-  /** Set only for PAYOUT_SPLIT: the statements that add up to it, and what
-      each one takes. Ordered oldest first, the way an advice pays. */
   split: Array<{ batchId: number; amountSen: number }>;
-  /** What a person would have to choose between. */
   candidates: PayableBatch[];
-  /** One sentence saying why, in the operator's terms. Never a stack trace. */
   clue: string | null;
   /** The acquirer's own payment advice said what this credit pays — the payer's
       answer, not an inference (owner 2026-11-17: a split it spells out matches
@@ -315,20 +264,15 @@ const covers = (b: PayableBatch, day: string) => day >= b.periodFrom && day <= b
 export function exactCombination(batches: PayableBatch[], targetSen: number): PayableBatch[] {
   const MAX_POOL = 12;
   const MAX_PICK = 4;
-  /* Oldest first: an advice pays the oldest trading days it covers, and the
-     order decides which single answer is reported when several are equal. */
   const pool = [...batches].sort((a, b) => a.periodFrom.localeCompare(b.periodFrom)).slice(0, MAX_POOL);
 
   const found: PayableBatch[][] = [];
   const walk = (from: number, picked: PayableBatch[], sum: number) => {
-    if (found.length > 1) return;                 // already ambiguous, stop
+    if (found.length > 1) return;
     if (sum === targetSen && picked.length > 1) { found.push([...picked]); return; }
     if (picked.length >= MAX_PICK || from >= pool.length) return;
     for (let i = from; i < pool.length; i += 1) {
       const b = pool[i]!;
-      /* Outstanding amounts can be negative (an acquirer clawing a payout
-         back), so overshoot is not a safe reason to prune. Depth and pool size
-         are what bound this, not the arithmetic. */
       picked.push(b);
       walk(i + 1, picked, sum + b.outstandingSen);
       picked.pop();
@@ -340,17 +284,6 @@ export function exactCombination(batches: PayableBatch[], targetSen: number): Pa
   return found.length === 1 ? found[0]! : [];
 }
 
-/**
- * The statements one advice pays, resolved against the statements still owed
- * money — or null when the advice does not answer for this credit.
- *
- * The advice is trusted only when everything lines up: every day it names is
- * covered by a reconciled statement, each statement's outstanding is exactly
- * the advice's figure for its day(s), and the parts reach the advice's own
- * total. Anything less means the books have moved since the advice was written
- * — a report re-opened, a partial credit recorded — and then the advice is
- * history, not an answer, and the search below takes over.
- */
 function adviceAllocation(
   advice: PayoutAdviceForMatch, payable: PayableBatch[],
 ): Array<{ batch: PayableBatch; amountSen: number }> | null {
@@ -365,10 +298,7 @@ function adviceAllocation(
   const parts = [...perBatch.values()];
   if (parts.length === 0) return null;
   if (parts.some((p) => p.amountSen !== p.batch.outstandingSen)) return null;
-  /* Day rows that do not reach the advice's own total are a partial record —
-     an allocation built from them would book less than the credit. */
   if (parts.reduce((s, p) => s + p.amountSen, 0) !== advice.netSen) return null;
-  /* Oldest first, the way an advice pays. */
   return parts.sort((a, b) => a.batch.periodFrom.localeCompare(b.batch.periodFrom));
 }
 
@@ -385,8 +315,6 @@ export function matchBankMovements(input: {
   movements: BankMovement[];
   rules: BankRecognitionRule[];
   batches: PayableBatch[];
-  /** Uploaded payment advices — the payer's own answers. Optional because only
-      Public Bank sends one; every other acquirer is matched by inference. */
   payouts?: PayoutAdviceForMatch[];
 }): BankDecision[] {
   const { movements, rules, batches, payouts } = input;
@@ -398,9 +326,6 @@ export function matchBankMovements(input: {
       acquirerCode: null, tradingDate: null, merchantNo: null, clue: null, byAdvice: false,
     };
 
-    /* Money going OUT is never an acquirer paying us. Said here rather than
-       relied upon: an acquirer's own charge line reads exactly like its payout
-       to a pattern, and only the sign tells them apart. */
     if (movement.amountSen <= 0) return { ...base, kind: 'OTHER' };
 
     const seen = recogniseAcquirer(rules, movement);
@@ -418,13 +343,6 @@ export function matchBankMovements(input: {
       };
     }
 
-    /* THE ADVICE, before any inference. Public Bank writes down which days one
-       credit pays; when an uploaded advice names this exact amount and its days
-       resolve cleanly onto waiting statements, that IS the answer — written by
-       the party paying. It is also the only path with no ceiling: a payout
-       spanning ten reports needs no combination search, because nobody is
-       searching. Two advices for the same amount is the one ambiguity left, and
-       the credit's own day settles it or nobody does. */
     const usable = (payouts ?? [])
       .filter((p) => p.acquirerCode === seen.acquirerCode && p.netSen === movement.amountSen)
       .map((p) => ({ advice: p, parts: adviceAllocation(p, mine) }))
@@ -454,8 +372,6 @@ export function matchBankMovements(input: {
       };
     }
 
-    /* The trading day the bank names is the strongest evidence there is — it
-       comes off the statement itself, not from a resemblance between amounts. */
     const onDay = seen.tradingDate ? mine.filter((b) => covers(b, seen.tradingDate!)) : [];
     const pool = onDay.length > 0 ? onDay : mine;
     const exact = pool.filter((b) => b.outstandingSen === movement.amountSen);
@@ -476,11 +392,6 @@ export function matchBankMovements(input: {
       };
     }
 
-    /* No single statement is owed this, so ask whether SEVERAL of them are —
-       one advice for three trading days is Public Bank's ordinary behaviour,
-       not an exception. Tried against every outstanding statement of the
-       acquirer rather than only those covering the named day, because an
-       advice's own date names one day and pays for several. */
     const together = exactCombination(mine, movement.amountSen);
     if (together.length > 0) {
       return {
@@ -498,9 +409,6 @@ export function matchBankMovements(input: {
       const b = onDay[0]!;
       return {
         ...named, kind: 'PAYOUT_UNSURE', candidates: [b],
-        /* Both numbers, always. A difference the operator can see is a
-           difference he can explain — a chargeback, a second credit still to
-           come — and one he cannot see is one he approves blind. */
         clue: `The bank names ${seen.tradingDate}, which is ${b.fileName ?? `report ${b.id}`}`
           + `, but that report is owed ${rm(b.outstandingSen)} and this credit is ${rm(movement.amountSen)}. Check before recording it.`,
       };
@@ -531,18 +439,14 @@ export function matchBankMovements(input: {
 
 export type QrReportForMatch = {
   batchId: number; fileName: string | null; acquirerCode: string; periodFrom: string; periodTo: string;
-  /** The report's QR lines, and whether a person has linked each to its sale. */
   lines: Array<{ lineNo: number; txnDate: string; grossSen: number; linked: boolean }>;
-  /** The sales they are linked to: each one's live entry, and the accounts that entry debits. */
   sales: Array<{ docNo: string | null; amountSen: number; jeNo: string | null; accounts: string[] }>;
 };
 
 export type QrSales = {
   batchId: number; fileName: string | null; tradingDate: string | null;
   sales: Array<{ docNo: string | null; amountSen: number; jeNo: string | null }>;
-  /** QR lines nobody has linked to a sale yet. */
   waiting: Array<{ lineNo: number; txnDate: string; grossSen: number }>;
-  /** The entries to match the movement to — only when ready. */
   jeNos: string[];
   ready: boolean;
   clue: string;
@@ -552,9 +456,7 @@ export function qrSalesFor(
   movement: { amountSen: number; description: string; reference: string | null },
   rules: BankRecognitionRule[],
   reports: QrReportForMatch[],
-  /** Every entry a POSTED bank line already holds. */
   claimed: ReadonlySet<string>,
-  /** The bank account this movement is on. */
   accountCode: string,
 ): QrSales | null {
   if (movement.amountSen <= 0) return null;
@@ -646,9 +548,7 @@ export type EntryCandidateSource = {
 };
 
 export type EntryCandidate = EntryCandidateSource & {
-  /** Signed the way the statement signs it: positive is money in. */
   amountSen: number;
-  /** Days between the entry and the movement. 0 is the same day. */
   daysApart: number;
 };
 
@@ -673,9 +573,6 @@ export function entryCandidatesFor(
   ledger: EntryCandidateSource[],
   claimed: ReadonlySet<string>,
 ): EntryCandidate[] {
-  /* A movement with no date cannot be windowed, and a window is the only thing
-     keeping an equal amount from being a coincidence. Offer nothing rather than
-     offer everything. */
   if (!/^\d{4}-\d{2}-\d{2}$/.test(movement.bookedOn)) return [];
 
   const out: EntryCandidate[] = [];
@@ -689,11 +586,6 @@ export function entryCandidatesFor(
     out.push({ ...e, amountSen, daysApart });
   }
 
-  /* Closest day first, then oldest, then by entry number — which is posting
-     order, so two entries on one day are offered in the order they were made.
-     The last term is what makes this deterministic: without it the tie falls to
-     insertion order, which is whatever the database happened to return, and the
-     same screen could offer the same two entries in either order. */
   return out.sort((a, b) =>
     a.daysApart - b.daysApart
     || a.entryDate.localeCompare(b.entryDate)
@@ -714,8 +606,6 @@ export function entryCandidatesFor(
    candidate, is what a person would have pressed without thinking. Days apart
    do not matter — a cheque clears when it clears. */
 
-/** Words that name nobody: company boilerplate, the bank's own vocabulary,
-    the words every transfer carries. */
 const NAME_STOP = new Set([
   'SDN', 'BHD', 'BERHAD', 'SDNBHD', 'ENTERPRISE', 'TRADING', 'HOLDING', 'HOLDINGS', 'PLT', 'LTD', 'LIMITED',
   'THE', 'AND', 'FOR', 'FROM', 'TO', 'AT', 'OF', 'MR', 'MRS', 'MS', 'MDM', 'MALAYSIA',
@@ -776,8 +666,6 @@ export function obviousEntryFor(
    prefix (MPV-2609-012 for HC-MPV-2609-012); that is read as the company's own,
    the only vouchers this ledger holds. */
 
-/** A voucher number as a bank line's words carry it: formal ({co}-{letter}PV-YYMM-NNN,
-    {co}-{letter}RF-…, with or without the company prefix) or Draft ({co}-Draft-YYMM-NNN). */
 const VOUCHER_NO = /\b(?:[A-Z0-9]+-)?(?:[A-Z]{0,2}PV|[A-Z]{1,2}RF|DRAFT)-\d{4}-\d{2,5}\b/g;
 
 /** The voucher numbers in a bank line's words, upper case, each once. */
@@ -801,14 +689,12 @@ export function voucherEntryFor(
   claimed: ReadonlySet<string>,
   formerNumbers: ReadonlyMap<string, readonly string[]> = new Map(),
 ): EntryCandidate | null {
-  /* A voucher pays money out; a movement in never takes one. */
   if (!(movement.amountSen < 0)) return null;
   const named = voucherNumbersIn(`${movement.description} ${movement.reference ?? ''}`);
   if (named.length === 0) return null;
   const wanted = new Set<string>();
   for (const no of named) {
     for (const formal of formerNumbers.get(no) ?? formerNumbers.get(withoutCompanyPrefix(no)) ?? []) wanted.add(String(formal).toUpperCase());
-    /* A formal number names itself; a Draft number only through what it became. */
     if (!/(^|-)DRAFT-/.test(no)) wanted.add(no);
   }
   const hits = ledger.filter((e) => e.sourceType === 'PV' && e.sourceDocNo != null && !claimed.has(e.jeNo)
@@ -841,8 +727,6 @@ export type ReversalSource = {
 export type ReversalPair<T> = { original: T; reversal: T };
 
 const isBankReversal = (description: string): boolean => /\breversal\b/i.test(description);
-/* The reference as the bank wrote it, with only the spacing and the case
-   forgiven; blank is not a reference two lines can share. */
 const referenceKey = (reference: string | null): string | null => {
   const key = String(reference ?? '').replace(/\s+/g, ' ').trim().toUpperCase();
   return key.length > 0 ? key : null;

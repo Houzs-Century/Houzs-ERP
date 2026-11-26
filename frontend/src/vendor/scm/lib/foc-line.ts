@@ -45,7 +45,6 @@ export type FocLineInput = {
   unitPriceSen?: number | null;
   line_total_sen?: number | null;
   lineTotalSen?: number | null;
-  /** The Sales Order's own total column is `total_sen`, not `line_total_sen`. */
   total_sen?: number | null;
   variants?: { freeGift?: unknown } | Record<string, unknown> | null;
 };

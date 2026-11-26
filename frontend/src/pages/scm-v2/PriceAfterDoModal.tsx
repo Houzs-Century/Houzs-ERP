@@ -15,9 +15,6 @@ type PricedLine = {
   qty: number; unit_price_sen: number; discount_sen: number; total_sen: number;
 };
 
-/* DEV-70 — PriceAfterDoModal: unit price + discount of a line a Delivery Order
-   already carries (`scm.so.edit_price_after_do`). The server copies both onto
-   the DO line(s) and any invoice billing them; qty, product and spec stay as delivered. */
 export const PriceAfterDoModal = ({
   item,
   docNo,

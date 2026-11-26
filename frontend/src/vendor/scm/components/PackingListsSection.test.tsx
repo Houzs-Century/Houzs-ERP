@@ -1,15 +1,3 @@
-/* The Packing Lists surface under Last Mile Delivery.
- *
- * Two things are worth asserting here and the rest is layout:
- *
- *   1. ONE ROW PER TRIP. A packing list IS a trip — one lorry, one day — so
- *      three lorries out must produce three rows, and the row must name the
- *      lorry, the driver and the counts a dispatcher checks before printing.
- *   2. AN EMPTY BUCKET RENDERS A DASH, NOT A ZERO. A run whose delivery orders
- *      the company predicate filtered out looks exactly like a run with nothing
- *      on it, so the status chip and the volume both refuse rather than
- *      inventing "Delivered 0/0" and "0.00 m³".
- */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, within } from '@testing-library/react';
 import type { PackingListRow, PackingListsResponse } from '../lib/packing-list-queries';
@@ -64,7 +52,7 @@ describe('PackingListsSection', () => {
     expect(screen.getByText('TRIP-2608-001')).toBeTruthy();
     expect(screen.getByText('ABC 999')).toBeTruthy();
     expect(screen.getByText('DEF 111')).toBeTruthy();
-    expect(screen.getAllByRole('row').length).toBe(4); // header + three trips
+    expect(screen.getAllByRole('row').length).toBe(4);
   });
 
   it('rolls the member delivery orders up into the owner ladder', () => {
@@ -87,7 +75,7 @@ describe('PackingListsSection', () => {
     const body = screen.getAllByRole('row')[1];
     expect(within(body).queryByText(/Delivered 0\/0/)).toBeNull();
     expect(within(body).queryByText(/0\.00 m³/)).toBeNull();
-    expect(within(body).getAllByText('—').length).toBeGreaterThanOrEqual(2); // status + volume
+    expect(within(body).getAllByText('—').length).toBeGreaterThanOrEqual(2);
   });
 
   it('reports what it looked for when the day has no trips, and claims nothing about the business', () => {

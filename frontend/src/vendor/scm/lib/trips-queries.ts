@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// trips-queries.ts — the TRIPS scheduling layer's read/act hooks.
-//
-// scm.trips + trip_stops have existed since mig 0053 and the backend route since
-// the TMS port, but nothing in the UI ever read them: a trip could only be seen
-// through the API. That also left POST /trips/:id/optimize-route (the Google
-// Directions optimiser, #732 + #757) with no way to be triggered by a human.
-// These hooks + the Trips page close that.
-//
-// Same pattern as the sibling vendor query libs: TanStack Query + authedFetch,
-// rows snake_case as the API emits them.
-// ----------------------------------------------------------------------------
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -39,7 +27,6 @@ export type TripStop = {
   customer_name: string | null;
   address: string | null;
   revenue_sen: number;
-  /* Mig 0134 — filled by the route optimiser; null when never optimised. */
   leg_distance_m: number | null;
   leg_duration_s: number | null;
   eta_offset_s: number | null;
@@ -81,9 +68,6 @@ export type OptimizeResult = {
   stops: Array<{ ref: string; order: number; etaSecondsFromDepart: number }>;
 };
 
-/* Optimise a trip's stop order via Google Directions. `apply` writes the new
-   stop_no + the per-stop ETA back; without it this is a dry run. Returns
-   configured:false when GOOGLE_MAPS_API_KEY is unset — nothing is billed. */
 export function useOptimizeTripRoute() {
   const qc = useQueryClient();
   return useMutation({
@@ -119,7 +103,6 @@ export function useUpdateTrip() {
       tripDate?: string | null;
       warehouseId?: string | null;
       notes?: string | null;
-      /** Planned departure (ISO); the Last Mile crew modal sets it. */
       plannedDepartAt?: string | null;
     }) =>
       authedFetch<{ trip: TripRow }>(`/trips/${id}`, {
@@ -134,9 +117,6 @@ export function useUpdateTrip() {
   });
 }
 
-/* ── Move a stop between lorry runs (Last Mile "Change lorry", phase 3b) ────────
-   POST /trips/move-stop reassigns the order's DELIVERY stop to another run of the
-   same day at a position and renumbers both runs (backend lib/move-stop.ts). */
 export function useMoveStop() {
   const qc = useQueryClient();
   return useMutation({

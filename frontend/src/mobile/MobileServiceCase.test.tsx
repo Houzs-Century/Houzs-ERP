@@ -2,21 +2,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-/* MobileServiceCase — the phone's ASSR surface.
- *
- * Two rules pinned here, both of them "the phone and the desktop must send the
- * same thing to the same endpoint":
- *
- *  1. A case raised on a phone must carry `customer_email`. `assr.ts` picks the
- *     CSAT survey recipient as `email_for_survey || customer_email`, so a
- *     phone-raised case had no survey address and somebody had to fill one in
- *     afterwards.
- *  2. `service_category` is a MAINTAINED list (assr_product_categories, mig
- *     0112) that desktop edits with chips and sends as an ARRAY. Mobile bound
- *     the same column as free text and sent a STRING, so a typed value became
- *     its own bucket in desktop's filter and — because resolveCategories only
- *     writes assr_case_categories rows for tokens it RECOGNISES — the case was
- *     left uncategorised for reporting. */
 
 const { apiGet, apiPost, apiPatch, apiDel, authUser } = vi.hoisted(() => ({
   apiGet: vi.fn(),
@@ -67,7 +52,6 @@ vi.mock("./MobileVirtualList", () => ({
 
 import { MobileServiceCase } from "./MobileServiceCase";
 
-/** The request body of a recorded api.post / api.patch call. */
 const body = (call: unknown[] | undefined): Record<string, unknown> =>
   (call?.[1] ?? {}) as Record<string, unknown>;
 
@@ -145,8 +129,6 @@ beforeEach(() => {
 afterEach(cleanup);
 
 async function fillIntake() {
-  // The SO is PICKED from the live search, never typed — `soPicked` is what
-  // gates the Create button.
   fireEvent.change(screen.getByPlaceholderText(/SO #/i), { target: { value: "SO-2608" } });
   await waitFor(() => expect(screen.getByText("SO-2608-001")).toBeTruthy());
   await act(async () => {
@@ -205,8 +187,6 @@ async function openProductInfoEditor() {
   await waitFor(() => expect(screen.getByText("ASSR-2608-004")).toBeTruthy());
   fireEvent.click(screen.getByText("ASSR-2608-004"));
   await waitFor(() => expect(screen.getAllByText("Product info").length).toBeGreaterThan(0));
-  // Fields render in the accordion's EDIT view (the phone's Edit / Save
-  // pattern), so open it the way an operator would.
   const panel = screen.getAllByText("Product info")[0].closest("details");
   expect(panel).toBeTruthy();
   const edit = Array.from(panel!.querySelectorAll("span")).find(
@@ -233,7 +213,6 @@ describe("MobileServiceCase product category is the maintained list, not free te
     await openProductInfoEditor();
     await waitFor(() => expect(screen.getByText("Mattress")).toBeTruthy());
     expect(screen.getByText("Sofa")).toBeTruthy();
-    // The current value must be shown as selected, not as typed text.
     const bedframe = screen.getByText("Bedframe").closest("button");
     expect(bedframe).toBeTruthy();
     expect(bedframe!.getAttribute("aria-pressed")).toBe("true");
@@ -246,8 +225,6 @@ describe("MobileServiceCase product category is the maintained list, not free te
     await act(async () => {
       fireEvent.click(screen.getByText("Mattress"));
     });
-    // The phone saves on Save, not per toggle (desktop's accordion-free layout
-    // saves per toggle); what must match is the WIRE SHAPE, not the moment.
     await act(async () => {
       fireEvent.click(screen.getAllByText("Save")[0]);
     });

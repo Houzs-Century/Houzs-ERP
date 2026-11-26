@@ -1,5 +1,3 @@
-// Delivery Planning stops and project Setup / Dismantle as trip rows: the job
-// type each becomes, and where its amount, state, postcode and crew come from.
 import { describe, expect, test } from "vitest";
 import { computeTripMonth, DEFAULT_TRIP_RATES } from "../../scm/shared/hr-trip-pay";
 import { deliveryOrderRows, doRunDate, planningRowOf, projectCrewLorries, projectLegRows, rowHrEdited, tripRowOf, type PlanningDo, type PlanningStop, type ProjectLeg } from "./hr-trip-store";
@@ -57,7 +55,6 @@ describe("planningRowOf", () => {
   test("a delivery with no SO pays commission on the amount typed on its DP job (owner 2026-11-20)", () => {
     const r = planningRowOf({ ...base, revenue_sen: 0, dp_sales_sen: "350000" }, who);
     expect(r.local_total_sen).toBe(350000);
-    /* A DO still wins when the stop has one. */
     const withDo = planningRowOf({ ...base, local_total_sen: "570000", revenue_sen: 0, dp_sales_sen: 350000 }, who);
     expect(withDo.local_total_sen).toBe(570000);
   });
@@ -184,9 +181,7 @@ describe("delivery orders our lorries ran (Last Mile reaches them through the DO
   const rowsOf = (dos: PlanningDo[], stops: Set<string>) => deliveryOrderRows(dos, "2026-10-23", "2026-11-22", stops, who);
 
   test("the run date is the day Last Mile shows it on the lorry: the SO's due date for its newest live DO", () => {
-    // HC-DO-2611-219 is cut 2026-11-18 but its SO is due, and run, 2026-11-17.
     expect(doRunDate(doBase)).toBe("2026-11-17");
-    // An older DO of the SO (a partial delivery Last Mile no longer shows): the day it was delivered, else its DO date.
     expect(doRunDate({ ...doBase, is_latest_live: false, delivered_day: "2026-11-05" })).toBe("2026-11-05");
     expect(doRunDate({ ...doBase, is_latest_live: false, delivered_day: null })).toBe("2026-11-18");
     expect(doRunDate({ ...doBase, so_due_date: null, delivered_day: null })).toBe("2026-11-18");
@@ -232,7 +227,6 @@ describe("delivery orders our lorries ran (Last Mile reaches them through the DO
     expect(out({ lorry_internal: false })).toEqual([]);
     expect(out({ crew_plate: null, lorry_plate: null, lorry_internal: null })).toEqual([]);
     expect(out({ so_due_date: null, delivered_day: null, do_date: null })).toEqual([]);
-    // On the lorry but not yet signed for is still a run; a typed plate with no master counts.
     expect(out({ do_status: "IN_TRANSIT" })).toHaveLength(1);
     expect(out({ lorry_plate: null, lorry_internal: null })[0]?.lorry_plate).toBe("VNB 9058");
   });

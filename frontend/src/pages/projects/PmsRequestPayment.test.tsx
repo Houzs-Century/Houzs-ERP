@@ -14,7 +14,6 @@ import { describe, expect, test, vi } from 'vitest';
 import type { PaymentRequest } from '../../vendor/scm/lib/payment-request-queries';
 import type { TaskAttachment } from './types';
 
-/* The dialogs have their own contract (PmsRequestModals.test.tsx); here they only have to open with the right things. */
 vi.mock('./PmsRequestModals', () => ({
   default: (p: Record<string, unknown>) => (
     <div role="dialog" aria-label={`modal ${String(p.mode)}`}>
@@ -97,7 +96,6 @@ describe('the row\'s requests', () => {
     expect(box.textContent).toContain('Official invoice owed');
     expect(box.textContent).toContain('Proforma only — follow up the actual invoice');
     expect(box.textContent).toContain('#2 · balance');
-    /* One owed request, one button. */
     const send = within(box).getAllByRole('button', { name: 'Send the actual invoice' });
     expect(send).toHaveLength(1);
     fireEvent.click(send[0]!);

@@ -93,7 +93,6 @@ export function useGrnRackOptions(warehouseId: string | undefined) {
   const racks = useMemo(() => racksQ.data?.racks ?? [], [racksQ.data?.racks]);
   const ownCode = (racksQ.data?.warehouses ?? []).find((w) => w.id === warehouseId)?.code ?? null;
   const crossRacks = crossQ.data?.racks;
-  // Stable per data, so a caller's own useMemo keyed on these does not rerun every render.
   const options = useMemo(
     () => grnRackOptionsWithSiblingStock(racks, ownCode, crossRacks ?? []),
     [racks, ownCode, crossRacks],
@@ -164,10 +163,6 @@ export function useGrnLineRackSplit({ grnId, itemId, lineRackId, qtyAccepted }: 
     saving: setRacks.isPending,
     error,
     add: (rackId: string, qty: number, onSaved?: () => void) => save(addRackShare(splits, qtyAccepted, rackId, qty), onSaved),
-    /** A line on no rack yet goes whole onto the picked rack, saved at once
-     *  (Sim, 2026-10-20: picking then pressing Add was "double work", and a
-     *  pick left without Add saved nothing). True when it did; a second rack is
-     *  a split and still asks for its qty. */
     placeWhole: (rackId: string, onSaved?: () => void): boolean => {
       if (splits.length > 0 || qtyAccepted <= 0) return false;
       save([{ rackId, qty: qtyAccepted }], onSaved);

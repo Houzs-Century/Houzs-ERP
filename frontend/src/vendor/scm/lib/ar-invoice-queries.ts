@@ -18,29 +18,21 @@ export type ArListKind = 'ALL' | 'SI' | 'ODB';
     other-debtor bill raised on the AR Invoices page; `kind` says which. */
 export type ArListRow = {
   kind: 'SI' | 'ODB';
-  /** 'DN' for a debit note to an other debtor (a bill of its own kind, series {co}ODN-); every other row 'INV'. */
   docKind?: 'INV' | 'DN';
   id: string;
   invoiceNumber: string;
-  /** The party as the filter groups it: `C:<debtor code>` for a customer, `D:<debtor id>` for an other debtor. */
   partyKey: string;
   partyCode: string | null;
   partyName: string | null;
-  /** The other debtor's registry id (a bill); null on a sales invoice. */
   debtorId: string | null;
-  /** The sales order behind a sales invoice; a bill has none. */
   ref: string | null;
   description: string | null;
   invoiceDate: string | null;
   dueDate: string | null;
   currency: string;
   totalSen: number;
-  /** What settles the document: an invoice's own receipts PLUS the order's deposit applied; a bill's money received. */
   paidSen: number;
-  /** The slice of the order's deposit applied to a sales invoice (0 on a bill). */
   depositAppliedSen: number;
-  /** What customers' credit notes knocked off a sales invoice (0 on a bill) — apart from paid. Absent
-      from a server older than the knock-off; read as 0. */
   creditNotesSen?: number;
   outstandingSen: number;
   status: string;
@@ -57,9 +49,7 @@ export const useArInvoices = (kind: ArListKind = 'ALL', docKind?: 'INV' | 'DN') 
     invoice's BILL TO reads) — the pop-out over the list. */
 export type ArBillDetail = {
   bill: DebtorBill; debtor: OtherDebtor | null;
-  /** The debtor receipts that knock it off, with their stage marks and the amount on this bill (batch 5 §8.3 c8). */
   receipts?: Array<{ id: string; number: string; date: string | null; status: string; submittedAt: string | null; checkedAt: string | null; approvedAt: string | null; amountSen: number }>;
-  /** The other-debtor credit notes allocated to it (c8). */
   creditNotes?: Array<{ id: string; number: string; date: string | null; status: string; reason: string | null; amountSen: number; appliedSen: number }>;
 };
 

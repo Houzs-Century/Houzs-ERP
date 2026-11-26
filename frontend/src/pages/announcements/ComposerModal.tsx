@@ -34,28 +34,10 @@ import {
   type Company,
 } from "./announcementModel";
 
-// ────────────────────────────────────────────────────────────────────────────
-// ComposerModal — the wide composer (design handoff 2026-09-04, screen 4):
-// a 1060px card, editor column left (category pills, "Require
-// acknowledgement", title, rich text, attachment strip with the schedule),
-// the three-column AudiencePicker right, and a footer with Preview +
-// Schedule post / Post announcement.
-//
-// The draft autosaves to localStorage (per user) so a half-written notice
-// survives a closed modal or a reload; "Draft saved HH:mm" in the header is
-// that stamp. Posting clears it.
-//
-// Recipients: departments + people (+ company) exactly as the backend targets
-// them today; "All staff" is an explicit choice, never the accident of an
-// empty picker (the old composer guarded the same way).
-// ────────────────────────────────────────────────────────────────────────────
 
 export type ComposerDraft = {
   savedAt: number;
-  /** Document type code (mig 20260908T0300): ANN or e.g. MEMO. */
   docType: string;
-  /** Numbered under (mig 20260909T0900): the department whose series the
-   *  number is minted on; null = the submitter's own. */
   numberDeptId: number | null;
   category: AnnouncementCategory;
   requireAck: boolean;
@@ -67,12 +49,6 @@ export type ComposerDraft = {
   audience: AudienceValue;
   photoLayout: PhotoLayout | "";
   videoLayout: VideoLayout;
-  /** Minted when the draft is first written, sent with the post, cleared with
-   *  the draft on success. A repeat of the SAME draft — after a hang, a
-   *  reload, a second click — is answered by the server with the row the first
-   *  request made (mig 20260907T0010), never a second one. Stable across
-   *  edits on purpose: the retry that made nine copies on 2026-09-06 was one
-   *  draft re-posted with small changes. */
   clientKey: string;
 };
 
@@ -104,14 +80,11 @@ export function readDraft(key: string): ComposerDraft | null {
       audience: {
         ...EMPTY_AUDIENCE,
         ...(d.audience ?? {}),
-        // Drafts saved before 2026-09-05/06 have neither list.
         divisions: Array.isArray(d.audience?.divisions) ? d.audience.divisions : [],
         excludedUserIds: Array.isArray(d.audience?.excludedUserIds) ? d.audience.excludedUserIds : [],
       },
       photoLayout: d.photoLayout === "1" || d.photoLayout === "2" || d.photoLayout === "3" || d.photoLayout === "4" ? d.photoLayout : "",
       videoLayout: d.videoLayout === "1x2" ? "1x2" : "1x1",
-      // A draft saved before 2026-09-07 has no key: mint one now, and the next
-      // autosave makes it stable.
       clientKey: typeof d.clientKey === "string" && d.clientKey ? d.clientKey : newIdempotencyKey(),
     };
   } catch {
@@ -158,7 +131,6 @@ export function buildPostBody(
   };
   if (!a.allStaff) {
     if (a.deptIds.length) body.targetDeptIds = a.deptIds;
-    // Divisions the department selection already implies are not repeated.
     const divisions = a.divisions.filter((x) => !a.deptIds.includes(x.deptId));
     if (divisions.length) body.targetDivisions = divisions;
     if (a.userIds.length) body.targetUserIds = a.userIds;
@@ -171,8 +143,6 @@ export function buildPostBody(
     if (Number.isNaN(t)) return { ok: false, error: "The schedule date is not valid" };
     body.scheduledAt = new Date(t).toISOString();
   }
-  // SOP never expires — the SOP Library is permanent — so an expiry is only
-  // sent for the other categories.
   if (d.expiresAt && d.category !== "SOP") {
     const t = Date.parse(d.expiresAt);
     if (Number.isNaN(t)) return { ok: false, error: "The hide-after date is not valid" };
@@ -193,15 +163,7 @@ export type ComposerModalProps = {
   companies: Company[];
   salesDirOnly: boolean;
   currentUserId: number | null;
-  /** Settings → Documents says the ANN type needs a file before submit
-   *  (mig 20260907T0715). Submit is held until one is attached; Save draft is
-   *  not. The server enforces the same rule. Superseded per type by
-   *  `docTypes` when that is given. */
   attachmentRequired?: boolean;
-  /** The registered document types (GET /api/document-types, active only).
-   *  With more than one, the composer offers a Type row — Announcement / Memo
-   *  — and the pick is the [TYPE] segment of the reference number (mig
-   *  20260908T0300). Each type carries its own attachment policy. */
   docTypes?: DocumentTypeOption[];
   onClose: () => void;
   onPosted: () => void;
@@ -218,8 +180,6 @@ function fmtClock(ms: number): string {
 
 export function ComposerModal(p: ComposerModalProps) {
   const toast = useToast();
-  // Optional: the Link button needs the app's prompt dialog; a bare mount
-  // (unit test) has no provider and simply gets no Link button.
   const dialog = useDialogOptional();
   const storageKey = draftStorageKey(p.currentUserId);
   const restored = useMemo(() => readDraft(storageKey), [storageKey]);
@@ -272,8 +232,6 @@ export function ComposerModal(p: ComposerModalProps) {
   const [audience, setAudience] = useState<AudienceValue>(restored?.audience ?? EMPTY_AUDIENCE);
   const [photoLayout, setPhotoLayout] = useState<PhotoLayout | "">(restored?.photoLayout ?? "");
   const [videoLayout, setVideoLayout] = useState<VideoLayout>(restored?.videoLayout ?? "1x1");
-  // One key per draft (see ComposerDraft.clientKey). A restored draft keeps
-  // the key it was saved with, so the post after a reload is the same post.
   const [clientKey] = useState(() => restored?.clientKey ?? newIdempotencyKey());
   const [focusDept, setFocusDept] = useState<number | null>(restored?.audience.deptIds[0] ?? null);
   const [savedAt, setSavedAt] = useState<number | null>(restored?.savedAt ?? null);
@@ -281,8 +239,6 @@ export function ComposerModal(p: ComposerModalProps) {
   const [posting, setPosting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // Object URLs for images picked THIS session (an uploaded key cannot be
-  // streamed back before the notice exists). Revoked on unmount.
   const [localPreviews, setLocalPreviews] = useState<Record<string, string>>({});
   useEffect(
     () => () => {
@@ -291,8 +247,6 @@ export function ComposerModal(p: ComposerModalProps) {
     [],
   );
 
-  // A Sales Director's picker is already scoped to their department; seed it
-  // once so posting with no manual pick still targets the whole department.
   const seededRef = useRef(false);
   useEffect(() => {
     if (!p.salesDirOnly || seededRef.current || p.departments.length === 0) return;
@@ -302,8 +256,6 @@ export function ComposerModal(p: ComposerModalProps) {
     );
   }, [p.salesDirOnly, p.departments]);
 
-  // Autosave (debounced). Skipped while the form is pristine so an opened-and-
-  // closed composer never leaves an empty draft behind.
   const draft = useMemo<Omit<ComposerDraft, "savedAt">>(
     () => ({
       docType,
@@ -338,13 +290,11 @@ export function ComposerModal(p: ComposerModalProps) {
         localStorage.setItem(storageKey, JSON.stringify({ ...draft, savedAt: now }));
         setSavedAt(now);
       } catch {
-        /* storage full / private mode: the draft simply is not remembered */
       }
     }, 800);
     return () => window.clearTimeout(t);
   }, [draft, storageKey, title, html, attachments.length, audience]);
 
-  // Esc closes; the page behind stays put.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") p.onClose();
@@ -392,9 +342,6 @@ export function ComposerModal(p: ComposerModalProps) {
     }
   }, [toast]);
 
-  // An image placed INSIDE the text: uploaded like any attachment (so it is
-  // in the manifest the serve route authorises against), then handed back to
-  // the editor as {key, local preview}. The editor stores only the key.
   const onInsertImage = useCallback(
     async (file: File): Promise<RichEditorImage | null> => {
       if (!file.type.startsWith("image/")) {
@@ -435,14 +382,6 @@ export function ComposerModal(p: ComposerModalProps) {
     [dialog],
   );
 
-  // Approval workflow (mig 20260906T1509): a notice is submitted, not posted —
-  // it goes live when an approver signs it off. `asDraft` parks it in Manage
-  // without ringing the approvers' bell.
-  //
-  // A ref, not only the `posting` state: two clicks inside one event loop turn
-  // see the same stale state and both get through. The server's client key
-  // would still collapse them into one row; this keeps the second request
-  // from being sent at all.
   const postingRef = useRef(false);
   async function post(opts: { asDraft?: boolean } = {}) {
     if (postingRef.current) return;
@@ -461,12 +400,7 @@ export function ComposerModal(p: ComposerModalProps) {
       try {
         localStorage.removeItem(storageKey);
       } catch {
-        /* nothing to clear */
       }
-      // `duplicate`: this draft had already been submitted (the earlier request
-      // answered after the page gave up on it). The server returned that row
-      // and made no second one — say so, so the author edits it under Manage
-      // rather than submitting again.
       toast.success(
         res.duplicate
           ? "This notice was already submitted — no second copy was made"
@@ -508,7 +442,6 @@ export function ComposerModal(p: ComposerModalProps) {
         className="my-2 flex max-h-[calc(100dvh-3rem)] w-full max-w-[1280px] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-slab"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {/* ── Header ───────────────────────────────────────────────────── */}
         <div className="flex items-center gap-2.5 border-b border-border px-[18px] py-3.5">
           <span className="text-[15px] font-[680] text-ink">New announcement</span>
           {savedAt != null && (
@@ -527,7 +460,6 @@ export function ComposerModal(p: ComposerModalProps) {
         </div>
 
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_520px]">
-          {/* ── Editor column ─────────────────────────────────────────── */}
           <div className="flex min-h-0 flex-col gap-3.5 overflow-auto border-r border-border px-[18px] py-4">
             <div className="flex flex-wrap items-center gap-2">
               {CATEGORY_ORDER.map((c) => {
@@ -803,7 +735,6 @@ export function ComposerModal(p: ComposerModalProps) {
             )}
           </div>
 
-          {/* ── Audience column ───────────────────────────────────────── */}
           <div className="flex min-h-0 flex-col">
             <div className="flex flex-col gap-[3px] border-b border-border px-4 py-3">
               <span className={cn(EYEBROW, "text-ink-secondary")}>Audience</span>

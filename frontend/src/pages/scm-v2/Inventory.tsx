@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// Inventory — AutoCount-style stock view (PR #38).
-//
-// 4 tabs:
-//   1. Balances     — one row per SKU, Total Bal Qty + Main Supplier.
-//                      Double-click row → per-warehouse breakdown drawer
-//                      (Location | Qty | Unit Cost), like AutoCount's
-//                      "Up To Date Cost" panel.
-//   2. Movements    — append-only ledger (every GRN/DO/PR post)
-//   3. COGS (FIFO)  — FIFO consumption stream
-//   4. Warehouses   — CRUD for stock locations (merged from old /warehouses page)
-//
-// IN  events: GRN posted
-// OUT events: DO dispatched, Purchase Return posted
-// COGS auto-posted via DB trigger trg_inventory_movement_fifo (migration 0053).
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -59,10 +43,6 @@ import {
   type Warehouse,
 } from '../../vendor/scm/lib/inventory-queries';
 
-/** Best-effort route for a movement's source doc. Mirrors StockCard's
- *  docHrefFor so every IN/OUT/ADJUSTMENT row on the Movements ledger can be
- *  clicked through to the document that drove it. ADJUSTMENT links to its document
- *  when it has one, else to the list. */
 const docHrefFor = (m: InventoryMovement): string | null => {
   switch (m.source_doc_type) {
     case 'GRN':              return m.source_doc_id ? `/scm/grns/${m.source_doc_id}` : null;
@@ -82,16 +62,10 @@ import { stockAdjustmentHref } from '../../vendor/scm/lib/stock-adjustment-link'
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 const ICON_MD = { size: 16, strokeWidth: 1.75 } as const;
 
-/* KPI tile grid — replaces the bespoke .statGrid (auto-fit minmax(220px)).
-   Mirrors the SalesOrderDetailListing reskin: a plain Tailwind grid that
-   holds the shared <StatCard>s, 2-up on a phone (the old 600px media rule). */
 const STAT_GRID = 'grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4';
 
-/* Same grid, capped at 3 columns for the 3-tile clusters. */
 const STAT_GRID_3 = 'grid grid-cols-2 gap-3 md:grid-cols-3';
 
-/* "Failed to load" banner — err tokens (was the bespoke .bannerWarn, whose
-   colours only resolved via the removed .page cascade). */
 const BANNER_ERR =
   'rounded-lg border border-err/40 bg-err/10 px-4 py-3 text-[13px] text-err';
 
@@ -111,7 +85,6 @@ const fmtAgeDays = (iso: string | null): string => {
   return d === 0 ? 'today' : `${d}d`;
 };
 
-/* ETA display for an incoming PO line (date only). */
 const fmtEta = (iso: string | null): string => {
   if (!iso) return 'no ETA';
   const d = new Date(iso);
@@ -119,10 +92,6 @@ const fmtEta = (iso: string | null): string => {
   return fmtDate(d);
 };
 
-/* One-per-line "PO-2606-001 · ETA 21/06/2026 · +6" summary, for the Incoming
-   cell tooltip. The same list renders as the row drill (IncomingPoPanel).
-   Null-safe: the API field can be absent on an older/partial payload — treat a
-   missing list as empty rather than reading `.length` off undefined. */
 const incomingPoSummary = (pos: InventoryIncomingPo[] | null | undefined): string => {
   const list = pos ?? [];
   return list.length === 0
@@ -158,9 +127,6 @@ export const Inventory = () => {
            overflow. `sm` is the owner-approved 17px document title. */
         titleSize="sm"
         actions={
-          /* Tab rail — reskinned to the reference FilterPills slab. Rides in
-             the header's actions slot, the same seat the bespoke .tabRow had
-             inside the old sticky .headerRow (PageHeader is sticky too). */
           <div className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-surface p-1 shadow-stone [&>*]:shrink-0">
             {([
               { value: 'balances' as const, label: 'Balances' },
@@ -187,7 +153,6 @@ export const Inventory = () => {
         }
       />
 
-      {/* Category chips — only for Balances tab */}
       {tab === 'balances' && (
         <div className={styles.warehouseChips}>
           {CATEGORIES.map((cat) => (
@@ -202,9 +167,6 @@ export const Inventory = () => {
       {tab === 'balances' && (
         <>
           <div className={styles.filterRow}>
-            {/* ask A (2026-07-24) — compact SEARCHABLE warehouse filter (was a
-                big-card / chip rail). Scopes Stock / Incoming / Scheduled /
-                Unscheduled to the picked warehouses. */}
             <WarehouseFilter
               warehouses={warehouses.data ?? []}
               value={warehouseIds}
@@ -262,14 +224,7 @@ export const Inventory = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Analytics tab — read-only inventory KPI board: aging, turnover, dead stock,
-   ABC. Computed server-side from open lots + COGS stream (GET /inventory/
-   analytics). Wei Siang 2026-06-04.
-   ════════════════════════════════════════════════════════════════════════ */
 const WINDOWS = [30, 90, 180, 365];
-/* 'never' rather than '—' is this screen's wording for "no count has ever
-   happened", not a second date format — the date itself is the one rule. */
 const fmtDay = (iso: string | null): string => (iso ? fmtDate(iso) : 'never');
 
 const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
@@ -284,7 +239,6 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-      {/* Window selector */}
       <div className={styles.warehouseChips}>
         {WINDOWS.map((w) => (
           <button key={w} type="button" className={styles.chip}
@@ -294,7 +248,6 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
         ))}
       </div>
 
-      {/* KPI cards — shared <StatCard> */}
       <div className={STAT_GRID}>
         <StatCard label="Inventory Value" value={fmtRm(data.totalValueSen)} />
         <StatCard label="Distinct SKUs in stock" value={fmtQty(data.distinctSkus)} />
@@ -305,9 +258,6 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
         />
       </div>
 
-      {/* Stock aging — batch 2: DataTable, aging-bucket order preserved (the
-          buckets arrive youngest→oldest from the server; keep insertion order,
-          so no default sort). */}
       <p className={styles.eyebrow}>Stock Aging — by date received</p>
       <DataTable<(typeof data.aging)[number]>
         tableId="inventory-analytics-aging"
@@ -333,7 +283,6 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
         ] satisfies Column<(typeof data.aging)[number]>[]}
       />
 
-      {/* ABC classification */}
       <p className={styles.eyebrow}>ABC Classification — by sales value over the window</p>
       <div className={STAT_GRID}>
         {(['A', 'B', 'C'] as const).map((cls) => (
@@ -346,7 +295,6 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
         ))}
       </div>
 
-      {/* Dead stock — batch 2: DataTable. */}
       <p className={styles.eyebrow}>Dead Stock — has stock, no sale in {days} days</p>
       <DataTable<(typeof data.deadStock)[number]>
         tableId="inventory-analytics-dead"
@@ -367,10 +315,6 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Balances tab — AutoCount-style: one row per SKU + Total Qty + Main Supplier
-   Double-click row → per-warehouse breakdown drawer
-   ════════════════════════════════════════════════════════════════════════ */
 const BalancesTab = ({
   category, search, warehouseIds, onDrilldown,
 }: {
@@ -395,9 +339,6 @@ const BalancesTab = ({
     hasData: data !== undefined,
     hasError: Boolean(error),
   });
-  // Category changes also change the query key. React Query deliberately keeps
-  // the previous category as placeholderData, so treat that payload as stale
-  // even when the search term itself did not change.
   const resultsAreStale = searchTransition.resultsAreStale || isPlaceholderData;
   const searching = searchTransition.isSearching || (isPlaceholderData && !error);
   // Owner 2026-07-25 — a "Dead stock only" view over the SAME set-based rows:
@@ -423,11 +364,6 @@ const BalancesTab = ({
     heldValue: visibleRows.reduce((s, r) => s + (r.held_value_sen ?? 0), 0),
   }), [visibleRows]);
 
-  // `visibleRows` is deliberately EMPTY while a search/filter is in flight, so
-  // these three aggregates are all 0 — and "Inventory Value RM 0.00" is a
-  // sentence, not a spinner. Mark them unknown until the rows they summarise are
-  // the rows actually on screen. An error is unknown too: the aggregate would
-  // otherwise describe a list that failed to load.
   const statsFailed = Boolean(error);
   const statsPending = isLoading || searching || resultsAreStale || Boolean(error);
 
@@ -440,8 +376,6 @@ const BalancesTab = ({
         <StatCard label="Consignment Value" value={fmtRm(stats.heldValue)} pending={statsPending} failed={statsFailed} onRetry={() => void refetch()} />
       </div>
 
-      {/* Dead-stock view — SKUs with Spare (surplus) stock beyond all demand.
-          Make-to-order (SOFA/BEDFRAME) rows are the abnormal ones (red badge). */}
       <div className={styles.warehouseChips} style={{ marginTop: 'var(--space-3)' }}>
         <button type="button" className={styles.chip}
           data-active={!deadOnly} onClick={() => setDeadOnly(false)}>
@@ -473,12 +407,6 @@ const BalancesTab = ({
         </div>
       )}
 
-      {/* Batch 2: DataTable. The old DataGrid bound double-click to the
-          drawer and row-click to expansion; DataTable splits them cleanly —
-          row CLICK opens the per-warehouse breakdown drawer (better
-          discoverability than double-click), the chevron owns the variant
-          expansion. Page-level search stays server-scoped (contract above),
-          so no DataTable search config. */}
       <DataTable<InventoryProductTotal>
         tableId="inventory-balances"
         layoutFamily="inventory-balances"
@@ -489,8 +417,6 @@ const BalancesTab = ({
         getRowKey={(r) => r.item_code}
         columns={BALANCE_COLUMNS}
         onRowClick={(r) => onDrilldown(r.item_code, r.product_name)}
-        /* Variant drill (Commander 2026-05-29): chevron expands the SKU into
-           its attribute-composition buckets. Lazy: only fetches when expanded. */
         expandable={{
           render: (r) => (
             <>
@@ -506,9 +432,6 @@ const BalancesTab = ({
   );
 };
 
-/* Balances columns — batch 2: DataTable `Column`s at module scope. Sorting
-   derives from `getValue` (numbers for qty/money, strings for text); the
-   chevron is DataTable's synthetic expand column. */
 const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
   {
     key: 'code',
@@ -570,8 +493,6 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
       return (
         <span className={`${styles.numCell} ${qtyClass}`}>
           {fmtQty(owned)}
-          {/* The two ledgers disagree for this SKU. Marked, not hidden — Actions
-              -> "Reconcile a SKU" settles it from the documents. */}
           {r.ledger_mismatch && (
             <span
               className={styles.numCellNeg}
@@ -587,8 +508,6 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     label: 'Consignment',
     width: '105px',
     align: 'right',
-    /* Somebody else's goods standing with us — findable, sortable, and never
-       mixed into Stock, Available, Spare or any value figure. */
     getValue: (r) => r.held_qty ?? 0,
     render: (r) => {
       const held = r.held_qty ?? 0;
@@ -628,8 +547,6 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     label: 'Scheduled',
     width: '100px',
     align: 'right',
-    // Demand from open SO lines that HAVE a delivery date (scheduled to ship).
-    // Backend field stays `committed_scheduled`; the on-screen label is "Scheduled".
     getValue: (r) => r.committed_scheduled,
     render: (r) => (
       <span
@@ -663,7 +580,6 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     label: 'Unscheduled',
     width: '105px',
     align: 'right',
-    // Demand from open SO lines with NO delivery date (future / uncertain).
     getValue: (r) => r.unscheduled_qty,
     render: (r) => (
       <span
@@ -679,9 +595,6 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     label: 'Spare',
     width: '95px',
     align: 'right',
-    // Spare = Available − Unscheduled. Negative = even undated demand can't be
-    // met (reads as short); positive = genuinely spare / idle stock (dead-stock
-    // signal). Backend field stays `surplus_qty`; the on-screen label is "Spare".
     getValue: (r) => r.surplus_qty,
     render: (r) => (
       <span
@@ -770,7 +683,6 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     key: 'age',
     label: 'Age',
     width: '70px',
-    /* Oldest lot first when ascending — null (no lots) sorts last. */
     getValue: (r) => r.oldest_lot_at ?? '9999-12-31',
     render: (r) => (
       <span className={styles.numCellZero} title={r.oldest_lot_at ?? undefined}>{fmtAgeDays(r.oldest_lot_at)}</span>
@@ -792,9 +704,6 @@ const IncomingPoPanel = ({ pos }: { pos: InventoryIncomingPo[] | null | undefine
             <td style={{ paddingLeft: 22, width: 200 }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <span className={styles.numCellZero}>↳ incoming</span>
-                {/* PO number only (the detail route keys on the PO's UUID, which
-                    this per-SKU roll-up doesn't carry) — shown as a code chip,
-                    not a link, so it never routes to a broken page. */}
                 <span className={styles.codeChip}>{p.po_number}</span>
               </span>
             </td>
@@ -810,11 +719,6 @@ const IncomingPoPanel = ({ pos }: { pos: InventoryIncomingPo[] | null | undefine
   );
 };
 
-/* Variant breakdown panel inside a row's DataGrid expansion (was inline
-   <tr>s pre-DataGrid). Sums each attribute composition (variant_key) across
-   warehouses → one row per variant type, so the list shows "what variants
-   this SKU has" without opening the drawer (Commander 2026-05-29). Lazy:
-   only mounts (and fetches) when expanded. */
 const SkuVariantPanel = ({ code }: { code: string }) => {
   const bd = useInventoryProductBreakdown(code);
   const balances = (bd.data?.balances ?? []).filter((b) => b.item_code === code);
@@ -825,7 +729,6 @@ const SkuVariantPanel = ({ code }: { code: string }) => {
       const cur = m.get(vk) ?? { vk, sup: null, qty: 0, value: 0 };
       cur.qty += b.qty ?? 0;
       cur.value += b.value_sen ?? 0;
-      // Same vk = same fabric = same supplier code — keep the first stamp seen.
       cur.sup = cur.sup ?? b.fabric_supplier_code ?? null;
       m.set(vk, cur);
     }
@@ -867,16 +770,6 @@ const SkuVariantPanel = ({ code }: { code: string }) => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Batches tab (Stage 4 — Commander 2026-05-31)
-   ───────────────────────────────────────────────────────────────────────
-   Sofa is colour-matched, produced as a SET on ONE PO = ONE dye lot = ONE
-   batch (batch_no = source PO number). To ship a set with no colour diff the
-   whole set must leave from ONE batch. This view shows, per warehouse, every
-   open batch and the surviving component SKUs inside it — the raw material the
-   allocator binds and the DO consumes from. Only produced-to-PO stock carries a
-   batch; free / un-batched GRN stock never appears here (by design).
-   ════════════════════════════════════════════════════════════════════════ */
 const BatchesTab = ({
   warehouseId, setWarehouseId, warehouses, search, setSearch,
 }: {
@@ -891,7 +784,6 @@ const BatchesTab = ({
   });
   const allBatches: InventoryBatch[] = useMemo(() => data ?? [], [data]);
 
-  /* Client-side search across batch no / supplier / component code+name. */
   const q = search.trim().toLowerCase();
   const batches = useMemo(() => {
     if (!q) return allBatches;
@@ -912,7 +804,6 @@ const BatchesTab = ({
 
   return (
     <>
-      {/* Warehouse filter chips */}
       <div className={styles.warehouseChips}>
         <button type="button" className={styles.chip}
           data-active={warehouseId === null} onClick={() => setWarehouseId(null)}>
@@ -960,9 +851,6 @@ const BatchesTab = ({
         </div>
       )}
 
-      {/* Batch 2: DataTable — the page's own search box above stays (its
-          scope line is a contract string); the chevron expands the batch into
-          its surviving component SKUs. */}
       <DataTable<InventoryBatch>
         tableId="inventory-batches"
         layoutFamily="inventory-batches"
@@ -981,9 +869,6 @@ const BatchesTab = ({
   );
 };
 
-/* Batches columns — batch 2: DataTable `Column`s at module scope. The
-   chevron comes from DataTable's synthetic expand column; page-level search
-   already matches component SKUs inside the batch, so no per-column search. */
 const BATCH_COLUMNS: Column<InventoryBatch>[] = [
   {
     key: 'batch',
@@ -1037,8 +922,6 @@ const BATCH_COLUMNS: Column<InventoryBatch>[] = [
   },
 ];
 
-/* Component SKUs inside a batch — rendered in the row's DataGrid expansion
-   (was inline cream <tr>s pre-DataGrid). */
 const BatchComponentsPanel = ({ batch }: { batch: InventoryBatch }) => (
   <table className={`${styles.table} bg-surface-2`}>
     <tbody>
@@ -1077,20 +960,6 @@ const BatchComponentsPanel = ({ batch }: { batch: InventoryBatch }) => (
   </table>
 );
 
-/* ════════════════════════════════════════════════════════════════════════
-   Reservations tab — reserved-but-unshipped visibility
-   ───────────────────────────────────────────────────────────────────────
-   Every OPEN FIFO lot (stock physically on the shelf) with the READY sales-
-   order demand claiming it (GET /inventory/reservations). Answers the owner's
-   question: for a lot sitting unshipped, which SO reserved it — vs which stock
-   is free (no order). "Reserved since" is the reserving SO's created_at (no
-   allocation timestamp exists — an honest proxy for the age of the claim).
-   ════════════════════════════════════════════════════════════════════════ */
-/* Assigned-SO cell — the SO(s) this lot's ON-HAND units are allocated to by the
-   ONE MRP engine (mrp_assigned_to), each with its qty + DELIVERY DATE. This is
-   the owner's "which 3 of the 10 are assigned, to which SO" — NOT the hard READY
-   reservation. Null-safe: absent fields (older/degraded payload) → free (no
-   order). Shared by the drawer's owned/consignment rows + the Reservations tab. */
 const renderAssignedFor = (r: InventoryReservation) => {
   const claims = r.mrp_assigned_to ?? [];
   if (claims.length === 0) return <span className={styles.numCellZero}>No order (free)</span>;
@@ -1107,11 +976,6 @@ const renderAssignedFor = (r: InventoryReservation) => {
   ));
 };
 
-/* Status cell — the MRP-derived assigned/free split for one lot. A lot may be
-   part assigned, part free; show both counts. FREE units are a dead-stock
-   candidate, emphasised (red) for make-to-order SOFA/BEDFRAME where free stock is
-   abnormal, soft (amber) for make-to-stock (MATTRESS) where it is normal.
-   Consignment lots (held, not owned) never read as dead stock. */
 const renderAssignedFreeStatus = (r: InventoryReservation) => {
   const assigned = lotAssignedQty(r);
   const free = lotFreeQty(r);
@@ -1172,13 +1036,11 @@ const ReservationsTab = ({
   const stats = useMemo(() => ({
     assignedQty: rows.reduce((s, r) => s + lotAssignedQty(r), 0),
     freeQty: rows.reduce((s, r) => s + lotFreeQty(r), 0),
-    // Dead stock = free un-assigned units on OWNED lots (consignment excluded).
     deadQty: rows.reduce((s, r) => s + (lotIsDeadStock(r) ? lotFreeQty(r) : 0), 0),
   }), [rows]);
 
   return (
     <>
-      {/* Warehouse filter chips */}
       <div className={styles.warehouseChips}>
         <button type="button" className={styles.chip}
           data-active={warehouseId === null} onClick={() => setWarehouseId(null)}>
@@ -1236,9 +1098,6 @@ const ReservationsTab = ({
         </div>
       )}
 
-      {/* Batch 2: DataTable. Row identity includes the loop index in the old
-          markup because (warehouse, product, variant, batch) can repeat across
-          lots — keep the same composite via list position lookup. */}
       <DataTable<InventoryReservation>
         tableId="inventory-reservations"
         layoutFamily="inventory-reservations"
@@ -1301,40 +1160,22 @@ const ReservationsTab = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Product breakdown drawer — AutoCount-style "Up To Date Cost" panel:
-   per-warehouse Location | Qty | Unit Cost  +  FIFO lots underneath
-   ════════════════════════════════════════════════════════════════════════ */
 const ProductBreakdownDrawer = ({
   code, name, warehouseIds, onClose,
 }: { code: string; name: string; warehouseIds: readonly string[]; onClose: () => void }) => {
   const movements = useInventoryMovements({ itemCode: code });
   const cogs = useCogsEntries({ itemCode: code });
   const warehouses = useWarehouses();
-  /* ONE per-lot feed (GET /inventory/reservations) powers the whole merged
-     breakdown: each open lot with its warehouse, attributes, qty, unit cost,
-     SOURCE doc (GRN / PCR), received date, reservation status + reserving SO(s)
-     and that SO's delivery date. Owned vs consignment is split by the lot's
-     SOURCE server-side (never the warehouse flag). Narrowed to this SKU. */
   const reservations = useInventoryReservations({ itemCode: code });
 
-  /* Movements + COGS sections are collapsed by default (Commander 2026-05-30).
-     Operator opens what they want to see — keeps the drawer scannable. */
   const [movementsOpen, setMovementsOpen] = useState(false);
   const [cogsOpen, setCogsOpen] = useState(false);
 
-  /* Warehouse lookup (UUID → row). The tables below render the SHORT code-name
-     (`code`, "KL WAREHOUSE"), the ONE canonical warehouse label the owner
-     wants — never the long `name` ("BALAKONG WAREHOUSE") or a code+name concat. */
   const whById = useMemo(
     () => new Map((warehouses.data ?? []).map((w) => [w.id, w])),
     [warehouses.data],
   );
 
-  /* Running-balance computation for Movements (same pattern as Stock Card):
-     API returns DESC, reverse to ASC, accumulate signed qty, then render DESC.
-     OUT subtracts, IN/ADJUSTMENT/TRANSFER add as-is (ADJUSTMENT carries a
-     signed qty per inventory_movements convention). */
   const movementsWithBalance = useMemo(() => {
     const desc = movements.data ?? [];
     const asc = [...desc].reverse();
@@ -1347,28 +1188,14 @@ const ProductBreakdownDrawer = ({
     return out.reverse();
   }, [movements.data]);
 
-  /* CONSIGNMENT stock is held but NOT owned: its quantity shows, but it stays
-     OUT of inventory VALUE (owner rule). The split is by each lot's SOURCE (a
-     Purchase Consignment Receive fed it) — NEVER the warehouse flag, which
-     leaked PCR stock mis-posted into a normal warehouse into owned value
-     (BUG-HISTORY 2026-07-25). buildStockBreakdown is the SAME transform the
-     mobile Stock Card uses — one logic layer, two presentations. */
   const lotRows = useMemo(() => {
     const all = reservations.data ?? [];
     return warehouseIds.length > 0 ? all.filter((l) => warehouseIds.includes(l.warehouse_id)) : all;
   }, [reservations.data, warehouseIds]);
   const bd = useMemo(() => buildStockBreakdown(lotRows), [lotRows]);
-  // Free make-to-order units the server calls dead (service / showroom lots excluded).
   const deadMtoQty = bd.ownedLots
     .filter((l) => (l.make_to_order ?? isMakeToOrderCategory(l.category)) && lotIsDeadStock(l))
     .reduce((s, l) => s + lotFreeQty(l), 0);
-  /* Owned + consignment lots, one flat list tagged with which bucket each row
-     came from — DataTable's groupBy needs one array, not two, to give this
-     table the same column-filter/sort/freeze funnel every other DataTable in
-     this file already has (owner request: "want this filtering system for
-     the stock breakdown tables too"). The inline "Owned value subtotal" row
-     the old hand-rolled <table> carried is dropped here — it duplicated the
-     "Total Value (owned)" StatCard already shown above the table. */
   const lotTableRows = useMemo(
     () => [
       ...bd.ownedLots.map((r) => ({ ...r, _source: 'owned' as const })),
@@ -1401,9 +1228,6 @@ const ProductBreakdownDrawer = ({
         </div>
 
         <div className={`mt-4 grid gap-2.5 ${bd.consignmentQty !== 0 ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'}`}>
-          {/* The totals reduce over the lot feed, which is [] until it resolves —
-              so a confident "RM 0.00" before load would be a lie the operator can
-              act on. Unknown until it is known. */}
           <StatCard label="Total Qty (owned)" value={fmtQty(bd.ownedQty)} pending={breakdownPending} failed={Boolean(reservations.error)} onRetry={() => void reservations.refetch()} />
           {/* Owner 2026-07-25 — the assigned/free split from the ONE MRP engine.
               Free (un-assigned) OWNED stock is the dead-stock slice; for a
@@ -1416,12 +1240,8 @@ const ProductBreakdownDrawer = ({
           {bd.consignmentQty !== 0 && (
             <StatCard label="Consignment Qty (not owned)" value={fmtQty(bd.consignmentQty)} pending={breakdownPending} failed={Boolean(reservations.error)} onRetry={() => void reservations.refetch()} />
           )}
-          {/* Value is OWNED stock only — consignment is excluded by SOURCE. */}
           <StatCard label="Total Value (owned)" value={fmtRm(bd.ownedValueSen)} pending={breakdownPending} failed={Boolean(reservations.error)} onRetry={() => void reservations.refetch()} />
         </div>
-        {/* Dead-stock banner: free make-to-order (SOFA/BEDFRAME) on-hand stock is
-            abnormal (built against an SO), so surface it prominently. Soft/absent
-            for make-to-stock. */}
         {!breakdownPending && deadMtoQty > 0 && (
           <div className="mt-3 rounded-lg border border-err/40 bg-err/10 px-4 py-2.5 text-[13px] text-err">
             <strong className="font-semibold">Dead-stock candidate.</strong>{' '}
@@ -1429,16 +1249,6 @@ const ProductBreakdownDrawer = ({
           </div>
         )}
 
-        {/* ── ONE merged per-lot table (owner request). The old "Stock by
-            Warehouse", "FIFO Lots" and "Reserved for Sales Orders" tables shared
-            warehouse / attributes / qty / cost and repeated them 3×. This is the
-            SKU's real open-lot buckets in FIFO order (oldest received first — the
-            next DO consumes them top-down), each row carrying its SOURCE doc
-            (GRN / PCR), reservation status + reserving SO(s) and that SO's
-            delivery date. Owned and consignment lots are separated; consignment
-            is excluded from the owned value subtotal. The drawer body is the ONE
-            scroll container (no nested-scroll jank); the wide table scrolls
-            sideways inside its own card for long lists. */}
         <p className={styles.eyebrow} style={{ marginTop: 'var(--space-4)' }}>
           Stock Lots (oldest first — consumed first on the next DO) &middot; Owned value subtotal {fmtRm(bd.ownedValueSen)}
         </p>
@@ -1490,8 +1300,6 @@ const ProductBreakdownDrawer = ({
               },
             },
             {
-              // SOURCE — the GRN (or PCR/adjustment) that fed this lot. A
-              // GRN-sourced lot also traces to its originating PO.
               key: 'source_doc', label: 'Source', width: '150px',
               getValue: (r) => r.source_doc_no ?? '',
               render: (r) => (
@@ -1511,7 +1319,6 @@ const ProductBreakdownDrawer = ({
           ] satisfies Column<(typeof lotTableRows)[number]>[]}
         />
 
-        {/* Movements ledger — collapsed by default. Header is a button. */}
         <button type="button"
           onClick={() => setMovementsOpen((v) => !v)}
           style={{
@@ -1576,7 +1383,6 @@ const ProductBreakdownDrawer = ({
           />
         )}
 
-        {/* COGS — collapsed by default. */}
         <button type="button"
           onClick={() => setCogsOpen((v) => !v)}
           style={{
@@ -1625,9 +1431,6 @@ const ProductBreakdownDrawer = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Movements tab
-   ════════════════════════════════════════════════════════════════════════ */
 const MovementsTab = ({
   warehouseId, search, warehouses,
 }: {
@@ -1678,8 +1481,6 @@ const MovementsTab = ({
         </div>
       )}
 
-      {/* Batch 2: DataTable — the append-only ledger, newest first from the
-          server (no default sort). */}
       <DataTable<InventoryMovement>
         tableId="inventory-movements"
         layoutFamily="inventory-movements"
@@ -1746,9 +1547,6 @@ const MovementsTab = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   COGS tab — FIFO consumption stream
-   ════════════════════════════════════════════════════════════════════════ */
 export const CogsTab = ({
   warehouseId, search,
 }: {
@@ -1769,10 +1567,6 @@ export const CogsTab = ({
           label="Total COGS"
           value={fmtRm(totalCogs)}
           subtitle={`${cogs.length} consumptions`}
-          /* Sum over an empty-because-unloaded list. RM 0.00 for "we have not
-             fetched the consumptions yet" is a lie the operator can act on —
-             and `isLoading` is FALSE after a FAILED fetch, which is the other
-             way this list is empty for a reason unrelated to cost of goods. */
           pending={isLoading}
           failed={isError}
           onRetry={() => void refetch()}
@@ -1785,8 +1579,6 @@ export const CogsTab = ({
           : `${cogs.length} consumption entries`}
       </p>
 
-      {/* Batch 2: DataTable. The icon-decorated empty state flattens to the
-          shared emptyLabel sentence (same trade every converted page made). */}
       <DataTable<CogsEntry>
         tableId="inventory-cogs"
         layoutFamily="inventory-cogs"
@@ -1819,9 +1611,6 @@ export const CogsTab = ({
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Warehouses tab — moved from standalone /warehouses page (PR #38)
-   ════════════════════════════════════════════════════════════════════════ */
 const WarehousesTab = () => {
   const [includeInactive, setIncludeInactive] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -1842,7 +1631,6 @@ const WarehousesTab = () => {
         </Button>
       </div>
 
-      {/* Batch 2: DataTable. */}
       <DataTable<Warehouse>
         tableId="inventory-warehouses"
         layoutFamily="inventory-warehouses"

@@ -48,12 +48,10 @@ export function useVisibleReports(): readonly ReportItem[] {
 
 /** One entry of the list: a report, or a P&L's views as one. */
 export type ReportListEntry = {
-  /** The report it opens: for a P&L, the first of its views the reader may open. */
   item: ReportItem;
   label: string;
   icon: LucideIcon;
   desc: string;
-  /** Lit while this report is open — for a P&L, while any of its views is. */
   isOn: (current: ReportId) => boolean;
 };
 
@@ -70,7 +68,6 @@ export function reportListEntries(reports: readonly ReportItem[]): ReportListEnt
 export function ReportRail({ current, entries, range, pinned, onPinned }: {
   current: ReportId;
   entries: readonly ReportListEntry[];
-  /** The range the links carry; null opens each report on its own dates. */
   range: ReportRange | null;
   pinned: boolean;
   onPinned: (on: boolean) => void;
@@ -84,7 +81,6 @@ export function ReportRail({ current, entries, range, pinned, onPinned }: {
     window.clearTimeout(closeTimer.current);
   };
   useEffect(() => clear, []);
-  /* Esc, or a tap anywhere else, closes the list opened by hand. */
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
@@ -99,7 +95,6 @@ export function ReportRail({ current, entries, range, pinned, onPinned }: {
     };
   }, [open]);
 
-  /* Pointing opens it, a touch does not: a tap on the list icon does. */
   const onEnter = (e: ReactPointerEvent) => {
     if (e.pointerType !== 'mouse' || pinned) return;
     window.clearTimeout(closeTimer.current);

@@ -55,9 +55,7 @@ export type JournalRefSource = {
 export type JournalRef = {
   reference: string | null;
   who: string | null;
-  /** Ref. 1 — the document number a person files the entry under. */
   doc: string | null;
-  /** Ref. 2 — the second handle: the order, the supplier's ref, the bank ref. */
   doc2: string | null;
 };
 
@@ -71,7 +69,6 @@ const chunks = <T>(xs: T[]): T[][] => {
 };
 
 const baseTypeOf = (t: string | null): string => String(t ?? '').replace(/_REVERSAL$/, '');
-/** The key of a charge kept off a credit (acc/charge-account receiptChargeKey). */
 const KEPT_CHARGE = /^SETTLECHARGE-R(\d+)$/;
 
 /** "Stock 07/2026" off a STOCKADJ key (STOCKADJ-<company>-<yyyy>-<mm>, or STOCKADJ-REV-…). */
@@ -86,7 +83,6 @@ export const commissionMonthLabel = (doc: string): string => {
   return m ? `Commission ${m[2]}/${m[1]}` : doc;
 };
 
-/** Read one lookup table in chunks and fold it into a map. */
 async function lookup(sb: Db, companyId: number, table: string, keyCol: string, cols: string, keys: string[], label: string): Promise<{ ok: true; rows: Map<string, Record<string, unknown>> } | { ok: false; reason: string }> {
   const rows = new Map<string, Record<string, unknown>>();
   for (const ks of chunks(keys)) {
@@ -111,7 +107,6 @@ export async function resolveJournalRefs(sb: Db, companyId: number, entries: Jou
   const docsOf = (types: string[]): string[] =>
     [...new Set(entries.filter((e) => types.includes(baseTypeOf(e.sourceType)) && e.sourceDocNo).map((e) => String(e.sourceDocNo)))];
 
-  /* ── Sales-order payments: the payment → its order and its receipt ─────── */
   const paymentIds = docsOf(['SOPAY', 'SIPAY', 'SOCONV']);
   const orderOfPayment = new Map<string, string>();
   const movedFrom = new Map<string, string>();
@@ -135,7 +130,6 @@ export async function resolveJournalRefs(sb: Db, companyId: number, entries: Jou
     for (const o of (Array.isArray(data) ? data : []) as Array<{ doc_no: string; debtor_name: string | null }>) customerOfOrder.set(String(o.doc_no), String(o.debtor_name ?? ''));
   }
 
-  /* ── Documents with a second handle: the supplier's ref, the order ─────── */
   const pis = await lookup(sb, companyId, 'purchase_invoices', 'invoice_number', 'invoice_number, supplier_invoice_ref', docsOf(['PI']), 'purchase invoices');
   if (!pis.ok) return pis;
   const apis = await lookup(sb, companyId, 'ap_invoices', 'invoice_number', 'invoice_number, supplier_invoice_ref', docsOf(['API']), 'AP invoices');
@@ -149,7 +143,6 @@ export async function resolveJournalRefs(sb: Db, companyId: number, entries: Jou
   const pvs = await lookup(sb, companyId, 'payment_vouchers', 'pv_number', 'pv_number, payee_name, refund_source_doc_no', docsOf(['PV']), 'vouchers');
   if (!pvs.ok) return pvs;
 
-  /* ── Settlements: the row → its day and ref; the receipt → its day and bank ref; the batch → its acquirer ── */
   const settleKeys = docsOf(['SETTLE', 'SETTLEMOVE']);
   const rowIds = [...new Set(settleKeys.map((k) => Number(k.split('-')[1])).filter((n) => Number.isInteger(n)))];
   const settleRows = new Map<number, { txn_date: string | null; ref: string | null; acquirer_code: string | null }>();
@@ -160,8 +153,6 @@ export async function resolveJournalRefs(sb: Db, companyId: number, entries: Jou
   }
   const payoutKeys = docsOf(['SETTLEBANK']);
   const chargeKeys = docsOf(['SETTLECHARGE']);
-  /* A charge kept off a credit is keyed on the credit (SETTLECHARGE-R<id>, owner
-     2026-09-30) — it reads its day and bank ref off the same receipt rows. */
   const keptReceiptIds = chargeKeys.map((k) => KEPT_CHARGE.exec(k)?.[1]).filter((x): x is string => x != null).map(Number);
   const receiptIds = [...new Set([...payoutKeys.map((k) => Number(k.split('-')[2])), ...keptReceiptIds].filter((n) => Number.isInteger(n)))];
   const batchIds = new Set(payoutKeys.map((k) => Number(k.split('-')[1])).filter((n) => Number.isInteger(n)));
@@ -211,7 +202,6 @@ export async function resolveJournalRefs(sb: Db, companyId: number, entries: Jou
       const or = receiptOfPayment.get(doc) ?? null;
       ref = {
         reference: so ? (or ? `${or} · ${so}` : so) : (or ?? doc),
-        /* The order's customer; failing that the party, failing that the note. */
         who: (so ? customerOfOrder.get(so) : null) || party || note,
         doc: or ?? so ?? doc,
         doc2: or ? so : null,

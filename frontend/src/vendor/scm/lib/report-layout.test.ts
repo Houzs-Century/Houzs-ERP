@@ -37,7 +37,6 @@ describe('moving among siblings', () => {
     const down = moveWithinSiblings(before, 'expenses', accountKey('900-A001'), 1);
     expect(shape(down.blocks.expenses!)).toEqual([{ 'acc:900-0000': [{ 'acc:900-A002': ['900-A014'] }, '900-A001'] }, '900-O001']);
     expect(JSON.stringify(before)).toBe(snapshot);
-    /* Already first: nothing moves, the same object comes back. */
     expect(moveWithinSiblings(before, 'expenses', 'acc:900-0000', -1)).toBe(before);
     expect(moveWithinSiblings(before, 'expenses', accountKey('nope'), 1)).toBe(before);
   });
@@ -57,7 +56,6 @@ describe('categories', () => {
     expect(shape(l.blocks.expenses!)).toEqual([
       { 'acc:900-0000': ['900-A001', { 'acc:900-A002': ['900-A014'] }] }, '900-O001', { 'cat:staff': [{ 'cat:sal': [] }] },
     ]);
-    /* Adding under an account, or a missing parent, changes nothing. */
     expect(addCategory(l, 'expenses', accountKey('900-O001'), 'X', 'cat:x')).toBe(l);
     l = removeCategory(l, 'acc:900-A002');
     expect(shape(l.blocks.expenses!)).toEqual([{ 'acc:900-0000': ['900-A001', '900-A014'] }, '900-O001', { 'cat:staff': [{ 'cat:sal': [] }] }]);
@@ -100,7 +98,6 @@ describe('placing an item', () => {
     expect(placeItem(before, 'expenses', op, { kind: 'into', categoryId: 'acc:900-0000' })).toBe(before);
     expect(placeItem(before, 'expenses', op, { kind: 'into', categoryId: 'acc:900-A002' })).toBe(before);
     expect(placeItem(before, 'expenses', op, { kind: 'before', key: accountKey('900-A014') })).toBe(before);
-    /* Sideways is fine: the whole subtree travels. */
     const moved = placeItem(before, 'expenses', op, { kind: 'end' });
     expect(shape(moved.blocks.expenses!)).toEqual(['900-O001', { 'acc:900-0000': ['900-A001', { 'acc:900-A002': ['900-A014'] }] }]);
   });
@@ -183,8 +180,6 @@ describe('figures and ids', () => {
   });
 });
 
-/* Folding a flattened tree: the level opens categories to a depth; a person
-   opens or closes any one of them past that. */
 describe('linesVisible', () => {
   const lines = [
     { id: 'blk', depth: 0 },
@@ -276,7 +271,6 @@ describe('the Cash Flow tree', () => {
     l = addSubtotal(l, 'accounts', 'Net operation surplus / (deficit)', 'sub:ops');
     expect(l.blocks.accounts![2]).toEqual({ kind: 'subtotal', id: 'sub:ops', label: 'Net operation surplus / (deficit)' });
     const sub = l.blocks.accounts![2]!;
-    /* Between the sides: fine. Into a category, or above a nested line: refused. */
     const moved = placeItem(l, 'accounts', sub, { kind: 'before', key: 'side:out' });
     expect(shape(moved.blocks.accounts!).map((x) => Object.keys(x as object)[0])).toEqual(['side:in', 'subtotal', 'side:out']);
     expect(placeItem(l, 'accounts', sub, { kind: 'into', categoryId: 'side:in' })).toBe(l);
@@ -295,7 +289,6 @@ describe('the Cash Flow tree', () => {
     expect(codesOf(unplacedAccounts(l, cfBlock, cfAccounts, 'out'))).toEqual(['320-0000', '910-0000']);
     const net = setAccountFlow(unplaceAccount(l, 'accounts', '300-0000', 'in'), 'accounts', 'a:out:300-0000', 'net');
     expect(codesOf(unplacedAccounts(net, cfBlock, cfAccounts, 'in'))).toEqual(['601-0000', '601-0003', '910-0000']);
-    /* Without a side, the old reading: placed anywhere counts. */
     expect(codesOf(unplacedAccounts(l, cfBlock, cfAccounts))).toEqual(['910-0000']);
   });
 
@@ -309,7 +302,6 @@ describe('the Cash Flow tree', () => {
     expect(nested.split).toEqual({ settlement: 1, deposit: 2 });
     l = setCategorySplit(l, 'side:in', null);
     expect(l.blocks.accounts![0]).not.toHaveProperty('split');
-    /* Only a category carries parts. */
     expect(setCategorySplit(before, 'a:in:300-0000', { settlement: 1, deposit: 0 })).toBe(before);
   });
 
@@ -319,16 +311,13 @@ describe('the Cash Flow tree', () => {
     const ca = (x: Layout) => ((x.blocks.accounts![0] as LayoutCategory).children[0] as LayoutCategory).children;
     expect(ca(l)[0]).toEqual({ kind: 'account', code: '300-0000', flow: 'in', split: { settlement: 1, deposit: 0 } });
     expect(ca(before)[0]).not.toHaveProperty('split');
-    /* One account, two lines: its Out line still follows its group. */
     expect((l.blocks.accounts![1] as LayoutCategory).children[0]).not.toHaveProperty('split');
-    /* A new direction, then a move: the parts stay on the line. */
     l = setAccountFlow(l, 'accounts', 'a:in:300-0000', 'net');
     l = placeItem(l, 'accounts', ca(l)[0]!, { kind: 'into', categoryId: 'out:acc:601-0000' });
     const purchases = () => ((l.blocks.accounts![1] as LayoutCategory).children[1] as LayoutCategory).children;
     expect(purchases()[1]).toEqual({ kind: 'account', code: '300-0000', flow: 'net', split: { settlement: 1, deposit: 0 } });
     l = setAccountSplit(l, 'accounts', 'a:net:300-0000', null);
     expect(purchases()[1]).toEqual({ kind: 'account', code: '300-0000', flow: 'net' });
-    /* Only an account line, and only one the block holds. */
     expect(setAccountSplit(before, 'accounts', 'side:in', { settlement: 1, deposit: 0 })).toBe(before);
     expect(setAccountSplit(before, 'accounts', 'a:in:910-0000', { settlement: 1, deposit: 0 })).toBe(before);
   });
@@ -350,7 +339,6 @@ describe('the Cash Flow tree', () => {
     expect(splitOfChoice('deposit')).toEqual({ settlement: 0, deposit: 1 });
     expect(splitOfChoice('parts')).toEqual({ settlement: 1, deposit: 2 });
     expect(splitOfChoice('')).toBeNull();
-    /* A part typed: a whole number 0–99; anything else keeps the part it had. */
     expect(splitPart('4', 2)).toBe(4);
     expect(splitPart('150', 2)).toBe(99);
     expect(splitPart('-3', 2)).toBe(0);

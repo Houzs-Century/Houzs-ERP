@@ -179,7 +179,6 @@ interface ProjectDetail {
     pic_name: string | null;
     pic_email: string | null;
     pic_phone: string | null;
-    // Logistics schedule (Notion parity)
     setup_start_at: string | null;
     setup_end_at: string | null;
     dismantle_start_at: string | null;
@@ -192,7 +191,6 @@ interface ProjectDetail {
     dismantle_driver_name: string | null;
     dismantle_lorry_id: string | null;
     dismantle_lorry_plate: string | null;
-    // Phase helper crew (mig 083)
     setup_helper_1_id: number | null;
     setup_helper_1_name: string | null;
     setup_helper_2_id: number | null;
@@ -203,9 +201,6 @@ interface ProjectDetail {
     dismantle_helper_2_id: number | null;
     dismantle_helper_2_name: string | null;
     dismantle_helper_outsourced: number;
-    // Phase crew editor (mig 097) -- JSON: drivers/helpers (name+phone),
-    // lorries, outsourced (name/phone/plate). Read by the stage stepper
-    // (setup_crew) and written by the Setup & Dismantle crew editor.
     setup_crew: string | null;
     dismantle_crew: string | null;
     // service_crew (owner 2026-07-22): mid-fair Service / Exchange trip — same
@@ -217,22 +212,16 @@ interface ProjectDetail {
     schedule_remark?: string | null;
     banner_message: string | null;
     banner_tone: "info" | "warning" | "error" | null;
-    // Payment workflow
     payment_status: PaymentStatus | null;
     payment_proof_r2_key: string | null;
     payment_proof_file_name: string | null;
     payment_notes: string | null;
     payment_updated_at: string | null;
   };
-  /** Per-project access tier computed server-side. "limited" = scoped
-   *  rep — finance / logistics / linked POs panels should be hidden. */
   _access?: {
     level: "full" | "limited";
     is_pic: boolean;
     scoped: boolean;
-    /** PMS role-based visibility (sales-department feature). When present it
-     *  refines what the viewer may see/edit; when absent (older cached
-     *  response) callers fall back to `level === "full"`. */
     pms?: {
       role:
         | "DIRECTOR"
@@ -249,8 +238,6 @@ interface ProjectDetail {
       canRental: boolean;
       canPayment: boolean;
       canSensitive: boolean;
-      /** Setup & Dismantle section (crew editor + documents). Owner
-       *  2026-07-15: hidden from non-director Sales, even the PIC. */
       canSetupDismantle: boolean;
       sections: string[];
     };
@@ -266,7 +253,6 @@ interface ProjectDetail {
     notes: string | null;
   } | null;
   finance_lines: FinanceLine[];
-  /** The books on the event (payment-request item 5); null when finance is hidden. */
   finance_books?: FinanceBooks | null;
   /** The two P&Ls (owner 2026-10-16) — services/eventPnl.ts; null on an older server. */
   finance_pnl?: EventPnl | null;
@@ -276,34 +262,26 @@ interface ProjectDetail {
   stock_transfers: StockTransfer[];
   checklist: ChecklistItem[];
   checklist_comments: ChecklistComment[];
-  /** Per-task attachments (mig 050). Replaces project-level Attachments. */
   checklist_attachments?: TaskAttachment[];
-  /** Tasklist sections (mig 050). Tasks group under these. */
   sections?: TasklistSection[];
-  /** Per-section progress for the stage chip row. */
   section_progress?: SectionProgress[];
   attachments: ProjectAttachment[];
   defects: ProjectDefect[];
   activity: ActivityRow[];
   team: any[];
   trips: ProjectTrip[];
-  /** Sales reps attending the project (mig 087). */
   sales_attendees?: SalesAttendee[];
 }
 
 interface ChecklistComment {
   id: number;
   item_id: number;
-  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove"; // written as RAW SQL by routes/projects.ts:4235,:4318, bypassing the typed helper; widen with the mirror in backend/src/services/projects.ts
+  kind: "note" | "submit" | "reject" | "amend" | "approve" | "upload" | "remove";
   body: string | null;
   user_name: string | null;
   created_at: string;
 }
 
-// Same pattern as OrganizerPicker but for the booth setup/dismantle contractor.
-// Picks land in projects.contractor (free text) and get recorded in
-// project_contractors so the next project sees them. Also feeds the
-// per-contractor share links.
 function ContractorPicker({
   value,
   onChange,
@@ -359,7 +337,6 @@ function ContractorPicker({
       }
     >
       <option value="">— select contractor —</option>
-      {/* Surface legacy values that aren't in the lookup yet */}
       {value && !options.some((o) => o.name === value) && (
         <option value={value}>{value}</option>
       )}
@@ -386,14 +363,10 @@ function exportOrganizer(organizer: string | null): string {
   return EO_ANON_ORGANIZERS.some((n) => low.startsWith(n)) ? "EO" : v;
 }
 
-// ── Stage helpers ────────────────────────────────────────────
 
-// Stage label + variant now come from the SHARED vendor/scm/lib/pms-status so
-// desktop + mobile can't drift on the stage vocabulary.
 const STAGE_LABEL: Record<string, string> = PMS_STAGE_LABEL;
 const stageVariant = pmsStageVariant;
 
-// ── Main page ────────────────────────────────────────────────
 
 type ProjectsView = "hub" | "list" | "calendar" | "defects" | "finances" | "maintenance";
 
@@ -406,9 +379,6 @@ const PROJECTS_VIEWS: ProjectsView[] = [
 ];
 
 export function Projects() {
-  // URL-driven (`?view=…`). The sidebar's Project Management group has
-  // one entry per view, so the page itself doesn't render a tab strip
-  // — view selection lives in the sidebar.
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -417,37 +387,15 @@ export function Projects() {
     "list",
     enumPreference(PROJECTS_VIEWS),
   );
-  // Finances sub-page is DIRECTOR-level only (Super Admin, Sales Director,
-  // Finance Manager, owner). Backed by the finance-viewer flag on /auth/me;
-  // ANDed with the existing projects.finances page-access below.
   const canProjectFinance = !!user?.project_finance_viewer;
 
-  // Per-view access (mig 073 — sub-page split). Each top-level view
-  // gates on its own `projects.<view>` access level. The PageGuard at
-  // the route already filtered users with `projects = none`; this
-  // narrower check decides which views are reachable.
-  // Levels are AccessLevel (none/view/edit/full or legacy partial) — let TS
-  // infer so position-matrix values (view/edit) are accepted, not just the old
-  // role-matrix trio.
   const access = {
     list: usePageAccess("projects.list"),
     calendar: usePageAccess("projects.calendar"),
-    // Defect List rides the project-list access: the same cohort that sees the
-    // project list sees the cross-project defect feed (only Calendar-only users
-    // are deliberately out). The action buttons on it carry their own gate.
     defects: usePageAccess("projects.list"),
     finances: usePageAccess("projects.finances"),
     maintenance: usePageAccess("projects.maintenance"),
   };
-  // Maintenance is a FULL-or-none page by its own catalogue contract
-  // (`projects.maintenance` in pageAccess.ts: supportsPartial false,
-  // partialMeaning "(not used; full or none)"), and Sidebar.tsx states the same
-  // rule on the nav entry with `pageAccessFull`. The generic `!== "none"` test
-  // below admits view/edit — levels this page does not support — and children
-  // INHERIT the parent key when they have no explicit row, so every
-  // `projects = view` user resolved to `maintenance = view`: no nav entry, yet
-  // the hub card below still offered the page. Match the nav's level so the two
-  // gates agree.
   const canProjectMaintenance = access.maintenance === "full";
   const allowed: ProjectsView[] = PROJECTS_VIEWS.filter(
     (v) =>
@@ -460,11 +408,6 @@ export function Projects() {
   const firstAllowed: ProjectsView | null = allowed[0] ?? null;
 
   const urlView = params.get("view") as ProjectsView | null;
-  // Distinguish "explicitly requested" from "fell through to stored".
-  // When the URL explicitly names a view the user can't access, we
-  // show <Forbidden> so they see why — silent fallback to a different
-  // view looked like "no response from the web". When there's no
-  // explicit URL view, pick the first accessible one.
   const explicit: ProjectsView | null =
     urlView === "hub"
       ? "hub"
@@ -482,8 +425,6 @@ export function Projects() {
   const requestedDenied =
     explicit !== null && explicit !== "hub" && !allowed.includes(explicit);
 
-  // Persist whatever view was rendered so a bare `/projects` lands
-  // back where the user left off — but only if it was accessible.
   useEffect(() => {
     if (view && view !== "hub" && !requestedDenied && view !== storedView)
       setStoredView(view);
@@ -554,17 +495,8 @@ export function Projects() {
 }
 
 const PROJECTS_LIST_FILTER_KEYS = [
-  // `stage` filter retired — the team now tracks progress via tasklist
-  // sections (Pre-event / Setup / Live / Teardown). The legacy stage
-  // enum stays in the DB and detail view for the next-stage button.
-  // Kept in the URL keys list so any old bookmark with ?stage=… still
-  // parses without throwing.
   "stage",
-  // `phase=setup|dismantle` — field/sales cohort's date-derived Setup/Dismantle
-  // filter (the `stage` enum is unmaintained). See ProjectsListView.
   "phase",
-  // `mine=all` — field/sales cohort's "My events" toggle OFF state (absent =
-  // ON, so the slim bar defaults to their own events). See ProjectsListView.
   "mine",
   "section",
   // `task` — outstanding-task filter (owner 2026-08-05): show only events where
@@ -621,8 +553,6 @@ function ProjectsListView() {
   const monthList = useMemo(() => csvParam(month), [month]);
   const statusList = useMemo(() => csvParam(status), [status]);
   const organizerList = useMemo(() => csvParam(organizer), [organizer]);
-  // Cohort "Setup"/"Dismantle" pick a date-derived event PHASE (not the stale
-  // `stage` enum) — see the field/sales slim bar below + backend f.phase.
   const phase = params.get("phase") || "";
   const page = Math.max(1, parseInt(params.get("page") || "1", 10) || 1);
   function patchParams(patch: Record<string, string>) {
@@ -644,16 +574,11 @@ function ProjectsListView() {
   const setPage = (n: number) => patchParams({ page: String(n) });
 
   const [perPage, setPerPage] = useIdentityPreference("pp:projects", 50, pageSizePreference([10, 25, 50, 100, 200]));
-  // List render mode — cards (P2 design) vs the full data table. Default cards.
   const [listMode, setListMode] = useIdentityPreference("projects:listMode", "cards", enumPreference(["cards", "table", "reminder"] as const));
-  // The Reminder view toggle was removed; snap any stored "reminder" preference
-  // back to cards so nobody lands on the now-unreachable view.
   useEffect(() => {
     if (listMode === "reminder") setListMode("cards");
   }, [listMode, setListMode]);
   const [showCreate, setShowCreate] = useState(false);
-  // Deep-link: the global "+" quick-action FAB opens the New Project modal via
-  // /projects?new=1. Consume the flag once and strip it so refresh/back don't reopen.
   useEffect(() => {
     if (params.get("new") === "1") {
       // Only BD / owner / weisiang may open the create modal (owner 2026-07-24);
@@ -666,14 +591,7 @@ function ProjectsListView() {
   }, [params, setParams, user]);
   const [showImport, setShowImport] = useState(false);
   const [showArchived, setShowArchived] = useIdentityPreference("projects:showArchived", false, booleanPreference);
-  // Hide projects whose every tasklist section is complete — same
-  // predicate as the section=__done filter, just inverted. Disabled
-  // automatically when the user picks the Completed pill so the
-  // controls don't fight each other.
   const [hideCompleted, setHideCompleted] = useIdentityPreference("projects:hideCompleted", false, booleanPreference);
-  // "My pending tasks" -- when on, the list shows only projects that have
-  // a pending checklist item belonging to the caller's role (mapped to a
-  // chip label / document title server-side). Export is unaffected.
   const [myPending, setMyPending] = useIdentityPreference("projects:myPending", false, booleanPreference);
 
   // Owner 2026-07-21: field/sales roles (Sales Exec/Mgr except Sales Director,
@@ -687,34 +605,22 @@ function ProjectsListView() {
     !!user?.permissions?.includes("*") ||
     /\b(super admin|sales director|finance manager)\b/i.test(_pos);
   const _isDriver = /\bdriver\b/i.test(_pos);
-  // Helpers/storekeepers are FORCE-scoped server-side, drivers are not (they opt
-  // in). The predicate — and why it moved here — is in auth/crewScope.ts.
   const _isCrew = _isDriver || isCrewScopedUser(user);
   const _isSalesExec = (/sales/i.test(_dept) || /^sales/i.test(_pos)) && !_isDirector;
   const restrictedCohort = _isCrew || _isSalesExec;
   const cohortTickOnly = can("projects.checklist.tick") && !can("projects.write");
-  // "My events" is a REAL toggle only for drivers (server doesn't force their
-  // scope and their assigned_to_me arm actually filters). Helpers/storekeepers
-  // are force-scoped and sales are row-scoped server-side, so for them the
-  // button is cosmetic (always on) — sending assigned_to_me for a sales user
-  // would filter to crew arms and wrongly return zero rows. OFF state is
-  // encoded as ?mine=all (absent = default on).
   const canToggleMyEvents = _isDriver && cohortTickOnly;
   const crewSeeAll = params.get("mine") === "all";
   const myEventsActive = restrictedCohort && (canToggleMyEvents ? !crewSeeAll : true);
   const sendAssignedToMe = canToggleMyEvents && !crewSeeAll;
-  // Pill styling copied from <FilterPills/> so the cohort bar reads identically.
   const cohortPillCls = (active: boolean) =>
     "whitespace-nowrap rounded px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-all duration-150 " +
     (active ? "bg-primary text-white shadow-sm" : "text-ink-secondary hover:bg-primary-soft hover:text-primary");
 
-  // ?focus=ID — Overview inbox deep-links straight to the detail page.
   useFocusFromUrl((id) => navigate(`/projects/${id}`, { replace: true }));
 
   const { sort, sortParams, handleSortChange } = useServerSort(() => setPage(1));
 
-  // Skip exclude_done when the user explicitly picked the Completed
-  // section pill — otherwise the page would show zero rows.
   const excludeDoneParam =
     hideCompleted && !sectionList.includes("__done") ? 1 : undefined;
 
@@ -722,9 +628,6 @@ function ProjectsListView() {
     (signal) =>
       api.get(
         `/api/projects${buildQuery({
-          // Cohort uses ONLY stage + assigned_to_me + search; the section /
-          // brand / year / month / status / my_pending filters are hidden from
-          // them, so force those undefined to keep their list unfiltered.
           brand: restrictedCohort ? undefined : brand || undefined,
           organizer: restrictedCohort ? undefined : organizer || undefined,
           year: restrictedCohort ? undefined : year || undefined,
@@ -738,9 +641,6 @@ function ProjectsListView() {
           exclude_done: restrictedCohort ? undefined : excludeDoneParam,
           my_pending: restrictedCohort ? undefined : myPending ? 1 : undefined,
           search,
-          // Status is filtered SERVER-side (the list endpoint's `status`
-          // param), so the list stays paginated (per_page=perPage) even while
-          // a status pill is active — no more fetch-all page-1 workaround.
           status: restrictedCohort ? undefined : status || undefined,
           page,
           per_page: perPage,
@@ -750,18 +650,12 @@ function ProjectsListView() {
         { signal },
       ),
     [brand, organizer, year, month, from, to, section, taskPending, status, phase, restrictedCohort, sendAssignedToMe, excludeDoneParam, myPending, search, page, perPage, showArchived, sort?.key, sort?.dir],
-    // Paginated + filter-switched list: keep the current rows on screen while
-    // the next page/filter loads instead of flashing an empty table.
     { keepPreviousData: true }
   );
-  // Peter 2026-10-14: opening an event and coming back landed the list at the
-  // TOP — <main> is the app's scroll container and this page remounts on
-  // return. Save its scrollTop when a row opens; restore once rows render.
   const openProject = (id: number) => {
     try {
       sessionStorage.setItem("projects:listScroll", String(document.querySelector("main")?.scrollTop ?? 0));
     } catch {}
-    /* And where this project's Back goes: this list, its filters and page with it. */
     rememberBackTo(id, `${window.location.pathname}${window.location.search}`);
     navigate(`/projects/${id}`);
   };
@@ -786,12 +680,7 @@ function ProjectsListView() {
     hasError: Boolean(list.error),
   });
 
-  // Status (Confirmed / Pending / Cancelled) is now filtered server-side via
-  // the list endpoint's `status` param, so the rows the endpoint returns are
-  // already the matching, paginated set — no client-side filtering needed.
   const rows = list.data?.data ?? null;
-  // Non-null view of rows for the card list + right rail (rows itself stays
-  // nullable for the DataTable's loading state).
   const cardRows = searchTransition.resultsAreStale ? [] : rows ?? [];
 
   // Export = the FULL filtered project list (ALL pages), IGNORING the "My
@@ -808,8 +697,6 @@ function ProjectsListView() {
       for (let pg = 1; pg <= 500; pg++) {
         const res = await api.get<Paginated<ProjectRow>>(
           `/api/projects${buildQuery({
-            // Mirror the on-screen filter set, incl. the cohort's slim bar
-            // (stage + assigned_to_me), so the export matches what they see.
             brand: restrictedCohort ? undefined : brand || undefined,
             organizer: restrictedCohort ? undefined : organizer || undefined,
             year: restrictedCohort ? undefined : year || undefined,
@@ -913,25 +800,18 @@ function ProjectsListView() {
     live_count: number;
     overdue_tasks: number;
   }>("/api/projects/summary", () => api.get("/api/projects/summary"));
-  // A failed or not-yet-loaded summary read must NOT render "0" — a zero is a
-  // claim the data doesn't support. Mirror Overview: unknown read → an em dash.
   const summaryUnknown = !!summary.error || !summary.data;
 
   const brands = useQuery<{ data: string[] }>("/api/projects/brands", () => api.get("/api/projects/brands"));
-  // Organizer pool (picker-backed, same source as the New Project organizer
-  // picker + the Analytics filter) — drives the toolbar's Organizer dropdown.
   const organizers = useQuery<{ data: { id: number; name: string }[] }>("/api/projects/organizers", () =>
     api.get("/api/projects/organizers")
   );
   const eventTypes = useQuery<{ data: EventType[] }>("/api/projects/event-types", () =>
     api.get("/api/projects/event-types")
   );
-  // Distinct active section names — drives the Section filter dropdown.
-  // Empty until any project has tasklist sections defined.
   const sectionsList = useQuery<{ data: string[] }>("/api/projects/sections-distinct", () =>
     api.get("/api/projects/sections-distinct")
   );
-  // Canonical task titles (+ their section) for the outstanding-task filter.
   const taskTitles = useQuery<{ data: { title: string; section: string | null }[] }>(
     "/api/projects/task-titles-distinct",
     () => api.get("/api/projects/task-titles-distinct"),
@@ -977,14 +857,10 @@ function ProjectsListView() {
     }
     return groups;
   }, [sectionsList.data, taskTitles.data, sectionCounts]);
-  // The combined selection, each URL param mapped back onto its prefixed value.
   const taskFilterSelected = useMemo(
     () => [...sectionList.map((s) => `sec:${s}`), ...taskPendingList.map((t) => `task:${t}`)],
     [sectionList, taskPendingList],
   );
-  // Split the ticked values back into the two params and patch BOTH at once —
-  // patching section and task in two calls would clobber (each rebuilds the URL
-  // from the same stale snapshot).
   const setTaskFilter = (values: string[]) => {
     const secs: string[] = [];
     const tasks: string[] = [];
@@ -997,9 +873,6 @@ function ProjectsListView() {
 
   const columns: Column<ProjectRow>[] = [
     {
-      // Hidden by default — the team identifies projects by name, not the
-      // long hyphenated code. Still in the column chooser for the rare
-      // admin who needs to grep, and still exported in CSV via getValue.
       key: "code",
       label: "Code",
       defaultHidden: true,
@@ -1045,10 +918,6 @@ function ProjectsListView() {
     {
       key: "stage",
       label: "Stage",
-      // Stage = the project's current template section (mig 050). The
-      // pill matches the visual language of the filter pill row above
-      // the table + StageProgressRow on the detail page. The legacy
-      // draft / setup / dismantle / completed enum is retired here.
       render: (r) => {
         const total = r.sections_total ?? 0;
         const active = r.active_section_name ?? null;
@@ -1115,8 +984,6 @@ function ProjectsListView() {
     {
       key: "pic_name",
       label: "PIC",
-      // Falls back to the creator when no PIC is assigned — matches the
-      // scope rules (COALESCE(pic_id, created_by)) used by the ACL.
       render: (r) => (
         <span className="text-[11px]">
           {r.pic_name || (
@@ -1179,12 +1046,6 @@ function ProjectsListView() {
       ),
       getValue: (r) => r.total_sales,
     },
-    // ── Ledger-derived finance columns (opt-in via the column chooser) ──
-    // Computed per project from project_finance_lines by the list endpoint
-    // (SUM(amount) per category, single grouped join — no N+1). Amounts are
-    // whole RM integers. GP / NP / percent are derived here from the raw
-    // sums so the list matches the Finance tab (/finance/by-project). All
-    // defaultHidden so the default view is unchanged; null = finance-hidden.
     {
       key: "revenue",
       label: "Revenue (RM)",
@@ -1276,7 +1137,6 @@ function ProjectsListView() {
       align: "right",
       defaultHidden: true,
       render: (r) => {
-        // Guard divide-by-zero: no revenue means GP% is undefined, not 0.
         if (r.fin_revenue == null || r.fin_cogs == null || r.fin_revenue <= 0) {
           return <span className="font-mono text-[11px]">—</span>;
         }
@@ -1311,7 +1171,6 @@ function ProjectsListView() {
       align: "right",
       defaultHidden: true,
       render: (r) => {
-        // NP / Revenue. Same divide-by-zero guard as GP%.
         if (r.fin_revenue == null || r.fin_total_cost == null || r.fin_revenue <= 0) {
           return <span className="font-mono text-[11px]">—</span>;
         }
@@ -1328,8 +1187,6 @@ function ProjectsListView() {
       label: "Venue size",
       align: "right",
       defaultHidden: true,
-      // Depends on feat/pms-venue-size-field exposing `size` on the venue /
-      // project payload. Renders "—" until that lands.
       render: (r) => (
         <span className="text-[11px]">
           {r.venue_size != null ? `${r.venue_size} sqm` : "—"}
@@ -1365,8 +1222,6 @@ function ProjectsListView() {
         }
       />
 
-      {/* Reminder mode owns its own filters, so the project-list stat cards and
-          filter toolbar are hidden while it is active. */}
       {listMode !== "reminder" && (
       <>
       <DashboardGrid cols={3}>
@@ -1557,10 +1412,7 @@ function ProjectsListView() {
       </>
       )}
 
-      {/* View toggle — cards (P2 design) vs the full data table. */}
       <div className="mb-3 flex items-center justify-end gap-2">
-        {/* Export is part of the Table toolbar; add it here so Cards view can
-            export too (same filtered rows + columns as the table). */}
         {listMode === "cards" && (
           <button
             onClick={() => void exportProjects()}
@@ -1667,10 +1519,6 @@ function ProjectsListView() {
                       <SoloSafeName p={r} />
                     </div>
                     {meta && <div className="mt-0.5 truncate text-[11.5px] text-ink-muted">{meta}</div>}
-                    {/* Crew cards outside My Pending mode: the caller's own due
-                        pending tasks below the meta line (my_pending_titles is
-                        attached server-side; promoted to the tag row above when
-                        the My Pending filter is on). */}
                     {!myPending && !!(r as any).my_pending_titles && (
                       <div className="mt-1.5 flex flex-wrap gap-1.5">
                         {String((r as any).my_pending_titles).split("|").map((t: string) => (
@@ -1837,7 +1685,6 @@ function ProjectsFinancesView() {
   );
 }
 
-// ── Finance List view (per-project aggregate) ────────────────
 
 const FINANCE_LIST_FILTER_KEYS = [
   "date_from",
@@ -1869,21 +1716,11 @@ function FilterField({
 
 
 
-// A single full-width message row (loading / error / empty) spanning the drill
-// table, so nested states never break the column grid.
-
-// Layer-2 body: the months behind one expanded dimension value, rendered as
-// sibling <tr>s so their P&L columns line up under the group's. Each month
-// expands in turn to its projects (Layer 3).
-
-// Layer-3 body: the projects behind one expanded month (or, for the By-Month
-// card, one expanded month value). Each project row navigates to its detail
-// page (Layer 4). Guarded on value+month so a resolving query never flashes
-// the wrong slice under this row.
 
 
 
-// ── Progress bar ─────────────────────────────────────────────
+
+
 
 function ProgressBar({ pct }: { pct: number }) {
   const clamped = Math.max(0, Math.min(100, pct));
@@ -1903,7 +1740,6 @@ function ProgressBar({ pct }: { pct: number }) {
   );
 }
 
-// ── Detail Panel ─────────────────────────────────────────────
 
 function ProjectDetailContent({
   id,
@@ -1920,8 +1756,6 @@ function ProjectDetailContent({
 }) {
   const { can, user } = useAuth();
   const dialog = useDialog();
-  /* Declared above the loading / error early returns so the hook count is
-     stable; the Print preview it drives renders down in the header row. */
   const projectPrint = usePrintPreview(async () => {
     try {
       await api.openHtml(`/api/projects-print/${id}`);
@@ -1930,13 +1764,9 @@ function ProjectDetailContent({
     }
   });
   const detail = useQuery<ProjectDetail>("/api/projects/:", () => api.get(`/api/projects/${id}`), [id]);
-  // The pasted sales report, read once here and shared by the Sales section
-  // (its block) and Sales Attending (the red number beside each name).
   const salesGate = useCanViewProjectSales();
   const billsQ = useProjectSalesBills(id, salesGate.canViewSales);
   const notOpenedByRep = notOpenedByRepId(billsQ.data?.persons ?? []);
-  // Users list — fetched once per open panel, reused for owner pickers
-  // in the logistics section, checklist add form, and reassign dropdowns.
   const usersQ = useQuery<{ id: number; name: string }[]>("/api/users#unwrapped",
     () => api.get<any>("/api/users").then((r: any) => r.users ?? r.data ?? r ?? []),
     []
@@ -1970,10 +1800,6 @@ function ProjectDetailContent({
   const p = detail.data?.project;
   const detailName = p ? shownProjectName({ ...p, event_type_slug: eventTypes.find((t) => t.id === p.event_type_id)?.slug ?? null }, canSeeSoloOrganizer(user)) : null; // solo organizer masked outside BD/Owner/weisiang (owner 2026-09-18)
 
-  // PIC picker source — ALL Sales-department members, regardless of
-  // brand (owner: Option A). The backend ?department= filter matches the
-  // dept name case-insensitively/by-substring (prod = "Sales Department"),
-  // and the PIC-save brand gate is brand-relaxed for Sales-dept members.
   const picUsersQ = useQuery<{ users: Array<{ id: number; name: string | null; email: string; phone?: string | null }> }>("/api/users?department=:",
     () => api.get(`/api/users?department=${encodeURIComponent("Sales")}`),
     []
@@ -1984,21 +1810,9 @@ function ProjectDetailContent({
   const trips = detail.data?.trips ?? [];
   const attachments = detail.data?.attachments ?? [];
 
-  // PIC-only panels (Payment, Logistics, Stock Transfers, Finance Ledger) are
-  // hidden when the viewer is a scoped rep. The backend returns
-  // _access.level = "limited" in that case and also omits the underlying finance
-  // data, so there's nothing to show anyway.
-  //
-  // ALL of these now come from the ONE fail-closed reader (auth/projectAccess).
-  // They used to read the raw payload with `!_access || …` and `pms ? … : true`,
-  // which made a MISSING permission payload mean FULL ACCESS. See the header of
-  // projectAccess.ts for what each fallback granted.
   const access = readProjectAccess(detail.data);
   const accessUnresolved = projectAccessUnresolved(detail.data);
   const fullAccess = access.full;
-  // Both terms kept (it was `fullAccess && pms.canEdit`) so this stays exactly
-  // as narrow as before for a RESOLVED payload; only the unresolved case moves,
-  // and it moves from "true" to "false".
   const canEditDetail = fullAccess && access.canEdit;
   // Owner 2026-07-18: PIC assignment AND Sales-Attending assignment are open to
   // EVERYONE holding projects.write EXCEPT the Sales Director. This SUPERSEDES
@@ -2041,9 +1855,6 @@ function ProjectDetailContent({
   }
 
   async function setItemStatus(item: ChecklistItem, status: ChecklistStatus) {
-    // 07-15: silent no-op, never a permission toast. 08-17 (0488): the key
-    // gates only non-na/pending. 08-21 (0489): keyless N/A is scoped to the
-    // BADGED function — write does not extend it; projects.manage may.
     if (!can("projects.write") && !can("projects.checklist.tick")) return;
     if (item.required_perm && !holdsChecklistApproval(user?.permissions, item.required_perm)) {
       if (status !== "na" && status !== "pending") return;
@@ -2095,8 +1906,6 @@ function ProjectDetailContent({
       actions={
         p ? (
           <div className="flex flex-wrap items-center gap-1.5">
-            {/* Both items POST /:id/archive|/unarchive = projects.manage. Their
-                `disabled` is STATE, never permission; the button carries the gate. */}
             {can("projects.manage") && (
             <div className="relative">
               <HeaderButton variant="ghost" onClick={() => setArchiveMenuOpen((o) => !o)}>
@@ -2104,7 +1913,6 @@ function ProjectDetailContent({
               </HeaderButton>
               {archiveMenuOpen && (
                 <>
-                  {/* click-outside backdrop */}
                   <div className="fixed inset-0 z-30" onClick={() => setArchiveMenuOpen(false)} />
                   <div className="absolute right-0 z-40 mt-1 min-w-[150px] rounded-md border border-border bg-surface py-1 text-[12px] shadow-lg">
                     <button
@@ -2152,9 +1960,6 @@ function ProjectDetailContent({
             <HeaderButton variant="ghost" onClick={projectPrint.openPreview}>
               <Printer size={12} /> Print
             </HeaderButton>
-            {/* Same Print preview the rest of the app opens. A project prints
-                from a SERVER-rendered HTML view, so there is no PDF file to
-                download here — Print hands over to that view. */}
             <PrintPreviewModal
               open={projectPrint.open}
               onClose={projectPrint.close}
@@ -2204,13 +2009,6 @@ function ProjectDetailContent({
       )}
       {p && (
         <>
-          {/* The project loaded but carried NO permission payload. Every
-              section gate above therefore reads false and most of this page is
-              missing. That is the safe answer, but silently hiding half a page
-              is the outage nobody reports — people stop using the feature and
-              never file a ticket. Say which of the two it is: "we couldn't load
-              your permissions" sends an operator to IT, "you don't have
-              permission" sends them to their manager. */}
           {accessUnresolved && (
             <ProjectBanner
               message="We couldn't load your permissions for this project, so some sections are hidden. This is a system problem, not a restriction on your account — please reload, and tell IT if it persists."
@@ -2218,12 +2016,8 @@ function ProjectDetailContent({
             />
           )}
 
-          {/* Banner — optional per-project warning */}
           {p.banner_message && <ProjectBanner message={p.banner_message} tone={p.banner_tone} />}
 
-          {/* ── Stage progress (directly under page title) ──────────
-             Per-section pills with completion tick + lead time chip.
-             Print button lives in the title actions now. */}
           <div className="mb-4 border-b border-border-subtle pb-3">
             <StatusDot variant={stageVariant(p.stage)} label={STAGE_LABEL[p.stage]} />
             <div className="mt-3">
@@ -2235,11 +2029,6 @@ function ProjectDetailContent({
             </div>
           </div>
 
-          {/* ── Project spec strip ──────────────────────────────────
-             Editorial titleblock-style metadata grid. Sits under the
-             stage row. Each cell hosts an InlineEdit or read-only
-             field — no PanelSection chrome (the team called the old
-             card grid "weird / too heavy"). */}
           <ProjectSpecStrip
             project={p}
             brands={brands}
@@ -2250,13 +2039,7 @@ function ProjectDetailContent({
             onFinanceChange={() => detail.reload()}
             toast={toast}
           />
-          {/* Payment status now lives in the checklist as the "Rental
-              Payment" pill row (PAYMENT section) — see mig 090. The old
-              standalone Payment panel was removed at the boss's request. */}
 
-          {/* Operational area — Chat on the side; Sales / Tasklist /
-              Logistics / Finance Ledger stacked in Main (Finance at the
-              bottom; Logistics directly above it per the team's request). */}
           <DefectActionsCtx.Provider value={defectActionsValue}>
           <DetailGrid>
             <DetailMain>
@@ -2306,16 +2089,6 @@ function ProjectDetailContent({
                   <PhasePhotosSection projectId={id} />
                 </>
               )}
-              {/* Finance Ledger + Financial Snapshot: DIRECTOR-level only.
-                  The backend NULLs finance data for non-directors, so this
-                  gate keeps a sales PIC from seeing an empty finance shell.
-
-                  This was `pms ? pms.canFinancial : fullAccess`. The fallback
-                  was not just fail-open, it was fail-open to the WRONG COHORT:
-                  `fullAccess` is the ROW tier (PIC on this project), which every
-                  project's own PIC satisfies, while canFinancial is the SECTION
-                  tier (isFinanceViewer). An unresolved payload therefore opened
-                  the Finance Ledger to every PIC. It now closes. */}
               {access.canFinancial && (
                 <FinanceLedgerSection
                   projectId={id}
@@ -2366,13 +2139,6 @@ function ProjectDetailContent({
   );
 }
 
-// ── ProjectTeamSection ────────────────────────────────────────────
-// Lives in the right sidebar above Chat. Carries the project's PIC
-// (one User, the project owner) plus the list of sales reps who'll
-// physically attend the event (project_sales_attendees, mig 087).
-// Both pickers list ALL Sales-department members regardless of brand
-// (owner: Option A): PIC = Sales-dept users (GET /api/users?department=Sales),
-// attendees = active sales_person reps (GET /api/projects/sales-rep-options).
 
 interface SalesRepBrief {
   id: number;
@@ -2383,7 +2149,6 @@ interface SalesRepBrief {
   brands_csv?: string | null;
 }
 
-/** An active staff member who is not on the Sales Team roster yet. */
 interface StaffBrief {
   user_id: number;
   name: string | null;
@@ -2406,7 +2171,6 @@ function ProjectTeamSection({
   projectId: number;
   project: ProjectDetail["project"];
   attendees: SalesAttendee[];
-  /** sen still not opened per rep, from the pasted sales report — red beside the name. */
   notOpenedByRep: Map<number, number>;
   picUsers: Array<{ id: number; name: string | null; email: string }>;
   picUsersLoading: boolean;
@@ -2421,9 +2185,6 @@ function ProjectTeamSection({
   toast: ReturnType<typeof useToast>;
 }) {
   const dialog = useDialog();
-  // Sales-attending picker — gated on projects.write, role-filtered to
-  // sales_person. Brand-relaxed (owner: Option A): lists ALL active
-  // Sales Persons regardless of brand. See GET /api/projects/sales-rep-options.
   const repsQ = useQuery<{ data: SalesRepBrief[]; others?: StaffBrief[] }>("/api/projects/sales-rep-options",
     () => api.get(`/api/projects/sales-rep-options`),
     []
@@ -2453,11 +2214,6 @@ function ProjectTeamSection({
      a search), so Lim / Nancy / Syasya can still be added (2026-10-19). */
   const [showOthers, setShowOthers] = useState(false);
   const filteredOthers = showOthers || search.trim() ? others.filter((s) => matches(s.name, s.email)) : [];
-  // Peter 2026-10-21: the picker was two separate A→Z blocks (reps, then the
-  // 2026-10-19 "not in Sales Team" staff), so the combined list RESTARTED the
-  // alphabet at the divider and read as un-sorted ("messy, not alphabet").
-  // Merge both into ONE continuous A→Z list, by the shown name; non-roster
-  // staff keep a small inline tag so "adding puts them in the team" stays clear.
   type PickItem =
     | { kind: "rep"; id: number; name: string; code: string | null; phone: string | null }
     | { kind: "staff"; id: number; name: string; email: string };
@@ -2532,7 +2288,6 @@ function ProjectTeamSection({
 
   return (
     <PanelSection title="Project Team">
-      {/* PIC row */}
       <div>
         <div className="mb-1 flex items-center gap-1.5 text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
           <UserCircle2 size={11} /> PIC
@@ -2585,7 +2340,6 @@ function ProjectTeamSection({
         )}
       </div>
 
-      {/* Sales attending */}
       <div className="border-t border-border pt-2">
         <div className="mb-1.5 flex items-center gap-1.5 text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
           <Users size={11} /> Sales Attending
@@ -2717,17 +2471,7 @@ function ProjectTeamSection({
   );
 }
 
-// ── ProjectSpecStrip ──────────────────────────────────────────────
-// Editorial titleblock-style metadata grid. Read-only by default;
-// click "Edit" in the header to reveal inputs/selects. The same
-// editor classes are used across InlineSpecText / Date / Select /
-// VenuePicker / OrganizerPicker so dropdowns look consistent.
 
-/** Read the total m² off the project's uploaded Display Floor Plan (owner
- *  2026-08-04). The server does the reading; this is the manual trigger +
- *  result feedback. `overwrite=1` because pressing the button IS the operator
- *  asking to replace whatever is in the box. Shared with the automatic run
- *  that fires after a floorplan upload (see detectFloorplanSize). */
 function DetectSizeButton({
   projectId,
   onDetected,
@@ -2770,8 +2514,6 @@ function DetectSizeButton({
   );
 }
 
-/** POST the detect-size call. Shared by the manual button and the automatic
- *  post-upload run so both behave identically. */
 async function detectFloorplanSize(projectId: number, overwrite = false) {
   return api.post<{
     detected_sqm: number | null;
@@ -2799,16 +2541,13 @@ function ProjectSpecStrip({
   eventTypes: EventType[];
   fullAccess: boolean;
   patch: (body: Record<string, any>) => Promise<void>;
-  /** Finance ledger lines — the quick Rental box reads/writes the
-   *  `rental` cost line here so it stays in sync with the Financial
-   *  Snapshot, Total Cost, Net Profit, and the Rental KPI/column. */
   financeLines: FinanceLine[];
   onFinanceChange: () => void;
   toast: ReturnType<typeof useToast>;
 }) {
   const [editing, setEditing] = useState(false);
   const slug = eventTypes.find((t) => t.id === p.event_type_id)?.slug ?? null;
-  const soloMasked = isSoloMasked({ ...p, event_type_slug: slug }, useCanSeeSoloOrganizer()); // Name + Organizer read-only and masked
+  const soloMasked = isSoloMasked({ ...p, event_type_slug: slug }, useCanSeeSoloOrganizer());
   const suggested = composeDefaultProjectName({
     state: p.state,
     brand: p.brand,
@@ -2818,8 +2557,6 @@ function ProjectSpecStrip({
   });
   const hasAutoSuggestion = suggested && suggested !== p.name;
 
-  // Helper for resolving a foreign-key label so read mode shows the
-  // human-readable name instead of an opaque id.
   const eventTypeLabel = p.event_type_id
     ? (eventTypes.find((t) => t.id === p.event_type_id)?.name ?? "—")
     : "—";
@@ -2859,8 +2596,6 @@ function ProjectSpecStrip({
       <div
         className={cn(
           "grid grid-cols-1 divide-x divide-y divide-border-subtle border-y border-border-subtle md:grid-cols-2",
-          // View mode = the 5 fields the owner reads at a glance, one row.
-          // Edit mode = a 4-col grid for every field.
           editing ? "lg:grid-cols-4" : "lg:grid-cols-5",
         )}
       >
@@ -2877,7 +2612,6 @@ function ProjectSpecStrip({
               onChange={(e) => {
                 const newBrand = e.target.value || null;
                 const updates: Record<string, any> = { brand: newBrand };
-                // Keep the project title's [brand] tag in sync with the Brand.
                 if (p.name && /\[[^\]]*\]/.test(p.name)) {
                   updates.name = newBrand
                     ? p.name.replace(/\[[^\]]*\]/, `[${newBrand}]`)
@@ -2949,8 +2683,6 @@ function ProjectSpecStrip({
               onChange={async (iso) => {
                 const v = iso || null;
                 if (v && p.end_date && p.end_date < v) {
-                  // New start is past the current end — don't block; shift the
-                  // whole event forward, keeping its length (owner reschedule).
                   const base = p.start_date ?? p.end_date;
                   const len = Math.max(0, Math.round((Date.parse(p.end_date + "T00:00:00Z") - Date.parse(base + "T00:00:00Z")) / 86400000));
                   const ne = new Date(v + "T00:00:00Z");
@@ -2973,8 +2705,6 @@ function ProjectSpecStrip({
               onChange={async (iso) => {
                 const v = iso || null;
                 if (v && p.start_date && v < p.start_date) {
-                  // New end is before the current start — don't block; shift the
-                  // whole event earlier, keeping its length (owner reschedule).
                   const base = p.end_date ?? p.start_date;
                   const len = Math.max(0, Math.round((Date.parse(base + "T00:00:00Z") - Date.parse(p.start_date + "T00:00:00Z")) / 86400000));
                   const ns = new Date(v + "T00:00:00Z");
@@ -3028,10 +2758,6 @@ function ProjectSpecStrip({
               placeholder="—"
               onChange={(v) => patch({ size_sqm: v ? parseFloat(v) : null })}
             />
-            {/* Read the m² off the uploaded Display Floor Plan (owner
-                2026-08-04). Runs automatically right after a floorplan upload;
-                this button re-runs it on demand (and overwrites, since the
-                operator asked for it explicitly). */}
             <DetectSizeButton
               projectId={p.id}
               onDetected={onFinanceChange}
@@ -3148,9 +2874,6 @@ const DefectActionsCtx = createContext<{
   reload: () => void;
 } | null>(null);
 
-// Defect action button + badge colours per tone (shared by the fresh-reviewer
-// and escalated-purchaser rows and the timeline badges). Keyed to defectReviewer
-// tones so the three defect surfaces stay in step.
 const DEFECT_BTN_TONE: Record<DefectActionTone, { active: string; idle: string }> = {
   done: {
     active: "border-green-600 bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300",
@@ -3171,7 +2894,6 @@ const DEFECT_BADGE_TONE: Record<DefectActionTone | "fresh", { dot: string; pill:
   progress: { dot: "bg-amber-600", pill: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300" },
   fresh: { dot: "bg-amber-500", pill: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300" },
 };
-/** The badge tone a stored status renders in. */
 function defectBadgeTone(status: string): DefectActionTone | "fresh" {
   const stage = defectStage(status);
   if (stage === "resolved") return "done";
@@ -3191,8 +2913,6 @@ function TaskAttachmentRow({
   attachment: TaskAttachment;
   canManage?: boolean;
   showRemark?: boolean;
-  /** Title of the checklist item this file belongs to — gates the defect
-   *  action timeline to Defect List rows. */
   itemTitle?: string;
   /** Role badge of the checklist item — a tick-only role may remove files from
    *  a task badged for ITS OWN function (owner 2026-09-02). */
@@ -3216,10 +2936,6 @@ function TaskAttachmentRow({
   const fileActions = isDefectFile && defectCtx
     ? defectCtx.actions.filter((x) => x.attachment_id === attachment.id)
     : [];
-  // Latest timeline entry drives the five-state machine (defectStage): a fresh
-  // upload awaits the reviewer (Done Clean / Exchange / Service); an escalated or
-  // in-progress one awaits the purchaser (In Progress / Done); done/done_clean is
-  // resolved (no buttons).
   const latestAction = fileActions.length
     ? fileActions.reduce((m, a) => (a.id > m.id ? a : m))
     : null;
@@ -3272,8 +2988,6 @@ function TaskAttachmentRow({
     }
   }
 
-  // Fetch a blob URL for anything we can preview inline (images AND PDFs) so
-  // the same effect handles cleanup + revocation on unmount for both.
   const wantsInlinePreview = isImage || isPdf;
   useEffect(() => {
     if (!wantsInlinePreview) return;
@@ -3293,7 +3007,6 @@ function TaskAttachmentRow({
         }
       })
       .catch(() => {
-        // Silent — falls through to the file-type icon.
       });
     return () => {
       cancelled = true;
@@ -3323,10 +3036,6 @@ function TaskAttachmentRow({
     }
   }
 
-  // Every attachment: medium preview + download. Images open a lightbox on
-  // click (medium inline preview so the content is visible without leaving
-  // the page); other files (PDF/xlsx/docx) open inline in a new tab via the
-  // "View" button. A Download button is always available alongside.
   return (
     <>
       <div className="border-t border-border-subtle px-2 py-1.5 text-[10.5px]">
@@ -3345,9 +3054,6 @@ function TaskAttachmentRow({
             />
           </button>
         ) : isPdf && thumbUrl ? (
-          // Native browser PDF viewer — shows page 1 inline. Wrapped in a
-          // click-through overlay so the PDF's own scrollbars don't swallow
-          // the click; the label + click always opens the full doc in a tab.
           <div
             className="relative block max-w-full overflow-hidden rounded border border-border bg-surface"
             title="Click to open the full document"
@@ -3399,10 +3105,6 @@ function TaskAttachmentRow({
             </button>
           )}
         </div>
-        {/* A saved per-photo remark is ALWAYS visible read-only (owner
-            2026-07-27: Defect List remarks were hidden until the row's Remark
-            toggle was opened, so uploaded captions looked missing). Editing
-            still lives behind the Remark toggle for managers. */}
         {canManage && showRemark ? (
           <textarea
             value={caption}
@@ -3514,9 +3216,6 @@ function TaskAttachmentRow({
   );
 }
 
-// ── Project Stage stepper ─────────────────────────────────────
-// The 10-step tracker; its rule lives in projects/projectStage.ts, shared with
-// Project Overview's event list.
 export function ProjectStageStepper({
   checklist,
   startDate,
@@ -3525,7 +3224,6 @@ export function ProjectStageStepper({
 }: {
   checklist?: ChecklistItem[];
   startDate?: string | null;
-  /** Setup & Dismantle crew JSON — drives the "Setup/Dismantle" step. */
   setupCrew?: string | null;
   setupStartAt?: string | null;
 }) {
@@ -3586,11 +3284,6 @@ export function ProjectStageStepper({
   );
 }
 
-// ── Tasklist (grouped by section) ─────────────────────────────
-// Mig 050: replaces the flat checklist with section headers + grouped
-// rows. Each section is collapsible; admins can add/rename/delete
-// sections inline. Tasks without a section land in an "Uncategorised"
-// bucket pinned at the bottom.
 export function TasklistSections({
   projectId,
   projectName,
@@ -3615,7 +3308,6 @@ export function TasklistSections({
   projectId: number;
   /** The last same-organiser-same-venue event's Expo Map files, while this one has none (owner 2026-11-18). */
   lastEventExpoMap: LastEventExpoMap | null;
-  /** The event's name — what a payment request raised from its CONTRACT row says it is for. */
   projectName: string;
   projectStartDate: string | null;
   projectEndDate: string | null;
@@ -3640,7 +3332,6 @@ export function TasklistSections({
   const [newSectionName, setNewSectionName] = useState("");
   const [editingSectionId, setEditingSectionId] = useState<number | null>(null);
   const [editingSectionName, setEditingSectionName] = useState("");
-  // List vs Gantt view toggle, URL-backed so a Gantt link is shareable.
   const [viewParams, setViewParams] = useSearchParams();
   const view = viewParams.get("tasklist_view") === "gantt" ? "gantt" : "list";
   function setView(next: "list" | "gantt") {
@@ -3649,9 +3340,6 @@ export function TasklistSections({
     else p.set("tasklist_view", next);
     setViewParams(p, { replace: true });
   }
-  // Sort mode for the list view. "section" keeps the section grouping
-  // (default); "due" flattens to a single list ordered by due_date so
-  // the user can scan what's coming up next across sections.
   const sort = viewParams.get("tasklist_sort") === "due" ? "due" : "section";
   function setSort(next: "section" | "due") {
     const p = new URLSearchParams(viewParams);
@@ -3659,9 +3347,6 @@ export function TasklistSections({
     else p.set("tasklist_sort", next);
     setViewParams(p, { replace: true });
   }
-  // Click → list scroll target. The list-view rows carry data-task-id;
-  // the handler sets the focus id, which a useEffect below scrolls into
-  // view + briefly highlights via a CSS animation.
   const [focusTaskId, setFocusTaskId] = useState<number | null>(null);
   useEffect(() => {
     if (focusTaskId == null || view !== "list") return;
@@ -3677,8 +3362,6 @@ export function TasklistSections({
       return () => clearTimeout(t);
     }
   }, [focusTaskId, view]);
-  // Which section the "Add item" form is targeting. Null = no section
-  // (Uncategorised). Keyed off button click below.
   const [addInSectionId, setAddInSectionId] = useState<number | null>(null);
 
   const groups = useMemo(() => {
@@ -3687,8 +3370,6 @@ export function TasklistSections({
       items: ChecklistItem[];
     }> = [];
     if (sort === "due") {
-      // Flat list, ascending by due_date with nulls (no due) at the end.
-      // Same comparator the calendar uses for task ordering.
       const sorted = [...checklist].sort((a, b) => {
         const ad = a.due_date ?? "";
         const bd = b.due_date ?? "";
@@ -3733,13 +3414,8 @@ export function TasklistSections({
       arr.push(a);
       m.set(a.item_id, arr);
     }
-    // Merged-in phase photos carry a NEGATIVE id: they live in a different
-    // table, so delete / defect-action calls (which take an attachment id)
-    // must not fire on them — the render sites gate on `id > 0`.
     const photos = phasePhotosQ.data?.photos ?? [];
     if (photos.length > 0) {
-      // "Setup Image" exists twice (DRIVER + SALES PIC badges); crew photos
-      // belong to the DRIVER one. Dismantle Image is DRIVER-only.
       const pickRow = (re: RegExp) => {
         const rows = checklist.filter((it) => re.test((it.title || "").trim()));
         return rows.find((it) => (it.role_label ?? "").toUpperCase().includes("DRIVER")) ?? rows[0];
@@ -3820,9 +3496,6 @@ export function TasklistSections({
     }
   }
 
-  // Reorder a section by one slot. The order drives the stage-chip
-  // progress bar at the top of the page, so admins reach for this
-  // when they want stages displayed in lifecycle order.
   async function moveSection(sectionId: number, delta: -1 | 1) {
     const idx = sections.findIndex((s) => s.id === sectionId);
     if (idx < 0) return;
@@ -3845,9 +3518,6 @@ export function TasklistSections({
       title={`Tasklist (${checklist.length})`}
       action={
         <div className="flex items-center gap-1.5">
-          {/* List / Gantt toggle. URL-backed (?tasklist_view=) so a
-              Sales Director can deep-link to a single project's
-              Gantt without further navigation. */}
           <div className="inline-flex overflow-hidden rounded-md border border-border bg-bg/40 font-mono text-[9.5px] font-semibold uppercase tracking-wider">
             <button
               type="button"
@@ -3876,9 +3546,6 @@ export function TasklistSections({
               Gantt
             </button>
           </div>
-          {/* Sort: section (default grouping) vs due (flat, by due_date).
-              Only meaningful in list view. URL-backed so a "what's
-              next?" view is bookmarkable. */}
           {view === "list" && (
           <div className="inline-flex overflow-hidden rounded-md border border-border bg-bg/40 font-mono text-[9.5px] font-semibold uppercase tracking-wider">
             <button
@@ -3988,11 +3655,6 @@ export function TasklistSections({
             section?.name ?? (sort === "due" ? "By due date" : "Uncategorised");
           const denom = items.length - items.filter((i) => i.status === "na").length;
           const done = items.filter((i) => i.status === "done").length;
-          // Section lead time — latest due_date among unfinished items in
-          // the section. Tells the team "this section needs to be wrapped
-          // up by X". Skips done/na rows so a finished item doesn't peg
-          // the deadline in the past. Returns null when there are no
-          // dated open items.
           const sectionLeadTime: { days: number; targetIso: string } | null = (() => {
             const dates = items
               .filter((i) => i.status !== "done" && i.status !== "na" && !!i.due_date)
@@ -4058,9 +3720,6 @@ export function TasklistSections({
                     </span>
                     {section && canManage && (
                       <>
-                        {/* Up / down arrows reorder the section. The
-                            order here drives the stage-chip progress
-                            bar at the top of the page. */}
                         <button
                           onClick={() => moveSection(section.id, -1)}
                           disabled={
@@ -4148,8 +3807,6 @@ export function TasklistSections({
                     canApprove={!item.required_perm || holdsChecklistApproval(user?.permissions, item.required_perm)}
                     canManage={canManage}
                     attachments={
-                      // 3D shared upload: the Peter approval row mirrors the
-                      // file uploaded on the "3D Checked by MGT" row.
                       item.title === "3D Approved by Peter"
                         ? attachmentsByItem.get(
                             items.find((i) => i.title === "3D Checked by MGT")?.id ?? -1
@@ -4211,7 +3868,6 @@ export function TasklistSections({
   );
 }
 
-// ── Checklist row ────────────────────────────────────────────
 
 const REVIEW_BADGES: Record<string, { label: string; cls: string }> = {
   pending_review: { label: "In Review", cls: "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300" },
@@ -4220,20 +3876,7 @@ const REVIEW_BADGES: Record<string, { label: string; cls: string }> = {
   approved: { label: "Approved", cls: "bg-synced/15 text-synced" },
 };
 
-// Which rows carry the submit/approve/reject workflow is decided by
-// isReviewableTitle (pms-reviewable-titles.ts), shared with mobile. It is a
-// PREFIX rule: this Set of seven EXACT titles used to withhold the workflow
-// from "3D Design (Revision 2)" on desktop while mobile granted it.
 
-// Documents that are view-only: a medium preview opens (image → lightbox,
-// other files → inline new tab) and there's no download button.
-// ── Document table (section display_mode = 'documents') ───────
-// Renders a section's items as a 6-column document table
-// (DOCUMENT / REMARKS / FILES / UPLOADED BY / APPROVAL / ACTIONS).
-// Approve/Reject reuses the review pipeline and shows only on
-// reviewable items (e.g. Stock Out Transfer Record).
-// NOTE: roleChipClass is NOT defined here — it lives in the crew-editor
-// block (single authoritative definition shared by both features).
 function DocumentTable({
   payable = false,
   projectId,
@@ -4371,7 +4014,6 @@ function DocRow({
   const [remarkOpen, setRemarkOpen] = useState(false);
   const [remark, setRemark] = useState("");
   const [postingRemark, setPostingRemark] = useState(false);
-  // Free-text remark notes on this document (excludes the review decision trail).
   const remarkNotes = comments.filter((c) => c.kind !== "submit" && c.kind !== "reject" && c.kind !== "approve" && c.kind !== "amend" && c.body);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const reviewable = isReviewableTitle(item.title);
@@ -4490,10 +4132,6 @@ function DocRow({
         </td>
         <td className="px-3 py-2 text-ink-secondary">
           {(() => {
-            // Remarks = the document's own notes PLUS any reason text
-            // entered during review (e.g. a rejection reason). The
-            // approve/reject *decision trail* stays in the Approval
-            // column; the remark text itself belongs here.
             const remarkComments = comments
               // Remarks column shows human-typed notes only. Excludes:
               // - 'submit' (empty ping, always body=null anyway)
@@ -4546,9 +4184,6 @@ function DocRow({
             <span className="text-ink-muted">—</span>
           ) : (
             <div className="space-y-1">
-              {/* Chronological history (oldest → newest): uploads, removes,
-                  approves, rejects. 'submit' pings hidden as noise — the
-                  upload comment beside them carries the filename instead. */}
               {comments.filter((c) => c.kind !== "submit").length > 0 && (
                 <div className="space-y-0.5">
                   {comments
@@ -4556,9 +4191,6 @@ function DocRow({
                     .slice()
                     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
                     .map((c) => {
-                      // Upload/remove comments carry the filename in `body`;
-                      // approve/reject leave body null (the decision itself is
-                      // the whole story).
                       const showFile = (c.kind === "upload" || c.kind === "remove") && c.body;
                       return (
                         <div key={c.id} className="text-[9px] leading-snug text-ink-muted">
@@ -4568,11 +4200,6 @@ function DocRow({
                           {showFile && (
                             <>
                               {" "}
-                              {/* inline-block, not inline: truncate is dead on
-                                  inline elements, which is how full 100-char
-                                  filenames wrapped the whole cell (owner
-                                  2026-08-17: "make it short and fit in box
-                                  only"). Full name stays on hover. */}
                               <span
                                 title={c.body ?? undefined}
                                 className="inline-block max-w-[150px] truncate align-bottom text-ink"
@@ -4802,7 +4429,6 @@ function DocRow({
                   <div key={a.id} className={vs?.kind === "reject" ? "opacity-60" : undefined}>
                     <TaskAttachmentRow
                       attachment={a}
-                      /* id < 0 = merged crew phase photo — view/download only. */
                       canManage={canManage && a.id > 0}
                       showRemark={remarkOpen}
                       itemTitle={item.title}
@@ -4832,10 +4458,6 @@ function DocRow({
   );
 }
 
-// ── 3D Approval block ─────────────────────────────────────────
-// Renders the 3D APPROVAL section as simple status rows
-// (PENDING / DONE / N/A) with ONE shared "Upload 3D" panel between
-// the MGT and Peter steps (the file is shared between both).
 function ThreeDApprovalBlock({
   items,
   attachmentsByItem,
@@ -5026,8 +4648,6 @@ function ChecklistRow({
   toast,
 }: {
   item: ChecklistItem;
-  /** Owning project — needed by the floorplan size auto-detect that runs
-   *  after a Display Floor Plan upload (ChecklistItem carries no project_id). */
   projectId: number;
   comments: ChecklistComment[];
   canTick: boolean;
@@ -5042,8 +4662,6 @@ function ChecklistRow({
   ) => void | Promise<void>;
   onCrewVisible?: (visible: boolean) => void | Promise<void>;
   onAttachmentsChanged?: () => void;
-  /** mig: 3D shared-file — when set, the row shows another item's
-   *  attachments read-only (no upload button) plus a caption. */
   readOnlyAttach?: boolean;
   attachCaption?: string;
   toast?: ReturnType<typeof useToast>;
@@ -5106,10 +4724,6 @@ function ChecklistRow({
     }
   }
 
-  /** Open one attachment in a new tab (auth-protected R2 goes through
-   *  api.fetchBlobUrl, same as the stock-transfer + TaskAttachmentRow viewers).
-   *  Used by the per-file chips on pill rows (Rental Payment / Security
-   *  Deposit), where every file must be individually clickable. */
   async function openAttachment(a: TaskAttachment) {
     try {
       await openLoadedTab(() => api.fetchBlobUrl(
@@ -5137,8 +4751,6 @@ function ChecklistRow({
       )}&name=${encodeURIComponent(file.name)}${capParam}`;
       await api.putBinary(url, buf, file.type || "application/octet-stream");
       toast?.success("Uploaded");
-      // Reviewable items auto-submit on upload so the approver's
-      // Approve/Reject reappear (and a prior decision is superseded).
       if (isReviewableTitle(item.title)) {
         await onReview("submit", {});
       }
@@ -5158,7 +4770,7 @@ function ChecklistRow({
           } else if (r.detected_sqm != null && r.skipped_reason === "already_set") {
             toast?.info?.(`Floorplan reads ${r.detected_sqm} sqm — the size box already has a value, left as is.`);
           }
-        } catch { /* silent: the upload itself succeeded */ }
+        } catch { }
       }
       onAttachmentsChanged?.();
     } catch (e: any) {
@@ -5195,14 +4807,9 @@ function ChecklistRow({
   const awaitingReview = item.review_status === "pending_review" || item.review_status === "amended";
   const reviewable = isReviewableTitle(item.title);
 
-  // mig 090 — payment / deposit rows render as multi-state pills instead
-  // of the done/pending circle. pill_value is stored via the standard
-  // checklist PATCH; the row's status stays 'na' (off the progress bar).
   if (item.pill_kind) {
     const opts = paymentPillOptions(item.pill_kind);
     const cur = item.pill_value || "unpaid";
-    // Terminal pill values (N/A, FULLY PAID, REFUNDED) = treat the row as done:
-    // green check + greyed title. Only PENDING ("unpaid") stays "not done".
     const pillDone = cur !== "unpaid";
     const selTone = (v: string) =>
       v === "unpaid"
@@ -5266,7 +4873,6 @@ function ChecklistRow({
             </button>
           ))}
         </div>
-        {/* Attach below the row — allow multiple (e.g. deposit + balance slips). */}
         <input
           ref={fileInputRef}
           type="file"
@@ -5297,10 +4903,6 @@ function ChecklistRow({
                     {a.file_name}
                   </span>
                 </button>
-                {/* Remove file — shown to whoever can attach here (owner
-                    2026-08-11), which since 2026-09-02 includes a tick-only role
-                    on a task badged for its own function. id < 0 = merged crew
-                    photo, never removable. */}
                 {mayAttachRow && !readOnlyAttach && a.id > 0 && (
                   <button
                     type="button"
@@ -5419,9 +5021,6 @@ function ChecklistRow({
                 Rejected: {item.rejection_reason}
               </span>
             )}
-            {/* Per-task attachments (mig 050). Table layout: clicking
-                the name downloads; delete button on the right when the
-                user can manage. */}
             {((attachments && attachments.length > 0) || canManage) && (
               <div className="mt-1 basis-full">
                 {attachments && attachments.length > 0 && (
@@ -5436,9 +5035,6 @@ function ChecklistRow({
                       <TaskAttachmentRow
                         key={a.id}
                         attachment={a}
-                        /* id < 0 = a crew phase photo merged in from the
-                           phase-photos table — view/download only; deleting it
-                           needs the Phase Photos block, not this row. */
                         canManage={canManage && a.id > 0}
                         showRemark={expanded}
                         itemTitle={item.title}
@@ -5660,8 +5256,6 @@ function commentKindColor(k: string): string {
   }
 }
 
-// ── Project banner ───────────────────────────────────────────
-// Optional warning/info strip shown above every section.
 
 function ProjectBanner({
   message,
@@ -5691,10 +5285,6 @@ function ProjectBanner({
   );
 }
 
-// ── Logistics schedule + crew ────────────────────────────────
-// Separate from the customer-facing event date range. This is when
-// the booth is actually being built / torn down, who's driving, and
-// which lorry is moving stock.
 
 // ── PIC role chip colour by role ──────────────────────────────
 // Shared helper used by the crew section's "LOGISTIC" badge. (The
@@ -5708,13 +5298,6 @@ function roleLabelParts(label: string): string[] {
 }
 
 
-/** THE Attach / Remark / N/A button shape for the whole desktop PMS (owner
- *  2026-08-11: "one consistent button style for this action group across the
- *  entire desktop PMS"). Boxed = icon + label inside a bordered pill, the style
- *  the Contract / Booth Layout tables already used; the checklist-card sections
- *  (Operation, Setup & Dismantle Documents, Expo Map) were an unbordered
- *  icon-stack. Callers append only the colour/state classes, so the geometry can
- *  never drift between sections again. */
 const ACTION_BTN_BASE =
   "inline-flex items-center justify-center gap-1 whitespace-nowrap rounded-md border px-2 py-1 text-[9px] font-semibold leading-none min-w-[46px]";
 
@@ -5750,7 +5333,6 @@ function formatRoleLabel(label: string): string {
     .join(" ");
 }
 
-// ── Setup & Dismantle crew editor (JSON: setup_crew / dismantle_crew) ──
 type CrewSlot = { name: string; phone: string };
 // Per-lorry crew (owner 2026-07-13): each lorry carries its OWN drivers + helpers.
 // provider (owner 2026-07-23): a trip that is NOT an internal lorry is done by
@@ -5773,18 +5355,11 @@ type OutsourcedEntry = {
   helper2?: string;
 };
 interface PhaseCrew {
-  /** The editable per-lorry structure. */
   lorryCrew: LorryCrew[];
-  /** Flat mirrors DERIVED from lorryCrew on save — kept so the mobile view,
-   *  the stage stepper, and any other legacy reader of {drivers,helpers,lorries}
-   *  keep working unchanged. Never edited directly. */
   drivers: CrewSlot[];
   helpers: CrewSlot[];
   lorries: string[];
   outsourced: { enabled: boolean; entries: OutsourcedEntry[] };
-  /** Free-text note — used by the Service / Exchange phase ("what service /
-   *  exchange"). This one is the INTERNAL-LORRY remark. Empty for
-   *  setup/dismantle. Persisted inside the same JSON. */
   remark: string;
   /** Second Service / Exchange note — for the OUTSOURCED (Grab/Lalamove) side,
    *  kept separate from the lorry remark (owner 2026-07-23). */
@@ -5821,7 +5396,6 @@ function parsePhaseCrew(s: string | null | undefined): PhaseCrew {
         helpers: Array.isArray(l?.helpers) ? l.helpers : [],
       }));
     } else {
-      // Legacy flat crew → fold into one lorry per plate, crew on the first.
       const oldDrivers: CrewSlot[] = Array.isArray(p.drivers) ? p.drivers : [];
       const oldHelpers: CrewSlot[] = Array.isArray(p.helpers) ? p.helpers : [];
       const oldPlates: string[] = Array.isArray(p.lorries) ? p.lorries.filter((x: any) => typeof x === "string" && x.trim()) : [];
@@ -5854,7 +5428,6 @@ function serializePhaseCrew(pc: PhaseCrew): string {
   });
 }
 
-// A <select> value that no real name can take, used as the "+ Add new" sentinel.
 const ADD_OUTSOURCE_SENTINEL = "__add_outsource__";
 
 function CrewSlotRow({
@@ -5869,22 +5442,15 @@ function CrewSlotRow({
 }: {
   label: string;
   color: string;
-  /** Driver vs helper — decides which Fleet roster a manual add is created in. */
   kind?: CrewKind;
   options: CrewMember[];
   slot: CrewSlot | undefined;
   onChange: (s: CrewSlot) => void;
-  /** Create a manual OUTSOURCE member in the Fleet roster and return it. Absent
-   *  (or no kind) hides the "+ Add new" option and keeps the plain picker. */
   onCreate?: (name: string, phone: string) => Promise<CrewMember>;
-  /** View-only for Sales (owner 2026-07): disable both controls. */
   readOnly?: boolean;
 }) {
   const cur = slot ?? { name: "", phone: "" };
   const canAdd = !readOnly && !!onCreate && !!kind;
-  // Inline "add a name not in the list" mode. The new member is created in the
-  // Fleet roster (outsource), selected into this slot, and — via onCreate's
-  // state update in the parent — folded into `options` so it stays pickable.
   const [adding, setAdding] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftPhone, setDraftPhone] = useState("");
@@ -6012,9 +5578,6 @@ const OUTSOURCED_PROVIDER_LABEL: Record<OutsourcedProvider, string> = {
   grab: "Grab",
 };
 
-// One chip per outsourced trip — Grab shows its two helpers, the others show
-// the manual name / phone / plate. Falls back to name/phone/plate for any
-// legacy Grab row that predates the helper picker. Shared by every phase.
 function OutsourcedEntryChips({
   entries,
   readOnly,
@@ -6075,21 +5638,11 @@ function PhaseCrewEditor({
   lorryOptions: string[];
   patch: (body: Record<string, any>) => Promise<void>;
   emptyHint?: string;
-  /** Rendered above the "{title} Drivers" heading (e.g. the Dismantle Time field). */
   headerExtra?: React.ReactNode;
-  /** When set (Setup / Dismantle), each lorry card shows its OWN date+time field
-   *  under this label — there is no single shared date for all lorries. Omitted
-   *  for Service / Exchange, which has no scheduled window. */
   lorryDateLabel?: string;
-  /** Show a free-text remark box under the crew (Service / Exchange phase). */
   showRemark?: boolean;
   remarkLabel?: string;
-  /** View-only for Sales (owner 2026-07): render current crew/plates but
-   *  disable every control and suppress the add/remove/save actions. */
   readOnly?: boolean;
-  /** Create a manually-typed OUTSOURCE driver/helper in the Fleet roster and
-   *  fold it into the picker. Absent = no "+ Add new" option (the picker still
-   *  lists whatever crew it was given). */
   onCreateCrew?: (kind: CrewKind, name: string, phone: string) => Promise<CrewMember>;
 }) {
   const [pc, setPc] = useState<PhaseCrew>(() => parsePhaseCrew(value));
@@ -6100,10 +5653,8 @@ function PhaseCrewEditor({
     setPc(next);
     patch({ [field]: serializePhaseCrew(next) });
   }
-  // Remarks save on blur (not per keystroke) so a long note isn't a PATCH storm.
   const [remarkDraft, setRemarkDraft] = useState(pc.remark);
   useEffect(() => setRemarkDraft(pc.remark), [pc.remark]);
-  // Which provider's add-box is open in the Setup/Dismantle outsourced row.
   const [openProvider, setOpenProvider] = useState<OutsourcedProvider | null>(null);
   const addOutsourced = (entry: OutsourcedEntry) =>
     save({ ...pc, outsourced: { enabled: true, entries: [...pc.outsourced.entries, entry] } });
@@ -6111,8 +5662,6 @@ function PhaseCrewEditor({
     const entries = pc.outsourced.entries.filter((_, j) => j !== i);
     save({ ...pc, outsourced: { enabled: entries.length > 0, entries } });
   };
-  // Always show at least one lorry card so an empty project isn't blank —
-  // the card is only persisted once the user actually fills something in.
   const lorries = pc.lorryCrew.length ? pc.lorryCrew : [{ plate: "", drivers: [], helpers: [] }];
   const setLorrySlot = (li: number, kind: "drivers" | "helpers", si: number, s: CrewSlot) => {
     const arr = lorries.map((l, i) => {
@@ -6135,8 +5684,6 @@ function PhaseCrewEditor({
   // UI-only state; a hidden Driver 2 re-collapses by clearing its name.
   const [openSlot2, setOpenSlot2] = useState<Set<string>>(new Set());
   const showSlot2 = (li: number, kind: "d" | "h") => setOpenSlot2((s) => new Set(s).add(`${li}${kind}`));
-  // Bind the Fleet-roster creator to each slot's kind, or leave it off when the
-  // editor was given none (the picker then has no "+ Add new" option).
   const onCreateDriver = onCreateCrew ? (name: string, phone: string) => onCreateCrew("driver", name, phone) : undefined;
   const onCreateHelper = onCreateCrew ? (name: string, phone: string) => onCreateCrew("helper", name, phone) : undefined;
   return (
@@ -6147,8 +5694,6 @@ function PhaseCrewEditor({
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {lorries.map((lorry, li) => (
           <div key={li} className="space-y-1 rounded-lg border border-border bg-bg/30 p-2.5">
-            {/* Same icon size / gap / fixed label width as CrewSlotRow so the
-                LORRY label and its select column-align with the crew rows. */}
             <div className="flex items-center gap-1">
               <Truck size={12} className="shrink-0 text-ink-secondary" />
               <span className="w-11 shrink-0 text-[9px] font-bold uppercase tracking-wider text-ink-secondary">Lorry {li + 1}</span>
@@ -6317,14 +5862,10 @@ function ServiceExchangeBlock({
     );
   }, [serviceCrew]);
   const [open, setOpen] = useState(hasData);
-  // If data arrives while the card is closed (e.g. saved on another device),
-  // reveal it — a filled Service / Exchange must never stay hidden.
   useEffect(() => {
     if (hasData) setOpen(true);
   }, [hasData]);
 
-  // Sales / view-only: show the block only when it actually has content — never
-  // an empty optional section or an add button.
   if (readOnly && !hasData) return null;
 
   return (
@@ -6396,9 +5937,6 @@ function LogisticsCrewSection({
     /logistic/.test(_role) ||
     /\bbd\b/.test(_role);
   const readOnly = !canEditLogistics;
-  // Schedule reference is TIGHTER than the rest of the section (owner
-  // 2026-07-23): only BD + weisiang (Lim, weisiang329@gmail.com) may edit it —
-  // plus the Owner / admins (wildcard "*"), who can edit everything.
   const canEditSchedule =
     !!user?.permissions?.includes("*") ||
     /\bbd\b/.test(_role) ||
@@ -6409,20 +5947,8 @@ function LogisticsCrewSection({
     canEditSchedule || /logistic/.test(_pos) || /logistic/.test(_role);
   const [crew, setCrew] = useState<CrewMember[]>([]);
   const [lorryOptions, setLorryOptions] = useState<string[]>([]);
-  // Outsource Fleet-roster crew (scm.drivers / scm.helpers, in_house = false),
-  // folded into the Driver/Helper pickers so an outsource name added once is
-  // reusable. The two reads below recover to an empty list on failure: the Fleet
-  // routes sit behind scm.transportation.drivers, so a user without that access
-  // simply gets no outsource options and the in-house staff list is unaffected.
   const [fleetDrivers, setFleetDrivers] = useState<CrewMember[]>([]);
   const [fleetHelpers, setFleetHelpers] = useState<CrewMember[]>([]);
-  // A failed reference read must not render as an empty list. `.catch(() => {})`
-  // here meant a 403 (or a cold-pool 503, or a network drop) left `crew` and
-  // `lorryOptions` at [], and the crew/lorry pickers then said "no drivers" —
-  // the same defect that made a 403 look like an empty dropdown, and the same
-  // one that printed an SO PDF claiming the full amount owed. The message is
-  // already plain language: api.client throws HttpError whose `.message` is
-  // humanHttpMessage(status, body).
   const [refError, setRefError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
@@ -6442,11 +5968,6 @@ function LogisticsCrewSection({
       .get<{ lorries: { plate: string }[] }>("/api/scm/lorries")
       .then((r) => { if (live) setLorryOptions((r.lorries ?? []).map((l) => l.plate).filter(Boolean)); })
       .catch(fail);
-    // Outsource Fleet crew — the roster is OPTIONAL here (gated by
-    // scm.transportation.drivers). A failure (most often a 403 for a scheduler
-    // without Fleet access) must NOT blank the in-house pickers or raise
-    // refError: it just means no outsource options, so we recover to an empty
-    // list rather than swallow the rejection or surface an alarm.
     api
       .get<{ drivers?: FleetDriverRow[] }>("/api/scm/drivers")
       .then((r) => { if (live) setFleetDrivers(outsourceOnly(r.drivers ?? []).map(driverToCrew)); })
@@ -6467,9 +5988,6 @@ function LogisticsCrewSection({
     () => mergeCrewOptions(crew.filter((u) => isType(u, "helper") && (u.name || "").trim() !== ""), fleetHelpers),
     [crew, fleetHelpers],
   );
-  // Create a manually-typed outsource driver/helper in the Fleet roster and fold
-  // it into the picker so it stays selectable. Rejects on failure; the row shows
-  // the message. Drivers post `phone` (required); helpers post `contact`.
   const createOutsourceCrew = async (kind: CrewKind, name: string, phone: string): Promise<CrewMember> => {
     if (kind === "driver") {
       const r = await api.post<{ driver: FleetDriverRow }>("/api/scm/drivers", { name, phone, inHouse: false });
@@ -6643,12 +6161,11 @@ function ScheduleRef({
         if (readOnly || busy) return;
         const items = Array.from(e.clipboardData?.items ?? []);
         const img = items.find((i) => i.kind === "file" && i.type.startsWith("image/"));
-        if (!img) return; // let a normal text paste through untouched
+        if (!img) return;
         const blob = img.getAsFile();
         if (!blob) return;
         e.preventDefault();
         const ext = (blob.type.split("/")[1] || "png").replace("jpeg", "jpg");
-        // Clipboard blobs are nameless — stamp one so the row reads sensibly.
         void upload(new File([blob], `schedule-${Date.now()}.${ext}`, { type: blob.type }));
       }}
       className="mb-3 rounded-lg border border-dashed border-border bg-bg/30 p-3 outline-none focus:border-accent/50 focus:ring-1 focus:ring-accent/20"
@@ -6822,12 +6339,6 @@ function ServicePhotos({ projectId, readOnly = false }: { projectId: number; rea
   );
 }
 
-// ── Project Sales Entries (rep-facing log, scoped to one project) ──
-// The standalone /sales page used to host this. We moved it inside the
-// project page because the workflow is per-exhibition: a rep opens the
-// project they're working, drafts the sales they collected, then submits.
-// The entry's project_id is hard-locked here so a rep can't accidentally
-// re-target a draft to a different exhibition.
 
 function ProjectSalesEntriesSection({
   projectId,
@@ -6839,11 +6350,9 @@ function ProjectSalesEntriesSection({
   toast,
 }: {
   projectId: number;
-  /** code + name + what soloOrganizerMask needs to label the Sales Order panel. */
   project: SoloMaskProject;
   canManage: boolean;
   currentTotalSales: number | null;
-  /** The pasted sales report, read by the detail page and shared with Sales Attending. */
   bills: QueryState<ProjectSalesBillsResponse>;
   onTotalSaved: () => void;
   toast: ReturnType<typeof useToast>;
@@ -6851,14 +6360,6 @@ function ProjectSalesEntriesSection({
   const dialog = useDialog();
   const auth = useAuth();
   const meId = auth.user?.id;
-  // Three gates, three DIFFERENT server rules — they were two, and the write
-  // half asked for the flat sales.write key, which neither write route reads.
-  //   view  GET  /api/sales/entries        requirePageAccessOrSalesView("sales")
-  //   log   POST /api/sales/entries        requirePageAccess("sales")
-  //   total PATCH /api/projects/:id/finance  projects.write + denyFinance
-  // The org-position arm belongs to the READ gate only (owner 2026-07: a Sales
-  // Director has no matrix "sales" row and must still see the list), so it is
-  // ORed on canViewSales alone — off, not hide, and no render-then-403.
   const salesLevel = usePageAccess("sales");
   const canLogSale = canLogSalesEntry(salesLevel);
   const canSetTotalSales = canWriteProjectFinance(auth.user, auth.can);
@@ -6866,17 +6367,11 @@ function ProjectSalesEntriesSection({
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<SalesEntry | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
-  // Quick-log inline form state. The full EntryPanel is too heavy
-  // for the floor; reps just need amount + ref_no + date.
   const [quickLogOpen, setQuickLogOpen] = useState(false);
   const [qlAmount, setQlAmount] = useState("");
   const [qlRefNo, setQlRefNo] = useState("");
   const [qlDate, setQlDate] = useState(() => todayInAppTz());
   const [qlSaving, setQlSaving] = useState(false);
-  // Quick Total Sales — set the project's lump-sum total sales directly
-  // (project_finance.total_sales) without logging individual entries. Used
-  // for exhibitions where only the final total is known. Shows on the
-  // Project List "Sales" column + Overview P&L.
   const [quickTotalOpen, setQuickTotalOpen] = useState(false);
   const [qtValue, setQtValue] = useState("");
   const [qtSaving, setQtSaving] = useState(false);
@@ -6946,7 +6441,6 @@ function ProjectSalesEntriesSection({
     { enabled: canViewSales }
   );
   const udf = useUdf("sales_entries");
-  // The orders opened in the SO module for this fair — same gate as the list.
   const soQuery = useProjectSalesOrders(projectId, canViewSales);
 
   async function submitEntry(e: SalesEntry) {
@@ -6983,22 +6477,15 @@ function ProjectSalesEntriesSection({
   const totals = list.data?.totals;
   const projectLabel = salesOrderProjectLabel(project, canSeeSoloOrganizer(auth.user)); // solo: organizer masked outside BD/Owner/weisiang (owner 2026-09-18)
 
-  // When an event has no individual sales entries, fall back to the project's
-  // lump-sum total (project_finance.total_sales) so this box matches the
-  // Project List + dashboard instead of showing RM 0.00. Individual sales
-  // (any status) take over the moment they exist.
   const salesEntryCount = totals
     ? totals.by_status.draft + totals.by_status.submitted + totals.by_status.pushed
     : 0;
   const showLumpTotal = salesEntryCount === 0 && currentTotalSales != null;
 
-  // Off, not hide: a user who can't access sales neither renders this section
-  // nor fires the (now enabled-gated) request. All hooks above run first.
   if (!canViewSales) return null;
 
   return (
     <PanelSection title={`Sales (${rows.length + (soQuery.data?.totals.count ?? 0)})`}>
-      {/* Toolbar: totals · status filter · new-sale */}
       <div className="mb-2 flex flex-col gap-3 rounded-md border border-border-subtle bg-bg/30 px-3 py-2 text-[10.5px] sm:flex-row sm:flex-wrap sm:items-center">
         {totals && (
           <div className="flex flex-wrap items-center gap-3">
@@ -7103,8 +6590,6 @@ function ProjectSalesEntriesSection({
         onSetTotalSales={async (rm) => { await api.patch(`/api/projects/${projectId}/finance`, { total_sales: rm }); toast.success("Total sales updated"); onTotalSaved(); }}
       />
       <ProjectSalesOrdersBlock query={soQuery} finalTotalRm={currentTotalSales} />
-      {/* Quick Total Sales inline form — sets project_finance.total_sales
-          directly (lump sum), no individual entries. */}
       {quickTotalOpen && (
         <div className="mb-2 rounded-md border border-emerald-600/40 bg-emerald-50/60 p-2.5">
           <div className="mb-1.5 flex items-center justify-between">
@@ -7148,9 +6633,6 @@ function ProjectSalesEntriesSection({
           </p>
         </div>
       )}
-      {/* Quick-log inline form — three required fields, no full
-          customer / deposit panel. Reps complete the rest later via
-          the Sales page (the row gets a yellow "Quick log" pill). */}
       {quickLogOpen && (
         <div className="mb-2 rounded-md border border-amber-500/40 bg-amber-50/60 p-2.5">
           <div className="mb-1.5 flex items-center justify-between">
@@ -7288,15 +6770,7 @@ function Stat({
   );
 }
 
-// ── Finance ledger ───────────────────────────────────────────
-// Line-item finance. Each entry is an income or cost line tagged with
-// a category. Live totals + margin + per-sqm / per-day views are
-// computed client-side so edits feel instant; the backend keeps
-// project_finance in sync for list-view rollups.
 
-// The picker lists and their labels live in pms-ledger-categories.ts, shared
-// with mobile — which used to humanize() the slugs, so one P&L row read
-// "COGS — Matt/Sofa" on the PC and "Cogs Matt Sofa" on the phone.
 
 function FinanceLedgerSection({
   projectId,
@@ -7318,8 +6792,6 @@ function FinanceLedgerSection({
   sizeSqm: number | null;
   durationDays: number | null;
   lines: FinanceLine[];
-  /** The books on this event (payment-request item 5): the rows they fill are
-   *  Finance's figures — read-only here. `lines` already carries them. */
   books: FinanceBooks | null;
   /** The two P&Ls — by Total Sales and by the Sales Orders (owner 2026-10-16).
    *  Null on an older server or when the orders could not be read: the single
@@ -7328,26 +6800,13 @@ function FinanceLedgerSection({
   /** The three layers over the Total Sales column (owner 2026-11-18); null = actuals only. */
   forecast: DetailForecast | null;
   canForecast: boolean;
-  /** project_finance.total_sales — the quick lump-sum "Total Sales" box.
-   *  Used as the snapshot's sales figure when no individual sales-entry
-   *  lines exist, so the green box and the snapshot agree. */
   lumpSales: number | null;
   onChange: () => void;
   toast: ReturnType<typeof useToast>;
 }) {
-  // Snapshot is the editor (2026-05-08). Each editable cost row's
-  // value cell is click-to-edit; saving consolidates that
-  // category's existing non-auto lines into one line at the typed
-  // amount. Empty/0 archives them all.
   const [savingCat, setSavingCat] = useState<string | null>(null);
-  // 2026-05-08 (revised) — boss said no per-row expand; attachments
-  // live in a single dedicated section at the bottom of the card.
-  // Click-to-edit on each cost row still consolidates that category
-  // into one tally line. Receipts are managed via the Attachments
-  // section below.
   const [addingReceipt, setAddingReceipt] = useState(false);
   const dialog = useDialog();
-  // A row the books fill shows Finance's figure and cannot be typed over.
   const filled = new Set(books?.rows ?? []);
   const typedRow = (row: string, category: string) =>
     filled.has(row) ? undefined : { onSave: (n: number) => replaceCategoryAmount(category, n) };
@@ -7356,12 +6815,9 @@ function FinanceLedgerSection({
       (l) =>
         l.kind === "cost" &&
         (l.category ?? "").trim() === category &&
-        // Auto rows are managed by the rate engine — never touched here.
         !l.auto_source &&
-        // Sales-entry-sourced income lines never live in cost; defensive.
         !l.source,
     );
-    // If the typed amount equals the current single-line amount, nothing to do.
     if (existing.length === 1 && Math.abs((existing[0].amount || 0) - nextAmount) < 0.005) {
       return;
     }
@@ -7374,19 +6830,14 @@ function FinanceLedgerSection({
     setSavingCat(category);
     try {
       if (nextAmount <= 0) {
-        // Zeroing the row — archive every line in the category.
         for (const line of existing) {
           await api.del(`/api/projects/finance/lines/${line.id}`);
         }
       } else if (existing.length === 1) {
-        // Edit the amount in place so the line keeps its receipt
-        // (r2_key) and identity. Delete+recreate would drop the file.
         await api.patch(`/api/projects/finance/lines/${existing[0].id}`, {
           amount: nextAmount,
         });
       } else {
-        // Consolidating many into one. Carry the first attached receipt
-        // forward so collapsing the rows never silently loses a file.
         const withReceipt = existing.find((l) => l.r2_key);
         for (const line of existing) {
           await api.del(`/api/projects/finance/lines/${line.id}`);
@@ -7419,8 +6870,6 @@ function FinanceLedgerSection({
           (category === undefined ? true : l.category === category),
       )
       .reduce((s, l) => s + (l.amount || 0), 0);
-  // 2026-05-08: NAMED_COSTS includes the new COGS sub-categories +
-  // transport split so they don't double-count under "Others".
   const NAMED_COSTS = new Set([
     "cogs",
     "cogs_matt_sofa",
@@ -7438,13 +6887,8 @@ function FinanceLedgerSection({
   const totalCost = cost.reduce((s, l) => s + (l.amount || 0), 0);
   const profit = totalIncome - totalCost;
   const margin = totalIncome > 0 ? (profit / totalIncome) * 100 : null;
-  // Prefer individual sales-entry lines; if none exist, fall back to the
-  // quick lump-sum Total Sales box (project_finance.total_sales) so the
-  // snapshot matches the green Total Sales figure the user keyed in.
   const salesLinesSum = sumBy("income", "sales");
   const sales = salesLinesSum > 0 ? salesLinesSum : (lumpSales ?? 0);
-  // COGS family — break out + total. Legacy `cogs` slug folds into
-  // the total alongside the three product sub-cats.
   const cogsLegacy = sumBy("cost", "cogs");
   const cogsMattSofa = sumBy("cost", "cogs_matt_sofa");
   const cogsBedframe = sumBy("cost", "cogs_bedframe");
@@ -7452,8 +6896,6 @@ function FinanceLedgerSection({
   const cogs = cogsLegacy + cogsMattSofa + cogsBedframe + cogsAccessories;
   const rentalTotal = sumBy("cost", "rental");
   const setupTotal = sumBy("cost", "setup");
-  // Transport split — fee = rate-driven, setup_dismantle = manual.
-  // Legacy `transport` rows fold into the fee bucket.
   const transportFee = sumBy("cost", "transport") + sumBy("cost", "transport_fee");
   const transportSetupDismantle = sumBy("cost", "transport_setup_dismantle");
   const transportTotal = transportFee + transportSetupDismantle;
@@ -7473,8 +6915,6 @@ function FinanceLedgerSection({
     rentalTotal > 0 && sizeSqm && sizeSqm > 0 && durationDays && durationDays > 0
       ? rentalTotal / sizeSqm / durationDays
       : 0;
-  /* The tiles read the Total Sales P&L when the server sent it (eventPnl.ts),
-     so tiles and table never disagree; else the lines, as before. */
   const kpi = forecast
     ? { sales: forecast.lines.sales.amount, gp: forecast.totals.gross_profit.amount, cost: forecast.totals.total_cost.amount, net: forecast.totals.net_profit.amount }
     : pnl
@@ -7486,13 +6926,6 @@ function FinanceLedgerSection({
 
   return (
     <PanelSection title={`Finance Ledger (${lines.length})`} muted>
-      {/* ── Financial Snapshot — single source of truth ─
-          The previous design showed three different views of the
-          same data (3-up totals, 12-cell breakdown grid, line
-          lists). Boss flagged the repetition; this snapshot
-          replaces the first two with one canonical card matching
-          the Exhibition Report cost model. Line lists below stay
-          for adding / editing the underlying data. */}
       <div className="rounded-md border border-border bg-surface">
         <div className="border-b border-border px-4 py-3">
           <h3 className="text-[11px] font-bold uppercase tracking-brand text-ink">
@@ -7511,7 +6944,6 @@ function FinanceLedgerSection({
           )}
         </div>
 
-        {/* 4 KPI tiles */}
         <div className="grid grid-cols-2 divide-x divide-y divide-border-subtle border-b border-border sm:grid-cols-4 sm:divide-y-0">
           <SnapshotKpi
             label="Total Sales"
@@ -7561,11 +6993,6 @@ function FinanceLedgerSection({
           </div>
         )}
 
-        {/* Itemized cost table — single editor surface (2026-05-08).
-            Click any non-auto row to inline-edit the amount; saving
-            consolidates that category's lines into one. Per-row
-            expanders are gone (boss feedback) — receipts live in the
-            single Attachments section below. */}
         {!pnl && <div className="text-[12px]">
           <SnapshotRow
             label="COGS — Matt/Sofa"
@@ -7646,11 +7073,6 @@ function FinanceLedgerSection({
           />
         </div>}
 
-        {/* Cost lines — single section at the bottom of the snapshot
-            card. Lists every non-auto cost line (with or without a
-            receipt) so each can be edited in place and have a file
-            attached. "+ Add cost line" opens AddFinanceLineForm, whose
-            dropdown hides already-used categories to prevent duplicates. */}
         <FinanceAttachmentsSection
           projectId={projectId}
           lines={lines}
@@ -7676,14 +7098,4 @@ function FinanceLedgerSection({
   );
 }
 
-// ── Chat panel ───────────────────────────────────────────────
-// Free-text messages interleaved with the project's system activity
-// (stage transitions, finance edits, checklist changes…). Mirrors the
-// ASSR notes pattern — same backend table (project_activity), one
-// composer that POSTs to /api/projects/:id/notes with action="note".
 
-// ── Collapsible "Project Details" wrapper ───────────────────
-// The aside used to dump every basics/dates/venue/booth panel up-front
-// which pushed the useful content (chat, checklist actions on the
-// main column) far down the page. Collapsed by default; one click to
-// expand when the operator actually needs to edit metadata.

@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-alerts.ts — the pure rules behind Sync Status (layout E7): which
-// terminals need an alert, which alert resolves, when an email goes out or
-// goes out again, and the subject line. Three alert kinds (spec section 10):
-//   PENDING_STALE         pending > 0 and no successful sync for > N days
-//   EVENT_ENDED_PENDING   event end + M days passed and pending > 0 (or never
-//                         synced since the event started)
-//   DATA_LOST             the device reconnected with an empty local database
-//                         while the ERP's last record showed pending > 0
-// No alert for a terminal that is merely offline during an event.
-// ----------------------------------------------------------------------------
 
 export type AlertType = "PENDING_STALE" | "EVENT_ENDED_PENDING" | "DATA_LOST";
 

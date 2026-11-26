@@ -5,7 +5,6 @@ import { daysBetween, pickPosEvents, summariseAfterSales, summariseAttendance, s
 import { addDays, briefApprovals, briefPurchaseOrders, briefSalesOrders, buildBrief, poDueDate } from "./mcp-brief";
 import { EXPORT_LISTS, EXPORT_MAX_ROWS, exportQuery, fetchAllRows, isRound3Tool, matchesSearch, ROUND3_TOOLS, runRound3Tool, type R3Ctx, type R3Read } from "./mcp-round3";
 
-/** The files inside a zip (local headers only; enough for what buildXlsx writes). */
 async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
   const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
   return new Uint8Array(await new Response(stream).arrayBuffer());
@@ -31,13 +30,13 @@ async function unzip(buf: Uint8Array): Promise<Record<string, string>> {
 const ok = (value: unknown): R3Read => ({ ok: true, status: 200, value, removed: [], target: "" });
 const denied: R3Read = { ok: false, status: 403, message: "Not available to your role", note: "no permission", target: "" };
 
-/** A fake ERP: path → reply, each answered after `delayMs` (to measure fan-out). */
 function fakeCtx(routes: Partial<Record<string, (q: Record<string, unknown> | undefined) => R3Read>>, delayMs = 0) {
   const calls: { path: string; q: Record<string, unknown> | undefined }[] = [];
   const puts: { key: string; size: number }[] = [];
   const ctx: R3Ctx = {
     read: async (path, q) => {
       calls.push({ path, q });
+      // eslint-disable-next-line houzs/no-imperative-timers -- a fake slow read: the test times it to prove the reads run in parallel
       if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
       const h = routes[path];
       return h ? h(q) : { ok: false, status: 404, message: "not found", note: "", target: path };
@@ -234,7 +233,7 @@ describe("round-3 tools through a fake ERP", () => {
     const o = await runRound3Tool(ctx, "daily_brief", {});
     const ms = performance.now() - t0;
     expect(calls).toHaveLength(6);
-    expect(ms).toBeLessThan(40 * 3); // serial would be >= 240 ms
+    expect(ms).toBeLessThan(40 * 3);
     const b = body(o);
     expect(b.waitingForYou).toEqual([{ title: "Mail Center threads waiting for you", count: 1 }]);
     expect(b.notAvailable).toEqual(["You don't have access to purchase orders."]);
@@ -251,7 +250,7 @@ describe("round-3 tools through a fake ERP", () => {
     );
     const t0 = performance.now();
     const b = body(await runRound3Tool(ctx, "pos_sales", {}));
-    expect(performance.now() - t0).toBeLessThan(30 * 3.5); // events + one parallel wave
+    expect(performance.now() - t0).toBeLessThan(30 * 3.5);
     expect(calls).toHaveLength(4);
     expect((b.totals as { mtdNetRm: number }).mtdNetRm).toBe(6);
   });

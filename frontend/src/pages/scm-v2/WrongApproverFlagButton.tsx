@@ -34,8 +34,6 @@ export type FlaggableAmendment = {
 export const WRONG_APPROVER_NOTE_TOO_SHORT =
   "Say why this is not yours to approve — that note is what the other desk reads.";
 
-/* Only a lane row still waiting on its desk, only by someone who could sign it,
-   and only once: a row that already carries a note was passed here. */
 export function canFlagWrongApprover(a: FlaggableAmendment | null | undefined, canSign: boolean): boolean {
   if (!a || !canSign) return false;
   if (a.status !== "REQUESTED") return false;
@@ -51,13 +49,10 @@ const plainError = (e: unknown): string => {
 
 type FlagProps = {
   amendment: FlaggableAmendment | null | undefined;
-  /** The caller holds this row's own lane approval key. */
   canSign: boolean;
   variant: "desktop" | "mobile";
 };
 
-/* The super admin's "change approver" rides along here so every surface that
-   offers the approver's handover also offers the admin's, from one mount. */
 export function WrongApproverFlagButton(props: FlagProps) {
   return (
     <>
@@ -72,8 +67,6 @@ function FlagButton({ amendment, canSign, variant }: FlagProps) {
   const notify = useNotify();
   const flagLane = useFlagAmendmentLane();
 
-  /* The phone's amendment card has no section of its own for the saved note (the
-     desktop job card does), so the note is shown here, to everyone. */
   const saved = (amendment?.lane_flag_note ?? "").trim();
   if (variant === "mobile" && saved) {
     return (

@@ -69,7 +69,6 @@ type TeamTabValue =
 
 const TEAM_KEYS = ["tab"] as const;
 
-// Icons for the Team Hub landing cards (keyed by tab value).
 const TEAM_HUB_ICON: Partial<Record<TeamTabValue, LucideIcon>> = {
   directory: Users,
   orgchart2: Network,
@@ -83,8 +82,6 @@ const TEAM_HUB_ICON: Partial<Record<TeamTabValue, LucideIcon>> = {
   mail: Mail,
 };
 
-// One-click member segments (label + key). Shared by the Filters popover
-// and the active-filter pill row.
 const QUICK_SEGMENTS = [
   ["online", "Online now"],
   ["joined7d", "Joined ≤ 7d"],
@@ -96,29 +93,21 @@ const QUICK_SEGMENTS = [
   ["no_photo", "No photo"],
 ] as const;
 
-// yyyy/mm/dd for the date columns — same normalisation as the SO list's
-// fmtDate, plus space-separated Postgres timestamps ("2026-07-22 09:14:33").
 const fmtDay = fmtDate;
 
-// Full department set for a member (mig 0020) — primary first, falling back to
-// the single primary on older backends that don't send department_ids.
 function deptIdsOf(u: TeamMember): number[] {
   if (u.department_ids && u.department_ids.length) return u.department_ids;
   return u.department_id != null ? [u.department_id] : [];
 }
 
-// Departments a member belongs to BESIDES the primary — drives the "+N" chips.
 function extraDeptIdsOf(u: TeamMember): number[] {
   return deptIdsOf(u).filter((d) => d !== u.department_id);
 }
 
-// True when the member belongs to `deptId` through any of their departments.
 function inDept(u: TeamMember, deptId: number): boolean {
   return deptIdsOf(u).includes(deptId);
 }
 
-// Compact "+N" pill for departments a member has beyond the primary; the
-// tooltip names them. Renders nothing when there are no extras.
 function ExtraDeptCount({
   user,
   deptById,
@@ -140,9 +129,6 @@ function ExtraDeptCount({
   );
 }
 
-// ──────────────────────────────────────────────────────────
-// Company assignment (Phase 0e) — shared helpers + segmented control
-// ──────────────────────────────────────────────────────────
 
 type CompanyOpt = { id: number; code: string; name: string };
 
@@ -159,22 +145,16 @@ type ShowroomOption = {
   active: boolean;
 };
 
-/* The subset of GET /api/scm/staff this panel reads. `userId` is migration
-   0066's link from a Houzs user to their sales profile. */
 type ScmStaffRow = {
   id: string;
   userId: number | null;
   showroomWarehouseId: string | null;
 };
 
-// Friendly short name for a company code (HOUZS → "Houzs"; else the code).
 function companyShortName(code: string): string {
   return code === "HOUZS" ? "Houzs" : code;
 }
 
-// One-word label for a member's grant set, for the Company column:
-//   all companies granted → "Both"; a single company → its short name;
-//   empty (no grant row) → "All" (fail-open — user may act in every company).
 function companyLabelFor(ids: number[], companies: CompanyOpt[]): string {
   if (!companies.length) return "—";
   if (ids.length === 0) return "All";
@@ -184,10 +164,6 @@ function companyLabelFor(ids: number[], companies: CompanyOpt[]): string {
   return single ? companyShortName(single.code) : "—";
 }
 
-// Segmented picker: one button per company plus a "Both" (all companies) when
-// there is more than one. Value/onChange work on the raw company-id array so
-// the caller sends `company_ids` straight to the backend. Both = every id;
-// a single company = [id]. Mirrors the existing option-pill styling.
 function CompanySelect({
   companies,
   value,
@@ -257,13 +233,7 @@ export function Team() {
   const canRoles = can("roles.read");
   const canManageUsers = can("users.manage");
   const canManageRoles = can("roles.manage");
-  // Mail Center admin — gates the Mailboxes tab (owner via "*").
   const canManageMail = can("mail_center.manage");
-  // Sales Director — department-scoped Team admin (owner 2026-07). Gets
-  // Members / Org Chart / Departments (own-dept only, backend-scoped) + Invite,
-  // but NOT Positions/Mailboxes and NOT permission editing. A full admin
-  // (canManageUsers) keeps everything unchanged. `salesDirScoped` is true only
-  // when the Sales Director is NOT already a full admin.
   const isSalesDir = isSalesDirectorUser(user);
   const salesDirScoped = isSalesDir && !canManageUsers;
   const canSeeMembers = canUsers || isSalesDir;
@@ -298,7 +268,6 @@ export function Team() {
     // baseline role is auto-assigned on invite. Re-add this line to restore.
   ];
 
-  // The landing tab, and the fallback when the requested one is not theirs.
   const firstVisible = tabs.find((t) => t.show !== false)?.value ?? null;
 
   // Whether the user can open a tab's CONTENT — deliberately not the same list
@@ -331,13 +300,9 @@ export function Team() {
 
   const raw = params.get("tab") as TeamTabValue | null;
   const requested = raw && raw in canViewTab ? raw : null;
-  // Honour the requested tab only if the user can open it, else land on their
-  // first real one. Falling back to a tab they cannot see renders the header
-  // over an empty body, which is what `: "roles"` used to do here.
   const active: TeamTabValue | null =
     requested && canViewTab[requested] ? requested : firstVisible;
 
-  // No tab at all — say so instead of rendering a page with nothing under it.
   if (active === null)
     return (
       <Forbidden
@@ -557,11 +522,9 @@ export function Team() {
 // plain `.map` grid it replaces.
 const GRID_VIRTUAL_THRESHOLD = 40;
 const GRID_OVERSCAN_ROWS = 3;
-const GRID_GAP = 12; // px — matches Tailwind `gap-3` (0.75rem) on the grid
-const CARD_HEIGHT_ESTIMATE = 168; // px; corrected at runtime by measuring a real card
+const GRID_GAP = 12;
+const CARD_HEIGHT_ESTIMATE = 168;
 
-// Live column count from the grid's resolved template (e.g. "296px 296px 296px"
-// → 3). Follows the responsive breakpoints without re-encoding them.
 function gridColumnCount(grid: HTMLElement): number {
   const tpl = getComputedStyle(grid).gridTemplateColumns;
   const n = tpl && tpl !== "none" ? tpl.split(" ").filter(Boolean).length : 1;
@@ -578,10 +541,7 @@ function VirtualMemberGrid<T>({
   estimateHeight = CARD_HEIGHT_ESTIMATE,
 }: {
   items: T[];
-  /** Must return an element with a stable `key` (the caller owns it). */
   renderItem: (item: T, index: number) => ReactNode;
-  /** The exact grid classes (`grid grid-cols-2 gap-3 …`) so the responsive
-   *  column count + card layout stay identical to the un-windowed grid. */
   gridClassName: string;
   gap?: number;
   threshold?: number;
@@ -612,7 +572,7 @@ function VirtualMemberGrid<T>({
       if (card && card.offsetHeight > 0) rowHRef.current = card.offsetHeight + gap;
       const rh = rowHRef.current || estimateHeight + gap;
       const totalRows = Math.ceil(items.length / cols);
-      const top = container.getBoundingClientRect().top; // grid top vs viewport
+      const top = container.getBoundingClientRect().top;
       const firstRow = Math.max(0, Math.floor(-top / rh) - overscanRows);
       const visRows = Math.ceil(window.innerHeight / rh) + overscanRows * 2;
       const lastRow = Math.min(totalRows, firstRow + visRows);
@@ -639,7 +599,6 @@ function VirtualMemberGrid<T>({
     };
   }, [on, items.length, overscanRows, estimateHeight, gap]);
 
-  // Below the threshold: byte-identical to the plain grid it replaces.
   if (!on) {
     return (
       <div className={gridClassName}>
@@ -661,9 +620,6 @@ function VirtualMemberGrid<T>({
   );
 }
 
-// ──────────────────────────────────────────────────────────
-// Members tab — active users + pending invitations
-// ──────────────────────────────────────────────────────────
 function MembersTab({
   inviteOpen,
   onCloseInvite,
@@ -671,26 +627,16 @@ function MembersTab({
 }: {
   inviteOpen: boolean;
   onCloseInvite: () => void;
-  /** Sales Director (non-admin) — invite is forced into HIS department and the
-   *  Position/Role pickers are hidden (backend forces dept + defaults role). */
   salesDirScoped?: boolean;
 }) {
   const { user: me, can } = useAuth();
   const toast = useToast();
   const dialog = useDialog();
 
-  // NOTE: unbounded fetch — pulls ALL users in one request; the grid below is
-  // DOM-windowed, but fetch pagination is a separate follow-up.
   const members = useQuery<{ users: TeamMember[] }>("/api/users", () => api.get("/api/users"));
   const invites = useQuery<{ invitations: Invitation[] }>("/api/users/invitations", () =>
     api.get("/api/users/invitations")
   );
-  // PERF: these were refetchOnMount "always" + staleTime 0, which forced a
-  // full-screen load on EVERY Team visit. Freshness is already guaranteed
-  // without that: every create/update goes through the MutationCache hook
-  // (lib/queryClient.ts) which invalidates same-tab queries and broadcasts
-  // to sibling tabs — and invalidation ignores staleTime. A 60s staleTime
-  // just lets a plain revisit serve the cached snapshot instantly.
   const freshList = { staleTime: 60_000 };
   const roles = useQuery<{ roles: Role[] }>("/api/roles",
     () => api.get("/api/roles"),
@@ -707,13 +653,9 @@ function MembersTab({
     [],
     freshList,
   );
-  // Live presence — who's online right now (active in the last few minutes).
   const presence = useQuery<{ active: { id: number }[] }>("/api/presence", () =>
     api.get("/api/presence")
   );
-  // Multi-company (Phase 0e). Gate the per-user Company-access control on there
-  // being a real choice (>1 company). Pre-activation this returns 0/1 companies
-  // so the control stays hidden — single-company Houzs is unchanged.
   const companiesQ = useQuery<{
     companies: Array<{ id: number; code: string; name: string }>;
   }>("/api/companies", () => api.get("/api/companies"), [], freshList);
@@ -723,20 +665,15 @@ function MembersTab({
     () => new Set((presence.data?.active ?? []).map((a) => a.id)),
     [presence.data],
   );
-  // Lookup for resolving a member's extra department ids → name/colour.
   const deptById = useMemo(() => {
     const m = new Map<number, Department>();
     for (const d of depts.data?.departments ?? []) m.set(d.id, d);
     return m;
   }, [depts.data]);
 
-  // Members-list filters (owner ask: filter/sort by department and/or position).
   const [filterDept, setFilterDept] = useState<number | "">("");
   const [filterPos, setFilterPos] = useState<number | "">("");
   const [filterStatus, setFilterStatus] = useState<"" | "active" | "invited" | "disabled">("");
-  // One-click segments to surface misconfigured / stale accounts.
-  // Multi-select: any number of segments can be active; each adds a
-  // constraint (AND), the same way the dropdown filters compose.
   const [quickFilters, setQuickFilters] = useState<Set<string>>(new Set());
   const toggleQuick = (key: string) =>
     setQuickFilters((prev) => {
@@ -749,7 +686,6 @@ function MembersTab({
   const [filterCompany, setFilterCompany] = useState<number | "">("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchQ, setSearchQ] = useState("");
-  // Card grid (reference look) vs. dense table. Grid is the default.
   /* Owner 2026-07-24: Members opens in the LIST view by default ("team member
      - default view是listing"). Identity-scoped preference still wins, so
      anyone who explicitly picked the grid keeps it. */
@@ -763,29 +699,18 @@ function MembersTab({
     enumPreference(["open", "collapsed"] as const),
   );
   const invitesOpen = invitesView === "open";
-  // Grid ordering (the table view has its own column sort).
   const [gridSort, setGridSort] = useIdentityPreference(
     "team:gridSort",
     "name",
     enumPreference(["name", "recent", "status"] as const),
   );
 
-  // Per-user brand picker — opens a small modal scoped to one member.
-  // Member being edited in the side panel (name/email/phone/org + actions).
   const [editing, setEditing] = useState<TeamMember | null>(null);
-  // Member whose full-screen detail is open. Stored by id so it re-reads
-  // from the live list after an edit/reload instead of going stale.
   const [viewingId, setViewingId] = useState<number | null>(null);
-  // Invitation row whose resend is in flight (spinner + disable).
   const [resendingId, setResendingId] = useState<number | null>(null);
 
   const canManage = can("users.manage");
-  // `salesDirScoped` (a dept-scoped Sales Director) opens the member-detail Edit +
-  // enable/disable, and narrows the Edit panel to what their writes apply.
 
-  // Staging-only "login as member": the backend probe reports enabled only
-  // when the worker runs with IMPERSONATION_ENABLED (staging vars block), so
-  // the button never appears on prod even though it's the same bundle.
   const [canImpersonate, setCanImpersonate] = useState(false);
   useEffect(() => {
     if (!canManage) return;
@@ -796,7 +721,6 @@ function MembersTab({
         if (alive) setCanImpersonate(!!r.enabled);
       })
       .catch(() => {
-        /* disabled or unreachable — keep the button hidden */
       });
     return () => {
       alive = false;
@@ -813,7 +737,6 @@ function MembersTab({
     try {
       const res = await api.post<{ token: string }>(`/api/users/${u.id}/impersonate`, {});
       tokenStore.set(res.token, true);
-      // Full reload so the app re-bootstraps as the target user everywhere.
       window.location.assign("/");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not log in as this member");
@@ -825,10 +748,6 @@ function MembersTab({
     invites.reload();
   }
 
-  // Sending a reset link does NOT change the account (backend users.ts
-  // /:id/reset-password). The old copy promised a logout that the old handler
-  // really did perform; both are gone. The link is never shown here — it is a
-  // live credential and it belongs only in the member's mailbox.
   async function sendReset(u: TeamMember) {
     if (
       !(await dialog.confirm(
@@ -856,10 +775,6 @@ function MembersTab({
     }
   }
 
-  // Admin set / clear a member's POS PIN (backend /api/pos/admin-*-pin/:userId,
-  // users.manage-gated). The admin TYPES the 6-digit PIN — a login credential is
-  // entered into the tool by the person, not stored or defaulted by us. The
-  // member can change it themselves afterwards via the POS.
   async function setPosPin(u: TeamMember) {
     const pin = await dialog.prompt({
       title: `Set POS PIN for ${u.name || u.email}`,
@@ -881,9 +796,6 @@ function MembersTab({
     }
   }
 
-  // Re-send the invite email to a member who hasn't joined yet, keyed by
-  // user id (the member row). Reuses the existing invite token — only the
-  // email is fired again.
   async function resendInviteForUser(u: TeamMember) {
     try {
       const res = await api.post<{
@@ -914,7 +826,7 @@ function MembersTab({
         placeholder: "e.g. left the company",
         confirmLabel: "Disable",
       });
-      if (reason === null) return; // cancelled
+      if (reason === null) return;
       body.status_reason = reason.trim() || null;
     }
     try {
@@ -927,9 +839,6 @@ function MembersTab({
   }
 
   async function removeUser(u: TeamMember) {
-    // True hard-delete via ?hard=1. Backend errors out with a helpful
-    // message if FK references block it; in that case the admin should
-    // use the Disable button (soft-delete) instead.
     const confirmed = await dialog.confirm(
       `Permanently delete ${u.email}?\n\n` +
         "This wipes their account, sessions, audit log entries, and engagement history. " +
@@ -1076,14 +985,12 @@ function MembersTab({
     posNameById,
   ]);
 
-  // Distinct brands across members — drives the brand filter dropdown.
   const allBrands = useMemo(() => {
     const s = new Set<string>();
     for (const u of members.data?.users ?? []) for (const b of u.brands ?? []) s.add(b);
     return [...s].sort();
   }, [members.data]);
 
-  // Active-filter bookkeeping for the Filters popover + removable pills.
   const statusLabels: Record<string, string> = {
     active: "Active",
     invited: "Pending",
@@ -1130,7 +1037,6 @@ function MembersTab({
     setQuickFilters(new Set());
   }
 
-  // Grid ordering (table view keeps its own column sort).
   const gridMembers = useMemo(() => {
     const arr = filteredMembers.slice();
     if (gridSort === "name") {
@@ -1151,8 +1057,6 @@ function MembersTab({
     return arr;
   }, [filteredMembers, gridSort]);
 
-  // Status tallies for the stat strip (reference layout). Mirrors the
-  // member lifecycle: active / invited (pending) / disabled (archived).
   const counts = useMemo(() => {
     const all = members.data?.users ?? [];
     return {
@@ -1163,13 +1067,10 @@ function MembersTab({
     };
   }, [members.data]);
 
-  // Click a stat card to toggle that status filter (like the reference).
   function pickStatus(s: "active" | "invited" | "disabled") {
     setFilterStatus((cur) => (cur === s ? "" : s));
   }
 
-  // Status strip under the section header — same slab as the SO list's
-  // status tabs, counts baked into the labels over the FULL member set.
   const statusPillOptions = [
     { value: "all" as const, label: `All · ${counts.total}` },
     { value: "active" as const, label: `Active · ${counts.active}` },
@@ -1177,8 +1078,6 @@ function MembersTab({
     { value: "disabled" as const, label: `Disabled · ${counts.disabled}` },
   ];
 
-  // How many members report to each manager — powers the hidden
-  // "Direct Reports" column without a backend round-trip.
   const directReports = useMemo(() => {
     const m = new Map<number, number>();
     for (const u of members.data?.users ?? []) {
@@ -1187,14 +1086,11 @@ function MembersTab({
     return m;
   }, [members.data]);
 
-  // Re-read the viewed member from the live list so the detail page stays
-  // current after an edit reload (rather than holding a stale snapshot).
   const viewing =
     viewingId != null
       ? (members.data?.users.find((u) => u.id === viewingId) ?? null)
       : null;
 
-  // ── Bulk selection (list view) ─────────────────────────────────
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const bulkBusyRef = useRef(false);
@@ -1218,7 +1114,6 @@ function MembersTab({
   function clearSelect() {
     setSelectedIds(new Set());
   }
-  // Only ever act on rows the admin may modify (manageable + not self).
   const selectableFiltered = filteredMembers.filter(
     (u) => canManage && u.id !== me?.id,
   );
@@ -1245,10 +1140,6 @@ function MembersTab({
     }
   }
 
-  // Two SEPARATE bulk actions, kept distinct on purpose so re-inviting the
-  // not-yet-onboarded never touches (and never logs out) active members:
-  //   • Resend invites  → only pending (status "invited") rows
-  //   • Reset passwords → only active rows (deliberate, confirmed, logs sessions out)
   const selectedInvited = selectableFiltered.filter(
     (u) => selectedIds.has(u.id) && u.status === "invited",
   );
@@ -1503,8 +1394,6 @@ function MembersTab({
         </span>
       ),
     },
-    /* Reveal-on-demand columns (SO-list parity) — every field /api/users
-       already returns, so the Columns panel decides, not the payload. */
     {
       key: "email",
       label: "Email",
@@ -1711,11 +1600,6 @@ function MembersTab({
     },
   ];
 
-  // ── Pending invitations table (Theme C DataTable) — expiry buckets and
-  //    the copied link come from lib/invitations, shared with the mobile
-  //    MobileInvitations card. ──────────────────────────────────────
-  /* No getValue carries token/invite_url — the CSV export must never
-     contain a live invite credential. Copy Link stays a per-row action. */
   const inviteColumns: Column<Invitation>[] = [
     {
       key: "email",
@@ -1911,7 +1795,6 @@ function MembersTab({
         />
       ) : (
       <>
-      {/* Status overview — each card filters the list when clicked. */}
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
           pending={members.loading && !members.data}
@@ -1954,7 +1837,6 @@ function MembersTab({
         />
       </div>
 
-      {/* Members */}
       <div className="mb-6">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <span className="h-px w-5 bg-accent" />
@@ -1962,8 +1844,6 @@ function MembersTab({
             Members ({filteredMembers.length}/{members.data?.users.length ?? 0})
           </h2>
           <div className="ml-auto flex items-center gap-2">
-            {/* List view searches inside the DataTable toolbar; the grid
-                keeps its own box since the table chrome isn't mounted. */}
             {view === "grid" && (
               <div className="relative">
                 <Search
@@ -1979,7 +1859,6 @@ function MembersTab({
               </div>
             )}
 
-            {/* Filters — everything tucked into one popover to keep the bar tidy */}
             <div className="relative">
               <button
                 type="button"
@@ -2196,8 +2075,6 @@ function MembersTab({
           </div>
         </div>
 
-        {/* Status strip — SO-list pattern: one slab, counts in the labels.
-            Mirrors the stat cards' filter (both drive filterStatus). */}
         <div className="mb-3">
           <FilterPills
             options={statusPillOptions}
@@ -2206,7 +2083,6 @@ function MembersTab({
           />
         </div>
 
-        {/* Active filters — removable pills so applied filters are visible. */}
         {activeFilters.length > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-1.5">
             <span className="text-[10px] font-medium uppercase tracking-wide text-ink-muted">
@@ -2262,9 +2138,6 @@ function MembersTab({
         ) : gridMembers.length === 0 ? (
           <EmptyState compact message="No members match these filters." />
         ) : (
-          // Windowed so only the on-screen rows (plus overscan) are in the DOM;
-          // the grid classes are handed through verbatim so the responsive
-          // column count and card layout are unchanged.
           <VirtualMemberGrid
             items={gridMembers}
             gridClassName="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
@@ -2281,7 +2154,6 @@ function MembersTab({
           />
         )}
 
-        {/* Bulk action bar — appears when rows are selected (list view). */}
         {view === "list" && selectedIds.size > 0 && (
           <div className="sticky bottom-3 z-20 mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-accent/40 bg-surface px-3 py-2 shadow-slab">
             <span className="text-[12px] font-semibold text-ink">
@@ -2388,8 +2260,6 @@ function MembersTab({
         )}
       </div>
 
-      {/* Pending invitations — collapsed by default so the members table
-          keeps the full freeze height (the row cap yields to content below). */}
       <div className="mb-6">
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <button
@@ -2490,9 +2360,6 @@ function MembersTab({
   );
 }
 
-// Bordered column card with a bold header — the right-hand groups on the
-// member detail page (reference layout: profile on the left, grouped
-// columns on the right).
 function DetailCol({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
@@ -2504,7 +2371,6 @@ function DetailCol({ title, children }: { title: string; children: ReactNode }) 
   );
 }
 
-// "service_cases.cases" → "Service cases · Cases" for the page-access list.
 function prettyPageKey(key: string): string {
   return key
     .split(".")
@@ -2527,13 +2393,6 @@ function DetailKV({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/**
- * Full-screen member detail (reference layout, Houzs theme): a profile card
- * on the left, grouped columns on the right — Organisation, Direct reports,
- * Access & Activity. All data comes from the members payload (no extra
- * fetch). Manage actions live on the profile card; clicking a direct report
- * navigates to their detail.
- */
 function MemberDetail({
   user,
   members,
@@ -2572,15 +2431,11 @@ function MemberDetail({
     .slice()
     .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
 
-  // Departments this member belongs to beyond the primary (mig 0020).
   const deptById = new Map(departments.map((d) => [d.id, d]));
   const extraDepts = extraDeptIdsOf(user)
     .map((id) => deptById.get(id))
     .filter((d): d is Department => !!d);
 
-  // Pages this member can reach, via their position's access matrix. The
-  // endpoint returns a { page_key: { explicit, level } } MAP (not an array),
-  // so flatten it to a sorted list of the pages actually granted.
   const pageAccessQ = useQuery<{
     page_access: Record<string, { explicit?: boolean; level: string }>;
   }>("position-page-access#user",
@@ -2615,17 +2470,11 @@ function MemberDetail({
   const actionCls =
     "inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-3 py-2 text-[12px] font-semibold text-ink-secondary transition-colors hover:border-accent/40 hover:bg-accent-soft/50 hover:text-accent";
 
-  // When the detail opens (or switches member) the grid it replaced may have
-  // been scrolled down — bring the detail into view so it doesn't render above
-  // the viewport and look like nothing happened.
   const topRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     topRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
   }, [user.id]);
 
-  /* Tab state · ?view=overview (default) | ?view=org-performance. URL-state
-     so a deep-link or refresh lands on the right tab; the existing default
-     (no query string) still lands on Overview. */
   const [searchParams, setSearchParams] = useSearchParams();
   const view: "overview" | "org-performance" =
     searchParams.get("view") === "org-performance" ? "org-performance" : "overview";
@@ -2646,7 +2495,6 @@ function MemberDetail({
         <ArrowLeft size={14} /> Back to members
       </button>
 
-      {/* Tab strip — Overview / Org & Performance. Brands & Commission stays a side-drawer. */}
       <div className="mb-4 flex items-center gap-1 border-b border-border" role="tablist">
         <button
           type="button"
@@ -2699,7 +2547,6 @@ function MemberDetail({
 
       {view === "overview" && (
       <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
-        {/* Profile card */}
         <div className="self-start rounded-lg border border-border bg-surface p-5 shadow-stone">
           <div className="flex flex-col items-center text-center">
             <span className="relative">
@@ -2763,8 +2610,6 @@ function MemberDetail({
 
           {(canManage || canEditScoped) && (
             <div className="mt-4 grid gap-2 border-t border-border-subtle pt-4">
-              {/* Edit + enable/disable are available to a full admin AND a
-                  dept-scoped Sales Director; the rest stay full-admin only. */}
               <Button variant="brass" className="w-full" icon={<Pencil size={13} />} onClick={onEdit}>
                 Edit member
               </Button>
@@ -2800,7 +2645,6 @@ function MemberDetail({
           )}
         </div>
 
-        {/* Grouped columns */}
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <DetailCol title="Organisation">
             <DetailKV label="Department">
@@ -2935,11 +2779,6 @@ function MemberDetail({
   );
 }
 
-/**
- * Member card for the grid view (reference layout, Houzs theme). Avatar +
- * name + position, contact lines, a status chip, and a hover "Edit" hint.
- * Clicking opens the Edit Member panel when the viewer can manage.
- */
 function MemberCard({
   u,
   posName,
@@ -3064,7 +2903,6 @@ export function EditMemberPanel({
   members: TeamMember[];
   onClose: () => void;
   onSaved: () => void;
-  /** Reload the list without closing the panel (e.g. after a photo change). */
   onChanged: () => void;
   onSendReset: (u: TeamMember) => void;
   onResendInvite: (u: TeamMember) => void;
@@ -3080,8 +2918,6 @@ export function EditMemberPanel({
   const [emailAlias, setEmailAlias] = useState(user.email_alias || "");
   const [phone, setPhone] = useState(user.phone || "");
   const [deptId, setDeptId] = useState<number | "">(user.department_id ?? "");
-  // Full department membership (mig 0020). Primary (deptId) is always part of
-  // this set; extra chips add/remove the others.
   const [deptIds, setDeptIds] = useState<number[]>(() => deptIdsOf(user));
   const [positionId, setPositionId] = useState<number | "">(user.position_id ?? "");
   // Role editor re-added to the panel (owner 2026-07-20). Seeded from the
@@ -3090,9 +2926,6 @@ export function EditMemberPanel({
   const [roleId, setRoleId] = useState<number | "">(user.role_id ?? "");
   const [managerId, setManagerId] = useState<number | "">(user.manager_id ?? "");
   const [division, setDivision] = useState(user.division || "");
-  // Company grants (Phase 0e). Seeded from the member's current grant set; an
-  // empty set (legacy no-grant → fail-open ALL) shows no segment selected and,
-  // if left untouched, is preserved unchanged.
   const [companyIds, setCompanyIds] = useState<number[]>(() => user.company_ids ?? []);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -3125,10 +2958,6 @@ export function EditMemberPanel({
     [],
     { staleTime: 300_000 },
   );
-  // Roles list for the Role editor. Role = what the member can DO (action
-  // permissions + the "*" wildcard); Position (above) = what they can SEE. The
-  // backend PATCH /api/users/:id already accepts + validates role_id (gated on
-  // users.manage), so this is a frontend-only re-exposure of that control.
   const rolesQ = useQuery<{ roles: Role[] }>(
     "/api/roles",
     () => api.get("/api/roles"),
@@ -3138,17 +2967,12 @@ export function EditMemberPanel({
   const roleList = (rolesQ.data?.roles ?? [])
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name));
-  /* The scm.staff row is joined by user_id — migration 0066's deterministic
-     link between a Houzs user and their sales profile. No row means this
-     member has no sales profile and cannot be parked; the UI says so rather
-     than offering a control that would silently do nothing. */
   const myScmStaff = (scmStaff.data?.staff ?? []).find(
     (r) => Number(r.userId) === Number(user.id),
   );
   const [showroomId, setShowroomId] = useState<string>("");
   const [showroomDirty, setShowroomDirty] = useState(false);
   useEffect(() => {
-    /* Seed from the server once loaded, but never stomp an edit in progress. */
     if (!showroomDirty) setShowroomId(myScmStaff?.showroomWarehouseId ?? "");
   }, [myScmStaff?.showroomWarehouseId, showroomDirty]);
   const selectedShowroom = (showrooms.data?.showrooms ?? []).find(
@@ -3162,8 +2986,6 @@ export function EditMemberPanel({
     }
     setPicBusy(true);
     try {
-      // WO-7 — avatars render small; compress before upload (also absorbs
-      // what used to be a hard "under 5 MB" rejection for phone shots).
       const { file } = await prepareImageForUpload(rawFile, { maxDimension: 1000, wantThumb: false });
       if (file.size > 5 * 1024 * 1024) {
         toast.error("Image must be under 5 MB");
@@ -3175,7 +2997,7 @@ export function EditMemberPanel({
         file,
         file.type,
       );
-      setPicBump((n) => n + 1); // remount the preview avatar to bust its cache
+      setPicBump((n) => n + 1);
       onChanged();
       toast.success("Photo updated");
     } catch (e: any) {
@@ -3206,7 +3028,6 @@ export function EditMemberPanel({
       patch.email_alias = emailAlias.trim().toLowerCase() || null;
     if (phone.trim() !== (user.phone || "")) patch.phone = phone.trim() || null;
     if ((deptId || null) !== (user.department_id ?? null)) patch.department_id = deptId || null;
-    // Full membership set — always carry the primary; send only when changed.
     const finalDeptIds = (() => {
       const s = new Set(deptIds);
       if (deptId !== "") s.add(deptId);
@@ -3218,14 +3039,10 @@ export function EditMemberPanel({
       finalDeptIds.every((d) => initialDeptIds.includes(d));
     if (!sameDeptSet) patch.department_ids = finalDeptIds;
     if ((positionId || null) !== (user.position_id ?? null)) patch.position_id = positionId || null;
-    // Role — send only when changed to a real role. A member always has a role
-    // (never cleared to none from here), so an empty roleId (roles still loading)
-    // is never written.
     if (roleId !== "" && roleId !== (user.role_id ?? "")) patch.role_id = roleId;
     if ((managerId || null) !== (user.manager_id ?? null)) patch.manager_id = managerId || null;
     if ((division.trim() || null) !== (user.division ?? null))
       patch.division = division.trim() || null;
-    // Company grants — send only when changed (and multi-company is active).
     if (multiCompany) {
       const initialCompany = (user.company_ids ?? []).slice().sort((a, b) => a - b);
       const nextCompany = companyIds.slice().sort((a, b) => a - b);
@@ -3243,10 +3060,6 @@ export function EditMemberPanel({
     }
 
     const body = editMemberPatchFor(patch, salesDirScoped);
-    // Save if EITHER the user fields OR the showroom parking changed. The
-    // showroom lives in scm.staff (the separate call below), so an "only the
-    // showroom changed" edit has an EMPTY user patch — the old early-return here
-    // dropped it silently (owner: picked a venue, hit Save, nothing persisted).
     if (Object.keys(body).length === 0 && !showroomDirty) {
       onClose();
       return;
@@ -3254,12 +3067,6 @@ export function EditMemberPanel({
     setBusy(true);
     try {
       if (Object.keys(body).length > 0) await api.patch(`/api/users/${user.id}`, body);
-      /* Showroom parking lives in scm.staff, not on the user record, so it is a
-         second call — made only when it actually changed, and AFTER the user
-         patch succeeded. Its failure is surfaced separately rather than being
-         folded into the user save's success message: reporting "Saved" when the
-         venue binding did not persist is exactly the silent-miss this feature
-         cannot afford. */
       if (showroomDirty) {
         try {
           await api.patch(`/api/scm/staff/by-user/${user.id}/showroom`, {
@@ -3387,8 +3194,7 @@ export function EditMemberPanel({
             onChange={(v) => {
               const next = v ? Number(v) : "";
               setDeptId(next);
-              setPositionId(""); // positions are department-scoped — reset
-              // The primary is always part of the membership set.
+              setPositionId("");
               if (next !== "")
                 setDeptIds((prev) => (prev.includes(next) ? prev : [...prev, next]));
             }}
@@ -3414,7 +3220,6 @@ export function EditMemberPanel({
                 <button
                   key={d.id}
                   type="button"
-                  // The primary can't be removed here — change it above first.
                   disabled={isPrimary}
                   onClick={() =>
                     setDeptIds((prev) =>
@@ -3611,9 +3416,6 @@ export function EditMemberPanel({
             </select>
           )}
           <div className="mt-1 text-[10px] text-ink-muted">
-            {/* State WHAT the setting does to real documents, and be explicit
-                about the two ways it does not apply — those are the questions
-                the owner will actually have, and both are deliberate. */}
             {selectedShowroom && !selectedShowroom.venueName ? (
               <span className="text-danger">
                 This showroom has no Venue name yet, so orders will still have no
@@ -3674,14 +3476,8 @@ export function EditMemberPanel({
   );
 }
 
-// ──────────────────────────────────────────────────────────
-// Org hierarchy helpers
-// ──────────────────────────────────────────────────────────
 
 
-// One departmental box in the org chart (a dept with non-root members, or the
-// "Unassigned" catch-all). Shared between OrgChartTab (which owns per-box
-// expand/collapse state) and OrgDeptChart (which renders them).
 type OrgGroup = {
   key: string;
   deptId: number | null;
@@ -3690,9 +3486,6 @@ type OrgGroup = {
   members: TeamMember[];
 };
 
-// Build the departmental boxes: one per department that has non-root members
-// (matching ANY of a member's departments, mig 0020), then a catch-all for the
-// unassigned. Root people are pulled into a separate top row by the caller.
 function buildDeptGroups(
   users: TeamMember[],
   roots: TeamMember[],
@@ -3713,25 +3506,8 @@ function buildDeptGroups(
   return groups;
 }
 
-// Initial-render card budget: department boxes are expanded (their member cards
-// mounted) greedily in order until this many cards are on screen; the rest stay
-// collapsed to a header + count, mounting zero cards until the user expands
-// them. This bounds the initial DOM so the chart doesn't freeze at scale — a
-// collapsed box contributes 0 card nodes. Roots/leadership always render.
 const ORG_INITIAL_CARD_BUDGET = 60;
 
-// ──────────────────────────────────────────────────────────
-// Org Chart tab — top-down visual tree with drag-to-assign
-// ──────────────────────────────────────────────────────────
-//
-// Renders each team as a proper top-down hierarchy (parent → children
-// below, connected by hairlines). Interactions:
-//   • Drag a node onto another node → assigns that user as report.
-//   • Drag a node onto the "Top level" strip → removes their manager.
-//   • Click the pencil on a card → inline manager dropdown (keyboard-
-//     accessible fallback for drag-and-drop).
-// Cycle prevention is enforced both client-side (drop target refuses)
-// and server-side (PATCH /api/users/:id walks the chain).
 
 function OrgChartTab() {
   const { can } = useAuth();
@@ -3741,22 +3517,11 @@ function OrgChartTab() {
   const depts = useQuery<{ departments: Department[] }>("/api/departments", () =>
     api.get("/api/departments")
   );
-  // Multi-company (Phase 0e). Each company gets its OWN reporting tree; a member
-  // is placed in a company's tree when granted to it — using the same grant
-  // resolution as the Members table (empty grant = every company; "Both" = all
-  // ids, so those members appear in EVERY tree). Pre-activation this returns 0/1
-  // companies, so `companyOpts.length > 1` is false and the chart falls back to a
-  // single combined tree — single-company Houzs is visually unchanged.
   const companiesQ = useQuery<{
     companies: Array<{ id: number; code: string; name: string }>;
   }>("/api/companies", () => api.get("/api/companies"), [], { staleTime: 60_000 });
   const companyOpts: CompanyOpt[] = companiesQ.data?.companies ?? [];
 
-  // Department filter — null = "All". When a dept is selected the chart
-  // narrows to that dept's members only; reps reporting up to a manager
-  // outside the filtered set get re-rooted so the team's lineup is
-  // visible end-to-end. Persists per-tab in the URL so a "Sales chart"
-  // bookmark stays usable.
   const [params, setParams] = useSearchParams();
   const filterDeptId = params.get("dept")
     ? parseInt(params.get("dept") || "", 10)
@@ -3773,21 +3538,11 @@ function OrgChartTab() {
   );
   const users = useMemo(() => {
     if (filterDeptId == null) return allActive;
-    // Match ANY of the member's departments, not just the primary (mig 0020).
     return allActive.filter((u) => inDept(u, filterDeptId));
   }, [allActive, filterDeptId]);
 
-  // Global lookup for the mutation handlers (manager reassignment, cycle checks)
-  // — keyed across the full filtered set, not one company's slice.
   const byId = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
 
-  // One reporting tree PER company (or a single combined tree when there is not
-  // more than one company). Within each tree the manager -> report hierarchy is
-  // preserved exactly as before: a user whose manager_id points at someone NOT in
-  // that tree (inactive, missing, out-of-dept-filter, or granted to a different
-  // company) is re-rooted so they stay visible. A member granted to both
-  // companies is present in both slices, so they render in BOTH trees under their
-  // reporting line there — not in a separate side section.
   const companyViews = useMemo(() => {
     const departments = depts.data?.departments ?? [];
     const buildView = (
@@ -3808,8 +3563,6 @@ function OrgChartTab() {
         arr.sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
       }
       const roots = childrenOf.get(null) ?? [];
-      // Namespace each box's key by tree so expand/collapse state never collides
-      // between companies (both trees can have a "d5" or "none" box).
       const groups = buildDeptGroups(viewUsers, roots, departments).map((g) => ({
         ...g,
         key: `${key}:${g.key}`,
@@ -3818,9 +3571,6 @@ function OrgChartTab() {
     };
 
     if (companyOpts.length > 1) {
-      // Grant resolution mirrors the Members table (companyLabelFor): an empty
-      // grant is fail-open (member acts in every company) so it appears in every
-      // tree; otherwise the member appears in each company whose id it carries.
       return companyOpts.map((co) =>
         buildView(
           `c${co.id}`,
@@ -3835,8 +3585,6 @@ function OrgChartTab() {
     return [buildView("all", "", users)];
   }, [companyOpts, users, depts.data?.departments]);
 
-  // Flat list of every box across every tree — drives the shared expand/collapse
-  // controls and the initial-render card budget (bounds total DOM at scale).
   const allGroups = useMemo(
     () => companyViews.flatMap((v) => v.groups),
     [companyViews],
@@ -3846,12 +3594,6 @@ function OrgChartTab() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
 
-  // Which department boxes are expanded. Lazy-mount: a collapsed box shows only
-  // its header (name + count + chevron) and mounts none of its member cards, so
-  // deep/large departments contribute 0 DOM nodes until opened. Keys are
-  // tree-namespaced (see companyViews) so the state spans every company tree.
-  // null = "use the budget-based default". Once the user toggles anything we
-  // hold their explicit set instead.
   const [expandedGroups, setExpandedGroups] = useState<Set<string> | null>(null);
   const defaultExpandedGroups = useMemo(() => {
     const s = new Set<string>();
@@ -3881,10 +3623,6 @@ function OrgChartTab() {
   const allGroupsExpanded =
     allGroups.length > 0 && allGroups.every((g) => expandedKeys.has(g.key));
 
-  /* Export → Print preview → Print now. Expanding every box FIRST is what makes
-     the printout the whole chart (a collapsed box mounts none of its cards);
-     the two frames let those cards mount before each tree is measured and
-     scaled to a landscape page (see the @media print rule in index.css). */
   const orgChartPrint = usePrintPreview(() => {
     expandAllGroups();
     requestAnimationFrame(() =>
@@ -3906,7 +3644,7 @@ function OrgChartTab() {
     if (userId === managerId) return;
     const current = byId.get(userId);
     if (!current) return;
-    if ((current.manager_id ?? null) === managerId) return; // no-op
+    if ((current.manager_id ?? null) === managerId) return;
     if (managerId != null && isDescendantOf(managerId, userId, users)) {
       toast.error("That user reports to this one — would create a loop");
       return;
@@ -3946,8 +3684,6 @@ function OrgChartTab() {
     }
   }
 
-  // Replace-set the member's full department list (mig 0020). The backend keeps
-  // the primary in the set, so this is safe to call with any selection.
   async function changeDepts(userId: number, departmentIds: number[]) {
     const current = byId.get(userId);
     if (!current) return;
@@ -3960,12 +3696,11 @@ function OrgChartTab() {
     }
   }
 
-  // Set a member's division (org-chart column) — free text, mig 0021.
   async function changeDivision(userId: number, division: string | null) {
     const current = byId.get(userId);
     if (!current) return;
     const next = division?.trim() || null;
-    if ((current.division ?? null) === next) return; // no-op
+    if ((current.division ?? null) === next) return;
     try {
       await api.patch(`/api/users/${userId}`, { division: next });
       members.reload();
@@ -3974,8 +3709,6 @@ function OrgChartTab() {
     }
   }
 
-  // Drag-drop target: move a member into a department column. Sets both the
-  // primary department and the division in one shot.
   async function moveMember(
     userId: number,
     departmentId: number | null,
@@ -3988,7 +3721,7 @@ function OrgChartTab() {
       (current.department_id ?? null) === departmentId &&
       (current.division ?? null) === next
     )
-      return; // no-op
+      return;
     try {
       await api.patch(`/api/users/${userId}`, {
         department_id: departmentId,
@@ -4020,7 +3753,6 @@ function OrgChartTab() {
   const filterDept = filterDeptId
     ? deptList.find((d) => d.id === filterDeptId)
     : null;
-  // Existing division names (for the editor's autocomplete) — deduped, sorted.
   const divisionOptions = Array.from(
     new Set(
       allActive
@@ -4031,9 +3763,6 @@ function OrgChartTab() {
 
   return (
     <div className="space-y-4">
-      {/* Department pill row — pick "All" or any dept to narrow the
-          tree to that team. Bookmarkable via ?dept= so a Sales chart
-          link is shareable. */}
       {deptList.length > 0 && (
         <div className="no-scrollbar -mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-1">
           <span className="shrink-0 font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
@@ -4087,7 +3816,6 @@ function OrgChartTab() {
         </div>
       )}
 
-      {/* Top-level drop zone — drop a user here to remove their manager */}
       {canManage && (
         <TopLevelDropZone
           dragging={draggingId != null}
@@ -4103,7 +3831,6 @@ function OrgChartTab() {
         </div>
       ) : (
         <>
-          {/* Controls: expand · export · zoom */}
           <div className="flex flex-wrap items-center justify-end gap-1.5">
             {allGroups.length > 1 && (
               <button
@@ -4133,9 +3860,6 @@ function OrgChartTab() {
               <Printer size={13} strokeWidth={2} />
               Export
             </button>
-            {/* Same Print preview every printable surface in the app opens. The
-                chart prints from the page itself (.org-print-area), so there is
-                no PDF file to download or open in a tab. */}
             <PrintPreviewModal
               open={orgChartPrint.open}
               onClose={orgChartPrint.close}
@@ -4177,8 +3901,6 @@ function OrgChartTab() {
 
           <div className="org-print-area thin-scroll space-y-8 overflow-auto pb-6">
             {companyViews.map((view) => {
-              // Only label the tree when there is more than one — a single
-              // combined tree stays header-less, exactly as before.
               const showHeader = companyViews.length > 1;
               return (
                 <section key={view.key} className="space-y-2">
@@ -4275,18 +3997,7 @@ function TopLevelDropZone({
   );
 }
 
-// ──────────────────────────────────────────────────────────
-// Departmental org chart (Chart view)
-//
-// A root box at the top (people with no manager) over a connector bus into one
-// titled box PER DEPARTMENT — each a dark header bar (white, uppercase dept
-// name) over square-photo cards, sub-grouped by position. Mirrors a classic
-// printed org chart, not a manager→report tree. Editing (reports-to, primary
-// dept, extra depts) stays on each card's pencil popover.
-// ──────────────────────────────────────────────────────────
 
-// Float seniority-sounding positions to the top of a department box so the
-// lead reads first (e.g. Supervisor above the Storekeepers it leads).
 const ORG_RANK = [
   "owner", "director", "head", "manager", "supervisor", "lead",
   "executive", "senior", "admin", "officer",
@@ -4297,9 +4008,6 @@ function orgSeniority(positionName?: string | null): number {
   return i < 0 ? ORG_RANK.length : i;
 }
 
-/** Group a department's members by position into clusters, most-senior first.
- *  A cluster of 2+ gets a small label (e.g. "Storekeepers"); lone members
- *  render label-less so the box doesn't become a wall of headings. */
 function clusterByPosition(
   members: TeamMember[],
 ): { label: string | null; members: TeamMember[] }[] {
@@ -4347,10 +4055,7 @@ function OrgDeptChart({
 }: {
   users: TeamMember[];
   roots: TeamMember[];
-  /** Prebuilt department boxes (see buildDeptGroups) — the caller owns them so
-   *  it can also own the expand/collapse state. */
   groups: OrgGroup[];
-  /** Keys of the boxes that are expanded; collapsed boxes mount no cards. */
   expandedKeys: Set<string>;
   onToggleGroup: (key: string) => void;
   departments: Department[];
@@ -4389,9 +4094,6 @@ function OrgDeptChart({
     />
   );
 
-  // Department boxes are prebuilt and owned by the caller (which also owns the
-  // expand/collapse state); see buildDeptGroups. Root people render in the top
-  // row below.
   const hasRoots = roots.length > 0;
 
   return (
@@ -4417,8 +4119,6 @@ function OrgDeptChart({
       <div className="flex items-start justify-center gap-5">
         {groups.map((g, i) => (
           <div key={g.key} className="relative flex flex-col items-center">
-            {/* Connector bus across the department boxes (only when there's a
-                root above to hang them from). */}
             {hasRoots && groups.length > 1 && (
               <span
                 aria-hidden
@@ -4458,8 +4158,6 @@ function DeptGroupBox({
     color: string | null;
     members: TeamMember[];
   };
-  /** When collapsed the box mounts only its header — none of its member cards.
-   *  This is what bounds the chart's DOM at scale. */
   collapsed: boolean;
   onToggle: () => void;
   renderCard: (u: TeamMember) => ReactNode;
@@ -4467,9 +4165,6 @@ function DeptGroupBox({
   draggingId: number | null;
   onMoveMember: (userId: number, departmentId: number | null, division: string | null) => void;
 }) {
-  // Columns = divisions within the department. Members with no division fall
-  // into a leading default column ("" key); named divisions sort alpha after.
-  // Only computed when expanded, since a collapsed box renders no columns.
   const byDiv = new Map<string, TeamMember[]>();
   if (!collapsed) {
     for (const m of group.members) {
@@ -4528,8 +4223,6 @@ function DeptGroupBox({
   );
 }
 
-// One division = one column inside a department box, and a drop target: drag a
-// card onto it to set that member's department + division in one move.
 function DivisionColumn({
   deptId,
   division,
@@ -4602,10 +4295,6 @@ function DivisionColumn({
   );
 }
 
-// Chip multi-select for a member's extra departments, used in both org-chart
-// edit popovers. Toggling applies immediately (replace-set via onChangeDepts),
-// matching the popover's other always-live controls. The primary chip is shown
-// but locked — change the primary with the Department select above it.
 function DeptChipsEditor({
   user,
   departments,
@@ -4676,12 +4365,8 @@ function OrgCard({
   onPickManager,
 }: {
   user: TeamMember;
-  /** Manager cards get the top department-colour bar; leaf report cards don't. */
   accent: boolean;
-  /** Departmental chart cards use a square photo + a wider body (ID-card look). */
   square?: boolean;
-  /** In the departmental chart the division COLUMN is the drop target, so the
-   *  card opts out of being a reporting drop target (it stays a drag source). */
   noReportDrop?: boolean;
   canManage: boolean;
   draggingId: number | null;
@@ -4691,7 +4376,6 @@ function OrgCard({
   setEditing: (on: boolean) => void;
   users: TeamMember[];
   departments: Department[];
-  /** Existing division names for the editor's autocomplete. */
   divisionOptions?: string[];
   onChangeDept: (userId: number, departmentId: number | null) => void;
   onChangeDepts: (userId: number, departmentIds: number[]) => void;
@@ -4703,7 +4387,6 @@ function OrgCard({
   const isValidDropTarget =
     draggingId != null &&
     draggingId !== user.id &&
-    // Can't drop user onto their own descendant.
     !isDescendantOf(user.id, draggingId, users);
 
   return (
@@ -4746,9 +4429,6 @@ function OrgCard({
         canManage && "cursor-grab active:cursor-grabbing",
       )}
     >
-      {/* Department colour bar — only on manager cards, so the report grid
-          below stays clean (reference look). In the departmental chart the
-          dept colour lives on the group header instead, so square cards skip it. */}
       {accent && !square && (
         <span
           aria-hidden
@@ -4874,13 +4554,7 @@ function OrgCard({
   );
 }
 
-// ──────────────────────────────────────────────────────────
-// Departments tab — small CRUD list of org groupings
-// ──────────────────────────────────────────────────────────
 
-/** Fixed palette shown in the colour picker. Values are 6-char hex
- *  without '#', to match the backend contract. Room for 8 entries so
- *  the swatches fit on one row without crowding. */
 const DEPT_PALETTE = [
   { hex: "64748b", label: "Slate" },
   { hex: "3b82f6", label: "Blue" },
@@ -5144,9 +4818,6 @@ function DepartmentEditor({
   );
 }
 
-// ──────────────────────────────────────────────────────────
-// Invite panel
-// ──────────────────────────────────────────────────────────
 export function InvitePanel({
   open,
   onClose,
@@ -5167,22 +4838,15 @@ export function InvitePanel({
   members: TeamMember[];
   companies: CompanyOpt[];
   multiCompany: boolean;
-  /** Sales Director (scoped) — when provided (number or null), the new member
-   *  is FORCED into this department and the Department/Position/Role pickers are
-   *  hidden. `undefined` = normal full-admin invite (all pickers shown). */
   lockDeptId?: number | null;
   onInvited: () => void;
 }) {
   const toast = useToast();
-  // Scoped Sales-Director invite: department is fixed, extra org pickers hidden.
   const scoped = lockDeptId !== undefined;
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [roleId, setRoleId] = useState<number | "">("");
-  // Company grants for the new member (Phase 0e). Defaults to Houzs (id 1) so a
-  // new user is never created with zero grants. Scoped Sales-Director invites
-  // don't show the picker — they are forced to Houzs server-side.
   const [companyIds, setCompanyIds] = useState<number[]>([1]);
   const [deptId, setDeptId] = useState<number | "">(
     scoped ? lockDeptId ?? "" : "",
@@ -5203,10 +4867,6 @@ export function InvitePanel({
     pos_pin_set?: boolean;
   } | null>(null);
 
-  // POS PIN is the TABLET credential and it is separate from the password above:
-  // pos.2990shome.com signs in by picking a name + 6-digit PIN, with no password
-  // field at all. Only a sales position can PIN-login (backend /api/pos/pin-login
-  // refuses the rest), so the field appears for exactly those positions.
   const selectedPosition = positions.find((p) => p.id === positionId);
   const isSalesPosition = !!selectedPosition?.slug?.startsWith("sales");
   const salesDeptNoPosition =
@@ -5216,9 +4876,6 @@ export function InvitePanel({
       .toLowerCase()
       .includes("sales");
 
-  // Page access for the chosen position — the invitee can only reach pages
-  // their position grants, so a position with zero granted pages drops them
-  // on a blank/Forbidden app. Fetched on demand to warn before sending.
   const positionPages = useQuery<{
     page_access: Record<string, { explicit?: boolean; level: string }>;
   }>("position-page-access#selected",
@@ -5237,20 +4894,11 @@ export function InvitePanel({
   const positionHasNoPages =
     positionId !== "" && !positionPages.loading && positionPageCount === 0;
 
-  // Default the role once roles load. Prefer the "Position Preview" role
-  // (action permissions only — page visibility still follows the position);
-  // fall back to the first non-system role, then any role. Kept in an effect
-  // (not the render body) so it never sets state during render.
   useEffect(() => {
     if (roleId !== "" || roles.length === 0) return;
     const preview = roles.find(
       (r) => r.name.trim().toLowerCase() === "position preview",
     );
-    // Prefer the neutral "Position Preview" role; else ANY zero-permission
-    // non-system role (so the invitee's access comes purely from their
-    // position); only then fall back to the first non-system role. Without the
-    // zero-perm guard the alphabetically-first non-system role (e.g. "BD Exec",
-    // which carries users.manage) was auto-assigned to every invitee.
     const defaultRole =
       preview ||
       roles.find((r) => !r.is_system && (r.permissions?.length ?? 0) === 0) ||
@@ -5286,16 +4934,11 @@ export function InvitePanel({
       }>("/api/users/invite", {
         email: email.toLowerCase().trim(),
         name: name.trim() || undefined,
-        // Scoped Sales-Director invite: department is FORCED server-side to the
-        // director's own; role is defaulted server-side; no position sent. The
-        // full-admin flow keeps sending all picked org dimensions.
         role_id: scoped ? undefined : roleId,
         department_id: scoped ? lockDeptId ?? undefined : deptId || undefined,
         position_id: scoped ? undefined : positionId || undefined,
         manager_id: managerId || undefined,
         phone: phone.trim() || undefined,
-        // Company grants (Phase 0e). Omitted for scoped invites (forced to
-        // Houzs server-side). Backend defaults to [1] (Houzs) if absent.
         company_ids: scoped ? undefined : companyIds,
         password: pw || undefined,
         pos_pin: pin || undefined,
@@ -5308,8 +4951,6 @@ export function InvitePanel({
           ? `Invitation emailed to ${res.email}`
           : `Invitation issued for ${res.email}`
       );
-      // The member exists either way; only the tablet PIN failed. Say so
-      // instead of letting them find out at the POS.
       if (pin && res.pos_pin_set === false) {
         toast.error(
           "Member created, but the POS PIN could not be set (no sales profile yet) — use Set PIN on their row.",
@@ -5424,9 +5065,6 @@ export function InvitePanel({
             />
           </div>
           {scoped ? (
-            /* Sales-Director scoped invite — department is fixed to the
-               director's own; Position + Role pickers are hidden (assigned by
-               an admin later / defaulted server-side). */
             <div>
               <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
                 Department
@@ -5450,7 +5088,7 @@ export function InvitePanel({
                   value={deptId}
                   onChange={(e) => {
                     setDeptId(e.target.value ? Number(e.target.value) : "");
-                    setPositionId(""); // positions are department-scoped — reset
+                    setPositionId("");
                   }}
                   className="h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 >

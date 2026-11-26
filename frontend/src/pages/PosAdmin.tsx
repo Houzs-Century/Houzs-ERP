@@ -1,7 +1,3 @@
-/* POS Admin — the ERP side of the Houzs POS booth app (layouts E1-E9).
- * Owner / admin only (pos.manage). One page, one tab per menu entry; the URL
- * carries the tab. Sales Report, Sync Status and Import backup join in the
- * later build steps. */
 import { useSearchParams } from "react-router-dom";
 import { PageHeader } from "../components/Layout";
 import { TabStrip, type TabOption } from "../components/TabStrip";

@@ -55,9 +55,6 @@ export type ScanLearningSkip = 'not-from-scan' | 'no-sample-id' | 'no-ai-origina
  * stays empty forever.
  */
 export function reportScanLearningSkipped(reason: ScanLearningSkip, surface: 'mobile' | 'desktop'): void {
-  /* not-from-scan is the overwhelmingly common case — a normal hand-typed SO —
-     and is not worth a report. The other two mean a SCAN happened and its
-     correction was lost. */
   if (reason === 'not-from-scan') return;
   reportClientError(
     new Error(`scan learning skipped: ${reason}`),
@@ -84,9 +81,6 @@ export async function postScanLearningSample(
       body: JSON.stringify(body),
     });
   } catch (err) {
-    /* Best-effort still — swallowed for the OPERATOR, recorded for us. Whether
-       authedFetch rejects on a non-2xx or resolves with it, either way the
-       failure now reaches the reporter rather than a no-op arrow function. */
     reportClientError(err, `scan-learning/${surface}/confirm-failed`);
   }
 }

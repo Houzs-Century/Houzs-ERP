@@ -1,6 +1,3 @@
-// The Compliance tab of a lorry: one card per document, answering the question
-// the page is opened for, how long until this one must be renewed. Older renewals
-// stay behind a toggle; they are the audit trail, not what is being looked at.
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { fmtDate } from "../../vendor/shared/format";

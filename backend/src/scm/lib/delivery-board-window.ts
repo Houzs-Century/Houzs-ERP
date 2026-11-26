@@ -101,10 +101,6 @@ export function bandRows<T extends { row_type: string; effective_delivery_date: 
   return rows.filter((o) => bandOf(o.effective_delivery_date, today) === band.band && (o.row_type === 'so' || band.page === 0));
 }
 
-/** SO doc numbers a self-scoped caller's own DOs point at: the DO header driver,
- *  or any crew seat. Not company-predicated on purpose: the result only ever
- *  narrows the already company-scoped SO header rows (intersection), exactly as
- *  the board's own DO read by so_doc_no does. */
 async function ownSoDocs(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm service client
   sb: any,
@@ -157,7 +153,7 @@ export async function planBoardSoRows<T extends { doc_no: string | null; status:
   const from = band.page * BAND_PAGE_SIZE;
   return {
     kept: kept.slice(from, from + BAND_PAGE_SIZE),
-    skipped: band.page === 0 ? skipped : [], // counted once, on page 0
+    skipped: band.page === 0 ? skipped : [],
     pageCount: Math.max(1, Math.ceil(kept.length / BAND_PAGE_SIZE)),
   };
 }
@@ -174,7 +170,6 @@ export function countsByRegion<R extends { delivery_state: string }, S>(
   const out: Record<string, Record<string, number>> = {};
   for (const key of ['ALL', ...regionKeys]) {
     const c = empty();
-    // empty() holds ALL and every state at 0.
     for (const o of rows) if (matches(o, key)) { c[o.delivery_state] += 1; c.ALL += 1; }
     for (const s of skipped) if (key === 'ALL' || regionsOfSkipped(s).includes(key)) { c.DELIVERED += 1; c.ALL += 1; }
     out[key] = c;

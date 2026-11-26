@@ -59,9 +59,7 @@ export function saveProblemsTitle(count: number): string {
 export async function notifySaveProblems(
   notify: (opts: { title: string; body?: ReactNode; tone?: 'info' | 'error' }) => Promise<void>,
   err: unknown,
-  /** What to do when the failure is NOT an aggregated gate refusal. */
   onOther: (message: string) => void,
-  /** The sentence for a failure that carries no message of its own. */
   genericMessage = 'Something went wrong.',
 ): Promise<void> {
   const problems = parseSaveProblems((err as { body?: string } | undefined)?.body);

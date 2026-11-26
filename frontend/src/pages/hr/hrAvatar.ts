@@ -1,4 +1,3 @@
-/* Deterministic avatar colour + initials for the HR pages, from a name. */
 const AVATAR_BG = ["bg-primary", "bg-accent", "bg-learning", "bg-synced", "bg-err"];
 
 export function avatarColor(name: string): string {

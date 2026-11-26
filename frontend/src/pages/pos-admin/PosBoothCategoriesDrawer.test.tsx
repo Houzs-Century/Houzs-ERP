@@ -1,6 +1,3 @@
-/* POS Items > Add by category: the picker opens with the categories that
- * have items on ticked, says what each button will do, and sends only the
- * ticked categories to the backend. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

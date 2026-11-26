@@ -1,26 +1,3 @@
-// /addons — Order Add-ons CRUD (whole-order one-time fees: Dispose, Lift).
-//
-// Backs the "Order Add-ons" tab on the Products page (OrderAddonsManager in
-// SpecialAddonsTab.tsx). An order add-on is a whole-order fee chosen at
-// checkout — NOT bound to a Model. The POS books it on the SO via the
-// optional `service_sku` (each add-on can mint its own SVC-* catalog line).
-//
-// Wired 2026-06-20 (SCM stub-wiring sweep). 2990's UI read/wrote the supabase
-// `addons` table directly under RLS; the Houzs vendor layer has no client-side
-// supabase, so this route exposes the same CRUD over /api/scm/addons and the
-// 4 stub hooks in mfg-products-queries.ts now call it.
-//
-// Auth: plain supabaseAuth — /api/scm/* is owner-gated at the Houzs layer
-// (every caller is the seeded system super_admin), same as /mfg-products.
-//
-// scm.addons shape (introspected): id text PK (a client slug like
-// "dispose-wardrobe"), label, description, icon, kind addon_kind enum
-// (qty|floors_items|flat), price int, per_floor_item int, unit, default_qty
-// int DEFAULT 1, stock, enabled bool, show_at_handover bool, service_sku,
-// sort_order int, updated_at. There is NO `category` column — the source UI
-// sends one but never reads it back, so we accept + ignore it on write and
-// always return category:null. scm.order_items.addon_id FKs this table, so a
-// DELETE of an in-use add-on yields 23503 (the UI surfaces "used on orders").
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
@@ -40,7 +17,7 @@ const createSchema = z.object({
   description:    z.string().nullable().default(null),
   icon:           z.string().min(1),
   kind:           KIND,
-  category:       z.string().nullable().optional(),   // accepted but not stored (no column)
+  category:       z.string().nullable().optional(),
   price:          z.number().int().default(0),
   perFloorItem:   z.number().int().nullable().default(null),
   unit:           z.string().nullable().default(null),
@@ -86,7 +63,6 @@ type AddonRow = {
   updated_at: string;
 };
 
-// API shape mirrors the frontend AdminAddonRow (category has no column → null).
 const toApi = (r: AddonRow) => ({
   id:             r.id,
   label:          r.label,
@@ -108,7 +84,6 @@ const toApi = (r: AddonRow) => ({
 const SELECT =
   'id, label, description, icon, kind, price, per_floor_item, unit, default_qty, stock, enabled, show_at_handover, service_sku, sort_order, updated_at';
 
-// GET — list, ordered the way the manager expects (sort_order then label).
 addons.get('/', async (c) => {
   const supabase = c.get('supabase');
   const { data, error } = await scopeToCompany(
@@ -121,7 +96,6 @@ addons.get('/', async (c) => {
   return c.json({ addons: (data as AddonRow[]).map(toApi) });
 });
 
-// POST — create. id is a client-supplied slug. 23505 (dup id) → 409.
 addons.post('/', async (c) => {
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -159,7 +133,6 @@ addons.post('/', async (c) => {
   return c.json({ addon: toApi(data as AddonRow) }, 201);
 });
 
-// PATCH /:id — update.
 export const patchAddonHandler = async (c: any) => {
   const id = c.req.param('id');
   let body: unknown;
@@ -185,8 +158,6 @@ export const patchAddonHandler = async (c: any) => {
   if (p.sortOrder      !== undefined) patch.sort_order       = p.sortOrder;
 
   const supabase = c.get('supabase');
-  // Multi-company: scope the write to the active company so a blind id from
-  // another company matches nothing (reported as not-found, not mutated).
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data, error } = await scopeToCompanyId(supabase.from('addons').update(patch).eq('id', id), co.companyId).select(SELECT).maybeSingle();
@@ -196,13 +167,9 @@ export const patchAddonHandler = async (c: any) => {
 };
 addons.patch('/:id', patchAddonHandler);
 
-// DELETE /:id — blocked by the order_items FK when the add-on is in use
-// (23503). The UI translates that into a "used on existing orders" message.
 addons.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
-  // Multi-company: scope the delete; select reports whether a row in THIS
-  // company was actually removed.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data, error } = await scopeToCompanyId(supabase.from('addons').delete().eq('id', id), co.companyId).select('id').maybeSingle();

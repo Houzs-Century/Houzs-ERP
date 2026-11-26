@@ -14,8 +14,6 @@ import { cancelledDocNoClass, cancelledRowClass, isCancelledDocStatus } from "..
 
 const SRC = resolve(__dirname, "../..");
 
-/* Every desktop list that shows document rows with a cancelled state. Adding a
-   document list means adding it here. */
 const DOCUMENT_LISTS = [
   "pages/scm-v2/MfgSalesOrdersListV2.tsx",
   "pages/scm-v2/MfgDeliveryOrdersListV2.tsx",
@@ -35,15 +33,12 @@ const DOCUMENT_LISTS = [
   "pages/scm-v2/StockTransfersListV2.tsx",
   "pages/scm-v2/PaymentVouchers.tsx",
   "pages/scm-v2/CreditNotes.tsx",
-  // Money in › Credit / debit notes, its own list since batch 5 step 7.
   "pages/scm-v2/money-in/MoneyInNotes.tsx",
   "pages/scm-v2/ApInvoices.tsx",
   "pages/scm-v2/ArInvoices.tsx",
   "pages/scm-v2/Receipts.tsx",
-  // Debtor maintenance lists the debtors’ receipts again (batch 5 step 6).
   "pages/scm-v2/OtherDebtors.tsx",
   "pages/scm-v2/DpOrders.tsx",
-  // Its Completed / All lists carry cancelled documents (batch 5 redesign).
   "pages/scm-v2/Outstanding.tsx",
 ];
 

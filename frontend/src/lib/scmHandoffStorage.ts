@@ -66,12 +66,9 @@ function removePhysicalKey(key: ScmHandoffKey, instanceId?: string): boolean {
   if (!physicalKey) return false;
   try {
     storageFor(key).removeItem(physicalKey);
-    // Remove a copy left by an older build if this key's durability policy
-    // changed. The other store never wins reads.
     (DURABLE_KEYS.has(key) ? sessionStorage : localStorage).removeItem(physicalKey);
     return true;
   } catch {
-    // Storage may be disabled. Reads and removals remain fail-closed.
     return false;
   }
 }
@@ -206,7 +203,6 @@ export function clearAllScmHandoffs(): void {
     for (const key of keys) sessionStorage.removeItem(key);
     for (const key of SCM_HANDOFF_KEYS) sessionStorage.removeItem(key);
   } catch {
-    // Best effort for privacy cleanup when browser storage is unavailable.
   }
 }
 
@@ -227,6 +223,5 @@ export function discardDurableScmHandoffs(): void {
     }
     for (const key of keys) localStorage.removeItem(key);
   } catch {
-    // Never clear another signed-in tab's durable retry intents.
   }
 }

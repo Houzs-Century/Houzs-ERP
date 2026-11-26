@@ -22,8 +22,6 @@
 import { describe, expect, test } from "vitest";
 import { humanApiError, parseSaveProblems } from "./authed-fetch";
 
-/** The body backend proceedGateUnmetBody() sends for the owner's order:
- *  total 0, paid 0, postcode missing. One condition failed, one is named. */
 const OWNERS_REFUSAL = JSON.stringify({
   error: "proceed_gate_unmet",
   reason: "Delivery postcode is required before this order can be proceeded",
@@ -39,15 +37,11 @@ describe("a proceed refusal reaching the operator names the condition that faile
     const shown = humanApiError(422, OWNERS_REFUSAL);
     expect(shown.toLowerCase()).toContain("postcode");
     expect(shown.toLowerCase()).not.toContain("deposit");
-    /* And none of the three conditions that passed are recited at him. */
     expect(shown.toLowerCase()).not.toContain("customer name");
     expect(shown.toLowerCase()).not.toContain("delivery date");
   });
 
   test("the modal surfaces get the same list — no client change was required", () => {
-    /* SalesOrderDetail / SalesOrderNew / MobileNewSO render this array in a
-       popup. It keys off the presence of `problems`, not off the
-       `validation_failed` code, so the proceed refusal renders there too. */
     const problems = parseSaveProblems(OWNERS_REFUSAL);
     expect(problems).toHaveLength(1);
     expect(problems![0]).toMatchObject({ field: "Postcode" });
@@ -69,9 +63,6 @@ describe("a proceed refusal reaching the operator names the condition that faile
   });
 
   test("`problems` wins over `reason`, so an old-style recital can never win a race", () => {
-    /* Defence for the migration window: a stale worker still sending only the
-       five-condition sentence keeps working (the reason path below), and any
-       body carrying both shows the specific list. */
     const shown = humanApiError(422, JSON.stringify({
       error: "proceed_gate_unmet",
       reason: "A Processing Date can only be set once the order has a customer name, a full delivery address (line 1 and postcode), a delivery date, and the deposit its company requires.",

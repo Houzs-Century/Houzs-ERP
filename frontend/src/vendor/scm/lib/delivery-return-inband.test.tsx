@@ -1,7 +1,3 @@
-// Symptom: a delivery return whose stock IN was refused read as saved.
-// Cause: the server answers 201 / 200 with `movementErrors` in the body (the return stands either way), and
-//   create, convert-from-DO, status and the line verbs never read it.
-// Fix: each hook calls reportInBandFailure; line changes also refresh ['inventory'].
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';

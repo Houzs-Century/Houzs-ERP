@@ -1,8 +1,3 @@
-/* A bill the ERP holds, handed back to a POS device in the shape the device
- * itself saves (pos/src/sale.ts SaleRecord), so any device of the event can
- * reprint a receipt another device made. Read-only: a void or a return stays
- * on the device that made the bill, where the stock and the cash drawer are.
- */
 import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
 import type { getDb } from "../../db/client";
 import { pos_payments, pos_sale_lines, pos_sales } from "../../db/schema";
@@ -31,7 +26,6 @@ export type DeviceSale = {
   synced_at: string | null; sync_error: null; returned: null;
 };
 
-/** Postgres hands a timestamptz back as "2026-11-19 07:09:12+00"; the device compares and prints ISO. */
 const iso = (stored: string | null): string | null => {
   const t = momentMs(stored);
   return t == null ? null : new Date(t).toISOString();

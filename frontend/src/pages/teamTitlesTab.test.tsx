@@ -42,7 +42,7 @@ function mount(perms: string[], tab = "positions") {
 
 afterEach(() => {
   cleanup();
-  try { window.localStorage.clear(); } catch { /* jsdom */ }
+  try { window.localStorage.clear(); } catch { }
 });
 
 describe("Team strip: Titles", () => {

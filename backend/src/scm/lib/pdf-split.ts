@@ -12,8 +12,6 @@
 
 import { PDFDocument } from 'pdf-lib';
 
-/* The pile holds 50 files (MAX_PILE_FILES); a PDF longer than that is a
-   catalogue, not a stack of bills. */
 export const MAX_SPLIT_PAGES = 50;
 
 export type SplitResult =

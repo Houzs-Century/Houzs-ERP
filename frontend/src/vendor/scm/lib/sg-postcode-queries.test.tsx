@@ -24,12 +24,11 @@ const addr = (o: Partial<SgAddress>): SgAddress => ({
   postcode: '', building: '', blockNo: '', road: '', address: '', lat: '', lng: '', planningArea: '', ...o,
 });
 
-// A slice of the seeded SG rows (mig 0181): city = planning area, state = region.
 const SG_ROWS = [
   { country: 'Singapore', city: 'Orchard', state: 'Central' },
   { country: 'Singapore', city: 'Bukit Merah', state: 'Central' },
   { country: 'Singapore', city: 'Tampines', state: 'East' },
-  { country: 'Malaysia', city: 'Orchard', state: 'Johor' }, // a same-named MY city must NOT win
+  { country: 'Malaysia', city: 'Orchard', state: 'Johor' },
 ];
 
 beforeEach(() => authedFetch.mockReset());
@@ -58,12 +57,11 @@ describe('resolveSgPlanningArea', () => {
     expect(resolveSgPlanningArea(SG_ROWS, 'Tampines')).toEqual({ state: 'East', city: 'Tampines' });
   });
   it('only matches Singapore rows, so a same-named MY city cannot win', () => {
-    // 'Orchard' exists under Malaysia/Johor too; the SG row is the one returned.
     expect(resolveSgPlanningArea(SG_ROWS, 'ORCHARD')?.state).toBe('Central');
   });
   it('returns null for a blank area or one not among the seeded SG cities', () => {
     expect(resolveSgPlanningArea(SG_ROWS, '')).toBeNull();
-    expect(resolveSgPlanningArea(SG_ROWS, 'WESTERN WATER CATCHMENT')).toBeNull(); // real area, not in this slice
+    expect(resolveSgPlanningArea(SG_ROWS, 'WESTERN WATER CATCHMENT')).toBeNull();
     expect(resolveSgPlanningArea([], 'ORCHARD')).toBeNull();
   });
 });

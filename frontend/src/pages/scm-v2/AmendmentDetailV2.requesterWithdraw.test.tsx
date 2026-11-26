@@ -1,10 +1,3 @@
-/* The person who raised an SO amendment can see Withdraw on it.
- *
- * 2026-10-05, HC-SO-011143/A1: Syu raised it (BUG-53 put a phantom pillow
- * colour change in it) and had no Withdraw button, because the page compared
- * requested_by with an scm staff id the browser never has. The server now says
- * whether the caller raised it (viewerIsRequester); the page reads that.
- */
 import { cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -20,7 +13,6 @@ vi.mock("../../vendor/scm/lib/sales-order-queries", async (orig) => ({
   ...(await orig<typeof import("../../vendor/scm/lib/sales-order-queries")>()),
   useSalesOrderAuditLog: () => ({ data: [], isLoading: false, isError: false }),
 }));
-/* A salesperson: no approve permission on any lane. */
 vi.mock("../../auth/AuthContext", () => ({ useAuth: () => ({ user: { id: 41, name: "Syu" }, can: () => false }) }));
 vi.mock("../../hooks/useBreadcrumbs", () => ({ useSetBreadcrumbs: () => undefined }));
 vi.mock("../../hooks/useStaffLookup", () => ({ useStaffLookup: () => ({ actorNameOf: () => "Syu" }) }));

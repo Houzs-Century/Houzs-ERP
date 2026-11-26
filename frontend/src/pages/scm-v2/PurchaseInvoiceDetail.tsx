@@ -97,8 +97,6 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   return fmtMoneySen(v, currency);
 };
 
-/* Draft state shapes (mirror PO #194). HeaderDraft mirrors the editable PI
-   header fields. */
 type HeaderDraft = {
   supplierId: string;
   supplierInvoiceRef: string;
@@ -122,23 +120,12 @@ type PiItemRow = Record<string, unknown> & {
   variants?: Record<string, unknown> | null;
   binding_id?: string | null;
   supplier_sku?: string | null;
-  /* GRN-sourced lines carry the source GRN line id; identity + variants on those
-     stay read-only (only qty/price editable). Free-entry lines have it null. */
   grn_item_id?: string | null;
-  /* #26 — the line's own purchase order, resolved by the detail GET. */
   source_po_id?: string | null;
   source_po_number?: string | null;
-  /* The PO price trail (mig 20260914T0200), served by the detail GET. */
   po_unit_price_sen?: number | null;
 };
 
-/* Whole-line edit (T12) — Edit mode drives one PoLineCard per line, the SAME rich
-   editor as Create. EditLine = the shared PoLineDraft + the persisted item id
-   (absent on a freshly-added blank card) + whether the line came from a GRN.
-   grnItemId is set on a line ADDED via "Transfer from GRN" (below) — it has no
-   itemId yet (never saved), but Save must still tell the server which GRN line
-   it bills; a line loaded from the server already carries this on the item row
-   itself, so draftFromItem doesn't need to set it (grnLinked alone locks it). */
 type EditLine = PoLineDraft & { itemId?: string; grnLinked?: boolean; grnItemId?: string };
 
 const headerSnapshot = (p: any): HeaderDraft => ({
@@ -150,8 +137,6 @@ const headerSnapshot = (p: any): HeaderDraft => ({
   notes:              p.notes ?? '',
 });
 
-/* Map a persisted PI line → an editable PoLineCard draft. A GRN-sourced line
-   (grn_item_id set) is flagged grnLinked so the card locks its identity. */
 const draftFromItem = (it: PiItemRow): EditLine => ({
   rid:            `i${it.id}`,
   itemId:         it.id,
@@ -166,15 +151,9 @@ const draftFromItem = (it: PiItemRow): EditLine => ({
   discountSen:  it.discount_sen ?? 0,
   category:       it.item_group ?? undefined,
   variants:       (it.variants as Record<string, unknown> | null) ?? {},
-  /* An existing line's stored price is authoritative — don't let the cost
-     auto-recompute clobber it on enter-edit. Editing variants re-arms it. */
   priceTouched:   true,
 });
 
-/* Map one picked outstanding GRN line → an editable PoLineCard draft, for
-   "Transfer from GRN" (addGrnLines below). Exported so the mapping itself —
-   the one non-trivial piece of this feature — has a test independent of the
-   page's many data hooks; see PurchaseInvoiceDetail.grnLine.test.ts. */
 export const grnItemToEditLine = (it: OutstandingGrnItem, qty: number): EditLine => ({
   rid:            `g${it.grnItemId}`,
   grnItemId:      it.grnItemId,
@@ -189,8 +168,6 @@ export const grnItemToEditLine = (it: OutstandingGrnItem, qty: number): EditLine
   priceTouched:   true,
 });
 
-/* The drafts after the saved items changed under an open editor: a draft of a line that still exists keeps what was
-   typed, a draft not saved yet stays, a draft of a deleted line goes, and a saved line no draft names is added. */
 export function mergeEditLines(prev: EditLine[], items: PiItemRow[]): EditLine[] {
   if (prev.length === 0) return items.map(draftFromItem);
   const live = new Set(items.map((it) => it.id));
@@ -199,8 +176,6 @@ export function mergeEditLines(prev: EditLine[], items: PiItemRow[]): EditLine[]
   return [...kept, ...items.filter((it) => !named.has(it.id)).map(draftFromItem)];
 }
 
-/* Single Save's line half (T12), out of the component so a retry can be tested: a line with no itemId is added, a
-   saved line that changed is updated. Each added line's id goes back into the draft through `saved`. */
 export async function saveEditLines(
   piId: string,
   editLines: EditLine[],
@@ -214,8 +189,6 @@ export async function saveEditLines(
   const byId = new Map(items.map((it) => [it.id, it]));
   for (const d of editLines) {
     if (!d.itemId) {
-      // New line — free-entry (grnItemId undefined) or GRN-transferred
-      // (set by addGrnLines above); the server caps/consumes either way.
       const added = await api.add({
         id: piId,
         grnItemId:      d.grnItemId,
@@ -229,8 +202,6 @@ export async function saveEditLines(
         itemGroup:      d.category,
         variants:       Object.keys(d.variants).length ? d.variants : undefined,
       });
-      /* The draft now names the saved line, so a Save pressed again after a later line failed updates it instead
-         of adding it a second time. */
       const addedId = (added as { item?: { id?: string } } | undefined)?.item?.id;
       if (addedId) api.saved(d.rid, addedId);
       continue;
@@ -277,17 +248,11 @@ export const PurchaseInvoiceDetail = () => {
   const confirmPi = usePostPurchaseInvoice();
 
   const pi = detail.data?.purchaseInvoice ?? null;
-  /* Memoised so the edit-mode seed + cost-recompute effects don't re-fire on
-     every render (detail.data?.items is a fresh array each time otherwise). */
   const items = useMemo(() => (detail.data?.items ?? []) as PiItemRow[], [detail.data?.items]);
   // OUR delivery order(s) this purchase covers (owner 2026-07-23 "要的") —
   // server-resolved through the so_item_id chain; empty for stock POs.
   const customerDos = detail.data?.customerDos ?? [];
 
-  /* ── Whole-line editor data (T12) — the SAME lookups Create uses so PoLineCard
-     renders identically in Edit. Bindings come from the PI's supplier; allSkus is
-     the catalogue fallback; maint + fabrics drive the variant dropdowns;
-     specialsPools feeds the Special Orders checkboxes. */
   const piSupplierId = pi?.supplier_id ?? '';
   const supplierDetailQ = useSupplierDetail(piSupplierId || null);
   const bindings = useMemo(() => supplierDetailQ.data?.bindings ?? [], [supplierDetailQ.data?.bindings]);
@@ -301,7 +266,6 @@ export const PurchaseInvoiceDetail = () => {
   );
   const masterMaintQ = useMaintenanceConfig('master');
   const maint = supplierMaintQ.data?.data ?? masterMaintQ.data?.data ?? null;
-  /* Dropdown options follow master; the supplier overlay only prices them (BUG-60). */
   const pickerMaint = useMemo(
     () => withMasterPickerPools(maint, masterMaintQ.data?.data ?? null),
     [maint, masterMaintQ.data?.data],
@@ -318,35 +282,19 @@ export const PurchaseInvoiceDetail = () => {
     return { bedframe: pick('BEDFRAME'), sofa: pick('SOFA') };
   }, [specialAddonsQ.data]);
 
-  /* code → category (lowercased) lookup, mirroring Create's categoryForCode. */
   const categoryForCode = (code: string): string | undefined =>
     allSkus.find((p) => p.code === code)?.category.toLowerCase();
 
-  /* View → Edit gate (mirror PO/GRN) — default read-only View; click Edit to
-     flip into draft mode. The PI list's right-click "Edit" lands here with
-     ?edit=1. */
   const [searchParams] = useSearchParams();
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
 
-  /* #194 draft buffers. headerDraft is null until the first header field is
-     touched (then seeded from the PI). Line edits are WHOLE-LINE drafts
-     (editLines), one PoLineCard per line. Existing lines carry their itemId; a
-     freshly-added blank card has none until Save inserts it. None of this
-     persists until the single top Save. */
   const [headerDraft, setHeaderDraft] = useState<HeaderDraft | null>(null);
   const [editLines, setEditLines] = useState<EditLine[]>([]);
   const [savingDraft, setSavingDraft] = useState(false);
 
-  // Unified edit-lock (migration 0106): a PI is read-only once it has ANY
-  // payment recorded (paid_sen > 0) OR is CANCELLED. POSTED with zero payment
-  // stays editable.
   const isLocked = pi ? purchaseInvoiceLinesLocked({ status: pi.status, paid_sen: pi.paid_sen ?? null }) : true;
-  // DRAFT lifecycle — a DRAFT PI is editable (not locked) and shows a Confirm
-  // banner; confirming flips DRAFT → POSTED (where AP/GL post + GRN consume run).
   const isDraft = (pi?.status as string) === 'DRAFT';
 
-  /* If the PI locks while we're in Edit mode (e.g. cancelled in another tab),
-     drop back to View + discard the draft. */
   useEffect(() => {
     if (isLocked && isEditing) {
       setIsEditing(false);
@@ -355,20 +303,12 @@ export const PurchaseInvoiceDetail = () => {
     }
   }, [isLocked, isEditing]);
 
-  /* Seed/clear the whole-line drafts (T12) — entering Edit populates a PoLineCard
-     draft for EVERY current line; leaving Edit wipes them. When the items change
-     while editing (a Save's re-fetch, a deleted line) the drafts are merged, never
-     replaced: a Save that failed part-way keeps the lines it had not saved yet. */
   useEffect(() => {
     if (!isEditing) { setEditLines([]); return; }
     setEditLines((prev) => mergeEditLines(prev, items));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, items]);
 
-  /* Cost auto-recompute (mirrors Create) — resolve a line's supplier price
-     matrix + maintenance surcharges into a unit cost. A manually-touched line
-     (priceTouched) keeps its typed value; a GRN-linked line keeps its billed
-     price (its identity/variants are locked, so it never re-prices). */
   const fabricTierForLine = (line: EditLine): MfgFabricTier | null => {
     const code = String(line.variants.fabricCode ?? '');
     if (!code) return null;
@@ -407,8 +347,6 @@ export const PurchaseInvoiceDetail = () => {
     return breakdown.unitPriceSen;
   };
 
-  /* Cost auto-recompute effect — re-price every non-touched, non-GRN-linked
-     editLine off the supplier matrix + maintenance surcharges. Gated to Edit. */
   useEffect(() => {
     if (!isEditing) return;
     setEditLines((prev) => {
@@ -425,28 +363,14 @@ export const PurchaseInvoiceDetail = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, bindings, fabrics, maint, editLines]);
 
-  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
-     until 2026-08-17, so the loading render called fewer hooks than the loaded
-     one and React threw #310 ("rendered more hooks than during the previous
-     render") the moment the query resolved — a blank "Something went wrong
-     loading this page." on every direct URL / refresh of a PI. Arriving from
-     the list hid it: react-query already had the detail cached, so the
-     isPending branch never rendered first. `deliverPrintPdf` therefore has to
-     tolerate a null pi; it can only ever be CALLED from the preview dialog,
-     which does not exist until the record has loaded. */
   const deliverPrintPdf = (action: PdfAction) => {
     if (!pi) return;
-    // PI PDF (AutoCount layout) — mirrors PO/GRN's print wiring its own
-    // purchase-invoice-pdf helper.
     return import('../../vendor/scm/lib/purchase-invoice-pdf').then(({ generatePurchaseInvoicePdf }) =>
       generatePurchaseInvoicePdf(pi, items as any, { action }),
     ).catch((e) => notify({ title: 'PDF generation failed', body: `${e instanceof Error ? e.message : 'Something went wrong.'}`, tone: 'error' }));
   };
   const print = usePrintPreview(deliverPrintPdf);
 
-  /* Transfer from GRN — state + derived sets for the picker (addGrnLines
-     below, past the guards, is a plain function so it's fine there; these
-     three are hooks and must stay above every early return in the file). */
   const [showGrnPicker, setShowGrnPicker] = useState(false);
   const linkedGrnItemIds = useMemo(
     () => new Set(editLines.map((l) => l.grnItemId).filter((x): x is string => Boolean(x))),
@@ -468,13 +392,7 @@ export const PurchaseInvoiceDetail = () => {
     );
   }
 
-  /* ── Draft helpers (pi is guaranteed non-null past the guards above) ── */
-  /* View shows the live server items; Edit drives editLines (one PoLineCard per
-     line). Deletes fire immediately server-side; only the field/variant edits
-     are buffered until the single top Save. */
   const visibleItems = items;
-  /* Totals — in Edit, sum the live editLines (incl. unsaved edits); in View, the
-     stored line totals. */
   const itemsSubtotal = isEditing
     ? editLines.reduce((s, d) => s + Math.max(0, d.qty * d.unitPriceSen - (d.discountSen ?? 0)), 0)
     : visibleItems.reduce((s, it) => s + (it.line_total_sen ?? (it.qty * it.unit_price_sen - (it.discount_sen ?? 0))), 0);
@@ -489,11 +407,9 @@ export const PurchaseInvoiceDetail = () => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(pi)), [k]: v }));
   };
 
-  /* Patch one editLine by rid (mirrors Create's setLine). */
   const patchLine = (rid: string, patch: Partial<EditLine>) =>
     setEditLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
 
-  /* Adopt a supplier binding into a line (mirrors Create's pickBinding). */
   const pickBinding = (rid: string, b: BindingRow) =>
     patchLine(rid, {
       bindingId:      b.id,
@@ -506,10 +422,6 @@ export const PurchaseInvoiceDetail = () => {
       priceTouched:   false,
     });
 
-  /* Patch one variant key + auto-compute bedframe Total Height (= Divan + Leg +
-     Gap, from vendor/shared/total-height.ts — the one home, no longer a copy of
-     Create's). Editing a variant re-arms the cost auto-recompute
-     (priceTouched ← false). */
   const setVariant = (rid: string, k: string, v: unknown) =>
     setEditLines((prev) => prev.map((l) => {
       if (l.rid !== rid) return l;
@@ -520,28 +432,15 @@ export const PurchaseInvoiceDetail = () => {
       return { ...l, variants, priceTouched: false };
     }));
 
-  /* Append a fresh blank PoLineCard (PI is free-entry — grn_item_id null).
-     Committed by the page-level Save. */
   const startAddLine = () =>
     setEditLines((prev) => [...prev, { ...emptyPoLine() }]);
   addLineHandoff.current = { enabled: isEditing && !isLocked, onTrigger: startAddLine };
 
-  /* Transfer from GRN (mirrors AutoCount's "Transfer From Goods Receive Note"
-     on an already-saved PI) — pulls more outstanding GRN lines onto THIS
-     invoice, alongside the free-entry "+ Add item" above. Each picked line
-     becomes a grnLinked draft; Save sends its grnItemId to POST /:id/items,
-     which already validates + caps + recomputes the GRN's invoiced_qty (T12's
-     endpoint was built for this, just never had a button). The two hooks this
-     needs (showGrnPicker, linkedGrnItemIds) live ABOVE the
-     isPending/isError guards below, with the rest of the page's hooks — not
-     here, past them, which is a rules-of-hooks violation ESLint caught. */
   const addGrnLines = (picked: Array<{ it: OutstandingGrnItem; qty: number }>) => {
     setEditLines((prev) => [...prev, ...picked.map(({ it, qty }) => grnItemToEditLine(it, qty))]);
     setShowGrnPicker(false);
   };
 
-  /* Remove a line. A persisted line fires the delete mutation immediately; a
-     never-saved blank card just drops from the draft array. */
   const removeLine = async (rid: string) => {
     const l = editLines.find((x) => x.rid === rid);
     if (!l) return;
@@ -565,15 +464,8 @@ export const PurchaseInvoiceDetail = () => {
     setIsEditing(true);
   };
 
-  /* Single Save (T12) — whole-line diff. For each draft:
-       · no itemId → ADD (full payload incl. variants / itemCode)
-       · itemId + changed any field → UPDATE (full payload)
-     Deletes already fired server-side in removeLine. Then commit the header (if
-     touched) and drop back to View. The server 409s over-invoicing a GRN-linked
-     line → surfaced via notify. */
   const handleSave = async () => {
     if (savingDraft) return;
-    // Guard: every line must reference a product before Save.
     const blankLine = editLines.find((d) => !d.itemCode.trim());
     if (blankLine) {
       notify({ title: 'Every line needs a product', body: 'Pick a product for each line, or remove the empty one before saving.', tone: 'error' });
@@ -601,7 +493,6 @@ export const PurchaseInvoiceDetail = () => {
 
   return (
     <div className={styles.page}>
-      {/* ── Header ──────────────────────────────────────────────── */}
       <div className={styles.headerRow}>
         <div className={styles.titleBlock}>
           <Link to="/scm/purchase-invoices" className={styles.backBtn}>
@@ -616,13 +507,10 @@ export const PurchaseInvoiceDetail = () => {
           </div>
         </div>
         <div className={styles.actions}>
-          {/* Total KPI tile — tracks the live line items (incl. unsaved draft
-              edits) + stored tax. */}
           <div className={styles.totalRail}>
             <span className={styles.totalRailLabel}>Total</span>
             <span className={styles.totalRailValue}>{fmtRm(grandTotal, pi.currency)}</span>
           </div>
-          {/* A PI is Confirmed the moment it exists (no Draft/lifecycle). */}
           <StatusPill docType="pi" status={pi.status} />
           <RelationshipMapButton type="pi" id={id} />
           <Button variant="ghost" size="md" onClick={print.openPreview}>
@@ -641,8 +529,6 @@ export const PurchaseInvoiceDetail = () => {
             ]}
             {...print.handlers}
           />
-          {/* Cancel — only when the PI is not locked (no payment recorded, not
-              already cancelled). */}
           {!isLocked && (
             <Button variant="ghost" size="md"
               onClick={async () => {
@@ -661,11 +547,6 @@ export const PurchaseInvoiceDetail = () => {
               <span>{cancel.isPending ? 'Cancelling…' : 'Cancel'}</span>
             </Button>
           )}
-          {/* "Transfer from GRN" — mirrors AutoCount's own PI ribbon button.
-              Pulls more outstanding lines from this supplier's goods-received
-              notes onto this SAME saved invoice. Beside Save/Edit, not down in
-              the Line Items header, since it's a document-level action like
-              Cancel/Print, not a per-line one like "+ Add item". */}
           {isEditing && !isLocked && (
             <Button variant="ghost" size="md" onClick={() => setShowGrnPicker(true)} disabled={!piSupplierId}
               title={piSupplierId ? undefined : 'Pick a supplier first'}>
@@ -673,9 +554,6 @@ export const PurchaseInvoiceDetail = () => {
               <span>Transfer from GRN</span>
             </Button>
           )}
-          {/* View → Edit gate. Default View shows Edit (disabled while locked);
-              editing flips into draft mode and the button becomes the single
-              "Save" that commits the whole draft. Back (top-left) discards. */}
           {!isEditing ? (
             <Button variant="primary" size="md" onClick={enterEdit} disabled={isLocked}>
               <Pencil {...ICON} />
@@ -690,11 +568,6 @@ export const PurchaseInvoiceDetail = () => {
         </div>
       </div>
 
-      {/* ── DRAFT banner + Confirm (DRAFT flow) ─────────────────────
-          A PI created with Save as Draft lands as DRAFT: no AP/GL post, no GRN
-          consume, no recost happened yet. Review + Confirm flips DRAFT → POSTED
-          (PATCH /:id/post), which is where the AP liability posts + the GRN lines
-          are consumed. Mirrors the SO detail DRAFT banner. */}
       {isDraft && (
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -729,9 +602,6 @@ export const PurchaseInvoiceDetail = () => {
         </div>
       )}
 
-      {/* ── Supplier / ref / dates / currency / notes ───────────── */}
-      {/* In View the card renders read-only text; in Edit it shows inputs bound
-          to the draft (committed by the single top Save). */}
       <SupplierCard
         pi={pi}
         draft={headerView}
@@ -741,14 +611,9 @@ export const PurchaseInvoiceDetail = () => {
         customerDos={customerDos}
       />
 
-      {/* ── Line items ──────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Items ({isEditing ? editLines.length : visibleItems.length})</h2>
-          {/* T12 — Edit mode restores the Create UI: a "+ Add item" that appends a
-              blank PoLineCard (PI is free-entry). Hidden while the PI is locked.
-              "Transfer from GRN" sits in the top header toolbar beside Save,
-              not here — see the header actions block. */}
           {isEditing && !isLocked && (
             <Button variant="primary" size="sm" onClick={startAddLine}>
               <Plus {...ICON} />
@@ -758,16 +623,9 @@ export const PurchaseInvoiceDetail = () => {
         </header>
 
         {isEditing ? (
-          /* Whole-line inline edit (T12) — every line is a PoLineCard (the SAME
-             editor as Create), all editable at once. GRN-sourced lines keep their
-             identity + variants read-only (identityReadOnly); free-entry lines get
-             full editing. The PI card hides the PO-only fields (hidePoFields). The
-             ONE page-level Save diffs each draft and add/update/deletes. */
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', padding: 'var(--space-3)' }}>
             {editLines.map((l, idx) => (
               <div key={l.rid}>
-              {/* #26 — which PO this line came from, above its editor. A new or
-                  free-entry line has none and shows nothing. */}
               {(() => {
                 const src = l.itemId ? items.find((it) => it.id === l.itemId) : undefined;
                 /* Beside the #26 PO link: the PO's price against the price being
@@ -850,15 +708,11 @@ export const PurchaseInvoiceDetail = () => {
         )}
       </section>
 
-      {/* ── Totals ────────────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Totals</h2>
         </header>
         <div className={styles.cardBody}>
-          {/* Subtotal computed LIVE from the visible line items (incl. unsaved
-              draft edits); tax is the stored header value; total = subtotal +
-              tax. Paid + Balance are read-only (no payment-entry UI here). */}
           <div className={styles.totalsGrid}>
             <div className={styles.totalRow}>
               <span className={styles.totalLabel}>Subtotal</span>
@@ -897,29 +751,19 @@ export const PurchaseInvoiceDetail = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Supplier / header card — controlled by the page's draft (mirror PO/GRN).
-   In View it renders read-only InfoCells; in Edit it shows inputs bound to the
-   page draft (committed by the single top Save).
-   ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
   pi, draft, onField, locked, isEditing = true, customerDos = [],
 }: {
   pi: any;
-  /** Draft header values (page-owned). In View these mirror the saved PI. */
   draft: HeaderDraft;
-  /** Update a single header field on the page draft. */
   onField: (k: keyof HeaderDraft, v: string) => void;
   locked: boolean;
-  /** View → Edit gate. When false the card renders read-only display text. */
   isEditing?: boolean;
-  /** OUR delivery order(s) this purchase covers (so_item_id chain). */
   customerDos?: Array<{ id: string; do_number: string }>;
 }) => {
   const suppliersQ = useSuppliers();
   const suppliers = suppliersQ.data ?? [];
-  // In Edit follow the draft's picked supplier; in View follow the saved PI.
   const supplierIdForDetail = isEditing ? (draft.supplierId || null) : (pi.supplier_id ?? null);
   const supplierDetail = useSupplierDetail(supplierIdForDetail);
   const supplier: SupplierRow | null = supplierDetail.data?.supplier ?? null;
@@ -931,7 +775,6 @@ const SupplierCard = ({
       </header>
       <div className={styles.cardBody}>
         {!isEditing ? (
-          /* View mode — read-only display text sourced from the saved PI. */
           <div
             style={{
               display: 'grid',
@@ -984,8 +827,6 @@ const SupplierCard = ({
                 onChange={(e) => onField('currency', e.target.value)}>
                 <option value="MYR">MYR</option>
                 <option value="RMB">RMB</option>
-                {/* CNY — same currency as RMB under its ISO code; a purchase
-                    invoice raised against a CNY purchase order carries it. */}
                 <option value="CNY">CNY</option>
                 <option value="USD">USD</option>
                 <option value="SGD">SGD</option>
@@ -1021,7 +862,6 @@ const SupplierCard = ({
         </div>
         )}
 
-        {/* Supplier-info auto-fill card. Read-only display from /suppliers/:id. */}
         {supplier && (
           <div
             style={{
@@ -1058,7 +898,6 @@ const SupplierCard = ({
   );
 };
 
-/* Read-only label/value cell for the supplier auto-fill card. */
 function InfoCell({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div>
@@ -1107,8 +946,6 @@ const GrnLinePickerModal = ({
 }: {
   supplierId: string;
   currency: string;
-  /** GRN lines already on this invoice (persisted or picked this session) —
-      hidden so the same line can't be added twice. */
   excludeGrnItemIds: Set<string>;
   onAdd: (picked: Array<{ it: OutstandingGrnItem; qty: number }>) => void;
   onClose: () => void;

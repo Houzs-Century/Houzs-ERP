@@ -9,11 +9,6 @@
 // apart and stops states from scattering (a fair spanning three brands now
 // stacks as one block).
 
-// Fixed display order, north -> south, PENANG on top per the owner; East
-// Malaysia last. Cities that show up in the free-text state field (e.g. IPOH
-// for Perak) sit next to their state. Any value not listed sorts AFTER all of
-// these, then alphabetically among themselves — so an unexpected label never
-// breaks the sort, it just lands at the bottom.
 export const CALENDAR_STATE_ORDER: readonly string[] = [
   "PENANG",
   "KEDAH",
@@ -50,9 +45,6 @@ export interface CalendarSortable {
   brand?: string | null;
 }
 
-// State (fixed order) -> venue -> organizer -> brand. Venue+organizer together
-// keep one fair's brand rows adjacent; brand is the final tiebreak so the
-// stack reads in a stable brand order.
 export function compareCalendarEvents(a: CalendarSortable, b: CalendarSortable): number {
   return (
     calendarStateRank(a.state) - calendarStateRank(b.state) ||

@@ -59,8 +59,6 @@ export function parseCondition(token: string): Condition | null {
 
 export type DateRange = { from?: string; to?: string };
 
-/* Evaluated in MYT (UTC+8) like the rest of the app: a Date shifted by +8h has
-   its UTC fields equal to the MYT wall clock, so the getUTC* family is exact. */
 export function presetRange(preset: DatePreset, now = Date.now()): DateRange {
   const nowMyt = new Date(now + 8 * 3600 * 1000);
   const shifted = (days: number): string => {
@@ -156,7 +154,6 @@ export function rowMatchesCondition<T>(row: T, c: Condition, col: ConditionColum
   return true;
 }
 
-/* ── Toolbar text search over the loaded rows (DataGrid parity) ─────────── */
 
 export interface SearchColumn<T> {
   searchValue?: (row: T) => string | null | undefined;

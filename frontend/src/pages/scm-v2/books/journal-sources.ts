@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// journal-sources — every source a journal entry is written from, as the
-// Journal entries' Source filter offers it and the entry card names it (the
-// owner's redesign, batch 6 §2.3 a2). ONE list: the engine's own vocabulary —
-// the journal classes' fixed and money-side types (backend acc/journal-class)
-// and the document types its rules post (acc/rules REVERSAL_SOURCE) — each
-// with its reversal, `<TYPE>_REVERSAL`. The filter is a server parameter, so a
-// type missing here could not be picked; the design's labels are the model
-// ("SI · Sales invoice"). A type the list does not know is named by itself.
-// ----------------------------------------------------------------------------
 
 export type JournalSource = { code: string; label: string };
 
@@ -44,7 +34,6 @@ export const JOURNAL_SOURCES: readonly JournalSource[] = [
 
 const REVERSAL = /_REVERSAL$/;
 
-/** The short name a reversal is called by: "SI reversal", "Manual reversal". */
 const shortOf = (label: string): string => label.split(' · ')[0] ?? label;
 
 /** The reversals, one per source, in the same order. */

@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// CrossCompanyRacks — the "All Companies" tab on the Warehouse page. The same
-// physical warehouse exists as one record per company; this READ-ONLY view
-// widens across every company the caller may see (backend
-// GET /warehouse/cross-company -> scopeToAllowedCompanies) and shows one
-// combined list with a Company column, so you can see the whole physical
-// warehouse regardless of which company owns each rack. Editing / stock / zone
-// stay on the per-company tabs — this view never writes.
-//
-// Grouping / sorting / filtering reuse the ONE tested logic layer
-// (vendor/scm/lib/warehouse-floorplan.ts); this file is presentation only.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type ReactNode } from 'react';
 import { Search } from 'lucide-react';
@@ -22,9 +10,6 @@ import {
   statusCounts, toSlot, type FloorFilters, type Slot, type SlotStatus,
 } from '../../vendor/scm/lib/warehouse-floorplan';
 
-/* A cross-company row is a slot plus the company + physical warehouse it sits
-   in (the floor-plan slot model carries neither, since that view is already
-   pinned to one company + one warehouse). */
 type CcSlot = Slot & { companyCode: string; warehouseCode: string };
 
 const productText = (s: CcSlot): string =>
@@ -63,8 +48,6 @@ const CC_COLUMNS: Column<CcSlot>[] = [
 
 const STATUS_LABEL: Record<SlotStatus, string> = { occupied: 'Occupied', reserved: 'Reserved', empty: 'Empty' };
 
-/* Status pill classes — control flow, not a colour table, so each status maps to
-   the shared Ink & Petrol semantic tokens. */
 function statusPill(st: SlotStatus): string {
   if (st === 'occupied') return 'bg-primary-soft text-primary-ink';
   if (st === 'reserved') return 'bg-warning-bg text-warning-text';

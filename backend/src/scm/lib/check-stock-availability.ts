@@ -147,7 +147,6 @@ export async function checkStockAvailability(
   lines: StockLineRequest[],
   companyId: number | null | undefined,
 ): Promise<StockShortage[]> {
-  // Aggregate requested per SKU. Drop zero-qty lines (not shipped).
   type Ask = { item_code: string; variant_key: string; product_name: string | null; needed: number };
   const byItem = new Map<string, Ask>();
   for (const l of lines) {
@@ -165,8 +164,6 @@ export async function checkStockAvailability(
   const asks = [...byItem.values()];
   if (asks.length === 0) return [];
 
-  // Pull live qty at THIS warehouse per requested SKU — every spec bucket
-  // summed, because the units under the blank key are the same furniture.
   const itemCodes = [...new Set(asks.map((b) => b.item_code))];
   const { data: balRows, error: balErr } = await pgrestIn(sb
     .from('inventory_balances')
@@ -188,12 +185,6 @@ export async function checkStockAvailability(
   }
   if (shortBuckets.length === 0) return [];
 
-  // Pull warehouse names (target + alternatives) in one shot — SCOPED to the
-  // active company. In the merged Houzs/2990 DB an unscoped select advertises
-  // the OTHER company's warehouse to this operator; scoping the name lookup and
-  // the alternatives scan below to company_id closes that. Degrades to no
-  // predicate when the company is unresolved (single-company Houzs / cold-start),
-  // matching scopeToCompany's fail-open on a READ.
   const scoped = Number.isInteger(companyId) && Number(companyId) > 0;
   let whQuery = sb.from('warehouses').select('id, code, name');
   if (scoped) whQuery = whQuery.eq('company_id', companyId);
@@ -201,9 +192,6 @@ export async function checkStockAvailability(
   const whById = new Map(((whRows ?? []) as Array<{ id: string; code: string; name: string }>).map((w) => [w.id, w]));
   const targetWh = whById.get(warehouseId);
 
-  // Cross-warehouse hint — qty available at OTHER warehouses for the short
-  // buckets. A single inventory_balances scan filtered to the same product
-  // codes + > 0 qty avoids the N+1.
   const shortCodes = [...new Set(shortBuckets.map((s) => s.b.item_code))];
   const altByItem = new Map<string, Map<string, WarehouseAlt>>();
   if (shortCodes.length > 0) {
@@ -218,10 +206,6 @@ export async function checkStockAvailability(
       // eslint-disable-next-line no-console
       console.error('[check-stock-availability] alt-warehouse balances read failed:', (altErr as { message?: unknown }).message ?? altErr);
     }
-    /* ONE ROW PER WAREHOUSE, summed across specs. Keyed per spec, this hint was
-       blind in exactly the case it exists for: the goods sit at the other
-       warehouse under the blank key, so "3 at Balakong" was never shown and the
-       operator's only visible way forward was Ship anyway. */
     for (const r of (altRows ?? []) as Array<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>) {
       const wh = whById.get(r.warehouse_id);
       const perWh = altByItem.get(r.item_code) ?? new Map<string, WarehouseAlt>();
@@ -247,7 +231,7 @@ export async function checkStockAvailability(
     available,
     short: b.needed - available,
     alternatives: [...(altByItem.get(b.item_code)?.values() ?? [])]
-      .sort((a, c) => c.available - a.available), // highest-qty alternative first
+      .sort((a, c) => c.available - a.available),
   }));
 }
 
@@ -279,23 +263,6 @@ export const shortStockResponse = (
   ...(bindings.length > 0 ? { bindings } : {}),
 });
 
-/* WHICH LINES ALREADY HOLD THEIR OWN GOODS, so the shared pool is the wrong
-   question for them. Company 1 binds a bedframe / sofa / (SP) mattress line to
-   the purchase order raised from it; readiness lights that line off its own
-   `received_qty` and never reads `inventory_balances`. Returns the sales-order
-   line ids whose own purchase order has received at least what this delivery
-   ships, for `stockCheckableLines` to drop.
-
-   COMPANY 2 GETS AN EMPTY SET, and that is the whole of the company gate: 2990
-   pools, so every line of theirs stays a pool question exactly as before.
-
-   A cancelled purchase order proves nothing and is excluded. `received_qty` is
-   summed because one sales-order line can be split across several purchase
-   lines (allocations, mig 0235).
-
-   Best-effort by construction: a failed read yields an empty set, which returns
-   the guard to its previous, stricter behaviour rather than waving a line
-   through — the safe direction when we cannot tell. */
 export async function dedicatedlyCoveredSoItemIds(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client is untyped throughout this file
   sb: any,
@@ -326,15 +293,6 @@ export async function dedicatedlyCoveredSoItemIds(
     if ((po?.status ?? '') === 'CANCELLED') continue;
     receivedBySoItem.set(r.so_item_id, (receivedBySoItem.get(r.so_item_id) ?? 0) + Number(r.received_qty ?? 0));
   }
-  /* AND THE WAREHOUSE MUST ACTUALLY HOLD THE GOODS — the earmark says which
-     units are this line's, not that they exist. Measured before shipping this:
-     of 462 lines the receipt test alone would wave through, 432 have the stock
-     sitting in that warehouse under SOME variant key (the bucket is the wrong
-     place to look, which is the whole point) and **30 do not** — for those the
-     goods are genuinely not there and the old warning was RIGHT. Waving those
-     through would trade a false "no stock" for a silent over-ship, which is the
-     worse of the two errors. So the bucket-blind total is the second half of
-     the test: skip the variant bucket, never skip the warehouse. */
   const covered = new Set<string>();
   const candidates = [...needBySoItem].filter(([id, need]) => (receivedBySoItem.get(id) ?? 0) >= need);
   if (candidates.length === 0) return covered;
@@ -362,15 +320,6 @@ export async function dedicatedlyCoveredSoItemIds(
   return covered;
 }
 
-/* THE TWO-STEP THE DO PRE-FLIGHT RUNS, AND THE ORDER IS THE POINT — which is
-   why it lives here rather than in the route. The cover test above asks whether
-   THIS line's warehouse holds the goods, and a line's warehouse is
-   `resolveDoLineWarehouses`'s answer, not a field on the request. So the caller
-   resolves warehouses FIRST and hands the map in. The first cut of this fix
-   computed cover before the warehouses were known, asked about warehouse
-   `null`, and covered nothing — it typechecked, it passed its tests, and it did
-   exactly nothing. Taking the map as a REQUIRED argument is what makes that
-   mistake unwritable. */
 export async function uncoveredStockCheckLines<
   T extends { lineRef: string; soItemId: string | null; itemCode: string; itemGroup?: string | null; qty: number },
 >(

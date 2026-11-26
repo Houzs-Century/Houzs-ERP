@@ -1,32 +1,3 @@
-// ----------------------------------------------------------------------------
-// packing-list-view — assemble ONE DAY's packing lists out of the trip rows.
-//
-// A PACKING LIST IS A TRIP, RENDERED. It is not a document of its own and there
-// is no `packing_lists` table: `scm.trips` already IS "one day + one lorry"
-// (mig 0053 — `trip_date DATE`, `lorry_id`, indexed on both), and `trip_stops`
-// already carries the ordered drop list with the delivery order hanging off each
-// stop. Three lorries out today = three trips = three packing lists. Mixed
-// companies work by construction, because each stop's DO carries its own
-// company_id and the reads that resolve them carry the company predicate.
-//
-// PURE. No supabase, no Hono, no env — the route does the five reads and hands
-// the rows here. That is what makes the ordering rule and the totals testable
-// without a database, and it is why the reversal rule below has a test that
-// fails if anyone "fixes" it.
-//
-// STOPS COME OUT IN DELIVERY ORDER (stop_no ascending) — the truth as the
-// dispatcher sequenced it. The LOADING order is the reverse of it, and that
-// reversal belongs to the thing that prints, not to the thing that reads: see
-// frontend/src/vendor/scm/lib/packing-list-model.ts `loadingOrder`.
-//
-// EMPTY IS NOT ZERO. `m3_milli` is null — never 0 — when not one member DO
-// carries a figure, because `delivery_orders.m3_total_milli` is a column that
-// exists and is not necessarily filled, and a printed "0.00 m³" is a claim
-// about the load rather than a report of what we hold. Same reason a stop whose
-// DO did not come back carries `do_missing: true` instead of `units: 0`: the
-// company predicate legitimately filters a DO out, and that is an unknown, not
-// an empty lorry.
-// ----------------------------------------------------------------------------
 
 // @ts-expect-error - plain .mjs, the one stamp rule shared with the DO detail and scripts/stamp-do-shipped-from.mjs
 import { stampRackLabel } from '../../../scripts/lib/do-shipped-from.mjs';
@@ -65,7 +36,6 @@ export type PackItemRow = {
   description: string | null;
   qty: number | null;
   rack_id: string | null;
-  /** The PO / rack stamp locked at the first ship (mig 20261110T2300), or null. */
   shipped_from: unknown;
 };
 
@@ -77,10 +47,6 @@ export type PackingItem = {
   item_code: string;
   description: string | null;
   qty: number;
-  /** The rack the LINE leaves from (scm.delivery_order_items.rack_id, mig 0118).
-   *  Null when the line carries no explicit pick — dispatch auto-picks then, and
-   *  a sheet that printed a rack anyway would be inventing one. A shipped line
-   *  prints the rack(s) it was locked to when it left instead (`rack_locked`). */
   rack: string | null;
   rack_locked: boolean;
 };
@@ -93,7 +59,6 @@ export type PackingStop = {
   do_id: string | null;
   do_number: string | null;
   do_status: string | null;
-  /** The stop names a delivery order that this caller's companies cannot read. */
   do_missing: boolean;
   units: number;
   items: PackingItem[];
@@ -110,9 +75,7 @@ export type PackingList = {
   stop_count: number;
   do_count: number;
   units: number;
-  /** Σ m3_total_milli over the DISTINCT member DOs, or null when none carries one. */
   m3_milli: number | null;
-  /** DELIVERY order — stop_no ascending. The print reverses it. */
   stops: PackingStop[];
 };
 
@@ -141,7 +104,6 @@ export type AssembleInput = {
   warehouses: readonly PackLabelRow[];
 };
 
-/** The stamped rack(s) first; only an unstamped line falls back to its explicit pick. */
 function packRack(it: PackItemRow, rackById: Map<string, string>): { rack: string | null; rack_locked: boolean } {
   const locked: string | null = stampRackLabel(it.shipped_from, it.item_code ?? null);
   if (locked) return { rack: locked, rack_locked: true };
@@ -184,10 +146,6 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
 
   return input.trips.map((t) => {
     const raw = (stopsByTrip.get(String(t.id)) ?? []).slice();
-    /* Sort by stop_no, ties broken by the stop's own id so the order is stable
-       across two reads. `stop_no` is NOT NULL DEFAULT 1 (mig 0053), so a trip
-       that was never sequenced has every stop on 1 and the tiebreak is what
-       stops the sheet shuffling between prints. */
     raw.sort((a, b) => num(a.stop_no) - num(b.stop_no) || String(a.id).localeCompare(String(b.id)));
 
     const seenDo = new Set<string>();
@@ -201,9 +159,6 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
       const items = doId && row ? itemsByDo.get(doId) ?? [] : [];
       const stopUnits = items.reduce((n, it) => n + it.qty, 0);
 
-      /* Totals count each DELIVERY ORDER once. Two stops may legitimately name
-         the same DO (a split drop), and adding its units twice would overstate
-         what goes on the lorry. */
       if (doId && row && !seenDo.has(doId)) {
         seenDo.add(doId);
         units += stopUnits;

@@ -43,7 +43,6 @@ const refused = (r: R3Read & { ok: false }, target: string, what: string): R3Out
   target,
 });
 
-// ── paging a list the ERP serves 100 at a time (page is 0-based) ─────────────
 
 export type Paged = { ok: true; rows: Obj[]; total: number; truncated: boolean } | { ok: false; r: R3Read & { ok: false } };
 
@@ -76,7 +75,6 @@ export async function pagedRows(ctx: R3Ctx, path: string, key: string, q: Obj, m
   return { ok: true, rows, total, truncated: !stopped && rows.length < total };
 }
 
-// ── P1 + P4: purchase orders overdue / awaiting receipt ─────────────────────
 
 const poLine = (p: Obj, today: string, origin: string) => {
   const date = poDueDate(p);
@@ -125,7 +123,6 @@ async function poOverdue(ctx: R3Ctx): Promise<R3Outcome> {
   return answer(summarisePoOutstanding(got.rows, today, ctx.origin, got.truncated), target);
 }
 
-// ── P2: supplier lateness ───────────────────────────────────────────────────
 
 /**
  * Received POs in the window (by the day they were fully received) against their
@@ -184,7 +181,6 @@ async function supplierLateness(ctx: R3Ctx, args: Obj): Promise<R3Outcome> {
   const thisMonth = str(args.period) === "this_month";
   const since = thisMonth ? `${today.slice(0, 7)}-01` : addDays(today, -89);
   const target = `supplier-lateness:${since}..${today}`;
-  // A PO is ordered before it is received: 120 days of PO dates before the window catch nearly every receipt in it.
   const poFrom = addDays(since, -120);
   const [received, open] = await Promise.all([
     pagedRows(ctx, "/api/scm/mfg-purchase-orders", "purchaseOrders", { status: "received", from: poFrom, to: today, sort: "po_date:desc" }, 20),
@@ -195,7 +191,6 @@ async function supplierLateness(ctx: R3Ctx, args: Obj): Promise<R3Outcome> {
   return answer({ ...out, ...(received.truncated ? { cut: "More than 2,000 received POs in the window; the first 2,000 are counted." } : {}) }, target);
 }
 
-// ── P3 / S3: aging (AP and AR) ──────────────────────────────────────────────
 
 /** The aging's five day columns (0-30, 31-60, 61-90, 91-120, 120+) folded to four: 0-30 / 31-60 / 61-90 / over 90. */
 export function foldCells(cells: unknown): { "0-30": number; "31-60": number; "61-90": number; "90+": number } {
@@ -282,14 +277,11 @@ async function receivablesSummary(ctx: R3Ctx): Promise<R3Outcome> {
   );
 }
 
-// ── S1 / S2: sales orders and deliveries by date ────────────────────────────
 
 /** Statuses of an SO still waiting to go out (the list tabs). */
 export const SO_OPEN_TABS = Object.keys(SO_TAB_STATUSES).filter((t) => t !== "ON_HOLD" && SO_TAB_STATUSES[t].every((st) => !(SO_TERMINAL_STATES as readonly string[]).includes(st)));
-/** Not still to deliver: arrived (the ERP's own set, scm/shared/do-shipped-states.ts) or cancelled. */
 const DO_DONE = new Set<string>([...DO_ARRIVED_STATES, "CANCELLED"]);
 
-/** Open SOs of every open tab, earliest customer delivery date first, read until the dates pass `horizon`. */
 async function openSalesOrders(ctx: R3Ctx, horizon: string): Promise<{ ok: true; rows: Obj[]; truncated: boolean } | { ok: false; r: R3Read & { ok: false } }> {
   const past = (last: Obj) => {
     const d = str(last.customer_delivery_date).slice(0, 10);
@@ -410,7 +402,6 @@ async function deliveriesDue(ctx: R3Ctx): Promise<R3Outcome> {
   return answer({ ...out, ...(notAvailable.length ? { notAvailable } : {}) }, target);
 }
 
-// ── registration ────────────────────────────────────────────────────────────
 
 const readOnly = { readOnlyHint: true, openWorldHint: false };
 const COMPANY = { type: "string", description: "Which company's data, as for the other tools (default: the person's usual company)" };

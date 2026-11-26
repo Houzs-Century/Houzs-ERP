@@ -10,12 +10,6 @@ import type { FinanceBooks, FinanceLine } from "./types";
 import { viewableMime } from "./projectHelpers";
 import { openLoadedTab } from "../../lib/openLoadedTab";
 
-// Single Cost Lines section at the bottom of the Financial Snapshot.
-// Lists every non-auto, manually-entered cost line (with or without a
-// receipt) with open / edit / delete affordances, so each can be edited
-// in place and have a receipt attached. "+ Add cost line" opens
-// AddFinanceLineForm, whose category dropdown hides already-used
-// categories so a category never gets a duplicate line.
 export function FinanceAttachmentsSection({
   projectId,
   lines,
@@ -28,7 +22,6 @@ export function FinanceAttachmentsSection({
 }: {
   projectId: number;
   lines: FinanceLine[];
-  /** The books on this event (payment-request item 5). */
   books?: FinanceBooks | null;
   adding: boolean;
   onAddOpen: () => void;
@@ -39,11 +32,7 @@ export function FinanceAttachmentsSection({
   const costLines = lines.filter(
     (l) => l.kind === "cost" && !l.auto_source && !l.source,
   );
-  // Categories that already have an editable cost line. The add form
-  // hides these so a category never gets a duplicate line — the user
-  // edits the existing row instead.
   const usedCategories = new Set(costLines.map((l) => ((l.category as string | null) ?? "").trim()));
-  // A row the books fill takes no typed line — it would not count.
   for (const c of books?.closed_categories ?? []) usedCategories.add(c);
   const booksLines = lines.filter((l) => l.kind === "cost" && l.source === "books");
   return (
@@ -133,16 +122,7 @@ function BooksLines({ lines, replaced }: { lines: FinanceLine[]; replaced: Finan
   );
 }
 
-// EditableSnapshotRow was deleted on 2026-05-08 along with the
-// per-row expand UI — boss preferred a single Attachments section
-// at the bottom of the snapshot card. SnapshotRow's `editable` prop
-// (click-to-edit consolidate) covers the inline edit need; the new
-// FinanceAttachmentsSection above covers receipts.
 
-// Compact list of the underlying lines for one category, with the
-// existing edit/delete/openFile affordances. Lifted from LedgerGroup
-// but stripped of the section chrome so it nests cleanly under a
-// snapshot row.
 function CategoryDetailLines({
   lines,
   onChange,
@@ -230,8 +210,6 @@ function CategoryDetailLines({
   );
 }
 
-// Financial Snapshot tile — large value above a one-line subtitle.
-// Mirrors the Exhibition Report layout the boss vibecoded.
 export function SnapshotKpi({
   label,
   value,
@@ -263,14 +241,6 @@ export function SnapshotKpi({
   );
 }
 
-// One row of the itemized cost table. `subtotal` flag bolds the row
-// and tints the background so it reads as a footer — used for COGS
-// Total, Total Cost, and Net Profit rows. `indent` nests the label
-// under its parent subtotal (the COGS sub-rows under COGS Total).
-// When `editable` is set the value cell becomes click-to-edit and
-// calls onSave with the typed amount. `lineCount` + `expanded` +
-// `onToggleExpand` add the chevron affordance for drilling into
-// per-line detail (descriptions / dates / attachments).
 export function SnapshotRow({
   label,
   value,
@@ -288,7 +258,6 @@ export function SnapshotRow({
   label: string;
   value: number;
   annotation?: string;
-  /** The row is Finance's figure from the books (payment-request item 5). */
   books?: boolean;
   subtotal?: boolean;
   indent?: boolean;
@@ -314,7 +283,7 @@ export function SnapshotRow({
       return;
     }
     setEditing(false);
-    if (Math.abs(n - value) < 0.005) return; // unchanged
+    if (Math.abs(n - value) < 0.005) return;
     await editable.onSave(n);
   }
   return (
@@ -413,12 +382,7 @@ function AddFinanceLineForm({
   onCancel: () => void;
   onSaved: () => void;
   toast: ReturnType<typeof useToast>;
-  // When set, the category dropdown is pre-selected (and the field
-  // hidden) so the row-level "+ Add detailed line" CTA goes straight
-  // to amount + description + date + receipt.
   categoryDefault?: string;
-  // Categories that already have a line — hidden from the dropdown so
-  // the user edits the existing row rather than adding a duplicate.
   usedCategories?: Set<string>;
 }) {
   const allCategories = kind === "income" ? LEDGER_INCOME_CATS : LEDGER_COST_CATS;
@@ -605,9 +569,6 @@ export function EditFinanceLineRow({
         description: description.trim() || null,
         occurred_at: occurredAt || null,
       };
-      // Replacing / attaching a receipt — upload then carry the key on
-      // the patch. An existing r2_key is left untouched when no new file
-      // is picked.
       if (file) {
         if (file.size > 10 * 1024 * 1024) {
           toast.error("File exceeds 10MB");

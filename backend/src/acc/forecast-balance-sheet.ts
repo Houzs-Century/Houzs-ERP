@@ -39,17 +39,12 @@ export type Accrual = { salesSen: number; purchasesSen: number; salariesSen: num
 export type BsMove = { ym: string; sen: number; against: string; flow: 'in' | 'out' };
 
 export type BsForecastInput = {
-  /** Oldest first; the first is the current month. */
   months: readonly string[];
   accounts: { ar: string; ap: string; accrual: string | null };
   accruals: Readonly<Record<string, Accrual | undefined>>;
-  /** The P&L forecast's money, the trade-finance plan, the Capex & financing table. */
   moves: readonly BsMove[];
-  /** The bills the books owed at the start, by the month they are paid. */
   openingBills: ReadonlyArray<{ ym: string; sen: number }>;
-  /** The open orders' balances to collect, already capped at the start's debtors. */
   openingReceipts: ReadonlyArray<{ ym: string; sen: number }>;
-  /** The salary accrual's credit balance at the start. */
   openingSalarySen: number;
 };
 

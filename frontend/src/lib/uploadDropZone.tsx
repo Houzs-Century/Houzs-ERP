@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// Drop / paste upload plumbing for attachment slots.
-//
-// A detail view can render several upload targets at once (e.g. the service
-// case's Photos card plus one milestone slot per stage row), so pasted files
-// must be ROUTED rather than grabbed document-wide: the zone under the
-// pointer claims the clipboard files; everywhere else the paste is left
-// alone so a caller can show a hint instead of silently dropping it in a
-// surprising category. Drag & drop is per-zone naturally.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "./utils";
@@ -53,10 +43,6 @@ export function acceptedUploadFiles(
   });
 }
 
-// Zones currently under the pointer. A view's fallback paste listener
-// consults this to know whether a zone is about to claim the paste —
-// listener order between parent and children isn't stable across
-// re-mounts, so a shared registry beats event ordering.
 export const hoveredUploadZones = new Set<object>();
 
 /** Wraps an upload target so files can be dropped onto it, or pasted
@@ -82,7 +68,6 @@ export function UploadDropZone({
   useEffect(() => {
     const id = zoneId.current;
     const onPaste = (e: ClipboardEvent) => {
-      // defaultPrevented = another zone (nested/overlap) already took it.
       if (latest.current.disabled || e.defaultPrevented) return;
       if (!hoveredUploadZones.has(id)) return;
       const files = clipboardFiles(e);
@@ -109,7 +94,6 @@ export function UploadDropZone({
         }
       }}
       onDragLeave={(e) => {
-        // Ignore leave events triggered by entering a child node.
         if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
         setDragActive(false);
       }}

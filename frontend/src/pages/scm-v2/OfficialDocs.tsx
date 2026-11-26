@@ -26,7 +26,6 @@ import css from './MoneyOutErp.module.css';
 
 type View = 'owed' | 'received' | 'all';
 
-/** Each state of the official invoice as the page's status tag. */
 const stateTag = (state: OfficialState): { text: string; tone: Tone } => {
   switch (state) {
     case 'OWED': return { text: 'Owed', tone: 'late' };
@@ -35,17 +34,14 @@ const stateTag = (state: OfficialState): { text: string; tone: Tone } => {
   }
 };
 
-/** Whole days since an ISO time, in Malaysia time. */
 const daysSince = (iso: string | null): number | null => {
   if (!iso) return null;
   const t = Date.parse(iso);
   return Number.isFinite(t) ? Math.max(0, Math.floor((Date.now() - t) / 86_400_000)) : null;
 };
 
-/** The paying document's number — a voucher always has one (a draft's too). */
 const docNo = (r: OfficialDocRow): string => r.number ?? (r.kind === 'PV' ? 'Draft voucher' : 'AP bill');
 
-/* A double-click on the marks is not a double-click on the row. */
 const keepDoubleClick = (e: React.MouseEvent) => e.stopPropagation();
 
 export const OfficialDocs = () => {
@@ -63,8 +59,6 @@ export const OfficialDocs = () => {
     return { owed: all.filter((r) => r.state === 'OWED').length, received: all.filter((r) => r.state === 'RECEIVED').length };
   }, [q.data]);
 
-  /* Owed and To check are counted on either read; All only once its own read
-     (the checked ones too) is the one loaded. */
   const views: ViewOption<View>[] = [
     { key: 'owed', label: 'Owed', count: q.data ? counts.owed : null, work: 'late' },
     { key: 'received', label: 'To check', count: q.data ? counts.received : null, work: 'warn' },

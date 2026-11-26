@@ -35,11 +35,9 @@ import { callAcService } from '../../services/autocount-writeback';
 
 const env = { AC_SYNC_URL: 'https://autocount.example', AC_SYNC_KEY: 'k' } as never;
 
-/** A fetch that answers exactly what Cloudflare answers for a dead origin. */
 const cloudflare502 = async () =>
   new Response('error code: 502', { status: 502, headers: { 'content-type': 'text/plain' } });
 
-/** The service itself, reachable, refusing with its own words. */
 const serviceRefusal = async () =>
   new Response(JSON.stringify({ ok: false, error: 'masters not opened: item 9028 unknown' }), {
     status: 500, headers: { 'content-type': 'application/json' },
@@ -68,9 +66,6 @@ describe('callAcService — a gateway status with a non-JSON body', () => {
     expect(r.retryable).toBe(true);
   });
 
-  /* The service SPEAKING keeps its own words: a 500 with a JSON error is
-     AutoCount refusing something, which is a completely different problem and
-     a completely different person's job. */
   it('a JSON error from the service is NOT rewritten', async () => {
     const r = await callAcService(env, 'ensure_masters', {}, serviceRefusal as never);
     expect(r.error).toBe('masters not opened: item 9028 unknown');
@@ -83,10 +78,6 @@ describe('classifyAcSkip — the operator gets the right subsystem', () => {
     expect(classifyAcSkip(stored).kind).toBe('host-unreachable');
   });
 
-  /* ORDER IS THE RULE HERE. The stored sentence contains BOTH needles, because
-     the masters step is where the transport failure surfaces. The transport one
-     has to win, or a stopped service reads as bad master data — which is the
-     wrong place to send whoever investigates. */
   it('wins over the masters needle even though both appear in the text', () => {
     const stored = 'masters not opened, document not sent: the AutoCount host did not answer (HTTP 503)';
     expect(classifyAcSkip(stored).kind).not.toBe('masters-not-opened');

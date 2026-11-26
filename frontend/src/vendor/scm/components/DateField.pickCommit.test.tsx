@@ -1,7 +1,3 @@
-/* 2026-10-26, HC-SO-2609-164: a Delivery Date picked from the calendar showed 28
-   but the board saved nothing - the host compares its saved value with the
-   picked one on blur, and the delayed blur after a pick ran the onBlur captured
-   BEFORE the host re-rendered, i.e. with the old value. */
 import { fireEvent, render } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, test, vi } from 'vitest';
@@ -17,7 +13,7 @@ describe('DateField calendar pick', () => {
     vi.useFakeTimers();
     const onSave = vi.fn();
     const { container } = render(<BlurCommitHost saved="2026-10-20" onSave={onSave} />);
-    const native = container.querySelector('input[tabindex="-1"]') as HTMLInputElement; // the calendar's hidden input
+    const native = container.querySelector('input[tabindex="-1"]') as HTMLInputElement;
     fireEvent.change(native, { target: { value: '2026-10-28' } });
     vi.runAllTimers();
     vi.useRealTimers();

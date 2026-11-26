@@ -1,18 +1,3 @@
-/* Every address form shows TWO lines, then Postcode / City / State (owner
-   2026-11-18: "standardise the whole system like the Sales Order: two lines
-   only"). The tables keep address3 / address4 — the account book's four-line
-   format, prints and old imports still read them — so a record an old form or
-   the cutover filled can still hold text there. A form must never hide it:
-   Address line 2 SHOWS whatever lines 3 / 4 hold, and saving line 2 writes the
-   whole of it to line 2 and clears 3 / 4.
-
-   A line 3 / 4 that only repeats the record's own postcode, city or state
-   ("11900 Bayan Lepas" beside Postcode 11900 / City Bayan Lepas) is not shown
-   twice: those fields already say it.
-
-   ONE rule, two copies: backend/src/scm/shared is the original and
-   frontend/src/vendor/shared its byte-identical twin (check-shared-mirrors.mjs).
-   The data fold (backend/scripts/fold-address-lines.mjs) reads it too. */
 
 export type AddressTown = {
   postcode: string | null | undefined;

@@ -1,11 +1,5 @@
-// The sums the 3PL invoices and Reconciliation tabs show over the DO charges.
-// Pure, so the money is tested without rendering.
 import type { ChargeRow } from '../ThreePLInvoices';
 
-/* Per 3PL, from what its bills say (the 3PL invoices tab), against the rate card.
-   The trip table reads trips.three_pl_cost_sen, which nothing on screen writes
-   and which 3PL work rarely has (it is not planned as trips). The billed cost
-   that IS recorded is per DO. */
 export type CarrierRecon = {
   carrierId: string; carrierName: string; dos: number; billedSen: number; billedPricedSen: number;
   expectedSen: number; priced: number; off: number; noCard: number;
@@ -25,7 +19,6 @@ export const carrierRecon = (rows: readonly ChargeRow[]): CarrierRecon[] => {
 
 export interface ChargeTotals {
   dos: number; billedSen: number;
-  /** Over the DOs a rate card prices only: a DO with no card has nothing to differ from. */
   expectedSen: number; diffSen: number | null;
   priced: number; over: number; under: number; noCard: number;
 }

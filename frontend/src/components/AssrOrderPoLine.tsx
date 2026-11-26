@@ -1,9 +1,6 @@
 import { Fragment } from "react";
 import { assrOrderPoHref, assrOrderPos } from "../vendor/scm/lib/assr/case-fields";
 
-/* Read-only "Order PO" line on the desktop case detail, above the editable
-   PO No (the case's own service PO). Each number opens its purchase order in a
-   new window seeded with the CASE's company — see assrOrderPoHref. */
 export function AssrOrderPoLine({ row }: { row: { company_id?: number | string | null; order_pos?: unknown } }) {
   const pos = assrOrderPos(row);
   const companyId = row.company_id == null ? null : Number(row.company_id);

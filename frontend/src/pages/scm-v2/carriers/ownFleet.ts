@@ -1,6 +1,3 @@
-// Own fleet tab: the pieces worth pinning (ownFleet.test.ts). Our own lorries
-// priced like a 3PL — the trips and month figures come from
-// GET /delivery-rate-cards/own-fleet; these only read and word them.
 import type { OwnFleetMonth, OwnFleetRun } from '../../../vendor/scm/lib/delivery-rate-card-queries';
 import { JOB_LABEL } from '../../../vendor/scm/lib/rate-rule-taxonomy';
 
@@ -28,7 +25,6 @@ export function ownFleetTotals(months: readonly OwnFleetMonth[]): OwnFleetMonth 
   return t;
 }
 
-/* The server names the job; one this copy of the list lacks shows by its own name. */
 const jobLabel: Partial<Record<string, string>> = JOB_LABEL;
 
 /** A trip's other jobs as Delivery Planning names them: "Supplier x2 · Transfer item". */

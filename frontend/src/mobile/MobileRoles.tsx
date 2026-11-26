@@ -56,8 +56,6 @@ export function MobileRoles({ onBack }: { onBack: () => void }) {
   const roles = rolesQ.data?.roles ?? [];
   const selected = selectedId != null ? roles.find((r) => r.id === selectedId) ?? null : null;
 
-  // Whole-matrix snapshot for Excel export/import — the SAME pure engine as the
-  // desktop Matrix tab (one product, one logic layer).
   const snapshot = useMemo(
     () => snapshotFromApi(roles, pageQ.data?.pages ?? [], permsQ.data?.permissions ?? [], pageQ.data?.roles ?? []),
     [roles, permsQ.data, pageQ.data]
@@ -68,7 +66,6 @@ export function MobileRoles({ onBack }: { onBack: () => void }) {
     );
   }
 
-  // A role that vanished under us (deleted elsewhere) drops back to the list.
   useEffect(() => {
     if (selectedId != null && roles.length > 0 && !roles.some((r) => r.id === selectedId)) {
       setSelectedId(null);
@@ -150,7 +147,6 @@ const MATRIX_BTN: React.CSSProperties = {
   cursor: "pointer",
 };
 
-// ── List view ────────────────────────────────────────────────
 function RoleList({
   roles,
   permissions,
@@ -274,7 +270,6 @@ function RoleList({
   );
 }
 
-// ── Detail view ──────────────────────────────────────────────
 function RoleDetail({
   role,
   permissions,
@@ -318,8 +313,6 @@ function RoleDetail({
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
 
-  // Re-seed when the selected role changes (id is stable across data reloads, so
-  // a save+reload does not clobber the edits we just persisted).
   useEffect(() => {
     setStaged(new Set(role.permissions));
     setPageStaged({ ...pageBase });
@@ -609,7 +602,6 @@ const miniBtn: React.CSSProperties = {
   cursor: "pointer",
 };
 
-/** None/View/Edit/Full segmented picker for the mobile page-access cards. */
 function MLevelPicker({
   value,
   disabled,

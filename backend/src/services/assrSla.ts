@@ -1,36 +1,13 @@
 import type { Env } from "../types";
 
-/**
- * The case-level SLA clock: how many hours a Service case gets before
- * `deadline_at`. Its own module because both readers of it — `services/assr.ts`
- * (create + priority change) and `routes/assr.ts` (the Service Maintenance
- * lookup that WRITES it) — are already at their file-size ceiling, and because
- * keeping the read and the write validation side by side is what stops them
- * drifting apart again. They did: see below.
- *
- * NOT to be confused with the per-STAGE clock, which is a separate axis living
- * in `lookupStageTargetDays()` (`assr_priority_stage_targets`, mig 082).
- */
 
 type Priority = "low" | "normal" | "high" | "urgent";
 
-/**
- * Last-resort SLA in hours per priority. NOT the source of truth — that is
- * `assr_priorities.sla_hours`, which Service Maintenance edits (mig 065 calls
- * the column "optional override of slaHoursFor()"). This table exists so a
- * missing row, a blank cell or an unreachable lookup table can never crash a
- * case create; it mirrors the backfill in 012_assr_sla.sql and the 065 seed so
- * the fallback and the seeded rows agree.
- *
- * `backend/scripts/check-assr-sla-priorities.mjs` carries a hand-copy of this
- * table (a script running against a production DSN cannot import a Worker
- * module); `backend/tests/assrSlaFallbackMirror.test.ts` fails if the two drift.
- */
 const SLA_HOURS_BY_PRIORITY: Record<Priority, number> = {
   urgent: 24,
   high: 72,
-  normal: 168,  // 7 days
-  low: 336,     // 14 days
+  normal: 168,
+  low: 336,
 };
 
 export function slaHoursFor(priority: string | null | undefined): number {
@@ -64,9 +41,6 @@ export async function slaHoursForPriority(
       .bind(slug)
       .first<{ sla_hours: number | null }>();
     const hours = Number(row?.sla_hours);
-    // Blank cell = "use the module default", which is what the UI's own
-    // rowTitle promises. A stored non-positive or non-finite value is junk
-    // rather than an instruction, so it takes the same path.
     if (Number.isFinite(hours) && hours > 0) return hours;
   } catch (e) {
     console.warn("[assrSla.slaHoursForPriority] priority read failed:", e);

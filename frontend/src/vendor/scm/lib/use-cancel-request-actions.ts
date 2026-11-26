@@ -40,9 +40,7 @@ export type CancelRequestActions = {
   approve: (row: CancelRequestRow) => Promise<void>;
   reject: (row: CancelRequestRow) => Promise<void>;
   withdraw: (row: CancelRequestRow) => Promise<void>;
-  /** Run the document's own cancel on an already-APPROVED request. */
   executeNow: (row: CancelRequestRow) => Promise<void>;
-  /** True while any of them is in flight. */
   busy: boolean;
 };
 
@@ -61,7 +59,6 @@ export const approveIsFinal = (row: CancelRequestRow): boolean => {
 };
 
 export function useCancelRequestActions(
-  /** Called after an action changed something — for the sidebar approval badge. */
   onChanged?: () => void,
 ): CancelRequestActions {
   const askPrompt = usePrompt();
@@ -79,22 +76,15 @@ export function useCancelRequestActions(
   const fail = (title: string, err: unknown) =>
     serviceNotify({ title, body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
 
-  const changed = () => { try { onChanged?.(); } catch { /* a badge refresh must never fail an approval */ } };
+  const changed = () => { try { onChanged?.(); } catch { } };
 
   const executeNow = async (row: CancelRequestRow) => {
     if (row.doc_type === 'SO') {
       await cancelSo.mutateAsync({ docNo: row.doc_key, status: 'CANCELLED', expectedStatus: row.doc_status_at_request ?? null });
     } else {
-      /* The row's own words are the reason the cancel now requires (owner
-         2026-09-09). Only a request raised before the PO's approval was cut can
-         still reach this branch — nothing raises a new one. */
       await cancelPo.mutateAsync({ id: row.doc_key, reason: row.reason });
     }
     changed();
-    /* The document NUMBER, not a noun for its type: every number here already
-       carries its document (HC-SO- / PO- / DO-), and a table of type nouns in
-       this file would be one more home for the {SO, PO, DO} set that
-       shared/document-cancel.ts already answers. */
     void serviceNotify({ title: `${row.doc_number} cancelled`, body: 'The approval is complete and the cancellation has run.' });
   };
 

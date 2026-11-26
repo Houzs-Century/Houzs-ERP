@@ -24,7 +24,6 @@ export type R3Read =
   | { ok: true; status: number; value: unknown; removed: string[]; target: string }
   | { ok: false; status: number; message: string; note: string; target: string };
 export type R3Ctx = {
-  /** One ERP read as the person (routes/mcp.ts readValue with this call's company). */
   read: (path: string, query: Record<string, unknown> | undefined) => Promise<R3Read>;
   origin: string;
   userId: number;
@@ -44,7 +43,6 @@ const refused = (r: R3Read & { ok: false }, target: string, what: string): R3Out
 const answer = (v: unknown, target: string): R3Outcome => ({ result: text(JSON.stringify(v)), status: 200, note: "", target });
 const asBrief = (r: R3Read): BriefRead => (r.ok ? { ok: true, value: r.value } : { ok: false, status: r.status, message: r.message });
 
-// ── tool definitions ────────────────────────────────────────────────────────
 
 const readOnly = { readOnlyHint: true, openWorldHint: false };
 const COMPANY = { type: "string", description: "Which company's data, as for the other tools (default: the person's usual company)" };
@@ -132,7 +130,6 @@ export const ROUND3_INSTRUCTIONS = `- Sales by showroom / outlet today and month
 - "What do I need to look at today?": daily_brief. A list as an Excel file: export_excel {list, search, status, from, to, fields}; give the person the download link.
 ${FAQ_INSTRUCTIONS}`;
 
-// ── quick answers ───────────────────────────────────────────────────────────
 
 async function outletSales(ctx: R3Ctx): Promise<R3Outcome> {
   const today = myToday(new Date(ctx.now));
@@ -186,7 +183,6 @@ async function attendanceToday(ctx: R3Ctx): Promise<R3Outcome> {
   return answer(summariseAttendance(r.value), target);
 }
 
-// ── daily brief ─────────────────────────────────────────────────────────────
 
 export const BRIEF_BADGE_SOURCES = [
   "amendment-approvals",
@@ -202,7 +198,6 @@ export const BRIEF_BADGE_SOURCES = [
   "it-support-replies",
 ];
 
-/** Six reads, all at once (services/mcp-brief.ts lists them). */
 async function dailyBrief(ctx: R3Ctx): Promise<R3Outcome> {
   const today = myToday(new Date(ctx.now));
   const target = `brief:${today}`;
@@ -223,7 +218,6 @@ async function dailyBrief(ctx: R3Ctx): Promise<R3Outcome> {
   return answer(brief, target);
 }
 
-// ── export to Excel ─────────────────────────────────────────────────────────
 
 export const EXPORT_MAX_ROWS = 5000;
 const PAGE_SIZE: Record<"zero" | "assr", number> = { zero: 100, assr: 200 };
@@ -349,10 +343,6 @@ export async function runRound3Tool(ctx: R3Ctx, name: string, args: Obj): Promis
   }
 }
 
-// ── download ────────────────────────────────────────────────────────────────
-// GET /api/mcp/xlsx/:key — an export_excel file, stored 15 minutes under an
-// unguessable key (R2 mcp-exports/<key>.xlsx), like get_pdf's printouts. The
-// key is the permission: it exists only after the person's own reads succeeded.
 
 export const mcpXlsxDownload = new Hono<{ Bindings: Env }>();
 mcpXlsxDownload.get("/:key", async (c) => {

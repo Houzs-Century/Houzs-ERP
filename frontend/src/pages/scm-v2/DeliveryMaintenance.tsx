@@ -49,7 +49,6 @@ const TABS: Tab[] = [
   { key: 'regions', title: 'Regions', path: '/scm/delivery-planning-regions', render: () => <DeliveryPlanningRegions embedded /> },
   { key: 'saved-locations', title: 'Places', path: '/scm/saved-locations', render: () => <SavedLocations embedded /> },
 ];
-/* Old ?open= links (the folds) land on the tab they named. */
 const LEGACY: Partial<Record<string, string>> = { fleet: 'lorries', regions: 'regions', 'residence-rules': 'residence-rules', 'saved-locations': 'saved-locations' };
 
 /** The tab a link asks for: ?tab=, else the fold an old ?open= named, else Lorries. */

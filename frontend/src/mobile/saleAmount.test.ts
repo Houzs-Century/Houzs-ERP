@@ -1,5 +1,3 @@
-/* Regression: the phone "Log sale" prompt used parseFloat, so "12,000" logged
-   RM 12. The prompt now uses the shared money parser. */
 import { describe, expect, test } from "vitest";
 import { saleAmountRm, validateSaleAmount } from "./saleAmount";
 

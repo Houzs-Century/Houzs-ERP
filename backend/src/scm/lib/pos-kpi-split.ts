@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-kpi-split — the Products / Service / KPI money split behind the POS
-// My-Orders tiles. PURE: no I/O, no client, no env.
-//
-// The rule (Loo 2026-06-20), for ONE scope's set of orders:
-//
-//   Service  = total − goods            (delivery + every SERVICE line)
-//   KPI      = the item-KPI-flagged portion of goods
-//   Products = goods − KPI              (the commission threshold base)
-//
-// so the three rows sum back to the headline total. Products is the threshold
-// base precisely BECAUSE the KPI portion is carved out of it: a flagged item
-// earns a fixed bonus INSTEAD of percentage commission (hr-commission.ts), so
-// counting it in Products would pay for it twice.
-//
-// Extracted from routes/pos.ts rather than left inline for two reasons: the
-// arithmetic is the part worth testing (the reducer is trivial, the clamps are
-// not), and /hr/commission applies the same carve-out — one home means the
-// dashboard and the commission run cannot answer differently.
-// ----------------------------------------------------------------------------
 
 import { unitKpiExcludedSen, type ItemKpiFlag, type KpiUnit } from '../shared/hr-commission';
 
@@ -42,11 +22,8 @@ export const kpiSenForDocs = (
   );
 
 export interface ScopeRevenueSen {
-  /** total_revenue_sen summed over the scope's orders. */
   totalSen: number;
-  /** mattress_sofa + bedframe + accessories + others, summed. */
   goodsSen: number;
-  /** The item-KPI portion, from kpiSenForDocs. */
   kpiSen: number;
 }
 

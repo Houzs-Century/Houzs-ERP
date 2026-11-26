@@ -17,20 +17,6 @@
    and backend/scripts/check-shared-mirrors.mjs. No imports, so the two copies can
    stay identical. */
 
-/* WHICH STORED DATE IS "Estimate Delivery Date 1 / 2 / 3". The ONE place that
-   decides it — correct it here and every screen and export reading the
-   estimates follows (the PO line export and the Outstanding "PO Chasing" tab).
-
-   Checked against live AutoCount 2026-09-15: the book keeps these three on the
-   PO HEADER as UDF_EDate / UDF_EDate2 / UDF_EDate3 (captioned "Supplier
-   Delivery Date"). The ERP keeps the same three dates as
-   supplier_delivery_date_2/3/4 — on the purchase_orders header, cascaded onto
-   every line (POST /bulk-supplier-date), and editable per line on PoLineCard
-   ("Supplier Date 2/3/4"). delivery_date stays the line's own Delivery Date.
-
-   A LINE value wins over the header's: the line is where a date that differs
-   per item lives, and the cascade writes both halves the same. The header value
-   is used only where the line is blank. */
 export const PO_ESTIMATE_DELIVERY_DATE_FIELDS = [
   'supplier_delivery_date_2',
   'supplier_delivery_date_3',
@@ -118,12 +104,6 @@ export const PO_LINE_LABELS = {
 
 export type PoLineLabel = (typeof PO_LINE_LABELS)[keyof typeof PO_LINE_LABELS];
 
-/* AutoCount's Item Group for an ERP item_group. Measured 2026-09-15 on the 240
-   lines of the owner's AutoCount "PO chasing list" (20260904) that match an ERP
-   line by AutoCount doc no + supplier item code: sofa -> SOFA (13),
-   fabric_accessory -> SOFA (35; the book files a sofa's pillows under the sofa),
-   accessory -> ACC (11), mattress -> MATTRESS (90), bedframe -> BEDFRAME (91).
-   A group the book was not seen using prints upper-cased. */
 const AC_ITEM_GROUP: Readonly<Record<string, string>> = {
   accessory: 'ACC',
   fabric_accessory: 'SOFA',
@@ -142,13 +122,10 @@ export type PoListLine = {
   line_no: number | null;
   item_code: string | null;
   material_name: string | null;
-  /** AutoCount's Item Description: the book's item master for the supplier item
-   *  code, else the ERP's material_name. */
   item_description: string | null;
   description2: string | null;
   notes: string | null;
   item_group: string | null;
-  /** AutoCount's Item Group: the book's item master, else acItemGroup(item_group). */
   ac_item_group: string | null;
   supplier_sku: string | null;
   qty: number;
@@ -160,9 +137,7 @@ export type PoListLine = {
   estimate_delivery_date_1: string | null;
   estimate_delivery_date_2: string | null;
   estimate_delivery_date_3: string | null;
-  /** AutoCount's short location code (`KL`), line warehouse else PO ship-to. */
   location: string | null;
-  /** The Sales Order the line was raised for (via so_item_id), company-scoped. */
   so_doc_no: string | null;
 };
 
@@ -188,7 +163,6 @@ export function toPoListLine(
   ctx: {
     location: string | null;
     soDocNo: string | null;
-    /** The AutoCount item master row for the line's supplier item code, or null. */
     book: { description: string | null; itemGroup: string | null } | null;
   },
 ): PoListLine {
@@ -239,8 +213,6 @@ const num = (v: number | string | null | undefined): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-/* The storage shape (YYYY-MM-DD) — a spreadsheet sorts it, and it imports back
-   without a day/month guess. A timestamp keeps only its date. */
 const isoDate = (v: string | null | undefined): string | null => {
   const s = text(v);
   if (!s) return null;

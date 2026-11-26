@@ -19,7 +19,6 @@ import { DeliveryIssuesCard } from '../../../components/scm-v2/DeliveryIssuesCar
 import { issuesForRow, runKeysOf, SERVICE_CASE_CREATE_PERMS, useRunDeliveryIssues } from '../../../vendor/scm/lib/delivery-issue-queries';
 import { useAuth } from '../../../auth/AuthContext';
 
-/** Dispatch / customer-service remarks thread for one order (phase 3). */
 function RemarksSection({ soDocNo }: { soDocNo: string }) {
   const remarks = useDeliveryRemarks(soDocNo);
   const addRemark = useAddRemark();
@@ -96,8 +95,6 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-/** Change-lorry: move this order's delivery stop to another lorry run of the day
- *  at a chosen position (phase 3b). Disabled once delivered or before a DO exists. */
 function ChangeLorrySection({ doc, runs, onMoved }: { doc: DocRowVM; runs: LorryRunVM[]; onMoved: () => void }) {
   const move = useMoveStop();
   const notify = useNotify();
@@ -176,7 +173,6 @@ export function OrderDrawer({
 }: {
   doc: DocRowVM | null;
   run: LorryRunVM | null;
-  /** The day's runs, for the Change-lorry target picker. */
   runs: LorryRunVM[];
   salespersonName: string;
   onClose: () => void;
@@ -188,7 +184,6 @@ export function OrderDrawer({
   const issuesQ = useRunDeliveryIssues(runKeysOf(issueKeys ? [issueKeys] : []), !!doc);
   const issues = issueKeys ? issuesForRow(issuesQ.data, issueKeys) : [];
   const jobRef = doc && doc.rowType !== 'so' ? jobRefOf(doc.order) : null;
-  // The person to ask for at a supplier / venue: shown once, here, not again in the job panel below.
   const job = useDeliveryJob(jobRef);
   const contactName = doc ? stopContactName(job.data?.context, doc.customer) : null;
 
@@ -196,7 +191,6 @@ export function OrderDrawer({
     <ResizableDetailDrawer open={!!doc} onClose={onClose} ariaLabel="Delivery order detail">
       {doc && (
         <div className="flex h-full flex-col">
-          {/* header */}
           <div className="flex items-start justify-between border-b border-border p-4">
             <div className="min-w-0">
               <div className="flex items-center gap-1.5">
@@ -216,7 +210,6 @@ export function OrderDrawer({
           </div>
 
           <div className="flex-1 space-y-4 overflow-y-auto p-4">
-            {/* customer + lorry cards */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="rounded-lg border border-border bg-surface p-3">
                 <div className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Customer</div>
@@ -249,17 +242,10 @@ export function OrderDrawer({
               </div>
             </div>
 
-            {/* What the crew reported at POD ("Delivered with issue") + its Service Case. */}
             <DeliveryIssuesCard issues={issues} showDo canCreateCase={canAny(SERVICE_CASE_CREATE_PERMS)} />
 
-            {/* change lorry (phase 3b) — SO deliveries only; a non-SO job is
-                scheduled + crewed in its own module (DP / PMS / ASSR), not moved
-                through the DO-based mover here. */}
             {doc.rowType === 'so' && <ChangeLorrySection doc={doc} runs={runs} onMoved={onClose} />}
 
-            {/* fields — an SO delivery shows SO · DO · Ref + its money/load; a non-SO
-                job shows its own job type + document and skips the order-money
-                columns it does not carry. */}
             <div className="rounded-lg border border-border bg-surface p-3">
               {doc.rowType === 'so' ? (
                 <>
@@ -284,12 +270,8 @@ export function OrderDrawer({
               {doc.rowType === 'so' && <Field label="Load" value={`${doc.units} unit${doc.units === 1 ? '' : 's'}`} />}
             </div>
 
-            {/* remarks thread (phase 3) — the thread is keyed on a real SO doc no.,
-                so it is shown for SO deliveries only (a non-SO job has none). */}
             {doc.rowType === 'so' && <RemarksSection soDocNo={doc.soDocNo} />}
 
-            {/* POD + timeline — an SO delivery's off its delivery order; a non-SO job's
-                off its own progress, with the same office upload as the job panel. */}
             {jobRef && <JobBody key={jobKey(jobRef)} jobRef={jobRef} inStopDrawer />}
             {doc.rowType === 'so' && (
               doc.latestLiveDoId ? (

@@ -69,7 +69,6 @@ describe('list searches match the SO link resolved from the SO reference', () =>
   });
 });
 
-/** A fake PostgREST client: each (table, filter column) answers from `rows`. */
 function fakeSb(rows: Record<string, Record<string, unknown>[]>) {
   const log: string[] = [];
   const sb = {
@@ -124,8 +123,6 @@ describe('poIdsForSoDocNos', () => {
 
 describe('Delivery Planning board', () => {
   it("the board's Reference (its search field) falls back to customer_so_no like customer-ref.ts", () => {
-    // The SO row is built in lib/delivery-board-so-rows.ts (moved out of the route);
-    // both header reads, PostgREST and SQL, must carry ref + customer_so_no.
     expect(soRowsRaw).toMatch(/so_ref: \(\(r\.ref as string \| null\) \|\| \(r\.customer_so_no as string \| null\)\) \?\? null/);
     expect(boardSourceRaw).toMatch(/referral, ref, customer_so_no, delivery_message_status/);
     expect(boardSqlRaw).toMatch(/referral, ref, customer_so_no, delivery_message_status/);

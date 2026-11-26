@@ -1,25 +1,3 @@
-// /consignment-returns — Consignment Return (CRN): consignment goods come back.
-// A faithful clone of the Delivery Return API
-// (apps/api/src/routes/delivery-returns.ts).
-//
-// UNIFIED inventory model (Wei Siang 2026-06-06): a Consignment Return now books
-// a plain IN to the destination warehouse exactly like a Delivery Return — goods
-// physically re-enter inventory at the return line's snapshot cost, recorded as a
-// plain IN tagged CS_DR in the same stock ledger. Cancelling writes a balancing
-// OUT. (Superseded the earlier value-neutral transfer-from-hidden-warehouse model.)
-//
-// Tables: consignment_delivery_returns / _items (migration 0153). The DR's
-// delivery_order_id / do_item_id become consignment_do_id /
-// consignment_do_item_id (→ consignment_delivery_orders / _items).
-//
-// DROPPED vs the DR clone:
-//   • the "no DO, no return" hard requirement — RELAXED: a consignment return may
-//     reference a Consignment Note OR be free-entry (the loaner can come back
-//     without a linked note).
-//   • /from-do, /from-dos pickers + the over-return remaining guard (DO-pipeline).
-//   • reopenSoFromReturn (SO-specific) + COGS / margin recognition.
-//
-// Mounted at '/consignment-returns' in apps/api/src/index.ts. Numbering CRN-YYMM-NNN.
 
 import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
@@ -70,34 +48,13 @@ const ITEM =
   'uom, qty_returned, condition, unit_price_sen, discount_sen, line_total_sen, ' +
   'unit_cost_sen, line_cost_sen, line_margin_sen, refund_sen, variants, notes, created_at';
 
-/* FINANCE-GATED header keys — cost / margin / per-category revenue+cost
-   subtotals. All are in HEADER (so they travel in the return LIST and DETAIL
-   payloads) but must reach ONLY a finance-viewer
-   (lib/houzs-perms.canViewScmFinance). The refund/totals everyone is meant to
-   see (local_total_sen / refund_sen / line_total_sen) are deliberately NOT
-   listed — the same line #625 (SO) and #632 (DR) drew.
-
-   Consignment got the SCOPE fix (#417) but never the FINANCE fix:
-   canViewScmFinance appeared ZERO times in this file, so it declared no finance
-   keys at all while HEADER + ITEM selected cost and margin for every caller.
-   Same class as #600 (DO/SI detail), #625 (SO detail), #632 (DR detail). */
 const CRN_FINANCE_KEYS = [
   'mattress_sofa_sen', 'bedframe_sen', 'accessories_sen', 'others_sen',
   'mattress_sofa_cost_sen', 'bedframe_cost_sen', 'accessories_cost_sen', 'others_cost_sen',
   'total_cost_sen', 'total_margin_sen', 'margin_pct_basis',
 ] as const;
 
-/* KEPT LOCAL, deliberately — do NOT "converge" CRN_FINANCE_KEYS onto
-   SO_FINANCE_KEYS. It is the finance-shaped subset of THIS file's HEADER select,
-   and the consignment return speaks a narrower money vocabulary than the SO: no
-   service_sen / service_cost_sen and no deposit_sen (a return takes no
-   deposit). refund_sen is in HEADER and deliberately NOT here — the refund is
-   what the customer is owed and everyone who passes the access gate may see it,
-   the same line #625 (SO) and #632 (DR) drew. The per-LINE keys ARE shared —
-   see the SO_ITEM_FINANCE_KEYS import. */
 
-/** Strip header + line cost/margin in place for a non-finance caller. Accepts a
- *  single header or an array (the list passes rows). */
 function gateCrnFinance(
   c: Parameters<typeof canViewScmFinance>[0],
   deliveryReturn: unknown,
@@ -120,24 +77,10 @@ const nextNum = async (sb: any, c: any): Promise<string> => {
   return mintMonthlyDocNo(sb, 'consignment_delivery_returns', 'return_number', `${p}CRN-${yymm}`);
 };
 
-/* Re-derive the return header's per-category totals + grand total from its line
-   items. Plain per-category rollup, copied from the DR.
-
-   Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
-   recomputeTotals (mfg-sales-orders.ts), which carries the full rationale: a
-   read it cannot vouch for must not become a written total, and it aborts by
-   LOGGING because this roll-up only runs AFTER its triggering line write has
-   committed (a throw becomes a 500 the client retries into a duplicate line).
-   See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputeTotals(sb: any, returnId: string) {
   const { data: items, error: itemsErr } = await sb.from('consignment_delivery_return_items')
     .select('item_group, line_total_sen, line_cost_sen')
     .eq('consignment_delivery_return_id', returnId);
-  /* A failed READ is not an empty return, and `?? []` cannot tell them apart —
-     it folded a transient blip into a ZERO header AND a ZERO refund_sen on a
-     return whose lines were intact, i.e. a refund owed to a customer silently
-     became no refund. The ERROR is the signal, never the emptiness: a genuinely
-     empty return resolves error === null with data === [] and MUST still zero. */
   if (itemsErr) {
     /* eslint-disable-next-line no-console */
     console.error('[crn-recompute] item read failed — header left unchanged:', returnId, itemsErr.message);
@@ -174,31 +117,16 @@ async function recomputeTotals(sb: any, returnId: string) {
     refund_sen: total,
     updated_at: new Date().toISOString(),
   }).eq('id', returnId);
-  /* The write's own result was discarded until 2026-07-17: a rejected UPDATE left
-     the header STALE with nothing logged and every caller reporting success. */
   if (updErr) {
     /* eslint-disable-next-line no-console */
     console.error('[crn-recompute] header update failed — totals left STALE:', returnId, updErr.message);
   }
 }
 
-/* ── resolveReturnLineWarehouses ──────────────────────────────────────────────
-   Per-line DESTINATION warehouse for the loaner coming back. A returned line
-   re-enters the warehouse its Consignment Note line shipped FROM:
-     1. linked CN line → consignment_so_item_id → consignment_sales_order_items.warehouse_id
-     2. linked CN header's warehouse_id
-     3. the return header's warehouse_id (free-entry lines — allowed here, since
-        "no DO, no return" is RELAXED for consignment)
-     4. the return's OWN company's default warehouse
-   Returns map of item id → warehouse_id (null when even the fallbacks are
-   absent — the caller skips that line). */
 async function resolveReturnLineWarehouses(
   sb: any,
   items: Array<{ id: string; consignment_do_item_id?: string | null }>,
   headerWarehouseId: string | null,
-  /* The return's company (2026-08-03) — step 4 is per company. It used to be a
-     company-blind draw decided by alphabetical `code` order across every
-     company's is_default rows. */
   companyId: number | undefined,
 ): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
@@ -206,7 +134,6 @@ async function resolveReturnLineWarehouses(
     .map((it) => it.consignment_do_item_id ?? null)
     .filter((x): x is string => !!x))];
 
-  // CN line id → { consignment_so_item_id, CN header warehouse }
   const cnLineMeta = new Map<string, { soItemId: string | null; cnWarehouseId: string | null }>();
   const soItemIds = new Set<string>();
   if (cnItemIds.length > 0) {
@@ -246,7 +173,6 @@ async function resolveReturnLineWarehouses(
   return out;
 }
 
-/* warehouse_id → display CODE for the per-line Warehouse column on detail GET. */
 async function warehouseCodeMap(
   sb: any,
   ids: Array<string | null | undefined>,
@@ -261,22 +187,6 @@ async function warehouseCodeMap(
   return out;
 }
 
-/* ── resyncReturnInventory — self-healing IN ledger for a Consignment Return ───
-   ONE function for the whole lifecycle (receive / add-line / edit-qty /
-   delete-line / cancel), mirroring resyncNoteInventory but IN-primary (a return
-   books stock back IN). It reconciles the return's CURRENT lines (the TARGET net
-   IN per warehouse/product/variant/batch bucket) against what inventory_movements
-   already record for this return, and writes only the DELTA:
-     • first-ever IN for a bucket   → CS_DR  (carries the "stock back IN" label +
-       the CS_DR partial-unique-index idempotency backstop)
-     • any later increase           → STOCK_TRANSFER IN (no unique index → no
-       collision with the CS_DR row)
-     • any decrease / give-back     → STOCK_TRANSFER OUT
-     • cancel → status CANCELLED → TARGET is empty → every bucket's net is driven
-       back to 0 via STOCK_TRANSFER OUT.
-   A return posts immediately on create — there is no SHIPPED_STATES gate; it is
-   "active" (books IN) whenever status !== 'CANCELLED'. Idempotent: a re-run finds
-   delta 0 everywhere and writes nothing. Best-effort. */
 async function resyncReturnInventory(sb: any, returnId: string, performedBy: string | null): Promise<string[]> {
   const { data: header } = await sb.from('consignment_delivery_returns')
     .select('return_number, status, warehouse_id, company_id, consignment_do_id').eq('id', returnId).maybeSingle();
@@ -285,7 +195,6 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
   const returnNo = (header as { return_number: string }).return_number ?? returnId;
   const cancelled = status === 'CANCELLED';
 
-  // 1. TARGET net IN per bucket = sum of current lines (empty if cancelled).
   type Bucket = { warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null };
   const targetByBucket = new Map<string, Bucket>();
   if (!cancelled) {
@@ -303,8 +212,6 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
     const batchByWh = new Map<string, Map<string, string | null>>();
     const costByWh = new Map<string, Map<string, number>>();
     for (const wh of distinctWh) { batchByWh.set(wh, await resolveWarehouseLotBatches(sb, wh)); costByWh.set(wh, await resolveWarehouseLotCosts(sb, wh)); }
-    /* SKU category + canonical key, written as the stocked bucket's own string
-       when canonically equal (lib/stock-bucket-key.ts). */
     const keyOf = await stockBucketKeyResolver(sb, (header as { company_id?: number | null }).company_id ?? null,
       ((items ?? []) as Array<{ id: string; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }>).map((it) => ({ item_code: it.item_code, item_group: it.item_group ?? null, variants: it.variants ?? null, warehouse_id: lineWh.get(it.id) ?? null })));
     for (const it of ((items ?? []) as Array<{ id: string; item_code: string; description: string | null; qty_returned: number; unit_cost_sen?: number | null; item_group?: string | null; variants?: VariantAttrs | null }>)) {
@@ -314,9 +221,6 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
       if (!wh) continue;
       const vk = keyOf({ item_code: it.item_code, item_group: it.item_group ?? null, variants: it.variants ?? null, warehouse_id: lineWh.get(it.id) ?? null });
       const batch = batchByWh.get(wh)?.get(`${it.item_code}::${vk}`) ?? null;
-      // Cost = the return line's snapshot; if it's 0 (free-entry return with no
-      // cost), fall back to the SKU's current on-hand avg cost so we don't open a
-      // 0-cost lot that a later FIFO sale would eat and under-state its COGS.
       const lineCost = Number(it.unit_cost_sen ?? 0);
       const unitCost = lineCost > 0 ? lineCost : (costByWh.get(wh)?.get(`${it.item_code}::${vk}`) ?? 0);
       const k = `${wh}::${it.item_code}::${vk}::${batch ?? ''}`;
@@ -326,8 +230,6 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
     }
   }
 
-  // 2. CURRENT net IN per bucket from ALL this return's movements (CS_DR IN +
-  //    any prior STOCK_TRANSFER resync/cancel deltas).
   const { data: movs } = await sb.from('inventory_movements')
     .select('movement_type, warehouse_id, item_code, variant_key, batch_no, qty, total_cost_sen, product_name')
     .eq('source_doc_id', returnId)
@@ -343,11 +245,9 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
     if (!a.product_name) a.product_name = m.product_name;
   }
 
-  // 3. delta = target − current_net_in. >0 → book more IN; <0 → give stock back OUT.
   type MovOut = Parameters<typeof writeMovements>[1][number];
   const writes: MovOut[] = [];
-  const csDrEmitted = new Set<string>(); // product::variant given a CS_DR this run (avoid 2nd-warehouse collision)
-  /* A target canonically equal to a bucket this document already moved IS that bucket. */
+  const csDrEmitted = new Set<string>();
   foldTargetsIntoOwnBuckets(targetByBucket, aggByBucket.keys(), (header as { company_id?: number | null }).company_id ?? null);
   for (const k of new Set<string>([...targetByBucket.keys(), ...aggByBucket.keys()])) {
     const t = targetByBucket.get(k);
@@ -358,8 +258,6 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
     const batch_no = batchSeg || null;
     const pname = t?.product_name ?? a.product_name ?? null;
     if (delta > 0) {
-      // First IN for this product+variant → CS_DR (label + strict index guard);
-      // any later increase (or a 2nd warehouse for the same SKU) → STOCK_TRANSFER.
       const neverMoved = a.in_qty === 0 && a.out_qty === 0;
       const useCsDr = neverMoved && !csDrEmitted.has(`${pc}::${vk}`);
       if (useCsDr) csDrEmitted.add(`${pc}::${vk}`);
@@ -387,30 +285,15 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
 
   if (writes.length === 0) return [];
   await nameTheShipOutsReturned(sb, writes, returnId, (header as { consignment_do_id?: string | null }).consignment_do_id ?? null);
-  // Multi-company: resync movements inherit the return's company.
   const res = await writeMovements(sb, writes, (header as { company_id?: number | null }).company_id ?? null);
-  /* Oversell retro-cost (0154) — a consignment return books goods back onto the
-     shelf (IN), so a prior "ship anyway" DO that went out at RM0 in this
-     warehouse can now be costed from the re-opened lots. Wired 2026-07-29;
-     before that only a GRN reconciled (COE §2). Best-effort. */
   if (res.ok) await reconcileUncostedAfterIn(sb, writes, performedBy);
   try {
     const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
     await recomputeAllocationAfterSave(sb, 'consignment-return');
-  } catch { /* best-effort */ }
+  } catch { }
   return res.ok ? [] : [res.reason ?? 'consignment return inventory resync failed'];
 }
 
-/* Build one consignment_delivery_return_items insert row from a client line
-   payload. Shared by POST / (bulk create) and POST /:id/items (single add).
-
-   `sourceCostByNoteItem` (lib/source-cost) is the server's own read of the
-   SOURCE consignment-note line's unit_cost_sen. When the line is note-linked it
-   WINS over the client's `unitCostSen` unconditionally — the return must be
-   booked at the cost the note shipped at, which is history, not a catalog lookup.
-   Ignoring the client is what makes stripping the cost off /returnable-note-lines
-   safe (the #632 trap, disarmed at its root). A free-hand line has no source row
-   and keeps the client value. */
 function buildItemRow(
   returnId: string,
   it: Record<string, unknown>,
@@ -449,57 +332,41 @@ function buildItemRow(
   };
 }
 
-// ── List ────────────────────────────────────────────────────────────────
 consignmentReturns.get('/', async (c) => {
   const sb = c.get('supabase');
   const status = c.req.query('status');
 
-  /* Opt-in server-side pagination + search + sort (mirrors useSuppliersPaged).
-     The PRESENCE of `page` switches paging on; when absent/empty the query is
-     BYTE-IDENTICAL to the historical behavior (return_date desc, limit 500,
-     status + company scope, `{ deliveryReturns }` shape) — so every existing
-     full-list caller is UNAFFECTED. */
   const pageRaw = c.req.query('page');
   const paginate = pageRaw !== undefined && pageRaw !== '';
 
   if (!paginate) {
-    /* --- LEGACY PATH (unchanged) --- */
     let q = sb.from('consignment_delivery_returns').select(HEADER).order('return_date', { ascending: false }).limit(500);
     if (status) q = q.eq('status', status);
-    q = scopeToCompany(q, c); // multi-company: isolate to the active company
+    q = scopeToCompany(q, c);
     const { data, error } = await q;
     if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
     gateCrnFinance(c, data ?? [], null);
     return c.json({ deliveryReturns: data ?? [] });
   }
 
-  /* --- PAGINATED PATH (opt-in via `page`) --- */
   const page = Math.max(0, Math.trunc(Number(pageRaw)) || 0);
   const psRaw = Number(c.req.query('pageSize'));
   const pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(200, Math.max(1, Math.trunc(psRaw))) : 50;
 
-  /* Deterministic order + unique tiebreaker (id, in HEADER). Sort columns are
-     all already in the HEADER select (schema-drift safe). */
   const SORT_COLS = new Set(['return_date', 'return_number', 'debtor_name', 'status', 'local_total_sen']);
   const [rawCol, rawDir] = (c.req.query('sort') ?? 'return_date:desc').split(':');
   const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'return_date';
   const sortAsc = rawDir === 'asc';
   let q = sb.from('consignment_delivery_returns').select(HEADER, { count: 'exact' }).order(sortCol, { ascending: sortAsc });
-  if (sortCol !== 'id') q = q.order('id', { ascending: true }); // unique tiebreaker
+  if (sortCol !== 'id') q = q.order('id', { ascending: true });
   if (status) q = q.eq('status', status);
-  /* Free-text search over the SAME columns already in HEADER + that the FE list
-     searches: return_number + debtor_name. */
   const qText = c.req.query('q');
   if (qText) { const s = escapeForOr(qText); if (s) q = q.or(`return_number.ilike.%${s}%,debtor_name.ilike.%${s}%`); }
-  q = scopeToCompany(q, c); // multi-company: isolate to the active company
+  q = scopeToCompany(q, c);
   q = q.range(page * pageSize, page * pageSize + pageSize - 1);
   const { data, error, count } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  /* Full-set money KPIs — sum local_total_sen (Returned Value) / total_cost_sen
-     (Cost) / total_margin_sen (Margin) over the SAME status + search filters as
-     the page query, WITHOUT .range(). Mirrors the pre-pagination client KPI.
-     paginateAll pages past the 1000-row cap. All three columns are in HEADER. */
   const moneyRes = await paginateAll<{ local_total_sen: number | null; total_cost_sen: number | null; total_margin_sen: number | null }>((mfrom, mto) => {
     let mq = sb.from('consignment_delivery_returns').select('local_total_sen, total_cost_sen, total_margin_sen');
     if (status) mq = mq.eq('status', status);
@@ -514,11 +381,6 @@ consignmentReturns.get('/', async (c) => {
     costSen += m.total_cost_sen ?? 0;
     marginSen += m.total_margin_sen ?? 0;
   }
-  /* Strip the header finance keys for a non-finance caller (list half) AND drop
-     the full-set Cost / Margin KPIs — `aggregates` is derived from
-     total_cost_sen / total_margin_sen, so shipping it would hand back over
-     the whole filtered set exactly what the row strip just removed. Returned
-     Value (local_total_sen) stays: it is the refund total everyone may see. */
   gateCrnFinance(c, data ?? [], null);
   const aggregates = canViewScmFinance(c)
     ? { revenueSen, costSen, marginSen }
@@ -526,23 +388,6 @@ consignmentReturns.get('/', async (c) => {
   return c.json({ deliveryReturns: data ?? [], total: count ?? (data?.length ?? 0), page, pageSize, aggregates });
 });
 
-// ── Returnable Consignment Note lines (From-Note multi-picker) ────────────
-// Every consignment_delivery_order_item, with remaining = delivered (qty) −
-// already-returned (sum of qty_returned across non-cancelled Consignment Returns
-// linked to that note line via consignment_do_item_id). Only remaining > 0 lines
-// are pickable. Mirrors the DO→DR /returnable-do-lines endpoint. MUST be
-// registered before /:id so 'returnable-note-lines' isn't read as an id.
-//
-// FINANCE-GATED (was not — see below). Each descriptor carries the source note
-// line's unitCostSen, so this picker shipped every delivered line's unit cost
-// to any caller who could reach it. It was left open deliberately, because
-// ConsignmentReturnFromNote / ConsignmentReturnNew fed the value straight back
-// into the create payload and buildItemRow trusted it — a strip alone would have
-// booked every converted return at cost 0. That echo is now dead: buildItemRow
-// re-reads the cost from the source consignment_delivery_order_items row and
-// ignores the client, so the strip is safe. camelCase is why no existing list
-// matched this — SO_ITEM_FINANCE_KEYS is snake_case PostgREST vocabulary, and
-// lib/finance-keys warns that a camelCasing surface must strip in its own.
 consignmentReturns.get('/returnable-note-lines', async (c) => {
   const sb = c.get('supabase');
   // Company scope (owner 2026-08-10 audit): sibling GET / was scoped, this
@@ -577,9 +422,6 @@ consignmentReturns.get('/returnable-note-lines', async (c) => {
   if (itemList.length === 0) return c.json({ lines: [] });
   const itemIds = itemList.map((it) => it.id as string);
 
-  // Already-returned per note line — only count non-cancelled returns.
-  // Paged + company-scoped + error bound (2026-08-21, audit A6): un-paged, the
-  // picker re-offered fully-returned lines once live returns passed 1000.
   const { data: relRows, error: relErr } = await paginateAll<{ id: string }>((from, to) => scopeToCompany(sb
     .from('consignment_delivery_returns')
     .select('id, status')
@@ -630,7 +472,6 @@ consignmentReturns.get('/returnable-note-lines', async (c) => {
   return c.json({ lines });
 });
 
-// ── Detail ──────────────────────────────────────────────────────────────
 consignmentReturns.get('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const [h, i] = await Promise.all([
@@ -655,14 +496,13 @@ consignmentReturns.get('/:id', async (c) => {
   return c.json({ deliveryReturn: h.data, items });
 });
 
-/* Insert the return header from a client body. Shared by POST /. */
 async function insertHeader(sb: any, userId: string, body: Record<string, unknown>, c: any) {
   const phoneRaw = (body.phone as string | undefined) ?? null;
   const emPhoneRaw = (body.emergencyContactPhone as string | undefined) ?? null;
   return insertWithDocNoRetry<{ id: string; return_number: string }>(
     () => nextNum(sb, c),
     (returnNumber) => sb.from('consignment_delivery_returns').insert({
-    company_id: activeCompanyId(c), // multi-company: stamp the active company
+    company_id: activeCompanyId(c),
     return_number: returnNumber,
     do_doc_no: (body.doDocNo as string) ?? (body.cnDocNo as string) ?? null,
     consignment_do_id: (body.consignmentDoId as string) ?? (body.deliveryOrderId as string) ?? null,
@@ -695,9 +535,6 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
     emergency_contact_relationship: (body.emergencyContactRelationship as string) ?? null,
     warehouse_id: (body.warehouseId as string) ?? null,
     currency: (body.currency as string) ?? 'MYR',
-    /* A return = the loaner is RECEIVED back the moment it's created. Start at
-       RECEIVED and transfer it back to the shipping warehouse right after the
-       items insert. */
     status: 'RECEIVED',
     received_at: new Date().toISOString(),
     notes: (body.notes as string) ?? null,
@@ -706,11 +543,6 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
   );
 }
 
-// ── Create ──────────────────────────────────────────────────────────────
-// Accepts the full header + line items. A return is RECEIVED on creation → the
-// loaner is transferred back to the shipping warehouse immediately (idempotent).
-// "no DO, no return" is RELAXED — lines may reference a Consignment Note line
-// (consignmentDoItemId) OR be free-entry.
 /* OVER-RETURN GUARD — owner decision 2026-08-13, asked directly: "加上限,和兄弟
    单据一致".
 
@@ -735,9 +567,6 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
    `remaining` collapse to `delivered`, so a line already fully returned looks
    untouched and books stock IN a second time. Refusing a retryable operation is
    the cheaper error. */
-/* The refusal used when the guard could not be COMPUTED, as opposed to when it
-   was computed and failed. `lines: []` because there are no offending lines to
-   name — the check itself did not run. */
 const OVER_REMAINING_UNPROVEN = {
   error: 'over_remaining_uncheckable',
   message: 'Could not verify the remaining returnable quantity — the check could not read prior returns. Nothing was changed; please retry.',
@@ -746,10 +575,6 @@ const OVER_REMAINING_UNPROVEN = {
 
 async function checkCrOverRemaining(
   sb: any,
-  /* The Hono context, for scopeToCompany — added 2026-08-21 (audit A6): the
-     live-returns read below used to be company-blind, so the OTHER tenant's
-     returns consumed the 1000-row response budget and pushed this company's
-     rows past the truncation point. */
   c: any,
   items: Array<Record<string, unknown>>,
   excludeReturnItemId?: string,
@@ -757,7 +582,7 @@ async function checkCrOverRemaining(
   const wanted = new Map<string, number>();
   for (const it of items) {
     const noteItemId = ((it.noteItemId ?? it.consignmentDoItemId) as string | undefined) ?? null;
-    if (!noteItemId) continue; // free-entry line, nothing to bound it against
+    if (!noteItemId) continue;
     wanted.set(noteItemId, (wanted.get(noteItemId) ?? 0) + Number(it.qtyReturned ?? it.qty ?? 0));
   }
   if (wanted.size === 0) return null;
@@ -772,22 +597,6 @@ async function checkCrOverRemaining(
     ((srcRows ?? []) as Array<{ id: string; qty: number }>).map((r) => [r.id, Number(r.qty ?? 0)]),
   );
 
-  /* Already-returned, counting NON-CANCELLED returns only — the same filter the
-     picker uses, so the two never disagree. */
-  /* FAIL CLOSED on these two, and the header above is wrong about them. An empty
-     result here is not "nothing has been returned yet" — it makes `liveIds` and
-     `returnedById` empty, so `remaining` collapses to `delivered` and a line that
-     is ALREADY fully returned passes the guard and books stock IN a second time.
-     Returning null does not avoid that; it permits the same double-return, just
-     without an error. Same call as returnLineLock in this file: a read failure is
-     transient and the operator retries, a duplicated stock-in is not. */
-  /* paginateAll + scopeToCompany (2026-08-21, audit A6): this read was a bare
-     .neq() — one un-paged response, capped at 1000 rows by PostgREST, with the
-     other company's returns spending the same budget. A return whose id fell
-     past the cap was treated as CANCELLED, its quantity dropped out of
-     returnedById, and the guard passed a SECOND full return of the same note
-     line. A truncated page is error-free, so the fail-closed arm below never
-     saw it — paging is the only fix. */
   const { data: liveRows, error: liveErr } = await paginateAll<{ id: string }>((from, to) => scopeToCompany(sb
     .from('consignment_delivery_returns')
     .select('id, status')
@@ -811,7 +620,6 @@ async function checkCrOverRemaining(
   }>)) {
     if (!r.consignment_do_item_id) continue;
     if (!liveIds.has(r.consignment_delivery_return_id)) continue;
-    // An EDIT must not count its own current quantity against itself.
     if (excludeReturnItemId && r.id === excludeReturnItemId) continue;
     returnedById.set(
       r.consignment_do_item_id,
@@ -832,10 +640,6 @@ async function checkCrOverRemaining(
   };
 }
 
-/* A return line must name the Consignment Note line it brings back (owner 23 Nov 2026). Without that link
-   the stock-back IN cannot name the ship-out it undoes, so a ship-out that took nothing from the lots was
-   returned as a full lot (HC-CRN-2610-001), and nothing bounds the qty. Same rule as the Delivery Return's
-   do_link_required. Existing free-entry lines stay editable; new ones are refused. */
 const noteLineOf = (it: Record<string, unknown>): string | null =>
   ((it.doItemId ?? it.consignmentDoItemId ?? it.noteItemId) as string | undefined) || null;
 const NOTE_LINK_REQUIRED = {
@@ -864,7 +668,6 @@ export const createConsignmentReturnHandler = async (c: any) => {
 
   const sb = c.get('supabase'); const user = c.get('user');
 
-  /* itemCode catalog guard. */
   {
     const codeCheck = await validateItemCodes(sb, items.map((it) => it.itemCode as string | null | undefined), activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
@@ -878,10 +681,6 @@ export const createConsignmentReturnHandler = async (c: any) => {
      value later keyed from cannot differ. #2660 closed the inbound half. */
   items = await resolveItemGroups(sb, items, activeCompanyId(c) ?? null);
 
-  /* CROSS-COMPANY SOURCE (2026-08-21, audit A3) — the note-line ids are
-     caller-supplied and resolve the stored cost (and feed the over-return
-     bound); a foreign id booked the other tenant's line onto this company's
-     return unchecked. Same guard the GRN/DR/DO trio always had. */
   {
     const xl = await assertSourceLinesInCompany(sb, c, 'consignment_delivery_order_items',
       items.map((it) => (it.doItemId ?? it.consignmentDoItemId ?? it.noteItemId) as string | undefined));
@@ -899,10 +698,6 @@ export const createConsignmentReturnHandler = async (c: any) => {
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
   const h = header as unknown as { id: string; return_number: string };
 
-  /* Re-derive every note-linked line's cost from the SOURCE note line,
-     server-side — the New-Return form seeds its drafts off
-     /returnable-note-lines and posts the cost back, and trusting that echo is
-     what a finance strip would have turned into "book at cost 0" (#632). */
   const sourceCostByNoteItem = await sourceUnitCostByItemId(
     sb, 'consignment_delivery_order_items',
     items.map((it: Record<string, unknown>) => (it.doItemId ?? it.consignmentDoItemId) as string | undefined),
@@ -912,15 +707,12 @@ export const createConsignmentReturnHandler = async (c: any) => {
   if (iErr) { await sb.from('consignment_delivery_returns').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
   await recomputeTotals(sb, h.id);
 
-  /* The loaner comes back → book a plain IN to the destination warehouse.
-     Self-healing resync (idempotent + best-effort). */
   const movementErrors = await resyncReturnInventory(sb, h.id, user.id);
 
   return c.json({ id: h.id, returnNumber: h.return_number, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
 };
 consignmentReturns.post('/', createConsignmentReturnHandler);
 
-// ── Header PATCH (editable fields) ─────────────────────────────────────────
 consignmentReturns.patch('/:id', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -955,8 +747,6 @@ consignmentReturns.patch('/:id', async (c) => {
       updates[to] = body[from];
     }
   }
-  /* A cleared date input posts "" and this loop wrote it through to a date
-     column, which Postgres rejects and 500s the save. */
   coerceEmptyDates(updates);
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
@@ -966,22 +756,7 @@ consignmentReturns.patch('/:id', async (c) => {
   return c.json({ ok: true, id });
 });
 
-// ── Item CRUD ─────────────────────────────────────────────────────────────
-/* A REFUNDED / CREDIT_NOTED / CANCELLED return is terminal — lock line edits to
-   ACTIVE returns (mirrors pcReturnLineLock on the purchase side). Editing a
-   terminal return re-runs recomputeTotals + resyncReturnInventory, which would
-   rewrite settled totals and (for non-cancelled terminal states) re-book stock. */
 async function returnLineLock(sb: any, id: string): Promise<{ error: string; message: string } | null> {
-  /* FAILS CLOSED. `error` was not destructured at all, so a failed read gave
-     data = null, st = undefined, every check fell through, and the guard
-     RETURNED NULL — i.e. it PASSED. A lock whose own comment says editing a
-     terminal return "would rewrite settled totals and re-book stock" opened
-     itself whenever the database hiccupped.
-
-     Closed rather than open because of what is on the other side: this is not a
-     visibility filter, it is the only thing standing between a settled return
-     and a re-run of recomputeTotals + resyncReturnInventory. A read failure is
-     transient and the operator retries; a wrongly-permitted edit is not. */
   const { data, error } = await sb.from('consignment_delivery_returns').select('status').eq('id', id).maybeSingle();
   if (error) {
     return {
@@ -1006,13 +781,11 @@ export const addConsignmentReturnItemHandler = async (c: any) => {
   if (!noteLineOf(it)) return c.json(NOTE_LINK_REQUIRED, 409);
   { const lock = await returnLineLock(sb, id); if (lock) return c.json(lock, 409); }
 
-  /* The line is note-linked (checked above); bound it against what the note line has left. */
   {
     const over = await checkCrOverRemaining(sb, c, [it]);
     if (over) return c.json(over, 409);
   }
 
-  /* itemCode catalog guard. */
   {
     const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
@@ -1025,7 +798,6 @@ export const addConsignmentReturnItemHandler = async (c: any) => {
   const { data: header } = await scopeToCompanyId(sb.from('consignment_delivery_returns').select('id').eq('id', id), co.companyId).maybeSingle();
   if (!header) return c.json(NOT_THIS_COMPANY, 404);
 
-  /* Same cross-company line guard as the create path (2026-08-21, audit A3). */
   {
     const xl = await assertSourceLinesInCompany(sb, c, 'consignment_delivery_order_items',
       [(it.doItemId ?? it.consignmentDoItemId ?? it.noteItemId) as string | undefined]);
@@ -1037,15 +809,8 @@ export const addConsignmentReturnItemHandler = async (c: any) => {
     activeCompanyId(c) ?? null));
   const { data, error } = await sb.from('consignment_delivery_return_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
-  /* The ITEM select echoes the stored line back — cost/margin included. A
-     non-finance caller must not read it off the create response either. */
   gateCrnFinance(c, null, data);
   await recomputeTotals(sb, id);
-  /* Adding a return line books its IN too (self-healing resync). Best-effort. */
-  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
-  movementErrors; these mutations threw it away, so a resync that failed to
-  book or drain stock returned a clean 200. writeMovements never throws, so
-  the catch caught nothing either. */
   let resyncErrs: string[] = [];
   try { resyncErrs = await resyncReturnInventory(sb, id, user?.id ?? null); }
   catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
@@ -1061,7 +826,6 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   { const lock = await returnLineLock(sb, id); if (lock) return c.json(lock, 409); }
 
-  /* itemCode catalog guard (only when caller is changing it). */
   if (it.itemCode !== undefined) {
     const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
@@ -1090,11 +854,6 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
 
   const qty = (it.qtyReturned ?? it.qty) !== undefined ? Number(it.qtyReturned ?? it.qty) : Number(prev.qty_returned);
 
-  /* Bound the EDIT too — raising a line's qty is the same over-return by another
-     door. `excludeReturnItemId` keeps this row's own current quantity out of the
-     already-returned tally, or every edit would measure the line against itself
-     and refuse to stay put. The source link comes from the STORED row: a client
-     cannot re-point a line at a different note line to widen its own ceiling. */
   {
     const noteItemId = (prev as { consignment_do_item_id?: string | null }).consignment_do_item_id ?? null;
     if (noteItemId) {
@@ -1104,17 +863,6 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
   }
   const unitPrice = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : Number(prev.unit_price_sen);
   const discount = it.discountSen !== undefined ? Number(it.discountSen) : Number(prev.discount_sen);
-  /* A caller who cannot READ the cost must not WRITE it. The detail GET now
-     strips unit_cost_sen for a non-finance caller, and ConsignmentReturnDetail
-     seeds each line draft straight off that payload (`unit_cost_sen ?? 0`) and
-     posts the value back here on save — so trusting the client would let the
-     stripped field round-trip as a genuine 0 and wipe the line's cost basis
-     (recomputeTotals would then roll the return's cost to 0 and its margin to
-     the full refund). This route accepted ANY defined value, exactly like the DR
-     line PATCH did (#632) and unlike the SO / Consignment ORDER PATCH, whose
-     `explicitCost > 0` precedence makes a 0 fall through to the stored cost —
-     which is why the same strip was safe there (#625). Keep the stored cost for
-     a non-finance caller; a finance caller is unaffected. */
   const unitCost = (canViewScmFinance(c) && it.unitCostSen !== undefined)
     ? Number(it.unitCostSen)
     : Number(prev.unit_cost_sen);
@@ -1138,10 +886,6 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
   }
 
-  /* The EDIT half of the same back door: the over-return cap above and the
-     resync below both key on consignment_do_item_id, so an unlinked line whose
-     code is re-typed to one the Consignment Note carries counts against no note
-     line and the same goods return again. See unlinked-line-edit-guard. */
   {
     const repoint = await unlinkedEditRefusal(sb, 'consignment-return', {
       parent: { table: 'consignment_delivery_returns', column: 'consignment_do_id', id, companyId: co.companyId },
@@ -1155,11 +899,6 @@ consignmentReturns.patch('/:id/items/:itemId', async (c) => {
   const { error } = await scopeToCompanyId(sb.from('consignment_delivery_return_items').update(updates).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
-  /* Adjust inventory by the qty/variant delta (self-healing resync). Best-effort. */
-  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
-  movementErrors; these mutations threw it away, so a resync that failed to
-  book or drain stock returned a clean 200. writeMovements never throws, so
-  the catch caught nothing either. */
   let resyncErrs: string[] = [];
   try { resyncErrs = await resyncReturnInventory(sb, id, c.get('user')?.id ?? null); }
   catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
@@ -1175,21 +914,12 @@ consignmentReturns.delete('/:id/items/:itemId', async (c) => {
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   if (!del) return c.json(NOT_THIS_COMPANY, 404);
   await recomputeTotals(sb, id);
-  /* Give the deleted line's stock back OUT (self-healing resync). Best-effort. */
-  /* REPORTED, not discarded. The CREATE path returns this exact string[] as
-  movementErrors; these mutations threw it away, so a resync that failed to
-  book or drain stock returned a clean 200. writeMovements never throws, so
-  the catch caught nothing either. */
   let resyncErrs: string[] = [];
   try { resyncErrs = await resyncReturnInventory(sb, id, c.get('user')?.id ?? null); }
   catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }
   return c.json({ ok: true, ...(resyncErrs.length ? { movementErrors: resyncErrs } : {}) });
 });
 
-// ── Status transition ──────────────────────────────────────────────────────
-// A return is RECEIVED on create (the loaner was transferred back already);
-// CANCELLED reverses that transfer (shipping warehouse → consignment warehouse).
-// Other statuses (INSPECTED / REFUNDED / …) stamp their timestamp.
 export const patchConsignmentReturnStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
   const co = requireActiveCompanyId(c);
@@ -1198,23 +928,6 @@ export const patchConsignmentReturnStatusHandler = async (c: any) => {
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
 
-  /* NORMALISE FIRST — same fix, same reason, as the sibling
-     patchConsignmentNoteStatusHandler (consignment-notes.ts), and as the Sales
-     Order / Delivery Order / Sales Invoice handlers that already did it. The
-     asymmetry was inside this file: `resyncReturnInventory` uppercases the
-     PERSISTED status before deciding `cancelled` (:278), while every gate below
-     compared the INCOMING status raw.
-
-     A lowercase 'cancelled' missed the already-cancelled echo, missed the atomic
-     `.neq('status','CANCELLED')` single-flight, fell into the plain `else`
-     write, and never called `resyncReturnInventory` — so the CS_DR inventory IN
-     was NEVER reversed while the return read as cancelled everywhere. Same
-     mechanism as the Sales Invoice revenue-reversal bug that produced
-     SI_STATUS_CANON, with stock in place of revenue.
-
-     No status whitelist here either: this document's vocabulary is not declared
-     in one place, and a guessed one would refuse a legitimate status. Written up
-     as a recommendation instead. */
   const toStatus = String(body.status).trim().toUpperCase();
 
   const { data: cur } = await scopeToCompanyId(sb.from('consignment_delivery_returns').select('status').eq('id', id), co.companyId).maybeSingle();
@@ -1223,11 +936,6 @@ export const patchConsignmentReturnStatusHandler = async (c: any) => {
   if (toStatus === 'CANCELLED' && prevStatus === 'CANCELLED') {
     return c.json({ consignmentReturn: { id, status: 'CANCELLED' } });
   }
-  /* Audit 2026-06-20 — a CANCELLED Consignment Return is FINAL (mirrors
-     delivery-returns.ts dr_cancelled_final). The cancel already reversed the
-     return IN; reactivating to RECEIVED/INSPECTED/REFUNDED would re-arm a
-     double-IN on the next line edit (resyncReturnInventory then runs with a
-     non-cancelled status). Create a new return instead. */
   if (prevStatus === 'CANCELLED') {
     return c.json({ error: 'return_cancelled_final', message: 'A cancelled Consignment Return cannot be reactivated — create a new return.' }, 409);
   }
@@ -1238,8 +946,6 @@ export const patchConsignmentReturnStatusHandler = async (c: any) => {
   if (toStatus === 'INSPECTED') { ts.inspected_at = now; if (body.inspectionNotes) ts.inspection_notes = body.inspectionNotes; }
   if (toStatus === 'REFUNDED') ts.refunded_at = now;
 
-  /* ATOMIC cancel guard — the CANCELLED write is conditional on the row still
-     being non-cancelled so two concurrent cancels can't double-reverse. */
   let data: { id: string; status: string } | null;
   if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('consignment_delivery_returns')
@@ -1255,16 +961,8 @@ export const patchConsignmentReturnStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   }
 
-  /* Cancelling a Consignment Return REVERSES the return IN: target net is now 0
-     so the resync writes a balancing OUT per bucket. Idempotent + best-effort. */
-  // Hoisted: the response is OUTSIDE this block, so a block-scoped
-  // declaration would leave the cancel path unable to report.
   let resyncErrs: string[] = [];
   if (toStatus === 'CANCELLED') {
-    /* REPORTED, not discarded. The CREATE path returns this exact string[] as
-    movementErrors; these mutations threw it away, so a resync that failed to
-    book or drain stock returned a clean 200. writeMovements never throws, so
-    the catch caught nothing either. */
     resyncErrs = [];
     try { resyncErrs = await resyncReturnInventory(sb, id, user.id); }
     catch (e) { resyncErrs = [String((e as Error)?.message ?? 'resync threw')]; }

@@ -68,7 +68,6 @@ export function accountsLabel(p: Pick<LedgerParams, 'accounts' | 'fromAccount' |
   return 'All';
 }
 
-/* The design's tracks (Finance-1a-Reports, CW.gl); dates, entries, journals and figures never narrower than they read. */
 const WIDTHS: ColumnWidthSpec = {
   defaults: ['76px', '104px', '52px', 'minmax(96px,1fr)', '92px', '84px', 'minmax(120px,1.4fr)', '92px', '92px', '116px'],
   min: [60, 72, 40, 56, 48, 48, 64, 56, 56, 72],
@@ -152,7 +151,6 @@ const Block = ({ b, from, template, open, onToggle, full, onShowAll, onOpenEntry
   );
 };
 
-/** The Accounts button and its popover: tick accounts, or a From / To range. */
 function AccountsPicker({ p, chart, onPick }: {
   p: LedgerParams;
   chart: Array<{ account_code: string; account_name: string }>;
@@ -170,7 +168,6 @@ function AccountsPicker({ p, chart, onPick }: {
     document.addEventListener('keydown', key);
     return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); };
   }, [open]);
-  /* Typed to: every word must match the code or the name. */
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const shown = chart.filter((a) => words.every((w) => `${a.account_code} ${a.account_name}`.toLowerCase().includes(w)));
   const toggle = (code: string) =>
@@ -264,10 +261,8 @@ export const GeneralLedger = () => {
   const navigate = useNavigate();
   const p = useMemo(() => ledgerParamsFromSearch(params), [params]);
   const accounts = useAccounts();
-  /* A figure on a report opened this ledger: the way back (batch 6 §1.2). */
   const back = (location.state as { back?: { to: string; label: string } } | null)?.back ?? null;
 
-  /* Every filter change is written to the URL — the page keeps only what is folded open. */
   const update = (patch: Partial<LedgerParams>) => {
     const next = { ...p, ...patch };
     const q = new URLSearchParams(params);

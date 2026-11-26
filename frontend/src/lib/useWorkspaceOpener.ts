@@ -15,15 +15,10 @@ import {
 } from "./workspaceTabs";
 import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch } from "../pages/scm-v2/accounting-tabs";
 
-/** Names for the pages an order is opened from whose generic route label reads
-    as the bare app section. */
 const OPENER_LABELS: Array<[RegExp, string]> = [
   [/^\/scm\/merchant-recon(?:\/|$)/, "Merchant reports"],
   [/^\/scm\/bank-recon(?:\/|$)/, "Bank statements"],
   [/^\/scm\/fair-pending(?:\/|$)/, "Fair Links"],
-  /* Money in's lists, by the redesign's names (owner's Claude Design, batch 5):
-     a document opened from one reads "Back to Receipts" and so on. The list
-     itself only — a document opened from another document names that one. */
   [/^\/scm\/receipts$/, "Receipts"],
   [/^\/scm\/official-receipts$/, "Official receipts"],
   [/^\/scm\/ar-invoices$/, "Invoices"],
@@ -32,14 +27,9 @@ const OPENER_LABELS: Array<[RegExp, string]> = [
   [/^\/scm\/credit-notes$/, "Credit / debit notes"],
   [/^\/scm\/outstanding$/, "Outstanding"],
   [/^\/scm\/unbilled-deliveries$/, "Not yet billed"],
-  /* The Finance reports (owner's Claude Design, batch 6 §1.1): an order opened
-     from the Sales report reads "Back to Sales report"; the Accounting page's
-     tabs are named by accountingOpenerLabel. */
   [/^\/reports\/fair-report$/, "Sales report"],
 ];
 
-/** The Accounting page names the tab a document was opened from — Collection,
-    Corrections, Self-check, any report — not the bare "Accounting". */
 function accountingOpenerLabel(href: string): string | null {
   const [path, query = ""] = href.split("?");
   if (path !== "/scm/accounting") return null;

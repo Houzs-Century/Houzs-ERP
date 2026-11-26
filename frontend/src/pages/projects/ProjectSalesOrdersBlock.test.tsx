@@ -147,7 +147,6 @@ describe("ProjectSalesOrdersBlock — moving an order out (owner 2026-10-20)", (
     transferMutate.mockReset();
     mount(query({ data: { ...response([differs, plain]), can_transfer: true } }), null);
     const pick = screen.getByLabelText("Fair to move HC-SO-2610-166 to") as HTMLSelectElement;
-    /* Its own brand's booth, filled in; the person still presses Transfer. */
     expect(pick.value).toBe("307");
     expect([...pick.options].map((o) => o.text)).toEqual(["— pick a fair —", "AKEMI — IOIGECC — HOMELOVE (10/09 - 10/11)", "ZANOTTI — IOIGECC — HOMELOVE (10/09 - 10/11)"]);
     expect(transferMutate).not.toHaveBeenCalled();

@@ -1,25 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-field-policy (frontend vendored copy) — THE single source of truth for
-// "what can be edited on a processing-locked Sales Order, and does Save write
-// it or raise an amendment".
-//
-// THIS FILE IS A VENDORED MIRROR of backend/src/scm/shared/so-field-policy.ts.
-// The two builds are separate TypeScript projects with no shared import path
-// (that is what frontend/src/vendor/scm IS — the vendoring boundary), so the
-// table is physically duplicated. It is NOT duplicated in the sense that
-// matters: so-field-policy.test.ts reads the backend file off disk and fails
-// the frontend CI job if a single policy row differs. Edit the backend table,
-// then mirror it here; the test tells you if you forgot.
-//
-// Read the backend file for the full rationale. The short version:
-//   * FREE       — Save writes straight to the database, no gate. Audited.
-//   * CONTROLLED — Save raises an AMENDMENT for approval instead.
-//   * DERIVED    — frozen like CONTROLLED but recomputed server-side, so the
-//                  client must OMIT it rather than send it.
-//
-// Owner's test for which is which: does the field change what gets DELIVERED or
-// what gets CHARGED? Contact details are not that.
-// ----------------------------------------------------------------------------
 
 export type SoFieldClass = 'FREE' | 'CONTROLLED' | 'DERIVED';
 
@@ -31,8 +9,6 @@ export type SoHeaderFieldPolicy = {
   reason: string;
 };
 
-/* MIRROR of the backend table — column / payloadKey / label / cls must match
-   row-for-row and in order. `reason` is prose and is NOT drift-tested. */
 export const SO_HEADER_FIELD_POLICY: readonly SoHeaderFieldPolicy[] = [
   {
     column: 'processing_date',
@@ -205,10 +181,7 @@ export type PaymentMutationKind = 'ADD' | 'EDIT' | 'DELETE';
 
 export type PaymentRowMutability = {
   mutable: boolean;
-  /** Plain-language reason when it may not — shown verbatim. null when it may. */
   problem: string | null;
-  /** WHY it may, when it may — null when it may not. 'amend' means the amend
-      right opened the door, so the client must ask for a reason first. */
   via: PaymentChangeVia;
 };
 
@@ -219,20 +192,12 @@ export type PaymentChangeVia = 'draft' | 'same_day' | 'amend' | null;
     closed over it, and an operator told only "it is reconciled" cannot go and
     look at the one that did. */
 export type PaymentReconciledBy =
-  /** Matched into a merchant settlement report — its fee is booked. */
   | { kind: 'merchant'; on: string }
-  /** Its journal entry has been claimed by a movement on a bank statement. */
   | { kind: 'bank'; jeNo: string }
-  /** Its month on that account has been closed and reported. */
   | { kind: 'month'; accountCode: string; month: string };
 
 export type PaymentAmendContext = {
-  /** Does the caller hold `scm.so_payment.amend`? Finance does; sales does
-      not. Absent means no — a missing permission is never an open door. */
   mayAmend?: boolean;
-  /** What has already reconciled this row, if anything. Null / absent means
-      the caller CHECKED and found nothing — never "the caller did not look":
-      the server refuses outright when it cannot read the answer. */
   reconciled?: PaymentReconciledBy | null;
 };
 
@@ -290,13 +255,3 @@ export const paymentRowMutable = (
   };
 };
 
-/* ── Delivery-address staleness — NARROWED 2026-07-27 ──────────────────────
-   The address block (address1-4 + ship/bill/install-to) is now CONTROLLED
-   (owner two-lane spec, rows above): a street/unit change on a locked SO moves
-   by Logistics-approved amendment, so the person who plans trips is the person
-   who signs the change. What this still does NOT do is re-plan an
-   already-SCHEDULED trip when the amendment applies — the trip holds its own
-   stop. The Logistics approver is at least now IN the loop by construction;
-   re-planning after applying remains a by-hand step. Surfacing a
-   scheduled-trip flag on the SO header (delivery-planning already knows; the
-   SO does not ask) is still the proper close, reported for the owner. */

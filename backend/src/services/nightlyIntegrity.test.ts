@@ -60,7 +60,7 @@ describe("skip rules", () => {
       { docId: "d1", itemCode: "MISC", itemGroup: "others", qty: 1 },
     ];
     const movs = [{ docId: "d1", itemCode: "BED-1", net: 1 }, { docId: "d1", itemCode: "MISC", net: 1 }];
-    expect(compareDocItems(docs, lines, movs).length).toBeGreaterThan(0); // without the rule: TRANSPORTATION CHARGES missing
+    expect(compareDocItems(docs, lines, movs).length).toBeGreaterThan(0);
     const f = withoutNonStock(lines, movs, master);
     expect(compareDocItems(docs, f.lines, f.movements)).toEqual([]);
   });
@@ -77,7 +77,6 @@ describe("skip rules", () => {
       { itemCode: "SOFA-A", warehouse: "WH1", variantKey: "", movementNet: 0, lotOpen: 2, lastAt: hoursAgo(1), firstAt: hoursAgo(3), category: "SOFA" },
     ];
     expect(newLotBucketFindings(1, rows, CUT, new Set())).toEqual([]);
-    // The same two buckets in company 2 (pooled) are two findings.
     expect(newLotBucketFindings(2, rows, CUT, new Set())).toHaveLength(2);
   });
 

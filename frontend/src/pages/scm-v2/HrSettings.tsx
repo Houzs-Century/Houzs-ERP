@@ -42,10 +42,6 @@ const INPUT_CLASS =
 
 const SECTION_CLASS = 'space-y-2';
 const TABLE_WRAP_CLASS = 'overflow-x-auto rounded-md border border-border bg-surface';
-// Batch 4 skin (2026-07-29): the inline-edit tables stay exempt from
-// conversion, but their headers take the SO-sample DataTable spec so the whole
-// program reads as one system — surface-dim #e3e6e0, 10px/bold, brand tracking,
-// ink, 2px rule. Drives all three HrSettings tables.
 const THEAD_CLASS = 'border-b-2 border-border bg-surface-dim text-[10px] font-bold uppercase tracking-brand text-ink';
 
 const Label = ({ children }: { children: string }) => (
@@ -56,17 +52,12 @@ const SectionHeading = ({ children }: { children: string }) => (
   <h2 className="text-[14px] font-semibold text-ink">{children}</h2>
 );
 
-/** Integer bps -> a human percent, trailing zeros dropped. Display only. */
 const fmtPct = (bps: number) => `${(bps / 100).toFixed(2).replace(/\.?0+$/, '')}%`;
 
-/* A rate held as integer basis points, edited as a percent. The bps never
-   changes shape in flight: it is divided by 100 to render and multiplied back
-   by exactly 100 with Math.round on the way out. */
 const RateField = ({
   label, bps, editable, onChange,
 }: { label: string; bps: number; editable: boolean; onChange: (bps: number) => void }) => {
   const [text, setText] = useState((bps / 100).toString());
-  // Resync when the server value moves under us (save, refetch, concurrent edit).
   useEffect(() => setText((bps / 100).toString()), [bps]);
   return (
     <label className="flex flex-col gap-1">
@@ -79,9 +70,6 @@ const RateField = ({
         value={text}
         disabled={!editable}
         onChange={(e) => setText(e.target.value)}
-        /* An EMPTY box is not 0%. Number('') === 0, so accepting it would stage
-           a 0% base rate that reads as a deliberate edit — on this page that is
-           everybody's pay. Blank reverts to the server value instead. */
         onBlur={() => {
           const n = Number(text);
           if (text.trim() === '' || !Number.isFinite(n) || n < 0) {
@@ -95,7 +83,6 @@ const RateField = ({
   );
 };
 
-/** A money threshold held as integer sen, edited as ringgit. */
 const SenField = ({
   label, centi, editable, onChange,
 }: { label: string; centi: number; editable: boolean; onChange: (centi: number) => void }) => {
@@ -111,7 +98,6 @@ const SenField = ({
         value={text}
         disabled={!editable}
         onChange={(e) => setText(e.target.value)}
-        // Blank is "unknown", not RM 0 — see RateField.
         onBlur={() => {
           const n = Number(text);
           if (text.trim() === '' || !Number.isFinite(n) || n < 0) {
@@ -125,11 +111,6 @@ const SenField = ({
   );
 };
 
-/* The in-table twin of RateField/SenField: an integer minor unit (sen or bps)
-   edited as its major one, with the same blank guard. Read-only mode prints the
-   value rather than showing a disabled box, because a table of greyed inputs
-   reads as broken. `render` formats the committed value; `scale` is what one
-   major unit is worth (100 for both RM->sen and %->bps). */
 const MinorUnitCell = ({
   value, editable, scale, step, render, onChange,
 }: {
@@ -151,7 +132,6 @@ const MinorUnitCell = ({
       step={step}
       value={text}
       onChange={(e) => setText(e.target.value)}
-      // Blank is "unknown", not zero — Number('') === 0 would stage a real edit.
       onBlur={() => {
         const n = Number(text);
         if (text.trim() === '' || !Number.isFinite(n) || n < 0) {
@@ -233,10 +213,6 @@ export const HrSettings = () => {
     setLevelDraft((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   const stageCfg = (patch: HrConfigPatch) => setCfgDraft((prev) => ({ ...prev, ...patch }));
 
-  /* The mode as the page currently believes it (staged edit wins over server).
-     Drives the chain-only hints — the ladder section itself stays visible in
-     both modes, because you must be able to BUILD the ladder before the mode
-     that needs it can be selected. */
   const effectiveMode: HrOverrideMode = cfgDraft.overrideMode ?? cfg?.overrideMode ?? 'showroom';
   const activeLevelCount = levelRows.filter((l) => levelDraft[l.id]?.active ?? l.active).length;
 
@@ -257,10 +233,6 @@ export const HrSettings = () => {
       for (const [id, patch] of Object.entries(itemDraft)) {
         await updateItemKpi.mutateAsync({ id, ...patch });
       }
-      /* Levels BEFORE config, deliberately. The backend refuses to switch the
-         mode to 'chain' unless at least one ACTIVE level exists; applying the
-         ladder edits first means that check runs against the state this save is
-         actually establishing, not the one it is replacing. */
       for (const [id, patch] of Object.entries(levelDraft)) {
         await updateLevel.mutateAsync({ id, ...patch });
       }
@@ -271,9 +243,6 @@ export const HrSettings = () => {
       setCfgDraft({});
       setEditMode(false);
     } catch (e) {
-      /* The draft is deliberately NOT cleared and edit mode stays open: the
-         rates on screen are what the user meant to save, and silently dropping
-         them on a failed request would look like the save succeeded. */
       await notify({ title: 'Could not save', body: (e as Error)?.message, tone: 'error' });
     } finally {
       setSaving(false);
@@ -286,17 +255,11 @@ export const HrSettings = () => {
         : flagType === 'fabric' ? pickers.data?.fabrics ?? []
           : pickers.data?.specials ?? [];
 
-  /* BONUS VALIDATION — explicit, not a clamp. Math.max(0, NaN) is NaN and
-     Number('') is 0, so neither "empty" nor "abc" may be allowed to reach the
-     API as a number: a bonus that silently becomes 0 or NaN is a wrong payslip,
-     not a cosmetic bug. Returns the reason so the UI can SAY it rather than
-     disabling a button for no visible cause. */
   const bonusError = ((): string | null => {
     if (flagBonus.trim() === '') return 'Enter the bonus amount in ringgit.';
     const n = Number(flagBonus);
     if (!Number.isFinite(n)) return 'The bonus must be a number, in ringgit.';
     if (n <= 0) return 'The bonus must be more than RM 0.';
-    // Sen is the smallest unit that can be paid; 1.234 would silently round.
     if (Math.round(n * 100) !== n * 100) return 'The bonus cannot be smaller than one sen.';
     return null;
   })();
@@ -318,14 +281,9 @@ export const HrSettings = () => {
     const bonusSen = Math.round(Number(flagBonus) * 100);
     const chosen = flagRefs.map((ref) => ({
       ref,
-      // The label is what the owner reads back on the row. A ref with no picker
-      // entry means the list moved under us, so keep the raw ref rather than
-      // inventing a friendly name for something we could not resolve.
       label: refList.find((r) => r.ref === ref)?.label ?? ref,
     }));
 
-    /* Say the shape of what is about to happen BEFORE it happens. Three
-       selections = three rules, each paying the bonus on its own item. */
     if (chosen.length > 1) {
       const ok = await askConfirm({
         title: `Add ${chosen.length} separate ${flagType} rules?`,
@@ -340,30 +298,22 @@ export const HrSettings = () => {
       if (!ok) return;
     }
 
-    /* One request for the whole selection, all or nothing (YH 2026-11-06): a
-       series saved one rule at a time once stopped after five, silently. Now
-       either every rule is saved or none is, and the error says why. */
     try {
       await createItemKpis.mutateAsync(chosen.map((c) => ({ flagType, ref: c.ref, label: c.label, bonusSen })));
     } catch (e) {
       await notify({
         title: chosen.length === 1 ? 'Could not add the bonus rule' : 'Could not add the bonus rules',
         body:
-          // authed-fetch already ran the response through humanApiError and
-          // threw an Error carrying that plain sentence — do not re-wrap it.
           `${(e as Error)?.message ?? 'The system did not say why.'}\n\nNothing was saved, so adding them again will not make duplicates.`,
         tone: 'error',
       });
-      return; // the selection stays, so the retry is one click
+      return;
     }
     setFlagRefs([]);
     setFlagBonus('');
   };
 
   const addLevel = async () => {
-    /* Both fields are read from their TEXT, never coerced: Number('') === 0, so
-       a blank rate box would silently add a 0% rung — a level that pays nobody
-       but makes chain mode selectable. Blank is refused, an explicit 0 is not. */
     const lvl = Number(newLevel);
     const rate = Number(newLevelRate);
     if (newLevel.trim() === '' || !Number.isInteger(lvl) || lvl < 1) return;
@@ -409,9 +359,6 @@ export const HrSettings = () => {
         }
       />
 
-      {/* A failed read must never look like an empty list — "no salespeople
-          configured" and "we could not ask" are different answers, and only one
-          of them means nobody gets paid. */}
       {config.isError && (
         <div className="rounded-md border border-err/40 bg-err/5 px-3 py-3 text-[13px] text-ink">
           {(config.error as Error)?.message || 'The commission rate settings could not be loaded.'}
@@ -433,7 +380,6 @@ export const HrSettings = () => {
         </div>
       )}
 
-      {/* 1 · Salespeople */}
       <section className={SECTION_CLASS}>
         <SectionHeading>Salespeople</SectionHeading>
         <div className={TABLE_WRAP_CLASS}>
@@ -546,10 +492,6 @@ export const HrSettings = () => {
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
             </select>
-            {/* A salesperson CANNOT be added without a showroom (it is NOT NULL
-                on the profile), so an empty list is a dead end. Say which one it
-                is: "none set up yet" and "we could not ask" need different
-                actions from the owner, and neither is "the page is broken". */}
             {showrooms.length === 0 && !pickers.isLoading && (
               <span className="text-[11px] text-ink-secondary">
                 {pickers.isError
@@ -569,7 +511,6 @@ export const HrSettings = () => {
         </div>
       </section>
 
-      {/* 2 · Commission rates */}
       <section className={SECTION_CLASS}>
         <SectionHeading>Commission rates</SectionHeading>
         {cfg && (
@@ -631,9 +572,6 @@ export const HrSettings = () => {
           </div>
         )}
 
-        {/* The two modes are alternatives, never both: running them together
-            pays a manager twice on the same goods. Saying which one is live is
-            worth a line, because the rate fields above only explain one of them. */}
         {cfg && (
           <p className="text-[12px] text-ink-secondary">
             {effectiveMode === 'chain'
@@ -649,11 +587,8 @@ export const HrSettings = () => {
         )}
       </section>
 
-      {/* 3 · Item KPIs */}
       <section className={SECTION_CLASS}>
         <SectionHeading>Item KPIs</SectionHeading>
-        {/* YH 2026-11-06: a series adds a dozen rules at once, so the list scrolls
-            inside its box (header pinned) instead of pushing the Add form off screen. */}
         <div className={`${TABLE_WRAP_CLASS} max-h-[420px] overflow-y-auto`}>
           <table className="w-full text-[12px]">
             <thead className={`${THEAD_CLASS} sticky top-0 z-10`}>
@@ -746,9 +681,6 @@ export const HrSettings = () => {
             </label>
             <label className="flex min-w-[300px] flex-col gap-1">
               <Label>{flagType === 'category' ? 'Categories' : 'Items'}</Label>
-              {/* A real multi-select list, not a combo box: the owner is choosing
-                  how many rules to create, so how many are highlighted has to be
-                  visible at a glance. */}
               <select
                 multiple
                 size={Math.min(8, Math.max(4, refList.length))}
@@ -806,8 +738,6 @@ export const HrSettings = () => {
                 value={flagBonus}
                 onChange={(e) => setFlagBonus(e.target.value)}
               />
-              {/* The reason is SHOWN, never just used to grey the button out:
-                  a disabled Add with no explanation reads as a broken page. */}
               {flagBonus.trim() !== '' && bonusError && (
                 <span className="text-[11px] text-err">{bonusError}</span>
               )}
@@ -829,8 +759,6 @@ export const HrSettings = () => {
             </div>
           </div>
 
-          {/* The precedence rule, stated where the rule is created rather than
-              left for someone to discover from a payslip. */}
           {flagType === 'category' && (
             <p className="text-[12px] text-ink-secondary">
               A category rule pays on every product in that category. If a product also has its own
@@ -840,7 +768,6 @@ export const HrSettings = () => {
         </div>
       </section>
 
-      {/* 4 · Override levels (chain mode) */}
       <section className={SECTION_CLASS}>
         <SectionHeading>Override levels</SectionHeading>
         <p className="text-[12px] text-ink-secondary">
@@ -863,10 +790,6 @@ export const HrSettings = () => {
             <tbody>
               {levelRows.map((lv) => (
                 <tr key={lv.id} className="border-t border-border-subtle">
-                  {/* The level NUMBER is never editable — the backend refuses to
-                      patch it too. Renumbering a rung in place would repoint an
-                      existing rate at a different set of people without anyone
-                      choosing that. Delete and re-add instead. */}
                   <td className="px-3 py-2 font-semibold text-ink">{lv.level}</td>
                   <td className="px-2 py-2">
                     {editMode ? (

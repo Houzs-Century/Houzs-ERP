@@ -1,11 +1,3 @@
-// ── TOTP (RFC 6238) + recovery codes ──────────────────────────
-//
-// Pure Web Crypto (HMAC-SHA1) — no WASM, no deps — so it runs in the Worker
-// runtime exactly like the PBKDF2 password hashing in auth.ts. The shared
-// secret is base32 (what authenticator apps expect in the otpauth:// URI).
-//
-// Verification accepts a ±1 step (30s) window to tolerate clock drift between
-// the phone and the edge. Codes are compared in (near) constant time.
 
 const STEP_SECONDS = 30;
 const DIGITS = 6;
@@ -34,7 +26,7 @@ function b32ToBytes(b32: string): Uint8Array {
   const out: number[] = [];
   for (const ch of clean) {
     const idx = B32_ALPHABET.indexOf(ch);
-    if (idx === -1) continue; // skip stray chars defensively
+    if (idx === -1) continue;
     value = (value << 5) | idx;
     bits += 5;
     if (bits >= 8) {
@@ -64,8 +56,6 @@ async function hmacSha1(keyBytes: Uint8Array, msg: Uint8Array): Promise<Uint8Arr
 
 function counterBytes(counter: number): Uint8Array {
   const buf = new Uint8Array(8);
-  // 64-bit big-endian. JS bit ops are 32-bit, so fill the low 4 bytes from the
-  // counter and the high 4 from counter/2^32 (TOTP counters never exceed 2^53).
   let lo = counter >>> 0;
   let hi = Math.floor(counter / 0x100000000) >>> 0;
   for (let i = 7; i >= 4; i--) {
@@ -153,10 +143,6 @@ export function otpauthUri(secret: string, account: string, issuer = "Houzs ERP"
   return `otpauth://totp/${label}?${params.toString()}`;
 }
 
-// ── Backup / recovery codes ───────────────────────────────────
-// 10 single-use codes shown ONCE at enrollment. Stored as SHA-256 hashes so a
-// DB read never reveals usable codes; entries are removed from the JSON array
-// as they're spent. High entropy (40 bits) → fast hash is fine, no PBKDF2.
 
 async function sha256Hex(s: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -164,8 +150,7 @@ async function sha256Hex(s: string): Promise<string> {
 }
 
 function randomCode(): string {
-  // 8 chars from a digit+uppercase set, grouped "XXXX-XXXX" for readability.
-  const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // no I/L/O/U to avoid confusion
+  const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
   const r = crypto.getRandomValues(new Uint8Array(8));
   let s = "";
   for (let i = 0; i < 8; i++) s += alphabet[r[i] % alphabet.length];

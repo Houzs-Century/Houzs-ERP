@@ -43,7 +43,6 @@ export const CardSettingsDrawer = ({ card, kind, title, onClose }: { card: RateC
               <option value="ITEM">By item</option>
             </select>
           </Field>
-          {/* WIRED since mig 0244 — this is what the tier ladder counts. */}
           <Field label="Charge per">
             <select className={INPUT} value={card.aggregation} onChange={(e) => patch({ aggregation: e.target.value })}>
               <option value="UNIT">{card.basis === 'ITEM' ? 'Item' : 'Set'}</option>
@@ -72,10 +71,6 @@ export const CardSettingsDrawer = ({ card, kind, title, onClose }: { card: RateC
             onChange={(e) => patch({ isActive: e.target.checked })} />
           Active
         </label>
-        {/* WHO the card belongs to is a FACT here, not a control (owner
-            2026-08-02): you reached this card by clicking that carrier, so
-            re-picking it could only make the editor disagree with its own
-            heading. Own fleet IS "no carrier", derived server-side (mig 0246). */}
         <div className="flex flex-col gap-1 border-t border-border pt-4">
           <span className={LABEL}>Carrier</span>
           <span className="text-[13px] font-semibold text-ink">

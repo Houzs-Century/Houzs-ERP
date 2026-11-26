@@ -42,9 +42,6 @@ mfgSoVpBrand.put('/:docNo/vp-brand', async (c) => {
   }
   if (body.brand != null && typeof body.brand !== 'string') return c.json({ error: 'bad_brand' }, 400);
 
-  /* STRICT company scope for a write -- refuse when unresolved rather than run
-     wide (companyScope.ts). The order is read under it, so another company's
-     doc_no is "not found". */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data, error } = await scopeToCompanyId(
@@ -63,10 +60,6 @@ mfgSoVpBrand.put('/:docNo/vp-brand', async (c) => {
     open_to_all: boolean | null;
   };
 
-  /* A salesperson who sees only their own orders answers only for their own --
-     the same own/downline rule every write on a sales order keeps
-     (selfScopedSalesBlocked in mfg-sales-orders.ts). Out of scope reads as
-     not found, like a doc_no that does not exist. */
   if (!canViewAllSales(c)) {
     const outOfScope = await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, false, {
       salespersonId: so.salesperson_id,
@@ -76,8 +69,6 @@ mfgSoVpBrand.put('/:docNo/vp-brand', async (c) => {
     if (outOfScope) return c.json({ error: 'not_found' }, 404);
   }
 
-  /* The same choices the question offered: this company's brands the portal
-     pays a margin ladder on (vp-brand-ask.ts). Anything else is refused. */
   let brand: string | null = null;
   if (typeof body.brand === 'string' && body.brand.trim() !== '') {
     const options = await loadVpBrandOptions({

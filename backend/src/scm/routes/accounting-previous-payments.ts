@@ -30,7 +30,6 @@ const gate = (c: Ctx): { ok: true; companyId: number } | { ok: false; response: 
   return { ok: true, companyId: co.companyId };
 };
 
-/** The body's payments, each a known source and an id — or why not. */
 async function refsOf(c: Ctx): Promise<{ ok: true; refs: PaymentRef[] } | { ok: false; response: Response }> {
   let body: unknown;
   try { body = await c.req.json(); } catch { body = null; }

@@ -11,8 +11,6 @@ import type { AttendanceRules } from "../../scm/shared/hr-attendance";
 export type ShiftGroupShift = {
   startMin: number;
   endMin: number;
-  /** The shift on a day the employee was on a delivery. null = no delivery
-   *  variation (e.g. drivers, who already start early). */
   deliveryStartMin: number | null;
   deliveryEndMin: number | null;
 };

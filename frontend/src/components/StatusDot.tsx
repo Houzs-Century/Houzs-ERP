@@ -5,18 +5,8 @@ type Variant = "synced" | "error" | "open" | "in-progress" | "closed" | "neutral
 const COLORS: Record<Variant, string> = {
   synced: "bg-synced",
   error: "bg-err",
-  // Nico 2026-07-09 — every "open work" stage (Verification, Solution,
-  // Inspection, Item Pickup, etc.) shows a petrol dot instead of amber.
-  // Amber is reserved for SLA warnings ("Due soon"); functional progress
-  // markers use the palette primary. Kept in lockstep with the Stage
-  // funnel dot logic in ServiceCases.tsx.
   open: "bg-primary",
   "in-progress": "bg-primary",
-  // Nico 2026-07-09 — Completed cases wear a neutral grey dot so
-  // "archived / no longer in-flight" reads distinct from "in-progress
-  // (petrol)" and the "green = healthy running" tone that stays on
-  // synced/All. Everywhere StatusDot with variant="closed" is used
-  // (list row Stage column when stage='completed') picks this up.
   closed: "bg-ink-muted",
   neutral: "bg-ink-muted",
 };
@@ -45,10 +35,6 @@ export function statusVariantForAssr(status: string): Variant {
 }
 
 const STAGE_VARIANT: Record<string, Variant> = {
-  // v3.1 workflow — every open stage is amber and completed is
-  // green, matching the Stage funnel's dot semantics. Before this map
-  // the new slugs fell through to neutral, so the whole list rendered
-  // grey dots.
   pending_review: "open",
   under_verification: "open",
   pending_solution: "open",
@@ -56,8 +42,6 @@ const STAGE_VARIANT: Record<string, Variant> = {
   pending_item_ready: "open",
   pending_delivery_service: "open",
   completed: "closed",
-  // Legacy aliases — 5-stage vocabulary + retired stages
-  // (pending_inspection mig 0105, pending_item_pickup mig 0110).
   pending_inspection: "open",
   pending_item_pickup: "open",
   registration: "open",
@@ -108,6 +92,3 @@ export function resolutionLabel(method: string | null): string {
   if (!method) return "—";
   return RESOLUTION_LABEL[method] ?? method;
 }
-/* cache-rotate 2026-07-31: the CDN edge cached a poisoned (HTML) response
-   under this chunk's previous hashed URL during a deploy race — a content
-   change rotates the hash so clients fetch a clean URL. */

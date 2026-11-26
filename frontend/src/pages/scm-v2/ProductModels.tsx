@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// ProductModels — list page at /product-models (PR #49).
-//
-// "Group by Model" landing screen. Lists every product_models row grouped by
-// category, with SKU count + active/inactive status. Click a Model → detail
-// page where allowed-options + name + description are managed.
-//
-// Replaces the old SKU-only flat list when commander wants to manage at the
-// Model layer. The plain SKU list lives on /products (SkuMasterTab).
-// ----------------------------------------------------------------------------
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ProductModelDetail } from './ProductModelDetail';
@@ -45,33 +35,20 @@ import styles from './ProductModels.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-/* "Failed to load" / validation banner — err tokens. Replaces the bespoke
-   .errorBanner, whose --c-festive-b + rgba fill only resolved via the
-   removed .page cascade. Shared by the list and all three dialogs. */
 const BANNER_ERR =
   'rounded-lg border border-err/40 bg-err/10 px-4 py-3 text-[13px] text-err';
 
-/* DataGrid layout key for the Models list. The legacy page rendered one
-   table per category — to keep that read on first visit we seed a default
-   "group by Category" layout ONCE (only when no layout was ever stored).
-   After that, whatever the operator does (remove the group chip, hide
-   columns, …) persists and this seed never runs again. */
 const PM_GRID_KEY = 'dg-product-models';
 if (typeof window !== 'undefined' && window.localStorage.getItem(PM_GRID_KEY) == null) {
   try {
     window.localStorage.setItem(PM_GRID_KEY, JSON.stringify({ groupBy: ['category'] }));
-  } catch { /* storage full / disabled — grid just starts flat */ }
+  } catch { }
 }
 
 export const ProductModels = () => {
-  const CATEGORIES = useProductCategories().active.map((c) => c.code); // the registry, scm.acc_item_groups
+  const CATEGORIES = useProductCategories().active.map((c) => c.code);
   const [filter, setFilter] = useState<MfgCategory | 'all'>('all');
   const [search, setSearch] = useState('');
-  // PR #119 — Commander 2026-05-26: clicking a Model in Modular tab opens
-  // a right-side drawer with the detail content (photo / allowed options /
-  // SKU variants) instead of navigating away to /product-models/{id}. The
-  // dedicated route still exists for deep-links; this is just the Modular
-  // entrypoint.
   const [openModelId, setOpenModelId] = useState<string | null>(null);
   // Owner request 2026-06-12 — quick per-model Edit dialog (name / branding /
   // description + allowed sizes & compartments) without opening the full
@@ -84,11 +61,6 @@ export const ProductModels = () => {
   // without clicking into each one.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleting, setDeleting]       = useState(false);
-  // PR — Commander 2026-05-27: tick N Models → "Assign to supplier · N
-  // selected" CTA opens a Modular-tab parallel of SupplierDetail's
-  // ModelSkuPickerDialog. Picks a supplier, types ONE supplier code +
-  // description per Model, fans the binding out across every active SKU
-  // under each Model in a single /bindings/batch POST.
   const [assigningSupplier, setAssigningSupplier] = useState(false);
   const deleteMut = useDeleteProductModel();
   const askConfirm = useConfirm();
@@ -122,8 +94,6 @@ export const ProductModels = () => {
       return n;
     });
   }, []);
-  // Select-all over the rows currently in view (replaces the old per-category
-  // header checkbox — same pattern as the SKU Master grid toolbar).
   const allTicked = filtered.length > 0 && filtered.every((m) => selectedIds.has(m.id));
   const someTicked = !allTicked && filtered.some((m) => selectedIds.has(m.id));
   const toggleAllVisible = () => {
@@ -221,7 +191,6 @@ export const ProductModels = () => {
         sortFn: (a, b) => Number(b.active) - Number(a.active),
       },
       {
-        // Wei Siang 2026-06-19: a 0-SKU orphan Model gets an amber "0 SKUs" badge.
         key: 'sku_count',
         label: 'SKUs',
         width: 96,
@@ -296,9 +265,6 @@ export const ProductModels = () => {
         eyebrow="Catalog"
         title="Product Models"
         description={
-          /* The bespoke .count chip that sat next to the title — the live
-             filtered tally keeps its wording verbatim, it just reads as the
-             header's own description line now. */
           `${filtered.length} models`
         }
         actions={
@@ -318,7 +284,6 @@ export const ProductModels = () => {
         }
       />
 
-      {/* Category filter chips */}
       <div className={styles.chipRow}>
         <FilterChip on={filter === 'all'} onClick={() => setFilter('all')}>All</FilterChip>
         {CATEGORIES.map((c) => (
@@ -332,24 +297,13 @@ export const ProductModels = () => {
         </div>
       )}
 
-      {/* PR #106 — Bulk-select toolbar. Sticky-ish strip that surfaces only
-          when at least one Model is ticked; mirrors the SKU Master pattern
-          (PR #82). */}
       {selectedIds.size > 0 && (
-        /* Petrol-soft selection slab — was a hardcoded rgba(232,107,58,.08)
-           fill over a --c-orange hairline, i.e. the pre-Theme-C brand
-           orange. Now primary tokens, so it matches the selected-row tint
-           the rest of the app uses. */
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary-soft px-4 py-3">
           <span className="text-[13px] font-semibold text-primary-ink">
             {selectedIds.size} model{selectedIds.size === 1 ? '' : 's'} selected
           </span>
           <span className="inline-flex flex-wrap items-center gap-2">
             <Button variant="ghost" onClick={() => setSelectedIds(new Set())}>Clear</Button>
-            {/* PR — Commander 2026-05-27: primary CTA pivots the bulk-select
-                toolbar from "manage Models" into the supplier-mapping flow.
-                Promotes the "Assign to supplier" action over the destructive
-                Delete (Delete is demoted to a ghost button on its right). */}
             <Button
               variant="primary"
               icon={<Truck {...ICON} />}
@@ -357,9 +311,6 @@ export const ProductModels = () => {
             >
               Assign to supplier · {selectedIds.size} selected
             </Button>
-            {/* disabled={deleting} keeps this inline as a <Button>: a
-                secondaryActions MenuItem has no disabled field, so the
-                in-flight lock would be silently dropped. */}
             <Button
               variant="ghost"
               icon={<Trash2 {...ICON} />}
@@ -433,7 +384,6 @@ export const ProductModels = () => {
         <EditModelDialog model={editModel} onClose={() => setEditModel(null)} />
       )}
 
-      {/* PR — Commander 2026-05-27: bulk Assign-to-Supplier dialog. */}
       {assigningSupplier && (
         <ModularAssignSupplierDialog
           modelIds={Array.from(selectedIds)}
@@ -445,8 +395,6 @@ export const ProductModels = () => {
         />
       )}
 
-      {/* PR #119 — embedded Model detail drawer. Its px matches Layout's page
-          gutter, which PageHeader's -mx expects to cancel. */}
       {openModelId && (
         <div
           onClick={() => setOpenModelId(null)}
@@ -478,14 +426,6 @@ function FilterChip({
   );
 }
 
-/* ────────────────────────── Model Photo cell ───────────────────────────── */
-/* PR — Commander 2026-05-27: 48×48 thumb on each Product Model row in
-   Modular tab. Click the empty slot or filled thumb to pick a new file
-   (jpg/png/webp; big photos are auto-resized client-side to fit the 2 MB
-   cap, so phone photos no longer get rejected). Hover the filled thumb to
-   reveal an × button that removes the photo (R2 delete + nulls
-   photo_url). Errors surface as a small red caption under the thumb so
-   we don't block the table layout. */
 
 const API_URL =
   ((import.meta.env.VITE_API_URL ||
@@ -493,9 +433,6 @@ const API_URL =
   '/api/scm';
 const PHOTO_MAX_BYTES_CLIENT = 2 * 1024 * 1024;
 
-/** Mirror of the POS catalog's resolvePhotoUrl(): photo_url is stored as
- *  a relative proxy path (`/product-models/.../photo/...`) — prefix with
- *  the API host so an <img src> works from the Backend portal origin. */
 function resolveBackendPhotoUrl(raw: string | null): string | null {
   if (!raw) return null;
   if (/^https?:\/\//i.test(raw)) return raw;
@@ -503,12 +440,6 @@ function resolveBackendPhotoUrl(raw: string | null): string | null {
   return raw.startsWith('/') ? `${API_URL}${raw}` : `${API_URL}/${raw}`;
 }
 
-/* Downscale a picked image in the browser before upload so big phone photos
- * (commonly 3–8 MB) fit under PHOTO_MAX_BYTES_CLIENT instead of being
- * rejected. Caps the longest edge at SHRINK_MAX_EDGE and re-encodes as JPEG
- * — product photos don't need transparency, and smaller files keep the POS
- * catalog fast. A decode/encode failure falls back to the original file via
- * the caller's try/catch; the byte-cap check still guards the upload. */
 const SHRINK_MAX_EDGE = 1600;
 const SHRINK_JPEG_QUALITY = 0.85;
 
@@ -527,7 +458,6 @@ async function shrinkImageForUpload(file: File): Promise<File> {
   });
   const longest = Math.max(img.width, img.height);
   const scale = longest > SHRINK_MAX_EDGE ? SHRINK_MAX_EDGE / longest : 1;
-  // Already small on both axes AND under the byte cap → upload untouched.
   if (scale === 1 && file.size <= PHOTO_MAX_BYTES_CLIENT) return file;
   const w = Math.round(img.width * scale);
   const h = Math.round(img.height * scale);
@@ -563,15 +493,13 @@ function ModelPhotoCell({ model }: { model: ProductModelRow }) {
 
   const onPicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = e.target.files?.[0];
-    e.target.value = ''; // allow re-picking the same file
+    e.target.value = '';
     if (!picked) return;
     if (!/^image\/(jpeg|jpg|png|webp)$/i.test(picked.type)) {
       setErr('Use JPG / PNG / WEBP');
       return;
     }
     setErr(null);
-    // Shrink big photos to fit the 2 MB cap instead of rejecting them. On any
-    // failure we fall back to the original; the byte-cap check below still guards.
     let file = picked;
     try {
       file = await shrinkImageForUpload(picked);
@@ -649,8 +577,6 @@ function ModelPhotoCell({ model }: { model: ProductModelRow }) {
               width: 16, height: 16,
               borderRadius: '50%',
               background: '#11140f',
-              /* fg-on-ink — #fff, not the surface-2 hex --c-cream mapped to
-                 elsewhere: here it painted text on an ink fill, not a bg. */
               color: '#fff',
               display: 'inline-flex',
               alignItems: 'center',
@@ -664,8 +590,6 @@ function ModelPhotoCell({ model }: { model: ProductModelRow }) {
         )}
       </button>
       {err && (
-        /* --c-danger was never defined anywhere, so this always painted its
-           #c0392b fallback. Pinned to the err token. */
         <span style={{ fontSize: 10, color: 'var(--hz-c-err)', maxWidth: 96, lineHeight: 1.2 }}>
           {err}
         </span>
@@ -681,31 +605,17 @@ function ModelPhotoCell({ model }: { model: ProductModelRow }) {
   );
 }
 
-/* ────────────────────────── + New Model dialog ─────────────────────────── */
 
-// Exported so SKU Master's "+ New SKU" button can drive the same dialog.
-// `initialCategory` pre-selects the dropdown — used when the SKU Master is
-// already filtered to a category, so the user doesn't have to pick again.
-// `onCreated` fires after the Model row is saved — used by SKU Master to
-// trigger the auto-generate flow without showing the Model Detail page.
-// PR #78b — Bulk row shape. Each Model in the batch has its own branding /
-// code / name / thickness / description; sizes (or compartments for SOFA)
-// are shared below all rows and apply to every Model in the batch.
 type ModelRow = {
-  // Stable React key — not sent to the API.
   rid:         string;
   branding:    string;
   modelCode:   string;
   name:        string;
-  thicknessCm: string;  // MATTRESS only; ignored for other categories
+  thicknessCm: string;
   description: string;
-  // Per-model suppliers (optional). Each row carries its own supplier LIST so
-  // a bulk batch can map each Model to multiple suppliers (an SKU can have
-  // 2-3 suppliers, each with their own supplier code) in one pass.
   suppliers: SupplierEntry[];
 };
 
-// One supplier binding config per model row — a model can carry several.
 type SupplierEntry = {
   supplierId:   string;
   supplierCode: string;
@@ -739,8 +649,6 @@ export function NewModelDialog({
 }: {
   onClose: () => void;
   initialCategory?: MfgCategory;
-  /** Only fires in single-row mode (rows.length === 1). Used by SKU Master's
-      "+ New SKU" entry-point to chain into the existing auto-generate flow. */
   onCreated?: (modelId: string, category: MfgCategory) => void;
 }) {
   const CATEGORIES = useProductCategories().active.map((c) => c.code);
@@ -752,28 +660,16 @@ export function NewModelDialog({
   const [submitting,  setSubmitting]  = useState(false);
 
   const maintenance = useMaintenanceConfig('master');
-  // Branding datalist — maintenance Brandings pool first, DISTINCT fallback
-  // across products + models. Datalist keeps free text possible.
   const brandingPool = useBrandingPool();
   const createMut   = useCreateProductModel();
   const generateMut = useGenerateModelSkus();
-  // (B) Wei Siang 2026-06-08 — used to ROLL BACK a just-created model when its
-  // SKU generation produced zero rows, so we never leave an empty phantom model.
   const deleteMut   = useDeleteProductModel();
   const askConfirm  = useConfirm();
   const notify      = useNotify();
 
-  // (A) Wei Siang 2026-06-09 — optional one-step supplier assignment is now
-  // PER MODEL: each row carries its own supplier + code, and every SKU that
-  // row generates is bound to that row's supplier in one batch, so the
-  // operator doesn't have to re-open "Supplier codes by Model".
   const suppliersQ      = useSuppliers({ status: 'ACTIVE' });
   const bindingsBatchMut = useCreateBindingsBatch();
 
-  // PR #87 — Commander 2026-05-26: bulk pickers should default to all-on so a
-  // new Model is born offering every variant from the global pool; commander
-  // toggles off what doesn't apply. Re-runs on pool change so a Maintenance
-  // edit (e.g. adding SP to bedframe sizes) doesn't leave the dialog stale.
   const _sizesPool = maintActiveValues((category === 'MATTRESS'
     ? maintenance.data?.data?.mattressSizes
     : maintenance.data?.data?.bedframeSizes) ?? []);
@@ -792,9 +688,6 @@ export function NewModelDialog({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, _sizesPool.length, _compsPool.length]);
 
-  // Every category but Sofa / Bedframe / Mattress has no size/compartment axis —
-  // each Model is exactly one SKU (code = model code). It still auto-generates
-  // that single SKU so it lands in the SKU Master (Wei Siang 2026-06-09).
   const isSingleSkuCat = isSingleSkuCategory(category);
   const sharedCount = (category === 'SOFA') ? pickedComps.size : pickedSizes.size;
   const totalSkus   = isSingleSkuCat ? rows.length : rows.length * sharedCount;
@@ -810,7 +703,6 @@ export function NewModelDialog({
     e.preventDefault();
     setBatchError(null);
 
-    // Validate every row up front so a half-batch failure isn't possible.
     for (const r of rows) {
       if (!r.modelCode.trim() || !r.name.trim()) {
         setBatchError(`Every row needs a model code + name. Row ${rows.indexOf(r) + 1} is incomplete.`);
@@ -824,11 +716,6 @@ export function NewModelDialog({
         }
       }
     }
-    // (B) Wei Siang 2026-06-08 — a Model must be born with at least one SKU.
-    // For the sized/compartmented categories that auto-generate, block here if
-    // nothing is picked, so we never create a 0-SKU phantom that then blocks
-    // re-tries with a duplicate-code error. (Single-SKU categories need no pick
-    // and are intentionally created without size variants — left untouched.)
     if (category === 'SOFA' && pickedComps.size === 0) {
       setBatchError('Pick at least one compartment — a model with no SKUs can’t be created.');
       return;
@@ -838,12 +725,6 @@ export function NewModelDialog({
       return;
     }
 
-    /* Supplier unit prices are checked HERE, before a single model is created,
-       not at the binding loop far below. The binding loop runs after the models
-       and their SKUs already exist, so a refusal down there would leave a
-       half-made batch behind. What it replaced was `parseFloat(x) || 0`, which
-       bound every SKU to the supplier at RM 0.00 — a purchase price of nothing,
-       written silently, that only surfaces when someone raises a PO against it. */
     for (const [i, r] of rows.entries()) {
       for (const sup of r.suppliers) {
         if (!sup.supplierId || !sup.supplierCode.trim()) continue;
@@ -852,8 +733,6 @@ export function NewModelDialog({
       }
     }
 
-    // Duplicate-code check inside the batch (server would reject the second
-    // one, leaving a confusing half-success — easier to catch here first).
     const codes = rows.map((r) => r.modelCode.trim());
     const dup   = codes.find((c, i) => codes.indexOf(c) !== i);
     if (dup) {
@@ -879,16 +758,11 @@ export function NewModelDialog({
 
     setSubmitting(true);
     try {
-      // Build allowedOptions shared across the batch (sizes or compartments
-      // — same selection applies to every row). Each row layers its own
-      // thickness onto the shared blob for MATTRESS.
       const sharedSizes = (category === 'MATTRESS' || category === 'BEDFRAME') && pickedSizes.size > 0
         ? Array.from(pickedSizes) : null;
       const sharedComps = category === 'SOFA' && pickedComps.size > 0
         ? Array.from(pickedComps) : null;
 
-      // Create Models in parallel — server protects against duplicate codes
-      // across batches via the existing 23505 path.
       const createdModels = await Promise.all(rows.map(async (r) => {
         const allowedOptions: Record<string, unknown> = {};
         if (sharedSizes) allowedOptions.sizes = sharedSizes;
@@ -908,10 +782,6 @@ export function NewModelDialog({
         return res.model;
       }));
 
-      // Auto-generate SKU variants for every Model whose batch had sizes /
-      // compartments selected. Models with neither selected get created but
-      // skip generation (matches the existing "empty allowed_options = no
-      // restriction" semantics — commander can pick later from detail page).
       let totalGenerated = 0;
       let boundInserted  = 0;
       if (sharedSizes || sharedComps || isSingleSkuCat) {
@@ -925,17 +795,6 @@ export function NewModelDialog({
         }));
         totalGenerated = results.reduce((sum, r) => sum + r.generated, 0);
 
-        // (B) No phantoms — ALL-OR-NOTHING. Any model that ended up with zero
-        // SKUs (generation errored, or produced nothing) is deleted so it can't
-        // linger as an empty shell that blocks the next attempt with a
-        // duplicate-code 409. The failure is surfaced, never swallowed.
-        // A model is a REAL failure only if generation errored, or it produced
-        // no SKU at all (none generated AND none pre-existing). "Skipped because
-        // the SKU code already exists" (skipped > 0) is NOT a failure — the SKU
-        // is already in the catalog, so keep the model and still bind its
-        // suppliers to it (Commander 2026-06-19: an ACCESSORY whose code already
-        // existed was stuck in an un-saveable loop because generated:0 was
-        // treated as fatal, and the real reason was hidden).
         const failed = results.filter((r) => r.error != null || (r.generated === 0 && r.skipped === 0));
         if (failed.length > 0) {
           await Promise.all(failed.map((r) => deleteMut.mutateAsync(r.model.id).catch(() => {})));
@@ -947,17 +806,6 @@ export function NewModelDialog({
           );
         }
 
-        // (A) Optional PER-MODEL supplier bindings — each row carries its own
-        // supplier LIST (an SKU can have 2-3 suppliers, each with their own
-        // code). `results` and `rows` share the same order/length, so
-        // results[i] pairs with rows[i] (the source row holding the supplier
-        // configs). itemCode is the AUTHORITATIVE server-returned code; the
-        // per-SKU supplier code reuses the proven composeSupplierSku (size-aware)
-        // so we never write the bare model code to every SKU (the
-        // duplicate-supplier-code bug from PR #206/#209). Best-effort: the SKUs
-        // are valid even if a binding call fails. One bindingsBatchMut per
-        // (model, supplier) pair. Runs AFTER the phantom-cleanup throw, so it
-        // only executes when every model kept its SKUs.
         for (let i = 0; i < results.length; i++) {
           const r      = results[i];
           const srcRow = rows[i];
@@ -965,10 +813,6 @@ export function NewModelDialog({
           for (const sup of srcRow.suppliers) {
             if (!sup.supplierId || !sup.supplierCode.trim()) continue;
             const baseCode   = sup.supplierCode.trim();
-            /* Already validated in submit()'s preflight, which returns before
-               anything is created — so a refusal here is unreachable. Kept
-               total rather than asserted because this loop is best-effort and
-               must not throw past a batch that already created its models. */
             const parsedPrice = parseMoneyToSen(sup.unitPrice, 'Supplier price');
             const priceSen = parsedPrice.ok ? parsedPrice.sen : 0;
             const lead       = parseInt(sup.leadDays, 10);
@@ -1004,8 +848,6 @@ export function NewModelDialog({
         }
       }
 
-      // Single-row + onCreated → chain into the caller's auto-generate flow
-      // (preserved for SKU Master "+ New SKU" entry).
       if (rows.length === 1 && createdModels[0] && onCreated) {
         onCreated(createdModels[0].id, category);
       } else {
@@ -1023,16 +865,9 @@ export function NewModelDialog({
     }
   };
 
-  // Aliased to the same pools the auto-fill effect already computed so the
-  // InlineAllowedOptions below + the All / None buttons inside it work off a
-  // single source.
   const sizesPool = _sizesPool;
   const compsPool = _compsPool;
 
-  // (D) Live preview (Wei Siang 2026-06-08) — show what the FIRST row will
-  // actually generate, so the operator types the SHORT name and SEES the
-  // system auto-build the full SKU code (branding + MATT/dash + size). Mirrors
-  // the server's code template + uppercase rule (product-models.ts generate-skus).
   const up = (s: string) => s.toUpperCase();
   const previewRow = rows[0];
   const previewTotal = category === 'SOFA'
@@ -1060,15 +895,9 @@ export function NewModelDialog({
         className={`${styles.modal} ${styles.modalCompact}`}
         onClick={(e) => e.stopPropagation()}
         onSubmit={submit}
-        // noValidate: let THIS dialog's own validation (submit() → setBatchError)
-        // surface a clear in-dialog message. Without it, native `required` made the
-        // browser silently refuse to submit (no event, no error) when Model Code /
-        // Name were left blank — the operator saw the placeholder "5530" and thought
-        // the field was filled, clicked Create, and nothing happened (Wei Siang 2026-06-09).
         noValidate
         style={{ maxHeight: '90vh', overflowY: 'auto' }}
       >
-        {/* Shared datalist for every row card's Branding input. */}
         <datalist id="branding-pool-model-rows">
           {sortByText(brandingPool.pool).map((b) => <option key={b} value={b} />)}
         </datalist>
@@ -1138,7 +967,6 @@ export function NewModelDialog({
           <span>Add Model {rows.length + 1}</span>
         </button>
 
-        {/* Shared sizes / compartments — applied to every row in the batch. */}
         {(category === 'MATTRESS' || category === 'BEDFRAME') && (
           <InlineAllowedOptions
             label={`Sizes (apply to all ${rows.length} row${rows.length === 1 ? '' : 's'})`}
@@ -1152,8 +980,6 @@ export function NewModelDialog({
             })}
             onSetAll={(vs) => setPickedSizes(new Set(vs))}
             formatChip={(code) => {
-              // PR #92 — consult Maintenance override so commander relabel
-              // (K → "Super K") rides through the chip preview live.
               const info = resolveSizeInfo(code, maintenance.data?.data);
               return info.label && info.label !== code ? `${code} · ${info.label}` : code;
             }}
@@ -1174,7 +1000,6 @@ export function NewModelDialog({
           />
         )}
 
-        {/* (D) Live preview — what the system will actually create. */}
         {previewCodes.length > 0 && (
           <div style={{
             fontSize: 'var(--fs-11)', color: 'var(--hz-c-ink-muted)',
@@ -1218,11 +1043,6 @@ export function NewModelDialog({
   );
 }
 
-/* ─────────── Per-row card (bulk mode) ────────────────────────────────────
-   Branding / Model code / Name / (Mattress thickness) / Description plus a
-   little × in the corner so commander can prune the row. Inline preview at
-   the bottom of the card shows the SKU shape this row + the shared sizes
-   below will materialise. */
 function ModelRowCard({
   row, index, category, canRemove, suppliers, onChange, onRemove,
 }: {
@@ -1304,18 +1124,12 @@ function ModelRowCard({
         )}
       </div>
 
-      {/* (A) Per-model suppliers (optional) — each row maps to its own list of
-          suppliers (an SKU can have 2-3, each with their own supplier code);
-          every SKU this row generates is bound to each filled entry with a
-          code auto-suffixed per size/variant. Only one entry can be Main.
-          Shown for every category (None = no binding). */}
       <div style={{ borderTop: '1px solid #d6d9d2', marginTop: 8, paddingTop: 8 }}>
         {row.suppliers.map((sup, si) => {
           const patchSup = (patch: Partial<SupplierEntry>) => {
             onChange({
               suppliers: row.suppliers.map((s, j) => {
                 if (j === si) return { ...s, ...patch };
-                // Only one Main per model — ticking this entry unticks the rest.
                 return patch.isMain ? { ...s, isMain: false } : s;
               }),
             });
@@ -1395,18 +1209,7 @@ function ModelRowCard({
   );
 }
 
-// PR #78b — TemplatePreview removed (was single-row, lived above the Cancel /
-// Create buttons). Bulk mode shows the SKU shape implicitly via the row
-// inputs + the shared sizes/compartments picker — repeating the preview N
-// times for N rows would be noisy. The hardcoded API templates in
-// apps/api/src/routes/product-models.ts still produce the same shapes.
 
-/* ─────────── Inline allowed-options chip toggle ──────────────────────────
-   Used in NewModelDialog so commander can pick sizes/compartments without
-   navigating to the Model detail page after create. PR #87 — Defaults to
-   all-on (the parent useEffect pre-fills picked with the full pool); All /
-   None mini-buttons live inline with the label so commander can flip every
-   chip in one tap. Untick = excluded from the batch's auto-generated SKUs. */
 function InlineAllowedOptions({
   label, hint, options, picked, onToggle, onSetAll, formatChip,
 }: {
@@ -1415,9 +1218,7 @@ function InlineAllowedOptions({
   options:     string[];
   picked:      Set<string>;
   onToggle:    (value: string) => void;
-  /** PR #87 — Bulk setter. Receives the full pool (for All) or [] (for None). */
   onSetAll?:   (values: string[]) => void;
-  /** Optional pretty-formatter (e.g. SIZE_INFO enrichment). Defaults to raw. */
   formatChip?: (value: string) => string;
 }) {
   if (options.length === 0) {
@@ -1511,7 +1312,6 @@ function InlineAllowedOptions({
                 borderRadius: 999,
                 border: '1px solid ' + (isOn ? 'var(--hz-c-primary)' : 'var(--hz-c-border-strong)'),
                 background: isOn ? 'var(--hz-c-primary)' : 'var(--hz-c-surface)',
-                /* isOn = petrol fill, so --c-cream here was fg-on-petrol → #fff. */
                 color: isOn ? '#fff' : '#11140f',
                 cursor: 'pointer',
                 transition: 'all 120ms ease-out',
@@ -1561,10 +1361,6 @@ function EditModelDialog({
   const isSofa      = model.category === 'SOFA';
   const hasSizeAxis = isSofa || model.category === 'BEDFRAME' || model.category === 'MATTRESS';
 
-  /* Pools: Maintenance master pool ∪ the model's saved picks, so a saved
-     value that fell out of the pool still renders as a togglable chip
-     instead of silently disappearing (same posture as the SO line editor's
-     "(current)" fallback). Fallback literals mirror ProductModelDetail. */
   const sizesPool = useMemo(() => {
     const base = maintActiveValues(isSofa
       ? cfg?.sofaSizes ?? ['24', '26', '28', '30', '32', '35']
@@ -1581,8 +1377,6 @@ function EditModelDialog({
   const [branding,    setBranding]    = useState(model.branding ?? '');
   const [name,        setName]        = useState(model.name);
   const [description, setDescription] = useState(model.description ?? '');
-  // Saved picks win; an EMPTY saved list means "no restriction" downstream, so
-  // it seeds as all-on — same mental model as ProductModelDetail (PR #87).
   const [pickedSizes, setPickedSizes] = useState<Set<string>>(
     () => new Set((model.allowed_options?.sizes?.length ? model.allowed_options.sizes : sizesPool)),
   );
@@ -1591,10 +1385,6 @@ function EditModelDialog({
   );
   const [error, setError] = useState<string | null>(null);
 
-  /* When the model saved NO picks (= no restriction) the all-on seed above may
-     have run before the Maintenance config arrived (fallback pool). Re-seed
-     once the real pool lands so the chips reflect it — mirrors the fillIfEmpty
-     re-run in ProductModelDetail. Models WITH saved picks are never reseeded. */
   useEffect(() => {
     if (!cfg) return;
     if (hasSizeAxis && !(model.allowed_options?.sizes?.length)) setPickedSizes(new Set(sizesPool));
@@ -1613,8 +1403,6 @@ function EditModelDialog({
       setError('Pick at least one size.');
       return;
     }
-    // Merge: only the keys this dialog edits change; everything else the
-    // detail drawer manages (leg heights, specials, fabrics, …) rides along.
     const ao: AllowedOptions = { ...(model.allowed_options ?? {}) };
     if (hasSizeAxis) ao.sizes = Array.from(pickedSizes);
     if (isSofa)      ao.compartments = Array.from(pickedComps);
@@ -1628,8 +1416,6 @@ function EditModelDialog({
       },
       {
         onSuccess: async (res) => {
-          // The SOFA PATCH may have auto-created SKUs for newly-activated
-          // compartments — refresh the SKU Master too.
           qc.invalidateQueries({ queryKey: ['mfg-products'] });
           const created = (res as { autoCreatedSkus?: string[] }).autoCreatedSkus ?? [];
           if (created.length > 0) {
@@ -1774,20 +1560,15 @@ function EditModelDialog({
    ════════════════════════════════════════════════════════════════════════ */
 
 type AssignDraft = {
-  /** Composite key: `${modelId}::${supplierId}` — used as the React key
-      and Map key for the per-(Model × Supplier) row. */
   key:            string;
   modelId:        string;
   modelCode:      string;
   modelName:      string;
   supplierId:     string;
-  supplierCode_s: string; // supplier.code (display)
-  supplierName:   string; // supplier.name (display)
-  /** Full SKU rows so the preview / save path can derive a per-SKU
-      supplier_sku suffix (compartment for sofa, size_code for bedframe /
-      mattress) via composeSupplierSku(). PR — Commander 2026-05-27. */
+  supplierCode_s: string;
+  supplierName:   string;
   skus:           MfgProductRow[];
-  supplierCode:   string; // commander-typed code for this (Model × Supplier)
+  supplierCode:   string;
   description:    string;
   unitPriceSen: number;
   leadTimeDays:   number;
@@ -1804,31 +1585,20 @@ export function ModularAssignSupplierDialog({
 }) {
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
   const modelsQ    = useProductModels();
-  // PR — pull every active SKU once and group by model_id client-side; same
-  // pattern as ModelSkuPickerDialog. 2990s' catalogue is small enough that
-  // the alternative (one query per Model) is wasteful.
   const productsQ  = useMfgProducts({ fresh: true });
   const batchMut   = useCreateBindingsBatch();
   const notify     = useNotify();
 
-  // PR — Commander 2026-05-27: multi-select suppliers. Each row in the table
-  // below is one (Model × Supplier) pair. We key drafts by `modelId::supplierId`.
   const [supplierIds, setSupplierIds] = useState<string[]>([]);
   const [drafts,      setDrafts]      = useState<Record<string, AssignDraft>>({});
   const [expanded,    setExpanded]    = useState<Set<string>>(new Set());
   const [error,       setError]       = useState<string | null>(null);
-  // Bind-in-flight indicator while we fan out per-supplier batch calls.
   const [saving, setSaving] = useState(false);
 
   const toggleExpanded = (id: string) => setExpanded((s) => {
     const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n;
   });
 
-  // Seed one draft per (Model × Supplier) pair. SKU list comes from the
-  // ACTIVE SKUs under that model_id; price defaults to the average
-  // base_price of those SKUs. Existing drafts are preserved across
-  // supplier add/remove — re-add a supplier and you'll get back to a fresh
-  // row only if it wasn't already present.
   useEffect(() => {
     if (!modelsQ.data || !productsQ.data || !suppliersQ.data) return;
     const skusByModel = new Map<string, MfgProductRow[]>();
@@ -1855,8 +1625,6 @@ export function ModularAssignSupplierDialog({
           const key = `${modelId}::${supplierId}`;
           const existing = prev[key];
           if (existing) {
-            // Preserve any typed values + refresh SKU references in case
-            // upstream catalogue refetched.
             seeded[key] = { ...existing, skus };
             continue;
           }
@@ -1880,7 +1648,6 @@ export function ModularAssignSupplierDialog({
       }
       return seeded;
     });
-  // Re-seed when input Models, picked suppliers, or upstream data change.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelIds.join('|'), supplierIds.join('|'), modelsQ.data?.length, productsQ.data?.length, suppliersQ.data?.length]);
 
@@ -1893,19 +1660,12 @@ export function ModularAssignSupplierDialog({
   const submit = () => {
     setError(null);
     if (supplierIds.length === 0) { setError('Pick at least one supplier first.'); return; }
-    // Bucket bindings BY supplier — the API's /bindings/batch endpoint is
-    // scoped to one supplier per call (see apps/api/src/routes/suppliers.ts
-    // line 268). We fan out N parallel batch POSTs.
     const bySupplier = new Map<string, NewBinding[]>();
     for (const d of Object.values(drafts)) {
       const code = d.supplierCode.trim();
-      // Skip (Model × Supplier) rows with no supplier code typed —
-      // commander left this pair empty on purpose.
       if (!code) continue;
       const bucket = bySupplier.get(d.supplierId) ?? [];
       for (const sku of d.skus) {
-        // PR — Commander 2026-05-27: per-SKU supplier_sku auto-suffix.
-        // composeSupplierSku("5539", sofaSku) → "5539-1A(LHF)" etc.
         const supplierSku = composeSupplierSku(code, sku);
         bucket.push({
           materialKind:   'mfg_product' as MaterialKind,
@@ -1928,10 +1688,6 @@ export function ModularAssignSupplierDialog({
       return;
     }
 
-    // Fan out one POST per supplier. We use the same mutation but call it
-    // imperatively so we can await + aggregate results. Errors short-circuit
-    // and surface in the error banner — partial successes are still kept
-    // in the database (the server inserts atomically per call).
     setSaving(true);
     let totalInserted = 0;
     let totalSkipped  = 0;
@@ -1960,17 +1716,13 @@ export function ModularAssignSupplierDialog({
 
   const supplierOptions = suppliersQ.data ?? [];
   const draftRows       = Object.values(drafts);
-  // For the footer + Save button: total bindings that WILL be POSTed.
   const totalSkus       = draftRows.reduce(
     (sum, d) => sum + (d.supplierCode.trim() ? d.skus.length : 0), 0,
   );
-  // For the per-Model sub-header: how many supplier rows are under each Model.
   const suppliersPerModel = new Map<string, number>();
   for (const d of draftRows) {
     suppliersPerModel.set(d.modelId, (suppliersPerModel.get(d.modelId) ?? 0) + 1);
   }
-  // Stable ordering — group by Model in the order they were picked,
-  // suppliers in the order they were added.
   const modelOrder = modelIds.filter((id) => suppliersPerModel.has(id));
 
   return (
@@ -2020,9 +1772,6 @@ export function ModularAssignSupplierDialog({
           border: '1px solid var(--hz-c-border)',
           borderRadius: 'var(--radius-md)',
           background: 'var(--hz-c-surface)',
-          // The table area takes the remaining modal height and scrolls on its
-          // own, so the header + supplier picker + footer (Save) stay put no
-          // matter how many (Model × Supplier) rows there are.
           flex: 1,
           minHeight: 0,
           overflowY: 'auto',
@@ -2050,9 +1799,6 @@ export function ModularAssignSupplierDialog({
                 </td></tr>
               )}
               {modelOrder.map((modelId) => {
-                // PR — Commander 2026-05-27: render a small per-Model
-                // sub-header so the (Model × Supplier) rows underneath are
-                // visually grouped — "Pantti — 3 suppliers".
                 const rowsForModel = draftRows.filter((d) => d.modelId === modelId);
                 if (rowsForModel.length === 0) return null;
                 const head = rowsForModel[0]!;
@@ -2162,10 +1908,6 @@ export function ModularAssignSupplierDialog({
                                 borderBottom: '1px solid #d6d9d2',
                                 borderTop: '1px dashed #d6d9d2',
                               }}>
-                                {/* PR — preview uses THIS row's typed base code +
-                                    composeSupplierSku() so commander sees the
-                                    "BOOQIT-1A(LHF) → 5539-1A(LHF)" before Save,
-                                    distinct per (Model × Supplier) row. */}
                                 <SkuPreviewStrip
                                   toMap={d.skus.map((s) => s.code)}
                                   alreadyBound={[]}
@@ -2220,8 +1962,6 @@ export function ModularAssignSupplierDialog({
 }
 
 const thStyle: React.CSSProperties = {
-  // Batch 3 theme skin — the SO-sample DataTable header spec (sans 10px/700,
-  // tracking-brand 0.18em, surface-dim #e3e6e0, ink).
   fontFamily: 'var(--font-sans)',
   fontSize: 10,
   fontWeight: 700,
@@ -2230,7 +1970,6 @@ const thStyle: React.CSSProperties = {
   color: 'var(--c-ink, var(--hz-c-ink))',
   textTransform: 'uppercase',
   letterSpacing: '0.18em',
-  // Keep the column headers visible while the (Model × Supplier) rows scroll.
   position: 'sticky',
   top: 0,
   background: 'var(--hz-c-surface-dim)',

@@ -42,11 +42,8 @@ import { serviceNotify } from './dialog-service';
 export type HoldDocType = 'so' | 'po' | 'grn' | 'pi' | 'do';
 
 type HoldDocSpec = {
-  /** The API path segment, e.g. `mfg-sales-orders`. */
   base: string;
-  /** Every react-query key that can be showing this document. */
   invalidate: string[];
-  /** What the operator sees if the write fails. */
   label: string;
 };
 
@@ -59,15 +56,8 @@ const DOCS: Record<HoldDocType, HoldDocSpec> = {
 };
 
 export type HoldVars = {
-  /** `doc_no` for the Sales Order, `id` for the other four — whatever that
-   *  document's own route is keyed by. */
   key: string;
-  /** TRUE puts the marker on, FALSE takes it off. No default anywhere in this
-   *  chain: a missing value is refused by the server (`on_hold_required`),
-   *  because guessing either way turns one operator action into the other. */
   onHold: boolean;
-  /** Why, in the operator's words. Optional — a hold with no reason is still a
-   *  hold, and demanding one would just produce a screen full of ".". */
   reason?: string | null;
 };
 
@@ -88,18 +78,10 @@ export function useSetDocumentHold(docType: HoldDocType) {
         body: JSON.stringify({ onHold, reason: reason ?? null }),
       }),
     onSuccess: (_data, vars) => {
-      /* `void` because react-query's invalidateQueries returns a promise nobody
-         waits on — a refetch that fails re-renders stale data, which the next
-         poll corrects, and awaiting it here would hold the mutation open for
-         every list this document appears on. Same posture as the sibling
-         mutations; the linter wants the intent spelled out rather than the
-         promise dropped silently. */
       for (const k of spec.invalidate) void qc.invalidateQueries({ queryKey: [k] });
       void qc.invalidateQueries({ queryKey: [spec.invalidate[0], vars.key] });
     },
     onError: (err, vars) => {
-      /* A refusal that reaches nobody is worse than a crash — the owner's
-         "the button does nothing" (CLAUDE.md, mutation-error.ts). */
       void serviceNotify({
         title: vars.onHold ? 'Could not put it on hold' : 'Could not take it off hold',
         body: err instanceof Error ? err.message : `Something went wrong with this ${spec.label}.`,

@@ -27,7 +27,6 @@
 import { describe, expect, test } from 'vitest';
 import { collectProcessingGateProblems, type ProcessingGateFacts } from './so-save-problems';
 
-/** An order released for ordering, fully addressed, with NOTHING paid. */
 const facts = (over: Partial<ProcessingGateFacts> = {}): ProcessingGateFacts => ({
   procDate: '2026-09-01',
   delivDate: '2026-09-20',
@@ -44,12 +43,6 @@ describe('the deposit never blocks a save (owner 2026-08-20)', () => {
     expect(collectProcessingGateProblems(facts())).toEqual([]);
   });
 
-  /* THE RED ONE. The cast is the whole point of this test: it hands the
-     collector exactly the shape the create and edit paths used to pass. Before
-     the ruling that produced `processing_date_unpaid`; after it, the condition
-     is GONE rather than merely unfed, so no caller can put the refusal back by
-     supplying the facts again. A test that simply omitted the key would have
-     passed before the change too, and proved nothing. */
   test('no caller can restore the refusal by handing over deposit facts', () => {
     const withDepositFacts = {
       ...facts(),
@@ -59,16 +52,10 @@ describe('the deposit never blocks a save (owner 2026-08-20)', () => {
     expect(collectProcessingGateProblems(withDepositFacts)).toEqual([]);
   });
 
-  /* The threshold used to be per company (Houzs 30%, 2990 50%), which is why
-     ProcessingGateFacts carried a companyCode at all. Nothing here reads a
-     company any more — the gate cannot give two companies different answers
-     about the money because it gives neither an answer. */
   test('the gate takes no company code — there is no per-company money rule left', () => {
     expect(Object.keys(facts())).not.toContain('companyCode');
   });
 
-  /* The ruling is ONE condition. These four still refuse — an order nobody can
-     deliver must not reach purchasing just because the money stopped counting. */
   test('customer / address / postcode still refuse', () => {
     const problems = codes(facts({
       completeness: { hasCustomerName: false, hasAddress: false, hasPostcode: false },

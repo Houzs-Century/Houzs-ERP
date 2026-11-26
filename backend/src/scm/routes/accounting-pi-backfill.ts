@@ -40,8 +40,6 @@ export type BackfillItem = {
   invoiceNumber: string;
   totalSen: number;
   kind: 'missing' | 'reshape' | 'current';
-  /** The ACTIVE journal's own date — a reshape's contra takes it, so the
-      invoice's month cancels within itself (bug 0647). Null when missing. */
   jeDate: string | null;
 };
 
@@ -92,16 +90,12 @@ export async function classifyPiBackfill(
   return { ok: true, items };
 }
 
-/* ── POST /accounting/backfill/pi-periodic[?dryRun=1&limit=N] ─────────────── */
 export const piPeriodicBackfill = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
   const dryRun = c.req.query('dryRun') === '1';
-  /* Batched: each invoice is a handful of reads and up to two engine posts,
-     and the Workers subrequest budget is finite. The caller repeats until
-     `remaining` is 0 — every pass is idempotent. */
   const limit = Math.min(25, Math.max(1, Number(c.req.query('limit') ?? 20) || 20));
 
   const cls = await classifyPiBackfill(sb, co.companyId);
@@ -120,8 +114,6 @@ export const piPeriodicBackfill = async (c: any): Promise<Response> => {
   const results: Array<{ invoiceNumber: string; kind: string; outcome: string; jeNo?: string; reason?: string }> = [];
   for (const item of pending.slice(0, limit)) {
     if (item.kind === 'reshape') {
-      /* The contra carries the ORIGINAL's date, not today's — the month the
-         invoice lives in cancels within itself (bug 0647). */
       const rev = await reversePiAccounting(sb, item.invoiceNumber, item.jeDate ? { entryDate: item.jeDate } : {});
       if (!rev.ok) {
         results.push({ invoiceNumber: item.invoiceNumber, kind: item.kind, outcome: 'failed', reason: `reverse: ${rev.reason ?? rev.status}` });

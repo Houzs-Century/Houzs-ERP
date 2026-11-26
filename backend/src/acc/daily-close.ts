@@ -17,7 +17,7 @@ import { resolveRoles } from './rules';
 import { fmtSen } from '../scm/shared/format';
 
 export type CloseBucketRow = {
-  bucket: string; // 'cash' | 'transfer' | acquirer code
+  bucket: string;
   systemSen: number;
   countedSen: number | null;
   diffSen: number;
@@ -31,7 +31,7 @@ export function bucketPayments(
 ): Map<string, number> {
   const buckets = new Map<string, number>();
   for (const r of rows) {
-    if (r.method === 'imported') continue; // migration-era, never part of a day's takings
+    if (r.method === 'imported') continue;
     if (r.method === 'converted') continue; // moved from a cancelled order — no money passed the till (docs/bugs/0927)
     const key =
       r.method === 'cash' ? 'cash'
@@ -86,8 +86,6 @@ export async function postCashOverShort(
 ): Promise<{ ok: true; status: 'posted' | 'already_posted' | 'zero_diff'; jeNo?: string } | { ok: false; status: string; reason?: string }> {
   if (diffSen === 0) return { ok: true, status: 'zero_diff' };
   const roles = await resolveRoles(sb, companyId);
-  // Counted < system → money is missing → expense (Dr over/short, Cr cash).
-  // Counted > system → drawer is over → the reverse.
   const short = diffSen < 0;
   const amount = Math.abs(diffSen);
   const r = await postJournal(sb, {

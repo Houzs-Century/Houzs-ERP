@@ -15,9 +15,6 @@ export interface BreadcrumbItem {
 
 interface Ctx {
   crumbs: BreadcrumbItem[];
-  /** Set the full crumb stack. Returns a cleanup fn that resets it
-   *  to empty — call from `useEffect` so a detail page's crumbs
-   *  disappear when it unmounts. */
   set: (crumbs: BreadcrumbItem[]) => void;
   clear: () => void;
 }
@@ -50,8 +47,6 @@ export function useBreadcrumbs(): Ctx {
  */
 export function useSetBreadcrumbs(crumbs: BreadcrumbItem[]) {
   const { set, clear } = useBreadcrumbs();
-  // Depend on a stable JSON snapshot so re-renders with equivalent
-  // arrays don't thrash context state.
   const key = JSON.stringify(crumbs);
   useEffect(() => {
     set(crumbs);

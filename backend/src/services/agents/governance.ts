@@ -1,37 +1,13 @@
-// ---------------------------------------------------------------------------
-// governance.ts — the Agent Operating Spec, made executable.
-//
-// docs/agents/operating-spec.md is the owner's target operating model. Its
-// section 11 is explicit: the decision-authority tables "should be converted
-// into a machine-readable Agent configuration rather than copied as one
-// unstructured prompt." This file is that conversion — the policy the LLM is
-// NOT trusted to hold in its head.
-//
-// Nothing here calls an LLM or touches the database. It is pure policy:
-//   • WHICH agents exist and how the code's families map to the spec IDs
-//   • the per-decision-class autonomy matrix (spec §3.8–§8.8, §9.3)
-//   • the Green/Amber/Red data-quality gate (spec §10.2)
-//   • the decision-packet shape every agent must emit (spec §9.4 / §10.6)
-//   • the runtime states (§10.5) and the stage-promotion gates (§10.4)
-//   • canSelfApprove() — the Stage-2 gate, so "auto-approve" stops being the
-//     blanket the spec forbids (§1.2: "never a blanket permission to approve
-//     everything") and becomes per-decision-class policy.
-//
-// Design rule taken from the spec itself (§1.2, §10.1): permissions and
-// approval are enforced by CODE, not prompt text. So a decision class marked
-// `neverAutonomous` is refused here even at Stage 3, and RED data halts a
-// material action here, regardless of what any prompt was talked into.
-// ---------------------------------------------------------------------------
 
 /** The seven agents the spec names (§2–§9), by their spec IDs. */
 export type SpecAgentId =
-  | 'HZS-OF-001'   // Order Fulfilment
-  | 'HZS-DLV-002'  // Delivery Planning & Transport
-  | 'HZS-COM-003'  // Customer Communication
-  | 'HZS-REP-004'  // Retail Purchasing & Replenishment (the "Procurement Agent")
-  | 'HZS-AR-005'   // Receivables, Collection & Delivery-Release
-  | 'HZS-SI-006'   // Sales & Commercial Intelligence
-  | 'GROUP-GCOA-001'; // Group Chief Operating Agent (orchestrator)
+  | 'HZS-OF-001'
+  | 'HZS-DLV-002'
+  | 'HZS-COM-003'
+  | 'HZS-REP-004'
+  | 'HZS-AR-005'
+  | 'HZS-SI-006'
+  | 'GROUP-GCOA-001';
 
 /** The families the CODE already runs (services/agent-console.ts). Not 1:1 with
  *  the spec: DOCUMENT/PMS have no spec agent, and OF/COM/GCOA have no family. */
@@ -70,9 +46,7 @@ export const FAMILY_TO_SPEC: Partial<Record<AgentFamily, SpecAgentId>> = {
  */
 export interface SpecAgentStatus {
   status: 'FULL' | 'PARTIAL' | 'NONE';
-  /** Spec limbs that have running code, with where it lives. */
   implemented: readonly string[];
-  /** Spec limbs with NO implementation. Empty for FULL. */
   missing: readonly string[];
 }
 
@@ -103,9 +77,6 @@ export const SPEC_AGENT_STATUS: Record<SpecAgentId, SpecAgentStatus> = {
 export const UNIMPLEMENTED_SPEC_AGENTS: readonly SpecAgentId[] =
   (Object.keys(SPEC_AGENT_STATUS) as SpecAgentId[]).filter((a) => SPEC_AGENT_STATUS[a].status === 'NONE');
 
-// ---------------------------------------------------------------------------
-// Autonomy matrix — spec §3.8–§8.8 and §9.3, transcribed verbatim.
-// ---------------------------------------------------------------------------
 
 /** The three-stage model, §1.3. */
 export type AutonomyStage = 1 | 2 | 3;
@@ -144,8 +115,6 @@ const COM: Matrix = {
   ROUTINE_REMINDER:   { stage1: 'Draft', stage2: 'Auto-send by cadence/consent', stage3: 'Automatic', neverAutonomous: 'Harassment/opt-out breach' },
   UPDATE_STRUCTURED_FIELD: { stage1: 'Propose', stage2: 'High-confidence low-risk field with audit', stage3: 'Automatic certified extraction', neverAutonomous: 'Price/refund/contract change' },
   DELIVERY_CONFIRMATION: { stage1: 'Record proposal', stage2: 'Auto-record explicit customer choice', stage3: 'Automatic', neverAutonomous: 'Infer silence as consent' },
-  // §5.8: this class has "No approval" at BOTH stage 2 and 3 — it never leaves
-  // classify-only. Encoded as neverAutonomous with the stages saying the same.
   COMPLAINT_RESOLUTION: { stage1: 'Classify only', stage2: 'No approval', stage3: 'No approval', neverAutonomous: 'Promise remedy' },
 };
 
@@ -173,9 +142,6 @@ const SI: Matrix = {
   EXPERIMENT_PROPOSAL: { stage1: 'Recommend', stage2: 'Small internal test within budget policy', stage3: 'Automatic certified test', neverAutonomous: 'Material campaign spend' },
 };
 
-/** GCOA (§9.3) is a decision-RIGHTS table, not a stage table — some rights are
- *  autonomous at all stages, some never. Encoded in the same shape: a right that
- *  is "Never directly" / "No" becomes neverAutonomous at every stage. */
 const GCOA: Matrix = {
   ROUTING_DECOMPOSITION: { stage1: 'Autonomous (all stages)', stage2: 'Autonomous', stage3: 'Autonomous', neverAutonomous: 'Routing that changes policy ownership' },
   PRIORITISATION:     { stage1: 'Recommend', stage2: 'Autonomous', stage3: 'Autonomous', neverAutonomous: 'Change committed dates / material spend / contract without approval' },
@@ -232,37 +198,23 @@ export function isNeverAutonomous(a: DecisionAuthority): boolean {
   return blocked(a.stage2) && blocked(a.stage3);
 }
 
-// ---------------------------------------------------------------------------
-// Data-quality gate — spec §10.2.
-// ---------------------------------------------------------------------------
 
 export type DataQuality = 'GREEN' | 'AMBER' | 'RED';
 
 export interface DataQualitySignals {
-  /** A required source record was missing / unreadable. */
   missingSource?: boolean;
-  /** Ledger vs order, stock vs moves, etc. did not reconcile. */
   reconciliationFailed?: boolean;
-  /** A duplicate record was detected. */
   duplicate?: boolean;
-  /** The record's company dimension disagrees with the scope (cross-company). */
   companyMismatch?: boolean;
-  /** Any integrity alarm the domain raised. */
   integrityAlert?: boolean;
-  /** The snapshot the agent read is older than its freshness budget. */
   staleSnapshot?: boolean;
-  /** Non-critical fields conflicted, or minor gaps. */
   minorGaps?: boolean;
 }
 
 export interface DataQualityVerdict {
   status: DataQuality;
-  /** RED: a material (irreversible/business-writing) action MUST NOT proceed. */
   mustStop: boolean;
-  /** AMBER: may analyse, but must disclose uncertainty and NOT execute anything
-   *  irreversible. */
   mustDisclose: boolean;
-  /** GREEN only: may recommend or execute within authority. */
   mayExecuteIrreversible: boolean;
   reasons: string[];
 }
@@ -294,32 +246,19 @@ export function dataQualityGate(sig: DataQualitySignals): DataQualityVerdict {
   return { status: 'GREEN', mustStop: false, mustDisclose: false, mayExecuteIrreversible: true, reasons: [] };
 }
 
-// ---------------------------------------------------------------------------
-// canSelfApprove — the Stage-2 gate (spec §1.2, §1.3, and each agent's §*.8).
-// ---------------------------------------------------------------------------
 
 export interface SelfApproveRequest {
   agent: SpecAgentId;
   decisionClass: string;
-  /** The stage the operator has certified this agent+class to. Below 2 → no
-   *  self-approval by definition (Stage 1 = human approves). */
   stage: AutonomyStage;
-  /** The freshness/integrity verdict for the records this action rests on. */
   dataQuality: DataQuality;
-  /** A size proxy for the action (units, RM-centi, drops…). Compared to `limit`
-   *  to honour "within limit / low-value" stage-2 cells. Omit if the class has
-   *  no size dimension. */
   valueProxy?: number;
-  /** The stage-2 ceiling for `valueProxy`. Omit = no ceiling on size. */
   limit?: number;
-  /** For classes whose neverAutonomous cell is "new supplier/vendor", whether
-   *  the counterparty is already known/approved. */
   counterpartyKnown?: boolean;
 }
 
 export interface SelfApproveVerdict {
   ok: boolean;
-  /** Present when ok=false: the single reason, for the run summary + audit. */
   reason?: string;
 }
 
@@ -336,35 +275,24 @@ export function canSelfApprove(req: SelfApproveRequest): SelfApproveVerdict {
   if (!a) {
     return { ok: false, reason: `${req.agent} has no decision class '${req.decisionClass}' — refusing to self-approve an unknown action` };
   }
-  // Classes that never self-execute at any stage (e.g. complaint resolution).
   if (isNeverAutonomous(a)) {
     return { ok: false, reason: `'${req.decisionClass}' is never autonomous (${a.neverAutonomous}) — human decision only` };
   }
-  // RED data halts every material action, whatever the stage (§10.2).
   const dq = req.dataQuality;
   if (dq === 'RED') {
     return { ok: false, reason: 'data-quality is RED — must stop and escalate, no self-approval' };
   }
-  // Stage 1 means a human approves, by definition (§1.3).
   if (req.stage < 2) {
     return { ok: false, reason: 'agent is at Stage 1 for this class — approval is the human role' };
   }
-  // AMBER may analyse but not execute anything irreversible (§10.2). Self-
-  // approval executes, so AMBER blocks it.
   if (dq === 'AMBER') {
     return { ok: false, reason: 'data-quality is AMBER — may analyse but not self-execute an irreversible action' };
   }
-  // "New/high-value supplier" and "New vendor/high spend" are the neverAutonomous
-  // cells for EXTERNAL_PO / OUTSOURCE_TRIP — an unknown counterparty is exactly
-  // that case, so it is never self-approved. The spec joins the words with a
-  // slash ("New/high-value supplier"), so match "new" and "supplier|vendor"
-  // independently rather than as an adjacent phrase.
   if (req.counterpartyKnown === false
       && /\bnew\b/i.test(a.neverAutonomous)
       && /(supplier|vendor)/i.test(a.neverAutonomous)) {
     return { ok: false, reason: `counterparty is new — '${a.neverAutonomous}' is never autonomous` };
   }
-  // Stage-2 "within limit / low-value" cells: over the ceiling is a human call.
   if (req.limit != null && req.valueProxy != null && req.valueProxy > req.limit) {
     return { ok: false, reason: `size ${req.valueProxy} exceeds the Stage-2 self-approval limit ${req.limit} — human approval required` };
   }
@@ -393,15 +321,9 @@ export function canSelfTuneConfig(req: { stage: AutonomyStage; dataQuality: Data
   return { ok: true };
 }
 
-// ---------------------------------------------------------------------------
-// Decision packet — the required output shape (§9.4 + §10.6). Encoded so agents
-// emit a structured packet, not a summary string. Not yet persisted; the shape
-// is fixed here first so every agent converges on ONE structure.
-// ---------------------------------------------------------------------------
 
 export interface DecisionOption {
   label: string;
-  /** "do nothing" MUST always be one of the options (§9.4). */
   isDoNothing?: boolean;
   note?: string;
 }
@@ -409,36 +331,23 @@ export interface DecisionOption {
 export interface DecisionPacket {
   agent: SpecAgentId;
   decisionClass: string;
-  /** Exactly what is proposed or executed. */
   statement: string;
-  /** Business reason + triggering event. */
   reason: string;
-  /** Source records with timestamps + freshness. */
   evidence: Array<{ ref: string; at?: string; freshness?: DataQuality }>;
-  /** Options considered, including do-nothing. */
   options: DecisionOption[];
-  /** Financial / customer / capacity / service / compliance / data-quality. */
   impact: string;
-  /** The policy + approval rule applied. */
   policy: string;
-  /** 0..1, plus the assumptions and unresolved uncertainties. */
   confidence: number;
   assumptions: string[];
-  /** Reversibility, rollback method, verification test. */
   reversible: boolean;
   rollback: string;
   verification: string;
-  /** Who executes, who approves (if required), and the deadline. */
   executor: SpecAgentId | 'HUMAN';
   approver?: 'HUMAN' | 'AGENT_AUTO';
   approvalRequired: boolean;
-  /** Filled after execution: what happened + whether the benefit was realised. */
   outcome?: string;
 }
 
-// ---------------------------------------------------------------------------
-// Runtime states (§10.5) and kill-switch scope (§10.6 kill switch).
-// ---------------------------------------------------------------------------
 
 export const RUNTIME_STATES = [
   'IDLE', 'OBSERVING', 'ANALYSING', 'WAITING_FOR_DATA', 'WAITING_FOR_APPROVAL',
@@ -452,13 +361,9 @@ export type RuntimeState = typeof RUNTIME_STATES[number];
  *  spec's additional scopes, named here so the gap is explicit. */
 export type KillScope = 'ALL' | 'AGENT' | 'CLASS' | 'TOOL' | 'COMPANY' | 'BRANCH';
 
-// ---------------------------------------------------------------------------
-// Stage-promotion gates (§10.4) — the readiness bar to move S1→S2 and S2→S3.
-// Encoded so promotion is a checked decision, not a vibe.
-// ---------------------------------------------------------------------------
 
 export interface PromotionGate {
-  minAcceptanceOrAccuracy: number; // fraction 0..1
+  minAcceptanceOrAccuracy: number;
   minCases: number;
   controls: string;
   exceptions: string;

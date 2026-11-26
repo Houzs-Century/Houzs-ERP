@@ -52,9 +52,6 @@ const METHOD_LABELS: Record<string, string> = {
 };
 const methodLabel = (m: string | null): string => (m ? METHOD_LABELS[m] ?? m : '—');
 
-/** Numeric DD/MM/YYYY (owner-locked date format), TZ-aware via the shared helper
- *  so a date-only string renders in Asia/Kuala_Lumpur without an off-by-one on an
- *  off-zone device; em-dash when empty/unparseable. */
 const dm = (d: string | null | undefined): string => formatDate(d);
 
 export function PaymentInfoBlock({ payment }: { payment: RecordedPaymentLike }) {

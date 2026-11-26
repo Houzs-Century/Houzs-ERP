@@ -2,12 +2,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AckTrendCard, AnnouncementBannerStack, TeamPendingCard } from "./AnnouncementDashboard";
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Overview pieces (design handoff 2026-09-04, screen 5): the banner stack —
-   first notice expanded, the rest collapsed, the overflow row — and the
-   supervisor's "My team's pending" card that renders only for a user with
-   direct reports.
-   ──────────────────────────────────────────────────────────────────────────── */
 
 const { navigate, ack, hookState, apiGet, apiPost, canWrite } = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -32,7 +26,6 @@ vi.mock("../hooks/useToast", () => ({
 vi.mock("../hooks/useDialog", () => ({
   useDialog: () => ({ confirm: vi.fn(async () => true) }),
 }));
-// A minimal useQuery: fetch once on mount, expose reload — enough for the card.
 vi.mock("../hooks/useQuery", async () => {
   const React = await import("react");
   return {
@@ -77,14 +70,11 @@ describe("AnnouncementBannerStack", () => {
     hookState.notices = [notice("w", "WARNING"), notice("s", "SOP"), notice("l", "LEARNING"), notice("g", "GENERAL")];
     hookState.ackedIds = new Set();
     render(<AnnouncementBannerStack />);
-    // Expanded card: body + the 150px action column with the category CTA.
     expect(screen.getByText("Body of w")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Got it" })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "View details" }).length).toBeGreaterThan(0);
-    // Collapsed SOP row keeps its own CTA wording and secondary.
     expect(screen.getByRole("button", { name: "Acknowledge" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Read SOP" })).toBeTruthy();
-    // Three visible, one folded.
     expect(screen.queryByText("Title g")).toBeNull();
     expect(screen.getByText("1 more notice collapsed")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Expand" }));
@@ -99,7 +89,6 @@ describe("AnnouncementBannerStack", () => {
     expect(ack).toHaveBeenCalledWith(expect.objectContaining({ id: "w" }));
     fireEvent.click(screen.getByRole("button", { name: "Read SOP" }));
     expect(navigate).toHaveBeenCalledWith("/announcements?id=s");
-    // Clicking a collapsed title expands it in place.
     fireEvent.click(screen.getByRole("button", { name: "Title s" }));
     expect(screen.getByText("Body of s")).toBeTruthy();
   });
@@ -187,7 +176,7 @@ describe("AckTrendCard", () => {
     const card = await screen.findByTestId("ack-trend");
     expect(card.textContent).toContain("Ack rate · last 30 days");
     expect(card.textContent).toContain("66%");
-    expect(card.textContent).toContain("2026/08/07"); // house DD/MM/YYYY, never a month name
+    expect(card.textContent).toContain("2026/08/07");
     expect(card.textContent).toContain("5 notices posted · 33 of 50 acknowledgements received (66%)");
     const bars = card.querySelectorAll("[title]");
     expect(bars).toHaveLength(6);

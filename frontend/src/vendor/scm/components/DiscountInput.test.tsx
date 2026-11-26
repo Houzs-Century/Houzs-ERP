@@ -10,7 +10,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 import { DiscountInput, readDiscountEntry } from './DiscountInput';
 
-const BASE = 1_000_00; // RM 1,000.00 line, so 25% is RM 250.00
+const BASE = 1_000_00;
 
 describe('readDiscountEntry — what did the operator mean', () => {
   test('a bare number is an AMOUNT in ringgit', () => {
@@ -106,8 +106,6 @@ describe('DiscountInput — one field, no mode to pick', () => {
   });
 });
 
-/* Regression: same default as MoneyInput. Clicking a discount showing 0.00 must
-   select it, so typing 50 replaces the 0 instead of reading 500 or 0.0050. */
 describe('DiscountInput focus', () => {
   test('selects the whole value on focus by default', () => {
     vi.useFakeTimers();

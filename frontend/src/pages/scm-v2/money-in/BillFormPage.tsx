@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// BillFormPage — an other debtor's bill (or debit note) form in place of the
-// page it was opened from (the owner's Claude Design, batch 5 §3.1 and §4.1):
-// Invoices' New debtor bill / Copy as new / Edit (`?form=new|copy|edit`),
-// Debtor maintenance's New bill, and the Credit / debit notes page's other
-// debtor debit note. The same doors as before: POST /other-debtors/:id/bills
-// (docKind DN for a debit note), PATCH /other-debtors/bills/:id (re-posts) —
-// nothing posts differently. A posted bill opens its own page.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type ReactNode } from 'react';
 import {
@@ -37,11 +28,8 @@ export const billValuesOf = (
 
 export function BillFormPage({ mode, id, debtorId, docKind, backLabel, titleExtra, onClose, openDoc }: {
   mode: 'new' | 'copy' | 'edit';
-  /** The bill an Edit or a Copy starts from. */
   id: string | null;
-  /** The debtor a New bill starts on ('' for none yet). */
   debtorId: string;
-  /** 'DN': a debit note to the debtor — a bill of its own kind. */
   docKind?: 'DN';
   backLabel: string;
   titleExtra?: ReactNode;
@@ -55,7 +43,6 @@ export function BillFormPage({ mode, id, debtorId, docKind, backLabel, titleExtr
   const debtorsQ = useOtherDebtors();
   const create = useCreateDebtorBill();
   const update = useUpdateDebtorBill();
-  /* One key per opened form, a fresh one when the screen opens another: a double press posts one bill. */
   const idemKey = useIdempotencyKeyFor(`${mode}:${id ?? 'new'}:${docKind ?? 'INV'}`);
   const [error, setError] = useState<string | null>(null);
   const accounts = useMemo(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);

@@ -45,14 +45,9 @@ export type SetChangeResult = { ok: true; written: number } | { ok: false; reaso
 export async function costChangedSofaSets(sb: Sb, args: {
   docNo: string;
   companyId: number;
-  /** The order date (YYYY-MM-DD): the day the unchanged pieces are priced on. */
   orderDay: string;
-  /** Today in Malaysia: the day of the change. */
   changeDay: string;
-  /** The base models whose set changed. */
   models: readonly string[];
-  /** The lines this change added or changed: their cost is the change day's,
-   *  already written by the caller. */
   changedLineIds: readonly string[];
 }): Promise<SetChangeResult> {
   const models = new Set(args.models.map((m) => m.toUpperCase()).filter(Boolean));

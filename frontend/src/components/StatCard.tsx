@@ -6,32 +6,11 @@ interface Props {
   value: ReactNode;
   subtitle?: ReactNode;
   tone?: "default" | "success" | "warning" | "error";
-  /** When set, the card renders as a button — focusable, keyboard-activatable. */
   onClick?: () => void;
-  /** Highlight the card as the currently-selected drill-down (brass border + tint). */
   active?: boolean;
-  /** Optional left colour rail (a Tailwind bg-* class, e.g. "bg-primary").
-   *  When set, a thin vertical bar runs down the card's left edge to colour-
-   *  code the metric. Omitted by default so existing callers are unchanged. */
   rail?: string;
-  /**
-   * The number is NOT KNOWN YET (first load, or a search/filter whose results
-   * have not come back). Renders an explicit unknown marker instead of `value`.
-   *
-   * This exists because an aggregate computed from an empty-because-unloaded row
-   * set is a real-looking zero: "Inventory Value RM 0.00" mid-search reads as a
-   * fact, and an operator will act on it. A figure the app cannot vouch for must
-   * never be rendered as a figure — least of all a money one.
-   */
   pending?: boolean;
-  /**
-   * The read behind the number FAILED. Wins over `pending`: a failed read is not
-   * "loading", and a tile that says "Loading…" after its request has died keeps
-   * staff waiting instead of retrying. Absent = not failed, which still never
-   * shows a figure while `pending` is set — the safe direction.
-   */
   failed?: boolean;
-  /** Offered as a Retry link while `failed`. */
   onRetry?: () => void;
 }
 
@@ -59,12 +38,10 @@ export function StatCard({ label, value, subtitle, tone = "default", onClick, ac
         active && "border-primary/60 bg-primary-soft/50 ring-1 ring-primary/30"
       )}
     >
-      {/* Left colour rail — colour-codes the metric when `rail` is set. */}
       {rail && (
         <span className={cn("pointer-events-none absolute left-0 top-0 h-full w-1 rounded-l-lg", rail)} />
       )}
 
-      {/* Brass top edge — thin by default, glows on hover (full when active) */}
       <span
         className={cn(
           "pointer-events-none absolute left-0 top-0 h-px w-full bg-gradient-to-r from-transparent to-transparent transition-opacity duration-300 group-hover:via-accent",
@@ -96,7 +73,6 @@ export function StatCard({ label, value, subtitle, tone = "default", onClick, ac
           {onRetry && (
             <>
               {" · "}
-              {/* A span, not a button: the card itself may be a <button>. */}
               <span
                 role="button"
                 tabIndex={0}

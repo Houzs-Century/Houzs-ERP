@@ -1,37 +1,3 @@
-// ----------------------------------------------------------------------------
-// GoodsReceivedDetail — full-page route at /grns/:id.
-//
-// EXACT clone of PurchaseOrderDetail (the gold standard): a draft-style View →
-// Edit → Save/Back machine, Print PDF, Cancel. The ONLY difference from the PO
-// page is the status label — a GRN reads as "Confirmed" (no Draft/lifecycle).
-//
-//   1. Header: back button + GRN# · supplier + status pill + actions
-//   2. Supplier card: editable supplier + received date + DN ref + receive-into
-//      warehouse + currency + notes (inputs in Edit, read-only InfoCells in View)
-//   3. Line items table: code + group + variants summary + qty(received) + unit
-//      + disc + total + delivery (inline-editable in Edit)
-//   4. Totals card: subtotal + total (live from line items)
-//
-// Draft model (mirrors PO #194):
-//   • Edit  → snapshots header + lets you edit Qty(received) / Unit / Disc /
-//             Delivery INLINE per row. Nothing persists until the single top Save.
-//   • Save  → commits header changes + every changed line's field edits.
-//   • Back  → leaves the page, discarding the field-edit draft (no auto-save).
-//   • Delete (trash) removes the line immediately (no confirm popup).
-//   • Changing the header Received Date cascades to every line's delivery date.
-//
-// grn_status: POSTED → "Confirmed" (editable). CANCELLED → "Cancelled" (locked).
-// CLOSED → "Closed" (locked). isLocked = CANCELLED or CLOSED.
-//
-// HOUZS VENDOR — re-vendored from apps/backend/src/pages/GoodsReceivedDetail.tsx
-// (2990 T12, 2026-06-19). Import boundary only: react-router → react-router-dom;
-// the GRN flow hooks resolve from the vendored split module grn-queries (NOT the
-// 2990 flow-queries barrel); suppliers / inventory / warehouse / category-badges
-// / mfg-products + the PDF helper → ../../vendor/scm/*; back / from-PO links
-// repointed to /scm/*. Carries 2990's T12 in-place variant editor verbatim
-// (editable Description + per-category SOFA/BEDFRAME variant editor + bedframe
-// total-height auto-compute) for existing bedframe/sofa lines in Edit mode.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -93,9 +59,6 @@ const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   return fmtMoneySen(v, currency);
 };
 
-/* T12 — existing GRN lines whose product is a bedframe/sofa get the SAME
-   per-category variant editor as New GRN. Small local copy of GrnNew's
-   VariantSelect (not exported there). */
 const VariantSelect = ({
   label, options, value, onChange, disabled = false,
 }: {
@@ -121,12 +84,6 @@ const VariantSelect = ({
   </label>
 );
 
-/* Draft state shapes (mirror PO #194). HeaderDraft mirrors the editable GRN
-   header fields; LineDraft holds the inline-editable per-line fields where qty
-   maps to qty_received. T12 widens it with the line's identity/variant fields
-   (materialName / itemGroup / variants) so an EXISTING GRN line can edit its
-   description + bedframe/sofa variants in Edit mode; the server re-buckets
-   inventory on save. */
 type HeaderDraft = {
   supplierId: string;
   receivedAt: string;
@@ -136,19 +93,13 @@ type HeaderDraft = {
   notes: string;
 };
 type LineDraft = {
-  qty: number;            // maps to qty_received
+  qty: number;
   unitPriceSen: number;
   discountSen: number;
   deliveryDate: string | null;
   materialName: string;
   itemGroup: string | null;
   variants: Record<string, unknown> | null;
-  /* migration 0280 — the zero-cost receipt gate's escape hatch. The gate
-     refuses a receipt that would open a zero-cost stock layer for a SKU the
-     company has bought at a real price before; this tick is the operator
-     saying the line genuinely arrived free (GWP, demo, display). It is the
-     ONLY way past the refusal that does not involve inventing a price, so it
-     has to be reachable from the same screen the refusal is read on. */
   zeroCostAck: boolean;
   zeroCostReason: string;
   rackId: string;
@@ -158,8 +109,6 @@ type GrnItemRow = Record<string, unknown> & {
   id: string;
   item_code: string;
   material_name: string;
-  /* Supplier-facing dual-code rule (Commander) — grn_items snapshots the
-     supplier's own SKU at receive time; surfaced read-only on the line card. */
   supplier_sku?: string | null;
   qty_received: number;
   unit_price_sen: number;
@@ -170,20 +119,13 @@ type GrnItemRow = Record<string, unknown> & {
   material_kind?: string | null;
   description?: string | null;
   variants?: Record<string, unknown> | null;
-  /* Commander 2026-06-04 — destination rack chosen at receiving time (nullable).
-     Resolved to its label via the GRN's warehouse racks for display. */
   rack_id?: string | null;
   qty_accepted?: number | null;
-  /* migration 0280 — zero-cost receipt acknowledgement + who set it. */
   zero_cost_ack?: boolean | null;
   zero_cost_reason?: string | null;
-  /* Bug #2 (2026-05-31) — server-resolved per-line source PO number + the GRN's
-     receive date, so each line surfaces "received from which PO" + "receive date". */
   source_po_number?: string | null;
   source_po_id?: string | null;
   received_at?: string | null;
-  /* Downstream "Transfer To" breakdown (read-only): the Purchase Invoice(s) and
-     Purchase Return(s) this GRN line was carried into, resolved server-side. */
   downstream?: { docNumber: string; docType: 'PI' | 'PR'; qty: number; status: string }[];
 };
 
@@ -209,18 +151,12 @@ const lineSnapshot = (it: GrnItemRow): LineDraft => ({
   rackId:         it.rack_id ?? '',
 });
 
-/* Manual "extra item" add-row draft — a genuinely-free receipt (an item the
-   source PO never ordered, a supplier extra, a sample). It carries no
-   purchase_order_item_id, so the server writes the stock IN but ticks nothing
-   off any PO; the unlinked-PO guard refuses it only when the item IS on the
-   parent PO (that must go through the From-PO picker instead). Money is in sen,
-   the code is item_code — matching the New-GRN manual line. */
 type AddDraft = {
   itemCode: string;
   materialName: string;
   supplierSku: string | null;
   itemGroup: string | null;
-  qty: number;            // maps to qty_received
+  qty: number;
   unitPriceSen: number;
 };
 const BLANK_ADD: AddDraft = {
@@ -246,13 +182,8 @@ export const GoodsReceivedDetail = () => {
   const grn = detail.data?.grn ?? null;
   const items = (detail.data?.items ?? []) as GrnItemRow[];
 
-  /* Commander 2026-06-04 — resolve each line's rack_id to its label. Racks are
-     warehouse-scoped, so we load the racks of THIS GRN's receive-into warehouse
-     (grn.warehouse_id) and build an id → label map for the Rack column below. */
   const racksQ = useGrnRackOptions(grn?.warehouse_id ?? undefined);
   const rackLabelById = racksQ.labelById;
-  /* The picker's labels also carry the other companies' stock on the same
-     shelf ("Rack L5.1 · HC 6 pcs"); the id → label map above stays plain. */
   const rackOptions = racksQ.options;
   /* A line split over several racks (owner 2026-10-02) reads as "L3.1 x6, L3.2 x4". */
   const splitQ = useGrnItemRacks(grn?.id);
@@ -264,9 +195,6 @@ export const GoodsReceivedDetail = () => {
     return m;
   }, [splitQ.data, rackLabelById]);
 
-  /* T12 — maintenance config + special-orders pools drive the per-category
-     variant editor on EXISTING bedframe/sofa lines in Edit mode (same dropdown
-     pools as New GRN). */
   const maintQ = useMaintenanceConfig('master');
   const maint  = maintQ.data?.data ?? null;
   const specialAddonsQ = useSpecialAddons();
@@ -280,15 +208,9 @@ export const GoodsReceivedDetail = () => {
     return { bedframe: pick('BEDFRAME'), sofa: pick('SOFA') };
   }, [specialAddonsQ.data]);
 
-  /* View → Edit gate (mirror PO) — default read-only View; click Edit to flip
-     into draft mode. The GRN list's right-click "Edit" lands here with ?edit=1. */
   const [searchParams] = useSearchParams();
   const [isEditing, setIsEditing] = useState(() => searchParams.get('edit') === '1');
 
-  /* Draft buffers. headerDraft is null until the first header field is touched
-     (then seeded from the GRN). lineDrafts overlays per-line edits keyed by item
-     id; any line without an entry shows its stored values. None of this persists
-     until Save. */
   const [headerDraft, setHeaderDraft] = useState<HeaderDraft | null>(null);
   const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
   const [savingDraft, setSavingDraft] = useState(false);
@@ -316,11 +238,6 @@ export const GoodsReceivedDetail = () => {
     enabled: showAddItem && debouncedProductQuery.trim().length >= 2,
   });
 
-  // DRAFT + POSTED ("Confirmed") are editable; CANCELLED / CLOSED lock. POSTED is
-  // additionally locked once the GRN has a downstream PI/PR (unified model,
-  // migration 0106) — to edit you must delete the downstream doc first. A DRAFT
-  // GRN can never have downstream children (it committed nothing), so it stays
-  // editable. The line-CRUD endpoints accept DRAFT writes WITHOUT moving stock.
   const hasChildren = Boolean(grn?.has_children);
   const isDraft = grn?.status === 'DRAFT';
   /* Owner 2026-08-20 (§8 GAP-1) — a Purchase Invoice / Return no longer freezes
@@ -336,9 +253,6 @@ export const GoodsReceivedDetail = () => {
   addLineHandoff.current = { enabled: isEditing && !isLocked, onTrigger: () => setShowAddItem(true) };
   const lockedDueToChildren = grn ? (grn.status === 'POSTED' && hasChildren) : false;
 
-  /* Only a HARD lock (Cancelled / Closed) drops us out of Edit — a GRN with a
-     PI/PR stays editable for its own-stage fields, so children must NOT kick us
-     back to View. */
   useEffect(() => {
     if (hardLocked && isEditing) {
       setIsEditing(false);
@@ -347,19 +261,8 @@ export const GoodsReceivedDetail = () => {
     }
   }, [hardLocked, isEditing]);
 
-  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
-     until 2026-08-17, so the loading render called fewer hooks than the loaded
-     one and React threw #310 ("rendered more hooks than during the previous
-     render") the moment the query resolved — a blank "Something went wrong
-     loading this page." on every direct URL / refresh of a GRN. Arriving from
-     the list hid it: react-query already had the detail cached, so the
-     isPending branch never rendered first. `deliverPrintPdf` therefore has to
-     tolerate a null grn; it can only ever be CALLED from the preview dialog,
-     which does not exist until the record has loaded. */
   const deliverPrintPdf = (action: PdfAction) => {
     if (!grn) return;
-    // GRN PDF (AutoCount layout) — mirrors PO's print wiring its own
-    // purchase-order-pdf helper, here the GRN-specific grn-pdf helper.
     return import('../../vendor/scm/lib/grn-pdf').then(({ generateGrnPdf }) =>
       generateGrnPdf(grn, items as any, { action }),
     ).catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
@@ -381,7 +284,6 @@ export const GoodsReceivedDetail = () => {
     );
   }
 
-  /* ── Draft helpers (grn is guaranteed non-null past the guards above) ── */
   const visibleItems = items;
   const lineOf = (it: GrnItemRow): LineDraft => lineDrafts[it.id] ?? lineSnapshot(it);
   const lineTotalOf = (it: GrnItemRow): number => {
@@ -391,7 +293,6 @@ export const GoodsReceivedDetail = () => {
   };
   const itemsSubtotal = visibleItems.reduce((s, it) => s + lineTotalOf(it), 0);
   const grandTotal = itemsSubtotal + (grn.tax_sen ?? 0);
-  // Freight/service lines are charges, not units received (mirror New GRN's Line Summary).
   const totalQty = visibleItems.reduce((s, it) => {
     const d = lineOf(it);
     return isServiceLine({ itemGroup: d.itemGroup, itemCode: it.item_code }) ? s : s + (isEditing ? d.qty : it.qty_received);
@@ -405,8 +306,6 @@ export const GoodsReceivedDetail = () => {
        fan down into the line drafts — that would mark a locked line "changed" and
        Save would 409 on the line PATCH (owner 2026-08-20, §8 GAP-1). */
     if (lockedDueToChildren) return;
-    // Received Date cascades to every line's delivery date (mirror PO's Expected
-    // Delivery cascade).
     if (k === 'receivedAt') {
       setLineDrafts((prev) => {
         const next = { ...prev };
@@ -421,8 +320,6 @@ export const GoodsReceivedDetail = () => {
   const setLine = (it: GrnItemRow, patch: Partial<LineDraft>) =>
     setLineDrafts((prev) => ({ ...prev, [it.id]: { ...(prev[it.id] ?? lineSnapshot(it)), ...patch } }));
 
-  /* T12 — patch one variant key on a line + auto-compute bedframe Total Height
-     (= Divan + Leg + Gap), mirroring New GRN's setVariant. */
   const setVariant = (it: GrnItemRow, key: string, value: string) =>
     setLineDrafts((prev) => {
       const cur = prev[it.id] ?? lineSnapshot(it);
@@ -446,10 +343,6 @@ export const GoodsReceivedDetail = () => {
     setProductQuery('');
   };
 
-  /* Mirror New GRN's manual line picker: a supplier binding fills name + unit
-     price + supplier SKU + category; a bare catalogue hit fills name + category;
-     free typing keeps the text and drops any stale supplier code (a code must
-     not outlive the pick it belonged to). */
   const onAddCodeChange = (code: string) => {
     setProductQuery(code);
     const bound = grn.supplier_id ? bindings.find((b) => b.item_code === code) : undefined;
@@ -489,7 +382,7 @@ export const GoodsReceivedDetail = () => {
     try {
       await addGrnItem.mutateAsync({
         grnId:               grn.id,
-        purchaseOrderItemId: null,            // manual line — no PO rollup
+        purchaseOrderItemId: null,
         materialKind:        'mfg_product',
         itemCode:            code,
         materialName:        name,
@@ -501,24 +394,10 @@ export const GoodsReceivedDetail = () => {
       });
       resetAddItem();
     } catch (e) {
-      /* The server's unlinked-PO guard (receiving a material the parent PO
-         already orders, by hand), the zero-cost receipt gate, and any lock /
-         over-receipt surface here as a plain sentence. Keep the row open so the
-         operator can adjust the code / price or switch to the From-PO picker.
-         A zero-cost refusal is then resolved on the added line's own card
-         (its zero-cost acknowledgement) once the line exists. */
       setAddError(e instanceof Error ? e.message : "Couldn't add this item.");
     }
   };
 
-  /* Single Save — commit header (only if touched) + every changed line's field
-     edits, then drop back to View. Back discards the field-edit draft.
-     (Line delete already committed server-side — see the trash handler.)
-     Resolves true when everything saved. A rack is placement only and has its own
-     endpoint, so it is saved FIRST and on its own: a line whose field edit the
-     server refuses (a lock, the zero-cost gate) no longer takes its rack, or the
-     racks of every line after it, down with it. A line that failed keeps its
-     draft and the page stays in Edit, naming what was not saved. */
   const handleSave = async (): Promise<boolean> => {
     if (savingDraft) return false;
     setSavingDraft(true);
@@ -545,13 +424,9 @@ export const GoodsReceivedDetail = () => {
           d.unitPriceSen !== it.unit_price_sen ||
           d.discountSen !== (it.discount_sen ?? 0) ||
           (d.deliveryDate ?? null) !== (it.delivery_date ?? null) ||
-          /* T12 — identity/variant edits participate in the dirty check. */
           d.materialName !== snap.materialName ||
           (d.itemGroup ?? '') !== (snap.itemGroup ?? '') ||
           JSON.stringify(d.variants ?? {}) !== JSON.stringify(snap.variants ?? {}) ||
-          /* The zero-cost waiver participates: without this a line ticked and
-             saved on its own would look unchanged and never reach the server,
-             leaving the operator to hit the same refusal again. */
           d.zeroCostAck !== snap.zeroCostAck ||
           d.zeroCostReason.trim() !== snap.zeroCostReason.trim();
         if (changed) {
@@ -560,15 +435,10 @@ export const GoodsReceivedDetail = () => {
               grnId: grn.id, itemId: it.id,
               qty: d.qty, unitPriceSen: d.unitPriceSen,
               discountSen: d.discountSen, deliveryDate: d.deliveryDate,
-              /* T12 — send the line's identity + variants; useUpdateGrnItem
-                 forwards them and the server re-buckets inventory + recomputes
-                 description2. materialName maps to both description + name. */
               materialName: d.materialName,
               description:  d.materialName,
               itemGroup:    d.itemGroup ?? undefined,
               variants:     d.variants ?? {},
-              /* migration 0280 — the server stamps who and when from the session;
-                 the client only ever sends the decision and the reason. */
               zeroCostAck:    d.zeroCostAck,
               zeroCostReason: d.zeroCostReason.trim() || null,
             });
@@ -580,7 +450,6 @@ export const GoodsReceivedDetail = () => {
       }
       setHeaderDraft(null);
       if (failed.length > 0) {
-        // Only the lines that failed keep their draft; a rack that saved reads back as the line's own.
         setLineDrafts(kept);
         void notify({ title: 'Some changes were not saved', body: failed.join(' · '), tone: 'error' });
         return false;
@@ -598,7 +467,6 @@ export const GoodsReceivedDetail = () => {
 
   return (
     <div className={styles.page}>
-      {/* ── Header ──────────────────────────────────────────────── */}
       <div className={styles.headerRow}>
         <div className={styles.titleBlock}>
           <Link to="/scm/grns" className={styles.backBtn}>
@@ -613,25 +481,15 @@ export const GoodsReceivedDetail = () => {
           </div>
         </div>
         <div className={styles.actions}>
-          {/* Total KPI tile — tracks the live line items (incl. unsaved draft edits). */}
           <div className={styles.totalRail}>
             <span className={styles.totalRailLabel}>Total</span>
             <span className={styles.totalRailValue}>{fmtRm(grandTotal, grn.currency)}</span>
           </div>
-          {/* A GRN is Confirmed the moment it exists (no Draft/lifecycle). */}
           <StatusPill docType="grn" status={grn.status} />
           <RelationshipMapButton type="grn" id={id} />
-          {/* From Purchase Order — Commander 2026-05-31: the EDIT flow uses the
-              SAME top-level convert-from-PO picker as Create GR (a GRN is built by
-              CONVERTING from POs, aggregating the supplier's outstanding PO lines
-              for THIS warehouse — not a free line-by-line add). Mirrors GrnNew's
-              header action; appends the picked lines into THIS GRN. Shown only in
-              Edit mode and never while locked (cancelled / closed / has PI-PR). */}
           {isEditing && !isLocked && (
             <Button
               variant="ghost" size="md"
-              /* Leaving for the picker would drop every unsaved line edit, the
-                 racks keyed on this page among them: save them first. */
               onClick={async () => { if (await handleSave()) navigate(`/scm/grns/from-po?appendToGrn=${grn.id}`); }}
               title="Add the supplier's outstanding PO lines for this warehouse into this GRN"
             >
@@ -655,10 +513,6 @@ export const GoodsReceivedDetail = () => {
             ]}
             {...print.handlers}
           />
-          {/* Cancel — when the GRN is still editable (Draft or Confirmed) AND has
-              no downstream PI/PR (unified model). Confirm dialog → cancel mutation.
-              For a Confirmed GRN this reverses the receipt; for a Draft the server
-              short-circuits (nothing committed to reverse) and just voids it. */}
           {(grn.status === 'POSTED' || grn.status === 'DRAFT') && !hasChildren && (
             <Button variant="ghost" size="md"
               onClick={async () => {
@@ -679,9 +533,6 @@ export const GoodsReceivedDetail = () => {
               <span>{cancel.isPending ? 'Cancelling…' : 'Cancel'}</span>
             </Button>
           )}
-          {/* View → Edit gate. Default View shows Edit (disabled while locked);
-              editing flips into draft mode and the button becomes the single
-              "Save" that commits the whole draft. Back (top-left) discards. */}
           {!isEditing ? (
             <Button variant="primary" size="md" onClick={enterEdit} disabled={hardLocked}>
               <Pencil {...ICON} />
@@ -696,9 +547,6 @@ export const GoodsReceivedDetail = () => {
         </div>
       </div>
 
-      {/* Child-lock note — POSTED with a downstream PI/PR. The supplier, currency
-          and line items are locked (the invoice/return was billed against them);
-          the received date, notes and warehouse stay editable (§8 GAP-1). */}
       {lockedDueToChildren && (
         <div className={styles.bannerWarn}>
           <strong>Has a Purchase Invoice / Return.</strong> Its supplier, currency and line items are
@@ -707,12 +555,6 @@ export const GoodsReceivedDetail = () => {
         </div>
       )}
 
-      {/* ── DRAFT banner + Confirm (Draft/Confirmed flow, mirrors SO) ───────
-          A GRN saved as a draft has committed NOTHING: no stock IN, no PO
-          received-rollup. Review the lines, then Confirm to receive — that runs
-          postGrnAndRollup server-side (inventory IN + PO rollup) and flips the
-          status to Confirmed. Stays out of inventory + the PI/PR pickers until
-          then. */}
       {isDraft && (
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -747,9 +589,6 @@ export const GoodsReceivedDetail = () => {
         </div>
       )}
 
-      {/* ── Supplier / dates / warehouse / currency / notes ─────── */}
-      {/* In View the card renders read-only text; in Edit it shows inputs bound
-          to the draft (committed by the single top Save). */}
       <SupplierCard
         grn={grn}
         draft={headerView}
@@ -759,16 +598,9 @@ export const GoodsReceivedDetail = () => {
         isEditing={isEditing}
       />
 
-      {/* ── Line items ──────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Items ({visibleItems.length})</h2>
-          {/* The primary path stays convert-from-PO — the TOP-LEVEL "From
-              Purchase Order" header button (see actions row above), mirroring
-              Create GR. The "Add line" affordance BELOW covers a
-              genuinely-free receipt (an item the PO never ordered, a sample);
-              the server still refuses receiving a material the parent PO DOES
-              order by hand (unlinked_po_lines) — that must go through From PO. */}
         </header>
 
         {visibleItems.length === 0 ? (
@@ -799,7 +631,6 @@ export const GoodsReceivedDetail = () => {
                     gap: 'var(--space-3)',
                   }}
                 >
-                  {/* Card header — LINE N · category pill · line value · remove */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                       <span style={{
@@ -849,9 +680,6 @@ export const GoodsReceivedDetail = () => {
                     </div>
                   </div>
 
-                  {/* Identity row — Item Code (always read-only; a GRN line's
-                      code comes from the source PO / SKU). T12: Description is now
-                      EDITABLE in Edit mode (read-only in View). */}
                   <div className={styles.formGrid2}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Item Code (Internal)</span>
@@ -933,8 +761,6 @@ export const GoodsReceivedDetail = () => {
                             value={String(d.variants?.gap ?? '')} onChange={(v) => setVariant(it, 'gap', v)} />
                           <VariantSelect label="Leg Height" disabled={isLocked} options={activeOptions(maint.legHeights, String(d.variants?.legHeight ?? ''))}
                             value={String(d.variants?.legHeight ?? '')} onChange={(v) => setVariant(it, 'legHeight', v)} />
-                          {/* Total Height auto-computed (see setVariant). Special
-                              Orders moved to the shared block below. */}
                         </div>
                       ) : (
                         <div className={styles.formGrid4}>
@@ -977,10 +803,6 @@ export const GoodsReceivedDetail = () => {
                     )
                   )}
 
-                  {/* Bug #2 (2026-05-31) — "received from which PO" + "receive date"
-                      per line. source_po_number is server-resolved from the line's
-                      purchase_order_item_id (null for manual lines); received_at
-                      mirrors the GRN header date. */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-4)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
                     <span>
                       Received from PO:{' '}
@@ -1006,8 +828,6 @@ export const GoodsReceivedDetail = () => {
                     </span>
                   </div>
 
-                  {/* Fields row — Received · Unit Price · Discount · Delivery Date.
-                      Editable inline in Edit; read-only display in View. */}
                   <div className={styles.formGrid4}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Received</span>
@@ -1040,11 +860,6 @@ export const GoodsReceivedDetail = () => {
                         />
                       )}
                     </label>
-                    {/* Zero-cost acknowledgement (migration 0280). Rendered only
-                        while the line actually carries no price — on a priced
-                        line the gate cannot fire, and a permanent "received
-                        free" tick next to every line is exactly the kind of
-                        control people learn to tick without reading. */}
                     {(isEditing ? d.unitPriceSen : it.unit_price_sen) === 0 && (
                       <label className={styles.field}>
                         <span className={styles.fieldLabel}>Received free</span>
@@ -1105,10 +920,6 @@ export const GoodsReceivedDetail = () => {
                         />
                       )}
                     </label>
-                    {/* Destination rack. Editable in Edit mode even when a PI/PR
-                        locks the lines — it is placement only, saved through its
-                        own endpoint, which also moves a posted line on the rack
-                        board. Options = racks of this GRN's warehouse. */}
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Rack</span>
                       {isEditing && grnRackSplitEditable(grn.status) ? (
@@ -1154,11 +965,6 @@ export const GoodsReceivedDetail = () => {
           </div>
         )}
 
-        {/* Manual / extra item — receive an item that was NOT on the source PO
-            (a supplier extra, a sample). Edit + unlocked only (isLocked already
-            covers Cancelled/Closed AND has-PI/PR). Commits at once via
-            POST /:id/items with no purchase_order_item_id, like the From-PO
-            append + line delete already do. */}
         {isEditing && !isLocked && (
           <div style={{ marginTop: 'var(--space-3)' }}>
             {!showAddItem ? (
@@ -1203,8 +1009,6 @@ export const GoodsReceivedDetail = () => {
                   {addDraft.itemGroup && <ItemGroupPill group={addDraft.itemGroup} />}
                 </div>
 
-                {/* Identity row — Item Code picker (supplier-binding-aware) +
-                    Supplier SKU (resolved) + Description. Mirrors New GRN. */}
                 <div className={styles.formGrid3}>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Item Code (Internal)</span>
@@ -1250,9 +1054,6 @@ export const GoodsReceivedDetail = () => {
                   </label>
                 </div>
 
-                {/* Received qty + Unit Price. Discount / variants / delivery /
-                    zero-cost ack are edited on the resulting line card once
-                    it's added. */}
                 <div className={styles.formGrid4}>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Received</span>
@@ -1294,9 +1095,6 @@ export const GoodsReceivedDetail = () => {
         )}
       </section>
 
-      {/* ── Line Summary — mirror New GRN: one row per line + Total Quantity /
-          Total Amount, computed LIVE from the visible line items (incl.
-          unsaved draft edits). GRN has no tax. ─────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Summary</h2>
@@ -1344,38 +1142,26 @@ export const GoodsReceivedDetail = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Supplier / header card — controlled by the page's draft (mirror PO).
-   In View it renders read-only InfoCells; in Edit it shows inputs bound to the
-   page draft (committed by the single top Save).
-   ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
   grn, draft, onField, locked, identityLocked = false, isEditing = true,
 }: {
   grn: any;
-  /** Draft header values (page-owned). In View these mirror the saved GRN. */
   draft: HeaderDraft;
-  /** Update a single header field on the page draft. */
   onField: (k: keyof HeaderDraft, v: string) => void;
-  /** Hard lock — Cancelled / Closed: every field read-only. */
   locked: boolean;
   /** A live Purchase Invoice / Purchase Return exists: the INHERITED fields
    *  (supplier / currency) freeze because that PI/PR was billed against them,
    *  but the GRN's own received date / delivery-note ref / warehouse / notes stay
    *  editable (owner 2026-08-20, §8 GAP-1). */
   identityLocked?: boolean;
-  /** View → Edit gate. When false the card renders read-only display text. */
   isEditing?: boolean;
 }) => {
-  // Inherited fields freeze on EITHER a hard lock or a live PI/PR; own fields on
-  // the hard lock only.
   const inheritedLocked = locked || identityLocked;
   const suppliersQ = useSuppliers();
   const suppliers = suppliersQ.data ?? [];
   const warehousesQ = useWarehouses();
   const warehouses = warehousesQ.data ?? [];
-  // In Edit follow the draft's picked supplier; in View follow the saved GRN.
   const supplierIdForDetail = isEditing ? (draft.supplierId || null) : (grn.supplier_id ?? null);
   const supplierDetail = useSupplierDetail(supplierIdForDetail);
   const supplier: SupplierRow | null = supplierDetail.data?.supplier ?? null;
@@ -1387,7 +1173,6 @@ const SupplierCard = ({
       </header>
       <div className={styles.cardBody}>
         {!isEditing ? (
-          /* View mode — read-only display text sourced from the saved GRN. */
           <div
             style={{
               display: 'grid',
@@ -1436,11 +1221,6 @@ const SupplierCard = ({
                 onChange={(e) => onField('currency', e.target.value)}>
                 <option value="MYR">MYR</option>
                 <option value="RMB">RMB</option>
-                {/* CNY — same currency as RMB under its ISO code. A GRN
-                    INHERITS its currency from the source PO (resolveGrnFx,
-                    routes/grns.ts), so a CNY purchase order puts CNY here; a
-                    value missing from the list renders blank and the next save
-                    would rewrite it. */}
                 <option value="CNY">CNY</option>
                 <option value="USD">USD</option>
                 <option value="SGD">SGD</option>
@@ -1451,8 +1231,6 @@ const SupplierCard = ({
           <div />
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Received Date</span>
-            {/* Changing this cascades to every line's Delivery Date (handled in
-                the page's setHeaderField). */}
             <DateField
               fullWidth
               className={styles.fieldInput}
@@ -1466,7 +1244,6 @@ const SupplierCard = ({
             <input className={styles.fieldInput} value={draft.deliveryNoteRef} disabled={locked}
               onChange={(e) => onField('deliveryNoteRef', e.target.value)} />
           </label>
-          {/* Receive-into warehouse: where the inventory IN landed. */}
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Receive Into</span>
             <span className={styles.selectWrap}>
@@ -1488,7 +1265,6 @@ const SupplierCard = ({
         </div>
         )}
 
-        {/* Supplier-info auto-fill card. Read-only display from /suppliers/:id. */}
         {supplier && (
           <div
             style={{
@@ -1525,7 +1301,6 @@ const SupplierCard = ({
   );
 };
 
-/* Read-only label/value cell for the supplier auto-fill card. */
 function InfoCell({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div>

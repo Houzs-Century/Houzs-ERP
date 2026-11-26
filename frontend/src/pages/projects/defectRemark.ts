@@ -39,7 +39,7 @@ export function parseDefectCaption(
     const rs = REASON_RE.exec(line);
     if (m) { model = m[1].trim() || null; sawStructure = true; }
     else if (rs) { reasonLines.push(rs[1].trim()); sawStructure = true; }
-    else if (sawStructure) reasonLines.push(line); // wrapped reason text
+    else if (sawStructure) reasonLines.push(line);
   }
   if (!sawStructure) return { model: null, reason: raw };
   const reason = reasonLines.join("\n").trim();

@@ -23,7 +23,6 @@ const uploadMutateAsync = vi.fn(async (body: { fileName: string }) => {
   return { ok: true, payoutId: 9, status: { netSen: 1189800, readyToReceive: true, blockedBy: null, days: [{}, {}] } };
 });
 
-/* One advice every day of which agrees, one blocked in all three ways. */
 const READY: Payout = {
   id: 1, acquirer_code: 'PBB', file_name: 'HOUZSCENTURY_IBG_100826.pdf',
   advice_date: '2026-08-10', payee_bank: 'MAYBANK ISLAMIC BERHAD', payee_account_no: '564418610346',
@@ -94,8 +93,6 @@ describe('an advice something is in the way of', () => {
     expect(screen.queryByText(/Ready — when the bank statement shows this RM 9,000\.00/)).toBeNull();
   });
 
-  /* BOTH numbers on the row, and their distance in the standing — a difference
-     he can see is one he can explain. */
   test('a day that differs carries the advice figure, the report figure and the gap', () => {
     render(<PayoutAdviceTab />);
     const row = screen.getByText('2026-08-15').closest('tr') as HTMLElement;
@@ -116,8 +113,6 @@ describe('an advice something is in the way of', () => {
   });
 });
 
-/* The advice goes up through the page's Upload drawer (MerchantUpload.test.tsx
-   proves the upload itself); the view keeps one door to it. */
 describe('uploading', () => {
   test('the view opens the Upload drawer for the advice, and carries no picker of its own', () => {
     const onUpload = vi.fn();
@@ -147,7 +142,6 @@ describe('a day the bank paid less for than its report', () => {
     expect(account.value).toBe('900-T009');
     expect(screen.getByText('905-0000 · Stationery')).toBeTruthy();
 
-    /* Nothing goes without a note. */
     const book = screen.getByText('Book charge') as HTMLButtonElement;
     expect(book.disabled).toBe(true);
 

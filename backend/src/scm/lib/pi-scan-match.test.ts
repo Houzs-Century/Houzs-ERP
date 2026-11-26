@@ -8,9 +8,6 @@ import {
 } from './pi-scan-match';
 import type { PiScanLine } from './pi-scan-extract';
 
-// The matcher is the safety-critical heart of the PI scanner: it decides which
-// GRN lines an invoice bills, and it must NEVER over-bill a receipt line or
-// invent a link. These pin that behaviour.
 
 const line = (p: Partial<PiScanLine>): PiScanLine => ({
   itemCode: null, articleNo: null, description: null, qty: null,
@@ -42,7 +39,6 @@ describe('docRefMatches — anchors a scanned ref to our doc number', () => {
     expect(docRefsOf(printed)).toEqual(['PO-009744', 'HC-PO-2609-151', 'HC-PO-2609-226']);
     expect(docRefsOf('EX HC-PO-2609-151; EXCH-HC-PO-2609-226')).toEqual(['HC-PO-2609-151', 'HC-PO-2609-226']);
     expect(docRefMatches(docRefsOf(printed)[1], 'HC-PO-2609-151')).toBe(true);
-    // A number that only starts with the letters is not marked.
     expect(docRefsOf('EXPO-1234567')).toEqual(['EXPO-1234567']);
     expect(exchangeRefsOf(printed)).toEqual(['PO-009744', 'HC-PO-2609-151', 'HC-PO-2609-226']);
     expect(exchangeRefsOf('HC-PO-2609-151')).toEqual([]);
@@ -143,7 +139,6 @@ describe('matchInvoiceLinesToGrnLines', () => {
       ],
       new Map(),
     );
-    // FIFO: HC-GRN-...001 first (5), then ...002 (2) to make 7.
     expect(res.picks).toEqual([
       { grnItemId: 'g1', qty: 5, grnNumber: 'HC-GRN-2609-001', invoiceLineIndex: 0 },
       { grnItemId: 'g2', qty: 2, grnNumber: 'HC-GRN-2609-002', invoiceLineIndex: 0 },
@@ -157,13 +152,12 @@ describe('matchInvoiceLinesToGrnLines', () => {
       [grn({ grnItemId: 'g1', itemCode: 'SOFA-A', remaining: 5 })],
       new Map(),
     );
-    // First line takes 4 of 5; second takes the last 1 and is flagged short.
     expect(res.picks).toEqual([
       { grnItemId: 'g1', qty: 4, grnNumber: 'HC-GRN-2609-001', invoiceLineIndex: 0 },
       { grnItemId: 'g1', qty: 1, grnNumber: 'HC-GRN-2609-001', invoiceLineIndex: 1 },
     ]);
     const totalBilled = res.picks.reduce((s, p) => s + p.qty, 0);
-    expect(totalBilled).toBe(5); // never exceeds the remaining
+    expect(totalBilled).toBe(5);
     expect(res.unmatched).toHaveLength(1);
     expect(res.unmatched[0]).toMatchObject({ invoiceLineIndex: 1, reason: 'qty_short', billed: 1 });
   });

@@ -1,29 +1,3 @@
-// ----------------------------------------------------------------------------
-// Fleet — consolidated "Driver & Helper" portal. ONE page that merges the three
-// TMS fleet masters (Drivers · Helpers · Lorries) into a single place: three
-// stacked sections, each a header (title + count + "New …" button) over the
-// master's DataGrid and its own create drawer. The Lorry Capacity dashboard
-// stays a separate page.
-//
-// Each section is a small, self-contained component that REUSES the existing
-// query hooks (useDrivers/useHelpers/useLorries + create/update) and the exact
-// columns, In-house/Outsource handling, and Fleet filter from 2990 — nothing
-// about the CRUD or behaviour changed, only the layout (h1 → h2 section
-// headers) and the co-location on one page.
-//
-// The `x.camelCase ?? x.snake_case` reads below are DEAD on their camel half,
-// and the comment that used to sit here ("the pg driver camelCases result
-// cols") was false for Houzs — it is Hookka's rule, copied in with the 2990
-// port. Two independent reasons it cannot be true here: (1) Houzs deliberately
-// does NOT install the camelCase transform (backend/src/db/pg.ts:5-10 — "fix
-// the route, do not flip a global transform"; docs/UPGRADE-PLAN.md:105 lists
-// the map as Hookka-specific, do-not-copy); (2) these rows never touch the pg
-// driver anyway — they arrive over /api/scm/* from PostgREST, which returns the
-// snake_case column names named in each route's COLS (backend/src/scm/routes/
-// lorries.ts:20, drivers.ts:24, helpers.ts). The snake half is the ONLY half
-// that ever resolves. Left in place because `?? ` costs nothing and every
-// sibling SCM surface still carries the same shape; do not "restore" the claim.
-// ----------------------------------------------------------------------------
 
 import { LorriesBoard } from "./fleet/LorriesBoard";
 import { DriversSection, HelpersSection } from './fleet/CrewBoard';
@@ -55,7 +29,6 @@ import { writeFailedAs } from '../../vendor/scm/lib/mutation-error';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/** Snake-case reads with a dead camel fallback — see the header note. */
 const isInternalOf = (l: LorryRow) => (l.isInternal ?? l.is_internal) !== false;
 const capM3Of = (l: LorryRow) => l.capacityM3 ?? l.capacity_m3 ?? null;
 const capKgOf = (l: LorryRow) => l.capacityKg ?? l.capacity_kg ?? null;
@@ -68,9 +41,6 @@ const fmtNum = (v: number | string | null): string => {
 
 export { DriversSection, HelpersSection };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Page — three stacked sections.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export const Fleet = ({ embedded = false }: { embedded?: boolean } = {}) => {
   return (
@@ -90,9 +60,6 @@ export const Fleet = ({ embedded = false }: { embedded?: boolean } = {}) => {
   );
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Lorries section (logic from the former Lorries.tsx — incl. the Fleet filter).
-// ─────────────────────────────────────────────────────────────────────────────
 
 export const LorriesSection = () => {
   const [creating, setCreating] = useState(false);
@@ -194,9 +161,6 @@ const CreateLorryDrawer = ({ onClose }: { onClose: () => void }) => {
   );
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared text field (identical across all three drawers).
-// ─────────────────────────────────────────────────────────────────────────────
 
 const Field = ({
   label, value, onChange, placeholder,

@@ -1,43 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-to-do-fields — WHAT AN SO CARRIES INTO A DELIVERY ORDER, in one place.
-//
-// WHY THIS FILE EXISTS. There were two SO→DO converters and they disagreed:
-//   · POST /delivery-orders-mfg/from-sos loaded the source SO header with NO
-//     company predicate, deliberately — "a 2990 SO may be converted while
-//     browsing as Houzs" (its own comment), because Delivery Planning is a
-//     shared cross-company queue.
-//   · The Create-DO FORM prefilled itself from GET /mfg-sales-orders/:docNo,
-//     which is wrapped in scopeToCompany. A MIRRORED SO carries company_id = 2
-//     (so-mirror.ts stamps it), so read while the active company is HOUZS it
-//     answered 404 — and the form rendered every header field EMPTY while the
-//     "Converted from <doc>" badge and the document-flow strip, both derived
-//     from the ?fromSo= query STRING rather than the fetch, kept showing the
-//     linkage. Perfect linkage, blank document.
-//
-// THAT DISAGREEMENT IS OVER, and the FIRST bullet is the one that won. The
-// shared Delivery Planning queue is real and the owner confirmed it on
-// 2026-08-13: /from-sos still converts a 2990 SO while the caller browses as
-// Houzs, and the DO it mints is a 2990 DO — 2990's company_id, 2990's prefix,
-// and, as of that date, 2990's warehouse and stock lines too. The header used
-// to inherit while the LINES stamped the active company, which is how a 2990 DO
-// came to deduct HOUZS stock; both now resolve from one `sourceCompanyId`.
-//
-// A passing draft of that day's sweep scoped both source reads to the ACTIVE
-// company and rewrote this paragraph to say the cross-company case "cannot
-// arise". It was reverted — scoping here does not make the conversion safe, it
-// makes the document invisible to the dispatcher who came to convert it. The
-// shared column set below is still the reason the two sides
-// cannot drift on WHICH fields carry across, which is what this file is for.
-//
-// So the column set and the field mapping live HERE and are imported by both
-// sides. A field added to the DO snapshot is added once.
-//
-// NOTHING IS DEFAULTED TO EMPTY. A field the source SO does not carry comes back
-// `null`, and `missingSourceFields` names it so the form can say "not on the
-// source order" instead of rendering a blank box. `?? ''` here would turn a data
-// problem into a silent one and invite someone to retype a customer's address by
-// hand.
-// ----------------------------------------------------------------------------
 
 /** The SO header columns a Delivery Order snapshots. Shared select list. */
 export const SO_CONVERT_HEADER =
@@ -47,7 +7,6 @@ export const SO_CONVERT_HEADER =
   'customer_country, customer_delivery_date, customer_so_no, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, currency';
 
-/** Trim to null — an all-whitespace column is absent, not present-and-empty. */
 function str(v: unknown): string | null {
   if (v == null) return null;
   const s = String(v).trim();
@@ -128,8 +87,6 @@ export function soHeaderToDoSource(head: Record<string, unknown>): SoConversionS
   };
 }
 
-/** The fields the Create-DO form shows as its own inputs, in form order. The
- *  labels are what the form prints, so they read as the user's field names. */
 const REPORTED_FIELDS: ReadonlyArray<readonly [keyof SoConversionSource, string]> = [
   ['customerName', 'Customer Name'],
   ['phone', 'Phone'],

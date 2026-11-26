@@ -21,9 +21,6 @@ import type { Env, Variables } from '../env';
 
 const SOFA_A = { seatHeight: '20', fabricCode: 'F-101' };
 
-// The fake has no rpc(); the audit pre-flight probe (assertAuditWritable) calls
-// sb.rpc('entity_audit_writable') and fails CLOSED without it. Stub it writable,
-// same as pvBlankVoucherDate.test.ts, so the line edit reaches the rule under test.
 const sb = Object.assign(
   fakeSb({
     grns: [{ id: 'grn-1', grn_number: 'GRN-2608-001', status: 'DRAFT', company_id: 1, purchase_order_id: 'po-1', warehouse_id: 'wh-1' }],
@@ -68,7 +65,6 @@ describe('PATCH grn line — inherited-variant lock', () => {
     const res = await patchLine('li-po', { variants: { seatHeight: '24', fabricCode: 'F-999' } });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: 'grn_inherited_field_locked' });
-    // nothing written — the stored variant is untouched
     expect(line('li-po').variants).toEqual(SOFA_A);
   });
 
@@ -85,9 +81,6 @@ describe('PATCH grn line — inherited-variant lock', () => {
   });
 });
 
-/* Symptom: two people editing one goods-receipt line left stock wrong (both stock deltas landed).
-   Cause: the PATCH read the line, computed the delta from that read, then wrote with no condition.
-   Fix: compare-and-set on grn_items.version and qty_accepted; the losing save writes nothing and gets 409. */
 describe('PATCH grn line — two editors', () => {
   it('a save whose line changed after it was read is refused and writes nothing', async () => {
     const realFrom = sb.from;
@@ -103,7 +96,6 @@ describe('PATCH grn line — two editors', () => {
           const r = await read();
           if (!isPrevRead) return r;
           fired = true;
-          /* The other editor's save commits between this read and this write; a copy, as PostgREST hands it. */
           const copy = { ...r, data: JSON.parse(JSON.stringify(r.data)) };
           Object.assign(line('li-manual'), { qty_received: 1, qty_accepted: 1, line_total_sen: 10000, version: 2 });
           return copy;

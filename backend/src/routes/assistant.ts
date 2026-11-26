@@ -66,10 +66,6 @@ function callerId(c: { get: (k: string) => unknown }): string | null {
 }
 
 app.post("/chat", async (c) => {
-  /* Two body shapes: JSON { message, conversationId? } as before, OR
-     multipart/form-data with a `message` field + one-or-more `file` parts (image
-     / PDF the assistant reads). Files are validated + encoded here; a bad type or
-     oversize file is a 400 BEFORE the model call. */
   const contentType = c.req.header("content-type") || "";
   let message = "";
   let conversationId: string | undefined;
@@ -102,10 +98,6 @@ app.post("/chat", async (c) => {
   if (!message.trim() && !hasFiles) {
     return c.json({ success: false, error: "message required" }, 400);
   }
-  /* Scope is resolved per REQUEST from the caller's own position — never cached,
-     never passed in by the client. A user with no position resolves to money
-     hidden: the policy has no basis to decide, and "cannot tell" must not become
-     "entitled". */
   const user = assistantUser(c);
   /* Field crew are denied the surface outright (owner 2026-07-18: operation gets
      the Assistant EXCEPT driver / helper / storekeeper). Checked here, not only in
@@ -120,9 +112,6 @@ app.post("/chat", async (c) => {
   const scope = scopeForUser(user, (i) => resolvePositionPolicy(i, user?.position_policy ?? null));
   const userId = callerId(c);
 
-  /* Resolve the conversation this turn belongs to. A supplied id that is not the
-     caller's live conversation is a 404 (never reveal another user's thread). No
-     id → a fresh thread, titled from the first message. */
   let convId: string | null = null;
   if (userId) {
     const conv = await resolveOrCreateConversation(c.env, userId, conversationId, message).catch(() => undefined);
@@ -132,9 +121,6 @@ app.post("/chat", async (c) => {
     convId = conv?.id ?? null;
   }
 
-  /* Pass the request context so the answer path can run the tool-loop (search_erp),
-     company-scoped to this caller. `c` satisfies CompanyScopeCtx structurally — the
-     same handle every companyScope helper already takes. */
   const res = await askAssistant(c.env, message, undefined, scope, contentBlocks, c);
 
   /* Build the turn's final answer. The router may read the message as teaching an
@@ -180,7 +166,6 @@ app.post("/chat", async (c) => {
     data = { answer: res.answer, agents: res.agents, degraded: res.degraded };
   }
 
-  /* Persist the turn — best-effort, so a history failure never fails the chat. */
   if (userId && convId) {
     await appendExchange(c.env, {
       conversationId: convId,

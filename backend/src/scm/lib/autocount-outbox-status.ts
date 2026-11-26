@@ -90,11 +90,8 @@ export const AC_STATE_MEANING: Record<AcOutboxState, string> = {
  * must not.
  */
 export interface AcSkipKind {
-  /** Stable identifier — URL filters and tests use this, never the needle. */
   kind: string;
-  /** Substring of `last_error` that identifies this class. */
   needle: string;
-  /** What an operator has to do about it. */
   remedy: string;
 }
 
@@ -161,13 +158,6 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
     remedy:
       'the ERP could not read its own document while composing — a read fault, not a refusal',
   },
-  /* BEFORE `masters-not-opened`, ON PURPOSE. The masters step is where the
-     unreachable-host failure surfaces — the ERP calls ensure_masters first, so
-     a dead host is recorded as "masters not opened, document not sent: <the
-     transport's words>". Matching the transport's words FIRST is what stops a
-     stopped Windows service reading as an AutoCount data problem, which is
-     exactly the wrong place to send whoever investigates (2026-08-23: a day
-     spent on AutoCount logins for a service that was not running). */
   {
     kind: 'host-unreachable',
     needle: 'the AutoCount host did not answer',
@@ -184,37 +174,12 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
     remedy: 'raised with no parent — cannot exist in AutoCount at all',
   },
   {
-    /* THE NEEDLE WAS WRONG AND MATCHED NOTHING, corrected 2026-08-16. It read
-       'AutoCount has no shape', which is a phrase from recordConvertSkipped's
-       own DOC COMMENT — no code path has ever written it into last_error. The
-       places that record a merged conversion (delivery-orders-mfg.ts,
-       grns.ts twice, sales-invoices.ts, purchase-invoices.ts, and
-       lib/si-autocount-source.ts since 2026-08-17) all write
-       "AutoCount transfers from ONE source document", so every merged
-       conversion in the queue has been classified `unrecognised` since the
-       feature shipped. A needle taken from the comment beside the writer
-       instead of from the writer is the same mistake in a different key as
-       matching a shared prefix. */
-    /* THE NEEDLE STAYS, THE REMEDY CHANGED, 2026-08-18. No writer produces this
-       sentence any more: the service took `FromDocNos` from 2026-08-16 and the
-       five ERP writers were rewired to name every source instead of refusing
-       (enqueueConvert takes an array). The needle has to stay because
-       scm.autocount_outbox is APPEND-ONLY and `last_error` is never rewritten —
-       every merged conversion recorded before that day still carries these
-       words, and a needle removed is a row reclassified `unrecognised` with no
-       remedy at all. What changed is what an operator should DO about one. */
     kind: 'no-autocount-shape',
     needle: 'AutoCount transfers from ONE source document',
     remedy:
       'recorded before merged conversions could be sent (2026-08-18) — nothing was composed, so Send again has nothing to send; raise it in AutoCount by hand. Documents raised since then sync merged',
   },
   {
-    /* ADDED 2026-08-17 with the fix to POST /sales-invoices. The ERP lets an
-       invoice carry a standalone line beside its delivered ones; AutoCount
-       builds the invoice by transferring the delivery order's lines, so the
-       standalone half would simply not be there — an invoice in the book worth
-       less than the one the customer holds. Its own class because its remedy is
-       its own: split the document, which is nothing like backfilling a key. */
     kind: 'mixed-source-lines',
     needle: 'came from no source document',
     remedy:

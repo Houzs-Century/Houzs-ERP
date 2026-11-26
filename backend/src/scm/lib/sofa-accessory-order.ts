@@ -77,7 +77,6 @@ export function validateSofaAccessoryOrder(items: Item[], products: Array<Produc
   }
   for (const [parentIndex, pieces] of piecesByParent) {
     if (used.get(parentIndex)!.size !== pieces.size) return fail('Every accessory on the sofa must have a matching order line.');
-    // The engine's deterministic selection follows the canvas order, not item ordering.
     parents.set(parentIndex, [...pieces.keys()].map((id) => parents.get(parentIndex)!.find((p) => p.id === id)!));
   }
   return { ok: true, context: { parents, children } };

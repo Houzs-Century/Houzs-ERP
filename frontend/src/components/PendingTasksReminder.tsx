@@ -59,8 +59,6 @@ export function PendingTasksReminder() {
           <span className="text-[11px] font-bold uppercase tracking-wider">Pending work</span>
         </div>
 
-        {/* The body is the CTA — tapping anywhere on it opens the filtered list,
-            which is why there is no third button (owner: "guna je same button"). */}
         <button
           type="button"
           onClick={openList}
@@ -92,9 +90,6 @@ export function PendingTasksReminder() {
               : "You can postpone once"}
           </span>
           <div className="flex gap-1.5">
-            {/* Postponing is refused once something has already run past its
-                event, or runs this week — the escalation the owner asked for
-                ("bg nmpk beza sikit"). */}
             {!digest.mustAcknowledge && (
               <button
                 type="button"

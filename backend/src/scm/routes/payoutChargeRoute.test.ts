@@ -1,13 +1,3 @@
-/* POST / DELETE /settlement/payouts/:id/days/:settledOn/charge — the bank
- * deducted a charge from one day of an advice, booked where Finance says.
- *
- * The RULE is pinned in acc/payout-charge.test.ts. What is pinned here is the
- * ROUTE: it needs the reconcile permission like every other payout handler,
- * it refuses a malformed day, it answers each of the module's refusals as a
- * sentence with the right status, and the list re-reads the charge so the day
- * comes back agreeing with where the money went. Driven through the real
- * handlers on a bare app with the fake PostgREST client.
- */
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -77,7 +67,6 @@ describe('booking a bank charge against an advice day', () => {
     };
     expect(list.payouts[0].status.days[0]).toMatchObject({ state: 'AGREES', differenceSen: 0, chargeSen: 32_400, chargeAccountCode: '900-T009', chargeNote: 'PBB card-terminal application fee' });
     expect(list.payouts[0].status.readyToReceive).toBe(true);
-    /* And what the dialog needs: the accounts it may offer, and the default. */
     expect(list.chargeAccounts.map((a) => a.accountCode)).toEqual(['900-T009', '905-0000']);
     expect(list.feeAccountByAcquirer).toEqual({ PBB: '900-T009' });
   });
@@ -119,7 +108,6 @@ describe('booking a bank charge against an advice day', () => {
     expect(sb.tables.journal_entries.filter((j: Row) => j.source_type === 'SETTLECHARGE' && !j.reversed)).toHaveLength(0);
     const list = await (await app.request('/settlement/payouts')).json() as { payouts: Array<{ status: { days: Array<Record<string, unknown>> } }> };
     expect(list.payouts[0].status.days[0]).toMatchObject({ state: 'DIFFERS', differenceSen: 32_400, chargeSen: 0 });
-    /* Nothing to undo twice. */
     expect((await app.request('/settlement/payouts/3/days/2026-06-06/charge', { method: 'DELETE' })).status).toBe(409);
   });
 });

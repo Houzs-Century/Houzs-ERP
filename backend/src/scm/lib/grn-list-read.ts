@@ -22,14 +22,13 @@ export const GRN_HEADER_COLS =
   /* Migration 0101 — GRN ↔ PO money parity; 0082 — exchange_rate (FX→MYR cost) +
      allocation_method (landed-cost "平摊" basis). */
   'currency, exchange_rate, allocation_method, subtotal_sen, tax_sen, total_sen, ' +
-  'posted_at, created_at, created_by, updated_at, ' + HOLD_COLUMNS; // mig 0324's marker, BESIDE the status pill
+  'posted_at, created_at, created_by, updated_at, ' + HOLD_COLUMNS;
 
 /* warehouse embeds the receiving location's NAME (Owner 2026-07-02 — the GRN
    list "Purchase Location" column). Supplier CONTACT fields ride the embed for
    the quick-view drawer. */
 export const GRN_LIST_SELECT =
   `${GRN_HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, email2, email3, address), purchase_order:purchase_orders(id, po_number), warehouse:warehouses!warehouse_id(id, code, name), ` +
-  /* The AutoCount GR number's two homes (lib/grn-export-rows.ts grnAcDocNo). */
   'linked_ac_docno, linked_ac_gr_docno, migrated_no_stock';
 
 /** The list's filter contract, as the query string carries it. */
@@ -50,8 +49,6 @@ export type GrnListFilters = {
 
 const param = (v: string | undefined): string | null => (v === undefined || v === '' ? null : v);
 
-/* Multi-value funnel params ride as a JSON array in ONE param (a creditor name
-   may contain a comma). Malformed / empty reads as no filter. */
 function jsonArrayParam(v: string | undefined): string[] | null {
   if (v === undefined || v === '') return null;
   try {
@@ -92,7 +89,6 @@ export function grnListSelect(f: GrnListFilters): string {
     'linked_ac_docno, linked_ac_gr_docno, migrated_no_stock';
 }
 
-/* Indexed by a caller's string, so an unknown key is `undefined` — say so. */
 const BUCKETS: Readonly<Record<string, string[] | undefined>> = GRN_STATUS_BUCKETS;
 
 const SORT_COLS = new Set(['received_at', 'grn_number', 'status', 'total_sen']);
@@ -102,9 +98,6 @@ export function grnListSort(sort: string | null): { col: string; asc: boolean } 
   return { col: SORT_COLS.has(rawCol) ? rawCol : 'received_at', asc: rawDir === 'asc' };
 }
 
-/* The PostgREST builder surface these functions use, asserted INSIDE so the
-   caller's own builder type passes through (the TS2589 trap po-list-read.ts
-   records). */
 type Filterable = {
   order(col: string, opts: { ascending: boolean }): Filterable;
   in(col: string, vals: string[]): Filterable;
@@ -126,18 +119,13 @@ export function orderGrnList<Q>(q: Q, sort: string | null): Q {
 /** Tab + supplier + COMPANY + search + date range. */
 export function filterGrnList<Q>(q: Q, f: GrnListFilters, c: CompanyScopeCtx): Q {
   let out = q as unknown as Filterable;
-  /* A known bucket key → all its raw statuses; 'all'/empty → no filter;
-     otherwise a raw DB status. The `on_hold` tab reads the MARKER (mig 0324). */
   if (f.status && f.status !== 'all') {
     if (f.status === 'on_hold') out = out.or(HELD_OR_TERM);
     else if (BUCKETS[f.status]) out = out.in('status', BUCKETS[f.status]!);
     else out = out.eq('status', f.status);
   }
   if (f.supplierId) out = out.eq('supplier_id', f.supplierId);
-  out = scopeToCompany(out, c); // multi-company: isolate to the active company
-  /* free-text search over the base-table text columns the list searches.
-     Supplier name / PO number are embedded resources, not base grns columns,
-     so they can't be ilike'd here. */
+  out = scopeToCompany(out, c);
   if (f.q) {
     const s = escapeForOr(f.q);
     if (s) out = out.or(`grn_number.ilike.%${s}%,delivery_note_ref.ilike.%${s}%,notes.ilike.%${s}%`);

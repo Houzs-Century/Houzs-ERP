@@ -25,8 +25,6 @@ import { PLACEHOLDER_BRAND_TEXTS } from '../shared/so-branding-label';
  *  as possibly label-only (still correct, just a superset). */
 export const BRANDING_FUNNEL_PROBE_CAP = 40;
 
-/* Every value double-quoted with `"` and `\` escaped: a brand may carry a comma,
-   a dot or a parenthesis, all reserved inside PostgREST's `or=(...)`. */
 export const quote = (v: string): string => `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
 /**

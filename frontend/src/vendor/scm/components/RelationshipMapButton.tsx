@@ -1,6 +1,3 @@
-// RelationshipMapButton — drop-in trigger for the document Relationship Map.
-// Bundles the button + modal + open state so a detail page only needs:
-//   <RelationshipMapButton type="so" id={docNo} />
 
 import { useState } from 'react';
 import { DocumentFlowModal } from './DocumentFlowModal';

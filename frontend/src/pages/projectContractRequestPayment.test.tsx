@@ -64,7 +64,6 @@ vi.mock("../api/client", async () => {
   };
 });
 
-/* Whether the caller holds a request key — everything else they hold. */
 let mayRequest = true;
 const REQUEST_KEYS = ["*", "scm.payment_request.create", "scm.payment_voucher.create"];
 vi.mock("../auth/AuthContext", () => ({
@@ -130,7 +129,6 @@ describe("ProjectDetail — Request payment on the CONTRACT row", () => {
     expect(within(rowOf("Agreement / Quotation")).getByRole("button", { name: /Request payment/ })).toBeTruthy();
     expect(within(rowOf("Rental receipt")).queryByRole("button", { name: /Request payment/ })).toBeNull();
     expect(within(rowOf("Booth drawing")).queryByRole("button", { name: /Request payment/ })).toBeNull();
-    /* Read for the CONTRACT rows only. */
     expect(asked.some((a) => a.enabled && a.ids.join(",") === "5001,5003")).toBe(true);
     expect(asked.some((a) => a.ids.includes(5002))).toBe(false);
     const box = screen.getByLabelText("Payment requests from this row");

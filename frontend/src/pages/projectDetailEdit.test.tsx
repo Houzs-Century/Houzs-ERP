@@ -67,8 +67,6 @@ const DETAIL = {
   _access: { level: "full", pms: { canEdit: true, canFinancial: true } },
 };
 
-// Lets a test push the lookup queries BEHIND the detail query, which is the
-// real-world ordering and the window the owner's first click lands in.
 let lookupDelayMs = 0;
 
 vi.mock("../api/client", async () => {
@@ -174,8 +172,6 @@ describe("ProjectDetail — Edit project details", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: /done/i })).toBeTruthy();
     });
-    // The edit-only cells are what the owner could not reach: Brand is absent
-    // in view mode and appears only in edit mode.
     expect(screen.getByText("Brand")).toBeTruthy();
   });
 
@@ -187,13 +183,11 @@ describe("ProjectDetail — Edit project details", () => {
      glance too, so the set is Start, End, Size, Booth, Rental. */
   it("shows only Start, End, Size, Booth and Rental until Edit is clicked", async () => {
     await renderDetail();
-    // Wait for the strip itself, not just the page shell.
     await screen.findByText("Start");
 
     for (const shown of ["Start", "End", "Size · sqm", "Booth", "Rental · RM"]) {
       expect(screen.getByText(shown), `${shown} must be on the resting strip`).toBeTruthy();
     }
-    // Booth reads its value without opening Edit.
     expect(screen.getByText("A12"), "the booth number must render at rest").toBeTruthy();
     for (const hidden of ["Venue *", "State", "Organizer", "Contractor", "Brand"]) {
       expect(screen.queryByText(hidden), `${hidden} must be behind Edit`).toBeNull();
@@ -201,12 +195,10 @@ describe("ProjectDetail — Edit project details", () => {
 
     await clickEditOnce();
 
-    // …and Edit still reveals every one of them.
     await waitFor(() => expect(screen.getByText("Venue *")).toBeTruthy());
     for (const revealed of ["State", "Organizer", "Contractor", "Brand"]) {
       expect(screen.getByText(revealed), `${revealed} must appear in edit mode`).toBeTruthy();
     }
-    // The five never leave.
     for (const kept of ["Start", "End", "Size · sqm", "Booth", "Rental · RM"]) {
       expect(screen.getByText(kept), `${kept} must stay in edit mode`).toBeTruthy();
     }
@@ -217,9 +209,6 @@ describe("ProjectDetail — Edit project details", () => {
     await renderDetail();
     await clickEditOnce();
 
-    // The lookups (brands / event types / venues / users) land here. If any of
-    // them remounted the spec strip, the edit flag would be thrown away and
-    // the button would fall back to "Edit" — the reported symptom.
     await new Promise((r) => setTimeout(r, 400));
     expect(screen.queryByRole("button", { name: /^edit$/i })).toBeNull();
     expect(screen.getByRole("button", { name: /done/i })).toBeTruthy();

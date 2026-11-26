@@ -82,7 +82,6 @@ describe('Edit task', () => {
     expect(screen.getByRole('button', { name: 'Monthly' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: '11' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: 'Payments' }).getAttribute('aria-pressed')).toBe('true');
-    /* An edit is not a remark: the form has no remark box. */
     expect(screen.queryByLabelText('Remark')).toBeNull();
 
     fireEvent.change(title, { target: { value: 'Repay - Mitsubishi RM 1,893 Forklift (HLBB)' } });

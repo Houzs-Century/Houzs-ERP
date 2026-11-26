@@ -1,14 +1,3 @@
-// Three owner defects on the SCM document-list chips (2026-08-01), pinned so
-// they cannot creep back:
-//
-//   1. A Delivered chip must NOT print "x1" — the chip already names one DO, so
-//      the multiplier only earns its place above 1.
-//   2. The "MRP guess · not linked" CAPTION is gone, but the fact it stated is
-//      not: an unlinked assignment must still say so in the chip's tooltip, and
-//      the floating chip must still carry its "~".
-//   3. A Source PO chip is the stored batch_no VERBATIM. This suite asserts the
-//      exact strings render unchanged, because "unifying" the company prefix
-//      would rename evidence on the batch -> lot -> COGS trail.
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -127,11 +116,9 @@ describe("Three chip identities — anchored / provenance / floating", () => {
     const a = chipFor(container, "SO-ANCH");
     const p = chipFor(container, "SO-PROV");
     const f = chipFor(container, "SO-FLOT");
-    // Anchored: solid accent tone, delivered wording — unchanged.
     expect(a.className).toContain("bg-surface-2");
     expect(a.className).not.toContain("border-dashed");
     expect(a.title).toContain("Delivered");
-    // Provenance: muted tone, "bought for", and NEVER the word "Locked".
     expect(p.className).toContain("bg-surface-dim");
     expect(p.className).not.toContain("border-dashed");
     expect(p.title).toContain("Bought for SO-PROV");
@@ -140,7 +127,6 @@ describe("Three chip identities — anchored / provenance / floating", () => {
     // MRP's order: a plain chip (owner 2026-11-19), saying it is MRP's.
     expect(f.className).not.toContain("border-dashed");
     expect(f.title).toContain("Assigned by MRP now");
-    // The three tones are pairwise distinct.
     expect(a.className).not.toBe(p.className);
     expect(p.className).not.toBe(f.className);
     expect(f.className).not.toBe(a.className);
@@ -183,9 +169,6 @@ describe("Three chip identities — anchored / provenance / floating", () => {
   });
 
   it("a stored link without source metadata degrades to provenance, not execution", () => {
-    // Older/cached payloads carry locked:true with no `source`. Reading that as
-    // anchored would re-dress provenance as execution — the exact confusion the
-    // Decision retires.
     const { container } = render(
       <AssignedSoCell assignments={[{ soDocNo: "SO-OLD", deliveryDate: null, locked: true }]} />,
     );
@@ -195,15 +178,6 @@ describe("Three chip identities — anchored / provenance / floating", () => {
   });
 });
 
-// ── PR-3: the coverage wire's PARALLEL provenance slot, rendered side by side ──
-//
-// The wire now carries `provenance` (layer-b stored-origin SOs) beside the
-// precedence winner in `assignments`. Rendering rule: AFTER the precedence
-// chips, ALSO render muted "bought for" chips for provenance SOs not already
-// shown (dedupe by soDocNo). The case this exists for: the floating allocator
-// re-assigned (dashed chips) while the stored links remain — after an SO
-// amendment both truths must be visible. Additive and optional: no provenance
-// field → exactly the pre-PR-3 rendering.
 describe("Provenance slot beside execution (PR-3)", () => {
   const floating = { soDocNo: "SO-FLOT", deliveryDate: null, locked: false, source: "mrp" as const };
   const bought = { soDocNo: "SO-PROV", deliveryDate: "2026-09-01", locked: true, source: "linked" as const };
@@ -281,7 +255,6 @@ describe("Provenance slot beside execution (PR-3)", () => {
         lines={[line({ assignedSos: [floating] })]}
       />,
     );
-    // One chip, dashed — and no muted provenance chip anywhere.
     expect(container.querySelectorAll("[title]")).toHaveLength(1);
     expect(container.querySelector('[title*="Bought for"]')).toBeNull();
   });
@@ -321,13 +294,10 @@ describe("Paired per-SO sub-table (2026-08-02 — one row per assigned SO)", () 
         lines={[line({ assignedSos: assigned, deliveredDos: delivered })]}
       />,
     );
-    // Both SO rows render; the shipped one says DELIVERED, the future-dated
-    // unshipped one says PENDING (never blank).
     expect(screen.getByText("2990-SO-2606-021")).toBeTruthy();
     expect(screen.getByText("2990-SO-2606-030")).toBeTruthy();
     expect(screen.getByText("DELIVERED")).toBeTruthy();
     expect(screen.getByText("PENDING")).toBeTruthy();
-    // The multi-DO SO row shows EVERY qty (x1 allowed on multi-chip rows).
     expect(screen.getByText(/x1/)).toBeTruthy();
     expect(screen.getByText(/x2/)).toBeTruthy();
   });
@@ -391,8 +361,6 @@ describe("Source PO chips render the stored doc number verbatim", () => {
     );
     expect(screen.getByText("2990-PO-2606-003")).toBeTruthy();
     expect(screen.getByText("PO-2607-002")).toBeTruthy();
-    // The bare one must NOT acquire a prefix: a `2990-PO-2607-002` may be a
-    // different, real purchase order.
     expect(screen.queryByText("2990-PO-2607-002")).toBeNull();
   });
 
@@ -433,7 +401,6 @@ describe("Accessory lines collapse their per-order list", () => {
     );
     expect(screen.getByText(/8 orders/)).toBeTruthy();
     expect(screen.getByText(/9 deliveries/)).toBeTruthy();
-    // Not one of the individual documents.
     expect(screen.queryByText("2990-SO-2606-020")).toBeNull();
     expect(screen.queryByText("2990-DO-2607-010")).toBeNull();
   });
@@ -460,8 +427,6 @@ describe("Accessory lines collapse their per-order list", () => {
   });
 
   it("leaves a NON-accessory line listing every order, unchanged", () => {
-    // The whole point is that this is an accessory-only rule. A mattress line
-    // on the same GRN must still name its orders.
     render(
       <DocumentLinesExpansion
         isLoading={false}
@@ -505,28 +470,19 @@ describe("Accessory lines collapse their per-order list", () => {
 });
 
 describe("Committed batch — the hard-from-DO anchor (mig 0230, Decision 2026-08-06)", () => {
-  // The DO detail surfaces `delivery_order_items.committed_po_batch_no`: which
-  // incoming PO batch a ship-before-arrival line committed to at DO creation.
-  // ANCHORED identity — solid chip, never dashed, no "~" — because it is a
-  // stored fact, not a floating MRP allocation.
 
   it("renders the anchored solid chip with the hard-from-DO tooltip when present", () => {
     const { container } = render(<CommittedBatchCell poNo="2990-PO-2607-014" />);
     const chip = screen.getByText("2990-PO-2607-014") as HTMLElement;
     expect(chip).toBeTruthy();
-    // Anchored tone: solid border + surface fill + accent ink — and NOT the
-    // floating dashed treatment.
     expect(chip.className).toContain("bg-surface-2");
     expect(chip.className).toContain("text-accent-ink");
     expect(chip.className).not.toContain("border-dashed");
     expect(container.textContent).not.toContain("~");
-    // Tooltip states the anchor: committed at DO creation — hard from DO.
     expect(chip.title).toMatch(/committed/i);
     expect(chip.title).toMatch(/when the Delivery Order was created/i);
     expect(chip.title).toMatch(/hard from DO/);
-    // The batch number renders VERBATIM (company-prefix namespacing rule).
     expect(chip.textContent).toBe("2990-PO-2607-014");
-    // The cell labels itself so a bare PO chip cannot be misread as Source PO.
     expect(screen.getByText(/Committed PO/i)).toBeTruthy();
   });
 

@@ -1,8 +1,3 @@
-/* Which board rows a GET /delivery-planning answers with, by `state`.
-   OPEN = every row but Delivered (2026-10-26: Delivered was 72% of a 5.4 MB
-   payload re-downloaded on every edit). The board fetches OPEN for its working
-   tabs; Delivered counts per region ride along so the tab badges stay right
-   without the rows. ALL and a single state behave as before. */
 export function boardSlice<T extends { delivery_state: string; regions: readonly string[] }>(
   rows: T[],
   stateParam: string,

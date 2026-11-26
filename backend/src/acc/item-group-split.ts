@@ -33,14 +33,10 @@ export async function splitByItemGroup(
   sb: Db,
   p: {
     companyId: number | null;
-    /** The document's number, for the refusal sentences. */
     docNo: string;
     items: GroupSplitLine[];
-    /** Which binding of scm.acc_item_group_accounts to read. */
     account: 'purchase_account' | 'sales_account';
-    /** The document's own currency → MYR sen, once per group (identity for MYR). */
     myrSen: (sen: number) => number;
-    /** The header total in MYR sen — the figure the groups must sum to. */
     totalSen: number;
   },
 ): Promise<GroupSplitResult> {

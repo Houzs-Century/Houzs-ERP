@@ -47,8 +47,6 @@ export async function maybeSendPodDeliveredWhatsApp(
   deliveryOrderId: string,
 ): Promise<void> {
   try {
-    // INERT without Connect — checked FIRST, before any read or the claim write,
-    // so an unconfigured deployment touches nothing (matches maybeSendDeliveryOrderEmail).
     if (!isConnectConfigured(c.env)) return;
     const sb = c.get('supabase');
 
@@ -79,10 +77,6 @@ export async function maybeSendPodDeliveredWhatsApp(
 
     if (!shouldSendPodDelivered({ hasPod, soFullyDelivered, alreadySent })) return;
 
-    // Claim the once-guard atomically: Postgres serialises the two UPDATEs and the
-    // `.is(null)` filter means exactly one caller gets a row; the loser of a
-    // concurrent double-DELIVERED sees none and returns. Mirrors
-    // maybeSendDeliveryOrderEmail (do-email.ts).
     const claimedAt = new Date().toISOString();
     const { data: claimed, error: claimErr } = await sb
       .from('delivery_orders')
@@ -91,15 +85,11 @@ export async function maybeSendPodDeliveredWhatsApp(
       .is('pod_completed_msg_sent_at', null)
       .select('id')
       .maybeSingle();
-    // No claim (write error, or lost a concurrent double-DELIVERED) → do not send.
     if (claimErr || !claimed) return;
 
     const result = await sendDeliveryMessageForDocs(c, [soDocNo], 'delivery_completed', {});
-    if (result.sent.length > 0) return; // claim stands = the customer was thanked
+    if (result.sent.length > 0) return;
 
-    // Not sent (no phone, Connect down, automation disabled, a fail-closed read)
-    // → RELEASE the claim, so the stamp only ever means "the customer WAS thanked"
-    // and a later re-delivery / retry can fire.
     await sb
       .from('delivery_orders')
       .update({ pod_completed_msg_sent_at: null })
@@ -108,6 +98,5 @@ export async function maybeSendPodDeliveredWhatsApp(
       .select('id')
       .maybeSingle();
   } catch {
-    // Best-effort: the DO is committed and the goods are out. Never rethrow.
   }
 }

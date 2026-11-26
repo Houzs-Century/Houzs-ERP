@@ -1,14 +1,3 @@
-// Nightly integrity check — the rules. Pure, so the unit suite holds them still.
-//
-// The judgement of "is this a mismatch" is NOT here: it is the shared core in
-// scripts/lib/half-done-documents.mjs, which the on-demand 180-day audit
-// (scripts/check-half-done-documents.mjs) uses too. This file only decides what
-// the NIGHTLY pass counts on top of that:
-//   - NEW only: activity in the last two days, so old cutover leftovers do not
-//     alarm every night;
-//   - known non-problems skipped: non-stock (service) item codes, company-1
-//     spec-bucket differences on hard-bound items, PO lines from the cutover.
-// The I/O is in nightlyIntegrityRun.ts. Nothing here reads or returns money.
 
 import { isServiceLine } from "../scm/shared/service-sku";
 import { HARD_BOUND_COMPANY_ID, isHardBoundLine } from "../scm/lib/so-stock-allocation";
@@ -126,7 +115,6 @@ export type IntegrityClass = keyof typeof CLASS_LABEL;
 export interface ClassResult {
   cls: IntegrityClass;
   count: number;
-  /** Document numbers / item codes only — never an amount. */
   examples: string[];
   error: string | null;
 }

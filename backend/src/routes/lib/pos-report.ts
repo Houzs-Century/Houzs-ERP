@@ -1,9 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-report.ts — the end-of-event summary email HTML on top of the shared
-// aggregation (scm/shared/pos-report.ts, which the device and the ERP page
-// use as well). The tables come from the shared report rows, so the email,
-// the CSV, the device and the ERP page name the same columns.
-// ----------------------------------------------------------------------------
 import { fmtSen } from "../../scm/shared/format";
 import { aggregateSales, reportRows, summaryCsv, type ReportSale, type ReportTotals } from "../../scm/shared/pos-report";
 
@@ -12,7 +6,6 @@ export type { ReportSale, ReportTotals };
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-/** One block of the shared rows (its header row until the next blank row) as an HTML table. */
 function block(rows: (string | number)[][], firstCell: string, limit = Infinity): string {
   const start = rows.findIndex((r) => r[0] === firstCell);
   if (start < 0) return "";

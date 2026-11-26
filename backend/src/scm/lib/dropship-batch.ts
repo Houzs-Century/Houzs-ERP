@@ -1,45 +1,7 @@
-// ----------------------------------------------------------------------------
-// dropship-batch — resolve the EXPECTED production batch for a sofa SO line
-// that is being shipped as a supplier-direct drop-ship (port of 2990 07c45728).
-//
-// A sofa "batch" = batch_no = the source production PO number. For a normal
-// ship the allocator only locks mfg_sales_order_items.allocated_batch_no once
-// a batch is PHYSICALLY received. A drop-ship ships BEFORE receipt -- the
-// operator is forcing the KNOWN expected batch ahead of the GRN. We derive
-// that batch from the PO raised against this SO line:
-//
-//     scm.purchase_order_items.so_item_id = <SO line id>
-//        -> scm.purchase_orders.po_number          (= batch_no the GRN stamps)
-//        -> scm.purchase_orders.expected_at / revised dates  (ETA)
-//
-// GUARDRAIL: a sofa line may only drop-ship if it HAS a bound PO (so the
-// incoming dye-lot batch is known). No PO -> the caller blocks; the OUT would
-// otherwise have no batch to net against on receipt.
-//
-// HARDENING (audit 2026-06-26):
-//   H1 — only LIVE POs count. A CANCELLED or DRAFT PO will never receive a
-//        GRN under its number, so a line whose only binding is dead resolves
-//        to "no PO" (drop-ship correctly blocked) instead of stamping a batch
-//        that can never net out.
-//   H3 — >1 live bound PO makes the expected batch AMBIGUOUS: the OUT would be
-//        stamped with one PO's number while the GRN may arrive under the
-//        other, stranding the drop-ship COGS at 0 forever. Guard/offer paths
-//        (buildDropshipOffenders) BLOCK the drop-ship (poNumber null +
-//        multiPo flag so the 409 can say why). Movement-write paths keep the
-//        deterministic most-recent-live-PO pick ('latest') so an ALREADY
-//        drop-shipped DO keeps resolving the same bucket its OUT was stamped
-//        with (a resync must never fall back to an un-batched OUT).
-// ----------------------------------------------------------------------------
 
 export type ExpectedBatch = {
-  /** = scm.purchase_orders.po_number — the batch_no the GRN will stamp on its
-   *  IN. null when the batch cannot be resolved (only possible in 'block'
-   *  mode: >1 live bound PO — see `multiPo`). */
   poNumber: string | null;
-  /** Effective ETA = GREATEST(expected_at, supplier_delivery_date_2..4); null if none. */
   eta: string | null;
-  /** H3 — true when the SO line is bound to MORE THAN ONE live PO, so the
-   *  expected batch is ambiguous. Only set in 'block' mode. */
   multiPo?: boolean;
 };
 
@@ -86,11 +48,6 @@ export async function resolveExpectedBatchBySoItem(
   if (ids.length === 0) return out;
 
   try {
-    // PO items that came from these SO lines -> their PO ids (mig 0098 port).
-    /* CHUNKED: `ids` is bounded when the ship path calls this with one DO, but
-       source-po-trace hands it every unresolved line of a whole DO list page —
-       uuids, straight into the URL. The picks below are made per so_item_id from
-       the full `links` set, so batching the read changes nothing. */
     type LinkRow = { so_item_id: string | null; purchase_order_id: string | null; created_at: string | null };
     const { data: links, error: poiErr } = await chunkIn<LinkRow>(ids, (batch, from, to) => sb
       .from('purchase_order_items')
@@ -103,9 +60,6 @@ export async function resolveExpectedBatchBySoItem(
     if (links.length === 0) return out;
 
     const poIds = [...new Set(links.map((r) => r.purchase_order_id).filter((x): x is string => !!x))];
-    /* H1 — status joins the read so dead (CANCELLED / DRAFT) POs never satisfy
-       the drop-ship guardrail. Filtered app-side so a schema without the
-       status column can never silently widen the filter. */
     type PoRow = {
       id: string; po_number: string | null; status: string | null; expected_at: string | null;
       supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null;
@@ -119,7 +73,7 @@ export async function resolveExpectedBatchBySoItem(
     if (poErr) return out;
     const poById = new Map<string, PoRow>();
     for (const p of poRows) {
-      if (DEAD_PO_STATUSES.has((p.status ?? '').toUpperCase())) continue; // H1
+      if (DEAD_PO_STATUSES.has((p.status ?? '').toUpperCase())) continue;
       poById.set(p.id, p);
     }
 
@@ -130,14 +84,11 @@ export async function resolveExpectedBatchBySoItem(
       return cands.length > 0 ? cands[cands.length - 1]! : null;
     };
 
-    /* Per SO line: the set of LIVE bound POs, plus the most-recently-created
-       one for the deterministic 'latest' pick. Links to dead POs are ignored
-       entirely (H1). */
     const livePosByLine = new Map<string, Set<string>>();
     const bestLinkByLine = new Map<string, { poId: string; createdAt: string }>();
     for (const l of links) {
       if (!l.so_item_id || !l.purchase_order_id) continue;
-      if (!poById.has(l.purchase_order_id)) continue; // dead or unknown PO
+      if (!poById.has(l.purchase_order_id)) continue;
       const set = livePosByLine.get(l.so_item_id) ?? new Set<string>();
       set.add(l.purchase_order_id);
       livePosByLine.set(l.so_item_id, set);
@@ -150,7 +101,7 @@ export async function resolveExpectedBatchBySoItem(
     for (const [soItemId, link] of bestLinkByLine) {
       const livePos = livePosByLine.get(soItemId) ?? new Set<string>();
       if (livePos.size > 1 && onMultiPo === 'block') {
-        out.set(soItemId, { poNumber: null, eta: null, multiPo: true }); // H3
+        out.set(soItemId, { poNumber: null, eta: null, multiPo: true });
         continue;
       }
       const po = poById.get(link.poId);

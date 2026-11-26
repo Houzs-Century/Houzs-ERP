@@ -34,7 +34,6 @@ export interface ChargeRow {
   customer: string | null; doCompanyCode: string | null; carrierId: string; carrierName: string | null;
   cardName: string | null; invoiceNo: string | null; invoiceDate: string | null;
   billedSen: number; expectedSen: number | null; varianceSen: number | null; note: string | null;
-  /** The AP invoice the row was brought in from; null when keyed by hand. */
   apInvoiceId?: string | null;
 }
 interface InvoiceTotal {
@@ -42,7 +41,6 @@ interface InvoiceTotal {
   billedSen: number; expectedSen: number | null; varianceSen: number | null;
 }
 
-/** The 409 PUT answers when the DO already has a row for this 3PL. */
 const alreadyKeyed = (e: unknown): { billedSen: number; invoiceNo: string | null } | null => {
   const err = e as { status?: number; body?: string } | null;
   if (err?.status !== 409 || !err.body) return null;
@@ -87,7 +85,6 @@ export const ThreePLInvoices = () => {
   const [busy, setBusy] = useState(false);
   const [fromAp, setFromAp] = useState(false);
   const [said, setSaid] = useState<string | null>(null);
-  /* The AP invoice is Finance's — the API refuses anyone else (threepl-from-ap.ts). */
   const mayBringIn = useAuth().can('scm.finance.accounting');
   const set = (k: keyof typeof blank) => (v: string) => setForm((s) => ({ ...s, [k]: v }));
   const refresh = () => qc.invalidateQueries({ queryKey: ['threepl-do-charges'] });
@@ -115,8 +112,6 @@ export const ThreePLInvoices = () => {
       try {
         await put(false);
       } catch (e) {
-        /* The DO already has a row for this 3PL: say what is there and replace
-           it only on a yes — a second key-in used to overwrite it in silence. */
         const was = alreadyKeyed(e);
         if (!was) throw e;
         const yes = await askConfirm({
@@ -128,7 +123,6 @@ export const ThreePLInvoices = () => {
         if (!yes) return;
         await put(true);
       }
-      // Keep the 3PL, invoice no and date: one invoice usually covers many DOs.
       setForm((s) => ({ ...s, doNumber: '', billed: '', note: '' }));
       await refresh();
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }

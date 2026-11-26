@@ -64,9 +64,6 @@ describe("Bill a Goods-Received Note: search", () => {
     expect(screen.queryByText(/This list is not complete/)).toBeNull();
   });
 
-  /* The server reads every note with something still to bill, up to a runaway
-     ceiling, and flags the answer when it stops there. A short list that looks
-     whole is exactly what the old newest-500 read produced in silence. */
   it("says the list is not complete when the server stopped reading at its ceiling", () => {
     open("/scm/purchase-invoices/from-grn", true);
     expect(screen.getByRole("alert").textContent).toMatch(/This list is not complete/);

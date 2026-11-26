@@ -1,6 +1,3 @@
-// The as-of view's category subtotals (GL redesign item 5): they must always
-// sum back to the grand total — a subtotal chip that disagrees with the cards
-// would be the screen arguing with itself.
 
 import { describe, expect, test } from 'vitest';
 import { categorySubtotals } from './InventoryAsOf';

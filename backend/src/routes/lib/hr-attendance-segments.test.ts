@@ -27,7 +27,6 @@ describe("applyPunch", () => {
     const full = [seg("A", "B"), seg("C", "D"), seg("E", "F"), seg("G", "H")];
     expect(full.length).toBe(MAX_PUNCH_PAIRS);
     expect(applyPunch(full, "CLOCK_IN", mk("I"))).toEqual({ ok: false, reason: "max-pairs" });
-    // but the 4th can still be clocked OUT if it were open
     expect(applyPunch([seg("A", "B"), seg("C", "D"), seg("E", "F"), seg("G", null)], "CLOCK_OUT", mk("H")).ok).toBe(true);
   });
   test("does not mutate the input array", () => {

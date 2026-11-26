@@ -15,9 +15,6 @@ export interface SupplierEmails {
   email3?: string | null;
 }
 
-/* One address, checked as a real address and not just "contains @": a supplier
-   address is where a PO goes, and "a@b" or "a@b.com, c@d.com" is a send that
-   fails at the provider. Permissive on the domain (no TLD list). */
 const EMAIL_RE = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
 
 export function isValidEmailAddress(addr: string | null | undefined): boolean {

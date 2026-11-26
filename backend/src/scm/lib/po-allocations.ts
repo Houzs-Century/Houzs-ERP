@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// PO line allocations — the PURE half of the write path (mig 0235).
-//
-// One PO line can serve several customers plus stock (a consolidated purchase:
-// 2990-PO-2606-023's qty-5 MAKOTO line = SO-036 x1 + SO-029 x1 + 3 stock), so
-// scm.purchase_order_item_allocations splits a line into 1-based sub-numbered
-// slices. These helpers hold the rules the routes enforce, kept free of Hono /
-// Supabase so the unit suite exercises them directly; the DB triggers in mig
-// 0235 are the concurrency backstop for the same invariant.
-//
-//   * qty is a positive integer, and SUM(allocations.qty) <= line qty — an
-//     allocation attributes real purchased units, it cannot invent them.
-//   * seq is dense 1..n per line: created at count+1, resequenced on delete so
-//     the printable sub-number (PO-2606-001-01, -02, ...) never gaps.
-// ----------------------------------------------------------------------------
 
 import { buildVariantSummary } from '../shared/variant-summary';
 
@@ -21,8 +6,6 @@ export type AllocationRow = { id: string; seq: number; qty: number; so_item_id: 
 export type AllocationRefusal = {
   error: 'invalid_qty' | 'allocation_exceeds_line_qty' | 'allocation_not_found';
   message: string;
-  /* The numbers behind an exceeds refusal, so the UI can say exactly how much
-     room the line has left instead of making the operator count. */
   lineQty?: number;
   allocatedQty?: number;
   remainingQty?: number;

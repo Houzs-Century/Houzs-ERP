@@ -38,8 +38,6 @@ type Sb = SupabaseClient<any, any, any>;
  */
 export function refusedDtlKey(lastError: string | null | undefined): number | null {
   const text = lastError ?? '';
-  /* A re-queued row is history: its document is queued or sent under a newer
-     row, and re-reading its old refusal would recompose a second time. */
   if (isRequeuedNote(text)) return null;
   const m = text.match(/line (\d+) not found on /);
   if (!m) return null;
@@ -83,14 +81,8 @@ export async function liveLineKeys(
 }
 
 export type StaleKeyOutcome =
-  /** Not a line-not-found refusal, or a newer edit already carries the state, or
-   *  the document cannot be composed — do nothing and let normal handling run. */
   | { kind: 'none' }
-  /** The ERP still carries the refused key: the account book lost the line, not
-   *  the ERP. Leave it failing for a person. */
   | { kind: 'office_changed'; key: number }
-  /** The ERP re-keyed the line; a fresh edit of the document as it now stands
-   *  was queued. */
   | { kind: 'queued'; key: number };
 
 type EditRow = { id: string; status: string; created_at: string };
@@ -117,13 +109,10 @@ export async function recomposeStaleKeyedEdit(
   enqueue: HeldEditEnqueue,
   liveKeys: LiveLineKeys,
 ): Promise<StaleKeyOutcome> {
-  /* Only a keyed edit of an SO or a PO composes a line-keyed state from live
-     rows; a conversion carries a stored instruction and a cancel carries none. */
   if (failed.op !== 'edit' || !failed.doc_no) return { kind: 'none' };
   if (failed.doc_type !== 'SO' && failed.doc_type !== 'PO') return { kind: 'none' };
   const key = refusedDtlKey(failed.last_error);
   if (key == null) return { kind: 'none' };
-  /* An SO is composed by its number; a PO only by its row id. */
   const docId = failed.doc_id ?? null;
   if (failed.doc_type === 'PO' && !docId) return { kind: 'none' };
 
@@ -131,17 +120,10 @@ export async function recomposeStaleKeyedEdit(
   try {
     live = await liveKeys(failed.doc_type, failed.doc_no, docId);
   } catch {
-    /* Could not read the ERP's own lines — decide nothing rather than guess. */
     return { kind: 'none' };
   }
-  /* The ERP STILL carries the key the book refused. The book lost the line, not
-     the ERP; sending the same key again would be refused the same way. */
   if (live.has(key)) return { kind: 'office_changed', key };
 
-  /* Re-keyed. Compose once: if a newer edit of this document is already queued
-     or has gone, it carries the current state and this recompose would be a
-     duplicate. `created_at` is read here, not off the row, because AcOutboxRow
-     does not carry it. */
   try {
     const { data, error } = await sb.from('autocount_outbox')
       .select('id, status, created_at')

@@ -1,7 +1,3 @@
-/* What a document file may be — the server's DOC_FILE_MIMES (doc-files.ts) as
-   an <input accept> — and the MIME a picked file is sent as. Its own module
-   with no imports: every page test that mocks payment-voucher-queries whole
-   would otherwise lose this helper and the upload would throw (CI 2026-10-15). */
 export const DOC_FILE_ACCEPT = 'image/jpeg,image/png,image/webp,application/pdf';
 /** The MIME a picked file is sent as. The browser's `File.type` is empty for a
     file a scanner or a chat app saved without one, and a few tools write

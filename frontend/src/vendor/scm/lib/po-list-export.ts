@@ -26,7 +26,6 @@ export type PoListFilterParams = { from?: string; to?: string;
   creditorNames?: string[];
   creditorCodes?: string[];
   currencies?: string[];
-  /** Doc Date funnel: ticked `po_date` values (YYYY-MM-DD). */
   docDates?: string[];
 };
 
@@ -55,13 +54,9 @@ export class ExportTruncatedError extends Error {
   }
 }
 
-/* The server's cap on ids per enrichment request (MAX_IDS in
-   routes/mfg-purchase-orders-list-enrichment.ts). Each request runs one
-   company-wide MRP, so they go two at a time, not all at once. */
 const ENRICH_CHUNK = 200;
 const ENRICH_CONCURRENCY = 2;
 
-/** The MRP-derived columns: only these need /list-mrp-enrichment. */
 const MRP_COLUMNS = new Set(['assigned_so', 'delivered']);
 
 /**

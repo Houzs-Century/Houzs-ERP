@@ -28,11 +28,6 @@ import type { Env } from '../env';
 import { sendEmail, documentEmailHtml, isChannelEnabled } from '../../services/email';
 import { getBrandingForCompany } from '../../services/branding';
 
-/* The recipient is delivery_orders.email — the DO's OWN column (HEADER, :133),
-   snapshotted from the SO at create (:2451, :2787, :2840). NOT
-   sales_orders.customer_email (mig 098): that column belongs to the CORE
-   AutoCount SO of the delivery module the strip-to-core cutover deleted, and it
-   keys nothing an SCM DO can reach. */
 const DO_EMAIL_COLS =
   'id, company_id, do_number, email, debtor_name, do_email_sent_at, ' +
   'address1, address2, city, postcode, state, ' +
@@ -115,14 +110,6 @@ export async function maybeSendDeliveryOrderEmail(
   deliveryOrderId: string,
 ): Promise<string | null> {
   try {
-    /* THE GATE — FIRST, before reading or writing anything. Seeded OFF (mig
-       098:22-25) and fail-closed (email.ts FAIL_CLOSED_PURPOSES), so a missing
-       row reads OFF too. Checked here and not only inside sendEmail, because the
-       claim below is a WRITE: with the toggle off this must do literally nothing
-       — no send, no claim, no stamp, no "add an email" nag about a switched-off
-       feature, and (being first) not even a read of the DO. Off costs the two
-       app_settings reads isChannelEnabled makes, and touches delivery_orders
-       zero times. */
     if (!(await isChannelEnabled(env, 'delivery_order'))) return null;
 
     const { data, error } = await sb
@@ -133,13 +120,8 @@ export async function maybeSendDeliveryOrderEmail(
     if (error || !data) return null;
     const row = data as unknown as DoEmailRow;
 
-    // Already told this customer — the once-only guard.
     if (row.do_email_sent_at) return null;
 
-    /* No recipient. NOT an error — a customer with no email on file is an
-       ordinary state and the goods still ship — but it is the difference between
-       the customer knowing and not knowing, so say it plainly instead of
-       swallowing it. Actionable: the address is on the DO/SO header. */
     if (!(row.email ?? '').trim()) {
       return 'No delivery email was sent: this customer has no email address on the order.';
     }
@@ -148,14 +130,6 @@ export async function maybeSendDeliveryOrderEmail(
     const msg = buildDeliveryOrderEmail(row, branding.companyName);
     if (!msg) return null;
 
-    /* Concurrent double-confirm — two callers can both read do_email_sent_at as
-       null and both reach here. CLAIM the row atomically: Postgres serialises
-       the two UPDATEs and the `.is(null)` filter means exactly one gets a row
-       back; the loser sees no row and returns without sending. Same shape as the
-       CANCELLED transition's atomic guard (delivery-orders-mfg.ts:3745).
-       The claim writes the real send time, not a sentinel, so the column never
-       holds a fabricated value — and it is RELEASED below if the send does not
-       actually happen. */
     const claimedAt = new Date().toISOString();
     const { data: claimed } = await sb
       .from('delivery_orders')
@@ -164,7 +138,7 @@ export async function maybeSendDeliveryOrderEmail(
       .is('do_email_sent_at', null)
       .select('id')
       .maybeSingle();
-    if (!claimed) return null; // lost the race — the winner is sending it
+    if (!claimed) return null;
 
     const result = await sendEmail(env, {
       to: msg.to,
@@ -172,33 +146,11 @@ export async function maybeSendDeliveryOrderEmail(
       html: msg.html,
       purpose: 'delivery_order',
       refType: 'delivery_order',
-      /* email_log.ref_id is INTEGER (mig 022:15) and a DO id is a uuid, so the
-         id does not fit — the do_number is in the subject, which is what an ops
-         trace greps. companyCode takes the DO's company_id: sendEmail resolves
-         it through the same getBrandingForCompany used above, so a 2990 DO mails
-         out under the 2990 display name. */
       companyCode: row.company_id != null ? String(row.company_id) : null,
     });
 
-    if (result.status === 'sent') return null; // claim stands = the customer was told
+    if (result.status === 'sent') return null;
 
-    /* NOT sent → RELEASE the claim, so the stamp only ever means "this customer
-       was successfully emailed at this time".
-         'skipped' — the channel went off between the check and the send, or the
-           recipient/API key vanished. Nothing was enqueued (sendEmail returns
-           before the outbox insert), so releasing cannot double-send, and it
-           leaves a later confirm free to notify once the toggle is on.
-         'error'   — the FIRST delivery attempt failed, but sendEmail already
-           enqueued the message to email_outbox and the five-minute cron drains
-           it (up to 3 attempts). Releasing is still safe from a double-send:
-           the pre-ship to DISPATCHED transition cannot repeat, because a
-           shipped DO is barred from falling back to a pre-ship status
-           (delivery-orders-mfg.ts:3708), so there is no second confirm to fire
-           on. The honest cost, recorded rather than hidden: if the outbox retry
-           later succeeds, this DO's stamp stays null though the customer WAS
-           emailed — a FALSE NEGATIVE. That is the safe direction (it under-
-           claims, never over-claims), and email_outbox + email_log carry the
-           real delivery truth. */
     await sb
       .from('delivery_orders')
       .update({ do_email_sent_at: null })
@@ -212,7 +164,6 @@ export async function maybeSendDeliveryOrderEmail(
     }
     return null;
   } catch {
-    /* Best-effort: the DO is committed and the goods are out. Never rethrow. */
     return null;
   }
 }

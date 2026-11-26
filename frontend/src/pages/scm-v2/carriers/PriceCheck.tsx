@@ -22,8 +22,6 @@ import { EYEBROW, Field, INPUT, LABEL } from './ui';
 const DEBOUNCE_MS = 300;
 const ERR = 'text-[12px] font-semibold text-[color:var(--hz-dk-err,#8a2c2c)]';
 
-/** A typed box with its own error under it — outside the label, so the
- *  message never becomes part of the box's name. */
 const Box = ({ label, value, placeholder, error, inputMode, onChange }: {
   label: string; value: string; placeholder: string; error: string | undefined; inputMode: 'numeric' | 'text'; onChange: (v: string) => void;
 }) => {
@@ -51,7 +49,6 @@ export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
   const { mutate } = useComputeCost(card.id);
   const [result, setResult] = useState<CostBreakdown | null>(null);
   const seq = useRef(0);
-  /* A box shows when the card or one of its areas prices it. */
   const priced = useMemo(() => pricedTypes([...rules, ...areaRules]), [rules, areaRules]);
   const destinations = useMemo(() => destinationGroups(areas, rules), [areas, rules]);
   const counts = FLAT_ORDER.filter((t) => priced.has(t));
@@ -59,8 +56,6 @@ export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
   const read = readFacts(form, card, priced, areas);
   const errors: CheckErrors = read.ok ? {} : read.errors;
 
-  /* What the answer depends on: the boxes, and the card's prices and settings
-     (a price changed on another tab is in the next answer). */
   const factsKey = read.ok ? JSON.stringify(read.facts) : null;
   const cardKey = JSON.stringify([
     card.basis, card.aggregation, card.minChargeSen, card.capSen, card.rounding,
@@ -72,7 +67,6 @@ export const PriceCheck = ({ card, rules, areas, areaRules, form, onForm }: {
     if (factsKey === null) return undefined;
     const id = ++seq.current;
     const t = setTimeout(() => {
-      /* Only the newest answer is shown: an older reply landing late is dropped. */
       mutate(JSON.parse(factsKey) as DeliveryFacts, { onSuccess: (r) => { if (id === seq.current) setResult(r.breakdown); } });
     }, DEBOUNCE_MS);
     return () => clearTimeout(t);

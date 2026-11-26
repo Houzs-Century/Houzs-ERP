@@ -35,7 +35,7 @@ describe("Sales Order list column funnels", () => {
   });
 
   it("brings a page past the filtered set back to its last page", () => {
-    expect(clampSoPage(69, 120, 50)).toBe(2); // page 70 of 3,465 -> 3 pages after the filter
+    expect(clampSoPage(69, 120, 50)).toBe(2);
     expect(clampSoPage(1, 120, 50)).toBe(1);
     expect(clampSoPage(5, 0, 50)).toBe(0);
   });

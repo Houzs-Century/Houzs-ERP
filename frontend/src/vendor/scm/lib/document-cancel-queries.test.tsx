@@ -39,9 +39,6 @@ describe('display rules', () => {
     expect(cancelRequestLine(row())).toBe('Waiting for level-1 approval (0 of 2)');
     expect(cancelRequestLine(row({ status: 'L1_APPROVED' }))).toBe('Waiting for level-2 approval (1 of 2)');
     expect(cancelRequestLine(row({ status: 'APPROVED' }))).toContain('2 of 2');
-    /* A Purchase Order takes one signature. */
-    /* A purchase order signs nothing since 2026-09-09; the only state one of
-       its rows can be in is the cancellation that already ran. */
     expect(cancelRequestLine(row({ doc_type: 'PO', status: 'EXECUTED' }))).toBe('Cancelled');
     expect(approveLabel('so', 1)).toBe('Approve (level 1)');
     expect(approveLabel('so', 2)).toBe('Approve & cancel (level 2)');
@@ -66,7 +63,6 @@ describe('display rules', () => {
     const l1Done = row({ status: 'L1_APPROVED', l1_by: 21 });
     expect(viewerCanApprove(l1Done, viewer(21, ['*']))).toBe(false);
     expect(viewerCanApprove(l1Done, viewer(31, ['*']))).toBe(true);
-    /* Nobody signs a purchase order's cancellation — it has no key at all. */
     expect(viewerCanApprove(row({ doc_type: 'PO' }), viewer(21, ['*']))).toBe(false);
     expect(CANCEL_APPROVE_KEY.po[1]).toBeUndefined();
     expect(CANCEL_APPROVE_KEY.po[2]).toBeUndefined();

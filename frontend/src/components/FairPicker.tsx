@@ -89,42 +89,21 @@ import { fairDaysOf, soleFairDay } from './fairPick';
 export type FairPickValue = {
   venue: string | null;
   organizer: string | null;
-  /** The PICKED event's period, sent on save so the server can match the exact
-   *  occurrence instead of re-deriving one from the order date.
-   *
-   *  REQUIRED, never optional. Its absence changes which lookup the server runs
-   *  — the exact event, or a guess across the venue's fairs in the window — and
-   *  an optional argument whose absence changes the answer is the bug class this
-   *  repo has paid for repeatedly. A caller with no event (an order opened for
-   *  edit, an auto-filled default, a pick through Others) passes null, which
-   *  reads as a decision rather than an omission. */
   startDate: string | null;
   endDate: string | null;
-  /** The DAY of the picked event the order was written on (rule 8), `YYYY-MM-DD`.
-   *  Null until one is picked, and for any value that is not an event. */
   day: string | null;
-  /** The BOOTH the operator picked (rule 9), a project id. Absent or null until
-   *  one is picked; every new event, Others or a clear drops it. */
   booth?: number | null;
 };
 
 export type FairPickerProps = {
   value: FairPickValue;
-  /** The ORDER's date, `YYYY-MM-DD`. A backdated slip must offer the fair that
-   *  was running the day it was written, so this is REQUIRED rather than
-   *  optional: a caller that forgets it would silently get today's fairs, and an
-   *  optional argument whose absence changes the answer is the bug class this
-   *  repo has paid for repeatedly. Pass null explicitly for "today". */
   soDate: string | null;
   onChange: (next: FairPickValue) => void;
   disabled?: boolean;
   selectClassName?: string;
   wrapClassName?: string;
-  /** Rendered under the control — the auto-fill hint on the SO form. */
   hint?: ReactNode;
   id?: string;
-  /** The order the Booth pick is asked for (rule 9): an edit by its number, a
-   *  new order by its lines. Absent where a form never asks. */
   boothFor?: Pick<FairBoothRequest, 'docNo' | 'items'>;
 };
 
@@ -135,13 +114,6 @@ function optionValue(o: FairOption): string {
   return `fair:${o.key}`;
 }
 
-/** Is this stored value one of the offered fairs? Matched on what the value
- *  actually carries: venue + organizer always, and the START DATE too once one
- *  is present. Without the date, two occurrences of the same venue+organizer
- *  inside the window would both light up and the first would win — which is
- *  exactly the ambiguity the period was added to remove. A value with no date
- *  (an order opened for edit, an auto-filled default) still matches on the
- *  first two, so a saved answer keeps lighting up its row. */
 function matches(o: FairOption, v: FairPickValue): boolean {
   const same = (a: string | null | undefined, b: string | null | undefined) =>
     (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
@@ -159,19 +131,8 @@ export function FairPicker(props: FairPickerProps) {
   const all = [...running, ...earlier];
   const picked = all.find((o) => matches(o, value)) ?? null;
   const place = (value.venue ?? '').trim();
-  /* Opening the venue master is the operator's move in THIS session, so it is
-     local state, not something inferred from the value. Inferring it was the
-     bug: "a place with no organizer" is also what every saved order looks like,
-     and "Others with no place yet" is indistinguishable from a blank form, so the
-     list could neither stay shut on a saved order nor open on an empty one. */
   const [choosingPlace, setChoosingPlace] = useState(false);
-  /* A place that matches no row — the saved venue on an order, an auto-filled
-     default, or an order written at a fair since cancelled or re-dated — is shown
-     AS the value. It is never re-read as a fair: picking the row from the venue
-     alone could name a fair that was not running on the order's date. */
   const selected = picked ? optionValue(picked) : place ? PLACE : choosingPlace ? OTHERS : '';
-  /* A linked event outside this order's list (e.g. archived since) still reads
-     back whole — venue, organizer and dates — never as a bare venue. */
   const placeLabel = value.organizer && value.startDate
     ? fairLabel({ venue: place, organizer: value.organizer, startDate: value.startDate, endDate: value.endDate })
     : value.organizer ? `${place} — ${value.organizer}` : place;
@@ -183,9 +144,6 @@ export function FairPicker(props: FairPickerProps) {
   const askBooth = boothReq && boothQ.data?.ask ? boothQ.data : null;
   const booth = askBooth?.booths.some((b) => b.projectId === value.booth) ? value.booth! : null;
 
-  /* An order can carry a venue the master no longer lists (renamed, deactivated,
-     or imported from AutoCount). Offer it as its own row rather than dropping
-     the operator's saved answer on the floor the moment they open the list. */
   const knownVenue = venues.some((v) => v.name.trim().toLowerCase() === place.toLowerCase());
   const strayVenue = place && !knownVenue ? place : null;
 
@@ -197,25 +155,17 @@ export function FairPicker(props: FairPickerProps) {
     }
     if (next === OTHERS) {
       setChoosingPlace(true);
-      /* Keep whatever place is already on the order — switching to Others is
-         "the list did not have my fair", not "clear the venue". The PERIOD goes,
-         because Others means no event was chosen and a stale period would tell
-         the server to match an occurrence the operator just rejected. */
       return onChange({ venue: value.venue ?? null, organizer: null, startDate: null, endDate: null, day: null });
     }
     const key = next.slice('fair:'.length);
     const hit = all.find((o) => o.key === key);
     if (hit) {
       setChoosingPlace(false);
-      /* The whole row travels, not just its first two fields. The period is what
-         tells the server WHICH occurrence this is — dropping it here is what
-         made an order written after its fair closed impossible to attribute. */
       onChange({
         venue: hit.venue,
         organizer: hit.organizer,
         startDate: hit.startDate,
         endDate: hit.endDate,
-        /* A new event starts with no day unless it has only one to give. */
         day: soleFairDay(hit, q.data?.date ?? null),
       });
     }
@@ -245,10 +195,6 @@ export function FairPicker(props: FairPickerProps) {
           </optgroup>
         )}
         {earlier.length > 0 && (
-          /* Fairs that have already CLOSED, newest first, four weeks back. Never
-             anything in the future — the owner does not write an order before
-             the event happens, so offering one is only a wrong pick waiting to
-             be made. */
           <optgroup label="Recently closed (last 4 weeks)">
             {earlier.map((o) => (
               <option key={o.key} value={optionValue(o)}>{fairLabel(o)}</option>
@@ -307,8 +253,6 @@ export function FairPicker(props: FairPickerProps) {
 
 export type FairDayPickerProps = {
   value: FairPickValue;
-  /** The ORDER's date, exactly as `FairPicker` takes it: the days stop at the
-   *  date the fair list was built for, never later. */
   soDate: string | null;
   onChange: (next: FairPickValue) => void;
   disabled?: boolean;
@@ -325,8 +269,6 @@ export function FairDayPicker(props: FairDayPickerProps) {
   const q = useFairOptions(soDate);
   if (!value.organizer || !value.startDate) return null;
   const days = fairDaysOf(value, q.data?.date ?? null);
-  /* A saved day the list no longer offers (the order re-dated, the fair
-     re-planned) is still the order's answer, so it is shown as itself. */
   const options = value.day && !days.includes(value.day) ? [value.day, ...days] : days;
   return (
     <span className={wrapClassName}>
@@ -348,10 +290,7 @@ export function FairDayPicker(props: FairDayPickerProps) {
 }
 
 export type AutoFair = {
-  /** Why no fair was filled in — the form sends it to POST /validate as
-   *  `fairWhy`, which words the refusal. Null when there is nothing to say. */
   why: FairWhy | null;
-  /** The line under the picker: what was filled in, or why nothing was. */
   hint: ReactNode;
 };
 
@@ -385,7 +324,7 @@ export function useAutoFair(
     const e = d.event;
     if (!e || value.organizer) return;
     onChange({ venue: e.venue, organizer: e.organizer, startDate: e.startDate, endDate: e.endDate, day: soleFairDay(e, d.date) });
-  }, [d, enabled]); // fills ONCE, when the default arrives — not on every pick
+  }, [d, enabled]);
 
   if (!enabled || !d) return { why: null, hint: null };
   const e = d.event;

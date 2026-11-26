@@ -57,9 +57,6 @@ type Header = {
 
 const text = (v: unknown): string | null => (v == null ? null : String(v).trim() || null);
 
-/** The body's lines as the engine reads them — every figure a whole number of
-    sen (a string "1920698" from a client is a number here; "19,206.98" is not,
-    and the engine's `bad_line` says so). */
 const linesOf = (raw: unknown): EngineLine[] =>
   (Array.isArray(raw) ? (raw as LineIn[]) : []).map((l) => ({
     accountCode: String(l.accountCode ?? '').trim(),
@@ -72,8 +69,6 @@ const linesOf = (raw: unknown): EngineLine[] =>
     notes: upperTyped(text(l.notes)),
   }));
 
-/* The same key the create, post and reverse routes ask for (accounting.ts:
-   requireGlPost) — an edit is a post and a reversal in one. */
 const GL_POST = 'scm.payment_voucher.post';
 
 export const journalEntryEdit = async (c: Ctx) => {
@@ -100,14 +95,11 @@ export const journalEntryEdit = async (c: Ctx) => {
     return c.json({ error: 'already_reversed', message: `${je.je_no} was reversed — it is history now. Copy it into a new journal instead.` }, 409);
   }
 
-  /* The corrected entry, as the engine will see it. A blank date keeps the
-     entry's own day — an edit of the figures is not a move to today. */
   const entryDate = dateOrNull(body.entryDate) ?? String(je.entry_date).slice(0, 10);
   const narration = body.narration === undefined ? je.narration : upperTyped(text(body.narration));
   const lines = linesOf(body.lines);
   const draft = { companyId: co.companyId, entryDate, sourceType: 'MANUAL', sourceDocNo: null, narration, lines };
 
-  /* 1 — validated before a single write: a bad edit reverses nothing. */
   const v = await validateJournal(sb, draft);
   if (!v.ok) {
     const client = v.status === 'min_2_lines' || v.status === 'bad_line' || v.status === 'unbalanced'
@@ -115,7 +107,6 @@ export const journalEntryEdit = async (c: Ctx) => {
     return c.json({ error: v.status, reason: v.reason }, client ? 400 : 500);
   }
 
-  /* A draft has booked nothing: rewrite it in place, same number. */
   if (je.posted !== true) {
     const { data: oldLines, error: oldErr } = await sb.from('journal_entry_lines')
       .select('journal_entry_id, line_no, account_code, debit_sen, credit_sen, party_type, party_code, party_name, notes, company_id')
@@ -141,22 +132,17 @@ export const journalEntryEdit = async (c: Ctx) => {
       notes: l.notes ?? null,
     })));
     if (insErr) {
-      /* The old lines go back so the draft is never a header alone. */
       if (oldLines.length > 0) await sb.from('journal_entry_lines').insert(oldLines);
       return c.json({ error: 'update_failed', reason: insErr.message }, 500);
     }
-    /* The draft IS rewritten at this point — a failed read-back degrades the
-       response body, never the outcome (the create route's own rule). */
     const { data: after, error: afterErr } = await sb.from('journal_entries').select('*').eq('id', je.id).maybeSingle();
     const header = afterErr ? null : after;
     return c.json({ journalEntry: header ?? { id: je.id, je_no: je.je_no }, lineCount: lines.length, replaced: null });
   }
 
-  /* 2 — the corrected entry as a draft: nothing in the books moves yet. */
   const made = await postJournal(sb, { ...draft, postNow: false });
   if (!made.ok) return c.json({ error: made.status, reason: made.reason }, 500);
 
-  /* 3 — the old entry reversed on its own day, the contra naming its successor. */
   const undone = await reverseJournal(sb, {
     sourceType: 'MANUAL',
     jeId: je.id,
@@ -165,15 +151,12 @@ export const journalEntryEdit = async (c: Ctx) => {
     narration: (orig) => `Reversal of ${orig.je_no} — edited, replaced by ${made.jeNo}`,
   });
   if (!undone.ok) {
-    /* The books are untouched; the draft that would have replaced the entry
-       is paperwork that never happened. */
     await sb.from('journal_entry_lines').delete().eq('journal_entry_id', made.jeId);
     await sb.from('journal_entries').delete().eq('id', made.jeId);
     return c.json({ error: 'reverse_failed', reason: `${undone.status}${undone.reason ? `: ${undone.reason}` : ''}` }, 500);
   }
   const contraJeNo = undone.status === 'reversed' ? undone.jeNo : null;
 
-  /* 4 — the corrected entry posted. */
   const { data: posted, error: postErr } = await scopeToCompanyId(
     sb.from('journal_entries').update({ posted: true }).eq('id', made.jeId),
     co.companyId,

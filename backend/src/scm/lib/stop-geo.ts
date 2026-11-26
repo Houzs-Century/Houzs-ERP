@@ -1,23 +1,3 @@
-// ---------------------------------------------------------------------------
-// stop-geo.ts — WHERE to put a Last Mile stop's pin, for every job type.
-//
-// The Last Mile map pins a stop by its board row key. Until 2026-11-18 only sales
-// orders were ever located (GET /delivery-planning/geo reads SOs only), so a
-// service-case leg, a setup / dismantle, a supplier pickup, a transfer or a lorry
-// service sat on the lorry card as an unnumbered dot with no pin (owner: "VNB9058
-// has only ONE point").
-//
-// Each stop gets an ordered list of addresses to try (`GeoCandidate`): its
-// street address with postcode / city / state first; the party name (venue,
-// supplier, warehouse) when the street is weak or missing; and last the postcode
-// area alone, marked approximate. `locateStops` walks each list cache-first
-// (one batched scm.geocode_cache read, at most one Google call per address the
-// cache has never seen) and stops at the first hit. Only a stop with no
-// locatable address at all comes back unlocated, with the reason.
-//
-// The candidate builders are PURE (unit-tested); the job readers and
-// `locateStops` do the I/O.
-// ---------------------------------------------------------------------------
 
 import type { Context } from 'hono';
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
@@ -34,7 +14,6 @@ import type { Env, Variables } from '../env';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- schema-parameterised scm client, same alias as geocode.ts
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
-/* ── Pure ───────────────────────────────────────────────────────────────── */
 
 /** One address to try. `approximate` = only the postcode area, not the door. */
 export interface GeoCandidate {
@@ -44,14 +23,11 @@ export interface GeoCandidate {
 
 /** A stop's place, in the parts every job type has. */
 export interface StopPlace {
-  /** The venue / supplier / warehouse name — used to geocode only when `useName`. */
   name: string | null;
   lines: Array<string | null | undefined>;
   postcode: string | null;
   city: string | null;
   state: string | null;
-  /** True when `name` names a PLACE (a venue, supplier, warehouse, workshop) that
-   *  Google can find by name; false for a customer's personal name. */
   useName: boolean;
 }
 
@@ -60,9 +36,6 @@ const tidy = (v: unknown): string => (v == null ? '' : String(v).replace(/\s+/g,
 const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const names = (text: string, part: string) => new RegExp(`(^|[^a-z0-9])${escapeRe(part.toLowerCase())}($|[^a-z0-9])`).test(text.toLowerCase());
 
-/** `head` (+ `street`) then each tail part the STREET does not already name, so
- *  "75450 Ayer Keroh" is not followed by "75450" again. The place name is not
- *  checked: "MELAKA INTERNATIONAL TRADE CENTRE" still needs ", Melaka". */
 function withTail(head: string[], street: string[], tail: string[]): string {
   const out = [...head, ...street];
   let said = street.join(' , ');
@@ -120,8 +93,6 @@ export function soCandidates(composed: string, postcode: string | null, state: s
   if (composed.trim() !== '') out.push({ address: composed, approximate: false });
   const pc = tidy(postcode);
   if (pc !== '') {
-    /* A Singapore postcode names one building, so "730621, Singapore" lands on
-       the door even when the street is misspelt; a Malaysian one is an area. */
     const sg = /singapore/i.test(tidy(country)) || /^\d{6}$/.test(pc);
     const area = sg ? `${pc}, Singapore` : [pc, tidy(state), 'Malaysia'].filter(Boolean).join(', ');
     if (normalizeAddress(area) !== normalizeAddress(composed)) out.push({ address: area, approximate: !sg });
@@ -129,7 +100,6 @@ export function soCandidates(composed: string, postcode: string | null, state: s
   return out;
 }
 
-/** DP job types whose party is a PLACE, not a person: geocode by its name too. */
 const PLACE_PARTY_TYPES = new Set(['SETUP', 'DISMANTLE', 'SUPPLIER_PICKUP', 'TRANSFER', 'LORRY_SERVICE']);
 
 /** A manual DP job (dp_orders row, postcode already filled from the text). PURE. */
@@ -199,7 +169,6 @@ export function parseJobRef(ref: string): JobRef | null {
   return null;
 }
 
-/* ── I/O ────────────────────────────────────────────────────────────────── */
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -311,7 +280,6 @@ export async function locateStops(
   const keys = [...new Set([...candidatesByRef.values()].flat().map((g) => normalizeAddress(g.address)).filter((k) => k !== ''))];
   for (let i = 0; i < keys.length; i += 200) {
     const { data, error } = await sb.from('geocode_cache').select('normalized_address, lat, lng').in('normalized_address', keys.slice(i, i + 200));
-    // A failed cache read is not fatal: those addresses go on to geocodeAddressCached, which re-reads the cache per address.
     if (error) { console.warn(`[stop-geo] geocode cache read failed: ${error.message.slice(0, 120)}`); continue; }
     for (const h of (data as Array<Record<string, unknown>>)) {
       const key = String(h.normalizedAddress ?? h.normalized_address ?? '');

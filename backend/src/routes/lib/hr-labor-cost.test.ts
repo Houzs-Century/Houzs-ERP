@@ -1,5 +1,3 @@
-// Labor Cost tab arithmetic: hours -> cost by department and employee, salary
-// as of the month, OT split out, daily-paid by the day.
 import { describe, expect, test } from "vitest";
 import { DEFAULT_PAY_RULES } from "../../scm/shared/hr-pay-rules";
 import { laborCost, type CostEmployeeIn } from "./hr-labor-cost";
@@ -25,8 +23,6 @@ describe("laborCost", () => {
       cfgFor: () => DEFAULT_PAY_RULES,
       departmentNames: names,
     });
-    // 26 working days in Oct 2026 with Deepavali: regular RM2,600 / 26 / 9 per hour.
-    // Day 1: 9 regular + 1 OT at 2600/26/9 x 1.5; day 2: 9 regular.
     const regularHour = 260000 / 26 / 9;
     expect(r.byEmployee[0]).toMatchObject({ empNo: "EMP-001", days: 2, hours: 19, otHours: 1, salaryMissing: false });
     expect(r.byEmployee[0].costSen).toBe(Math.round(18 * regularHour + regularHour * 1.5));

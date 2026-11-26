@@ -1,21 +1,6 @@
-// THE VENTURE PORTAL CATALOGUE PUSH: when the catalogue is sent, where, in how
-// many posts, and what the portal's answer does to the record of what it holds.
-//
-// What is NOT here is the body itself — that no price leaves is a property of
-// the SQL, and tests-pg/vpCatalogueFeed.pg.test.ts runs that SQL. Every
-// property below is one a wrong line of TypeScript would break silently:
-//
-//   • an unchanged catalogue must cost one md5, not a megabyte;
-//   • a catalogue the portal REFUSED must not be re-sent every five minutes,
-//     and one it may or may not have applied must not be trusted as delivered;
-//   • a section must never be split across two posts, because `full: true`
-//     retires whatever a carried section does not mention;
-//   • a vp.url of the wrong shape must stop the push, not be guessed at.
 import { describe, expect, test, beforeEach, vi } from 'vitest';
 import type { Env } from '../env';
 
-/* The module reads its client through getSupabaseService(env), exactly like
-   the order feed's sender; venture-portal-outbox.test.ts's seam, verbatim. */
 let currentSb: ReturnType<typeof import('./fake-postgrest').fakeSb>;
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => currentSb }));
 
@@ -41,7 +26,6 @@ const PRODUCTS_URL = 'https://venture-portal-chi.vercel.app/api/erp/v1/products'
 const URL_ROW = { k: 'vp.url', v: ORDERS_URL };
 const SECRET_ROW = { k: 'vp.secret', v: 's'.repeat(48) };
 
-/** A small but complete body, in scm.vp_build_catalogue's shape. */
 const catalogue = (companyId: number, over: Row = {}): Body => ({
   companyId,
   full: true,
@@ -54,12 +38,6 @@ const catalogue = (companyId: number, over: Row = {}): Body => ({
   ...over,
 });
 
-/**
- * A database with the feed wired up, and the two catalogue functions answering.
- * `digests` is what scm.vp_catalogue_digest returns per company right now;
- * the snapshot answers the same digest unless `snapshotDigests` says otherwise
- * (the catalogue changing between the two calls).
- */
 function db(opts: {
   flag: string | null;
   config?: Row[];
@@ -69,7 +47,6 @@ function db(opts: {
   snapshotDigests?: Record<number, string>;
   bodies?: Record<number, Body>;
   missing?: Record<string, string[]>;
-  /** scm.venture_portal_catalogue_changes — the marks the triggers leave. */
   changes?: Row[];
 }) {
   const sb = fakeSb(
@@ -94,7 +71,6 @@ function db(opts: {
   return sb;
 }
 
-/* Partial: a table nobody has written yet is absent, as the fake keeps it. */
 const state = (sb: { tables: Partial<Record<string, Row[]>> }, companyId: number): Row | undefined =>
   (sb.tables.venture_portal_catalogue_state ?? []).find((r) => Number(r.company_id) === companyId);
 
@@ -106,7 +82,6 @@ const res = (status: number, body: unknown = { ok: true, outcome: 'applied', pro
     headers: { 'content-type': 'application/json' },
   });
 
-/** A fetch that answers `statuses` in turn and records every call. */
 function portal(...statuses: Array<number | Error>) {
   const calls: Array<{ url: string; init: RequestInit; body: Body }> = [];
   let i = 0;
@@ -119,14 +94,12 @@ function portal(...statuses: Array<number | Error>) {
   return { fetchImpl: fetchImpl as unknown as typeof fetch, calls };
 }
 
-/* Only ever handed to the mocked getSupabaseService above. */
 const env = {} as Env;
 
 beforeEach(() => {
   resetFeedFlagCache();
 });
 
-// ---------------------------------------------------------------------------
 
 describe('the receiver is the order feed`s sibling', () => {
   test('/sales-orders becomes /products', () => {
@@ -140,9 +113,6 @@ describe('the receiver is the order feed`s sibling', () => {
     expect(vpCatalogueUrl(`  ${ORDERS_URL}  `)).toBe(PRODUCTS_URL);
   });
 
-  /* NOT GUESSED. A receiver URL of any other shape might be a proxy, a
-     different deployment or a typo — posting the catalogue to a guess is how
-     it ends up somewhere nobody meant. */
   test('anything that does not end in /sales-orders answers null', () => {
     for (const bad of [
       'https://venture-portal-chi.vercel.app/api/erp/v1/orders',
@@ -159,10 +129,6 @@ describe('the receiver is the order feed`s sibling', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// LIVE: the SCM write kick runs pushVenturePortalCatalogueOnChange after the
-// order drain. It must send when a catalogue table was marked — the owner's
-// "live, not five minutes" — and cost next to nothing when none was.
 
 const marks = (sb: { tables: Partial<Record<string, Row[]>> }) =>
   (sb.tables.venture_portal_catalogue_changes ?? []).map((r) => Number(r.id));
@@ -182,8 +148,6 @@ describe('live: the kick sends the catalogue when a catalogue table changed', ()
     expect(marks(sb)).toEqual([]);
   });
 
-  /* THE COMMON CASE. Every SCM write ends in this step, and almost none of them
-     touched the catalogue: no mark must mean no digest and no post. */
   test('no mark: no digest is asked and nothing is posted', async () => {
     const sb = db({ flag: '1' });
     currentSb = sb;
@@ -206,9 +170,6 @@ describe('live: the kick sends the catalogue when a catalogue table changed', ()
     expect(marks(sb)).toEqual([1]);
   });
 
-  /* A mark on a column the digest does not see (the trigger lists only what
-     the catalogue sends, so this is a race or a no-op UPDATE) still costs one
-     digest — and sends nothing. */
   test('a mark on an unchanged catalogue asks the digest, posts nothing, and clears the mark', async () => {
     const sb = db({
       flag: '1',
@@ -225,9 +186,6 @@ describe('live: the kick sends the catalogue when a catalogue table changed', ()
     expect(marks(sb)).toEqual([]);
   });
 
-  /* A Save that lands while the catalogue is being built must not be lost:
-     the run clears only the marks that were there when it started, so the new
-     one earns the next push. */
   test('a mark written while the run builds survives it', async () => {
     const sb = db({ flag: '1', changes: [MARK(1)] });
     currentSb = sb;
@@ -242,8 +200,6 @@ describe('live: the kick sends the catalogue when a catalogue table changed', ()
     expect(marks(sb)).toEqual([2]);
   });
 
-  /* The cron runs the same push every five minutes whatever the flag says, so
-     marks written while the feed is off cannot pile up. */
   test('every push clears the marks it covers — the cron too, with the feed off', async () => {
     const sb = db({ flag: 'off', changes: [MARK(1), MARK(2), MARK(3)] });
     currentSb = sb;
@@ -263,8 +219,6 @@ describe('the digest decides whether anything is sent', () => {
     expect(vpCatalogueDecision('d1', delivered('d1'), false)).toBe('unchanged');
   });
 
-  /* The portal refused THESE BYTES. Sending them every five minutes repeats
-     the refusal 288 times a day and hides it behind a busy log. */
   test('bytes the portal refused (400/422) wait for a change', () => {
     const refused = { delivered_digest: 'd0', last_digest: 'd1', last_outcome: 'failed' };
     expect(vpCatalogueDecision('d1', refused, false)).toBe('refused_unchanged');
@@ -306,17 +260,12 @@ describe('the digest decides whether anything is sent', () => {
     expect(state(sb, 1)).toMatchObject({
       delivered_digest: 'd-new', last_digest: 'd-new', last_outcome: 'sent', last_http_status: 200, last_error: null, last_parts: 1,
     });
-    /* The portal's own answer is kept, per post. */
     expect(state(sb, 1)?.portal_result).toEqual([
       expect.objectContaining({ status: 200, result: expect.objectContaining({ outcome: 'applied' }) }),
     ]);
     expect(state(sb, 1)?.delivered_at).toEqual(expect.any(String));
   });
 
-  /* THE RACE the snapshot exists for. The catalogue can change between the
-     digest question and the build. Recording the digest that was ASKED would
-     mark as delivered a catalogue the portal never received — and if the
-     catalogue were then edited back, the portal's copy would never be fixed. */
   test('the digest recorded is the one of the bytes sent, not the one first asked for', async () => {
     const sb = db({ flag: '1', digests: { 1: 'd-asked' }, snapshotDigests: { 1: 'd-built' } });
     currentSb = sb;
@@ -350,16 +299,12 @@ describe('what the portal`s answer means', () => {
     expect(classifyVpCatalogueResponse(401).note).toMatch(/secret/i);
   });
 
-  /* `delivered` must only ever describe what the portal HOLDS. A 4xx or a 503
-     on the first post proves nothing was written; anything else does not. */
   test('the record of what the portal holds is replaced, kept or cleared', () => {
     expect(vpCatalogueVerdict([200], 1)).toMatchObject({ outcome: 'sent', delivered: 'replace' });
     expect(vpCatalogueVerdict([200, 200, 200], 3)).toMatchObject({ outcome: 'sent', delivered: 'replace' });
     for (const s of [401, 503]) expect(vpCatalogueVerdict([s], 1)).toMatchObject({ outcome: 'retry', delivered: 'keep' });
     for (const s of [400, 422, 413]) expect(vpCatalogueVerdict([s], 1)).toMatchObject({ outcome: 'failed', delivered: 'keep' });
-    /* It may have committed before the answer was lost. */
     for (const s of [500, 502, 504, 0]) expect(vpCatalogueVerdict([s], 1)).toMatchObject({ outcome: 'retry', delivered: 'clear' });
-    /* An earlier post of this run WAS applied. */
     expect(vpCatalogueVerdict([200, 422], 2)).toMatchObject({ outcome: 'failed', delivered: 'clear' });
     expect(vpCatalogueVerdict([200, 401], 3)).toMatchObject({ outcome: 'retry', delivered: 'clear' });
     expect(vpCatalogueVerdict([200, 401], 3).note).toMatch(/^post 2 of 3: /);
@@ -391,14 +336,12 @@ describe('what the portal`s answer means', () => {
     expect(state(sb, 1)).toMatchObject({ last_digest: 'd-new', last_outcome: 'failed', last_http_status: 422 });
     expect(String(state(sb, 1)?.last_error)).toMatch(/portal said 422/);
 
-    /* Same digest: no post at all. */
     resetFeedFlagCache();
     const quiet = portal(200);
     const r2 = await pushVenturePortalCatalogue(env, { force: false }, quiet.fetchImpl);
     expect(r2.companies[0]).toMatchObject({ action: 'refused_unchanged' });
     expect(quiet.calls).toHaveLength(0);
 
-    /* Somebody fixed the catalogue: a new digest goes. */
     resetFeedFlagCache();
     sb.rpcHandlers.vp_catalogue_digest = () => 'd-fixed';
     sb.rpcHandlers.vp_catalogue_snapshot = () => ({ digest: 'd-fixed', body: catalogue(1) });
@@ -408,9 +351,6 @@ describe('what the portal`s answer means', () => {
     expect(fixed.calls).toHaveLength(1);
   });
 
-  /* A 5xx or a timeout can arrive AFTER the portal committed. If the record
-     kept saying "d-old delivered", and the catalogue were then edited back to
-     d-old, the push would skip it forever while the portal held the other one. */
   test('500: retried, and the delivery record is no longer trusted', async () => {
     const sb = db({ flag: '1', state: [{ company_id: 1, delivered_digest: 'd-old', last_digest: 'd-old', last_outcome: 'sent' }] });
     currentSb = sb;
@@ -418,7 +358,6 @@ describe('what the portal`s answer means', () => {
     await pushVenturePortalCatalogue(env, { force: false }, portal(500).fetchImpl);
     expect(state(sb, 1)).toMatchObject({ delivered_digest: null, last_outcome: 'retry', last_http_status: 500 });
 
-    /* The catalogue is edited back to what was delivered before: it still goes. */
     resetFeedFlagCache();
     sb.rpcHandlers.vp_catalogue_digest = () => 'd-old';
     sb.rpcHandlers.vp_catalogue_snapshot = () => ({ digest: 'd-old', body: catalogue(1) });
@@ -488,12 +427,7 @@ describe('splitting a body that is too big for one post', () => {
     expect(parts[0]!.bytes).toBe(utf8(parts[0]!.body));
   });
 
-  /* THE RULE THAT MUST NOT BREAK. full:true retires every row of a carried
-     section the post does not mention, so each section is whole in exactly
-     one post, and each post is a complete delivery on its own. */
   test('over the budget: whole sections, each in exactly one post, every post full and within budget', () => {
-    /* ~50 KB of products, ~49 KB of models, ~38 KB of fabrics: each fits the
-       budget alone, no two big ones fit it together. */
     const big = catalogue(1, {
       products: Array.from({ length: 200 }, (_, i) => ({ id: `mfg-${i}`, code: `SKU-${i}`, name: 'x'.repeat(200) })),
       models: Array.from({ length: 200 }, (_, i) => ({ id: `m-${i}`, model_code: `M${i}`, name: 'y'.repeat(200) })),
@@ -513,8 +447,6 @@ describe('splitting a body that is too big for one post', () => {
       expect(part.bytes).toBe(utf8(part.body));
       expect(part.bytes).toBeLessThanOrEqual(budget);
     }
-    /* Models go before products: the portal adopts a model from its SKUs only
-       once the model row exists. */
     expect(seen.indexOf('models')).toBeLessThan(seen.indexOf('products'));
   });
 
@@ -540,7 +472,6 @@ describe('splitting a body that is too big for one post', () => {
   });
 
   test('a section the body does not carry is not invented', () => {
-    /* A company with no effective maintenance row: the SQL leaves the key out. */
     const rest = catalogue(1);
     delete rest.maintenance;
     const [part] = planVpCatalogueParts(rest, AT, VP_CATALOGUE_MAX_POST_BYTES);
@@ -549,8 +480,6 @@ describe('splitting a body that is too big for one post', () => {
   });
 
   test('a catalogue over 3 MB leaves in several posts, and a refused one stops the rest', async () => {
-    /* ~3.2 MB of products: alone over the budget, so the run is three posts —
-       [models], [products], [maintenance, specials, fabrics, combos]. */
     const big = catalogue(1, { products: [{ id: 'mfg-1', name: 'x'.repeat(3_200_000) }] });
     const sb = db({ flag: '1', state: [{ company_id: 1, delivered_digest: 'd-old', last_digest: 'd-old', last_outcome: 'sent' }], bodies: { 1: big } });
     currentSb = sb;
@@ -565,8 +494,6 @@ describe('splitting a body that is too big for one post', () => {
     expect(state(sb, 1)).toMatchObject({ delivered_digest: 'd-new', last_parts: 3 });
     expect(state(sb, 1)?.portal_result).toHaveLength(3);
 
-    /* Next change: the second post is refused. The first WAS applied, so the
-       portal now holds a mix — the record must stop claiming d-new. */
     resetFeedFlagCache();
     sb.rpcHandlers.vp_catalogue_digest = () => 'd-newer';
     sb.rpcHandlers.vp_catalogue_snapshot = () => ({ digest: 'd-newer', body: big });
@@ -642,7 +569,6 @@ describe('the gates are the order feed`s', () => {
     expect(state(sb, 2)).toMatchObject({ delivered_digest: 'd-two', last_outcome: 'sent' });
   });
 
-  /* Not knowing what was delivered is not a reason to send. */
   test('an unreadable delivery record sends nothing', async () => {
     const sb = db({ flag: '1', missing: { venture_portal_catalogue_state: ['last_outcome'] } });
     currentSb = sb;
@@ -668,7 +594,6 @@ describe('the gates are the order feed`s', () => {
 
     expect(r.companies[0]).toMatchObject({ companyId: 1, action: 'build_failed' });
     expect(r.companies[0]!.note).toMatch(/statement timeout/);
-    /* One company's failure is not the other's. */
     expect(r.companies[1]).toMatchObject({ companyId: 2, action: 'sent' });
     expect(calls.map((c) => c.body.companyId)).toEqual([2]);
     expect(state(sb, 1)).toBeUndefined();

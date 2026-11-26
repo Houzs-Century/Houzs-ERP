@@ -1,13 +1,3 @@
-// ---------------------------------------------------------------------------
-// mcp-xlsx.ts — a minimal .xlsx writer for the AI Connector's export_excel
-// (services/mcp-round3.ts). The backend has no spreadsheet library and the
-// Worker bundle should not carry one, so this builds the five XML parts of an
-// Office Open XML workbook and zips them (deflate-raw via CompressionStream,
-// which Workers and Node both have). One sheet, a bold header row, column
-// widths from the content, money columns in RM with 2 decimals.
-//
-// Pure functions except the zip's compression step (async).
-// ---------------------------------------------------------------------------
 
 type Obj = Record<string, unknown>;
 
@@ -59,7 +49,6 @@ export function pickColumns(rows: readonly Obj[], fields: readonly string[]): Xl
   return wanted.slice(0, MAX_COLUMNS).map((key) => ({ key, header: isSenKey(key) ? moneyHeader(key) : key, money: isSenKey(key) }));
 }
 
-// ── XML ─────────────────────────────────────────────────────────────────────
 
 /** Escape for XML text, dropping characters XML 1.0 forbids. */
 export function xmlText(s: string): string {
@@ -84,7 +73,7 @@ export function colName(i: number): string {
   return s;
 }
 
-const MAX_CELL_CHARS = 32_000; // Excel's cell limit is 32,767
+const MAX_CELL_CHARS = 32_000;
 
 /** A cell's display value: money sen → RM number; numbers stay numbers; the rest text. */
 export function cellValue(col: XlsxColumn, v: unknown): { kind: "n"; n: number } | { kind: "s"; s: string } | null {
@@ -141,7 +130,6 @@ const ROOT_RELS =
   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
 const WORKBOOK_RELS =
   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>';
-// Style 0 plain, 1 bold header, 2 money (#,##0.00 = built-in format 4).
 const STYLES =
   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
 
@@ -151,7 +139,6 @@ const workbookXml = (sheetName: string) =>
 /** Excel sheet names: at most 31 characters, none of []:*?/\ . */
 export const safeSheetName = (s: string): string => s.replace(/[[\]:*?/\\]/g, " ").trim().slice(0, 31) || "Sheet1";
 
-// ── zip ─────────────────────────────────────────────────────────────────────
 
 let CRC_TABLE: Uint32Array | null = null;
 export function crc32(data: Uint8Array): number {
@@ -187,10 +174,10 @@ export async function zip(files: { name: string; data: Uint8Array }[]): Promise<
     const lh = new DataView(new ArrayBuffer(30));
     lh.setUint32(0, 0x04034b50, true);
     lh.setUint16(4, 20, true);
-    lh.setUint16(6, 0x0800, true); // UTF-8 names
-    lh.setUint16(8, 8, true); // deflate
+    lh.setUint16(6, 0x0800, true);
+    lh.setUint16(8, 8, true);
     lh.setUint16(10, 0, true);
-    lh.setUint16(12, 0x21, true); // 1980-01-01
+    lh.setUint16(12, 0x21, true);
     lh.setUint32(14, crc, true);
     lh.setUint32(18, comp.length, true);
     lh.setUint32(22, f.data.length, true);

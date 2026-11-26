@@ -1,9 +1,3 @@
-/* The Service Cases CSV (GET /api/assr/export.csv). Its "PO Amount" column is
-   the SUPPLIER cost of the case, so it follows the purchase-cost rule used for
-   SKU cost on SCM screens: pmsAccess.isProductCostViewer (directors +
-   Purchasing; /auth/me `product_cost_viewer`, capability scm.productCost.view).
-   Anyone else who may open the case list still gets the export, without that
-   column — never a refusal. */
 
 import { isProductCostViewer } from "../../services/pmsAccess";
 import type { AuthUser } from "../../services/auth";

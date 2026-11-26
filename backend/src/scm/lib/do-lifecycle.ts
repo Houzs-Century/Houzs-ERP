@@ -44,8 +44,6 @@ export function doLifecycleFrom(
     let best: Ev | null = null;
     for (const ev of evs) {
       if (!best) { best = ev; continue; }
-      // Bug #10 — normalize mixed plain-date / ISO-timestamp business dates to a
-      // day-level key before comparing (created_at remains the tie-breaker).
       const dc = normalizeEventDay(ev.date).localeCompare(normalizeEventDay(best.date));
       if (dc > 0) { best = ev; continue; }
       if (dc < 0) continue;

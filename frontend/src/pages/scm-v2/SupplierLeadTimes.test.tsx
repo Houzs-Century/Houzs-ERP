@@ -10,7 +10,6 @@ vi.mock('../../vendor/scm/lib/authed-fetch', () => ({ authedFetch: (...a: unknow
 vi.mock('../../vendor/scm/lib/mutation-error', () => ({ writeFailed: () => {} }));
 vi.mock('../../vendor/scm/lib/mrp-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../vendor/scm/lib/mrp-queries')>()),
-  // The category list + base defaults come from GET /mrp-lead-times.
   useCategoryLeadTimes: () => ({
     data: {
       categories: [
@@ -49,17 +48,17 @@ describe('SupplierLeadTimes', () => {
 
     expect((await screen.findByLabelText('Sofa lead time in days') as HTMLInputElement).value).toBe('20');
     expect(input('Rugs').value).toBe('');
-    expect(screen.getAllByText('Default: 7 days')).toHaveLength(2); // sofa + bedframe: the base number
-    expect(screen.getByText('Others: 10 days')).toBeTruthy(); // carpet: no base row, so Others
+    expect(screen.getAllByText('Default: 7 days')).toHaveLength(2);
+    expect(screen.getByText('Others: 10 days')).toBeTruthy();
   });
 
   test('one Save writes every changed row: a number PUTs, an emptied box DELETEs', async () => {
     authedFetch.mockResolvedValueOnce({ leadTimes: { sofa: 20 } });
     renderPanel();
     await screen.findByLabelText('Sofa lead time in days');
-    expect(saveButton().disabled).toBe(true); // nothing changed yet
+    expect(saveButton().disabled).toBe(true);
 
-    authedFetch.mockResolvedValue({ ok: true, leadTimes: {} }); // the write, then the refetch
+    authedFetch.mockResolvedValue({ ok: true, leadTimes: {} });
     fireEvent.change(input('Sofa'), { target: { value: '' } });
     fireEvent.change(input('Rugs'), { target: { value: '14' } });
     expect(saveButton().textContent).toBe('Save 2 changes');

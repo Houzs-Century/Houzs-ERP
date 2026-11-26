@@ -64,10 +64,6 @@
 import { normCategory, MAIN_CATEGORIES } from './so-readiness';
 import { loadProductsByCodes } from './mfg-pricing-recompute';
 
-/* The request-scoped Supabase client. This repo has no shared type for it —
-   every lib helper this file stands beside takes it untyped (loadProductsByCodes,
-   validateItemCodes, recomputeTotals) — so the alias names the reason ONCE here
-   instead of repeating an inline disable on four signatures. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see the comment above
 type Sb = any;
 
@@ -96,11 +92,6 @@ export type MixRefusal = { status: 400 | 409; body: { error: string; reason: str
 export const sofaMixRefusal = (): MixRefusal =>
   ({ status: 400, body: { error: SOFA_MIX_ERROR, reason: SOFA_MIX_REASON } });
 
-/** The 409 for "the check could not run". Mirrors variantCheckUnavailableResponse
- *  (allowed-options-check.ts): a failed read is ignorance, not permission —
- *  refuse, don't skip the gate. The driver's message goes to the log, never into
- *  the operator's sentence: humanApiError discards any `reason` carrying SQL /
- *  PGRST shapes and falls back to a blank-wall 409. */
 const mixCheckUnavailable = (where: string, detail?: string): MixRefusal => {
   /* eslint-disable-next-line no-console */
   console.error(`[main-mix] ${where} read failed — refusing rather than passing the gate:`, detail ?? '(no detail)');
@@ -156,10 +147,6 @@ export async function createMixRefusal(
  *  false)`). */
 export type MixLineTable = 'mfg_sales_order_items' | 'consignment_sales_order_items';
 
-/** Read a document's live lines. Binds the error, because "the read failed" and
- *  "the order is empty" are the same `data: null` and mean opposite things to a
- *  gate — an empty order can never mix, so a discarded failure is a silent
- *  pass. */
 async function liveLines(sb: Sb, table: MixLineTable, docNo: string): Promise<
   | { ok: true; rows: Array<{ id: string; item_code: string; item_group: string | null }> }
   | { ok: false; detail: string }
@@ -171,17 +158,6 @@ async function liveLines(sb: Sb, table: MixLineTable, docNo: string): Promise<
   return { ok: true, rows: (data ?? []) as Array<{ id: string; item_code: string; item_group: string | null }> };
 }
 
-/* Catalogue category first, stored item_group second — the idiom every other
-   category reader in this tree already uses for exactly this situation
-   (delivery-planning.ts:573, delivery-zones.ts:342, so-display-branding.ts:133
-   are all `productCategory.get(code) ?? normCategory(group)`), and what the
-   create paths do with their client-supplied itemGroup. `soMainMixIntroduced`
-   was the outlier: catalogue only, so a line whose code is not in this company's
-   mfg_products classified as nothing at all and a genuine mix could be built on
-   top of it. The fallback fires ONLY when the catalogue row is missing, so it
-   can never contradict the catalogue, and it cannot break the grandfathering: a
-   more complete `before` set makes `mix(before)` MORE likely, i.e. an
-   already-mixed document MORE editable, never less. */
 const catOf = (
   byCode: Map<string, { category?: string | null }>, code: string, group: string | null,
 ): string => byCode.get(code)?.category ?? group ?? '';
@@ -203,8 +179,6 @@ export async function lineMixRefusal(
   if (!live.ok) return mixCheckUnavailable(table, live.detail);
   const rows = live.rows;
   const byCode = await loadProductsByCodes(sb, rows.map((r) => r.item_code).concat(newCode), companyId);
-  /* validateItemCodes ran on this code moments ago, in this request and under
-     this company predicate. Not coming back means the catalogue read failed. */
   if (newCode !== '' && !byCode.has(newCode)) {
     return mixCheckUnavailable('mfg_products (line)', `the validated code ${newCode} did not come back`);
   }
@@ -243,10 +217,6 @@ export async function amendmentMixRefusal(
 ): Promise<MixRefusal | null> {
   const code = (l: AmendmentMixLine) => clean(l.newItemCode);
   const kind = (l: AmendmentMixLine) => clean(l.changeType).toUpperCase();
-  /* No requested code, no possible introduction: a QTY / SPEC / remark-only
-     amendment cannot move a category, and a REMOVE-only one can only ever make
-     the set SMALLER. Exit before the reads so the ordinary amendment pays
-     nothing for this gate. */
   const requested = lines.map(code).filter(Boolean);
   if (requested.length === 0) return null;
   const live = await liveLines(sb, 'mfg_sales_order_items', docNo);

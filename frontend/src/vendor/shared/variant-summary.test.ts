@@ -3,23 +3,6 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { buildVariantSummary, foldRedundantSpecials } from "./variant-summary";
 
-/* Two things are pinned here.
- *
- * 1. The SPECIAL segment prints one request ONCE. The migrated-corpus backfill
- *    (backend/scripts/backfill-specials-into-variants.mjs) is merge-only by
- *    owner rule — it machine-asserts that it never removes a pre-existing
- *    entry — so a line legitimately stores both the parser's glued phrase and
- *    the picker code derived from it. The stored data is correct; the doubled
- *    rendering was the defect, and it is resolved here and nowhere else.
- *
- * 2. This file and backend/src/scm/shared/variant-summary.ts are byte-
- *    identical. They were already two hand-maintained copies of one module
- *    with NOTHING guarding them, and this change had to land in both: the
- *    Worker stamps description2 from the backend copy while the SO detail page
- *    (pages/scm-v2/SalesOrderDetailV2.tsx) recomputes the same summary in the
- *    browser from this one and PREFERS its result. A fix applied to one copy
- *    would look correct on whichever surface the author happened to open.
- */
 
 const SOFA = "SOFA";
 const BEDFRAME = "BEDFRAME";
@@ -39,18 +22,15 @@ describe("foldRedundantSpecials", () => {
 
   test("nilon and nylon are one identity, and the spaced picker code survives", () => {
     expect(foldRedundantSpecials(["NILON", "nylon", "Nylon Fabric"])).toEqual(["Nylon Fabric"]);
-    // Same identity, different dress: the owner's spaced code beats the glued one.
     expect(foldRedundantSpecials(["NILONFABRIC", "Nylon Fabric"])).toEqual(["Nylon Fabric"]);
     expect(foldRedundantSpecials(["Nylon Fabric", "NILONFABRIC"])).toEqual(["Nylon Fabric"]);
   });
 
   test("a multi-word operator request is NEVER hidden", () => {
-    // Real production pairs that share a topic but are distinct requests.
     expect(foldRedundantSpecials(["Leg Change Altay Leg Grossy Black Leg", "Change 8030 Backcushion"]))
       .toEqual(["Leg Change Altay Leg Grossy Black Leg", "Change 8030 Backcushion"]);
     expect(foldRedundantSpecials(["6\" wooden leg", "Nylon Fabric"]))
       .toEqual(["6\" wooden leg", "Nylon Fabric"]);
-    // Narrower live picker code beside a wider one: both are multi-word, both stay.
     expect(foldRedundantSpecials(["Backcushion Firmer", "Seat and Backcushion Firmer"]))
       .toEqual(["Backcushion Firmer", "Seat and Backcushion Firmer"]);
   });
@@ -103,12 +83,6 @@ describe("buildVariantSummary — SPECIAL segment", () => {
 });
 
 describe("buildVariantSummary - recorded-only specials (owner choice 甲, 2026-09-03)", () => {
-  /* An AutoCount-imported line's slip asked for a PRICED option. Recording it
-     must let the factory see what to build without re-charging a closed
-     document, so it lives in variants.specialsRecorded - a key NO pricing path
-     reads (that is the whole safety property; see
-     backend/scripts/record-priced-specials-on-migrated-lines.mjs). Description 2
-     is the surface that carries it to the factory, so it renders HERE. */
   test("a recorded option prints in the same SPECIAL segment", () => {
     expect(buildVariantSummary(BEDFRAME, {
       specialsRecorded: ["HB Fully Cover"],

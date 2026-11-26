@@ -5,16 +5,6 @@ import { activeCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { financeHiddenForUser } from "../services/pmsAccess";
 
-/**
- * Server-side finance gate (Sales-department visibility, rules 2/3/7). These
- * cross-module P&L endpoints aggregate company revenue / cost / gross profit
- * (incl. project_finance_lines cost). requirePermission("projects.read") alone
- * would expose them to any positioned Sales user who can read projects, so we
- * layer the same stable-org gate the project finance/ledger endpoints use
- * (pmsAccess.financeHiddenForUser — DIRECTOR-level only; un-migrated users
- * without a position keep legacy access). Keeps the wire consistent with the
- * denyFinance() checks in routes/projects.ts.
- */
 function denyFinance(c: any): Response | null {
   if (financeHiddenForUser(c.get("user"))) {
     return c.json({ error: "You don't have permission to view financial information." }, 403);
@@ -22,27 +12,6 @@ function denyFinance(c: any): Response | null {
   return null;
 }
 
-/**
- * Cross-module P&L aggregation.
- *
- * Cash-basis Gross Profit. Source ownership:
- *   • Revenue — sales_orders.local_total by doc_date
- *   • Cost    — project_finance_lines.amount (kind='cost') by occurred_at
- *             + assr_cases.po_amount by completion_date
- *             + purchase_order_docs.local_ex_tax by doc_date
- *
- * Exhibition sales are booked through AutoCount, so project sales
- * reports are deliberately NOT summed here — they'd double-count the
- * same revenue. Cancelled POs are excluded.
- *
- * Supports three granularities:
- *   • yearly   — 5-year bar (current year + 4 prior)
- *   • monthly  — 12 months of the selected year (default)
- *   • weekly   — ~52 weeks of the selected year
- *
- * Bucketing happens in JS so the SQL stays simple (no SQLite week
- * arithmetic) and granularities don't fork the query path.
- */
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -50,10 +19,10 @@ type Scope = "all" | "sales" | "projects" | "service" | "po";
 type Granularity = "yearly" | "monthly" | "weekly";
 
 interface Bucket {
-  key: string;            // "2024" | "2024-03" | "2024-W12"
-  label: string;          // "2024" | "Jan" | "W12"
-  start: string;          // ISO YYYY-MM-DD
-  endExclusive: string;   // ISO YYYY-MM-DD
+  key: string;
+  label: string;
+  start: string;
+  endExclusive: string;
   revenue: number;
   cost: number;
   gross: number;
@@ -109,7 +78,6 @@ function emptyBuckets(granularity: Granularity, anchorYear: number): Bucket[] {
     }
     return out;
   }
-  // weekly — 7-day chunks starting from Jan 1, last bucket may be partial.
   const out: Bucket[] = [];
   const yearStart = new Date(Date.UTC(anchorYear, 0, 1));
   const yearEnd = new Date(Date.UTC(anchorYear + 1, 0, 1));
@@ -140,9 +108,6 @@ function placeRow(
   key: keyof Bucket["by_source"]
 ): void {
   if (!date || amount == null) return;
-  // Date strings are YYYY-MM-DD or longer; lexicographic compare works.
-  // Bucket array is in ascending order so a linear scan is fine for
-  // 5-53 buckets.
   for (const b of buckets) {
     if (date >= b.start && date < b.endExclusive) {
       b.by_source[key] += amount;
@@ -151,15 +116,7 @@ function placeRow(
   }
 }
 
-// ── Source pulls (raw date+amount tuples within an overall range) ──
 
-// Multi-company (Phase 0b): the P&L is a per-company financial view (design:
-// financial/order data is scoped to the active company). sales_orders +
-// purchase_order_docs carry company_id (mig 0061), so the revenue + PO-cost
-// pulls filter by the active company. assr_cases (service cost) is a
-// CROSS-company module and project_finance_lines has no company_id, so both stay
-// unscoped. `companyId` is undefined pre-migration / cold-start → predicate is
-// omitted → single-company Houzs is unchanged.
 async function rawSales(env: Env, start: string, end: string, companyId?: number) {
   const rows = await env.DB.prepare(
     `SELECT doc_date AS d, COALESCE(local_total, 0) AS a
@@ -183,49 +140,6 @@ async function rawSales(env: Env, start: string, end: string, companyId?: number
 // without joining projects counts cost from projects that were deliberately
 // removed. Measured 2026-07-29: RM 6,290,856 of the RM 69,251,852 this reported
 // belonged to archived projects — the six duplicate FAIR PNL seeds among them.
-/* ── ONE predicate per source, shared by the total and by its drill-down ──────
- *
- * A P&L bucket and the row list you get by clicking it are two different
- * queries over the same source. When the predicate is re-typed in each, they
- * drift, and the drift is INVISIBLE: the total is right, the list is longer,
- * and nothing in the response says which one to believe. That is exactly what
- * happened here — `bucketDrilldown`'s project-cost and service-cost queries
- * carried NEITHER the company filter nor the archived-project join that their
- * own totals apply, so clicking a Houzs cost bucket listed 2990's cost lines
- * and the archived FAIR PNL seeds alongside them (the RM 6,290,856 named in the
- * comment below).
- *
- * So the predicate now exists ONCE per source and both callers interpolate the
- * same string with the same binds. A future filter added here cannot reach the
- * total and miss the list. Text fragments rather than a query builder because
- * `env.DB.prepare` takes SQL text, and the two callers differ only in their
- * SELECT list and ORDER BY.
- *
- * `companyId === undefined` (pre-migration / cold-start) omits the filter, which
- * is the same three-state degrade `rawSales` has always used so single-company
- * Houzs is unchanged. */
-/* THE COMPANY OF A COST LINE IS ITS PROJECT'S, not the line's copy of it.
- * (report-money audit, 2026-08-21.)
- *
- * `project_finance_lines.company_id` is a DENORMALISED copy added by mig 0170.
- * Two writers never fill it: `services/projectCostRates.ts` stamps it on INSERT
- * only, so an auto row created before 0170 keeps NULL through every later
- * UPDATE; and the historical FAIR PNL ledger seeds were written without it.
- * `l.company_id = ?` therefore DROPS those rows from a company-scoped P&L —
- * silently, because a missing row cannot announce itself.
- *
- * Measured against production 2026-08-21 (run 32465233085,
- * `backend/scripts/check-report-money.mjs`): 85 live cost lines on unarchived
- * projects carry NULL — 79 manual (RM 1,327,267.94) + 6 auto (RM 126,069.00) =
- * RM 1,453,336.94 — while `/api/projects/analytics/profitability` and
- * `/api/projects/finance/by-project`, which both scope on `p.company_id`,
- * counted every one of them. The same money, two reports, RM 1.45M apart.
- *
- * Reading the project is not a widening: the same run found ZERO lines whose
- * own company_id disagrees with their project's, so the row set changes by
- * exactly the NULLs it was losing. The `projects` join is already here for
- * `archived_at`. The column stays — it is provenance, and other callers may
- * use it — it just stops being a second home for this answer. */
 const projectCostFrom = (companyId?: number) =>
   `FROM project_finance_lines l
        JOIN projects p ON p.id = l.project_id AND p.archived_at IS NULL
@@ -244,13 +158,9 @@ const serviceCostFrom = (companyId?: number, alias = "", join = "") => {
           ${companyId != null ? `AND ${p}company_id = ?` : ""}`;
 };
 
-/** The binds every fragment above expects, in order. */
 const costBinds = (start: string, end: string, companyId?: number) =>
   [start, end, ...(companyId != null ? [companyId] : [])] as const;
 
-/* Exported for backend/tests/reviewHighFindings.test.ts: the invariant under test
-   is that a bucket TOTAL and its drill-down apply the same predicate, and that is
-   only checkable by driving both. */
 export async function rawProjectCost(env: Env, start: string, end: string, companyId?: number) {
   const rows = await env.DB.prepare(
     `SELECT COALESCE(l.occurred_at, l.created_at) AS d, COALESCE(l.amount, 0) AS a
@@ -284,12 +194,6 @@ async function rawPoCost(env: Env, start: string, end: string, companyId?: numbe
   return rows.results ?? [];
 }
 
-// ── GET /api/finance/pnl ──
-//
-// Query params:
-//   • year=YYYY                — anchor year (default: current Malaysian year)
-//   • scope=all|sales|projects|service|po (default: all)
-//   • granularity=yearly|monthly|weekly (default: monthly)
 
 app.get("/pnl", requirePermission("projects.read"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
@@ -378,7 +282,6 @@ app.get("/pnl", requirePermission("projects.read"), async (c) => {
     granularity,
     scope,
     buckets,
-    // Backwards-compat alias for older clients that read `months`.
     months: buckets.map((b) => ({ ...b, month: b.key })),
     totals: { ...totals, margin_pct },
     notes: {
@@ -389,9 +292,6 @@ app.get("/pnl", requirePermission("projects.read"), async (c) => {
   });
 });
 
-// ── GET /api/finance/pnl/bucket?start=YYYY-MM-DD&end=YYYY-MM-DD ──
-// Drill-down: returns the contributing rows for a single bucket
-// (whatever granularity).
 
 export async function bucketDrilldown(env: Env, start: string, end: string, companyId?: number) {
   const [sales, projectLines, cases, poLines] = await Promise.all([

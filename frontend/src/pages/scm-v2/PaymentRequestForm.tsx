@@ -47,7 +47,6 @@ function FormSection({ n, title, required = false, first = false, children }: { 
   );
 }
 
-/* ── New / edit ─────────────────────────────────────────────────────────── */
 export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
   initial: PaymentRequest | null;
   hasEvents: boolean;
@@ -71,21 +70,15 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
     bankAccountName: initial?.bank_account_name ?? null,
     note: initial?.note ?? null,
   }));
-  /* A PMS row's files are the bill from the start; anything picked here joins them. */
   const [files, setFiles] = useState<File[]>(() => (initial ? [] : seed?.files ?? []));
   /* The bill is READ as it is attached (owner 2026-10-01, item 1): its number,
      date and total, whether it is for an event, the same bill elsewhere. */
   const billRead = useRequestBillRead();
-  /* What the last read offered each field — a field still holding it is the
-     reader's, not the requester's, and a newer read may replace it. */
   const lastOffer = useRef<BillOffer>({});
   const fileRef = useRef<HTMLInputElement>(null);
   const [noEvent, setNoEvent] = useState(() => !!initial?.no_event_reason);
   const [noEventReason, setNoEventReason] = useState(initial?.no_event_reason ?? '');
   const set = (patch: Partial<PaymentRequestInput>) => setV((prev) => ({ ...prev, ...patch }));
-  /* A bill paid in instalments (item 2): its total — read off it, or typed —
-     and this payment as an amount OR a percent of it. A balance's total is its
-     first request's, not edited here. */
   const isBalance = !!initial?.parent_request_id;
   const [billTotal, setBillTotal] = useState<number | null>(initial?.bill_total_sen ?? null);
   const [pct, setPct] = useState<string>(initial?.pay_pct != null ? String(initial.pay_pct) : '');
@@ -115,7 +108,6 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
     }
     const readTotal = read?.bill.totalSen ?? null;
     if (readTotal != null && readTotal > 0) setBillTotal((prev) => prev ?? readTotal);
-    /* The event the bill points at most strongly is picked for them — they confirm or change it. */
     const top = read?.eventBill ? read.eventSuggestions[0] : undefined;
     if (top) setV((prev) => (prev.projectId == null ? { ...prev, projectId: top.id } : prev));
   }, [runRead]);
@@ -123,7 +115,6 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
     setFiles(list);
     void readBill(list);
   };
-  /* A PMS row's files are read the moment the form opens, as if attached here. */
   useEffect(() => {
     if (!initial && seed && seed.files.length > 0) void readBill(seed.files);
   }, [initial, seed, readBill]);
@@ -154,8 +145,6 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
       ...billFactsOf(billRead.state),
       note: v.note?.trim() || null,
       noEventReason: v.projectId == null && noEvent ? noEventReason.trim() : null,
-      /* The total as it stands on the form (read, or typed over), and the percent
-         only while the amount is still what it makes. */
       ...(isBalance ? {} : { billTotalSen: billTotal }),
       payPct: pctValue != null && billTotal != null && pctOf(billTotal, pctValue) === v.amountSen ? pctValue : null,
       /* The PMS row it came from (owner 2026-10-08) — a new request only. */
@@ -173,7 +162,7 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
         }
       }
       onDone(id);
-    } catch { /* the mutation's own onError told the user */ }
+    } catch { }
   };
 
   /* The order it is filled in (owner 2026-10-02: 看了有点乱，整齐一点): ① the bill,
@@ -191,8 +180,6 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
       )}
       {!initial && (
         <FormSection n={stepNo('bill')} title="The bill" required first>
-          {/* A second pick adds to the first (the same file picked again is not
-              added twice); the ✕ takes one file off. */}
           <input ref={fileRef} type="file" multiple accept={PV_FILE_ACCEPT} aria-label="Bill files" style={{ display: 'none' }}
             onChange={(e) => {
               const picked = [...(e.target.files ?? [])].filter((p) => !files.some((f) => f.name === p.name && f.size === p.size));
@@ -261,7 +248,6 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Pay by</span>
-            {/* Dressed like the fields beside it — the date field's own pill stood out in the row. */}
             <DateField fullWidth value={v.dueDate ?? ''} onChange={(iso) => set({ dueDate: iso || null })} className={styles.fieldInput} aria-label="Pay by"
               style={{ background: 'var(--hz-c-surface)', border: '1px solid var(--hz-c-border)', borderRadius: 8 }} />
           </label>
@@ -313,7 +299,6 @@ export function RequestForm({ initial, hasEvents, onDone, onCancel, seed }: {
       </FormSection>
       <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end', paddingTop: 'var(--space-3)', borderTop: '1px solid var(--line, #ece9e2)' }}>
         <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
-        {/* Pressable while incomplete: the press says what is still missing. */}
         <Button variant="primary" size="sm" onClick={() => void save()} disabled={saving || reading}>
           {saving ? 'Sending…' : initial ? (initial.status === 'REJECTED' ? 'Send again' : 'Save') : 'Send to Finance'}
         </Button>

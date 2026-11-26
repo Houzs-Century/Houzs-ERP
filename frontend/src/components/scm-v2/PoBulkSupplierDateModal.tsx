@@ -31,8 +31,6 @@ import { DateField } from "../../vendor/scm/components/DateField";
 import type { PoHeaderRow } from "../../vendor/scm/lib/suppliers-queries";
 import { fmtDate } from "@2990s/shared";
 
-/* Same unwrap PoAmendmentCreateModal uses: authedFetch's rejection carries the
-   raw status + body, which humanApiError turns into a sentence. */
 const plainError = (e: unknown): string => {
   const err = e as { status?: number; body?: string; message?: string };
   if (typeof err?.status === "number" && typeof err?.body === "string") {
@@ -60,12 +58,9 @@ export function PoBulkSupplierDateModal({
   onDone,
 }: {
   open: boolean;
-  /** The POs ticked in the list. */
   poIds: string[];
-  /** The ticked rows on this page, for the read-only Date 1-4 table. */
   pos: PoHeaderRow[];
   onClose: () => void;
-  /** Fired after a successful call so the caller can refetch + report. */
   onDone: (result: BulkSupplierDateResult) => void;
 }) {
   const [slot, setSlot] = useState<SupplierDateSlot | "next">("next");
@@ -74,8 +69,6 @@ export function PoBulkSupplierDateModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fresh inputs each time it opens — a date left over from the previous batch
-  // is the kind of thing that quietly gets applied to the wrong set of POs.
   useEffect(() => {
     if (!open) return;
     setSlot("next");

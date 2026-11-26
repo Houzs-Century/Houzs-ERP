@@ -25,9 +25,8 @@ import { sha256Hex } from './scan-ocr';
 
 type Row = Record<string, any>;
 
-/* The scan reader's own inputs plus PDF — one bill, one document, one truth. */
 export const DOC_FILE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
-export const MAX_DOC_FILE_BYTES = 20 * 1024 * 1024; // the scan pipeline's own per-file cap
+export const MAX_DOC_FILE_BYTES = 20 * 1024 * 1024;
 
 const EXT: Record<string, string> = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf',
@@ -40,20 +39,12 @@ const EXT: Record<string, string> = {
 export type DocForFiles = { id: string; closed: boolean; locked: boolean; docNo?: string | null; status?: string | null };
 
 export type DocFilesSpec = {
-  /** The index table (in scm) and the column that names the document. */
   table: string;
   fkColumn: string;
-  /** R2 key layout: <keyPrefix>/<company>/<doc>/<uuid>.<ext>. */
   keyPrefix: string;
-  /** Upload and delete need one of these; reading rides the document. */
   writePerms: readonly string[];
-  /** Set when the writer is not a key holder — a product request's own
-      requester (a Sales caller holds no flat key). Replaces `writePerms`
-      entirely when present; `load` still narrows what the caller may reach. */
   mayWrite?: (c: any) => boolean;
-  /** The document under the active company — 404 when it is not there. */
   load: (c: any) => Promise<{ doc: DocForFiles } | { resp: Response }>;
-  /** The refusals, worded for THIS document. */
   closedRefusal: { error: string; message: string };
   lockedRefusal: { error: string; message: string };
   /** Set when the document must keep at least one file (a payment request's
@@ -182,7 +173,6 @@ export function makeDocFileHandlers(spec: DocFilesSpec) {
     if (!bucket) return noBucket(c);
     const found = await spec.load(c);
     if ('resp' in found) return found.resp;
-    /* Evidence locks with the document, at the stage the spec names. */
     if (found.doc.locked) return c.json(spec.lockedRefusal, 409);
     const sb = c.get('supabase');
     const { data: row, error } = await scopeToCompany(

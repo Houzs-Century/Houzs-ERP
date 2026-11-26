@@ -17,7 +17,7 @@ describe('planStopMove — within-trip reorder', () => {
   });
   it('clamps an out-of-range position to the last slot', () => {
     const u = byId(planStopMove({ stopId: 'a', sourceTripId: 'T', targetTripId: 'T', position: 99, sourceStops: src, targetStops: [] }));
-    expect(u['a']).toEqual({ id: 'a', stop_no: 3 }); // a goes last
+    expect(u['a']).toEqual({ id: 'a', stop_no: 3 });
   });
 });
 
@@ -26,10 +26,8 @@ describe('planStopMove — cross-trip move', () => {
   const tgt = [{ id: 'x', stop_no: 1 }, { id: 'y', stop_no: 2 }];
   it('closes the source gap and inserts into the target at position, moved carries trip_id', () => {
     const u = byId(planStopMove({ stopId: 'b', sourceTripId: 'T1', targetTripId: 'T2', position: 2, sourceStops: src, targetStops: tgt }));
-    // source: a stays 1 (no update), c 3 -> 2
     expect(u['a']).toBeUndefined();
     expect(u['c']).toEqual({ id: 'c', stop_no: 2 });
-    // target: x stays 1 (no update), b inserted at 2 with trip_id, y 2 -> 3
     expect(u['x']).toBeUndefined();
     expect(u['b']).toEqual({ id: 'b', stop_no: 2, trip_id: 'T2' });
     expect(u['y']).toEqual({ id: 'y', stop_no: 3 });

@@ -23,7 +23,6 @@ import {
 type Row = Record<string, unknown>;
 type Call = { sql: string; binds: unknown[] };
 
-/** Answers each query by the first matching pattern; records every call. */
 function fakeDb(answers: Array<[RegExp, Row[] | Error]>): FairDb & { calls: Call[] } {
   const calls: Call[] = [];
   return {
@@ -195,7 +194,6 @@ describe('isScanCreate — what counts as a scan on the create path', () => {
   });
 });
 
-/** The scm half of the confirm gate: one row per table, or an error. */
 function fakeSb(tables: Record<string, Row[] | Error>): FairConfirmSb {
   return {
     from(table: string) {
@@ -223,7 +221,6 @@ describe('fairConfirmProblems — what a DRAFT needs before Confirm (owner 2026-
     expect(await run(fakeSb(unplaced), fakeDb([]), { companyCode: '2990' }))
       .toEqual([{ code: 'fair_required', field: 'Fair', message: 'Pick the Fair, or mark it No fair (showroom).' }]);
     expect((await run(fakeSb(unplaced), fakeDb([[KEYER_FAIRS, []]])))[0]?.code).toBe('fair_required');
-    /* The phone's old fallback scan has no job row: the slip photo marks it. */
     const fallback = { mfg_sales_orders: [{ project_id: null, fair_match: 'PENDING', slip_image_key: 'scan-so/1/a.jpg' }] };
     expect((await run(fakeSb(fallback), fakeDb([]), { companyCode: '2990' }))[0]?.code).toBe('fair_required');
     const noFair = { mfg_sales_orders: [{ project_id: null, fair_match: 'NO_FAIR' }], scan_jobs: [{ houzs_user_id: 57 }] };
@@ -280,8 +277,6 @@ describe('fairConfirmProblems — what a DRAFT needs before Confirm (owner 2026-
 });
 
 describe('fairLinkForEdit — a re-picked event takes the brand, then the keyer (HC-0161)', () => {
-  /* HC-SO-2610-323: a pillow-only scan (brand null) at MLE @ MID VALLEY, which
-     had three booths. PMS put the scanner on the AKEMI booth after the scan. */
   const MLE = (id: number, brand: string) =>
     project({ id, brand, organizer: 'MLE', startdate: '2026-10-23', enddate: '2026-10-25' });
   const BOOTHS = [MLE(313, 'AKEMI'), MLE(314, 'ZANOTTI'), MLE(316, 'ERGOTEX')];

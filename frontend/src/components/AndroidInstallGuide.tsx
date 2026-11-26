@@ -3,24 +3,13 @@ import { MoreVertical, Plus, X } from "lucide-react";
 import { isAndroidInstallable, onInstallAvailability } from "../pwa";
 import { shouldShowPwaPrompt } from "./pwaDismissal";
 
-/**
- * AndroidInstallGuide — manual "Add to Home screen" coach for Android
- * browsers where beforeinstallprompt never fires (Samsung Internet, MIUI
- * browser, in-app WebViews, or Chrome after the native prompt was declined).
- * When the event IS available, PwaBanners' one-tap Install banner takes
- * precedence and this guide stays hidden. Shows once per 7-day cool-off;
- * hidden once installed (standalone). Theme C, mirrors IosInstallGuide.
- */
 const DISMISS_KEY = "pwa:android-guide:dismissed-at";
 const NAG_AFTER_DAYS = 7;
-// Give beforeinstallprompt a moment to arrive before deciding the browser
-// won't fire it — Chrome dispatches it shortly after load when eligible.
 const PROMPT_GRACE_MS = 2500;
 
 export function AndroidInstallGuide({
   graceMs = PROMPT_GRACE_MS,
 }: {
-  /** Wait for beforeinstallprompt before showing the manual steps. */
   graceMs?: number;
 } = {}) {
   const [show, setShow] = useState(false);
@@ -47,7 +36,6 @@ export function AndroidInstallGuide({
     setShow(false);
   }
 
-  // The one-tap install banner (PwaBanners) is available — defer to it.
   if (!show || canInstall) return null;
 
   return (

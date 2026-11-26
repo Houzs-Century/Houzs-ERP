@@ -1,32 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────
-// derive-product-cost-from-suppliers.ts — the auto-derive rule (owner
-// 2026-09-16). Pure functions only: NO db, NO io.
-//
-// RULE. The Product Maintenance cost price stops being hand-typed and is
-// derived from the supplier side:
-//   · one supplier  -> that supplier's cost.
-//   · many suppliers -> the MOST EXPENSIVE supplier's cost, taken as a WHOLE
-//     SET (owner decision 1: not a per-cell max — the whole matrix comes from
-//     the single dearest supplier, so it matches a PO raised at that supplier).
-//   · no supplier    -> nothing derivable (a "binding gap"; see the stage-1
-//     report). We SKIP rather than write a 0 — a blank source must not silently
-//     zero a cost.
-//
-// This is the REVERSE of the retired cost-anchor mirror: instead of the owner
-// typing a product cost and it flowing to one anchored supplier, the suppliers
-// are the source and the product cost is derived from them. It is date-UNAWARE
-// on purpose (owner: "current most expensive" now; effective-dating is Phase 2,
-// deferred) — the caller passes whatever bindings are current.
-//
-// SHAPE MAPPING reuses the audited `bindingToProductPatch` for FLAT and
-// BEDFRAME so the money mapping stays identical to the existing sync. SOFA is
-// the one net-new mapping: the retired mirror was product->binding one-way for
-// sofa, so there was no binding->product sofa path; here we build the product's
-// seat_height_prices COST grid from the chosen supplier's price_matrix (the
-// exact inverse of productToBindingPatch's sofa branch).
-//
-// SCALE: sen throughout (centi === sen). No unit conversion.
-// ─────────────────────────────────────────────────────────────────────────
 
 import {
   bindingToProductPatch,
@@ -39,7 +10,7 @@ export type SupplierBindingCost = {
   supplier_id: string;
   is_main_supplier: boolean | null;
   unit_price_sen: number | null;
-  price_matrix: unknown; // JSONB — {P1,P2} (bedframe) | {h:{P1,P2,P3}} (sofa) | null
+  price_matrix: unknown;
 };
 
 /** The cost fields this rule writes onto mfg_products. `seat_height_prices` is
@@ -54,10 +25,7 @@ export type DeriveResult =
   | { skipped: true; reason: string }
   | {
       skipped: false;
-      /** The supplier whose whole set was taken. */
       chosenSupplierId: string;
-      /** The dearness scalar the choice ranked on (sen). 0 = every candidate
-       *  was zero-priced; the caller decides whether to write a 0 cost. */
       dearnessSen: number;
       patch: DerivedProductCost;
     };
@@ -79,14 +47,6 @@ function matrixOf(v: unknown): Record<string, unknown> {
   return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
 
-/** The comparable "dearness" of ONE supplier's binding, per lane — the scalar
- *  that decides which supplier is "most expensive".
- *
- *  ASSUMPTION worth the owner's eye: for the matrix lanes there is no single
- *  natural price, so we rank on the DEAREST cell the supplier quotes (bedframe:
- *  the P2 cost ref, else P1; sofa: the max cell across the whole grid), then the
- *  flat price. Two suppliers still each contribute a whole set — this only
- *  decides which whole set wins. */
 function dearnessSen(lane: 'FLAT' | 'BEDFRAME' | 'SOFA', b: SupplierBindingCost): number {
   const flat = asCent(b.unit_price_sen) ?? 0;
   if (lane === 'FLAT') return flat;
@@ -94,7 +54,6 @@ function dearnessSen(lane: 'FLAT' | 'BEDFRAME' | 'SOFA', b: SupplierBindingCost)
   if (lane === 'BEDFRAME') {
     return asCent(m.P2) ?? asCent(m.P1) ?? flat;
   }
-  // SOFA — dearest cell across {height:{P1,P2,P3}}.
   let max = 0;
   let sawCell = false;
   for (const cell of Object.values(m)) {
@@ -142,9 +101,6 @@ function hasCostTier(lane: 'FLAT' | 'BEDFRAME' | 'SOFA', b: SupplierBindingCost)
   return flat !== null && flat > 0;
 }
 
-/** Build the product's SOFA seat_height_prices COST grid from a supplier's
- *  price_matrix {height:{P1,P2,P3,P4}} — the inverse of productToBindingPatch's
- *  sofa branch. */
 function sofaSeatRowsFromMatrix(price_matrix: unknown): ProductSeatCost[] {
   const rows: ProductSeatCost[] = [];
   const m = matrixOf(price_matrix);
@@ -184,9 +140,6 @@ export function deriveProductCostFromSuppliers(
   }
   const lane = laneFor(category);
 
-  // Exclude bindings that carry no cost tier (only a P1/selling number, or an
-  // empty grid) so a cost-less binding can never win the "most expensive"
-  // contest and anchor a 0/null cost. Ranking among the survivors is unchanged.
   const costed = bindings.filter((x) => hasCostTier(lane, x));
   if (costed.length === 0) {
     return { skipped: true, reason: 'no_supplier_with_cost' };
@@ -197,7 +150,6 @@ export function deriveProductCostFromSuppliers(
   let bestDear = dearnessSen(lane, best);
   for (const cur of rest) {
     const d = dearnessSen(lane, cur);
-    // tie-break on equal dearness: main supplier wins, else smaller supplier_id.
     const better =
       d > bestDear ||
       (d === bestDear &&
@@ -218,15 +170,12 @@ export function deriveProductCostFromSuppliers(
     return { skipped: false, chosenSupplierId: best.supplier_id, dearnessSen: bestDear, patch };
   }
 
-  // FLAT / BEDFRAME — reuse the audited binding->product mapping unchanged.
   const mapped = bindingToProductPatch({
     category,
     unit_price_sen: best.unit_price_sen,
     price_matrix: best.price_matrix,
   });
   if (mapped.skipped) {
-    // Only SOFA is skipped by bindingToProductPatch, and this branch is not
-    // SOFA — so this is unreachable. Surface it rather than silently drop.
     return { skipped: true, reason: `unexpected_mapping_skip:${mapped.reason}` };
   }
   return {
@@ -237,15 +186,6 @@ export function deriveProductCostFromSuppliers(
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// DISPLAY resolver — the anchor + state a drawer/list shows (read-only).
-//
-// This is a THIN wrapper over deriveProductCostFromSuppliers: it does NOT change
-// what gets written (auto-derive-cost.ts owns the write path), it only classifies
-// the SAME inputs for display so the UI can say "anchored to <supplier>", "took
-// highest", or "missing price". Kept in this module so the classification runs on
-// the one audited money rule (laneFor / hasCostTier / dearnessSen), not a copy.
-// ─────────────────────────────────────────────────────────────────────────
 
 /** The four states the SKU drawer / SKU-master column render:
  *   · ok       — a single supplier, or all costed suppliers agree.
@@ -256,19 +196,10 @@ export type CostAnchorState = 'ok' | 'conflict' | 'empty' | 'service';
 
 export type CostAnchorResult = {
   state: CostAnchorState;
-  /** Why the state is 'empty': 'no_supplier_binding' (nothing bound) or
-   *  'no_supplier_with_cost' (bound, but no supplier carries a real cost). null
-   *  for every other state. Lets the UI pick "add a supplier" vs "fill the price". */
   reason: string | null;
-  /** The supplier whose whole set anchors the cost (states ok | conflict), else null. */
   anchorSupplierId: string | null;
-  /** The derived headline cost in sen (base_price_sen lane; falls back to the
-   *  ranking scalar for a sofa with no flat), or null when not resolvable. Callers
-   *  that must not reveal cost null this out — it is the only cost-bearing field. */
   costSen: number | null;
-  /** Suppliers that carry a real cost tier — the "N" in "highest full set (N of M)". */
   costedCount: number;
-  /** Total supplier bindings for this SKU — the "M". */
   totalCount: number;
 };
 
@@ -323,9 +254,6 @@ export function resolveProductCostAnchor(
     };
   }
   const derived = deriveProductCostFromSuppliers(category, bindings);
-  // A zero-dearness winner is "no real price" — the same condition auto-derive
-  // refuses to write (all_zero_priced). Surface it as the missing-price gap, not
-  // an anchored RM 0.00.
   if (derived.skipped || derived.dearnessSen === 0) {
     return {
       state: 'empty',

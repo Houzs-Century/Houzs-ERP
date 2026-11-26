@@ -209,7 +209,6 @@ describe('each row and line in the list shape', () => {
     };
     const { body } = await getRows(harness(tables));
     const row = body.deliveryReturns[0]!;
-    /* The account book's item, through the one shared reader. */
     const book = bookLineItem({ itemCode: 'Y04-(K)', description: l.description as string, category: 'bedframe', uom: 'UNIT' }, null);
     expect(book.inBook).toBe(true);
     expect(row.so_doc_no).toBe('HC-SO-013389');

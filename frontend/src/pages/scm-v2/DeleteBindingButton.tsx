@@ -3,16 +3,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Trash2 } from 'lucide-react';
 import { useDeleteBinding } from '../../vendor/scm/lib/suppliers-queries';
 
-/* Remove a supplier binding from the product drawer — the twin of
-   AddSupplierBinding. Both hit /suppliers/:id/bindings (company-scoped,
-   server-validated); the DELETE hook already existed, only this affordance was
-   missing. Own file so Products.tsx stays under its size ceiling.
-
-   Two-step confirm, inline rather than a global dialog: a binding feeds the
-   SKU's cost anchor and MRP, so a stray single click must not drop one — but the
-   common case here is clearing junk RM0 bindings off a service SKU, so the
-   confirm stays lightweight (no modal). On success the drawer's supplier list +
-   cost anchor refresh via the same key AddSupplierBinding invalidates. */
 export const DeleteBindingButton = ({
   supplierId, bindingId, supplierName,
 }: {

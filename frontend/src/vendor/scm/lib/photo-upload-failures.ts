@@ -71,8 +71,6 @@ export type PhotoUploadFailure = LineWriteFailure;
 export const photoUploadFailure = (label: string, e: unknown): PhotoUploadFailure =>
   lineWriteFailure(label, e);
 
-/** Shown when the code has no usable name for the photo at all — an unnamed
- *  File on a line that has neither a product code nor a description yet. */
 const UNLABELLED = 'A line photo';
 
 /**
@@ -95,9 +93,6 @@ export function photoLabel(
   return line || file || UNLABELLED;
 }
 
-/** Why a staged photo never reached the network: its line could not be paired
- *  back to a saved item, so there is no item to hang the photo on. Says what
- *  happened without blaming the server, which did not refuse anything. */
 const UNMATCHED_LINE = 'We could not match this line to the saved order, so its photos were not sent.';
 
 /**
@@ -139,14 +134,8 @@ export function namedPhotoFailures(failures: readonly PhotoUploadFailure[]): str
   return `${failures.length} photos could not be uploaded — ${detail}`;
 }
 
-/** What a retryable photo failure promises. It does NOT say "your edits are
- *  still here" the way a line write does, because for a photo that is a lie:
- *  the staged File is gone with the screen, so the advice has to say where to
- *  go and do it again. */
 const RETRY_TAIL = 'Add them again from the SO detail screen.';
 
-/** What a refusal says instead — and it does not send the operator off to
- *  re-attach photos that will be refused exactly the same way on arrival. */
 const REFUSED_TAIL = 'Adding them again will not help until this is resolved.';
 
 /**

@@ -1,33 +1,3 @@
-/* "Mark paid" has to RECORD THE MONEY.
- *
- * THE DEFECT. The button PATCHed `/sales-invoices/:id/status` with
- * `{ status: 'PAID' }` and wrote no payment row. Two columns of one document
- * then disagreed — status PAID, `paid_sen` 0 — and the disagreement did not
- * last: the server DERIVES the status from the payments ledger
- * (`recomputeSiPaid`, backend `scm/lib/si-order-deposit.ts`), so the next time
- * anything touched that invoice's money the hand-written PAID was silently
- * reverted. In between, an invoice with nothing banked against it read as
- * settled.
- *
- * WHAT THESE TESTS PIN, and each one bites on the pre-fix tree:
- *   1. pressing Mark paid writes NO status — `useUpdateSalesInvoiceStatus` is
- *      never called;
- *   2. it seeds a receipt for the OUTSTANDING balance, NET of the source
- *      order's deposit — 4,400 invoice, 2,000 already collected on the order,
- *      2,400 recorded. Recording 4,400 would book 2,000 of cash that never
- *      arrived (the order's deposit is read THROUGH, never copied, precisely
- *      because both ledgers post Dr cash / Cr AR);
- *   3. saving sends that amount to `POST /:id/payments` — the same endpoint a
- *      manually-entered payment uses, so the GL posting happens once, on one
- *      path;
- *   4. the button is not offered where there is no honest receipt to write:
- *      nothing outstanding, an unreadable order deposit, a cancelled invoice or
- *      a draft (the payment routes 409 the last two with `not_payable`).
- *
- * The page is MOUNTED under a real router with only its data hooks faked, and
- * the assertions are about what the operator gets — not about which symbols the
- * file imports.
- */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -62,18 +32,11 @@ vi.mock("../../vendor/scm/lib/sales-invoice-queries", () => ({
   useAddSalesInvoicePayment: addPayment,
   useDeleteSalesInvoicePayment: deletePayment,
   useUpdateSalesInvoiceHeader: updateHeader,
-  /* The page mounts the Add line affordance (SalesInvoiceAddLine.tsx). It is
-     not what this file tests, but a module mock must name every export the
-     page reaches for or the mount throws before any assertion runs. */
   useAddSalesInvoiceItem: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("../../vendor/scm/lib/mfg-products-queries", () => ({
   useMfgProducts: () => ({ data: [] }),
 }));
-/* The REAL draft helpers stay — `newPaymentDraft` mints the row Mark paid
-   seeds, and `labelToApi` / `draftMethodFields` translate it on the way out, so
-   faking them would test a fake. Only the TABLE is replaced, with a probe that
-   records the drafts it was handed. */
 vi.mock("../../vendor/scm/components/PaymentsTable", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   PaymentsTable: (props: { payments: PaymentDraft[]; locked: boolean }) => {
@@ -112,12 +75,9 @@ import { readSiPaymentIntent, siPaymentIntentSearch, stripSiPaymentIntent } from
 
 const ID = "11111111-2222-3333-4444-555555555555";
 
-/** MYR 4,400.00 invoice. Sen throughout, as the columns are. */
 const TOTAL_SEN = 440_000;
-/** MYR 2,000.00 already collected on the SALES ORDER this invoice came from. */
 const DEPOSIT_SEN = 200_000;
-/** What is genuinely still owed, and the ONLY figure Mark paid may record. */
-const OUTSTANDING_SEN = TOTAL_SEN - DEPOSIT_SEN; // 240_000
+const OUTSTANDING_SEN = TOTAL_SEN - DEPOSIT_SEN;
 
 const header = {
   id: ID,
@@ -185,10 +145,6 @@ function setup(overrides: {
   );
 }
 
-/* The live URL, so "the intent is consumed" is asserted against what the router
-   actually holds — not against the helper the effect is SUPPOSED to call. An
-   earlier version of this file asserted only the helper, and deleting the strip
-   from the effect left it green. */
 function UrlProbe() {
   const loc = useLocation();
   return <span data-testid="url" data-search={loc.search} />;
@@ -202,8 +158,6 @@ const seededRows = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // jsdom has no layout, so it ships no scrollIntoView. The page calls it inside
-  // a requestAnimationFrame, where a throw escapes as an unhandled error.
   Element.prototype.scrollIntoView = vi.fn();
   lastPaymentsTableProps.current = null;
   window.localStorage.clear();
@@ -219,10 +173,6 @@ describe("Mark paid records the money", () => {
     expect(btn).not.toBeNull();
     fireEvent.click(btn!);
 
-    /* RED on the unfixed tree: it called updateStatus.mutate({ status: 'PAID' })
-       and that hand-written PAID was the whole bug. `confirm` is checked too —
-       the old path went through a confirm dialog before the status write, so an
-       await could not hide the call. */
     await waitFor(() => expect(seededRows().length).toBeGreaterThan(0));
     expect(updateStatusMutate).not.toHaveBeenCalled();
   });
@@ -231,10 +181,6 @@ describe("Mark paid records the money", () => {
     setup();
     fireEvent.click(markPaidButton()!);
 
-    /* 2,400 — NOT the 4,400 invoice total. The 2,000 the order already collected
-       is real cash already in the drawer and already posted to the GL from the
-       order side; booking it again here would debit cash twice and leave the
-       day's cash-up short by exactly that. */
     await waitFor(() => expect(seededRows()).toContain(OUTSTANDING_SEN));
     expect(seededRows()).not.toContain(TOTAL_SEN);
     expect(seededRows().reduce((s, n) => s + n, 0)).toBe(OUTSTANDING_SEN);
@@ -251,11 +197,8 @@ describe("Mark paid records the money", () => {
     const body = addPaymentMutateAsync.mock.calls[0][0] as Record<string, unknown>;
     expect(body.id).toBe(ID);
     expect(body.amountSen).toBe(OUTSTANDING_SEN);
-    /* A method is always sent, and it is one the server's enum accepts — the
-       operator sees and can change the row before Save. */
     expect(typeof body.method).toBe("string");
     expect(body.method).not.toBe("");
-    /* And still no hand-written status, on the way out either. */
     expect(updateStatusMutate).not.toHaveBeenCalled();
   });
 
@@ -273,9 +216,6 @@ describe("Mark paid is not offered where the receipt would be dishonest", () => 
     expect(markPaidButton()).toBeNull();
   });
 
-  /* The screen's outstanding falls back to the FULL total when the server could
-     not read the source order, so it is too high by the whole deposit. Offering
-     Mark paid there is offering to book the customer's deposit a second time. */
   it("is hidden when the order's deposit could not be read", () => {
     setup({ deposit: null, depositUnavailable: true });
     expect(markPaidButton()).toBeNull();
@@ -292,17 +232,6 @@ describe("Mark paid is not offered where the receipt would be dishonest", () => 
   });
 });
 
-/* The LIST's Mark paid used to send `{ status: "paid" }` from its own handler.
- * It now navigates here instead, because a list row cannot tell "the order
- * collected nothing" from "we could not read the order" — `siDepositAppliedSen`
- * reads absent-or-null as 0, which is the SAFE direction for a figure on screen
- * and the DANGEROUS one for a figure about to be booked as cash.
- *
- * These mount the detail page at exactly the URL the list builds — by calling
- * the same `siPaymentIntentSearch` the list calls — so the link is proven to
- * WORK, which is the assertion its predecessor never had: the list's old
- * `?tab=payments&record=1` was read by nothing at all.
- */
 describe("the list hands its payment entries to this screen", () => {
   it("?pay=balance seeds the outstanding balance and still writes no status", async () => {
     setup({ search: siPaymentIntentSearch("balance") });
@@ -324,11 +253,6 @@ describe("the list hands its payment entries to this screen", () => {
     expect(lastPaymentsTableProps.current?.locked).toBe(true);
   });
 
-  /* THE DEAD PARAM, pinned as dead. `?tab=payments&record=1` is what the list's
-     Record payment used to navigate with, and nothing in the app ever read
-     `tab` or `record` on a sales invoice — the detail page calls
-     `useSearchParams()` and never calls `.get()`. It must never silently start
-     meaning something. */
   it("the old ?tab=payments&record=1 is not an intent", async () => {
     expect(readSiPaymentIntent("?tab=payments&record=1")).toBeNull();
     setup({ search: "?tab=payments&record=1" });
@@ -336,8 +260,6 @@ describe("the list hands its payment entries to this screen", () => {
     expect(lastPaymentsTableProps.current?.locked).toBe(true);
   });
 
-  /* Round trip: what the list WRITES is what this screen READS. One module owns
-     both ends precisely so this can be asserted. */
   it("every intent the list can build is one this screen accepts", () => {
     for (const intent of ["open", "balance"] as const) {
       expect(readSiPaymentIntent(siPaymentIntentSearch(intent))).toBe(intent);
@@ -347,9 +269,6 @@ describe("the list hands its payment entries to this screen", () => {
   it("acting on the intent strips it from the URL, so a refresh does not re-seed a row", async () => {
     setup({ search: siPaymentIntentSearch("balance") });
     await waitFor(() => expect(seededRows()).toContain(OUTSTANDING_SEN));
-    /* Asserted on the ROUTER's URL, not on the helper: a refresh or a
-       back-button on a URL still carrying the intent would re-open the editor
-       and re-seed a payment row the operator may have decided against. */
     await waitFor(() => expect(currentSearch()).toBe(""));
     expect(readSiPaymentIntent(currentSearch() ?? "")).toBeNull();
   });

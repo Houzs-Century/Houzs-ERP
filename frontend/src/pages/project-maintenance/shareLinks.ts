@@ -1,10 +1,3 @@
-// The office side of a public calendar share link, for the Project Maintenance
-// row menus: copy (get-or-create) the link, or revoke it. One module for both
-// kinds so the contractor and brand rows cannot drift apart — the only things
-// that differ are the admin endpoint and the public path prefix.
-//
-//   contractor  POST/DELETE /api/projects/contractors/:id/share-link  →  /c/<token>
-//   brand       POST/DELETE /api/brand-share/:id/share-link           →  /b/<token>
 import { Ban, CalendarDays, Link2 } from "lucide-react";
 import { api } from "../../api/client";
 import type { MenuItem } from "../../components/RowActionsMenu";

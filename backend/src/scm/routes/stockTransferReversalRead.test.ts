@@ -1,8 +1,3 @@
-// Symptom / Cause / Fix: a reversal that cannot even read the movements it should take back answers ok:false with failed:0. The edit and
-// cancel paths checked only `failed > 0`, so a failed read was taken as "nothing to reverse": the edit re-applied
-// the transfer on top of movements never taken back (stock moved twice), and the cancel reported success while the
-// stock stayed moved. The cancel's in-band failure also came back as a bare string, which the screen spread one
-// character per line.
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
@@ -30,7 +25,6 @@ function makeSb() {
         entity_audit_log: [],
         app_config: [],
       },
-      // The read the reversal makes fails, as a transient PostgREST error would.
       { inventory_movements: ['movement_type'] },
     ),
     { rpc: async () => ({ data: true, error: null }) },
@@ -83,9 +77,6 @@ describe('stock transfer: a reversal that could not read its movements', () => {
   });
 });
 
-/* Symptom: a cancelled stock transfer whose stock did not come back could not be retried.
-   Cause: a second cancel answered 409 already_cancelled.
-   Fix: Cancel again re-runs the idempotent reversal; the detail says stockNotBack while stock is still owed. */
 describe('stock transfer: a cancel whose stock did not come back can be finished', () => {
   it('Cancel again re-runs the reversal, and the detail says when it is still owed', async () => {
     const missing: Record<string, string[]> = { inventory_movements: ['movement_type'] };
@@ -107,8 +98,6 @@ describe('stock transfer: a cancel whose stock did not come back can be finished
     expect(((await first.json()) as { reversalErrors?: string[] }).reversalErrors?.length).toBe(1);
     expect(sb.tables.stock_transfers[0]!.status).toBe('CANCELLED');
 
-    /* The read works again, a minute later (the cancel's lease has run out). The detail offers the finish, and
-       Cancel again moves the stock back. */
     delete missing.inventory_movements;
     sb.tables.stock_transfers[0]!.cancelled_at = new Date(Date.now() - 2 * 60_000).toISOString();
     const detail = await app().request('/st-1');
@@ -124,9 +113,6 @@ describe('stock transfer: a cancel whose stock did not come back can be finished
   });
 });
 
-/* Symptom: two Finish cancel presses at the same instant could both move the stock back (stock reversed twice).
-   Cause: each read the movements before either wrote, so both saw the stock still out.
-   Fix: a Finish cancel claims the transfer with a compare-and-set on cancelled_at; only one claim matches. */
 describe('stock transfer: only one Finish cancel runs at a time', () => {
   function cancelledShort(cancelledAt: string) {
     return Object.assign(fakeSb({

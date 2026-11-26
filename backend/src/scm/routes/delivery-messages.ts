@@ -37,11 +37,6 @@ import {
   movesDeliveryStatus,
   type SendExtras,
 } from '../lib/delivery-message-kinds';
-// East Malaysia detection (Sabah / Sarawak), the SAME rule the transporter feed
-// uses: sales_location SBH / SRW, with a Singapore re-check off the country / addr3.
-// salesLocationRegion maps the raw "SBH WAREHOUSE" book spelling to its code
-// FIRST (sheetRegion alone reads a warehouse name as null, so every East order
-// was skipped as not_east).
 import { salesLocationRegion } from '../../lib/delivery-sheet-feed';
 import { markSentStatus } from '../lib/delivery-message-status';
 import { parseAssrRowKey, sendAssrArrangement } from '../lib/assr-arrangement-message';
@@ -61,8 +56,6 @@ import { chunkIn, inList } from '../lib/paginate-all';
 
 export const deliveryMessages = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-// Same client wiring every scm sub-router carries (see dp-orders.ts — a router
-// without it has no c.get('supabase') and 500s on the first query).
 deliveryMessages.use('*', supabaseAuth);
 
 /** The shared E.164 normaliser, so a stored "+6060..." (pre-#4582 header) or
@@ -72,7 +65,6 @@ export function blastPhone(raw: unknown): string | null {
   return normalizePhone(raw == null ? null : String(raw));
 }
 
-/** ISO YYYY-MM-DD → the template payload's YYYY/MM/DD. */
 function payloadDate(iso: string | null | undefined): string {
   return String(iso ?? '').slice(0, 10).replace(/-/g, '/');
 }
@@ -80,9 +72,6 @@ function payloadDate(iso: string | null | undefined): string {
 const sendSchema = z.object({
   docNos: z.array(z.string().min(1)).min(1).max(200),
   kind: z.enum(MESSAGE_KINDS).default('delivery'),
-  // Operator-supplied variables for the kinds whose data the ERP does not hold
-  // (see delivery-message-kinds.ts). Validated per kind below, not here, so a
-  // delivery send never has to carry empty driver fields.
   driverInfo: z.object({
     driverName: z.string().trim().min(1).max(80),
     driverContact: z.string().trim().min(1).max(40),
@@ -92,28 +81,16 @@ const sendSchema = z.object({
   }).optional(),
 });
 
-/* The result of a delivery-message send. POST /send maps readError to a 500; a
-   best-effort caller (the DELIVERED → "Delivery Completed" hook) treats it as
-   "nothing sent" and does not claim its once-guard. */
 export interface SendDeliveryMessagesResult {
   sent: Array<{ phone: string; docNos: string[]; httpCode: number }>;
   failed: Array<{ phone: string; docNos: string[]; error: string }>;
   skipped: Array<{ docNo: string; reason: string }>;
   readError?: { code: string; reason: string };
-  /** Sends whose wa_message_log row did NOT land. The board's Message column reads
-   *  that log, so these orders will look unsent (or show an older result) there. */
   notLogged: Array<{ phone: string; docNos: string[]; sent: boolean; reason: string }>;
   /** Each order's Delivery Message Status as read before the send (HC-0205). */
   statusAtSend?: Map<string, string | null>;
 }
 
-/* The shared sender — group the docs by customer phone AND company, load the
-   per-company profile + live balances, POST one Connect event per (phone,
-   company) and log each. POST /send and the DELIVERED hook both call this, so
-   the auto "Delivery Completed" message goes through the SAME path (one message
-   per customer, same wa_message_log shape) instead of a second copy of the
-   sender. The caller MUST have checked isConnectConfigured first
-   (postConnectContact's contract). */
 export async function sendDeliveryMessageForDocs(
   c: Context<{ Bindings: Env; Variables: Variables }>,
   docNos: string[],
@@ -126,8 +103,6 @@ export async function sendDeliveryMessageForDocs(
   // deliver. `user` above is the pinned system staff id, shared by every caller.
   const sentByEmail = c.get('houzsUser')?.email;
 
-  // The message fields, straight off the SO header (the board's own source).
-  // Address columns feed the Postage kind only; the rest read nothing extra.
   const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders')
       // The headline columns (venue / agent / house_type / disposal_request /
@@ -143,28 +118,18 @@ export async function sendDeliveryMessageForDocs(
   if (readErr) return { sent: [], failed: [], skipped: [], notLogged: [], readError: { code: 'load_failed', reason: readErr.message } };
   const rows = (rowsRaw ?? []) as Array<Record<string, unknown>>;
 
-  // East Malaysia kinds only fire for East (Sabah / Sarawak) orders.
   const isEmKind = kind === 'eastmy_prep' || kind === 'eastmy_shipped' || kind === 'eastmy_arrived';
 
-  // eastmy_shipped reads the shipment facts the staff enter on the board's EM
-  // columns — the latest live DO's consignment_no / eta_arriving_port
-  // (delivery-planning-fields.ts). Merge them onto each SO row so kindAttributes
-  // can read them off the group's first order. The read is keyed on the already
-  // company-scoped doc_nos; "last live DO wins" is the board's own rule
-  // (delivery-board-maps.foldDos), excluding DRAFT / CANCELLED. (eastmy_arrived
-  // is an operator-judgment send and reads no DO field.)
   if (kind === 'eastmy_shipped') {
     const emDocs = rows.map((r) => String(r.doc_no));
     const { data: doRaw, error: doErr } = await sb.from('delivery_orders')
       .select('so_doc_no, status, consignment_no, eta_arriving_port')
       .in('so_doc_no', emDocs).order('created_at').order('id');
-    // Fail-closed like the profile / balance reads: a shipment fact we could not
-    // read must not send a Shipped message with a blank or stale field.
     if (doErr) return { sent: [], failed: [], skipped: [], notLogged: [], readError: { code: 'em_fields_load_failed', reason: doErr.message } };
     const emByDoc = new Map<string, { consignment_no: unknown; eta_arriving_port: unknown }>();
     for (const d of (doRaw as Array<Record<string, unknown>> | null) ?? []) {
       const st = String(d.status ?? '').toUpperCase();
-      if (st === 'DRAFT' || st === 'CANCELLED') continue;  // same live filter as the board
+      if (st === 'DRAFT' || st === 'CANCELLED') continue;
       emByDoc.set(String(d.so_doc_no), {
         consignment_no: d.consignment_no ?? null,
         eta_arriving_port: d.eta_arriving_port ?? null,
@@ -175,21 +140,12 @@ export async function sendDeliveryMessageForDocs(
 
   const byDoc = new Map(rows.map((r) => [String(r.doc_no), r]));
   const skipped: Array<{ docNo: string; reason: string }> = [];
-  // Group by normalized phone AND company — ONE message per (customer phone,
-  // company). The balance template bakes the COMPANY's bank account, so a phone
-  // that carries orders from both companies must get one message each: this
-  // split is what lets company_code / company_signature / bank_block follow the
-  // ORDER's company rather than the sending user's active company. A homogeneous
-  // phone (the common case) is unchanged — still one message, one batch.
   const byPhoneCompany = new Map<string, { phone: string; companyId: number | null; rows: Array<Record<string, unknown>> }>();
   for (const docNo of docNos) {
     const r = byDoc.get(docNo);
     if (!r) { skipped.push({ docNo, reason: 'not_found' }); continue; }
     const phone = blastPhone(r.phone);
     if (!phone) { skipped.push({ docNo, reason: 'no_phone' }); continue; }
-    // An East Malaysia kind only fires for an East (Sabah / Sarawak) order —
-    // belt-and-suspenders with the board, which shows these entries on the EM
-    // tab: a West / SG order ticked by mistake is skipped, not sent an EM template.
     if (isEmKind && salesLocationRegion(r.sales_location as string | null, r.address3 as string | null, r.customer_country as string | null) !== 'EAST') {
       skipped.push({ docNo, reason: 'not_east' });
       continue;
@@ -212,31 +168,12 @@ export async function sendDeliveryMessageForDocs(
   // company-scope: app_config is a global key/value config table, not per-company data.
   const { data: profileRow, error: profileErr } = await sb.from('app_config')
     .select('value').eq('key', CONNECT_COMPANY_PROFILE_KEY).maybeSingle();
-  // A FAILED read is not "no profile": sending without it would hand the
-  // customer a balance paragraph with no bank details and no signature, and
-  // the staff would never know. Refuse; nothing has been sent yet.
   if (profileErr) return { sent, failed, skipped, notLogged, readError: { code: 'profile_load_failed', reason: profileErr.message } };
-  // Parse ONCE into a company_id -> profile map; the profile is resolved PER
-  // GROUP below, by the ORDER's own company — NOT by activeCompanyId(c). Keyed
-  // by the sender, a 2990 order sent by Houzs staff printed HOUZS's signature
-  // and bank account on 2990's balance paragraph.
   const profilesById = parseConnectCompanyProfiles(
     (profileRow as { value?: string | null } | null)?.value ?? null,
   );
-  // id -> company CODE (HOUZS / 2990), for the company_code attribute Connect
-  // routes the balance send on. From the companies master on the request
-  // context (the cross-company TMS pattern — companyCodeMap), so no extra read.
   const codeByCompany = companyCodeMap(c);
 
-  // LIVE balance per SO — the SO list's own source of truth
-  // (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
-  // Σpayments), NOT the base table's balance_sen, which nothing maintains.
-  // VIEW-TRAP (backend/docs/scm-view-trap-coe.md): only view-native columns
-  // here, never a base-table header column added after the view was recreated.
-  // Same fail-closed rule as the profile: a balance we could not read must not
-  // go out as "nothing owed".
-  // local_total_sen is the SO's gross value in sen; like balance_sen_live it is
-  // a view-native column (drives `order_amount`, the panel-only order total).
   const { data: balRaw, error: balErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders_with_payment_totals')
       .select('doc_no, balance_sen_live, local_total_sen')
@@ -255,9 +192,6 @@ export async function sendDeliveryMessageForDocs(
 
   for (const { phone, companyId, rows: groupRows } of byPhoneCompany.values()) {
     const groupDocs = groupRows.map((r) => String(r.doc_no));
-    // What this KIND adds (or why this customer is skipped): the group's first
-    // order is the one the single-order templates print; the owed total is the
-    // same figure `amount` carries.
     const first = groupRows[0] as Record<string, unknown>;
     const owedSen = groupRows.reduce((sum, r) => sum + Math.max(0, balanceByDoc.get(String(r.doc_no)) ?? 0), 0);
     const perKind = kindAttributes(kind, first, effectiveSoDelivery(first as SoDeliveryDateRow), owedSen, extras);
@@ -265,27 +199,12 @@ export async function sendDeliveryMessageForDocs(
       for (const docNo of groupDocs) skipped.push({ docNo, reason: perKind.skip });
       continue;
     }
-    // The ORDER's company drives BOTH the per-company profile (signature / bank
-    // / disposal) and company_code — never activeCompanyId(c), the sender's. The
-    // group is one company, so every order below shares them. An unresolved
-    // company leaves the profile null and company_code null (Connect then falls
-    // back to the SO doc_no prefix), exactly as a single-company install did.
     const companyProfile: ConnectCompanyProfile | null = profilesById[String(companyId ?? '')] ?? null;
     const companyCode = companyId != null ? codeByCompany.get(companyId)?.toUpperCase() ?? null : null;
     const sendCtx = {
       callbackUrl,
       automation: KIND_AUTOMATION[kind],
-      // Headline fields FIRST so this kind's own variables win on any overlap
-      // (driver_info sets client_delivery_date itself); both ride on the one send.
       extra: {
-        // Clear any service_job left on the contact by an earlier Service
-        // Arrangement (ASSR). Connect MERGES contact attributes, so a customer
-        // who once had a service case keeps service_job on file; Connect's
-        // postpone/reminder routing (houzs-connect #211) reads service_job to
-        // pick the service template, so a plain SO postpone/reminder to that
-        // customer would be mis-routed to the service version. An SO send is
-        // never a service leg, so it always blanks service_job. The ASSR sender
-        // (assr-arrangement-message.ts) sets the real value on its own sends.
         service_job: '',
         ...buildSyncHeadline(first, phone, payloadDate(effectiveSoDelivery(first as SoDeliveryDateRow))),
         ...perKind.attributes,
@@ -293,27 +212,17 @@ export async function sendDeliveryMessageForDocs(
       },
       resetConversation: OPENER_KINDS.has(kind),
     };
-    // ONE message per customer phone and company. buildDeliveryFollowUp shows
-    // the first 3 orders and carries the TRUE count in order_total, so a customer
-    // with 4+ orders gets a single "first 3 of N" message, not several sends.
-    // ref = our Sales Order number; effective (amended ?? original) date as
-    // yyyy/mm/dd, same as the board.
     const orders: ConnectOrder[] = groupRows.map((r) => ({
       // The ERP Sales Order number, always (owner 2026-10-06) — not the AutoCount
       // number an older / imported order may also carry; the chat-callback still
       // resolves either, so an in-flight conversation opened under the old rule
       // is unaffected.
       ref: String(r.doc_no ?? ''),
-      // The customer Reference No. (scm.mfg_sales_orders.ref, e.g. "HC 11063"),
-      // which Connect shows on the contact's order card — distinct from `ref`
-      // (the SO doc_no). Blank on ~1/4 of SOs; Connect hides an empty field.
       orderRef: String(r.ref ?? ''),
       branding: String(r.branding ?? ''),
       deliveryDate: payloadDate(effectiveSoDelivery(r as SoDeliveryDateRow)),
       balanceSen: balanceByDoc.get(String(r.doc_no)) ?? null,
       totalSen: totalByDoc.get(String(r.doc_no)) ?? null,
-      // Every order in this group is the same company; company_code is a per
-      // order-batch value Connect routes on (see services/connect.ts).
       companyCode,
     }));
     const contact = buildDeliveryFollowUp(
@@ -322,11 +231,6 @@ export async function sendDeliveryMessageForDocs(
 
     const result = await postConnectContact(c.env, contact);
 
-    // Log one row per doc (all of the phone's docs, not only the 3 shown — the
-    // send covers them all), tied by batch_id. A log failure must not turn a
-    // delivered WhatsApp into a reported error, but it is REPORTED (notLogged):
-    // supabase-js returns a failed insert as `error`, it does not throw, so the
-    // catch alone lost every one of them and the Message column lied.
     const batchId = crypto.randomUUID();
     try {
       const { error: logErr } = await sb.from('wa_message_log').insert(groupDocs.map((docNo) => ({
@@ -356,9 +260,6 @@ export async function sendDeliveryMessageForDocs(
   return { sent, failed, skipped, notLogged, statusAtSend };
 }
 
-/* The result of a contact-info sync — one Connect upsert per (phone, company),
-   NO WhatsApp sent. Mirrors the send result's shape (synced in place of sent) so
-   the board reports it the same way. */
 export interface SyncContactsResult {
   synced: Array<{ phone: string; docNos: string[]; httpCode: number }>;
   failed: Array<{ phone: string; docNos: string[]; error: string }>;
@@ -384,9 +285,6 @@ export async function syncContactsForDocs(
   const sb = c.get('supabase');
   const user = c.get('user') as { id?: string } | null;
 
-  // The headline fields are the board's own SO columns (venue / agent /
-  // customer_state / house_type / disposal_request / delivery_message_status),
-  // read alongside the bundle's doc_no / ref / branding / dates.
   const { data: rowsRaw, error: readErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders').select(SYNC_SO_SELECT).in('doc_no', docNos),
     c,
@@ -421,8 +319,6 @@ export async function syncContactsForDocs(
   const profilesById = parseConnectCompanyProfiles((profileRow as { value?: string | null } | null)?.value ?? null);
   const codeByCompany = companyCodeMap(c);
 
-  // LIVE balance + gross total per SO (the SO list's own view, view-native cols);
-  // a failed read must not sync "nothing owed", same fail-closed rule.
   const { data: balRaw, error: balErr } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_orders_with_payment_totals')
       .select('doc_no, balance_sen_live, local_total_sen')
@@ -452,8 +348,6 @@ export async function syncContactsForDocs(
     });
     const result = await postConnectContact(c.env, contact, { expectTrigger: false });
 
-    // Logged like a send (per doc, shared batch_id) but source 'connect-sync', so
-    // the board's "Message" column never shows a sync as a customer message.
     const batchId = crypto.randomUUID();
     try {
       await sb.from('wa_message_log').insert(groupDocs.map((docNo) => ({
@@ -479,7 +373,6 @@ export async function syncContactsForDocs(
   return { synced, failed, skipped };
 }
 
-/* ── POST /sync — push the selected orders' full field set into Connect, no send ── */
 const syncSchema = z.object({
   docNos: z.array(z.string().min(1)).min(1).max(200),
 });
@@ -500,7 +393,6 @@ deliveryMessages.post('/sync', async (c) => {
   return c.json({ synced: result.synced, failed: result.failed, skipped: result.skipped });
 });
 
-/* ── POST /send — one Houzs Connect call per customer phone ────────────────── */
 deliveryMessages.post('/send', async (c) => {
   if (!isConnectConfigured(c.env)) {
     return c.json({
@@ -528,10 +420,6 @@ deliveryMessages.post('/send', async (c) => {
       return c.json({ error: 'load_failed', reason: String((e as Error).message).slice(0, 200) }, 500);
     }
   }
-  // These kinds also serve a Service Case leg — Driver Info (its trip's driver),
-  // Postpone (the leg's Amend Reason + new date) and the three Reminders — so a
-  // mixed selection's ASSR row keys go to the ASSR sender, which reads the case,
-  // not mfg_sales_orders, while the SO docs go on to the SO sender below.
   const assrKeys = ASSR_LEG_SEND_KINDS.has(kind) ? docNos.filter((k) => parseAssrRowKey(k)) : [];
   let assrResult = { sent: [], failed: [], skipped: [] } as Awaited<ReturnType<typeof sendAssrArrangement>>;
   if (assrKeys.length > 0) {
@@ -543,14 +431,8 @@ deliveryMessages.post('/send', async (c) => {
   }
   const soDocNos = assrKeys.length > 0 ? docNos.filter((k) => !assrKeys.includes(k)) : docNos;
   if (soDocNos.length === 0) return c.json({ ...assrResult, statusNotMoved: [] });
-  // Postpone needs no request field: it reads the row's Amend Reason + Delivery
-  // Date (kindAttributes), and skips any order missing either.
   const result = await sendDeliveryMessageForDocs(c, soDocNos, kind, extras);
   if (result.readError) return c.json({ error: result.readError.code, reason: result.readError.reason }, 500);
-  // The messages have left; a status that cannot move is reported, never a 500.
-  // Overdue Order and the East Malaysia touchpoints land on NO Delivery Message
-  // Status (NO_STATUS_MOVE_KINDS; KIND_AFTER_STATUS excludes them), so they move
-  // no row's "Done X". movesDeliveryStatus also narrows kind to a KIND_AFTER_STATUS key.
   const statusNotMoved = movesDeliveryStatus(kind)
     ? await markSentStatus(
         c, result.sent.flatMap((s) => s.docNos), KIND_AFTER_STATUS[kind], KIND_AUTOMATION[kind], result.statusAtSend,
@@ -565,7 +447,6 @@ deliveryMessages.post('/send', async (c) => {
   });
 });
 
-/* ── POST /statuses — latest send status per doc (board "Message" column) ──── */
 const statusesSchema = z.object({
   docNos: z.array(z.string().min(1)).min(1).max(1000),
 });
@@ -578,16 +459,6 @@ deliveryMessages.post('/statuses', async (c) => {
   const docNos = [...new Set(parsed.data.docNos)];
 
   const sb = c.get('supabase');
-  // source='delivery-planning' is load-bearing, not tidiness. wa_message_log
-  // also carries INBOUND rows now — routes/chatCallback.ts writes what the
-  // customer tapped with source='chat-callback' — and those are newer than the
-  // send they answer. Without this predicate the "first hit per doc" below
-  // would hand the board the customer's reply as if it were the send status,
-  // i.e. every answered message would report itself as freshly sent.
-  /* chunkIn: up to 1,000 docs, each with every send it ever had. One read capped
-     at 1,000 rows kept only the newest sends, and a doc whose last send was older
-     showed as never sent. Batches are URL-sized and paged; within a batch the
-     order is newest first, and a doc lives in one batch only. */
   const { data, error, truncated } = await chunkIn<{ doc_no: string; success: boolean; http_code: number | null; created_at: string }>(docNos, (part, from, to) =>
     sb.from('wa_message_log')
       .select('doc_no, success, http_code, created_at')
@@ -599,7 +470,6 @@ deliveryMessages.post('/statuses', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (truncated) return c.json({ error: 'load_failed', reason: 'Too many message log rows to read in full.' }, 500);
 
-  // First hit per doc = the latest (ordered DESC above).
   const statuses: Record<string, { success: boolean; http_code: number | null; created_at: string }> = {};
   for (const r of (data ?? []) as Array<{ doc_no: string; success: boolean; http_code: number | null; created_at: string }>) {
     if (!(r.doc_no in statuses)) {

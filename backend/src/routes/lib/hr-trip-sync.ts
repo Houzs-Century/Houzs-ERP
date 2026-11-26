@@ -1,17 +1,3 @@
-/* Trip Pay reads Delivery Planning (and the Projects module's Setup / Dismantle)
- * into hr_trip_rows without destroying anything HR did:
- *   - a stop not yet in the month becomes a row;
- *   - a row whose stop changed is brought up to date, unless HR edited it;
- *   - a row whose stop was cancelled or deleted is flagged for HR, never removed;
- *   - a row HR removed stays removed (it is kept, paid nothing, so no read adds it back);
- *   - a month whose payroll is approved is never touched.
- * Every night at 00:05 MYT (index.ts, "5 16 * * *") the read adds YESTERDAY and
- * re-reads only older days of the open trip months whose source changed since the
- * company's last run (updated_at on trips / dp_orders / delivery_orders / delivery_order_crew /
- * projects, created_at on trip_stops) or whose set of stops differs from the
- * rows. "Read Delivery Planning" runs the same rules over the whole month at once.
- * A month filled by pasting the Trip Report is left alone by the nightly read.
- * Money is never stored: it is worked out on read from the rows and the rates. */
 import { and, eq, inArray } from "drizzle-orm";
 import type { Env } from "../../types";
 import { getDb } from "../../db/client";
@@ -85,9 +71,7 @@ export function selectSyncDays(input: {
 export type SyncPlan = {
   inserts: SourceRow[];
   updates: { id: number; row: SourceRow }[];
-  /** Rows whose source is gone: flag for HR. */
   flag: number[];
-  /** Flagged rows whose source is back. */
   unflag: number[];
 };
 

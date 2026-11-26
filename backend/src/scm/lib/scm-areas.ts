@@ -1,33 +1,3 @@
-// ----------------------------------------------------------------------------
-// scm-areas — the L2 area a given /api/scm path belongs to.
-//
-// WHY THIS TABLE EXISTS. The write freeze (lib/write-freeze.ts) is mounted at
-// `scm.use('/*', ...)`, AHEAD of every sub-router, so that a single middleware
-// covers the whole surface. That placement is also why it cannot ask the
-// area guard which area a request is in: `scmAreaGuard` runs LATER, once Hono
-// has matched the sub-router's prefix. To lift the freeze per module, the
-// freeze needs the same prefix -> area mapping the guards encode, available
-// BEFORE routing. This file is that mapping.
-//
-// IT IS A COPY, AND A TEST KEEPS IT HONEST. The authority remains the
-// `scm.use('/<prefix>/*', scmAreaGuard('<area>'))` lines in scm/index.ts.
-// `backend/tests/writeFreezeAreas.test.ts` PARSES that file and asserts this
-// table is exactly equal to it, so a new mount that is not mirrored here fails
-// CI rather than silently becoming un-liftable (or, worse, liftable under the
-// wrong key). Do not hand-edit one without the other.
-//
-// MATCHING MIRRORS HONO. A mount written `/x/*` covers `/x` and `/x/...`; a
-// mount written without the wildcard matches that exact path only — which is
-// what Hono does. Longest prefix wins, so `/inventory/adjustments/9` resolves
-// to `scm.warehouse.adjustments` ahead of `/inventory/*`; on equal length the
-// exact mount wins.
-//
-// A PATH WITH NO AREA IS NOT LIFTABLE. `areaForPath` returns null for every
-// router mounted without a guard (SCM_UNGUARDED_PREFIXES below), and the freeze
-// treats null as "stays frozen". That is deliberate: an area exception can only
-// ever name something in this table, so a router nobody mapped can never be
-// opened by a typo. See docs/write-freeze-staged-lift.md.
-// ----------------------------------------------------------------------------
 
 /** prefix (under the /api/scm mount) -> L2 area key. Mirrors scm/index.ts. */
 export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
@@ -144,13 +114,6 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/slips/*", "scm.sales.orders"],
 ] as const;
 
-/* Routers mounted with NO scmAreaGuard — the cross-area picklists and the
-   read-mostly helpers left on the coarse scm.access umbrella (see the SHARED
-   READ HELPERS note in scm/index.ts). They have no L2 key, so no area exception
-   can name them and they stay frozen for as long as their company is frozen.
-   Listed here so the status endpoint and the runbook can SAY so rather than
-   leave the operator to discover it from a still-refused save. The same drift
-   test that pins SCM_AREA_MOUNTS pins this list. */
 export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/categories",
   "/pos-cart",
@@ -158,68 +121,29 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/sales-analysis",
   "/state-warehouse-mappings",
   "/entity-audit-log",
-  /* The go-live change log (2026-09-08). No area guard for /autocount-outbox's
-     reason: an L2 area key is a PAGE key and this page belongs to no SCM area —
-     it reads sales orders, deliveries, purchases and receipts at once, so any
-     area key here would be an arbitrary owner. It is READ-ONLY, so the freeze
-     treating it as frozen costs nothing. Authorization is the flat
-     scm.changelog.read / settings.manage keys inside the route. */
   "/change-log",
   "/autocount-outbox",
-  /* The Venture Portal live sales-order feed and its settings (2026-09-12). No
-     area guard for /autocount-outbox's reason: an L2 area key is a PAGE key and
-     this page belongs to no SCM area — it spans sales orders, their lines,
-     those lines' costs and their payments at once. Authorization is the flat
-     scm.venture_portal.read / .manage keys inside the route.
-     WHAT BEING ON THIS LIST COSTS, said plainly rather than discovered from a
-     refused save: unlike /change-log and /autocount-outbox this router is NOT
-     read-only, so a company-wide write freeze also pauses CHANGING the feed —
-     the secret, the scope, the switch. That is survivable and not nothing: the
-     cron drain is not an HTTP request and keeps delivering what is already
-     queued, so during a freeze the feed can be running and not be turnable off
-     from the page. Whoever imposed the freeze can still flip
-     scm.app_config 'scm.venture_portal_feed'. Exempting this prefix from the
-     freeze is a deliberate change to write-freeze's own contract and belongs in
-     its own PR, not smuggled in with the feed. */
   "/venture-portal-feed",
   "/currencies",
   /* 申请付款 (2026-09-30): the requester holds no SCM area — a sales PIC asking
      Finance to pay a bill. Authorization is the flat scm.payment_request.create
      key (own requests) or scm.payment_voucher.create (Finance) inside the route. */
   "/payment-requests",
-  /* Product request (2026-10-06): a salesperson holds no consignment or
-     procurement area and the Purchaser no sales area. Authorization is a Sales
-     caller or the flat scm.product_request.create key (own requests) and
-     scm.product_request.approve (the Purchaser) inside the route. */
   "/product-requests",
   "/hr",
   "/localities",
-  // SG postcode -> address via OneMap (2026-09-11): a shared reference lookup
-  // like /localities — read-only, cross-area, on the coarse gate.
   "/sg-postcode",
   "/staff",
   "/fabric-colours",
   "/document-flow",
   "/po-so-coverage",
-  // The cancellation-request inbox (2026-09-08): spans the sales and procurement
-  // areas, so it rides the coarse scm.access gate only; its writes are per-
-  // document routes behind their own area guards.
   "/cancel-requests",
-  // "/ar" left this list on 2026-08-13 when it gained an area guard. Both halves
-  // have to move together: the drift test derives the guarded set and the
-  // unguarded set from the SAME source scan, so gating a router without removing
-  // it here fails the mirror in two places at once. It did.
   "/reports",
 ] as const;
 
 /** Every area key that can appear in a freeze exception. */
 export const SCM_AREAS: ReadonlySet<string> = new Set(SCM_AREA_MOUNTS.map(([, a]) => a));
 
-/* Plain-English names for the refusal sentence and the status endpoint. The
-   floor does not know what `scm.procurement.grn` is; it knows "goods receipts".
-   Kept SHORT — freezeMessage interpolates them and both API clients discard a
-   sentence of 200 characters or more (see write-freeze.ts). A test asserts every
-   area has a label and that every resulting sentence stays under that cap. */
 export const SCM_AREA_LABELS: Readonly<Record<string, string>> = {
   "scm.sales.orders": "sales orders",
   "scm.sales.delivery": "delivery orders",
@@ -252,9 +176,6 @@ export function areaLabel(area: string): string {
   return SCM_AREA_LABELS[area] ?? area;
 }
 
-/* Longest-first so the first hit is the most specific mount; on equal base
-   length a non-wildcard mount sorts first because it is the narrower claim.
-   Computed once. */
 const MATCHERS = SCM_AREA_MOUNTS.map(([prefix, area]) => {
   const wildcard = prefix.endsWith("/*");
   const base = wildcard ? prefix.slice(0, -2) : prefix;
@@ -270,7 +191,6 @@ export function areaForPath(path: string): string | null {
   let p = String(path ?? "").split("?")[0];
   if (p.startsWith("/api/scm")) p = p.slice("/api/scm".length);
   if (!p.startsWith("/")) p = `/${p}`;
-  // Trailing slash is not significant for a mount match.
   if (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
   for (const m of MATCHERS) {
     if (m.wildcard ? p === m.base || p.startsWith(`${m.base}/`) : p === m.base) return m.area;

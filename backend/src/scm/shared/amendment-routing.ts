@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// amendment-routing (backend) — PURE classification of an amendment's changed
-// fields into a TYPE (processing vs delivery/commercial) and a RESPONSIBLE
-// DEPARTMENT. Mirror of the frontend copy
-// (frontend/src/vendor/scm/lib/amendment-routing.ts) — keep the FIELD_ROUTING
-// tables in sync. The backend uses it only to STAMP the routing summary onto the
-// amendment-approved audit row (so-revision.ts / po-revision.ts), so accountability
-// is recorded: which routed fields/departments the single approver signed off.
-//
-// This never gates the apply. Any authorized approver applies the WHOLE amendment
-// in ONE signature (the owner's soft-gate model); the routing is advisory
-// labelling for display + the audit trail, not a per-department hard block.
-//
-// See the frontend copy's header for the full owner-approved type model.
-// ----------------------------------------------------------------------------
 
 export type AmendmentType = 'PROCESSING' | 'DELIVERY_COMMERCIAL';
 

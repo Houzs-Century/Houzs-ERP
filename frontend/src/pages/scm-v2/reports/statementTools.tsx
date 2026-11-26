@@ -1,9 +1,3 @@
-// ----------------------------------------------------------------------------
-// statementTools — what the statements on the StatementTable share (the P&L,
-// the Balance sheet, the Performance P&L; the owner's Claude Design, batch 6):
-// one read per column, the Levels tool, the General ledger opened from a
-// category's figure with Back, and the sheet the exports draw.
-// ----------------------------------------------------------------------------
 
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueries } from '@tanstack/react-query';

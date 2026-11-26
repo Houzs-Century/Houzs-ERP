@@ -3,20 +3,7 @@ import { sql, type SQL } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb, type DB } from "../db/client";
 
-// ---------------------------------------------------------------------------
-// GET /api/admin/health/database — database load at a glance (DEV-35).
-// Mounted inside systemHealth.ts, so the IT-pages gate there covers it.
-//
-// Every metric is ONE catalog read in its own short transaction with
-// `SET LOCAL statement_timeout`, so a stalled catalog cannot hold a pooled
-// connection, and a failed metric reports { ok:false, error } without
-// aborting the others. SET LOCAL (never SET): Hyperdrive sits on the session
-// pooler, and a plain SET would leak into the next request's session.
-// ---------------------------------------------------------------------------
 
-// The SG micro instance caps at 60 connections (backend/wrangler.toml, the
-// [[hyperdrive]] comment). Reported beside max_connections; the verdict uses
-// whichever is smaller.
 export const POOLER_CONNECTION_CAP = 60;
 
 export const LONG_TX_WARNING_SECONDS = 30;
@@ -50,13 +37,8 @@ export function connectionVerdict(used: number, limit: number): Verdict {
   return "ok";
 }
 
-// What pg_stat_activity shows in `query` for a session this role may not
-// inspect (no pg_read_all_stats). state, xact_start, wait_event_type and
-// backend_type come back NULL for those rows.
 const HIDDEN_QUERY = "<insufficient privilege>";
 
-// Client sessions only. A hidden row has a NULL backend_type, so it is kept;
-// datid IS NOT NULL drops background processes, which have no database.
 const CLIENT_SESSIONS = sql`pid <> pg_backend_pid()
   AND datid IS NOT NULL
   AND (backend_type = 'client backend' OR backend_type IS NULL)`;
@@ -112,9 +94,6 @@ async function longTransactions(db: DB) {
   };
 }
 
-// pg_locks rather than pg_stat_activity.wait_event_type = 'Lock': the same
-// set of sessions, but pg_locks is readable without pg_read_all_stats and
-// carries waitstart, which pg_stat_activity has no column for.
 async function lockWaits(db: DB) {
   const row = await readRow<{ count: number; longestWaitSeconds: number | null }>(
     db,
@@ -200,7 +179,6 @@ app.get("/database", async (c) => {
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 503);
   }
-  // Sequential on purpose: the client holds one connection (db/pg.ts, max 1).
   const longTx = await measure(() => longTransactions(db));
   const locks = await measure(() => lockWaits(db));
   const conns = await measure(() => connections(db));

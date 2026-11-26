@@ -52,8 +52,6 @@ const WIDTHS: ColumnWidthSpec = {
   fit: [false, true, true, true, true, true, true, true, true],
 };
 
-/* The table as CSV: a month line, its merchants, their reports — or, under
-   Cash and Online, the payments. */
 export const merchantChargesCsv = (r: MerchantChargesReport): string => {
   const esc = (v: string | number | null) => `"${guardFormula(String(v ?? '')).replace(/"/g, '""')}"`;
   const figures = (f: ChargeFigures) => [f.lines, fmtRm(f.grossSen), fmtRm(f.feeSen), fmtPct(f.feePct), fmtRm(f.bankChargeSen), fmtRm(f.chargeSen), fmtPct(f.chargePct), fmtRm(f.netSen)];
@@ -137,8 +135,6 @@ const swiped = (from: string | null, to: string | null): string =>
 const NOTE_FEES = 'Fee % is the merchant’s fee against the gross they reported. Bank charge is what the bank took on the payout day (booked on Payment advice); Charge % is fee and bank charge together against the gross. A merchant opens to its reports.';
 const NOTE_CASH = 'Cash and Online are the payments keyed on sales orders, by payment date, with no fee; they count in the month and the total, and open to the payments.';
 
-/* ── The chart (batch 6 §5.6): fee % by merchant, month by month, the charge %
-   under each month — the same read over the chart's months. ── */
 const MERCHANT_COLORS = [REPORT_CHART_COLORS.petrol, REPORT_CHART_COLORS.gold, REPORT_CHART_COLORS.grey, '#0c3f39', '#a16a2e', '#5f6459'];
 
 export function chargeChartMonths(win: ChartWindow | null, r: MerchantChargesReport | undefined): { series: ChartBarSeries[]; months: ChartMonth[] } {
@@ -192,9 +188,6 @@ export const MerchantChargesTab = () => {
   const cw = useColumnWidths('mc', WIDTHS);
   const chartWin = useChartMonths(r.from, r.to, r.usable);
 
-  /* The merchants the range had, for the filter — remembered off an
-     unfiltered answer so picking one does not empty the list. Acquirers
-     first, then Cash and Online, as the table lists them. */
   const [merchants, setMerchants] = useState<string[]>([]);
   useEffect(() => {
     if (d && acquirer == null) setMerchants([...new Set(d.months.flatMap((m) => m.acquirers.map((a) => a.acquirer)))].sort(channelOrder));
@@ -299,7 +292,6 @@ export const MerchantChargesTab = () => {
   );
 };
 
-/** One line of the grid: its name, then the eight figures. */
 function FigureRow({ template, className, label, f, data }: {
   template: string; className: string; label: React.ReactNode; f: ChargeFigures; data?: Record<string, string>;
 }) {

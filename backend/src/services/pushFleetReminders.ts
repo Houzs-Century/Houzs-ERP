@@ -1,31 +1,3 @@
-// ---------------------------------------------------------------------------
-// Daily fleet-reminder push — the first APNs producer.
-//
-// WHAT IT SENDS. One summary alert per registered iOS device whose user holds
-// `fleet.read`, on days where the fleet has actionable expiries: the count and
-// the single most-urgent item, e.g.
-//   "4 fleet items need attention. Most urgent: WXY 1234 Road Tax / LKM
-//    expired 3 days ago."
-// The payload carries NO document details beyond that headline — the app opens
-// on tap and the Fleet Health page (which re-checks permissions server-side) is
-// the actual surface.
-//
-// WHY A DAILY SUMMARY, NOT PER-EVENT PUSHES. The reminder ladder
-// (services/fleet-status.ts) escalates over WEEKS; per-event delivery would
-// either spam every device each cron tick or need per-item sent-state. One
-// morning summary matches how the compliance clerk actually works the list.
-//
-// SCHEDULING. Called from the */30 cron during the 08:00 MYT hour (UTC 0), so
-// it runs twice; the per-device `last_reminder_sent_on` date stamp makes the
-// second pass a no-op. The stamp is written ONLY after a successful send, and
-// never when APNs is unconfigured — the first morning after the secrets land,
-// pushes just start.
-//
-// AUDIENCE. Same rule as the GET /reminders route: `fleet.read` via the role's
-// permission list, or the position-based super-admin wildcard. Resolved with
-// the SAME helpers the auth path uses (parsePermissions / hasPermission /
-// positionGrantsWildcard) — this file re-implements no permission logic.
-// ---------------------------------------------------------------------------
 
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Env } from "../types";
@@ -51,14 +23,11 @@ export type PushReminderRunResult = {
 
 export async function runPushFleetReminders(env: Env): Promise<PushReminderRunResult> {
   const none: PushReminderRunResult = { attempted: 0, sent: 0, failed: 0, deadTokens: 0 };
-  // Unconfigured = ship-dark mode. Return BEFORE stamping anything, so the
-  // first configured morning still sends.
   if (!apnsConfigured(env)) return { ...none, reason: "apns_not_configured" };
 
   const today = todayMyt();
   const db = getDb(env);
 
-  // Devices not yet stamped today, with their owner's authority sources.
   const candidates = await db
     .select({
       deviceId: push_devices.id,
@@ -83,8 +52,6 @@ export async function runPushFleetReminders(env: Env): Promise<PushReminderRunRe
   );
   if (due.length === 0) return { ...none, reason: "no_due_devices" };
 
-  // Compute the reminders ONCE (fleet is unified across companies — the
-  // /reminders route applies no per-user scoping either).
   const r = await computeFleetReminders(getSupabaseService(env));
   if (!r.ok) return { ...none, reason: `reminders_failed: ${r.reason}` };
   if (r.reminders.length === 0) return { ...none, reason: "nothing_actionable" };

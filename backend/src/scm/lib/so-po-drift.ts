@@ -1,22 +1,3 @@
-// SO→PO drift — does the live SO line still match what this PO line snapshotted
-// at proceed time? Extracted from routes/mfg-purchase-orders.ts (bug 0539) so
-// the warehouse arm can resolve line→header without growing that already-large
-// file, and so the whole rule is unit-testable.
-//
-// Three arms:
-//   · item swap    — the SO now names a different SKU (maybe a different
-//                    supplier): redo the PO, don't just re-print it.
-//   · spec drift   — the variant summary changed (recomputed apples-to-apples so
-//                    a formatter change can't false-trip it, and with the
-//                    read-side DISPLAY stamps removed from both sides first —
-//                    see DISPLAY_ONLY_VARIANT_KEYS).
-//   · warehouse    — the SO line's ship-from warehouse moved. This arm resolves
-//                    the SO line's EFFECTIVE warehouse (its own, else the order
-//                    header's) before comparing, and only flags two real,
-//                    distinct warehouses — a NULL line warehouse INHERITS the
-//                    header, it has not "moved" (see so-warehouse.ts). The old
-//                    inline check compared the raw NULL against the PO's real
-//                    warehouse and cried a false move on every such line.
 
 import { buildVariantSummary } from '../shared';
 import {

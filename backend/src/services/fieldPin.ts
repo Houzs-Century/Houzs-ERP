@@ -25,8 +25,6 @@ export const FIELD_LOGIN_PREFIX = "EMP-";
 export const FIELD_PIN_LENGTH = 6;
 export const FIELD_PIN_MAX_FAILURES = 5;
 export const FIELD_PIN_LOCK_MINUTES = 15;
-/* Several crew members can share one depot Wi-Fi address, so the per-IP budget
-   is a few people's worth of the per-account budget, not one person's. */
 export const FIELD_PIN_IP_MAX = 30;
 export const FIELD_PIN_WINDOW_SECONDS = 15 * 60;
 
@@ -114,8 +112,6 @@ export function fieldSessionAllowsPath(path: string): boolean {
 export const FIELD_SESSION_REFUSAL =
   "Crew PIN sign-in opens the delivery and project crew screens only. Sign in with your email and password for anything else.";
 
-/* SQL, kept here so the pg integration test executes the exact strings the
-   routes run. `?` placeholders (the D1-compatible binding the routes use). */
 
 /** Everything the PIN login needs, by staff code, in one read. */
 export const FIELD_PIN_LOOKUP_SQL = `SELECT u.id, u.status, u.totp_enabled, s.id AS staff_id,

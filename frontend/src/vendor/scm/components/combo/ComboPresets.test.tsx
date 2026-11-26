@@ -1,9 +1,3 @@
-/* New combo reads its presets from the server (Products > Combo Pricing >
- * Combos; the screen says "combo"), not a constant: only active presets are
- * offered, in the server's order; a piece the model does not make still
- * disables the row ("No CNR on this model"). The Combos list switches a preset
- * off, moves it by keyboard or drag, deletes it after a confirm naming it, puts
- * the order back when the save fails, and shows every failure on screen. */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -85,7 +79,6 @@ describe('the Combos list', () => {
   });
 
   it('dragging a handle below the next row saves the new order', async () => {
-    // jsdom has no PointerEvent, so a pointer event would carry no clientY.
     if (!('PointerEvent' in window)) {
       class PointerEventShim extends MouseEvent { pointerId = 1; }
       (window as unknown as { PointerEvent: typeof MouseEvent }).PointerEvent = PointerEventShim;

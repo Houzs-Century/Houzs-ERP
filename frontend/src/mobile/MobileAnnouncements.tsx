@@ -39,45 +39,17 @@ import {
 } from "./mobileI18n";
 import "./mobile.css";
 
-// ---------------------------------------------------------------------------
-// Mobile Announcements — list + detail + compose, wired to /api/announcements.
-// Presentation is ported VERBATIM from the owner's UPDATED mobile design (Houzs
-// Mobile.html #m-ann / #ann-detail / #ann-new + renderAnn / annAttBig /
-// annReceipts / annAck) using the .hz-m design classes (.hdr .ey .card .spill
-// .tinybtn .btn .actbar .fld .fld-l .fld-i).
-//
-// vs the previous version: NO cover image (dropped), attachments render INLINE
-// (photo grid / video / PDF rows), the audience is HIDDEN from recipients,
-// publishers see READ RECEIPTS (GET /:id/acks), and the detail has an explicit
-// sticky "Got it — mark as read" acknowledgement bar wired to POST /:id/ack.
-//
-// The banner GET (/api/announcements/banner?scope=human) returns the
-// HUMAN-authored notices THIS user is allowed to see (source IS NULL — no scan /
-// service-case system notices, matching the desktop Announcements page; owner
-// 2026-07-20) plus the ids they've already acked; we use it for the list so
-// non-admins see their own feed and honest unread dots. Compose is gated on
-// announcements.write and hits POST /api/announcements. No emoji.
-// ---------------------------------------------------------------------------
 
-// Attachment / rich-media layout-hint types (mig 0140) and the inline
-// attachment renderer now live in MobileAnnouncementMedia, shared with the
-// pop-up so both show the same media with the same Download affordance.
 type Announcement = {
   id: string;
   title: string;
   body: string;
-  /** Canonical rich fragment (lib/announcementRichText.ts) or null = plain;
-   *  `body` is always its plain-text shadow. */
   bodyHtml?: string | null;
   isActive: boolean;
-  /** ISO instant after which the notice stops being served to readers, or NULL
-   *  for "never". The phone COMPOSED without ever sending this until
-   *  2026-08-21, so every notice posted from a phone ran forever. */
   expiresAt: string | null;
   createdAt: string | null;
   createdBy: number | null;
   createdByName?: string | null;
-  /** Per-notice "must acknowledge" flag (mig 2026-09); absent = category rule. */
   requireAck?: boolean | null;
   remindedAt: string | null;
   updatedAt: string | null;
@@ -90,23 +62,12 @@ type Announcement = {
   targetCompanyIds?: number[];
   category: string;
   source?: string | null;
-  // Machine translations produced ONCE on POST by the backend
-  // (lib/translate-announcement.ts) into en/ms/zh/bn, stored as a JSON blob on
-  // the row. NULL/absent for notices posted before translation existed, for
-  // rows whose translate call failed, and — deliberately — for `bn` on every
-  // row written while the 4th language was still Burmese. Every consumer must
-  // go through localizeAnnouncement(), which falls back to the ORIGINAL posted
-  // text in all of those cases.
   translations?: AnnouncementTranslations;
-  /** Approval workflow (mig 20260906T1509); absent = APPROVED. */
   approvalStatus?: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "REJECTED";
   rejectReason?: string | null;
-  /** [DEPT]-ANN-[YYMM]-[NNNN], minted on approval. */
   refNo?: string | null;
-  /** Void (mig 20260907T1030). */
   voidedAt?: string | null;
   voidReason?: string | null;
-  /** Document type (mig 20260908T0300): ANN or e.g. MEMO. */
   docType?: string | null;
 };
 
@@ -115,8 +76,6 @@ const APPROVAL_CHIP: Record<"DRAFT" | "PENDING_APPROVAL" | "REJECTED", { label: 
   PENDING_APPROVAL: { label: "Pending approval", bg: "#fff1d6", fg: "#8a5a00" },
   REJECTED: { label: "Rejected", bg: "#fbe4e1", fg: "#a3271b" },
 };
-/** The approval state before anything else: an unapproved notice has no
- *  audience yet, so Live / Hidden / Expired would be a claim about nothing. */
 function ApprovalChip({ ann }: { ann: Announcement }) {
   if (ann.voidedAt) return <span className="spill" style={{ background: "var(--hz-dk-surface-2, #eceee9)", color: "var(--hz-c-ink-muted)", textDecoration: "line-through" }}>Voided</span>;
   const s = ann.approvalStatus ?? "APPROVED";
@@ -125,14 +84,8 @@ function ApprovalChip({ ann }: { ann: Announcement }) {
   return <span className="spill" style={{ background: c.bg, color: c.fg }}>{c.label}</span>;
 }
 
-// Multi-company: the company-target selector + row chip only appear when
-// /api/companies returns MORE THAN ONE company (mirrors the desktop rule).
 type Company = { id: number; code: string; name: string };
 
-// Audience-picker lookups. Dept + position come from the same core endpoints the
-// desktop Announcements composer uses (/api/departments, /api/positions);
-// user-level targeting reuses /api/users (gated by users.read). Every field
-// optional so a leaner backend never crashes the picker.
 type Dept = { id: number; name: string; code?: string | null };
 type Position = { id: number; name: string; department_name?: string | null };
 type UserRow = { id: number; name: string | null; email: string; status?: string | null };
@@ -143,7 +96,6 @@ type BannerResponse = {
   ackedIds?: string[];
 };
 
-// Read-receipt roster from GET /:id/acks — shown to publishers only.
 type AcksResponse = {
   success?: boolean;
   data?: {
@@ -154,9 +106,6 @@ type AcksResponse = {
   };
 };
 
-// Category chip colours mirror the design's ANN_CAT map. The backend stores an
-// enum; the design's labels (HR/Operations/Sales/Policy/Management) are folded
-// onto our enum plus keyed by the raw label so custom categories still colour.
 const CATEGORY_LABEL: Record<string, string> = {
   GENERAL: "General",
   WARNING: "Warning",
@@ -179,12 +128,10 @@ const CAT_COLOR: Record<string, string> = {
 const catLabel = (a: Announcement) => CATEGORY_LABEL[a.category] ?? a.category ?? "General";
 const catColor = (a: Announcement) => CAT_COLOR[catLabel(a)] ?? "#475569";
 
-// Numeric DD/MM/YYYY (owner standard) via the shared app formatter.
 const dm = (d: string | null | undefined) => formatDate(d);
 
 const byLine = (a: Announcement) => a.createdByName?.trim() || "Management";
 
-// annCatChip() from the design — the pill badge, colour-tinted by category.
 function CatChip({ ann }: { ann: Announcement }) {
   const col = catColor(ann);
   return (
@@ -194,10 +141,6 @@ function CatChip({ ann }: { ann: Announcement }) {
   );
 }
 
-/* Hidden / Expired badge, from the SHARED rule (lib/announcementStatus.ts) the
-   desktop row imports too — so the two surfaces can never disagree about what
-   "Expired" means. Publisher-only: a reader is never served a hidden or expired
-   notice, so a chip on their card could only ever say "Live". */
 function StatusChip({ ann }: { ann: Announcement }) {
   const status = announcementStatus(ann);
   if (status === "live") return null;
@@ -208,8 +151,6 @@ function StatusChip({ ann }: { ann: Announcement }) {
   );
 }
 
-// Company-scope label: empty target (or covering every company) = "Both"/"All";
-// a subset lists the codes. Mirrors the desktop companyScopeLabel.
 function companyScopeLabel(ids: number[] | undefined, companies: Company[]): string {
   const list = ids ?? [];
   if (companies.length === 0) return "";
@@ -219,7 +160,6 @@ function companyScopeLabel(ids: number[] | undefined, companies: Company[]): str
   return list.map((id) => companies.find((co) => co.id === id)?.code ?? `#${id}`).join(" / ");
 }
 
-// A neutral company-scope chip (multi-company only), styled like .spill.
 function CompanyChip({ ann, companies }: { ann: Announcement; companies: Company[] }) {
   if (companies.length <= 1) return null;
   return (
@@ -229,19 +169,6 @@ function CompanyChip({ ann, companies }: { ann: Announcement; companies: Company
   );
 }
 
-// annReceipts() — publisher-only read receipts from GET /:id/acks. Progress bar
-// + roster (Read / Not read) + the two Remind actions (POST /:id/remind).
-// Hides itself gracefully if the roster can't be loaded. Never renders NaN.
-//
-// WHY THE REMIND PATH LOOKS LIKE THIS. Until 2026-08-21 it was one line —
-// `api.post(url).catch(() => {}); setReminded(true);` — with no confirm, no
-// body and no error path. A 403 (a Sales Director reminding on someone else's
-// notice) or a 404 produced the words "Reminder sent" on the button and nothing
-// else anywhere: no toast, no console line, no retry. The publisher walked away
-// believing the roster had been re-popped. That is this repo's most expensive
-// defect shape — a refusal that reaches nobody — and it is why every mutation
-// here confirms first and then reports the SERVER's own answer, exactly as the
-// desktop page does (pages/Announcements.tsx remindUnacked / remindAll).
 function Receipts({ ann }: { ann: Announcement }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
@@ -264,13 +191,6 @@ function Receipts({ ann }: { ann: Announcement }) {
   ];
   const unread = Math.max(total - read, 0);
 
-  /* One code path for both scopes. `scope` is REQUIRED, never defaulted here:
-     the two actions mean very different things (re-pop for the un-acked vs WIPE
-     every acknowledgement and re-pop for everyone), and a default would let a
-     new caller pick the destructive one by omission. The backend defaults a
-     missing body to "unacked", so sending the key explicitly is also what makes
-     the "all" reset possible at all — the old call sent no body, which is why
-     the phone had no reset. */
   const remind = async (scope: "unacked" | "all") => {
     if (busy) return;
     const ok = await confirm(
@@ -294,9 +214,6 @@ function Receipts({ ann }: { ann: Announcement }) {
         `/api/announcements/${encodeURIComponent(ann.id)}/remind`,
         { scope },
       );
-      // Report the SERVER's count, not our own arithmetic: the backend rebuilds
-      // the roster from the active users of the targeted companies, so its
-      // number is the one that is true.
       const n = res.pendingCount ?? 0;
       await notify({
         title: scope === "all" ? "Read-receipts reset" : "Reminder sent",
@@ -370,9 +287,6 @@ const CATEGORY_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "LEARNING", label: "Learning" },
 ];
 
-// Which id-bucket a notice targets. ALL = everyone (back-compat default); the
-// other three map 1:1 to the backend's targetDeptIds / targetPositionIds /
-// targetUserIds. Mirrors the desktop composer's Bucket.
 type Bucket = "ALL" | "DEPT" | "POSITION" | "USER";
 const BUCKETS: Array<{ value: Bucket; label: string }> = [
   { value: "ALL", label: "All staff" },
@@ -383,8 +297,6 @@ const BUCKETS: Array<{ value: Bucket; label: string }> = [
 
 export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
   const { can, user } = useAuth();
-  // Reader's chosen portal language — drives which stored translation each
-  // notice renders. localizeAnnouncement() falls back to the original text.
   const lang = useMobileLang();
   // A Sales Director may compose (owner rule 2026-07-15) even without the
   // announcements.* permission — code-keyed off the org chart, mirroring the
@@ -394,20 +306,14 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
   const isSalesDir = isSalesDirectorUser(user);
   const canCreate = can("announcements.write") || isSalesDir;
   const salesDirOnly = isSalesDir && !can("announcements.write");
-  // The approval desk (mig 20260906T1509): Approve / Reject on the phone too.
-  // An approver without write reads the ledger (the queue is in it).
   const canApprove = can("announcements.approve");
   const seesLedger = canCreate || canApprove;
   const qc = useQueryClient();
 
   const [view, setView] = useState<"list" | "detail" | "compose" | "notifications">("list");
-  // Design handoff 2026-09-04 (screen 7): Needs you · All · SOP. "Needs you" =
-  // mandatory + addressed to me + unacked, the same rule the desktop inbox and
-  // the pop-up apply (announcementCategory.requiresAcknowledgement).
   const [filter, setFilter] = useState<"pending" | "all" | "sop">("all");
   const [ackingId, setAckingId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
-  // Which surface the open notice was tapped from, so Detail's back returns there.
   const [openFrom, setOpenFrom] = useState<"list" | "notifications">("list");
 
   const { data, isLoading, error } = useQuery({
@@ -418,22 +324,6 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
     queryFn: () => api.get<BannerResponse>("/api/announcements/banner?scope=human"),
     staleTime: 30_000,
   });
-  /* PUBLISHER LEDGER — GET /api/announcements, the same endpoint the desktop
-     page reads. Fetched ONLY for publishers, and it is what the list renders
-     for them.
-
-     WHY, and what it changes. The query above is the READER feed
-     (/banner?scope=human), which the backend filters to active AND not-expired
-     (announcements.ts isActiveFlag + notExpired). The phone showed nothing
-     else, so a manager who hid or expired a notice could not see it on their
-     phone at all — no badge, no way back, nothing to press. The nuance worth
-     stating because it is NOT symmetric: the banner feed does return a Sales
-     Director their OWN inactive/expired posts, so an SD saw theirs while a full
-     announcements.write manager saw none of theirs. The ledger removes that
-     split — both cohorts now read the surface that shows the whole picture.
-
-     Deliberately its own query key: ANNOUNCEMENT_FEED_KEY is shared with the
-     pop-up and the unread badge, which must stay READER-scoped. */
   const ledgerQ = useQuery({
     queryKey: ["mobile-ann-ledger"],
     queryFn: () => api.get<BannerResponse>("/api/announcements"),
@@ -449,9 +339,6 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
     staleTime: 30_000,
   });
 
-  // Audience-picker lookups — fetched only for publishers (they gate the
-  // compose/edit UI). retry:false so a 403 on /api/users just yields [] and the
-  // People bucket hides itself, rather than crashing or spamming retries.
   const deptsQ = useQuery({
     queryKey: ["mobile-ann-depts"],
     queryFn: () => api.get<{ departments: Dept[] }>("/api/departments"),
@@ -473,8 +360,6 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
     staleTime: 60_000,
     retry: false,
   });
-  // Companies drive the compose selector + the list/detail chip — fetched for
-  // everyone (cheap, cached). Empty/one company hides both controls.
   const companiesQ = useQuery({
     queryKey: ["mobile-ann-companies"],
     queryFn: () => api.get<{ companies: Company[] }>("/api/companies"),
@@ -491,29 +376,20 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
   };
 
   const readerList = data?.data ?? [];
-  // Publishers read the ledger (everything, incl. hidden + expired); everyone
-  // else reads their own feed. One expression so the two cannot diverge.
   const list = seesLedger ? (ledgerQ.data?.data ?? []) : readerList;
   const listLoading = seesLedger ? ledgerQ.isLoading : isLoading;
   const listError = seesLedger ? ledgerQ.error : error;
   const systemList = systemQ.data?.data ?? [];
-  /* Which ids are in the READER feed. An unread dot is a statement about the
-     signed-in person's own inbox, so it may only be drawn for a notice that is
-     actually being served to them — otherwise every hidden / expired /
-     other-audience row in a publisher's ledger would sprout a green "unread"
-     dot that nobody can ever clear. */
   const readerIds = useMemo(
     () => new Set(readerList.map((a) => a.id)),
     [readerList],
   );
-  // acked ids from BOTH banners; locally-acked ids clear the dot without a refetch.
   const [localAcked, setLocalAcked] = useState<Set<string>>(new Set());
   const ackedIds = useMemo(() => {
     const s = new Set<string>([...(data?.ackedIds ?? []), ...(systemQ.data?.ackedIds ?? [])]);
     for (const id of localAcked) s.add(id);
     return s;
   }, [data?.ackedIds, systemQ.data?.ackedIds, localAcked]);
-  // Unread system notices drive the header bell badge.
   const systemUnread = systemList.reduce((n, a) => (ackedIds.has(a.id) ? n : n + 1), 0);
 
   const open = [...list, ...systemList].find((a) => a.id === openId) ?? null;
@@ -528,8 +404,6 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
         ? list.filter((a) => readCategory(a.category) === "SOP")
         : list;
 
-  // Acknowledge from the card, without opening the notice. Same POST the
-  // detail's bar and the desktop use; same optimistic-with-reconcile trade.
   const ackInline = async (a: Announcement) => {
     if (ackingId) return;
     setAckingId(a.id);
@@ -543,9 +417,6 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
     refreshFeeds();
   };
 
-  /* Every write on this screen (publish, hide/show, delete, remind) must bust
-     BOTH surfaces: the publisher ledger it renders from, and the reader feed
-     shared with the pop-up and the unread badge. */
   const refreshFeeds = () => {
     void qc.invalidateQueries({ queryKey: ANNOUNCEMENT_FEED_KEY });
     void qc.invalidateQueries({ queryKey: ["mobile-ann-ledger"] });
@@ -575,18 +446,7 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
       <Detail
         ann={open}
         companies={companies}
-        // Read-receipts for any human notice this user can compose (matches the
-        // desktop: a dept/person-targeted notice has a meaningful roster too). A
-        // system per-user notice (any source — scan / service-case) is excluded:
-        // it targets one person, so "who read it" is meaningless. The Receipts
-        // panel hides itself when the roster can't be loaded (e.g. a Sales
-        // Director opening a notice they didn't author — the backend 404s).
         canReceipts={canCreate && !open.source}
-        /* Mirrors the desktop row's canManage: a full announcements.write
-           manager may act on any human notice; a Sales-Director-only publisher
-           may act on their OWN posts, which is exactly what the backend's
-           sdBlockedFromRow enforces on PATCH / DELETE / remind. A system
-           (scan / service-case) notice is nobody's to retract. */
         canManage={canCreate && !open.source && (!salesDirOnly || open.createdBy === (user?.id ?? null))}
         canApprove={canApprove && !open.source}
         acked={ackedIds.has(open.id)}
@@ -598,9 +458,6 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
     );
   }
 
-  // Notification bell surface — the system scan / service-case notices the list
-  // excludes (owner B2). Reuses the same NoticeCard + Detail + ack as the list,
-  // so nothing new is styled; only the source differs (scope=system feed).
   if (view === "notifications") {
     return (
       <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
@@ -651,12 +508,6 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
     );
   }
 
-  // Designer list layout (#m-ann): a header row with a hamburger "Menu" (returns
-  // to the module menu via onBack) on the left and the "New" compose button on
-  // the right, then the "Announcements" title below. Cards (renderAnn) are
-  // buttons: a category-tinted speaker-icon tile, the title + green unread dot,
-  // a category chip + byline (publisher · date), and an attachment count. The
-  // category chip + attachment count come from the live wiring.
   return (
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
       <header className="hdr">
@@ -668,8 +519,6 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
             </span>
           ) : <span />}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {/* Notification bell — the system scan / service-case notices the list
-                excludes live here so they still reach phone users (owner B2). */}
             <button
               onClick={() => setView("notifications")}
               aria-label={systemUnread > 0 ? `Notifications, ${systemUnread} unread` : "Notifications"}
@@ -780,10 +629,6 @@ export function MobileAnnouncements({ onBack }: { onBack?: () => void }) {
   );
 }
 
-// One notice row — shared by the human LIST and the system-notice bell view so
-// both render identically (owner B2). Lifted verbatim from the list's row: a
-// category-tinted speaker tile, the title + green unread dot, category +
-// company chips + byline, and an attachment count.
 function NoticeCard({
   a,
   unread,
@@ -796,15 +641,8 @@ function NoticeCard({
 }: {
   a: Announcement;
   unread: boolean;
-  /** Pending for THIS reader: the category CTA acknowledges in place (44px,
-   *  the hard minimum) beside a "Read full" that opens the notice. */
   inlineAck?: { label: string; acking: boolean; onAck: () => void };
-  /** Acknowledged by this reader — the card says so instead of offering a CTA. */
   confirmed?: boolean;
-  /** REQUIRED, not optional: the caller has to say whether this row is being
-   *  shown to a publisher (ledger — badge Hidden/Expired) or to a reader (feed
-   *  — nothing to badge). An optional flag would default the publisher list
-   *  back to unbadged, which is the state this fix exists to end. */
   showStatus: boolean;
   lang: Parameters<typeof localizeAnnouncement>[1];
   companies: Company[];
@@ -887,16 +725,11 @@ function Detail({
   ann: Announcement;
   companies: Company[];
   canReceipts: boolean;
-  /** May this caller hide / show / delete THIS notice. REQUIRED — a default
-   *  would decide a permission by omission. */
   canManage: boolean;
-  /** announcements.approve: Approve / Reject while the notice is pending. */
   canApprove: boolean;
   acked: boolean;
   onAcked: () => void;
-  /** A write landed and the row changed: bust both feeds. */
   onChanged: () => void;
-  /** The notice no longer exists: bust both feeds and leave this screen. */
   onRemoved: () => void;
   onBack: () => void;
 }) {
@@ -910,9 +743,6 @@ function Detail({
   const status = announcementStatus(ann);
   const approval = ann.approvalStatus ?? "APPROVED";
 
-  /* APPROVAL (mig 20260906T1509) — the same three transitions the desktop
-     drawer has. Each reports the server's answer; the approve toast carries
-     the reference number the server minted. */
   const transition = async (
     action: "submit" | "approve" | "reject" | "void",
     body: Record<string, unknown>,
@@ -964,10 +794,6 @@ function Detail({
     await transition("reject", { reason: reason.trim() }, () => ({ title: "Sent back to the author", body: "They have been told why." }));
   };
 
-  /* RETRACTION — hide/show + delete, the two publisher actions the phone did
-     not have at all. Both report the server's refusal: this file's Remind
-     button used to swallow one and claim success, and that shape is the reason
-     these are written out rather than fired and forgotten. */
   const setActive = async (next: boolean) => {
     if (managing) return;
     setManaging(true);
@@ -990,8 +816,6 @@ function Detail({
     setManaging(false);
   };
 
-  /* A draft is discarded; a submitted notice is VOIDED with a reason (mig
-     20260907T1030 — the server refuses to delete anything else). */
   const isDraft = (ann.approvalStatus ?? "APPROVED") === "DRAFT";
   const remove = async () => {
     if (managing) return;
@@ -1033,9 +857,6 @@ function Detail({
   const lang = useMobileLang();
   const t = useT();
   const loc = localizeAnnouncement(ann, lang);
-  // Reader-driven escape hatch back to the author's own words. Reset whenever
-  // the language changes so switching language never leaves you stuck looking
-  // at the original with a "Show translation" button you didn't ask for.
   const [showOriginal, setShowOriginal] = useState(false);
   useEffect(() => { setShowOriginal(false); }, [lang, ann.id]);
   const shown = showOriginal
@@ -1058,10 +879,6 @@ function Detail({
     onAcked();
   };
 
-  // Designer detail layout (#ann-detail): the header holds ONLY the back link;
-  // the category chip + date, title, byline ("Posted by …") and body all render
-  // in the scroll body (body not boxed in a card), then inline attachments,
-  // publisher-only read receipts, and a sticky "Got it" ack bar.
   return (
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
       <header className="hdr">
@@ -1091,9 +908,6 @@ function Detail({
         {ann.voidedAt && (canManage || canApprove) && (
           <div style={{ fontSize: 12, color: "var(--hz-c-ink-muted)", marginTop: 6 }}>Voided: {ann.voidReason ?? "no reason recorded"}</div>
         )}
-        {/* When it stops showing — stated on the phone as well as the desktop,
-            because "why is this still up" is a question the publisher asks from
-            wherever they happen to be. */}
         {canManage && ann.expiresAt && (
           <div style={{ fontSize: 11, color: "var(--hz-c-ink-muted)", marginTop: 3 }}>
             {status === "expired" ? "Hidden automatically on " : "Hides automatically on "}
@@ -1101,15 +915,6 @@ function Detail({
           </div>
         )}
 
-        {/* ---- Translation disclosure -------------------------------------
-            A machine translation of a WORKPLACE notice must never masquerade
-            as the author's own words: a mistranslated safety or pay notice is
-            worse than an untranslated one. So whenever the text above is
-            machine-produced we say so, and give a one-tap toggle back to the
-            original the author actually wrote.
-            When the reader chose a language this notice has no translation
-            for, we say THAT too rather than silently serving English and
-            leaving them to wonder whether they missed something. */}
         {loc.isTranslated && (
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 700, color: "var(--hz-c-ink-muted)", background: "var(--hz-c-surface-2)", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 999, padding: "4px 9px", lineHeight: 1.5 }}>
@@ -1223,8 +1028,6 @@ function Detail({
 
 type Lookups = { depts: Dept[]; positions: Position[]; users: UserRow[]; usersDenied: boolean; companies: Company[] };
 
-// Compose (create) an announcement. Audience targeting is real: dept +
-// position always available; People (user ids) only when /api/users is readable.
 function Compose({
   lookups,
   salesDirOnly,
@@ -1232,9 +1035,6 @@ function Compose({
   onPublished,
 }: {
   lookups: Lookups;
-  /** Composer opened by a Sales-Director-only caller: audience is constrained
-   *  to the whole Sales department OR a specific salesperson in it (owner rule).
-   *  The dept / user lookups are already server-scoped to their department. */
   salesDirOnly: boolean;
   onClose: () => void;
   onPublished: () => void;
@@ -1243,8 +1043,6 @@ function Compose({
 
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState(CATEGORY_OPTIONS[0].value);
-  // Document type (mig 20260908T0300): the registry's active types; ANN unless
-  // the writer picks Memo. The [TYPE] segment of the number.
   const [docType, setDocType] = useState("ANN");
   const docTypesQ = useQuery({
     queryKey: ["document-types"],
@@ -1259,39 +1057,22 @@ function Compose({
     if (typeTouched) return;
     setDocType(docTypeForCategory(readCategory(category), docTypeOptions));
   }, [category, typeTouched, docTypeOptions]);
-  // Numbered under (mig 20260909T0900): the department whose series the
-  // number is minted on; empty = the submitter's own.
   const [numberDeptId, setNumberDeptId] = useState<number | null>(null);
   const [bucket, setBucket] = useState<Bucket>(salesDirOnly ? "DEPT" : "ALL");
-  // Company target: "ALL" = every company (Both — sends no target, NULL = all);
-  // a company id = that company only. Default "ALL". Only shown when >1 company.
   const [companyPick, setCompanyPick] = useState<"ALL" | number>("ALL");
   const [selDepts, setSelDepts] = useState<Set<number>>(new Set());
   const [selPositions, setSelPositions] = useState<Set<number>>(new Set());
   const [selUsers, setSelUsers] = useState<Set<number>>(new Set());
   const [userSearch, setUserSearch] = useState("");
   const [body, setBody] = useState("");
-  /* Wall-clock "YYYY-MM-DDTHH:mm" — DateTimeField's own wire shape, shared with
-     the desktop composer. Empty = never expires, which is the backend default
-     and the pre-2026-08-21 mobile behaviour, so leaving the field alone changes
-     nothing for anyone. */
   const [expiresAt, setExpiresAt] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  // Rich-media layout hint (mig 0140). "" photo = auto (derive from count);
-  // video defaults to a 1x1 square. Only surfaced when the media is attached.
   const [photoLayout, setPhotoLayout] = useState<PhotoLayout | "">("");
   const [videoLayout, setVideoLayout] = useState<VideoLayout>("1x1");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  // One key per opened composer (the phone keeps no draft): a retry of this
-  // sheet's post — double tap, "Couldn't save" then Publish again — is
-  // answered by the server with the row the first request made, never a
-  // second one (mig 20260907T0010; the desktop composer keys its draft).
   const clientKey = useIdempotencyKey();
 
-  // The number this notice gets on approval — a preview from
-  // GET /api/document-refs/next (nothing claimed), following the type and the
-  // department picked; the attachment policy of the picked type.
   const numberDept = numberDeptId == null ? null : (lookups.depts.find((d) => d.id === numberDeptId) ?? null);
   const numberDeptCode = numberDept?.code ?? null;
   const nextQ = useQuery({
@@ -1337,10 +1118,6 @@ function Compose({
     );
   }, [lookups.users, userSearch]);
 
-  // Sales Director: default the "Sales Department" bucket to their own
-  // department (the lookups already return only it), so posting with no manual
-  // pick still targets the whole Sales dept + satisfies the DEPT validation.
-  // Seeded once so a later deselect isn't fought.
   const seededDeptRef = useRef(false);
   useEffect(() => {
     if (
@@ -1368,9 +1145,6 @@ function Compose({
     setErr(null);
     setSaving(true);
     try {
-      // Two-step upload manifest: PUT each file to the 'compose' scope, collect
-      // {r2Key, mime} entries. A failed upload is skipped rather than blocking.
-      // WO-7: shared pipeline — compresses images + uploads their thumbs.
       const uploaded: Attachment[] = [];
       for (const f of files) {
         try {
@@ -1379,16 +1153,9 @@ function Compose({
             uploaded.push({ r2Key: manifest.r2Key, name: manifest.name, mime: manifest.mime, size: manifest.size });
           }
         } catch {
-          /* skip this file; publish the rest. */
         }
       }
 
-      // Real audience targeting — one bucket at a time (mirrors desktop). ALL
-      // sends no target arrays (backend derives ALL_USERS). Empty arrays on a
-      // non-selected bucket keep the other buckets from being wiped on edit.
-      // Rich body (same editor as the desktop composer): `bodyHtml` is the
-      // canonical fragment, `body` its plain shadow; the server re-derives the
-      // latter and stores NULL html when nothing was actually formatted.
       const payload: Record<string, unknown> = {
         title: t,
         body: richTextToPlain(body),
@@ -1401,19 +1168,9 @@ function Compose({
       if (bucket === "DEPT") payload.targetDeptIds = Array.from(selDepts);
       if (bucket === "POSITION") payload.targetPositionIds = Array.from(selPositions);
       if (bucket === "USER") payload.targetUserIds = Array.from(selUsers);
-      // Company target: a single company sends [id]; "Both"/ALL omits the field
-      // (backend stores NULL = all companies).
       if (companyPick !== "ALL") payload.targetCompanyIds = [companyPick];
-      /* Expiry, sent EXACTLY as the desktop composer sends it
-         (pages/Announcements.tsx): a local wall-clock value converted to an ISO
-         instant, and the key omitted entirely when blank so the row keeps NULL
-         = never. Mobile sent this key on no path at all until 2026-08-21, which
-         is why a notice posted from a phone could not be given an end date and
-         then could not be taken down from the phone either. */
       if (expiresAt) payload.expiresAt = new Date(expiresAt).toISOString();
       payload.attachments = uploaded;
-      // Media layout — only hints for media actually uploaded. Empty photo pick
-      // stays absent so the renderer derives a count default.
       const upPhotos = uploaded.some((a) => (a.mime || "").startsWith("image/"));
       const upVideos = uploaded.some((a) => (a.mime || "").startsWith("video/"));
       const mediaLayout: { photo?: PhotoLayout; video?: VideoLayout } = {};
@@ -1429,15 +1186,12 @@ function Compose({
   };
 
   const poster = user?.name?.trim() || "your account";
-  // Sales Director: only two audiences — the whole Sales department, or a
-  // specific salesperson in it. Everyone else keeps the full bucket set.
   const baseBuckets: Array<{ value: Bucket; label: string }> = salesDirOnly
     ? [
         { value: "DEPT", label: "Sales Department" },
         { value: "USER", label: "Specific salesperson" },
       ]
     : BUCKETS;
-  // People bucket only offered when the directory is readable.
   const buckets = lookups.usersDenied
     ? baseBuckets.filter((b) => b.value !== "USER")
     : baseBuckets;
@@ -1521,8 +1275,6 @@ function Compose({
           </div>
         )}
 
-        {/* Company target — only when more than one company exists. Hidden for
-            a Sales Director (they post within their own department only). */}
         {lookups.companies.length > 1 && !salesDirOnly && (
           <>
             <div className="fld-l" style={{ margin: "0 2px 7px" }}>Company</div>
@@ -1544,7 +1296,6 @@ function Compose({
           </>
         )}
 
-        {/* Audience targeting — bucket selector + the matching id picker. */}
         <div className="fld-l" style={{ margin: "0 2px 7px" }}>Send to</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 9 }}>
           {buckets.map((b) => {
@@ -1614,17 +1365,11 @@ function Compose({
           <span className="fld-l">Title</span>
           <input className="fld-i" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Announcement title" maxLength={200} />
         </label>
-        {/* A div, not a <label>: a contenteditable box is not labelable, so a
-            label wrapper would only steal the first tap. */}
         <div className="fld" style={{ marginBottom: 12 }}>
           <span className="fld-l">Body</span>
           <AnnouncementRichEditor value={body} onChange={setBody} placeholder="Write the announcement…" minHeight={120} disabled={saving} />
         </div>
 
-        {/* Expiry — the same control and the same label as the desktop
-            composer, and the SHARED DateTimeField rather than a native
-            datetime-local, so the date half stays DD/MM/YYYY on a phone whose
-            OS is not day-first. Optional by design: blank = never expires. */}
         <div className="fld" style={{ marginBottom: 12 }}>
           <span className="fld-l">Hide automatically after</span>
           <DateTimeField
@@ -1666,8 +1411,6 @@ function Compose({
           </div>
         )}
 
-        {/* Layout hints — mirror the desktop composer. Only shown for the media
-            actually attached. */}
         {(hasPhotos || hasVideos) && (
           <div style={{ display: "flex", flexDirection: "column", gap: 9, marginTop: 12, background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 11, padding: "11px 12px" }}>
             {hasPhotos && (
@@ -1715,7 +1458,6 @@ function Compose({
   );
 }
 
-// A scrollable, bordered checkbox list used by every audience picker.
 function PickerBox({ empty, children }: { empty: string | null; children: React.ReactNode }) {
   return (
     <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 12, maxHeight: 220, overflowY: "auto" }}>

@@ -1,16 +1,3 @@
-/* The phone's direct create for PO / GRN / PI — what it refuses and what it sends.
- *
- * FAILS ON THE PRE-FIX CODE — the module did not exist; the phone could only
- * convert from a source document.
- *
- * The load-bearing assertions are the ones that would let a WRONG document be
- * created without anyone noticing:
- *   - the PO variant gate must be the SHARED rule, including the DIVAN ONLY
- *     exemption that keys off the item code (dropping the code would demand a
- *     Gap the owner ruled a divan-only line does not have);
- *   - the unit price must be the TYPED number, never the picker's catalog
- *     SELLING price — on a purchase document that would be booked as cost.
- */
 import { describe, expect, it } from "vitest";
 import {
   MODULE_TO_PURCHASE_DOC,

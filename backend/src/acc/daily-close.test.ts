@@ -1,7 +1,3 @@
-// The daily cashup's decisions: buckets follow the drawer (cash / transfer /
-// per-acquirer), imported rows are never part of a day's takings, a short
-// drawer books the loss THE DAY it happened, an over drawer books the reverse,
-// zero difference books nothing, and confirming twice books once.
 
 import { describe, it, expect } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';

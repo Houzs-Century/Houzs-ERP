@@ -27,20 +27,11 @@
  * still be recorded as parentless rather than sent as a transfer of nothing.
  */
 import { describe, expect, it } from 'vitest';
-/* `?raw`, not node:fs — this is a Workers project and node types are not in the
-   tsconfig, so a fs import typechecks red while the tests pass. The repo's other
-   source-reading test (lib/return-unlinked-lines.test.ts) reads the same router
-   the same way. */
 import grnsSrc from './grns.ts?raw';
 import piSrc from './purchase-invoices.ts?raw';
 import parentSrc from '../lib/convert-parent.ts?raw';
 
 const src = (f: string) => (f === 'grns.ts' ? grnsSrc : piSrc);
-/* Returns '' when either anchor is absent, and NEVER throws at module scope.
-   A source-reading test that dies while loading reports as "no tests", which
-   reads like a corrupt file rather than a failure — the exact shape CLAUDE.md
-   calls a verdict computed over nothing. Absent anchors have to fail INSIDE a
-   case, where the message says which assertion did not hold. */
 const between = (text: string, from: string, to: string) => {
   const a = text.indexOf(from);
   if (a < 0) return '';
@@ -62,11 +53,6 @@ describe('POST /grns — a receipt raised from a purchase order is SENT', () => 
   });
 
   it('names the source from the LINES, never from the header hint', () => {
-    /* body.purchaseOrderId is a field the form may or may not carry;
-       grn_items.purchase_order_item_id is what the conversion will name. */
-    /* Assert on the CODE, not the prose: the module's own header explains WHY
-       purchaseOrderId is not used, so a raw substring check fails on the
-       explanation. Comments stripped first, or the test measures the comment. */
     const code = parentSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     expect(code).toContain('purchase_order_item_id');
     expect(code).not.toContain('purchaseOrderId');
@@ -74,7 +60,7 @@ describe('POST /grns — a receipt raised from a purchase order is SENT', () => 
 });
 
 describe('POST /purchase-invoices — an invoice billing a receipt is SENT', () => {
-  const body = () => between(src('purchase-invoices.ts'), 'const srcGrnIds = await sourceGrnIdsForPi', 'LEAK GUARD (DRAFT)');
+  const body = () => between(src('purchase-invoices.ts'), 'const srcGrnIds = await sourceGrnIdsForPi', 'await reallocatePiCharges(sb, h.id');
 
   it('enqueues a gr_to_pi conversion when the lines name a receipt', () => {
     expect(body()).toContain("op: 'gr_to_pi'");

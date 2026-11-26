@@ -1,20 +1,6 @@
-// ---------------------------------------------------------------------------
-// Mail Center compose/reply — outbound attachment validation (PURE helpers).
-//
-// The POST /api/mail-center/compose and /threads/:id/reply routes send
-// SYNCHRONOUSLY via sendEmail and BYPASS the email outbox, so the outbox's size
-// guard does NOT protect them. These routes therefore own their own cap.
-//
-// These limits are the SINGLE SOURCE OF TRUTH and are MIRRORED on the frontend
-// compose so the operator is rejected with the SAME error the server would
-// return. If you change a number here, change it there too.
-//
-// No DB, no network — just shape + size + extension checks.
-// ---------------------------------------------------------------------------
 
-// Allow images + PDF only (the compose <input> sets accept="image/*,application/pdf").
 export const MAIL_ATTACH_MAX_COUNT = 10;
-export const MAIL_ATTACH_MAX_TOTAL_BYTES = 5 * 1024 * 1024; // 5 MB decoded
+export const MAIL_ATTACH_MAX_TOTAL_BYTES = 5 * 1024 * 1024;
 export const MAIL_ATTACH_ALLOWED_EXTENSIONS = [
   "png",
   "jpg",
@@ -35,14 +21,10 @@ export interface MailAttachmentInput {
 
 export interface MailAttachmentValidationResult {
   ok: boolean;
-  // Human-readable, English. Used verbatim in the 400 body / inline FE error.
   error?: string;
-  // Total decoded byte count across all attachments (handy for logging).
   totalDecodedBytes: number;
 }
 
-// Decoded binary size of a base64 string WITHOUT decoding it: each 4 base64
-// chars carry 3 bytes, minus 1 per '=' pad char.
 export function decodedBase64Bytes(contentBase64: string): number {
   const s = (contentBase64 ?? "").trim();
   if (s.length === 0) return 0;
@@ -61,9 +43,6 @@ export function isAllowedMailAttachment(filename: string): boolean {
   return (MAIL_ATTACH_ALLOWED_EXTENSIONS as readonly string[]).includes(ext);
 }
 
-// Validate the whole batch the way the route must: count cap, per-extension
-// allow-list, and a COMBINED decoded-size cap. Returns a single English error
-// for the first violation (interactive path -> reject clearly, don't drop).
 export function validateMailAttachments(
   attachments: MailAttachmentInput[] | undefined,
 ): MailAttachmentValidationResult {

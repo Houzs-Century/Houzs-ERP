@@ -36,7 +36,7 @@ export function OrganizerManagerRow({
   }
   function save() {
     const next = name.trim();
-    if (!next) return; // keep editing; an empty organizer name is never saved
+    if (!next) return;
     if (next !== o.name) onPatch(o.id, { name: next });
     setEditing(false);
   }

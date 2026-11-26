@@ -1,8 +1,5 @@
 import { useState } from "react";
 
-/* A purchase invoice's PO numbers in a header cell: the first `shown`, then a
-   "+N more" toggle that expands to the full list. The full list is also the
-   hover title, so it can be read without clicking. */
 export function PoNumberList({ poNumbers, shown }: { poNumbers: string[]; shown: number }) {
   const [open, setOpen] = useState(false);
   if (poNumbers.length === 0) return <span>—</span>;

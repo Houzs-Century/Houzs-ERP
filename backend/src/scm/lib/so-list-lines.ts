@@ -80,7 +80,6 @@ const num = (v: number | string | null | undefined): number | null => {
 const text = (v: string | null | undefined): string | null => String(v ?? '').trim() || null;
 const ymd = (v: string | null | undefined): string | null => text(v)?.slice(0, 10) ?? null;
 
-/* A line's printed position: line_no, then creation order, then id. */
 const byLinePosition = (a: LineRow, b: LineRow): number => {
   const an = a.line_no ?? Infinity;
   const bn = b.line_no ?? Infinity;
@@ -101,12 +100,6 @@ function lineDescription2(itemGroup: string | null, variants: unknown, stored: s
   return summary || text(stored);
 }
 
-/* Rows that point at these SO lines by so_item_id. A small set asks by id in
-   URL-sized batches; a large one reads the company's LINKED rows once and keeps
-   the ones it needs — the same rows either way, in far fewer subrequests.
-   Measured 2026-09-15 over the read-only shim on the full Houzs list (2,959
-   orders, 15,618 lines): the by-id form cost 622 reads of delivery and purchase
-   order lines; the company read costs one per 1,000 linked rows. */
 const BY_ID_LIMIT = 1000;
 
 async function readLinkedToLines<T extends { so_item_id: string | null }>(
@@ -160,8 +153,6 @@ export async function attachSoLines(
   const all = lineRead.data;
   const lineIds = all.map((l) => l.id);
 
-  /* AutoCount's number — a base-table column the list's view does not carry.
-     doc_no is the primary key, so the builder's read of the same orders is the same rows. */
   const base = prior?.base?.data && !prior.base.error
     ? { data: prior.base.data, error: null }
     : await chunkIn<{ doc_no: string; linked_ac_docno: string | null }>(docNos, (batch, from, to) =>
@@ -179,8 +170,6 @@ export async function attachSoLines(
     }
   }
 
-  /* Delivery order lines: DO numbers (not cancelled) and qty on a DO that has
-     not shipped by the app's rule (doCountsAsDelivered). */
   type DoLine = { id: string; so_item_id: string | null; qty: number | null; delivery_order_id: string | null };
   const doLines = await readLinkedToLines<DoLine>(lineIds, () =>
     scopeToCompany(sb.from('delivery_order_items').select('id, so_item_id, qty, delivery_order_id'), c));
@@ -199,7 +188,6 @@ export async function attachSoLines(
     if (!doCountsAsDelivered(d.status)) onDo.set(l.so_item_id, (onDo.get(l.so_item_id) ?? 0) + Number(l.qty ?? 0));
   }
 
-  /* Purchase order lines raised for these lines (PO not cancelled). */
   type PoLine = { id: string; so_item_id: string | null; purchase_order_id: string | null; delivery_date: string | null };
   const poLines = await readLinkedToLines<PoLine>(lineIds, () =>
     scopeToCompany(sb.from('purchase_order_items').select('id, so_item_id, purchase_order_id, delivery_date'), c));
@@ -220,7 +208,6 @@ export async function attachSoLines(
     if (dd && (!cur || dd < cur)) poDate.set(l.so_item_id, dd);
   }
 
-  /* Warehouses and staff by the ids of rows already read under the company scope. */
   const wh = prior?.warehouses?.data && !prior.warehouses.error
     ? { error: null, byId: new Map(prior.warehouses.data.map((w) => [w.id, w])) }
     : await lookupByIds<{ id: string; code: string | null; name: string | null }>(
@@ -234,7 +221,6 @@ export async function attachSoLines(
       .in('id', batch).order('id', { ascending: true }).range(from, to) as Res<never>);
   if (staff.error) return { error: `staff: ${staff.error}`, lineCount: 0 };
 
-  /* The write-back's own binding map, so an item resolves as the book was sent it. */
   let bindings: Map<string, string>;
   try {
     bindings = await bindingsFor(sb as never, (c.get('companyId') as number | undefined) ?? null, all.map((l) => l.item_code ?? ''));
@@ -265,8 +251,6 @@ export async function attachSoLines(
         description2: lineDescription2(l.item_group, l.variants, l.description2),
         item_group: item ? item.itemGroup : text(l.item_group),
         uom: item ? item.uom : text(l.uom),
-        /* A line with no warehouse of its own ships from the order's, which is
-           what the AutoCount write-back sends (defaultLocation = sales_location). */
         location: bookSpellingOrOwn(warehouseLabel(w) ?? l.location ?? text(r.sales_location), LOCATION_MAP),
         qty: num(l.qty) ?? 0,
         unit_price_sen: num(l.unit_price_sen),
@@ -289,8 +273,6 @@ export async function attachSoLines(
   return { error: null, lineCount: all.length };
 }
 
-/* buildSoListRows sizes its per-doc reads for one list page (≤ 100 orders); the
-   export hands it the matched orders in pages of that size. */
 const ROW_PAGE = 100;
 
 export type SoExportRows =

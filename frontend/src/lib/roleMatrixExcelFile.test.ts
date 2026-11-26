@@ -1,6 +1,3 @@
-// The browser I/O adapter: a REAL SheetJS round-trip (export bytes → read back)
-// proves the aoa ↔ workbook mapping survives an actual .xlsx, which the pure
-// engine test cannot see. Also covers the CSV read branch.
 import { describe, it, expect } from "vitest";
 import type { PermissionDef, Role } from "../types";
 import type { PageLite } from "./roleMatrixModel";
@@ -55,7 +52,7 @@ describe("workbookToXlsx + readWorkbookBytes", () => {
     // 功能 cols: 0 模块 | 1 功能 | 2 说明 | 3 key | 4 role7 | 5 role8(Storekeeper).
     const fn = wb.sheets.find((s) => s.name === EXCEL_SHEET_FUNCTIONS)!;
     const row = fn.aoa.find((r) => r[3] === "projects.read")!;
-    row[5] = "✓"; // grant Storekeeper projects.read
+    row[5] = "✓";
     const sheets = await readWorkbookBytes(await workbookToXlsx(wb));
     const parsed = parseMatrixWorkbook(sheets, snap);
     const store = parsed.changedRoles.find((r) => r.roleId === 8)!;

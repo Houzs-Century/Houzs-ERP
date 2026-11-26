@@ -1,15 +1,3 @@
-/* The change log that four documents did not have.
- *
- * The backend has recorded PURCHASE_ORDER, PURCHASE_INVOICE, SALES_INVOICE and
- * DELIVERY_ORDER changes into scm.entity_audit_log since the document modules
- * were added. No screen could show them: the type they had to be named with was
- * missing from the frontend's union, and the History button on three of the four
- * navigated to `?tab=history`, a URL parameter nothing reads.
- *
- * These tests pin the two halves of the fix that can go wrong silently:
- * a document that is wired to a drawer it has no vocabulary for, and a label
- * dictionary that quietly loses the keys its backend actually writes.
- */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -44,9 +32,6 @@ describe('the history drawer registry', () => {
   });
 
   it('gives every document a status vocabulary the StatusPill knows', () => {
-    /* A StatusDocType the pill has no map for renders the raw SCREAMING_CASE
-       status, which is the shape of the bug this whole change is about: it
-       looks like it works. */
     const src = repoFile('frontend/src/vendor/scm/lib/status-pill.ts');
     const maps = /const MAPS: Record<StatusDocType, Record<string, Entry>> = \{([\s\S]*?)\};/.exec(src);
     expect(maps).not.toBeNull();
@@ -69,8 +54,6 @@ describe('the history drawer registry', () => {
   });
 
   it('renders money keys through the money formatter, not as raw sen', () => {
-    /* A money key missing from moneyFields prints RM 1,234.00 as "123400".
-       Every document here logs a line total, so every one needs the set. */
     for (const key of DOC_KEYS) {
       const money = spec(key).moneyFields;
       if (!spec(key).fields.lineTotalSen) continue;
@@ -82,12 +65,6 @@ describe('the history drawer registry', () => {
 });
 
 describe('the document vocabularies match what their routes write', () => {
-  /* Each route diffs through an alias tuple list; the differ emits the CAMEL
-     half. A key present in the tuples and absent from the dictionary is not an
-     error — it falls back to humaniseKey — but a key the dictionary spells
-     DIFFERENTLY from the backend is a label that will never appear, and that is
-     invisible on screen. So assert coverage of the header tuples, which are the
-     ones staff read most. */
   const camelKeys = (src: string, constName: string): string[] => {
     const block = new RegExp(`const ${constName}[^=]*= \\[([\\s\\S]*?)\\n\\];`).exec(src);
     if (!block) throw new Error(`${constName} not found`);

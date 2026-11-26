@@ -1,18 +1,4 @@
-// Vendored SLICE of apps/backend/src/lib/flow-queries.ts — the Purchase Invoice
-// (PI) query/mutation surface the vendored PI pages call.
-//
-// Copied VERBATIM from the source flow-queries.ts PI section except for the
-// boundary:
-//   • import { authedFetch } from './authed-fetch' (the repointed vendored fetch
 import { writeFailed, writeFailedAs } from './mutation-error';
-//     → /api/scm).
-//   • the dropped `import { supabase }` / `verified-save` machinery — none of the
-//     PI hooks below reference it (they all go through authedFetch).
-//   • serviceNotify (cancel onError toast) is the vendored dialog-service bridge.
-//
-// The picker hooks (useOutstandingGrnItems / useCreatePisFromGrnItems) already
-// live in suppliers-queries.ts — NOT duplicated here; the from-GRN page imports
-// useOutstandingGrnItems from there.
 
 import { useMemo } from 'react';
 import { useListMrpEnrichmentChunks } from './list-mrp-enrichment-chunks';
@@ -26,7 +12,6 @@ import { piLedgerGap, type PiLedgerOutcome } from './pi-ledger-outcome';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import { applyPiListMrpEnrichment, type EnrichablePiRow, type PiListMrpEnrichment } from '../../../lib/piListEnrichment';
 
-/* ── Purchase Invoice ────────────────────────────────────────────────── */
 export const usePurchaseInvoices = (status?: string) =>
   useQuery({
     queryKey: ['purchase-invoices', status ?? 'all'],
@@ -36,17 +21,8 @@ export const usePurchaseInvoices = (status?: string) =>
     retryDelay: 800,
   });
 
-// Opt-in server-side pagination + search + sort + status-counts (mirrors
-// useMfgSalesOrdersPaged). Sending `page` switches /purchase-invoices into its
-// paginated contract ({ purchaseInvoices, total, page, pageSize, statusCounts });
-// the legacy usePurchaseInvoices above (no page) still returns the historical
-// unpaginated list. `status` is the resolved purchase_invoices.status DB value
-// (UPPERCASE); each PI filter-pill bucket (draft/posted/partial/paid/cancelled)
-// maps 1:1 to a single DB status, so no bucket needs dropping.
 export function usePurchaseInvoicesPaged(params: { from?: string; to?: string; page: number; pageSize: number; status?: string; q?: string; sort?: string; creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[] }) {
   const { page, pageSize, status, q, sort, creditorNames, creditorCodes, currencies, from, to } = params;
-  // The filter half is shared with the two exports (pi-list-export.ts), so an
-  // export can never be sent a different filter than the list it was pressed on.
   const usp = piListParams({ status, q, sort, creditorNames, creditorCodes, currencies, from, to });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
@@ -60,12 +36,6 @@ export function usePurchaseInvoicesPaged(params: { from?: string; to?: string; p
   });
 }
 
-/* Deferred PI-list enrichment — the MRP-derived columns (Assigned SO /
-   Delivered) the list no longer computes on its critical path (see
-   piListEnrichment.ts). Fired AFTER the list renders, for the PIs it just
-   showed, and merged in by applyPiListMrpEnrichment. The ids are chunked at 100
-   so the request stays bounded; each chunk is cached independently. The backend answers from the 15-min stored MRP snapshot
-   (list-mrp-enrichment-chunks.ts). */
 const ENRICH_CHUNK = 100;
 
 export function usePiListMrpEnrichmentMap(
@@ -82,9 +52,6 @@ export function usePiListMrpEnrichmentMap(
   return { byId, isFetching, mrp };
 }
 
-/* The overlay the PI list applies: take the rows the list endpoint returned
-   (without the MRP-derived columns), fetch the deferred enrichment for their
-   ids, and return the healed rows. */
 export function useEnrichedPiListRows<T extends EnrichablePiRow>(
   rows: T[],
   enabled: boolean,
@@ -102,8 +69,6 @@ export function useEnrichedPiListRows<T extends EnrichablePiRow>(
 }
 export const usePurchaseInvoiceDetail = (id: string | null) => useQuery({
   queryKey: ['purchase-invoice-detail', id],
-  // customerDos = OUR delivery order(s) this purchase covers, resolved
-  // server-side through the so_item_id chain (back-to-back POs only).
   queryFn: () => authedFetch<{ purchaseInvoice: any; items: any[]; customerDos?: Array<{ id: string; do_number: string }> }>(`/purchase-invoices/${id}`),
   enabled: Boolean(id), staleTime: 30_000, retry: retryUnlessClientError, retryDelay: 800,
 });
@@ -112,21 +77,12 @@ export const usePostPurchaseInvoice = () => {
   return useMutation({
     mutationFn: (id: string) =>
       authedFetch<{ ledger?: PiLedgerOutcome }>(`/purchase-invoices/${id}/post`, { method: 'PATCH' }),
-    /* A 200 here means the invoice is POSTED, not that its AP journal was
-       written: the server keeps the post when the journal is refused. Every
-       caller (list, both details, desktop and phone create) hears it from here,
-       and the returned promise holds mutateAsync until the operator has read it. */
     onSuccess: async (res, id) => {
       qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
       qc.invalidateQueries({ queryKey: ['purchase-invoice-detail', id] });
       const gap = piLedgerGap(res.ledger);
       if (gap) await serviceNotify({ title: 'Invoice posted without its AP journal', body: gap.charAt(0).toUpperCase() + gap.slice(1), tone: 'error' });
     },
-    /* The AP commit had no error path until 2026-08-21, while every sibling in
-       this file (cancel, record payment, delete item) had one. Its two call
-       sites pass no per-call `onError`, and the global MutationCache carries
-       only `onSuccess`, so a refused post left the operator believing the
-       liability was booked. */
     onError: writeFailedAs('Purchase invoice not posted'),
   });
 };
@@ -144,14 +100,6 @@ export const useCancelPurchaseInvoice = () => {
   });
 };
 
-/* `idempotencyKey` is OPTIONAL and must be destructured OUT of the body — the
-   rest-spread would otherwise post it as a PI field. Pass one per PI intent (see
-   lib/idempotency.ts): the middleware replays the first response — the SAME
-   invoiceNumber — instead of booking the supplier's bill twice. Omitting it is
-   exactly today's behaviour (the middleware no-ops).
-
-   A duplicate PI is a payable the company does not owe; usePostPurchaseInvoice
-   above then posts it to the accounts. */
 export const useCreatePurchaseInvoice = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -162,11 +110,6 @@ export const useCreatePurchaseInvoice = () => {
   });
 };
 
-/* ── PI PO-clone CRUD (mirror the GRN/PR header + line item hooks) ──────────
-   PATCH /purchase-invoices/:id (header), POST/PATCH/DELETE
-   /purchase-invoices/:id/items[/:itemId]. Each invalidates the PI detail
-   (['purchase-invoice-detail', id]) + list (['purchase-invoices']) — the same
-   query keys usePurchaseInvoiceDetail + usePurchaseInvoices read. */
 export const useUpdatePurchaseInvoiceHeader = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -210,11 +153,6 @@ export const useDeletePurchaseInvoiceItem = () => {
   });
 };
 
-/* T12 — free-add a NEW line to an existing PI (PI is free-entry, grnId:null is
-   first-class). POST /purchase-invoices/:id/items already accepts the full line
-   payload (itemCode/materialName/itemGroup/variants + qty/price) and
-   server-recomputes description2. Mirrors useAddGrnItem; invalidates the same
-   keys usePurchaseInvoiceDetail + usePurchaseInvoices read. */
 export const useAddPurchaseInvoiceItem = () => {
   const qc = useQueryClient();
   return useMutation({

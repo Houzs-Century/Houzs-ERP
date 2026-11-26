@@ -10,7 +10,6 @@ describe("serviceVerdict (DEV-35 outside services)", () => {
   it("is critical when the last attempt failed", () => {
     expect(serviceVerdict({ lastSuccessAt: TWO_HOURS_AGO, lastFailureAt: HOUR_AGO, attempts24h: 50, failures24h: 1 }, NOW))
       .toEqual({ verdict: "critical", note: "last attempt failed" });
-    // Failed with no success ever, even when idle since.
     expect(serviceVerdict({ lastSuccessAt: null, lastFailureAt: TWO_DAYS_AGO, attempts24h: 0, failures24h: 0 }, NOW).verdict)
       .toBe("critical");
   });

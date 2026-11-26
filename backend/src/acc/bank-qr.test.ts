@@ -16,7 +16,6 @@ const RULES: BankRecognitionRule[] = [
   { acquirerCode: 'HLB', pattern: 'CA Credit Advice', tradingDatePattern: 'MERCHAN\\s*T\\s+(\\d{8})', merchantPattern: '(\\d{9,})\\s+MERCHAN' },
 ];
 
-/* 2990, 02/11: the 31/10 QR report paid as one credit of RM 5,500. */
 const credit = (amountSen = 550000, day = '20261031') => ({
   amountSen, description: 'CA Credit Advice', reference: `00005992284 MERCHAN T ${day}`,
 });

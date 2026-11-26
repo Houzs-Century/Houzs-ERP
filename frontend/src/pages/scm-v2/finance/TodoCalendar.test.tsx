@@ -1,8 +1,3 @@
-// The To do's Calendar (the owner's Claude Design redesign, batch 2): the month
-// grid shows what falls on each day, a day's list opens beside it with what to
-// do, and a task dragged to another day is moved there this time only.
-// authed-fetch is mocked at the module seam; the rules are pinned in backend
-// acc/todo-calendar.test.ts.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -87,7 +82,6 @@ describe('TodoCalendar', () => {
   });
 });
 
-/* A supplier bill dragged to another day moves its planned payment date (the redesign, step 7). */
 describe('TodoCalendar — planning a bill', () => {
   const BILL = ev({ key: 'bill:HCAPI-2611-001', day: '2026-11-05', kind: 'pay', label: 'Kian Furniture · pay bill', short: 'Kian bill',
     detail: 'Supplier due 2026/11/05 · HCAPI-2611-001', amountSen: 1_929_000, to: '/scm/ap-invoices/1',

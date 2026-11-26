@@ -27,9 +27,6 @@ async function readIn<T>(
   sb: any, table: string, cols: string, column: string, values: string[], companyId: number | null,
   extra?: (q: any) => any,
 ): Promise<T[]> {
-  /* Each batch is PAGED (chunkIn): the GRN lines of a busy PO set pass
-     PostgREST's 1,000-row page, and the rows past it were dropped without an
-     error, so the DO's "shipped from" racks came out short. */
   const { data, error, truncated } = await chunkIn<T>(values, (part, from, to) => {
     let q = pgrestIn(scopeToCompanyIdOrOpen(sb.from(table).select(cols), companyId), column, part);
     if (extra) q = extra(q);
@@ -85,8 +82,6 @@ export async function loadGrnRacksForPos(
   }
   const rackIds = [...new Set([...lines.map((g) => g.rack_id), ...splits.map((s) => s.rack_id)].filter((x): x is string => !!x))];
   if (rackIds.length === 0) return [];
-  /* warehouse_racks has no company_id: the boundary is the warehouse, which the
-     caller resolved under the DO's company (the same boundary do-line-racks keeps). */
   const racks = await readIn<{ id: string; rack: string | null; warehouse_id: string | null }>(
     sb, 'warehouse_racks', 'id, rack, warehouse_id', 'warehouse_id', [...whs], null,
     (q) => pgrestIn(q, 'id', rackIds));

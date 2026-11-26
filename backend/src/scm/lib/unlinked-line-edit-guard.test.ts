@@ -1,21 +1,7 @@
-// The edit-path half of the unlinked-line back door. Every case here asserts a
-// DECISION (refuse / allow), and the exploit cases were each written FIRST and
-// observed to fail against the unwired handlers before the call sites existed.
-//
-// The exploit these cover, in two saves:
-//   1. add a line whose code is NOT on the parent the document names — allowed,
-//      correctly, because that is the service / freight / ad-hoc carve-out;
-//   2. PATCH that line's code to one that IS on the parent — which used to sail
-//      through, because the stored link is still NULL and every cap and recount
-//      on these chains is gated on that link being non-null.
 
 import { describe, it, expect } from 'vitest';
 import { fakeSb } from './fake-postgrest';
 import { unlinkedEditRefusal, doPendingItemCodesOf } from './unlinked-line-edit-guard';
-/* Source text of each router, so the WIRING of the guard is asserted too — a
-   guard nothing calls is the exact failure mode this whole unit is about, and
-   it is the one thing a unit test of the rule cannot see. Same `?raw` idiom
-   convert-ceilings.test.ts already uses for the PO router. */
 import grnsSrc from '../routes/grns.ts?raw';
 import purchaseReturnsSrc from '../routes/purchase-returns.ts?raw';
 import deliveryReturnsSrc from '../routes/delivery-returns.ts?raw';
@@ -26,10 +12,9 @@ import purchaseConsignmentReturnsSrc from '../routes/purchase-consignment-return
 const PO_ID = 'po-1';
 const GRN_ID = 'grn-1';
 const DO_ID = 'do-1';
-const CN_ID = 'cn-1';   // Consignment Note (parent of a Consignment Delivery Return)
-const PCR_ID = 'pcr-1'; // PC Receive (parent of a Purchase Consignment Return)
+const CN_ID = 'cn-1';
+const PCR_ID = 'pcr-1';
 
-/** A PO carrying the given materials — the GRN chain's parent. */
 const poWith = (materials: string[]) =>
   fakeSb({
     purchase_order_items: materials.map((m, i) => ({
@@ -37,7 +22,6 @@ const poWith = (materials: string[]) =>
     })),
   });
 
-/** A GRN carrying the given materials — the purchase-return chain's parent. */
 const grnWith = (materials: string[]) =>
   fakeSb({
     grn_items: materials.map((m, i) => ({
@@ -45,7 +29,6 @@ const grnWith = (materials: string[]) =>
     })),
   });
 
-/** A DO carrying the given items — the delivery-return chain's parent. */
 const doWith = (items: string[]) =>
   fakeSb({
     delivery_order_items: items.map((m, i) => ({
@@ -53,8 +36,6 @@ const doWith = (items: string[]) =>
     })),
   });
 
-/** A Consignment Note carrying the given items — the consignment-return chain's
- *  parent. Its lines live in consignment_delivery_order_items. */
 const cnWith = (items: string[]) =>
   fakeSb({
     consignment_delivery_order_items: items.map((m, i) => ({
@@ -62,8 +43,6 @@ const cnWith = (items: string[]) =>
     })),
   });
 
-/** A PC Receive carrying the given materials — the purchase-consignment-return
- *  chain's parent. Its lines live in purchase_consignment_receive_items. */
 const pcrWith = (materials: string[]) =>
   fakeSb({
     purchase_consignment_receive_items: materials.map((m, i) => ({
@@ -71,8 +50,6 @@ const pcrWith = (materials: string[]) =>
     })),
   });
 
-/** A DISPATCHED DO whose lines have `qty` delivered and nothing invoiced or
- *  returned — so every line is still Pending, the SI chain's shadow case. */
 const doPendingWith = (items: Array<{ code: string; qty: number; invoiced?: number }>) =>
   fakeSb({
     delivery_orders: [{ id: DO_ID, do_number: 'DO-1', status: 'DISPATCHED', debtor_code: 'C1', debtor_name: 'C' }],
@@ -87,13 +64,9 @@ const doPendingWith = (items: Array<{ code: string; qty: number; invoiced?: numb
     delivery_return_items: [],
   });
 
-/* ── The exploit, per chain ──────────────────────────────────────────────── */
 
 describe('unlinkedEditRefusal — the re-point exploit', () => {
   it('REFUSES re-pointing an unlinked GRN line at one of the PO\'s own materials', async () => {
-    // Save 2 of the exploit. Without this the stock goes in a second time while
-    // purchase_order_items.received_qty never moves, so the PO line still reads
-    // fully outstanding and the same delivery is received again.
     const out = await unlinkedEditRefusal(poWith(['FOAM-40D']), 'grn', {
       parentId: PO_ID,
       storedLink: null,
@@ -106,8 +79,6 @@ describe('unlinkedEditRefusal — the re-point exploit', () => {
   });
 
   it('REFUSES re-pointing an unlinked purchase-return line at the GRN\'s own material', async () => {
-    // grn_items.returned_qty is only touched when grn_item_id is set, so the
-    // receipt still reads fully un-returned and the goods go out twice.
     const out = await unlinkedEditRefusal(grnWith(['FOAM-40D']), 'purchase-return', {
       parentId: GRN_ID,
       storedLink: null,
@@ -130,7 +101,6 @@ describe('unlinkedEditRefusal — the re-point exploit', () => {
   });
 
   it('REFUSES re-pointing an unlinked SI line at a STILL-PENDING DO item', async () => {
-    // The double-invoice: the customer is billed twice for goods delivered once.
     const out = await unlinkedEditRefusal(
       doPendingWith([{ code: 'NTYR-PILLOW', qty: 10 }]), 'sales-invoice',
       { parentId: DO_ID, storedLink: null, storedCode: 'CONSULT-FEE', patchCode: 'NTYR-PILLOW' },
@@ -139,9 +109,6 @@ describe('unlinkedEditRefusal — the re-point exploit', () => {
   });
 
   it('REFUSES re-pointing an unlinked consignment-return line at the Note\'s own item', async () => {
-    // consignment_delivery_return_items.consignment_do_item_id stays NULL, so the
-    // over-return cap and the inventory resync (both gated on it) never see the
-    // line — the same goods come back IN twice.
     const out = await unlinkedEditRefusal(cnWith(['NTYR-PILLOW']), 'consignment-return', {
       parentId: CN_ID,
       storedLink: null,
@@ -153,8 +120,6 @@ describe('unlinkedEditRefusal — the re-point exploit', () => {
   });
 
   it('REFUSES re-pointing an unlinked purchase-consignment-return line at the PC Receive\'s own material', async () => {
-    // pc_receive_item_id stays NULL, so the qty cap and returned_qty recount never
-    // move the receive line — the same goods go OUT twice.
     const out = await unlinkedEditRefusal(pcrWith(['FOAM-40D']), 'purchase-consignment-return', {
       parentId: PCR_ID,
       storedLink: null,
@@ -166,9 +131,6 @@ describe('unlinkedEditRefusal — the re-point exploit', () => {
   });
 
   it('resolves the parent Note from the return header, not a passed parentId', async () => {
-    // The two consignment handlers have no header read to piggy-back on, so they
-    // hand the guard `parent` and it reads consignment_delivery_returns.consignment_do_id
-    // itself — company-scoped. Proven end to end here.
     const withHeader = fakeSb({
       consignment_delivery_returns: [{ id: 'cr-1', consignment_do_id: CN_ID, company_id: 7 }],
       consignment_delivery_order_items: [{ id: 'cdoi-0', consignment_delivery_order_id: CN_ID, item_code: 'NTYR-PILLOW' }],
@@ -193,8 +155,6 @@ describe('unlinkedEditRefusal — the re-point exploit', () => {
   });
 
   it('matches across case and whitespace on EITHER side', async () => {
-    // Both sides are hand-entered; a stored " foam-40d " that fails to match a
-    // typed "FOAM-40D" would read as genuinely ad-hoc and let the edit through.
     const out = await unlinkedEditRefusal(poWith([' foam-40d ']), 'grn', {
       parentId: PO_ID, storedLink: null, storedCode: 'SAMPLE', patchCode: '  FOAM-40D ',
     });
@@ -202,12 +162,9 @@ describe('unlinkedEditRefusal — the re-point exploit', () => {
   });
 });
 
-/* ── The carve-outs that must survive ────────────────────────────────────── */
 
 describe('unlinkedEditRefusal — what must still pass', () => {
   it('ALLOWS a service / freight / ad-hoc line whose code is on NO parent', async () => {
-    // The whole reason the link column is nullable. A blanket "every line must
-    // link" would break this, which is why the rule is narrow.
     for (const chain of ['grn', 'purchase-return'] as const) {
       const sb = chain === 'grn' ? poWith(['FOAM-40D']) : grnWith(['FOAM-40D']);
       const out = await unlinkedEditRefusal(sb, chain, {
@@ -226,8 +183,6 @@ describe('unlinkedEditRefusal — what must still pass', () => {
   });
 
   it('ALLOWS a genuinely ad-hoc code on the two consignment-return chains', async () => {
-    // A goodwill / replacement item the source document never carried is the
-    // whole reason the link column is nullable — it must survive.
     const cn = await unlinkedEditRefusal(cnWith(['NTYR-PILLOW']), 'consignment-return', {
       parentId: CN_ID, storedLink: null, storedCode: 'SPARE-LEG', patchCode: 'GOODWILL-CUSHION',
     });
@@ -239,8 +194,6 @@ describe('unlinkedEditRefusal — what must still pass', () => {
   });
 
   it('ALLOWS a LINKED consignment-return line editing its own qty (code echoed back)', async () => {
-    // A linked line's cap + resync already govern it; a qty-only save that echoes
-    // the same code must not begin 409-ing.
     const cn = await unlinkedEditRefusal(cnWith(['NTYR-PILLOW']), 'consignment-return', {
       parentId: CN_ID, storedLink: 'cdoi-0', storedCode: 'NTYR-PILLOW', patchCode: 'NTYR-PILLOW',
     });
@@ -252,9 +205,6 @@ describe('unlinkedEditRefusal — what must still pass', () => {
   });
 
   it('ALLOWS a patch that does not touch the code — the effective-value trap', async () => {
-    // A qty-only or price-only edit must not start refusing. `patchCode`
-    // undefined means the field is absent from the body, which is NOT the same
-    // as the caller clearing it.
     const out = await unlinkedEditRefusal(poWith(['FOAM-40D']), 'grn', {
       parentId: PO_ID, storedLink: null, storedCode: 'FOAM-40D', patchCode: undefined,
     });
@@ -262,9 +212,6 @@ describe('unlinkedEditRefusal — what must still pass', () => {
   });
 
   it('ALLOWS a client that echoes the SAME code back unchanged', async () => {
-    // These detail screens seed each line draft off the GET payload and post the
-    // whole line back on save, so an unchanged code arrives as a defined value.
-    // Refusing it would 409 every save on an orphaned line.
     const out = await unlinkedEditRefusal(poWith(['FOAM-40D']), 'grn', {
       parentId: PO_ID, storedLink: null, storedCode: 'FOAM-40D', patchCode: 'FOAM-40D',
     });
@@ -272,9 +219,6 @@ describe('unlinkedEditRefusal — what must still pass', () => {
   });
 
   it('ALLOWS an edit to a line that was ALREADY on the parent — blame the actor', async () => {
-    // Every link column is ON DELETE SET NULL, so deleting a parent line orphans
-    // its children: this state arrives through no act of the operator's. The
-    // guard fires on the TRANSITION, not on inherited state.
     const out = await unlinkedEditRefusal(poWith(['FOAM-40D', 'FABRIC-A']), 'grn', {
       parentId: PO_ID, storedLink: null, storedCode: 'FOAM-40D', patchCode: 'FABRIC-A',
     });
@@ -291,8 +235,6 @@ describe('unlinkedEditRefusal — what must still pass', () => {
   });
 
   it('ALLOWS an SI line shadowing a DO item that is ALREADY FULLY INVOICED', async () => {
-    // Owner's ruling: a Sales Invoice MAY carry direct/standalone lines, and a
-    // DO line with remaining 0 is not a double-invoice vector.
     const out = await unlinkedEditRefusal(
       doPendingWith([{ code: 'NTYR-PILLOW', qty: 10, invoiced: 10 }]), 'sales-invoice',
       { parentId: DO_ID, storedLink: null, storedCode: 'CONSULT-FEE', patchCode: 'NTYR-PILLOW' },
@@ -301,9 +243,6 @@ describe('unlinkedEditRefusal — what must still pass', () => {
   });
 
   it('does NOT behave like a boolean already-converted flag (owner ruling 1)', async () => {
-    // This business batch-ships. A PO line already partly received still accepts
-    // another receipt; nothing here counts conversions. A LINKED line on a PO
-    // that has already been received twice is still allowed through.
     const sb = fakeSb({
       purchase_order_items: [{ id: 'poi-0', purchase_order_id: PO_ID, item_code: 'FOAM-40D', qty: 100, received_qty: 60 }],
     });
@@ -314,14 +253,9 @@ describe('unlinkedEditRefusal — what must still pass', () => {
   });
 });
 
-/* ── Fail closed ─────────────────────────────────────────────────────────── */
 
 describe('unlinkedEditRefusal — a guard that cannot read the parent must refuse', () => {
   it('REFUSES when the parent read fails, rather than reading it as "nothing on the parent"', async () => {
-    // This is the piLocked defect, and it was live in all four parent-set
-    // readers: `const { data } = await …` turned a transient blip into an empty
-    // set, an empty set into "no offenders", and "no offenders" into ALLOWED —
-    // disabling the guard on exactly the write it exists to refuse.
     const sb = fakeSb(
       { purchase_order_items: [{ id: 'poi-0', purchase_order_id: PO_ID, item_code: 'FOAM-40D' }] },
       { purchase_order_items: ['item_code'] },
@@ -376,24 +310,11 @@ describe('unlinkedEditRefusal — a guard that cannot read the parent must refus
   });
 });
 
-/* ── WIRING: the guard must actually be CALLED by each handler ───────────── */
 
-/**
- * The source of ONE handler, sliced out of its router.
- *
- * This is the assertion that a unit test of the rule cannot make: the rule was
- * correct before this change too — it simply was not called. Slicing per handler
- * means an extraction that moves the call OUT of the handler fails here rather
- * than passing quietly, which is the failure mode this whole unit is about.
- *
- * A missing marker THROWS. If a route is renamed, this test must fail loudly
- * rather than silently assert against an empty string.
- */
 function handlerSlice(src: string, label: string, startMarker: string): string {
   const start = src.indexOf(startMarker);
   expect(start, `handler start marker not found in ${label}: ${startMarker}`).toBeGreaterThan(-1);
   const rest = src.slice(start + startMarker.length);
-  // To the handler's own closing `});` / `};` at column 0 — ONE handler's body.
   /* `\r?` is not decoration: this repo is developed on Windows, where the
      checkout is CRLF, so the LF-only form matched nothing and every
      assertion below died on "handler end not found". It failed LOUDLY
@@ -431,9 +352,6 @@ describe('every line-edit handler in the family calls the guard', () => {
   }
 
   it('the purchase-return ADD-LINE path calls the insert guard', () => {
-    // Found while verifying this unit: the other four chains guard their
-    // add-a-line path, this one never did — so a PR line receiving the parent
-    // GRN's own material could be added unlinked in ONE save, no edit needed.
     expect(handlerSlice(purchaseReturnsSrc, 'purchase-returns.ts', 'export const addPurchaseReturnItemHandler'))
       .toContain('findUnlinkedPrLines');
   });

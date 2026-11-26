@@ -1,6 +1,3 @@
-/* The copyright year on the customer portal and the sign-in screens is the
-   MALAYSIAN year: from 00:00 on 1 Jan in Malaysia (16:00 UTC on 31 Dec) it
-   reads the new year, on any device clock zone. Run with TZ=UTC. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -14,7 +11,7 @@ import { ForgotPasswordScreen } from "../../auth/AuthScreens";
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-12-31T16:30:00Z")); // 00:30 on 1 Jan 2027 in Malaysia
+  vi.setSystemTime(new Date("2026-12-31T16:30:00Z"));
 });
 afterEach(() => {
   cleanup();

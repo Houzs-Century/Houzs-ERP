@@ -25,13 +25,6 @@ import { MailHostPending } from "./MailHostPending";
 import { MailClaimRequests } from "./MailClaimRequests";
 import { MailHostRemove } from "./MailHostRemove";
 
-/* Mailboxes — design handoff screen 07, on the existing Mail Center data.
- * Personal mailboxes are tied to members, department mailboxes sit in their
- * own layer, and an ORPHANED mailbox (assigned member disabled, address
- * still active) is surfaced for resolution right on its row.
- *
- * The classic tab's access matrix + per-member scope tools stay at
- * /team?tab=mail; this screen is the directory-facing view. */
 
 type ViewTab = "all" | "department" | "personal" | "orphaned";
 

@@ -1,19 +1,3 @@
-// Vendored SLICE of apps/backend/src/lib/flow-queries.ts — the GRN (Goods
-// Received Note) query/mutation surface the vendored GRN pages call.
-//
-// The full source flow-queries.ts is ~1996 lines (the entire SO/DO/SI/PO/GRN/PI
-// /return query surface + verified-save + supabase + serviceNotify). Only the
-// GRN hooks are pulled here, copied VERBATIM except for the boundary:
-//   • import { authedFetch } from './authed-fetch' (the repointed vendored fetch
-//     → /api/scm), instead of the source's relative './authed-fetch' that pulled
-//     in supabase.
-//   • the dropped `import { supabase }` / `verifiedSave` machinery — none of the
-//     GRN hooks below reference it (they all go through authedFetch).
-//   • serviceNotify (cancel onError toast) is the vendored dialog-service bridge.
-//
-// The picker hooks (useOutstandingPoItems / useCreateGrnsFromPoItems) already
-// live in suppliers-queries.ts — NOT duplicated here; the from-PO page imports
-// useOutstandingPoItems from there.
 
 import { useMemo } from 'react';
 import { useListMrpEnrichmentChunks } from './list-mrp-enrichment-chunks';
@@ -27,26 +11,6 @@ import { serviceNotify } from './dialog-service';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import { writeFailed, writeFailedAs, reportInBandFailure, type InBandFailure } from './mutation-error';
 
-/* ── Batch conversions ────────────────────────────────────────────────
-   BOTH hooks below have ZERO callers as of 2026-07-17 (verified across every
-   .ts/.tsx under frontend/src). fix/so-idempotency listed them as un-migrated
-   creates; they were NOT migrated by fix/doc-idempotency, deliberately. Adding
-   an `idempotencyKey` param that no call site can pass would protect nobody
-   while reading as coverage — that IS the disease this whole line of work is
-   fixing (the mechanism ships, nobody opts in). Wire the param IN the PR that
-   wires a caller, not before.
-
-   The LIVE `/grns/from-pos` surface is mobile/MobileConvertWizard.tsx, which
-   calls the endpoint through a bare authedFetch rather than this hook — that is
-   where the key was actually added. `/purchase-returns/from-grns` has no live
-   caller at all on either side.
-
-   If either is ever wired, a per-mount key is the CORRECT shape and safe: the
-   response types below say so — N purchaseOrderIds collapse into ONE grnNumber
-   (poCount/lineCount are counts of SOURCES, not of documents raised), and N
-   grnIds into ONE returnNumber. One request, one document, so a replay returns
-   that one document. That is the opposite of SoFromProducts, which loops N
-   REQUESTS and must never share a key. */
 export const useGrnFromPos = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -57,10 +21,7 @@ export const useGrnFromPos = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['grns'] });
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
-      /* The whole-PO convert AUTO-POSTS, so stock IN is written on every success
-         (postGrnAndRollup); a mounted Stock Card / inventory list must refetch. */
       void qc.invalidateQueries({ queryKey: ['inventory'] });
-      /* Force picker refetch so received PO lines drop off. */
       qc.invalidateQueries({ queryKey: ['grns', 'outstanding-po-items'], refetchType: 'all' });
     },
     onError: writeFailedAs('GRN not created'),
@@ -77,14 +38,12 @@ export const usePurchaseReturnFromGrns = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['purchase-returns'] });
       qc.invalidateQueries({ queryKey: ['grns'] });
-      /* Force picker refetch so returned/invoiced GRN lines drop off. */
       qc.invalidateQueries({ queryKey: ['purchase-invoices', 'outstanding-grn-items'], refetchType: 'all' });
     },
     onError: writeFailedAs('Purchase return not created'),
   });
 };
 
-/* ── GRN ─────────────────────────────────────────────────────────────── */
 export const useGrns = (status?: string) =>
   useQuery({
     queryKey: ['grns', status ?? 'all'],
@@ -94,17 +53,8 @@ export const useGrns = (status?: string) =>
     retryDelay: 800,
   });
 
-// Opt-in server-side pagination + search + sort + status-counts (mirrors
-// useMfgSalesOrdersPaged). Sending `page` switches /grns into its paginated
-// contract ({ grns, total, page, pageSize, statusCounts }); the legacy useGrns
-// above (no page) still returns the historical unpaginated list. `status` is
-// the resolved grns.status DB value (UPPERCASE); each GRN filter-pill bucket
-// (draft/posted/cancelled) maps 1:1 to a single DB status, so no bucket needs
-// to be dropped here.
 export function useGrnsPaged(params: { from?: string; to?: string; page: number; pageSize: number; status?: string; q?: string; sort?: string; creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[] }) {
   const { page, pageSize, status, q, sort, creditorNames, creditorCodes, currencies, from, to } = params;
-  // The filter half is shared with the two exports (grn-list-export.ts), so an
-  // export can never be sent a different filter than the list it was pressed on.
   const usp = grnListParams({ status, q, sort, creditorNames, creditorCodes, currencies, from, to });
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
@@ -118,12 +68,6 @@ export function useGrnsPaged(params: { from?: string; to?: string; page: number;
   });
 }
 
-/* Deferred GRN-list enrichment — the MRP-derived columns (Assigned SO /
-   Delivered) the list no longer computes on its critical path (see
-   listMrpEnrichment.ts). Fired AFTER the list renders, for the GRNs it just
-   showed, merged in by applyListMrpEnrichment. The ids are chunked at 100 so the
-   request stays bounded; each chunk is cached independently. The backend answers from the 15-min stored MRP snapshot
-   (list-mrp-enrichment-chunks.ts). */
 const GRN_ENRICH_CHUNK = 100;
 
 export function useGrnListMrpEnrichmentMap(
@@ -140,9 +84,6 @@ export function useGrnListMrpEnrichmentMap(
   return { byId, isFetching, mrp };
 }
 
-/* The overlay the GRN list applies: take the rows the list endpoint returned
-   (without the MRP-derived columns), fetch the deferred enrichment for their
-   ids, and return the healed rows. */
 export function useEnrichedGrnListRows<T extends EnrichableMrpRow>(
   rows: T[],
   enabled: boolean,
@@ -175,18 +116,6 @@ export const useGrnDetails = (ids: string[]) => useQueries({
     staleTime: 30_000, retry: retryUnlessClientError, retryDelay: 800,
   })),
 });
-/* `idempotencyKey` is OPTIONAL and must be destructured OUT of the body — the
-   rest-spread would otherwise post it as a GRN field. Pass one per GRN intent
-   (see lib/idempotency.ts): the middleware replays the first response — the SAME
-   grnNumber — instead of receiving the same goods twice. Omitting it is exactly
-   today's behaviour (the middleware no-ops).
-
-   Like suppliers-queries.ts, this file carried NO idempotency at all before
-   2026-07-17 (fix/doc-idempotency). A duplicate GRN books stock IN twice and
-   rolls the PO's received qty up twice — the on-hand lie the owner would only
-   meet at a stock count. */
-/* A receipt moves the PO's received qty and status, read under the PO's own keys: without this "Back to PO" showed
-   the old received qty until the page was reopened. */
 const invalidateGrnPoSide = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
   void qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail'] });
@@ -196,8 +125,6 @@ export const useCreateGrn = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ idempotencyKey, ...body }: { idempotencyKey?: string } & Record<string, unknown>) =>
-      /* A non-draft create posts in the same request: its stock / PO-recount
-         failures ride in the 201 body (grn-create-outcome.ts reads them). */
       authedFetch<{ id: string; grnNumber: string } & InBandFailure>(`/grns`,
         idempotentInit(idempotencyKey, { method: 'POST', body: JSON.stringify(body) })),
     onSuccess: () => {
@@ -206,36 +133,18 @@ export const useCreateGrn = () => {
     },
   });
 };
-/* Confirm a DRAFT GRN → POSTED (PATCH /grns/:id/post). This is the commit
-   chokepoint: the server runs postGrnAndRollup here (inventory IN + PO
-   received-rollup). Also used right after a non-draft create as an idempotent
-   no-op (the row is already POSTED). Invalidates the GRN detail + list +
-   inventory so the page + on-hand reflect the just-committed receipt. */
 export const usePostGrn = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
       authedFetch<{ grn?: unknown } & InBandFailure>(`/grns/${id}/post`, { method: 'PATCH' }),
     onSuccess: (data, id) => {
-      /* IN-BAND FAILURE. `PATCH /grns/:id/post` answers 200 with
-         `{ grn, movementErrors }` (grns.ts:2077): the DOCUMENT posts and the
-         inventory IN is best-effort, so a refused stock write is a success as
-         far as `onError` is concerned. Nothing read this field, and the
-         operator had just confirmed "Inventory will be received into the
-         warehouse". `useCancelGrn` below has read its `cancelErrors` since
-         2026-08-13 for exactly this reason. */
       reportInBandFailure('GRN posted, but not everything was recorded', data);
       invalidateGrnPoSide(qc);
       qc.invalidateQueries({ queryKey: ['grn-detail', id] });
       qc.invalidateQueries({ queryKey: ['grns'] });
       qc.invalidateQueries({ queryKey: ['inventory'] });
     },
-    /* The commit chokepoint for inventory IN had no error path at all until
-       2026-08-21. Three of its four call sites pass no per-call `onError`
-       either, and the global MutationCache carries only `onSuccess` — so a
-       refused post reached nobody. check-silent-mutations could not see it:
-       its verdict is per HOOK, and GrnNew's `await post.mutateAsync(...)`
-       cleared the whole hook on behalf of the call sites that catch nothing. */
     onError: writeFailedAs('GRN not posted — the stock was NOT received'),
   });
 };
@@ -273,7 +182,6 @@ export const useAddGrnItem = () => {
         method: 'POST', body: JSON.stringify(body),
       }),
     onSuccess: (data, vars) => {
-      /* A line added to a posted receipt is saved even when its stock IN or PO recount is refused; that rides in the body. */
       reportInBandFailure('Line added, but not everything was recorded', data);
       invalidateGrnPoSide(qc);
       qc.invalidateQueries({ queryKey: ['grn-detail', vars.grnId] });
@@ -300,8 +208,6 @@ export const useUpdateGrnItem = () => {
   });
 };
 
-/* Rack is physical placement only — its own endpoint, so it stays settable on a
-   line the PI/PR child-lock freezes. Posted lines also move on the rack board. */
 export const useSetGrnLineRack = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -319,8 +225,6 @@ export const useSetGrnLineRack = () => {
 
 export type GrnItemRackRow = { grnItemId: string; rackId: string; qty: number };
 
-/* A line split over several racks (scm.grn_item_racks) — every split row of one
-   GRN, read once and shared by all its line cards. */
 export const useGrnItemRacks = (grnId: string | undefined) =>
   useQuery({
     queryKey: ['grn-racks', grnId],
@@ -329,8 +233,6 @@ export const useGrnItemRacks = (grnId: string | undefined) =>
     retry: retryUnlessClientError,
   });
 
-/* Replace one DRAFT line's split. The server refuses a split that holds more
-   than was accepted; posting refuses one that holds less. */
 export const useSetGrnLineRacks = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -359,23 +261,12 @@ export const useDeleteGrnItem = () => {
   });
 };
 
-/* ── Cancel a GRN (mirror useCancelPurchaseOrder) ──────────────────────────
-   PATCH /grns/:id/cancel — server flips status → CANCELLED and reverses the
-   receipt (inventory OUT + PO received_qty decrement). Invalidates the GRN
-   detail + list + inventory so the on-hand drilldown reflects the reversal. */
 export const useCancelGrn = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
       authedFetch<{ grn: any; cancelErrors?: string[] }>(`/grns/${id}/cancel`, { method: 'PATCH' }),
     onSuccess: (data, id) => {
-      /* IN-BAND FAILURE. The cancel writes a reversing OUT for everything the
-         GRN received; that write is best-effort and its result comes back in
-         `cancelErrors`, not as a rejection — so `onError` above never fires and
-         the operator would be told the cancel worked while the stock stayed
-         received. The backend started reporting this on 2026-08-13 (audit item
-         D3) and NOTHING read it until check-inband-failures.mjs counted the
-         producers against the readers and found zero. */
       reportInBandFailure('GRN cancelled, but the stock was not reversed', data);
       invalidateGrnPoSide(qc);
       qc.invalidateQueries({ queryKey: ['grn-detail', id] });
@@ -388,9 +279,6 @@ export const useCancelGrn = () => {
   });
 };
 
-/* ── Single-GRN conversions (GRN list right-click) ─────────────────────────
-   POST /purchase-invoices/from-grn + /purchase-returns/from-grn take { grnId }
-   and return the created doc's { id } so the caller can navigate straight in. */
 export const usePurchaseInvoiceFromGrn = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -401,48 +289,12 @@ export const usePurchaseInvoiceFromGrn = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['purchase-invoices'] });
       qc.invalidateQueries({ queryKey: ['grns'] });
-      /* Force picker refetch so already-invoiced GRN lines drop off. */
       qc.invalidateQueries({ queryKey: ['purchase-invoices', 'outstanding-grn-items'], refetchType: 'all' });
     },
     onError: writeFailedAs('Purchase invoice not created'),
   });
 };
 
-/* The arg widened from a bare `grnId: string` to an object on 2026-07-17 so a
-   key could travel with it — the bare string was the whole reason
-   fix/doc-idempotency deferred this one. `idempotencyKey` is OPTIONAL and is NOT
-   part of the body (the body is built explicitly here, so there is no rest-spread
-   to leak it as a document field).
-
-   WHAT THE KEY IS FOR, and it is not the case the deferral assumed. This is a
-   context-menu action on a LIST row (GoodsReceived.tsx) with NO pending guard —
-   no disabled state, no spinner, no visual feedback of any kind. The premise
-   under the other 17 ("the mechanism is NOT the double-tap — every form disables
-   on submit") is simply FALSE here, so BOTH halves are live: the double-tap AND
-   the retry after an apparent failure. Two in-flight posts each read
-   remaining = qty_accepted - returned_qty BEFORE either has written, so both
-   copy the full remaining and both create a PR — stock OUT twice and the refund
-   booked twice. adjustGrnReturnedQty then CLAMPS returned_qty to qty_accepted
-   (purchase-returns.ts:126), so the GRN reads "fully returned" while twice the
-   goods left. The clamp hides the duplicate from every downstream gate; on-hand
-   is the only witness, at the next stock count.
-
-   WHY per-GRN IS safe here, given more than one return per GRN IS valid.
-   purchase-returns.ts:806-807 is explicit — "a GRN can be returned across
-   multiple PRs (0106)" — so a key bound to the grnId FOREVER would swallow a
-   real second return, which is worse than the duplicate. It is not bound
-   forever. /from-grn always copies ALL remaining and drains returned_qty to
-   qty_accepted (:873-876), so the ONLY way to reach a legitimate second return
-   is to trim PR-1 first, which RELEASES the qty (:1270) — and trimming means
-   opening the PR, i.e. leaving the list. The caller's ref dies with that mount
-   and the next visit mints a fresh key, so the second return runs for real.
-   Within ONE mount, two clicks on the SAME GRN are always one intent.
-
-   The sequential retry is already domain-guarded (the second post finds
-   remaining = 0 and 400s "GRN is fully returned"), so the key does not save the
-   document there — it upgrades a confusing 400 into a replay of the original
-   201, landing the operator on the PR that actually exists. The duplicate it
-   genuinely PREVENTS is the concurrent one above. */
 export const usePurchaseReturnFromGrn = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -454,7 +306,6 @@ export const usePurchaseReturnFromGrn = () => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['purchase-returns'] });
       qc.invalidateQueries({ queryKey: ['grns'] });
-      /* Force picker refetch so returned GRN lines drop off. */
       qc.invalidateQueries({ queryKey: ['purchase-invoices', 'outstanding-grn-items'], refetchType: 'all' });
     },
     onError: writeFailedAs('Purchase return not created'),

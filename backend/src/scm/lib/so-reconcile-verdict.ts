@@ -104,25 +104,15 @@ export function soVerdictFromRow(
   if (row == null) return { kind: 'unknown', why: 'no-verdict-published' };
 
   const measured = Date.parse(row.measured_at ?? '');
-  /* An unparseable timestamp is not a fresh one. Number comparisons against
-     NaN are all false, so testing `age < max` would have answered "stale" here
-     anyway — but by accident, and the next refactor gets to break it. */
   if (!Number.isFinite(measured)) return { kind: 'unknown', why: 'verdict-stale' };
   if (now - measured > maxAgeMs) return { kind: 'unknown', why: 'verdict-stale' };
 
   if (row.clean === true) return { kind: 'clean', measuredAt: row.measured_at };
 
-  /* A row that says "not clean" and names no axis is still LOCKED. The axis
-     list drives the SENTENCE, never the decision — a publisher bug that lost
-     the axes must not be able to open a document. */
   const axes = (row.axes ?? []).filter((a): a is string => typeof a === 'string' && a.length > 0);
   return { kind: 'differs', axes, measuredAt: row.measured_at };
 }
 
-/* ── The read ──────────────────────────────────────────────────────────────
-   A FUNCTION, not a database client, for the reason so-is-migrated.ts records:
-   typing the supabase client structurally here makes the compiler unroll its
-   generics (TS2589) at the guard's call site. This module needs one row. */
 export type SoVerdictReader = (docNo: string) => PromiseLike<{ data: unknown; error: unknown }>;
 
 /**
@@ -149,10 +139,6 @@ export async function readSoVerdict(
   }
   if (data == null) return { kind: 'unknown', why: 'no-verdict-published' };
 
-  /* Both spellings, because PostgREST has already been caught here returning
-     camelCase where this repo expected snake_case — and in THIS module that
-     mistake would read as "no measurement", which locks. Harmless, but it would
-     lock every document and look like an outage. */
   const r = data as { clean?: unknown; axes?: unknown; measured_at?: unknown; measuredAt?: unknown };
   const measuredAt = r.measured_at ?? r.measuredAt;
   if (typeof measuredAt !== 'string') return { kind: 'unknown', why: 'verdict-read-failed' };

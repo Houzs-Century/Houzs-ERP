@@ -1,24 +1,3 @@
-// ---------------------------------------------------------------------------
-// authedFetch — the single authenticated fetch for the whole frontend data
-// layer. Previously copy-pasted into 24 query modules (10 subtly-different
-// variants); consolidated here so the auth header, the short-stock 409
-// "ship anyway?" retry, and the sofa whole-set hard-block all live in ONE place.
-//
-// The 409 handling is a safe superset: it only triggers on a 409 whose body
-// carries `short_stock` / `sofa_no_batch` / `sofa_partial_set` /
-// `sofa_set_po_split`, which only the
-// ship/mutation endpoints return — read-only callers never hit it, so adopting
-// this universally changes nothing for them.
-//
-// ── HOUZS VENDOR ADAPTATION (only the boundary changed) ────────────────────
-//   • API_URL now points at the Houzs Worker + the /api/scm mount (2990's
-//     routes were ported there), with a build-time VITE_API_URL override.
-//   • The bearer token comes from Houzs's JWT store via readAuthToken()
-//     instead of supabase.auth.getSession(); the supabase import and the 401
-//     refresh/redirect recovery are removed — a 401 just throws.
-//   Everything else (409 short-stock prompt, sofa hard-block, humanApiError)
-//   is kept verbatim.
-// ---------------------------------------------------------------------------
 
 import { serviceConfirm } from './dialog-service';
 import { describeRefusal } from './refusal-detail';
@@ -27,11 +6,6 @@ import {
   parseZeroCostRefusal,
   zeroCostRefusalText,
 } from './zero-cost-refusal';
-// Imported, NOT re-inlined as localStorage.getItem('auth:token'). Houzs stores
-// session-only logins (Remember me unchecked, and the owner's view-as hand-off)
-// in sessionStorage, so a localStorage-only read returns "" for a perfectly
-// authenticated user and every /scm/* page throws not_authenticated. This is
-// the vendor auth boundary — it is exactly where the host's answer belongs.
 import { readAuthToken, readAuthPass } from '../../../lib/authToken';
 import {
   consumeCorrelated,
@@ -44,46 +18,22 @@ import { companyHeader } from '../../../lib/activeCompany';
 import { abortableDelay, combineAbortSignals } from '../../../lib/abort';
 import { reportServerFailure, reportAccessDenied, reportSlowRequest, reportTimedOutRequest } from '../../../lib/errorReporter';
 
-// Same threshold as api/client.ts, so both halves of the app report alike.
 const SLOW_FETCH_MS = 800;
 
 /** Doc numbers (HC-SO-2609-004, PO-2607-001) are ids, so one endpoint stays one telemetry signature. */
 export const scmTelemetryPath = (path: string): string =>
   path.replace(/\/[A-Z]+(?:-[A-Z]+)*-\d{4}-\d+(?:-[A-Z0-9]+)*(?=[/?#]|$)/gi, '/:id');
 
-// `||` not `??`: the CI build inlines VITE_API_URL as an EMPTY STRING when the
-// repo var is unset, and `'' ?? default` keeps `''`. PROD fallback is now
-// same-origin — /api/* is proxied to the Worker by the Pages Function
-// (functions/api/[[path]].ts), avoiding *.workers.dev carrier blocking; local
-// `vite dev` has no proxy, so dev keeps the absolute Worker URL.
-/* EXPORTED so a caller that must bypass authedFetch (a raw byte stream, which
-   this helper JSON-parses) can reuse this base instead of declaring its own.
-   `||` not `??` is load-bearing — an empty-string VITE_API_URL must fall back
-   to the worker, and `??` would keep the empty string. slip.ts and
-   verified-save.ts still declare their own copies of this constant; converging
-   those two onto this export is a follow-up, deliberately not done here — both
-   carry the same `||` fix today and re-testing their upload paths is outside a
-   fleet PR. */
 export const API_URL =
   (import.meta.env.VITE_API_URL ||
     (import.meta.env.PROD ? '' : 'https://autocount-sync-api.houzs-erp.workers.dev')) +
   '/api/scm';
 
-/* ── Request timeout (ported from 2990 b9d0035c) ───────────────────────────
-   A fetch with no timeout hangs the UI forever on a stalled connection — the
-   operator stares at "Loading…" with no way out (OCR / slow report endpoints
-   are the worst). Apply a default deadline when the caller didn't pass its OWN
-   AbortSignal (uploads / cancellable flows control their own); OCR/scan paths
-   (/scan-so/extract etc.) get a longer one. A timeout becomes a plain-language
-   error; a caller-initiated abort is never rewritten.
-   NB: `path` here is the segment AFTER the /api/scm mount, so the /scan- test
-   still matches the vendored scan endpoints. */
 /* The bill readers — a supplier bill, a supplier credit note, a payment
    request's bill — each hand ONE paper to the AI reader, which can take past
    30 s on a long bill (owner 2026-10-05: the pile's "That took too long").
    They get the scan wait, and since they WRITE NOTHING a timeout says so
    instead of warning of a duplicate save. */
-/* The …/enqueue doors (ai-read-job.ts) carry the same upload, so they keep the long wait. */
 export const BILL_READER_PATH = /\/payment-vouchers\/extract(\/enqueue)?$|\/credit-notes\/scan(\/enqueue)?$|\/payment-requests\/read-bill(\/enqueue)?$|\/stock-takes\/[^/]+\/read-sheet$/;
 /* A document's file upload (POST …/files, …/official-doc) carries the whole
    file as base64 in one body — up to 27 MB for the 20 MB cap — which a slow
@@ -91,15 +41,10 @@ export const BILL_READER_PATH = /\/payment-vouchers\/extract(\/enqueue)?$|\/cred
 export const FILE_UPLOAD_PATH = /\/files$|\/official-doc$/;
 function timeoutSignal(path: string): AbortSignal | undefined {
   const ms = /\/scan-/.test(path) || BILL_READER_PATH.test(path) || FILE_UPLOAD_PATH.test(path) ? 120_000 : 30_000;
-  try { return AbortSignal.timeout(ms); } catch { return undefined; } // pre-2022 browsers
+  try { return AbortSignal.timeout(ms); } catch { return undefined; }
 }
 
 /** Keep caller cancellation and the request deadline active together. */
-/* A second press of the same save (a double click, or a retry while the first is still running) reuses the first
-   press's Idempotency-Key, and the server answers 409 idempotency_in_flight until the first finishes. That is not a
-   failure: once the first request has its answer, the same key replays it. So wait and ask again, and hand the caller
-   the first request's real outcome (the screen used to say "Save failed" about a save that had gone through). This
-   gives up after a minute and lets the in-flight answer through. */
 export const IN_FLIGHT_POLL_MS = 1000;
 export const IN_FLIGHT_MAX_WAIT_MS = 60_000;
 
@@ -129,10 +74,6 @@ async function fetchWithTimeout(url: string, init: RequestInit, path: string): P
   const callerSignal = init.signal;
   const deadlineSignal = timeoutSignal(path);
   try {
-    // Correlated fetch (main) + BOTH signals live (this branch): a caller that
-    // passes its own signal must still get the request deadline, and a
-    // caller-initiated cancellation is re-thrown verbatim rather than reworded
-    // as a timeout.
     return await correlatedFetch(url, {
       ...init,
       signal: combineAbortSignals(callerSignal, deadlineSignal),
@@ -157,10 +98,8 @@ async function fetchWithTimeout(url: string, init: RequestInit, path: string): P
          Either way it fails LOUDLY — never a spinner the operator walks away
          from believing it saved (owner ruling 2026-07-19). */
       const method = String(init.method ?? 'GET').toUpperCase();
-      try { reportTimedOutRequest(method, scmTelemetryPath(path)); } catch { /* never let telemetry break the request path */ }
+      try { reportTimedOutRequest(method, scmTelemetryPath(path)); } catch { }
       if (method !== 'GET' && BILL_READER_PATH.test(path)) {
-        /* A reader writes nothing — reading again is always safe; it is not
-           replayed by itself, since one try already waited two minutes. */
         throw correlateError(new Error('Reading took too long — nothing was saved. Please read it again.'), requestId);
       }
       if (method !== 'GET') {
@@ -175,13 +114,6 @@ async function fetchWithTimeout(url: string, init: RequestInit, path: string): P
       }
       throw markTransient(correlateError(new Error('The request took too long — please check your connection and try again.'), requestId));
     }
-    /* A genuine network failure — offline, DNS, CORS, the server unreachable —
-       surfaces as a TypeError ("Failed to fetch"), NOT a DOMException abort.
-       Left raw it reaches ~90 err.message sinks across the SCM + mobile-SCM
-       tree as machine text, so humanize it here in the one inner catch (mirrors
-       api/client.ts's request() network message). A caller-initiated abort is a
-       DOMException, never a TypeError, so it never matches this and is re-thrown
-       verbatim below — real aborts/timeouts keep today's behaviour. */
     if (e instanceof TypeError) {
       throw markTransient(correlateError(new Error('Network error — please check your connection and try again.'), requestId));
     }
@@ -203,22 +135,12 @@ export function failedWriteTail(e: unknown, unchanged: string): string {
   return ' Refresh this page to see whether it went through before trying again.';
 }
 
-/* Drop-ship confirm (port of 2990 07c45728) — when a sofa ship is blocked
-   because no batch is received yet (sofa_no_batch) BUT every affected line is
-   bound to a PO (canDropship), the supplier can ship direct. Render the
-   approved "Ship as drop-ship?" dialog (incoming PO + ETA + affected codes)
-   and, on confirm, the caller replays the request with dropShip:true (stock
-   goes negative against the expected batch, nets out + stamps the batch on
-   receipt). Returns true on confirm. */
 type DropshipOffender = { itemCode: string; soItemId: string | null; poNumber: string | null; eta: string | null };
 async function confirmDropship(raw: string): Promise<boolean> {
   try {
     const jsonStart = raw.indexOf('{');
     const body = JSON.parse(raw.slice(jsonStart)) as { dropship?: DropshipOffender[] };
     const offenders = body.dropship ?? [];
-    // One bullet per distinct incoming PO: the bound batch + ETA + the sofa
-    // codes that ride it. Group by PO so a multi-line set reads as one
-    // incoming batch.
     const byPo = new Map<string, { eta: string | null; codes: Set<string> }>();
     for (const o of offenders) {
       if (!o.poNumber) continue;
@@ -247,9 +169,6 @@ async function confirmDropship(raw: string): Promise<boolean> {
   }
 }
 
-/* BUG-59 — some picked Sales Order lines have no stock set aside for them.
-   A warning, not a block (Azza 2026-10-06): the operator may go back or
-   deliver anyway. Returns true on confirm; replays with confirmNotReady:true. */
 async function confirmNotReady(raw: string): Promise<boolean> {
   try {
     const body = JSON.parse(raw.slice(raw.indexOf('{'))) as {
@@ -269,9 +188,6 @@ async function confirmNotReady(raw: string): Promise<boolean> {
   }
 }
 
-/* 2990-0065 — the picked Sales Order lines are already on a live purchase order.
-   A question, not a block (Sim 2026-11-19): Continue replays with
-   confirmDuplicatePo:true. Returns true on Continue. */
 export function soHasPoMessage(raw: string): string {
   const body = JSON.parse(raw.slice(raw.indexOf('{'))) as {
     poNumbers?: string[];
@@ -316,9 +232,6 @@ async function confirmSoHasPo(raw: string): Promise<boolean> {
   }
 }
 
-/* Edge #J — render the shortage detail out of a 409 short_stock body and ask
-   the operator whether to ship anyway (stock goes negative). Returns true on
-   confirm; replays the request with confirmShortStock:true. */
 async function confirmShortStock(raw: string): Promise<boolean> {
   try {
     const jsonStart = raw.indexOf('{');
@@ -328,10 +241,6 @@ async function confirmShortStock(raw: string): Promise<boolean> {
         needed: number; available: number; short: number;
         alternatives?: Array<{ warehouseCode: string | null; warehouseName: string | null; available: number }>;
       }>;
-      /* 2026-07-31 — the incoming PO each short line will be BOUND to if the
-         operator ships anyway. This is what lets the drop-ship dialog stop
-         being a second question: the binding is named here, in the one dialog
-         that asks whether the goods may leave without having arrived. */
       bindings?: Array<{ itemCode: string; poNumber: string; eta: string | null }>;
     };
     const lines = (body.shortages ?? []).map((s) => {
@@ -368,37 +277,8 @@ async function confirmShortStock(raw: string): Promise<boolean> {
 
 export async function authedFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = readAuthToken();
-  // Stage 3: the signed staff pass, sent beside the token so the SCM list
-  // reads (the slowest surface) can authorize without a DB round trip. Absent
-  // -> the server takes the DB path. Bound to the token server-side.
   const pass = readAuthPass();
-  /* This throw reaches the operator through ~90 `err.message` sinks across the
-     SCM tree, and it fires on every read/write once the token is missing or has
-     expired mid-session — so it was the highest-frequency machine-code leak in
-     the app. It must read like the 401 status message it is. */
   if (!token) throw new Error('Your session has expired — please sign in again.');
-  // Only stamp content-type: application/json for string bodies (JSON
-  // payloads). For FormData (multipart upload) the browser sets the
-  // boundary-aware content-type itself — overriding it here breaks the
-  // multipart parse on the Worker side (parseBody returns {} → 400).
-  // Multi-company (Phase 0c): stamp the active company on every SCM request so
-  // the backend's companyContext resolves it. The id is written by the top-bar
-  // switcher (src/lib/activeCompany.ts) under 'houzs.activeCompanyId'; read the
-  // localStorage key DIRECTLY here to keep this vendored file self-contained
-  // (same style as the auth:token read above). Absent → NO header → backend
-  // falls back to its hostname default, so single-company Houzs is unchanged.
-  /* The tab's active company is stamped on every request — UNLESS the caller
-     PINNED a specific company for THIS one call. The driver run-sheet is a
-     CROSS-COMPANY queue: a mixed route interleaves both companies' stops, and a
-     per-DO read/write must act in the STOP's own granted company, not whichever
-     company the top-bar switcher happens to show (a mixed run would otherwise
-     need the switcher kept in lock-step with every stop — which is exactly how
-     "Couldn't mark arrival — that record isn't in the company you're working in"
-     reached a driver standing in front of a 2990 delivery while the tab read
-     HOUZS). Those call sites pass an explicit X-Company-Id (companyHeaderFor) and
-     it WINS here. authorization / content-type are still applied AFTER, so a
-     caller can never override them. No other caller sets X-Company-Id, so this is
-     a no-op for every other path. */
   const callerHeaders = (init?.headers ?? {}) as Record<string, string>;
   const callerPinnedCompany = Object.keys(callerHeaders).some((k) => k.toLowerCase() === 'x-company-id');
   const headers = {
@@ -408,15 +288,6 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
     ...(callerPinnedCompany ? {} : companyHeader()),
     ...(typeof init?.body === 'string' ? { 'content-type': 'application/json' } : {}),
   };
-  // Weak-wifi / Hyperdrive cold-start resilience (ported from HOOKKA
-  // 2026-06-30 + our core api-client): a transient 503 or network drop on an
-  // idempotent GET self-heals on retry instead of surfacing as a failed mobile
-  // list. GETs only (mutations aren't safe to replay).
-  // Cold-start ride-through (2026-07-04): widened 2→4 to MATCH the desktop
-  // api-client (GET_RETRIES=4 / COLD_POOL_RETRIES=4, sw v142). The mobile SCM
-  // screens (Orders/SO/Service/Delivery) go through THIS helper, not the core
-  // client — the earlier widen missed them, so a cold window still dumped
-  // "Couldn't load orders" here. ~10s of spaced retries now rides it out.
   const isGet = !init?.method || String(init.method).toUpperCase() === 'GET';
   /* A mutation that carries an Idempotency-Key is safe to REPLAY: the server
      returns the original outcome instead of minting a second document. That is what
@@ -424,8 +295,6 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
      ridden out below, exactly like a GET (owner 2026-09-22, "改单 saving 拿很久" +
      504). Every SO save / payment / convert path already sends one. */
   const hasIdemKey = Boolean((headers as Record<string, string>)['Idempotency-Key']);
-  // Bound once so the new retry backoffs below don't repeat `init?.signal` — an
-  // optional-parameter chain eslint's flow analysis mis-reads as always-present.
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- init is an optional parameter
   const abortSignal = init?.signal;
   let res: Response;
@@ -439,13 +308,11 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
       if (ms >= SLOW_FETCH_MS) {
         const m = String(init?.method ?? 'GET').toUpperCase();
         console.warn(`[perf] slow ${m} /api/scm${path} - ${ms}ms id=${requestIdFromResponse(res)}`);
-        try { reportSlowRequest(m, scmTelemetryPath(path), ms); } catch { /* never let telemetry break the request path */ }
+        try { reportSlowRequest(m, scmTelemetryPath(path), ms); } catch { }
       }
     } catch (e) {
       if (init?.signal?.aborted) throw e;
       if (isGet && attempt < 4) { await abortableDelay(600 + attempt * 1200, init?.signal); continue; }
-      /* A timed-out / dropped IDEMPOTENT mutation is safe to replay (the key
-         dedupes), so ride out a transient stall instead of failing the save. */
       const transientThrow = typeof e === 'object' && e !== null && (e as { transient?: unknown }).transient === true;
       if (!isGet && hasIdemKey && attempt < 4 && transientThrow) {
         await abortableDelay(600 + attempt * 1200, abortSignal); continue;
@@ -453,10 +320,6 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
       throw e;
     }
     if (res.status === 503 && isGet && attempt < 4) { await abortableDelay(600 + attempt * 1200, init?.signal); continue; }
-    // Cold Hyperdrive pool answers 503 with a "database briefly unavailable" body
-    // BEFORE the handler/DB runs, so a mutation never executed → safe to retry
-    // (no double-write). Retry ONLY this specific cold-pool 503 for mutations, so
-    // an SO save early after idle self-heals instead of dumping a raw 503.
     if (res.status === 503 && !isGet && attempt < 4) {
       const warmText = await res.clone().text().catch(() => '');
       if (/briefly unavailable|warming up|try again in a moment/i.test(warmText)) {
@@ -473,17 +336,6 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
     break;
   }
 
-  /* Confirmable-409 loop (port of 2990 c3068b28) — a single DO save can trip
-     MORE THAN ONE guard at once: short_stock (negative stock) AND sofa_no_batch
-     (drop-ship). Each confirm must STACK its flag onto the SAME body — earlier
-     one-shot blocks each spread the ORIGINAL init.body, so a drop-ship replay
-     dropped a just-confirmed confirmShortStock and the stock guard re-fired
-     ("Save failed: Stock not enough" right after Confirm drop-ship). Loop,
-     accumulating flags, until the server accepts, the operator declines, or a
-     non-confirmable 409 falls through to the terminal handling below. The
-     `!== true` guards stop a re-prompt if the flag is already set (a server
-     that STILL 409s despite the flag breaks out, no infinite loop); 4-iteration
-     cap is a backstop. Body-bearing (mutation) requests only. */
   if (res.status === 409 && typeof init?.body === 'string') {
     let mergedBody: Record<string, unknown> | null = null;
     try { mergedBody = JSON.parse(init.body) as Record<string, unknown>; } catch { mergedBody = null; }
@@ -506,34 +358,17 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
         }
         mergedBody = { ...mergedBody, confirmDuplicatePo: true };
       } else if (text.includes('"short_stock"') && mergedBody.confirmShortStock !== true) {
-        /* ASK ONCE (2026-07-31). "Ship as drop-ship?" and "Ship anyway?" are the
-           same question — the goods are not here — and the operator has already
-           answered it in the affirmative on this very request. Re-asking it in
-           the other wording is how a save that the operator already committed to
-           acquires a second chance to be abandoned half-way. The order of the
-           two guards differs between POST / and POST /from-sos, so this has to
-           work in BOTH directions; the other direction is the branch below. */
-        if (mergedBody.dropShip !== true && !(await confirmShortStock(text))) break; // declined → terminal error below
+        if (mergedBody.dropShip !== true && !(await confirmShortStock(text))) break;
         mergedBody = { ...mergedBody, confirmShortStock: true };
       } else if (
         text.includes('"sofa_no_batch"') && text.includes('"canDropship":true') &&
         mergedBody.dropShip !== true
       ) {
-        /* Already said "ship anyway" on this request: binding the incoming PO is
-           the CONSEQUENCE of that answer, not a further decision. The
-           short-stock dialog named the PO and its ETA (see confirmShortStock's
-           `bindings`), so nothing is being authorised behind the operator's
-           back — the second dialog only ever restated the first. */
         if (mergedBody.confirmShortStock === true) {
           mergedBody = { ...mergedBody, dropShip: true };
           res = await fetchWithTimeout(`${API_URL}${path}`, { ...init, headers, body: JSON.stringify(mergedBody) }, path);
           continue;
         }
-        /* Declined drop-ship — deliberate operator choice. This used to throw a
-           marker (`declined_dropship:"sofa_no_batch"`) that no page anywhere in
-           either tree actually handled, so pressing Cancel showed the operator a
-           machine code with a JSON fragment in it. Nothing was saved, and that
-           is what it now says. */
         if (!(await confirmDropship(text))) {
           throw correlateError(
             new Error('Drop-ship not confirmed, so nothing was saved. Nothing has changed.'),
@@ -542,39 +377,19 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
         }
         mergedBody = { ...mergedBody, dropShip: true };
       } else {
-        break; // non-confirmable 409 (no-PO no-batch / partial_set / already-flagged)
+        break;
       }
       res = await fetchWithTimeout(`${API_URL}${path}`, { ...init, headers, body: JSON.stringify(mergedBody) }, path);
     }
   }
 
-  /* Sofa whole-set HARD block — a sofa set must ship complete from ONE batch.
-     A no-PO sofa_no_batch (canDropship absent/false) can't drop-ship, so
-     surface the server's plain-English reason (no "ship anyway" retry). */
   if (res.status === 409) {
     const text = await consumeCorrelated(res, () => res.clone().text());
     if (text.includes('"sofa_no_batch"')) {
       let msg = "This sofa set can't ship yet — no single production batch on hand covers the whole set. Wait until one complete batch is received.";
-      try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { /* keep fallback */ }
+      try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { }
       throw correlateError(new Error(msg), requestIdFromResponse(res));
     }
-    /* Zero-cost receipt refusal — a hard stop like the sofa ones, and for the
-       same reason: there is no "post anyway" that makes a zero-cost stock layer
-       correct. Rendered here rather than per page so every caller (the GRN
-       detail's Confirm, the mobile convert wizard, the from-PO batch receive)
-       shows the same thing: WHICH lines, what the item normally costs, and the
-       two ways out. The escape hatch is per line and lives on the receipt
-       screen, so it is deliberately NOT a dialog button here — a blanket
-       "everything on this receipt was free" click is exactly the reflex the
-       gate exists to prevent.
-
-       The RAW BODY rides the error too (status + body, as the terminal path
-       below does). Composing the sentence and DISCARDING the parse is what left
-       a surface able to show the refusal and nothing else: the phone's receipt
-       screen named two fixes and offered neither, and its convert wizard told
-       the receiver to go find a PC. `zero-cost-refusal.ts` is now the one
-       reader, so the sentence and any remedy UI cannot describe different
-       lines. */
     if (text.includes(`"${ZERO_COST_RECEIPT_ERROR}"`)) {
       const zeroCost = new Error(
         zeroCostRefusalText(parseZeroCostRefusal(text)),
@@ -585,7 +400,7 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
     }
     if (text.includes('"sofa_partial_set"')) {
       let msg = "A sofa set must ship whole from one batch — this delivery leaves part of the set behind. Include the rest of the set, or ship none of it.";
-      try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { /* keep fallback */ }
+      try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { }
       throw correlateError(new Error(msg), requestIdFromResponse(res));
     }
     /* One PO IS one batch number (owner, 2026-07-31), so a sofa set that resolves
@@ -595,14 +410,14 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
        module and the PO it resolved. */
     if (text.includes('"sofa_set_po_split"')) {
       let msg = "A sofa set is one dye lot, so it must ship against one purchase order — its modules resolve different ones. Point them at the same PO, or ship none of it.";
-      try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { /* keep fallback */ }
+      try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { }
       throw correlateError(new Error(msg), requestIdFromResponse(res));
     }
   }
 
   if (!res.ok) {
     let body = '';
-    try { body = await res.text(); } catch { /* ignore */ }
+    try { body = await res.text(); } catch { }
     /* REPORT IT. reportServerFailure and reportAccessDenied have existed in
        errorReporter.ts since they were written and were called from NOWHERE — a
        grep across the whole frontend returns only their definitions. So every
@@ -617,7 +432,7 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
       const m = String(init?.method ?? 'GET').toUpperCase();
       if (res.status >= 500) reportServerFailure(m, scmTelemetryPath(path), res.status);
       else if (res.status === 403) reportAccessDenied(m, scmTelemetryPath(path));
-    } catch { /* never let telemetry break the request path */ }
+    } catch { }
     // Plain-language message for the operator (Wei Siang 2026-06-08: every error
     // shown must be 白话文 — no HTTP codes, no raw JSON, no DB internals). The
     // raw status/body are preserved on the error object for logging / Sentry.
@@ -653,27 +468,8 @@ export function parseSaveProblems(body: string | undefined | null): SaveProblem[
   }
 }
 
-/** Build an operator-friendly message from an API failure. Surfaces the
- *  server's own reason ONLY when it's already a plain sentence; otherwise maps
- *  the HTTP status to plain words. Never leaks JSON / SQL / status codes. */
 const ERROR_CODE_MESSAGES: Record<string, string> = {
-  // Aggregated save gate (backend so-save-problems.ts). A surface that renders
-  // the `problems` list itself never reaches this; it's the single-line fallback
-  // for surfaces that only read the message.
   validation_failed: 'Some details need fixing before this can be saved.',
-  // The idempotency middleware's in-flight 409 (backend/src/middleware/
-  // idempotency.ts): the SAME key is already running, i.e. this exact write is
-  // mid-flight. That is NOT an error and must never read like one — without this
-  // entry it fell through to the generic 409 ("That clashes with something
-  // already in the system"), which reads as "it failed, do it again" and invites
-  // the very double-submit the key exists to stop.
-  //
-  // WIDENED 2026-07-17 (fix/so-idempotency): the old wording said "payment",
-  // correct while only money call sites sent a key. SO CREATE now sends one, and
-  // an order is not a payment — a rep re-pressing Create would have been told a
-  // payment was going through, which is simply false and reads as a bug. The
-  // sentence is now subject-free so it is true for every opted-in surface;
-  // re-read this if a surface ever needs a subject-specific line.
   idempotency_in_flight:
     "This is already going through — give it a moment, then refresh to check. Please don't send it again.",
   /* A PAYMENT THE BOOKS HAVE CLOSED OVER, or whose same-day window has passed
@@ -691,15 +487,6 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
      when several names push its sentence past the filter. */
   already_on_report:
     'This file was not loaded: its transactions are already on a report uploaded earlier. The bank pays a card transaction once — open that batch instead.',
-  /* NEVER reword this into "nothing was saved, press Save again". The
-     middleware returns this code purely because the payload's hash differs
-     from the claim's, and the claim may hold a COMMITTED 201 (the body's
-     `completed_status` says which) — so this sentence cannot promise a clean
-     slate, and an instruction to resubmit books a second GRN, a second stock
-     IN and a second AutoCount enqueue. Refreshing is what SURFACES the
-     document that may already exist. A refusal that genuinely wrote nothing
-     never reaches here: the route releases the claim (markIdempotencyNoWrite)
-     and the corrected resubmit just works. */
   idempotency_key_reused:
     'An earlier submission with different details already finished under this request key. Refresh and check what was recorded before sending it again.',
   idempotency_key_conflict:
@@ -712,37 +499,8 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
     "This action couldn't be submitted safely. Refresh the page and try again.",
   idempotency_payload_too_large:
     'This upload is too large for safe retry. Upload the file separately.',
-  /* A DOCUMENT CARRIED OVER FROM AUTOCOUNT is invoiced by the migrated-invoice
-     converter, never by hand (backend/src/scm/lib/migrated-chain.ts). The server
-     writes a careful sentence saying exactly that and attaches the document
-     numbers — and until 2026-08-18 the operator never saw one word of it.
-
-     THE SENTENCE WAS 205 CHARACTERS AND THE FALLBACK ARM BELOW KEEPS ONLY
-     `r.length < 200`. With no entry here and no `field`/`value`/`allowed` shape
-     for describeRefusal to read, all three doors were shut and the 409 fell to
-     the status catch-all: "That clashes with something already in the system.
-     Please refresh and check." Refreshing changes nothing — the document is
-     migrated and will be refused every time — so the advice was not merely
-     unhelpful, it was a loop.
-
-     WHY IT LANDS ON ONE ORGANISATION ONLY. The refusal is company-neutral in
-     source. It can only FIRE where migrated documents exist, and those are the
-     AutoCount carry-overs, which belong to one company; the other has none and
-     never meets this code. So a rule that reads as universal is, in practice,
-     an experience only one organisation has — which is why it is fixed here
-     rather than left to the picker.
-
-     The house rule that was missed: companyScope.ts states that an `error` code
-     must be curated to the same sentence in this map, "a code with no entry
-     there would surface to the operator raw". */
   migrated_source_document:
     'This delivery or receipt was carried over from AutoCount, so its invoice has to mirror the AutoCount one exactly — run the migrated-invoice converter instead of building it by hand.',
-  /* GOODS RECEIPT over-receipt (backend grns.ts qty_exceeds_remaining). The line
-     is already fully received on its purchase order, so the receive is refused —
-     and the body carries no `message`, so until now it fell to the status-409
-     catch-all "That clashes... please refresh." Refreshing never helps: the PO
-     line's received quantity does not change, so the operator retried and got the
-     same wall (office, 2026-09-23). Name the real reason instead. */
   qty_exceeds_remaining:
     'This line is already fully received on its purchase order, so no more can be received against it — refreshing will not change that. Receive the purchase-order line that still has an outstanding balance instead.',
   duplicate_code:   'That code is already in use. Please choose a different one.',
@@ -753,15 +511,9 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
   // SO gates — curate the code so the operator never sees the raw sentence's
   // wording drift (owner 2026-07-14: Houzs Processing Date needs only 30%).
   processing_date_unpaid: 'A Processing Date needs at least 30% of the order total collected first.',
-  // Defence-in-depth: the SO form blocks this before the request (shared
-  // soDateGuardError), so this fires only if a surface forgets the client gate.
   processing_date_remove_forbidden:
     'Only a Super Admin can remove the Processing Date. Removing it pulls the order back out of Proceed — ask a Super Admin to do it.',
   so_sofa_no_other_main:  "A sofa order can't be mixed with bedframe or mattress items — use a separate order.",
-  // 2990-owned orders. The live mirror re-applies 2990's version of the order on
-  // every sync, so a change saved here would be undone within seconds with
-  // nothing shown to the operator — the backend refuses instead of letting them
-  // believe it saved.
   so_owned_by_2990:
     'This order belongs to 2990 and can only be changed in 2990. Any change made here would be undone automatically.',
   /* MIGRATED SALES ORDER, cutover lock (owner 2026-09-08). Curated here rather
@@ -776,12 +528,6 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
     'This order came from AutoCount, so it is view-only until its payments are reconciled. A new order saves normally. Ask IT if this one has to change today.',
   so_create_blocked_2990:
     'New orders for 2990 have to be created in 2990. An order created here would take a number 2990 is about to use, and would be overwritten.',
-  // Optimistic-lock conflict (backend mfg-sales-orders.ts PATCH /:docNo). Two
-  // people had the SAME order open in the editor and the other one saved first;
-  // the server refuses this Save rather than silently overwriting their change.
-  // Curated here so the wording can't drift and never reads as a raw 409 ("that
-  // clashes with something in the system") — the operator needs the ACTION
-  // (reload), not a system-internals sentence.
   so_version_conflict:
     'Someone else updated this order while you were editing. Your changes are still on this screen. Copy anything you need, then refresh to review the latest order.',
   so_version_required:
@@ -796,34 +542,16 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
     'This order is being saved on another screen. Your changes are still here. Wait a moment, then try Save again.',
   so_edit_lease_invalid:
     'This save session is no longer valid. Your changes are still here. Refresh the order before saving again.',
-  /* The bill-can-only-go-up floor (backend mfg-sales-orders.ts, five refusal
-     sites on the line PATCH / sofa-exchange paths). It had NO entry here, so an
-     operator who hit it got the generic 422 fallback and no idea which lever
-     had been pulled — the same "the button does nothing" shape as the 35 silent
-     write paths. Names the ACTION, not the rule's internals: what they must do
-     is put the value back, or raise it with someone who can approve less. */
   so_total_below_original:
     "This change would bring the order's total below what the customer already agreed to. Put the amount back, or have a manager approve the lower price first.",
   payment_version_conflict:
     'Someone else changed this payment first. Your input is still here. Refresh the payments before trying again.',
   payment_version_required:
     'This payment was loaded without a version. Refresh the payments before changing it.',
-  // The add-on amount is folded into the line's selling price and never prints
-  // as its own figure, so the description is the only thing on the customer's
-  // document that says what the extra charge was for. Naming the field is the
-  // whole message here — "add a description" is not actionable if you don't
-  // know which box.
   extra_addon_needs_description:
     'A special add-on charge needs a description. Fill in "Describe the special order..." next to the extra charge, or clear the amount.',
-  // Company-scoped WRITE refusals (backend scm/lib/companyScope.ts). Curated
-  // here because this map is read BEFORE `message`, so the operator's wording
-  // stays put even if the server sentence is later reworded. Kept short: a
-  // server message of 200 characters or more is discarded below in favour of a
-  // generic clash line, which reads as a blank wall.
   company_unresolved:
     "We couldn't tell which company this belongs to. Please refresh and try again.",
-  // Deliberately says the same thing as "no such record": confirming that
-  // another company's id exists would itself leak.
   not_found_in_company:
     "That record isn't available in the company you're working in.",
   already_posted: 'This journal entry is already posted.',
@@ -831,29 +559,12 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
     'This journal entry was reversed and cannot be posted. Create a new one.',
 };
 
-/* Codes whose refusal names ONE DOCUMENT, so the server's sentence beats
-   anything that can be written here. Keep this list tiny: a curated sentence is
-   the better default precisely because it is written for the operator, and this
-   is the exception for refusals the server can say more about than we can.
-   `so_migrated_readonly` earns it because since 2026-09-08 the answer differs
-   per order — one still differs from the account book on `document total`, its
-   neighbour matches and is open — and a class-level sentence cannot say which. */
 const SERVER_SENTENCE_WINS: ReadonlySet<string> = new Set(['so_migrated_readonly', 'payment_edit_locked', 'already_on_report']);
 
-/* A machine CODE, not a sentence: snake_case, no spaces. Mirrors the guard in
-   api/client.ts. Without it an UNCURATED code that the backend echoes into both
-   `error` and `message` sails through the hygiene test below (short, no braces,
-   no SQL keywords) and is printed verbatim — which is exactly how an operator
-   came to be shown the literal string `idempotency_in_flight`. A code-shaped
-   string is never user-facing text; fall through to the status map instead. */
 const isErrorCode = (s: string) => /^[a-z][a-z0-9_]*$/.test(s.trim());
 
 export function humanApiError(status: number, body: string): string {
   try {
-    // 0. Aggregated save gate (validation_failed) — surface EVERY reason at once
-    //    as its own line, so a surface that only shows a single string (mobile
-    //    error line, PDF, a plain banner) still lists them all instead of one.
-    //    Surfaces that render a real list use parseSaveProblems directly.
     const problems = parseSaveProblems(body);
     if (problems && problems.length > 0) {
       return problems.length === 1
@@ -861,33 +572,10 @@ export function humanApiError(status: number, body: string): string {
         : problems.map((p) => `• ${p.message}`).join('\n');
     }
     const j = JSON.parse(body) as { error?: unknown; reason?: unknown; message?: unknown };
-    /* HOISTED — these three used to sit just above `const said` below. They
-       moved because step 1 now has to be able to ASK whether the server's own
-       sentence is renderable before it decides to overwrite it with a curated
-       one. Nothing about what they do changed. */
     const isPlain = (r: string) =>
       !!r && r.length < 200 && !r.trim().startsWith('{') && !isErrorCode(r) &&
       !/violates|constraint|null value|column|relation|syntax|PGRST|error_code|\b\d{5}\b/i.test(r);
 
-    /* THE DIAGNOSTIC TAIL, DROPPED INSTEAD OF THE WHOLE SENTENCE.
-       Sixteen fail-closed refusals in this tree write the operator's sentence
-       and then staple the driver's own words onto the end of it in brackets —
-       `…so this invoice was NOT saved … Please try again (column grn_items.foo
-       does not exist).` (backend return-unlinked-lines.ts:294, and the same
-       shape in allowed-options-check, do-line-remaining, downstream-lock,
-       qty-cap, service-line-guard, sku-usage, so-confirm-gate, the two unlinked
-       edit guards, derive-do-so-item-id and three route-level lock checks).
-       The filter above is right about the bracket and was wrong about the
-       sentence: it judged the pair as one string and threw away BOTH, so a
-       refusal that had explained itself in full rendered as "The system hit a
-       problem." Fixing it here rather than in sixteen strings is deliberate —
-       the next one written will be the same shape, and this is the only place
-       that sees the string at the moment it is judged.
-       Only a TRAILING bracket is removed, only when the whole string failed and
-       the remainder passes, and only ever by DELETION — a mid-sentence aside
-       ("Goods Receipt -> Transfer to Purchase Invoice") is untouched, and a
-       remainder that is still internals is still dropped. Nothing that renders
-       today stops rendering. */
     const withoutTail = (r: string) => r.replace(/\s*\([^()]*\)\s*(\.?)\s*$/, '$1').trim();
     const sayable = (raw: unknown): string | null => {
       if (typeof raw !== 'string') return null;
@@ -895,73 +583,19 @@ export function humanApiError(status: number, body: string): string {
       const trimmed = withoutTail(raw);
       return trimmed !== raw && isPlain(trimmed) ? trimmed : null;
     };
-    // 1. Known error code → curated plain message.
     if (typeof j.error === 'string') {
       const mapped = ERROR_CODE_MESSAGES[j.error];
-      /* ...UNLESS the server's sentence is about THIS DOCUMENT. A curated
-         sentence is written once for a whole class of refusal, which is exactly
-         what makes it better than a raw 409 — and exactly what makes it WORSE
-         than a per-document one. Since the migrated-order lock was re-grained
-         onto correctness (backend/src/scm/lib/so-reconcile-verdict.ts) the
-         server answers "HC-SO-010789 still differs from the AutoCount book on:
-         document total", and the curated line here would have thrown that away
-         and said "view-only until its payments are reconciled" — a sentence
-         that is no longer even the reason. The salesperson would be told the
-         order is shut and given nothing to act on, which is the "the button
-         does nothing" failure with extra steps.
-         The curated line stays as the FALLBACK for a server that sends nothing
-         sayable, so a code in this set can never render worse than before. */
       if (mapped && !SERVER_SENTENCE_WINS.has(j.error)) return mapped;
       if (mapped) {
         const perDocument = sayable(j.reason) ?? sayable(j.message);
         return perDocument ?? mapped;
       }
     }
-    // 1b. STRUCTURED REFUSAL — the server named the input, the value AND the
-    //     legal set, and we used to throw all three away. `variant_not_allowed`
-    //     (backend allowed-options-check.ts:81-86) is the one that cost a
-    //     salesperson a bedframe line: no curated entry, no `reason`, no
-    //     `message`, so it fell to the 400 catch-all and told him nothing.
-    //
-    //     Placed AFTER the curated map on purpose. A curated sentence is
-    //     hand-written for the operator and often names the exact box
-    //     (extra_addon_needs_description is the best example in the tree), so it
-    //     must keep winning; this only fires where the alternative is the
-    //     status-code catch-all. And it keys off the body's SHAPE, not a list of
-    //     codes, so the next structured refusal renders without anyone
-    //     remembering to add it here — which is the defect being fixed, not
-    //     just this one instance of it. Anything it cannot say honestly returns
-    //     null and falls through to the generic sentence below, unchanged.
     const detail = describeRefusal(j);
     if (detail) return detail;
-    // 2. The server's own sentence, but only if it's already plain (no internals).
-    //
-    //    `message` IS TRIED FIRST, AND THE ORDER IS THE FIX. It used to be
-    //    `reason ?? message`, from when `reason` was the only field a refusal
-    //    carried. It is not any more: this tree's fail-closed refusals ship BOTH
-    //    halves — `message` written for the operator, `reason` copied from the
-    //    driver — and `reason` is therefore, by construction, the half most
-    //    likely to be PostgREST text that the hygiene filter below is right to
-    //    drop. Preferring it meant the driver's string was chosen, discarded,
-    //    and the sentence beside it never looked at: the server had explained
-    //    itself, the client held the explanation, and the operator was shown
-    //    "The system hit a problem." That is what a Purchase Invoice create
-    //    answered on production, 2026-08-19 (backend purchase-invoices.ts:774,
-    //    :785, :809 — `unlinkedCheckFailedResponse`, `load_failed`).
-    //
-    //    Both are still candidates and the filter still judges each one on its
-    //    own, so a `message` that is itself a blob, a code or SQL simply falls
-    //    through to `reason` exactly as before — nothing that used to render
-    //    stops rendering.
-    //
-    //    Skip nested JSON blobs (e.g. the raw GoTrue "session_not_found" body
-    //    the auth middleware forwards verbatim in `reason`) — those must never
-    //    reach an operator. The `{`-prefix + `error_code` guards catch them;
-    //    401s then fall through to the friendly "session has expired" status
-    //    message below.
     const said = sayable(j.message) ?? sayable(j.reason);
     if (said) return said;
-  } catch { /* body wasn't JSON — fall through to the status map */ }
+  } catch { }
   if (status === 401) return 'Your session has expired — please sign in again.';
   if (status === 403) return "You don't have permission to do that.";
   if (status === 404) return 'That item could no longer be found — it may have been changed or removed. Please refresh.';
@@ -986,6 +620,5 @@ export function itDetailOf(e: unknown): string {
   if (typeof said !== 'string' || !said.trim() || said.trim().startsWith('{')) return '';
   if (humanApiError(err.status, err.body).includes(said.trim())) return '';
   const t = said.trim().slice(0, 300);
-  // ends in a full stop so a tail sentence after it still reads
   return ` Details for IT: ${t}${/[.!?]$/.test(t) ? '' : '.'}`;
 }

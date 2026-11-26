@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// bank-receive — book one credit on a bank statement against the merchant
-// statement(s) it pays.
-//
-// The work behind POST /bank/lines/:id/receipt, lifted out of the route on
-// 2026-10-15 so the gated repair that books 2990's Maybank gross-and-fee pair
-// (scripts/settle-bank-fee-pairs.mjs) runs the same code as the button, not a
-// copy of it. The route still owns the request: who may, the closed-month
-// check, and the shape of the shares. This owns what follows: a receipt per
-// share through postBatchReceipt, every one taken back if a later one is
-// refused, each pointed at the movement, and the movement marked POSTED.
-// ----------------------------------------------------------------------------
 
 import { postBatchReceipt, undoBatchReceipt } from './settlement';
 
@@ -34,9 +22,6 @@ export async function postBankCredit(
   charge: CreditCharge | null,
   userName: string | null,
 ): Promise<PostBankCreditResult> {
-  /* The DATE comes off the bank statement, not off the request: it is what the
-     bank says, and the whole point of uploading the file is that nobody has to
-     retype it. */
   const receivedOn = String(line.booked_on).slice(0, 10);
   const bankRef = line.reference ?? null;
   const posted: PostedShare[] = [];
@@ -59,9 +44,6 @@ export async function postBankCredit(
       charge: charge && charge.batchId === a.batchId ? { amountSen: charge.amountSen, accountCode: charge.accountCode, note: charge.note } : null,
     });
     if (!r.ok) {
-      /* A refusal partway through must not leave half a payout booked. Every
-         receipt already written is reversed — through the engine, so the
-         contra entries exist — before the refusal is returned. */
       const undone: string[] = [];
       for (const done of posted) {
         const back = await undoBatchReceipt(sb, companyId, done.receiptId);
@@ -82,15 +64,12 @@ export async function postBankCredit(
     posted.push({ batchId: a.batchId, receiptId: r.receiptId, jeNo: r.jeNo, outstandingSen: r.outstandingSen, chargeSen: r.chargeSen });
   }
 
-  /* Point every receipt back at the movement it was read from. */
   for (const p of posted) {
     await sb.from('acc_settlement_receipts').update({ bank_line_id: line.id }).eq('id', p.receiptId);
   }
 
   const { error: upErr } = await sb.from('acc_bank_statement_lines').update({
     state: 'POSTED',
-    /* One entry number when there is one, all of them when the credit was
-       split — the operator asks "which JE" and both answers are true. */
     posted_je_no: posted.map((p) => p.jeNo).filter(Boolean).join(', ') || null,
     updated_at: new Date().toISOString(),
   }).eq('id', line.id).eq('company_id', companyId);

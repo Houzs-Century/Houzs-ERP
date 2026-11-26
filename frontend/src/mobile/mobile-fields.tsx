@@ -1,5 +1,3 @@
-// Form primitives of the mobile New-SO screen, moved out of MobileNewSO.tsx
-// unchanged so that file stays under its size ceiling.
 
 export type Opt = { value: string; label: string };
 
@@ -37,7 +35,6 @@ function ScannedTag() {
   );
 }
 
-/* SpecSel — a labelled <select> bound to a real option list. */
 export function SpecSel({ label, value, opts, onChange, required = false, invalid = false, emptyHint }: {
   label: string; value: string; opts: Opt[]; onChange: (v: string) => void;
   required?: boolean; invalid?: boolean; emptyHint?: string;

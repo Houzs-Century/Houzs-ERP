@@ -64,7 +64,6 @@ export type StopProgress = { departed_at?: string | null; arrived_at?: string | 
 export function stopStatusOf(
   row: StopStatusRow,
   progress: StopProgress,
-  /** The day the stop is run (YYYY-MM-DD), today, and the clock now (minutes). */
   when: { day: string; today: string; nowMinutes: number },
 ): StopStatus {
   const dos = row.delivery_orders ?? [];

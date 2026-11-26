@@ -68,7 +68,6 @@ export function refusalOf(f: {
 
 type PaymentFacts = { docNo: string | null; paidOn: string; method: string; channel: string | null; amountSen: number; reference: string | null; customer: string | null };
 
-/** The payments named, read from both tables, with the order's or invoice's customer. */
 async function readPayments(sb: Sb, companyId: number, refs: readonly PaymentRef[]): Promise<{ ok: true; facts: Map<string, PaymentFacts> } | Fail> {
   const soIds = [...new Set(refs.filter((r) => r.source === 'SOPAY').map((r) => r.id))];
   const siIds = [...new Set(refs.filter((r) => r.source === 'SIPAY').map((r) => r.id))];
@@ -127,13 +126,11 @@ export async function markPrevious(sb: Sb, companyId: number, refs: readonly Pay
   if (!payments.ok) return payments;
   const ids = [...new Set(refs.map((r) => r.id))];
 
-  /* A merchant report line holding it, matched or only linked. */
   const links = await chunkIn<Record<string, any>>(ids, (batch, lo, hi) => sb.from('acc_settlement_matches')
     .select('payment_source, payment_id').eq('company_id', companyId).in('payment_id', batch).order('payment_id').range(lo, hi));
   if (links.error) return { ok: false, reason: `merchant links: ${links.error.message}` };
   const linked = new Set(links.data.map((l) => previousKey(String(l.payment_source), String(l.payment_id))));
 
-  /* Its live entry, and whether the books count it: on or after their first day, or always when they have none. */
   const opening = await loadBooksOpening(sb, companyId);
   if (!opening.ok) return opening;
   const start = opening.opening?.booksStart ?? null;
@@ -143,7 +140,6 @@ export async function markPrevious(sb: Sb, companyId: number, refs: readonly Pay
     .eq('posted', true).order('je_no').range(lo, hi));
   if (entries.error) return { ok: false, reason: `entries: ${entries.error.message}` };
   const booked = new Map<string, string>();
-  /* `reversed` is read here, not filtered in the query (it is absent on a fresh fake row; acc/payment-reconciled). */
   for (const e of entries.data) {
     if (e.reversed) continue;
     if (start != null && day(e.entry_date) < start) continue;
@@ -163,7 +159,6 @@ export async function markPrevious(sb: Sb, companyId: number, refs: readonly Pay
     if (no) refused.push({ ...r, docNo: f?.docNo ?? null, ...no });
     else marked.push(r);
   }
-  /* Already marked is marked: a second press writes nothing. */
   const had = await marksAmong(sb, companyId, marked);
   if (!had.ok) return had;
   const fresh = marked.filter((r) => !had.keys.has(previousKey(r.source, r.id)));
@@ -175,7 +170,6 @@ export async function markPrevious(sb: Sb, companyId: number, refs: readonly Pay
   return { ok: true, marked, refused };
 }
 
-/** Which of these payments carry a mark already. */
 async function marksAmong(sb: Sb, companyId: number, refs: readonly PaymentRef[]): Promise<{ ok: true; keys: Set<string> } | Fail> {
   const ids = [...new Set(refs.map((r) => r.id))];
   if (ids.length === 0) return { ok: true, keys: new Set() };
@@ -217,7 +211,6 @@ export async function listPrevious(sb: Sb, companyId: number): Promise<{ ok: tru
   for (const m of marks) {
     const ref = { source: String(m.payment_source) as PaymentSource, id: String(m.payment_id) };
     const f = payments.facts.get(previousKey(ref.source, ref.id));
-    /* A payment deleted since it was marked has nothing to show; its mark is harmless. */
     if (!f) continue;
     rows.push({ ...ref, ...f, markedBy: m.marked_by == null ? null : String(m.marked_by), markedAt: String(m.marked_at ?? '') });
   }

@@ -25,9 +25,6 @@
 
 export type AmendmentType = 'PROCESSING' | 'DELIVERY_COMMERCIAL';
 
-/* The processing group is a PAIR (Production / Design co-own WHAT is made), which
-   is why it is one label rather than two — the owner listed it that way. The
-   delivery/commercial side splits into three distinct single-field owners. */
 export type ResponsibleDept =
   | 'Production / Design'
   | 'Finance'
@@ -35,18 +32,15 @@ export type ResponsibleDept =
   | 'Logistics'
   | 'Purchasing';
 
-/* The atoms a change can touch. Derived from WHICH field moved, never stored:
-   classification is a pure function of the diff, so it cannot drift from the row
-   and needs no migration. */
 export type AmendmentFieldKind =
-  | 'SPEC'      // SKU / item code / material code
-  | 'VARIANT'   // colour / fabric / variant spec
-  | 'QTY'       // quantity
-  | 'LINE'      // add / remove a whole line
-  | 'PRICE'     // sell price / discount (SO)
-  | 'COST'      // unit cost (PO)
-  | 'DELIVERY'  // per-line or header delivery date
-  | 'SUPPLIER'; // supplier change (PO header)
+  | 'SPEC'
+  | 'VARIANT'
+  | 'QTY'
+  | 'LINE'
+  | 'PRICE'
+  | 'COST'
+  | 'DELIVERY'
+  | 'SUPPLIER';
 
 export type FieldRouting = {
   kind: AmendmentFieldKind;
@@ -54,9 +48,6 @@ export type FieldRouting = {
   department: ResponsibleDept;
 };
 
-/* THE field -> {type, department} map. Single source of truth for every surface.
-   Adjust one row here and the detail pages, the PDF and the audit note all move
-   together. */
 const FIELD_ROUTING: Record<AmendmentFieldKind, { type: AmendmentType; department: ResponsibleDept }> = {
   SPEC:     { type: 'PROCESSING',          department: 'Production / Design' },
   VARIANT:  { type: 'PROCESSING',          department: 'Production / Design' },
@@ -97,8 +88,6 @@ export const routeField = (kind: AmendmentFieldKind): FieldRouting => ({
   ...FIELD_ROUTING[kind],
 });
 
-/* The human field labels the PDF mapper / UI already use, folded back to an atom
-   so a row that only knows its display label can still be routed. */
 const LABEL_TO_KIND: Record<string, AmendmentFieldKind> = {
   spec: 'SPEC',
   sku: 'SPEC',
@@ -118,7 +107,7 @@ const LABEL_TO_KIND: Record<string, AmendmentFieldKind> = {
   'delivery date': 'DELIVERY',
   delivery: 'DELIVERY',
   supplier: 'SUPPLIER',
-  notes: 'LINE', // a free-text note is not routable on its own; treat as line-level
+  notes: 'LINE',
 };
 
 /** Map a human field label (e.g. "Unit cost", "Delivery date") to its atom, or
@@ -129,12 +118,8 @@ export const fieldKindFromLabel = (label: string | null | undefined): AmendmentF
 };
 
 export type RoutingSummary = {
-  /** Distinct types present, ordered PROCESSING then DELIVERY_COMMERCIAL. */
   types: AmendmentType[];
-  /** True when BOTH types are present — a mixed amendment. */
   isMixed: boolean;
-  /** Each responsible department against the field atoms it owns in this
-      amendment. Ordered by first appearance; kinds de-duplicated. */
   departments: Array<{ department: ResponsibleDept; kinds: AmendmentFieldKind[] }>;
 };
 

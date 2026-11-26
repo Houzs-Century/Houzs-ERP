@@ -1,13 +1,7 @@
-// Fleet A1 hooks — the postcode -> zone map admin, the auto-propose delivery-date
-// action, and reversible day locks (migration 0205 / route delivery-zones.ts).
-//
-// The API emits camelCase already (the route shapes rows out); everything goes
-// through authedFetch -> /api/scm/delivery-zones.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 
-// ── Zone map ─────────────────────────────────────────────────────────────────
 
 export type ZoneRuleRow = {
   id: string;
@@ -62,7 +56,6 @@ export function useUpdateZoneRule() {
     mutationFn: ({ id, ...body }: ZoneRulePatch) =>
       authedFetch<{ zone: ZoneRuleRow }>(`/delivery-zones/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ZONES_KEY }),
-    // No hook-level onError: every caller passes its own, and both would fire.
   });
 }
 
@@ -74,7 +67,6 @@ export function useDeleteZoneRule() {
   });
 }
 
-// ── Auto-propose ─────────────────────────────────────────────────────────────
 
 export type ProposeBody = {
   soDocNos: string[];
@@ -135,7 +127,6 @@ export function useProposeDelivery() {
   });
 }
 
-// ── Sequence & assign (Fleet A2) ─────────────────────────────────────────────
 
 export type SequenceAssignBody = {
   soDocNos: string[];
@@ -144,7 +135,6 @@ export type SequenceAssignBody = {
   departTime?: string;
   defaultMaxSets?: number;
   defaultMaxRevenueSen?: number;
-  /** A3: own-fleet trips per lorry per day before the rest spill to 3PL overflow. */
   maxTripsPerLorryPerDay?: number;
 };
 
@@ -193,7 +183,6 @@ export type AssignedTrip = {
   overCeiling: boolean;
   departTime: string;
   stops: AssignedTripStop[];
-  /** The computed nearest-neighbour route + windows, or null when Google is off. */
   sequence: {
     departTime: string | null;
     sequence: AssignedSequenceStop[];
@@ -234,7 +223,6 @@ export type SequenceAssignResponse = {
   dispatchableCount: number;
   trips: AssignedTrip[];
   excludedLorries: { id: string; plate: string; status: string }[];
-  /** A3 fields. */
   excludedDrivers: ExcludedDriver[];
   overflow: OverflowGroup[];
   carriers: ThreePlCarrier[];
@@ -251,7 +239,6 @@ export function useSequenceAssign() {
   });
 }
 
-// ── Day locks ────────────────────────────────────────────────────────────────
 
 export type DayLock = {
   id: string;
@@ -295,10 +282,6 @@ export function useUnlockDay() {
   });
 }
 
-// ── Driver leave (Fleet A3) ────────────────────────────────────────────────────
-// The date-ranged CREW absences the A2 auto-assigner reads to skip on-leave
-// drivers AND helpers. Backed by scm.driver_leave (mig 0206 + 0208) via
-// /api/scm/driver-leave. A row is EITHER a driver's or a helper's leave (XOR).
 
 export type DriverLeaveRow = {
   id: string;
@@ -320,7 +303,6 @@ export function useDriverLeave() {
   });
 }
 
-// Provide exactly one of driverId / helperId (XOR, enforced by the route).
 export function useCreateDriverLeave() {
   const qc = useQueryClient();
   return useMutation({

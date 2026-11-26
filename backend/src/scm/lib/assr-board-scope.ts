@@ -121,7 +121,6 @@ export const ASSR_LEG_AMEND_REASON_COL = {
   customer_pickup: 'pickup_amend_reason', inspection: 'inspection_amend_reason', delivery: 'delivery_amend_reason',
 } as const;
 
-/* Stages AFTER each leg's own step (the HC sheet feed's rule): that leg is done. */
 const PAST_PICKUP = PAST_PICKUP_STAGES;
 const PAST_INSPECTION = new Set(['pending_supplier_pickup', ...PAST_PICKUP_STAGES]);
 
@@ -199,13 +198,6 @@ export function assrBoardLegs(a: AssrBoardCase, caseClosed: boolean, today = '')
 }
 
 export function assrBoardUnionSql(c: CompanyScopeCtx, recentClosedSince: string): string {
-  // The State / Postcode columns (and the region bucket) come from the LINKED
-  // Sales Order's real customer address, NOT from `location` (the branch/
-  // warehouse the case was raised at) — same source the delivery-sheet ASSR feed
-  // uses (lib/delivery-sheet-assr-feed.ts). Before this, customer_state was set
-  // to `location`, so a Kuching case showed "SRW" in State and fell into the KL
-  // bucket. doc_no matches first, then the AutoCount number; an old case whose
-  // order predates the ERP has no match and leaves these null (blank, not wrong).
   return `SELECT assr_cases.id            AS id,
               assr_cases.assr_no       AS assr_no,
               assr_cases.company_id    AS company_id,

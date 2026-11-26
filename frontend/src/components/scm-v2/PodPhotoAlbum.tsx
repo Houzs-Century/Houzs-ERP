@@ -15,9 +15,7 @@ import { api } from "../../api/client";
    are fetched as blobs). */
 export function PodPhotoAlbum({ paths, fileStem, title, emptyText }: {
   paths: string[];
-  /** Download file names: `${fileStem}-1.jpg`, … */
   fileStem: string;
-  /** The document number printed on every page of the photos PDF. */
   title: string;
   emptyText?: string;
 }) {
@@ -58,7 +56,7 @@ export function PodPhotoAlbum({ paths, fileStem, title, emptyText }: {
   const saveAll = async () => {
     for (let i = 0; i < total; i++) {
       save(i);
-      await new Promise((r) => setTimeout(r, 250)); // browsers drop back-to-back downloads
+      await new Promise((r) => setTimeout(r, 250));
     }
   };
 
@@ -72,9 +70,6 @@ export function PodPhotoAlbum({ paths, fileStem, title, emptyText }: {
         fetchPhoto: (p) => api.fetchBlobWithTime(p),
         onProgress: (done, all) => setPdfProgress(`${done} / ${all}`),
       });
-      // A phone gets the share sheet (straight to WhatsApp); a desktop, or a
-      // phone whose browser refuses (the tap is too long ago once the PDF is
-      // built), gets a download.
       const file = new File([out.blob], out.filename, { type: "application/pdf" });
       const touch = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
       if (touch && typeof navigator.canShare === "function" && navigator.canShare({ files: [file] })) {
@@ -125,8 +120,6 @@ export function PodPhotoAlbum({ paths, fileStem, title, emptyText }: {
         ))}
       </div>
 
-      {/* Portalled to <body>: inside a card or a sticky aside, position:fixed is
-          clipped by the ancestor and the table header painted over the viewer. */}
       {open != null && createPortal(
         <div role="dialog" aria-modal="true" aria-label="POD photo viewer"
           className="fixed inset-0 z-[2000] flex flex-col bg-black/90" onClick={() => setOpen(null)}>

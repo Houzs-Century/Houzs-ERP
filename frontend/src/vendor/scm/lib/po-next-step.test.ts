@@ -11,10 +11,6 @@ const PO_STATUSES = [
 
 describe('poConfirmBlockReason', () => {
   it('allows exactly DRAFT — the only status /confirm writes from', () => {
-    /* mfg-purchase-orders.ts:4086-4092: SUBMITTED and PARTIALLY_RECEIVED echo
-       back unchanged, everything else is 409 cannot_confirm. The old page had
-       this inverted: it rendered "Confirm" only when the PO was ALREADY
-       SUBMITTED, i.e. only where the endpoint does nothing. */
     expect(poConfirmBlockReason('DRAFT')).toBeNull();
     for (const s of ['SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CANCELLED']) {
       expect(poConfirmBlockReason(s), s).toBeTruthy();
@@ -22,8 +18,6 @@ describe('poConfirmBlockReason', () => {
   });
 
   it('sends a cancelled PO to Reopen, not back to Confirm', () => {
-    /* /reopen takes CANCELLED to SUBMITTED, not to DRAFT (:4514), so telling the
-       operator to "confirm it" would name a step that cannot happen. */
     expect(poConfirmBlockReason('CANCELLED')).toMatch(/reopen/i);
   });
 
@@ -47,9 +41,6 @@ describe('poConfirmBlockReason', () => {
 
 describe('grnTransferBlockReason', () => {
   it('mirrors the server RECEIVABLE_PO_STATUSES exactly', () => {
-    /* routes/grns.ts:200 — SUBMITTED, PARTIALLY_RECEIVED. If these two lists
-       ever drift the page offers a receipt the server refuses, or hides one it
-       would have accepted. */
     expect([...GRN_RECEIVABLE_PO_STATUSES]).toEqual(['submitted', 'partially_received']);
     expect(grnTransferBlockReason('SUBMITTED')).toBeNull();
     expect(grnTransferBlockReason('PARTIALLY_RECEIVED')).toBeNull();

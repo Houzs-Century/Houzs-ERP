@@ -31,7 +31,6 @@ export interface ConfirmOptions {
   message?: string;
   confirmLabel?: string;
   cancelLabel?: string;
-  /** Destructive: red confirm button + warning icon. */
   danger?: boolean;
   tone?: "default" | "danger" | "info";
 }
@@ -39,9 +38,7 @@ export interface ConfirmOptions {
 export interface PromptOptions extends ConfirmOptions {
   placeholder?: string;
   defaultValue?: string;
-  /** Block confirm when input is empty. */
   required?: boolean;
-  /** "text" | "textarea" — pick the input shape. */
   multiline?: boolean;
   inputType?: "text" | "email" | "number";
 }
@@ -130,8 +127,6 @@ function DialogShell({
     item.kind === "prompt" ? item.opts.defaultValue ?? "" : ""
   );
 
-  // Focus first interactive element on open. Confirm dialogs focus the
-  // confirm button; prompts focus the input.
   const confirmBtnRef = useRef<HTMLButtonElement | null>(null);
   useEffect(() => {
     const t = setTimeout(() => {
@@ -143,11 +138,9 @@ function DialogShell({
 
   useEscapeLayer(() => onClose(item.kind === "confirm" ? false : null), true);
 
-  // Enter confirms when not in a textarea.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Enter") {
-        // Enter inside a textarea adds a newline — let it through.
         const target = e.target as HTMLElement;
         if (target.tagName === "TEXTAREA") return;
         if (item.kind === "prompt") {
@@ -190,8 +183,6 @@ function DialogShell({
     <div
       className="fixed inset-0 z-[300] flex items-center justify-center bg-ink/40 backdrop-blur-sm animate-fade-in"
       onClick={(e) => {
-        // Click on backdrop dismisses (cancel). Click inside the
-        // panel doesn't bubble.
         if (e.target === e.currentTarget) {
           onClose(item.kind === "confirm" ? false : null);
         }

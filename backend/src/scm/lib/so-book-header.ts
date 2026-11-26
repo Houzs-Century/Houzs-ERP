@@ -1,7 +1,3 @@
-// The Sales Order's AutoCount header spellings — the grid's Doc No / Debtor
-// Code / Agent / Venue / Branding cells. One function so the list rows
-// (so-list-lines.ts attachSoLines) and the list's funnel value lists
-// (so-list-column-funnels.ts) offer the same values.
 
 import { bookSpellingOrOwn, resolveAcAgent, AC_DEBTOR_CODE } from '../../services/autocount-writeback';
 import { VENUE_MAP, BRANDING_MAP } from '../../services/autocount-master-maps';

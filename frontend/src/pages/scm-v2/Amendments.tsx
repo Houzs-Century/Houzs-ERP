@@ -66,7 +66,6 @@ import { customerRefOf } from '../../lib/customer-ref';
 // way (cancelBucketOf), so one chip counts both kinds of row.
 const STATUS_CHIPS = AMENDMENT_LIST_CHIPS;
 
-/* New unique storage key — NEVER reuse another list's key. */
 const AMENDMENT_LIST_STORAGE_KEY = 'so-amendment-list.layout.v1';
 
 /* Opens with Requested on top (status-pill.ts owns the order), EVERY time: the
@@ -75,7 +74,6 @@ const AMENDMENT_LIST_STORAGE_KEY = 'so-amendment-list.layout.v1';
    (owner 2026-09-14). */
 const OPEN_ORDER = compareAmendmentsForList<AmendmentQueueRow>((r) => r.bucket, (r) => r.createdAt);
 
-/* The SO's own customer reference, by the rule the Sales Order list uses. */
 const referenceOf = (a: AmendmentRow): string =>
   customerRefOf({ ref: a.so_ref, customer_so_no: a.so_customer_so_no });
 
@@ -91,12 +89,6 @@ const badge = (tone: { bg: string; fg: string }): React.CSSProperties => ({
   fontSize: 'var(--fs-11)', fontWeight: 700, background: tone.bg, color: tone.fg,
 });
 
-/* `requested_by` on an amendment is a bare scm.staff uuid (so_amendments
-   .requested_by, FK -> scm.staff.id) — the list endpoint sends no name with it.
-   Resolve through the shared staff roster exactly as the SO / DO / SI lists
-   resolve salesperson_id; search / group / sort all key off the RESOLVED name so
-   the column behaves as the person column it presents itself to be. A
-   cancellation row already carries the name its own endpoint resolved. */
 const buildAmendmentColumns = (
   actorNameOf: (id: string | null | undefined, empty?: string) => string,
   actions: (r: AmendmentQueueRow) => React.ReactNode,
@@ -108,7 +100,6 @@ const buildAmendmentColumns = (
       key: 'so_doc_no', label: 'SO No.', width: 140, sortable: true, groupable: true,
       accessor: (r) => <span style={{ fontWeight: 700, color: 'var(--c-burnt)', fontVariantNumeric: 'tabular-nums' }}>{r.soDocNo}</span>,
       searchValue: (r) => r.soDocNo,
-      // accessor is JSX → export the raw SO-no string so the column isn't blank.
       exportValue: (r) => r.soDocNo,
       groupValue: (r) => r.soDocNo,
       sortFn: (a, b) => a.soDocNo.localeCompare(b.soDocNo),
@@ -122,9 +113,6 @@ const buildAmendmentColumns = (
       sortFn: (a, b) => a.reference.localeCompare(b.reference),
     },
     {
-      /* Amendment or cancellation — the queue carries both since 2026-09-24,
-         and the two are acted on in different places, so the row has to say
-         which it is before anything else about it is read. */
       key: 'kind', label: 'Type', width: 120, sortable: true, groupable: true,
       accessor: (r) => (
         r.kind === 'CANCEL'
@@ -165,8 +153,6 @@ const buildAmendmentColumns = (
       sortFn: (a, b) => requesterOf(a, '').localeCompare(requesterOf(b, '')),
     },
     {
-      /* A cancellation's reason IS the request, so this column is no longer
-         hidden by default the way an amendment's optional note was. */
       key: 'reason', label: 'Reason', width: 240, minWidth: 160, sortable: true,
       accessor: (r) => r.reason || <span style={{ color: 'var(--fg-muted)' }}>—</span>,
       searchValue: (r) => r.reason,
@@ -182,14 +168,10 @@ const buildAmendmentColumns = (
     },
     {
       key: 'status', label: 'Status', width: 210, sortable: true, groupable: true,
-      /* An amendment collapses to Requested / Approved / Rejected; a
-         cancellation says which signature it is on ("waiting for level-2
-         approval (1 of 2)") — the chips still group both by the same buckets. */
       accessor: (r) => <TonedPill label={r.statusLabel} tone={simplifiedAmendmentPill(r.bucket).tone} />,
       searchValue: (r) => r.statusLabel,
       groupValue: (r) => amendmentBucketLabel(r.bucket),
       exportValue: (r) => r.statusLabel,
-      // Ascending = Requested -> Approved -> Rejected, not the bucket names A-Z.
       sortFn: (a, b) => amendmentBucketRank(a.bucket) - amendmentBucketRank(b.bucket),
     },
     {
@@ -200,9 +182,6 @@ const buildAmendmentColumns = (
       filterType: 'date', dateValue: (r) => r.createdAt,
     },
     {
-      /* Only a cancellation row acts here. An amendment is approved on its job
-         card, where the approver can first read the diff — a one-click approve
-         in a list would be a signature given without seeing what was signed. */
       key: 'actions', label: 'Actions', width: 260,
       accessor: (r) => actions(r),
       exportValue: () => '',
@@ -221,10 +200,6 @@ export const Amendments = () => {
   };
 
   const { data, isLoading, error } = useAmendments();
-  /* 'all', not 'open': the queue's Approved / Rejected chips have to be true of
-     cancellations too. A caller without the inbox's read permission simply gets
-     no cancellation rows — this read must never fail the amendments queue, so
-     its error is deliberately not surfaced in the banner below. */
   const cancels = useCancelRequests('all');
   const { actorNameOf } = useStaffLookup();
   const { user, can } = useHouzsAuth();
@@ -241,9 +216,6 @@ export const Amendments = () => {
     [allRows, statusChip],
   );
 
-  /* Which buttons a person sees is decided by the same rules the server
-     enforces (document-cancel-queries viewerCan*), and only so that nobody is
-     shown a button that will 403 — the server's answer is the gate. */
   const renderActions = (r: AmendmentQueueRow): React.ReactNode => {
     const row = r.cancel;
     if (!row) return null;
@@ -277,16 +249,9 @@ export const Amendments = () => {
     );
   };
 
-  // actorNameOf identity changes when the staff roster lands — rebuild so the
-  // column re-renders with real names instead of staying on the loading dash.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- renderActions reads the latest hooks on click; the column set itself is static
   const columns = useMemo(() => buildAmendmentColumns(actorNameOf, renderActions), [actorNameOf, viewer, cancelActions.busy]);
 
-  /* Row-click routing (2026-07-15) — open the amendment job card. The detail
-     page owns the diff + revision-status hero + gate actions, and hands off
-     into the SO / bound-PO editor for the deeper line edits. A cancellation has
-     no job card: it opens the Sales Order, whose cancellation card carries the
-     same actions beside the document itself. */
   const openRow = (r: AmendmentQueueRow) => {
     if (r.amendment) navigate(amendmentJobCardPath({ kind: 'so', id: r.amendment.id }));
     else navigate(`/scm/sales-orders/${encodeURIComponent(r.cancel?.doc_key ?? r.soDocNo)}`);
@@ -309,8 +274,6 @@ export const Amendments = () => {
         {error && !isLoading && (
           <div className="rounded-lg border border-err/40 bg-err/10 px-4 py-2.5 text-[12.5px] text-err">
             <strong className="font-semibold">Failed to load amendments.</strong>{' '}
-            {/* authedFetch already ran this through humanApiError, so `message`
-                is a plain sentence; the fallback covers a non-Error throw. */}
             {error instanceof Error ? error.message : 'Something went wrong.'}
           </div>
         )}
@@ -342,15 +305,8 @@ export const Amendments = () => {
           groupBanner={false}
           defaultSort={OPEN_ORDER}
           sortForSessionOnly
-          /* Single click: the quick view (amendments only — a cancellation's
-             whole content is on the row already). Double-click: the job card,
-             or the Sales Order for a cancellation. */
           onRowClick={(r) => { if (r.amendment) setQuick({ kind: 'so', id: r.amendment.id, label: String(r.amendment.amendment_no ?? r.soDocNo) }); }}
           onRowDoubleClick={(r) => openRow(r)}
-          /* Closed rows (rejected / withdrawn) grey out so they read as dead
-             (mirrors the GRN list's cancelled/closed treatment). Under the
-             simplified buckets only REJECTED is dead — an applied (SENT)
-             revision now reads as Approved, not closed. */
           rowStyle={(r) => (r.bucket === 'REJECTED' ? { opacity: 0.6, filter: 'grayscale(0.4)' } : undefined)}
           isLoading={isLoading}
           emptyMessage="No amendments yet — raise one from a processing-locked Sales Order."

@@ -51,11 +51,8 @@ export type DepartmentsAll = DepartmentPlan & {
   from: string; to: string; basis: DeptBasis;
   rates: ChargeRates;
   summary: Partial<Record<DeptColumnKey, DeptSummary>>;
-  /** The departments added up: what they pay each other comes out even. */
   total: DeptSummary;
-  /** Expense accounts no department claims yet: in no department's figures. */
   unassigned: { label: string; lines: Array<{ code: string; name: string; amountSen: number }> };
-  /** Set when the fairs could not be read for the Logistics P&L. */
   logisticsProblem: string | null;
 };
 
@@ -92,10 +89,8 @@ export type OpLine = {
 export type DepartmentsOperation = {
   from: string; to: string; months: string[]; incomeBp: number; logisticsIncomeBp: number;
   regions: Array<{ code: OpRegion; name: string }>;
-  /** The sheet's rows in order: how each is drawn, which block it adds into, and whether it shows only when not nil. */
   rows: Array<{ key: string; label: string; kind: OpRowKind; group: 'head' | 'gross' | 'expense' | 'expense_total' | 'result'; optional?: boolean }>;
   perMonth: Array<{ month: string; rows: Partial<Record<string, OpCells>>; dos: OpCells }>;
-  /** What every row but the results is made of: what a figure opens. */
   lines: OpLine[];
   income: Array<{ lineId: string; billNo: string; billDate: string; debtorName: string; description: string | null; accountCode: string; accountName: string | null; amountSen: number; month: string; key: string; region: OpRegion }>;
   manpower: Array<{ lineId: string; day: string; accountCode: string; accountName: string | null; notes: string | null; amountSen: number; row: string; region: OpRegion | null; cells: OpCells }>;
@@ -103,7 +98,6 @@ export type DepartmentsOperation = {
     lineId: string; kind: 'upkeep' | 'insurance'; accountCode: string; accountName: string | null; day: string; docNo: string | null; notes: string | null;
     amountSen: number; region: OpRegion; months: number; isDefault: boolean; perMonthSen: number; inRangeSen: number; lastMonth: string;
   }>;
-  /** Set when the fairs could not be read — the Setup/Dismantle line is then not known. */
   logisticsProblem: string | null;
 };
 
@@ -112,17 +106,13 @@ export type DepartmentView = {
   from: string; to: string; dept: Department; label: string; months: string[];
   basis: DeptBasis;
   rates: ChargeRates;
-  /** Performance: the orders counted and how many are not delivered yet. */
   orders: { counted: number; notDelivered: number } | null;
   perMonth: Array<{
     month: string; salesSen: number; costOfSalesSen: number; grossSen: number; otherIncomeSen: number; expensesSen: number; taxationSen: number;
-    /** What it pays the other departments, and the sales excluding service every rate is of (null: it pays none). */
     chargesSen: number; baseSen: number | null; netSen: number;
   }>;
   tree: Record<DeptBlock, DeptNode[]>;
-  /** What it pays the other departments, a row each (charge:ga, charge:operation, charge:setupDismantle). */
   charges: DeptNode[];
-  /** The accounts merchandise stands in for in Performance (none: no merchandise). */
   merchandiseAccounts: string[];
 };
 
@@ -131,13 +121,10 @@ export type UnitKind = 'operation' | 'logistics' | 'setupDismantle';
 export type DepartmentUnit = {
   from: string; to: string; basis: DeptBasis; label: string; unit: UnitKind; months: string[];
   rates: ChargeRates;
-  /** The sales excluding service each month: what the rates are of. */
   base: Record<string, number>;
-  /** Income, an expense, or what it pays another department (Operation's 3% to Logistics). */
   rows: Array<{ key: string; label: string; group: 'income' | 'expense' | 'paid'; cells: Record<string, number> }>;
   perMonth: Array<{ month: string; incomeSen: number; expenseSen: number; paidSen: number; netSen: number }>;
   regions: Array<{ code: OpRegion; name: string }>;
-  /** Operation: the sheet's lines behind its rows. */
   lines: OpLine[];
   logisticsProblem: string | null;
 };

@@ -26,37 +26,18 @@ export interface PermissionDef {
 }
 
 export const PERMISSIONS: PermissionDef[] = [
-  // Operational tabs
   { key: "service_cases.read",   resource: "Service Cases", verb: "read",   label: "View service cases",   description: "See the ASSR / Service Cases tab" },
   { key: "service_cases.create", resource: "Service Cases", verb: "create", label: "Log service cases",     description: "Create a case (but not edit it afterward — for sales who only log complaints)" },
   { key: "service_cases.write",  resource: "Service Cases", verb: "write",  label: "Edit service cases",   description: "Create and update ASSR cases" },
   { key: "service_cases.manage", resource: "Service Cases", verb: "manage", label: "Manage service cases", description: "Triage, assign, schedule logistics for ASSR cases" },
-  /* DECLARED 2026-08-13. `routes/assr.ts:2773` has gated POST /:id/approve on
-     this key all along, and it was absent from this array — so PERMISSION_KEYS
-     never contained it, it could not appear in the roles matrix, and
-     requirePermission admitted only holders of the literal string or `*`. In
-     practice: cost approval was accidentally Owner/IT-only, and no amount of
-     clicking in Team > Positions could change that.
-
-     Declaring it is a ZERO behaviour change today — everyone who could approve
-     still can — but the gate becomes grantable instead of silently absolute.
-     Its only other declaration was in the dead D1 tree
-     (db/migrations/014_qms_roles.sql:40). */
   { key: "service_cases.approve", resource: "Service Cases", verb: "manage", label: "Approve service cost", description: "Approve the quoted cost on an ASSR case (POST /api/assr/:id/approve)" },
   { key: "logs.read",     resource: "Activity Log", verb: "read", label: "View activity log", description: "See the system execution log" },
 
-  // IT pages (DEV-35): System Health, AI usage. While IT tests them the `*`
-  // wildcard does not confer this key; see services/itAccess.ts.
   { key: "it.view", resource: "IT", verb: "read", label: "View IT pages", description: "See System Health and the other IT-only pages" },
 
-  // Fleet Maintenance & Compliance (Phase 1) — the lorry master, compliance
-  // vault and Fleet Health dashboard (/api/fleet-maintenance). Read is the
-  // dashboard + reminders; write covers adding/editing vehicles and appending
-  // compliance-document renewals. Owner + IT Admin cover both via "*".
   { key: "fleet.read",  resource: "Fleet Maintenance", verb: "read",  label: "View Fleet Health",   description: "See the Fleet Health dashboard, lorry compliance vault and expiry reminders" },
   { key: "fleet.write", resource: "Fleet Maintenance", verb: "write", label: "Manage fleet vehicles", description: "Add and edit lorries, set out-of-service, and append compliance-document renewals" },
 
-  // Projects (exhibitions, solo events)
   { key: "projects.read",    resource: "Projects", verb: "read",   label: "View projects",     description: "See the Projects tab and open project detail pages" },
   { key: "projects.chat",    resource: "Projects", verb: "write",  label: "Post project chat", description: "Post messages and mark notifications read on projects you can see, without editing project config" },
   { key: "projects.checklist.tick", resource: "Projects", verb: "write", label: "Tick checklist items", description: "Flip the status of (non-gated) checklist items, without editing project config" },
@@ -85,41 +66,22 @@ export const PERMISSIONS: PermissionDef[] = [
   // full DIRECTOR tier. Read by pmsAccess.isFinanceViewer. Given to the BD role.
   { key: "projects.finance.view", resource: "Projects", verb: "read", label: "View project finances", description: "See project money figures (rental / sales / profit) and the Finances page without being a director" },
 
-  // Sales entries — rep-facing sales log that later pushes to AutoCount
   { key: "sales.read",   resource: "Sales Entries", verb: "read",   label: "View sales entries",   description: "See the Sales tab; scoped users see only their own entries" },
   { key: "sales.write",  resource: "Sales Entries", verb: "write",  label: "Edit sales entries",   description: "Create and edit own draft sales entries, submit for review" },
   { key: "sales.manage", resource: "Sales Entries", verb: "manage", label: "Manage sales entries", description: "Edit any entry, configure fields, void entries, push to AutoCount" },
 
-  // Houzs POS (the cash & carry booth app) — the ERP's POS Admin menu: items,
-  // barcode labels, cashiers, events, settings, sync status, reports. Owner +
-  // IT Admin cover it via "*"; this key lets another role in.
   { key: "pos.manage", resource: "POS Admin", verb: "manage", label: "Manage POS", description: "The POS Admin menu: POS items, barcode labels, cashiers, events, SST / receipt / printer / general settings, sync status and the POS sales report" },
 
-  // Supply Chain — ported 2990's furniture SCM (/api/scm). Single coarse
-  // gate: holding scm.access (or "*") unlocks every SCM module. Owner +
-  // IT Admin already cover it via "*"; this lets non-admin roles in too.
   { key: "scm.access", resource: "Supply Chain", verb: "read", label: "Access Supply Chain", description: "See and use the Supply Chain (furniture SCM) modules" },
-  // Granular SCM write gates — replace the inherited 2990 staff_role checks
-  // (which trivially pass in Houzs because the SCM bridge pins every caller
-  // to one super_admin row). Owner + IT Admin already cover all four via "*";
-  // grant it to a ROLE later under Team > Roles & Permissions.
   { key: "scm.config.write",        resource: "Supply Chain", verb: "write",  label: "Edit SCM master data",         description: "Edit SCM master data: products, sofa combos, delivery fees, fabric library + tier add-ons, PWP rules, sofa quick picks, special add-ons, Maintenance config, category hero images" },
   { key: "scm.products.merge",      resource: "Supply Chain", verb: "manage", label: "Merge product codes",          description: "Merge duplicate SKU codes into one kept code in SKU Master: moves every sales, purchase, delivery and stock line of the old codes onto the kept code and switches the old codes off" },
   { key: "scm.so.price_override",   resource: "Supply Chain", verb: "manage", label: "Override SO line unit price",  description: "Hand-override the unit price on a SCM Sales Order line (audited, admin-level)" },
   { key: "scm.so.view_all",         resource: "Supply Chain", verb: "read",   label: "View all salespersons' SOs",   description: "View every salesperson's My-Orders board (bypass per-rep attribution scoping)" },
   { key: "scm.so.attribute_other",  resource: "Supply Chain", verb: "manage", label: "Attribute SO to another rep",  description: "Create or edit a SCM Sales Order on behalf of another salesperson (stamp a different salesperson_id)" },
-  // DEV-32 (Syu 2026-10-01) — for Logistics. Rule: scm/shared/so-after-do-edit.ts.
   { key: "scm.so.edit_after_do",    resource: "Supply Chain", verb: "manage", label: "Edit SO after DO",             description: "After a Delivery Order is raised, change the SO customer details and add or edit charge lines (transport, storage, misc); the change is copied onto the DO. Not once the DO has an invoice or return." },
-  // DEV-70 (syasya 2026-10-12) — price of a line already on a DO. Rule: scm/shared/so-after-do-edit.ts.
   { key: "scm.so.edit_price_after_do", resource: "Supply Chain", verb: "manage", label: "Edit SO line price after DO", description: "After a Delivery Order is raised, change the unit price and discount of any SO line it carries (qty, product and specification stay locked); the DO line follows. Not once the DO has an invoice or return." },
   // Owner 2026-11-21 — the super-admin escape hatch. Rule: scm/shared/so-after-do-edit.ts.
   { key: "scm.so.edit_lines_after_do", resource: "Supply Chain", verb: "manage", label: "Edit SO line items after DO (super admin)", description: "After a Delivery Order is raised, change the QUANTITY and SPECIFICATION of any product line it carries, and add or remove product lines; the change flows onto the Delivery Order (stock re-synced) and onto every live Sales Invoice billing it (totals, paid status and the revenue entry re-derived), issued or not. Super-admin only; nobody holds it by default except '*'." },
-  // Port of 2990 gate #717 — clearing an already-set Processing Date pulls the
-  // SO back out of the Proceed lane (and, once the day has elapsed, undoes the
-  // lock that says "this is what we PO to the supplier"). 2990 restricts it to
-  // super_admin; Houzs has no live staff_role (the SCM bridge pins every caller
-  // to one super_admin row), so gate on this admin-level key instead. Owner + IT
-  // Admin cover it via "*"; grant the ROLE it belongs to under Team > Roles & Permissions.
   { key: "scm.so.override_po_processing_date", resource: "Supply Chain", verb: "manage", label: "Change Processing Date under a PO", description: "Move or clear the Processing Date of a Sales Order that already has a Purchase Order (BUG-101: Purchaser only, never sales)" },
   { key: "scm.so.remove_processing_date", resource: "Supply Chain", verb: "manage", label: "Remove SO Processing Date", description: "Clear an already-set Processing Date on a SCM Sales Order (admin-level; pulls the order back out of the Proceed lane)" },
   // Owner 2026-09-23 — a keyed-in payment's transaction-slip date must fall in
@@ -146,19 +108,9 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.amendment.approve_lines",    resource: "Supply Chain", verb: "manage", label: "Approve SO amendment — product lines", description: "Approve (or reject) the PRODUCT-LINE lane of an SO amendment: SKU/spec, colour/fabric and quantity on an existing line (price-only, and adding or cancelling a whole product line, are the Sales Director's — see approve_price). Approving applies the SO revision at once and auto-raises the follow-up PO Amendment for purchasing to confirm" },
   { key: "scm.amendment.approve_delivery", resource: "Supply Chain", verb: "manage", label: "Approve SO amendment — delivery",      description: "Approve (or reject) the DELIVERY lane of an SO amendment: schedule dates, State/Postcode/City (and the delivery-info fields as they come under control). Applies the SO revision at once; never touches a Purchase Order" },
   { key: "scm.amendment.approve_price",    resource: "Supply Chain", verb: "manage", label: "Approve SO amendment — price (2990)", description: "Approve (or reject) the Sales Director's SO-amendment lanes on HOUZS and 2990: a price-only line change (unit price / discount; SKU, colour and quantity unchanged), and adding or cancelling a whole product line. A price change applies the SO revision and never touches a Purchase Order; an add / cancel applies the revision and auto-raises the follow-up PO Amendment for purchasing to confirm" },
-  // LEGACY keys — gate only pre-rework amendments still mid-chain (lane IS NULL:
-  // supplier-confirm / approve-so / approve-po / send). Not granted to any role;
-  // Owner + IT Admin pass via "*". Kept so historical rows stay operable.
   { key: "scm.amendment.supplier_confirm", resource: "Supply Chain", verb: "manage", label: "Confirm SO amendment (supplier) — legacy", description: "LEGACY flow only: record the supplier's confirmation on a pre-rework amendment (REQUESTED -> SUPPLIER_PENDING)" },
   { key: "scm.amendment.approve_so",       resource: "Supply Chain", verb: "manage", label: "Approve SO revision — legacy",         description: "LEGACY flow only: approve the Sales Order revision of a pre-rework amendment (SUPPLIER_PENDING -> SO_APPROVED)" },
   { key: "scm.amendment.approve_po",       resource: "Supply Chain", verb: "manage", label: "Approve/send/reject PO revision — legacy", description: "LEGACY flow only: approve the bound PO revision, mark it sent, or reject a pre-rework amendment (SO_APPROVED -> PO_APPROVED -> SENT, or -> REJECTED)" },
-  // PO amendment / revision workflow (Houzs, mig 0192). A standalone amendment
-  // that revises a Purchase Order directly (line qty / cost / spec / delivery,
-  // add or remove a line, or the header supplier / delivery / notes) through a
-  // SIMPLIFIED single-approver gate: REQUESTED -> APPROVED (approve APPLIES the
-  // change), or REQUESTED -> REJECTED (reject / withdraw). No supplier-confirm,
-  // no two-gate, no send. Owner + IT Admin cover all via "*"; grant the
-  // purchasing ROLE under Team > Roles & Permissions. po_amendment.approve also gates reject.
   { key: "scm.po_amendment.create",  resource: "Supply Chain", verb: "manage", label: "Raise PO amendment",   description: "Raise an amendment request against a Purchase Order (opens the single-approver PO revision flow)" },
   { key: "scm.po_amendment.approve", resource: "Supply Chain", verb: "manage", label: "Approve/reject PO amendment", description: "Approve a Purchase Order amendment — snapshots the prior version, applies the line + header diffs, bumps the PO revision (REQUESTED -> APPROVED) — or reject it (-> REJECTED)" },
   // Document cancellation approval (owner 2026-09-08, 「SO 和 PO 取消的话需要
@@ -179,21 +131,10 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: "scm.so_cancel.approve_l1", resource: "Supply Chain", verb: "approve", label: "Approve SO cancellation — level 1", description: "Give the FIRST of two approvals (or reject) a request to cancel a Sales Order. The order is not cancelled until level 2 also approves" },
   { key: "scm.so_cancel.approve_l2", resource: "Supply Chain", verb: "approve", label: "Approve SO cancellation — level 2", description: "Give the SECOND and final approval (or reject) a request to cancel a Sales Order. Must be a different person from the level-1 approver and from the requester; the cancel runs on this signature" },
 
-  // Payment Vouchers — standalone AP cash-out document (port of 2990 0189/0202,
-  // Phase 1-B MYR). A PV pays a vendor that is NOT a goods invoice (freight
-  // forwarder, one-off service) and posts a balanced JE to the GL; a
-  // SUPPLIER_PAYMENT PV can also settle one or more Purchase Invoices at face
-  // value. Reading the list rides the coarse scm.access + the scm.finance area
-  // guard; these flat keys gate the write transitions against the REAL caller
-  // (2990's scm.staff.role gates are dead — the SCM bridge pins every caller to
-  // one super_admin row). Owner + IT Admin cover all via "*"; grant the
-  // finance / purchasing ROLE under Team > Roles & Permissions.
   { key: "scm.payment_voucher.create", resource: "Supply Chain", verb: "write",  label: "Create payment voucher",  description: "Create a draft Payment Voucher (pay a non-goods vendor: freight forwarder, one-off service)" },
   { key: "scm.payment_voucher.write",  resource: "Supply Chain", verb: "write",  label: "Edit payment voucher",    description: "Edit a DRAFT Payment Voucher (payee, accounts, lines, PI settlement allocations)" },
   { key: "scm.payment_voucher.post",   resource: "Supply Chain", verb: "manage", label: "Post payment voucher",     description: "Post a Payment Voucher to the General Ledger (DRAFT -> POSTED; settles any linked PIs)" },
   { key: "scm.payment_voucher.cancel", resource: "Supply Chain", verb: "manage", label: "Cancel payment voucher",   description: "Cancel a Payment Voucher (reverses the GL entry + any PI settlement)" },
-  // Phase 3 (2026-08-28): money leaves only after a yes. Nobody holds this by
-  // default except '*' — the owner grants it per position when he delegates.
   { key: "scm.payment_voucher.check", resource: "Supply Chain", verb: "manage", label: "Check payment voucher", description: "The first of the two yeses (owner 2026-09-02): check a prepared Payment Voucher — checking locks it and reserves it against Daily Bank's available money; a checker may also reject back to draft" },
   { key: "scm.payment_voucher.approve", resource: "Supply Chain", verb: "manage", label: "Approve payment voucher", description: "The second yes: approve a checked Payment Voucher — approval posts the GL entry in the same breath; an approver may also reject back to draft" },
   // 申请付款 (owner 2026-09-30, 4a: Event 的 rental 要还的要相关负责人 upload，然后我
@@ -246,41 +187,10 @@ export const PERMISSIONS: PermissionDef[] = [
   // Admin pass via "*"; grant warehouse leads via Team > Positions.
   { key: "scm.stock_take.supervise", resource: "Supply Chain", verb: "manage", label: "Supervise stock takes", description: "Post any stock take (not only ones assigned to you), post counts whose variance exceeds the threshold, and reveal system quantities on blind counts" },
 
-  // Currency master — the owner-maintained list of currencies + each one's
-  // rate_to_myr (multi-currency FX, migration 0082). Reading the list is open to
-  // any authed SCM caller (the GRN/PI/PV currency dropdowns need it); this flat
-  // key gates create/edit of a currency + its rate. Owner + IT Admin cover it via
-  // "*"; grant the finance / purchasing ROLE under Team > Roles & Permissions.
   { key: "scm.currency.manage",        resource: "Supply Chain", verb: "manage", label: "Manage currencies",        description: "Add or edit a currency in the master and set its exchange rate to MYR (used by GRN / PI / Payment Voucher foreign-currency posting)" },
 
-  // HR / Commission (port of 2990 0171 + apps/api/src/routes/hr.ts). Computes
-  // commission-only salaries: per-salesperson goods -> % rate + KPI bonuses ->
-  // payout. 2990 gates reads on staff.role admin|super_admin|sales_director and
-  // writes on admin|super_admin; those gates are DEAD in Houzs (the SCM bridge
-  // pins every /api/scm/* caller to one super_admin staff row), so these two
-  // flat keys gate the REAL caller instead — the read/write SPLIT is 2990's own
-  // (a sales director may see the numbers, not set the rates).
-  //
-  // These are NEW keys rather than a reuse, deliberately. /hr/commission returns
-  // every colleague's SALARY — the most sensitive read in the SCM surface — so
-  // it must not ride the coarse scm.access umbrella (see the "READ-ONLY IS NOT
-  // THE SAME AS SAFE" incident on scm/index.ts, where reports rode the umbrella
-  // and leaked company-wide cost + margin to any Sales Executive). Nor does it
-  // borrow canViewScmFinance: that answers "may this caller see cost/margin on a
-  // DOCUMENT", and quietly aliasing payroll onto it would mean any later change
-  // to the finance tier silently re-permissions salaries.
-  //
-  // Owner + IT Admin cover both via "*", so the module works on day one; every
-  // other position must be granted explicitly via Team > Positions. Payroll
-  // failing closed by default is the intended behaviour.
   { key: "scm.hr.read",   resource: "Supply Chain", verb: "read",   label: "View HR commission",   description: "See the HR module: every salesperson's commission, KPI bonuses, salary profiles and the rate settings (read-only)" },
   { key: "scm.hr.manage", resource: "Supply Chain", verb: "manage", label: "Manage HR commission", description: "Set the commission rates and KPI thresholds, assign salesperson tiers/showrooms, and flag item KPIs — changes what people are paid" },
-  // Closing a period FREEZES that period's payout against later rate edits, and
-  // reopening un-freezes an already-approved figure. They are separate keys and
-  // separate from scm.hr.manage on purpose: whoever tunes the rates should not
-  // thereby be able to approve a payroll run, and whoever approves one should
-  // not thereby be able to reverse an approval nobody else witnessed. Owner + IT
-  // Admin hold both via "*" — grant either explicitly and sparingly.
   { key: "scm.hr.close",  resource: "Supply Chain", verb: "manage", label: "Close HR payout period", description: "Freeze a commission period so later rate changes cannot alter what it pays — the payroll approval step" },
   { key: "scm.hr.reopen", resource: "Supply Chain", verb: "manage", label: "Reopen HR payout period", description: "Un-freeze a closed commission period so it recomputes again — reverses an approved payout and is always recorded with a reason" },
 
@@ -289,40 +199,17 @@ export const PERMISSIONS: PermissionDef[] = [
   // rules. Own keys, not scm.hr.*: commission and payroll are granted to
   // different people. Owner + IT Admin cover both via "*".
   { key: "hr.employees.read",   resource: "HR", verb: "read",   label: "View employees",   description: "See Employees & Attendance: every employee's pay basis, salary, bank and statutory flags, the public holidays and the pay rules (read-only)" },
-  // Approving a payroll month locks it, settles its advances and posts its
-  // penalties; approving a penalty sends it to payroll. Its own key so whoever
-  // keys hours and advances does not also sign off what they keyed.
   { key: "hr.payroll.approve", resource: "HR", verb: "approve", label: "Approve payroll", description: "Approve or reopen a payroll month, mark it paid, and approve, reject or revoke penalties" },
   { key: "hr.employees.manage", resource: "HR", verb: "manage", label: "Manage employees", description: "Add and edit employees and their salary, link the ERP account they punch with, keep the public holidays and schedule pay-rule changes — changes what people are paid" },
-  // A supervisor confirms or rejects the overtime workers report on the phone.
-  // Its own key so a floor / warehouse supervisor can sign off OT without the
-  // full hr.employees.manage pay-editing rights. Confirmed OT is what payroll pays.
   { key: "hr.ot.confirm", resource: "HR", verb: "approve", label: "Confirm overtime", description: "See and confirm or reject the overtime that workers report on the phone; confirmed overtime is what payroll pays" },
   // A supervisor approves the make-up punches (补卡) a worker files when they
   // forgot to clock in or out. An approval writes that day's attendance. Its own
   // key so a floor / warehouse supervisor can clear them without the full
   // hr.employees.manage attendance-editing rights.
   { key: "hr.punch.approve", resource: "HR", verb: "approve", label: "Approve make-up punches", description: "See and approve or reject the make-up punches workers file when they forgot to clock in or out; an approval writes that day's attendance" },
-  // A supervisor approves the leave workers apply for on the phone. An approval
-  // stamps those days onto attendance (paid leave not docked, unpaid not paid).
-  // Its own key so a floor / warehouse supervisor can clear leave without the
-  // full hr.employees.manage pay-editing rights.
   { key: "hr.leave.approve", resource: "HR", verb: "approve", label: "Approve leave", description: "See and approve or reject the leave workers apply for on the phone; an approval marks those days as leave on the attendance" },
-  // Attendance-only view. Opens Employees & Attendance to the Attendance (and,
-  // with hr.ot.confirm, OT) tabs ALONE — the daily punches and working hours,
-  // never salary, pay, the employee master or payroll. For an attendance / OT
-  // supervisor who must see who clocked in but not what anyone is paid.
   { key: "hr.attendance.read", resource: "HR", verb: "read", label: "View attendance only", description: "See the daily attendance punches and working hours in Employees & Attendance — not salary, pay, the employee master or payroll" },
 
-  // AutoCount write-back queue (scm.autocount_outbox, mig 0277) — the READ of
-  // what the ERP has told the licensed account book and what came back. It is a
-  // narrow key rather than a reuse of scm.access because the queue names every
-  // document the company pushed and quotes AutoCount's own refusals, and because
-  // the owner wanted to be able to hand somebody this page WITHOUT handing them
-  // settings.manage, which is the other key the route accepts (whoever may edit
-  // the sync connection may obviously read the queue it feeds, and that grant
-  // already exists — a key nobody holds is an endpoint nobody can call).
-  // Owner + IT Admin cover it via "*".
   { key: "scm.autocount.read", resource: "Supply Chain", verb: "read", label: "View AutoCount sync queue", description: "See every document the ERP pushed to AutoCount, its state (queued / sent / failed / skipped) and the reason it failed or was skipped" },
   /* DECLARED 2026-09-08, for the go-live change log the owner asked for when he
      opened sales orders, delivery orders, purchase orders and goods receipts to
@@ -334,74 +221,29 @@ export const PERMISSIONS: PermissionDef[] = [
      change log spans every area at once). Owner + IT Admin cover it via "*";
      settings.manage is the other key the route accepts. */
   { key: "scm.changelog.read", resource: "Supply Chain", verb: "read", label: "View the change log", description: "See who changed which sales order, delivery order, purchase order or goods receipt, when, and from what to what — with the system's own automated changes counted separately" },
-  /* DECLARED 2026-08-16, when the page grew a per-row "Send again" button.
-     The read key above used to end "Read-only: re-sending stays in
-     requeue-autocount-skipped.yml"; it does not any more, and the two are
-     deliberately SEPARATE keys rather than one. Reading the queue is watching;
-     re-sending WRITES A DOCUMENT INTO A LIVE LICENSED ACCOUNT BOOK, where an
-     accepted sales order cannot simply be deleted. Whoever is handed the page
-     to watch must not thereby be able to push into the book — the same split
-     scm.hr.close / scm.hr.reopen is drawn on one section up. The route also
-     accepts settings.manage, which already exists and already owns the AutoCount
-     connection, so the button works for its real audience on day one. */
   { key: "scm.autocount.requeue", resource: "Supply Chain", verb: "manage", label: "Re-send a refused AutoCount document", description: "Put one failed or skipped document back in the AutoCount queue once its cause is fixed — writes into the live account book, and is refused outright for a document AutoCount has already accepted" },
-  /* DECLARED 2026-09-12 with the Venture Portal live sales-order feed
-     (mig 20260912T1800). The SAME SPLIT the two AutoCount keys above are drawn
-     on, and for a sharper reason. Reading the queue is watching. Managing it
-     sets the shared SECRET and decides WHICH COMPANIES' sales orders — with
-     their line costs and their margins — leave this system for an external
-     portal where they become the input to somebody's commission. A delivery
-     cannot be recalled, so the manage key is deliberately not implied by the
-     read key, and neither is implied by scm.access: an L2 SCM area key would be
-     an arbitrary owner for a page that spans orders, lines, costs and payments
-     at once. settings.manage is the other key both halves accept — whoever
-     already owns the sync connections owns this one — so the page works for its
-     real audience on day one with no grant migration. Owner + IT Admin hold "*". */
   { key: "scm.venture_portal.read", resource: "Supply Chain", verb: "read", label: "View Venture Portal feed", description: "See whether the live sales-order feed to the Venture Portal is on, what is queued, what was delivered and why anything failed" },
   { key: "scm.venture_portal.manage", resource: "Supply Chain", verb: "manage", label: "Manage Venture Portal feed", description: "Turn the live sales-order feed on or off, choose which companies it covers, set or rotate the shared secret, and re-send a delivery — sends sales orders, line costs and cancellations to an external portal" },
 
-  // Mail Center — in-ERP shared inbox (/api/mail-center). mail_center.read is the
-  // nav/page gate (grant broadly); mail_center.manage gates the alias / access /
-  // scope-level admin grids. Owner + IT Admin cover both via "*". Per-thread
-  // read/reply/star/label/trash are NOT permission-gated — they gate on mailbox
-  // SCOPE ownership (see getMailScope) so an unseeded permission can't 403 a
-  // mailbox owner.
   { key: "mail_center.read",   resource: "Mail Center", verb: "read",   label: "View Mail Center", description: "See the Mail Center inbox and work the mailboxes in your scope" },
   { key: "mail_center.manage", resource: "Mail Center", verb: "manage", label: "Manage Mail Center", description: "Create/assign email aliases, the shared-mailbox access matrix, and per-user visibility levels" },
 
-  // Meetings (/api/meetings): every signed-in user books rooms and sees the calendar,
-  // so the page has no gate. Only adding and changing rooms, and the change log, need this.
   { key: "meetings.manage_rooms", resource: "Meetings", verb: "manage", label: "Manage meeting rooms", description: "Add and change meeting rooms (seats, hours, rules, closed dates) and see the meetings change log" },
 
-  // Announcements — office posts every logged-in user sees as a top-of-screen
-  // banner. announcements.read gates the list page + read-receipt visibility;
-  // announcements.write gates create / edit / hide / remind / delete. The
-  // banner GET + per-user ack POST live OUTSIDE the permission gate (every
-  // authed user can see + ack their own banner). Owner + IT Admin bypass via "*".
   { key: "announcements.read",  resource: "Announcements", verb: "read",  label: "View announcements",  description: "Open the Announcements list page and see read-receipts" },
   { key: "announcements.write", resource: "Announcements", verb: "write", label: "Manage announcements", description: "Post, edit, hide, remind, and delete announcements" },
-  // The approval desk (mig 20260906T1509): every notice — the MD's own
-  // included — is published by an approve click. Give this to the role that
-  // signs off; re-point it whenever the approver changes.
   { key: "announcements.approve", resource: "Announcements", verb: "approve", label: "Approve announcements", description: "Approve or reject submitted announcements before they go live; receives the approval-needed notice" },
 
-  // Memos — the department memo register (mig 20260909T0500). Any signed-in
-  // user registers for their own department; this key registers for any
-  // department and voids anyone's memo.
   { key: "memos.manage", resource: "Memos", verb: "manage", label: "Manage memos", description: "Register a memo for any department and void any memo (the register is otherwise own-department only)" },
 
-  // System
   { key: "udf.manage", resource: "Custom Fields", verb: "manage", label: "Manage custom fields", description: "Add or remove user-defined fields on tables" },
   { key: "settings.manage", resource: "Settings", verb: "manage", label: "Manage settings", description: "Edit connection and sync configuration" },
 
-  // Team & roles
   { key: "users.read",   resource: "Team",  verb: "read",   label: "View team",   description: "See team members and pending invitations" },
   { key: "users.manage", resource: "Team",  verb: "manage", label: "Manage team", description: "Invite, change role, disable, or remove users" },
   { key: "roles.read",   resource: "Roles", verb: "read",   label: "View roles",  description: "See the list of roles and their permissions" },
   { key: "roles.manage", resource: "Roles", verb: "manage", label: "Manage roles", description: "Create, edit, and delete custom roles" },
 
-  // AI Connector (routes/mcpAdmin.ts): approve who may connect Claude / ChatGPT
-  // read-only, see what was looked up, disconnect anyone. Owner holds it via "*".
   { key: "ai_connector.manage", resource: "AI Connector", verb: "manage", label: "Manage AI Connector", description: "Approve staff for the read-only AI connector, see their lookups, and disconnect them" },
 ];
 
@@ -449,8 +291,6 @@ export function hasPermission(
   if (Array.isArray(granted)) {
     return granted.includes("*") || granted.includes(required);
   }
-  // Narrowed to ReadonlySet<string> in the else branch — assert to
-  // satisfy TS's union-narrowing limitation here.
   const set = granted as ReadonlySet<string>;
   return set.has("*") || set.has(required);
 }
@@ -555,34 +395,17 @@ export function droppedPermissions(json: string | null | undefined): string[] {
  * (`middleware/supplierTrack.ts`), never by a session permission.
  */
 export type UndeclaredRoleKey = {
-  /**
-   * `legacy-closed` — a REAL gate exists, and the key is left ungrantable ON
-   * PURPOSE. Declaring one of these would OPEN access that is currently shut.
-   * `retired` — the key gates nothing anywhere; the module it belonged to is
-   * gone. Declaring one would add a checkbox that grants nothing.
-   */
   status: "legacy-closed" | "retired";
   why: string;
 };
 
 export const UNDECLARED_ROLE_KEYS: Readonly<Record<string, UndeclaredRoleKey>> = {
-  // ── The five AutoCount legacy read keys. DO NOT DECLARE. ────────────────
-  // Each one IS a live gate in `routes/udf.ts:26-32`, and that file's header
-  // says the closure is deliberate: "their legacy read keys survive only in
-  // the mig 001/009/014 role JSON, so they stay closed to anyone the matrix
-  // can grant." Declaring any of them makes it a tickable checkbox and opens
-  // a UDF table nobody has decided to reopen.
   "sales_orders.read":    { status: "legacy-closed", why: "gates GET /api/udf/sales_orders (udf.ts:26); closed on purpose since strip-to-core" },
   "delivery_orders.read": { status: "legacy-closed", why: "gates GET /api/udf/delivery_orders (udf.ts:27); closed on purpose" },
   "purchase_orders.read": { status: "legacy-closed", why: "gates GET /api/udf/purchase_orders (udf.ts:28); closed on purpose" },
   "balance.read":         { status: "legacy-closed", why: "gates GET /api/udf/balance (udf.ts:30); closed on purpose" },
   "overdue.read":         { status: "legacy-closed", why: "gates GET /api/udf/overdue (udf.ts:31); closed on purpose" },
 
-  // ── Retired Fleet / Trips module (mig 009, schema.sql Dispatcher+Driver+
-  // Helper). `public.trips` was DROPped by mig 0055; nothing mounts /api/trips
-  // or /api/planner. The Fleet keys that ARE live are `fleet.read` /
-  // `fleet.write`, which gate `scm/routes/fleet-maintenance.ts` — a different,
-  // later module. `routes/fleet.ts` has one gate and it is `users.read`.
   "trips.read.own":  { status: "retired", why: "retired Trips module; no /api/trips mount, public.trips dropped by mig 0055" },
   "trips.read.all":  { status: "retired", why: "retired Trips module; the only mention left is a comment at routes/inbox.ts:253" },
   "trips.write":     { status: "retired", why: "retired Trips module; mig 009 Dispatcher + Driver, mig 014 Logistic Admin" },
@@ -593,17 +416,9 @@ export const UNDECLARED_ROLE_KEYS: Readonly<Record<string, UndeclaredRoleKey>> =
   "sync.run":        { status: "retired", why: "old manual AutoCount sync trigger; the sync runs from cron + scm.autocount_* toggles" },
   "reports.read":    { status: "retired", why: "mig 014 Manager role; no /api/reports mount and no reader" },
 
-  // ── The `.write` twins of two legacy-closed READ keys. Distinct case, and
-  // the more dangerous one: their `.read` siblings are ungrantable ON PURPOSE
-  // (above), so declaring a `.write` would create a grantable write key whose
-  // read counterpart is deliberately shut.
   "sales_orders.write":    { status: "retired", why: "mig 009 Dispatcher; no writer — and its .read twin is legacy-closed, so declaring this would open write above read" },
   "delivery_orders.write": { status: "retired", why: "mig 009 Dispatcher; no writer — same read/write inversion as above" },
 
-  // ── Mig 014's Customer / Supplier portal roles. Superseded by CAPABILITY
-  // TOKENS: /api/portal and /api/supplier-portal resolve a bearer token to
-  // exactly one case (middleware/supplierTrack.ts), and no handler there
-  // consults a session permission at all.
   "portal.customer":               { status: "retired", why: "mig 014 Customer role; /api/portal is capability-token gated, not permission gated" },
   "portal.supplier":               { status: "retired", why: "mig 014 Supplier role; /api/supplier-portal is capability-token gated" },
   "service_cases.read.own":        { status: "retired", why: "mig 014 Customer role; superseded by the portal token" },

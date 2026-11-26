@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// RequestsDrawer — To do's "Payment requests" drawer in the owner's Claude
-// Design (Money out, batch 4 step 10). The `requests` job's Review opens it on
-// the To do page (?drawer=requests): one card per request waiting for Finance —
-// what it is, from whom, how much, for what, where the money goes — with Send
-// back (a reason, then today's return) and Make voucher › (New payment voucher
-// prefilled from the request, in a workspace tab); a supplier's bill can be
-// booked as an AP bill first. Nothing here posts: a voucher made from it starts
-// as a draft and walks the four steps.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { CheckCircle2, Info, Undo2, X } from 'lucide-react';
@@ -22,7 +12,6 @@ import styles from './FinanceTasks.module.css';
 import look from './RequestsDrawer.module.css';
 
 const firstName = (name: string | null): string => (name ?? '').trim().split(/\s+/)[0] || 'the requester';
-/** Whole days a request has waited, by its MYT calendar day. */
 const waitedDays = (createdAt: string, today: string): number =>
   Math.max(0, Math.round((Date.parse(today) - Date.parse(new Date(Date.parse(createdAt) + 8 * 3600_000).toISOString().slice(0, 10))) / 86_400_000));
 const payTo = (r: PaymentRequest): string | null => {
@@ -39,7 +28,7 @@ function RequestCard({ r, today, onSentBack }: { r: PaymentRequest; today: strin
   const days = waitedDays(r.created_at, today);
   const where = payTo(r);
   const back = async () => {
-    try { await sendBack.mutateAsync({ id: r.id, note: note.trim() }); onSentBack(r); } catch { /* the hook says why */ }
+    try { await sendBack.mutateAsync({ id: r.id, note: note.trim() }); onSentBack(r); } catch { }
   };
   return (
     <div className={look.req}>
@@ -85,7 +74,6 @@ function RequestCard({ r, today, onSentBack }: { r: PaymentRequest; today: strin
 export function RequestsDrawer({ open, onClose, today }: { open: boolean; onClose: () => void; today: string }) {
   const q = usePaymentRequests(false);
   const waiting = useMemo(() => (q.data?.requests ?? []).filter(awaitsFinance), [q.data]);
-  /* What was decided here, said in place of the card (the design's resolved lines). */
   const [sentBack, setSentBack] = useState<PaymentRequest[]>([]);
   return (
     <ResizableDetailDrawer open={open} onClose={onClose} ariaLabel="Payment requests">

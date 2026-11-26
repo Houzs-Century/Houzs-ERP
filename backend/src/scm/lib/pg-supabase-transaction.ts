@@ -8,17 +8,11 @@ import { recordStep } from '../../lib/step-timing';
 
 type QueryResult<T = unknown> = { data: T | null; error: { message: string } | null; count?: number | null };
 type Predicate = { sql: string; values: unknown[] };
-/* The schemas a command may name. `public` only for the masters the SCM client
-   reaches with `.schema('public')` (companies — doc-no.ts jePrefixForCompany). */
 type TxSchema = 'scm' | 'public';
 const txQueues = new WeakMap<object, Promise<void>>();
 const pendingReleases = new WeakMap<object, Promise<unknown>>();
 const SLOW_STATEMENT_MS = 1000;
 
-/* Sent now, awaited later. postgres.js queries are lazy until execute() or
-   await; a plain promise is already running. Inside sql.begin postgres.js
-   attaches its own catch to every query, so one that fails before it is
-   awaited is not an unhandled rejection, and it still fails the transaction. */
 const send = <T>(query: Promise<T>): Promise<T> =>
   (query as Promise<T> & { execute?: () => Promise<T> }).execute?.() ?? query;
 
@@ -76,8 +70,6 @@ const selectList = (raw = '*'): string => {
   if (raw.trim() === '*') return '*';
   if (raw.trim() === 'count(*)::bigint AS count') return raw.trim();
   const columns = splitTopLevel(raw)
-    // PostgREST relationship projections are presentation-only. Command code
-    // never uses them for mutation decisions; omit them from the tx adapter.
     .filter((part) => !part.includes('(') && !part.includes(':'))
     .map((part) => columnExpr(part));
   return columns.length > 0 ? columns.join(', ') : '*';
@@ -136,9 +128,6 @@ const parsePgTextArray = (value: unknown): unknown => {
 
 const PG_DATE_OID = 1082;
 
-/* `columns` is postgres.js's result metadata. A `date` column comes back as
-   "YYYY-MM-DD", as PostgREST returns it: postgres.js parses it to a JS Date
-   (UTC midnight), and callers written for PostgREST do String(day).slice(0, 10). */
 const normalizeReturnedRows = (
   rows: unknown[], table: string, columns: ReadonlyArray<{ name: string; type: number }> | undefined,
 ): unknown[] => {
@@ -160,15 +149,10 @@ const normalizeReturnedRows = (
 const commandParameter = (sql: Sql, table: string, column: string, value: unknown): unknown => {
   if (value === undefined || value === null || value instanceof Date) return value;
   if (JSON_COLUMNS.has(column)) {
-    // Explicit OID 3802 is essential with postgres.js unsafe(): PostgreSQL's
-    // describe phase otherwise discovers jsonb and JSON.stringify's an already
-    // stringified value a second time.
     return sql.json(value as never);
   }
   if (isTextArrayColumn(table, column)) {
     if (!Array.isArray(value)) throw new Error(`${column} must be a text array`);
-    // fetch_types:false deliberately does not discover array serializers. Send
-    // a correctly escaped text[] literal with the explicit built-in text[] OID.
     return sql.typed(encodePgTextArray(value), TEXT_ARRAY_OID);
   }
   if (typeof value === 'object') {
@@ -371,16 +355,11 @@ class PgPostgrestQuery implements PromiseLike<QueryResult<any>> {
       }
     });
     if (outcome.error) {
-      // Voucher minting retries a random code, while mirrored amendment
-      // dispatch resolves a duplicate idempotency key by reading the existing
-      // command. These are the two expected statement errors inside commands;
-      // the savepoint keeps the transaction usable for their retry/read path.
       if ((this.table === 'pwp_codes' || this.table === 'sync_command')
           && (this.operation === 'insert' || this.operation === 'upsert')
           && /duplicate key|unique constraint/i.test(outcome.error.message)) {
         return { data: null, error: outcome.error, count: 0 };
       }
-      // Keep the SQLSTATE: callers tell a DB guard (P0409, P0411) from a bug by it.
       throw Object.assign(new Error(outcome.error.message), { code: outcome.error.code });
     }
     const rows = outcome.rows;
@@ -418,24 +397,9 @@ export const pgTransactionSupabase = (sql: Sql) => ({
       return { data: rows[0]?.locked ?? false, error: null };
     }
     if (name === 'pg_advisory_unlock') {
-      // Transaction-scoped locks release automatically on commit/rollback.
       return { data: true, error: null };
     }
     if (name === 'rebuild_mfg_so_delivery_lines') {
-      /* Atomic SVC-DELIVERY* rebuild (migration 0214). It must be reachable from
-         inside an atomic command too: the delivery fee re-derives at the end of
-         every line PATCH, and those PATCHes run in this transaction wrapper. The
-         function's own pg_advisory_xact_lock is what serializes concurrent
-         rebuilds of the same SO — holding it inside the caller's transaction is
-         exactly the intent (it releases at commit/rollback).
-
-         It RETURNS false without writing when p_expect_state — the operator-owned
-         fee state the caller derived from — has moved under that lock (0314). The
-         caller re-derives and calls again, and in THIS path that retry is
-         guaranteed to converge: the advisory xact lock the first call took is
-         held for the rest of this transaction, so nothing can move the state
-         under attempt two. Returned as `data` rather than raised, precisely so a
-         stale derivation does not roll the whole command back. */
       try {
         const rows = await sql.unsafe(
           'SELECT scm.rebuild_mfg_so_delivery_lines($1::text, $2::text, $3::bigint, $4::jsonb, $5::jsonb) AS rebuilt',
@@ -454,13 +418,10 @@ export const pgTransactionSupabase = (sql: Sql) => ({
             // value once with OID 3802 — the exact fix commandParameter() above
             // already applies to every other jsonb column on this shim.
             sql.json((args.p_rows ?? []) as never),
-            /* Same rule for the expectation object. null means "do not check". */
             // eslint-disable-next-line no-restricted-syntax -- sql.json's parameter is JSONValue and p_expect_state arrives as unknown off the rpc args bag; this is the same cast the p_rows line above already needs, for the same reason.
             args.p_expect_state == null ? null : sql.json(args.p_expect_state as never),
           ] as never[],
         );
-        /* Optional on purpose: a driver that returns no row must read as "it
-           wrote", never as "it refused" — a silent no-op is not a refusal. */
         const rebuilt = (rows as Array<{ rebuilt?: boolean }>)[0]?.rebuilt;
         return { data: rebuilt ?? true, error: null };
       } catch (e) {
@@ -468,7 +429,6 @@ export const pgTransactionSupabase = (sql: Sql) => ({
       }
     }
     if (name === 'fn_retire_do_stock_cycle') {
-      /* The atomic ship retires a reverted DO's returned cycle before it deducts again (lib/do-stock-cycle.ts). */
       try {
         const rows = await sql.unsafe('SELECT scm.fn_retire_do_stock_cycle($1::uuid) AS n', [args.p_do_id] as never[]);
         return { data: (rows as Array<{ n?: number }>)[0]?.n ?? 0, error: null };
@@ -495,8 +455,6 @@ export function deferScmAfterCommit(c: any, effect: () => Promise<void>): void {
 export type SoCommandLeaseCheck =
   | { ok: true; version: number }
   | { ok: false; reason: 'not_found' }
-  /* WHICH of the three, because one message for four states sent the owner
-     looking for a colleague who was not there - see so-edit-lease.ts. */
   | { ok: false; reason: 'lease'; lease: SoEditLeaseRefusal };
 
 /** Lock the SO generation row and prove the lease on that same connection. */
@@ -505,9 +463,6 @@ export async function lockSoCommandLease(
   docNo: string,
   leaseToken: string | null | undefined,
   companyId: number | null | undefined,
-  /* REQUIRED, not optional: its absence decides whether a caller may take a
-     lock back, so a call site that forgot it must not silently get the old
-     behaviour. Pass an explicit null where there is no authenticated user. */
   callerUserId: number | null,
 ): Promise<SoCommandLeaseCheck> {
   const locked = await sql.unsafe<Array<{
@@ -532,9 +487,6 @@ export async function lockSoCommandLease(
     && Number.isFinite(expiry) && expiry > Date.now()
     && row.edit_lease_token !== leaseToken;
   if (!leaseToken) return { ok: false, reason: 'lease', lease: 'missing' };
-  /* THE SAME PERSON TAKES THEIR OWN LOCK BACK - mig 0348. A lock left by the
-     caller's own crashed save is not a colleague editing, and making them wait
-     it out protects nobody. Version CAS still decides who wins the write. */
   if (heldByAnother && soEditLeaseTakeoverAllowed(row.edit_lease_user_id, callerUserId)) {
     return { ok: true, version: Number(row.version ?? 1) };
   }

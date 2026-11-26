@@ -56,11 +56,9 @@ describe('SavedLocations', () => {
     fireEvent.click(await screen.findByText('New location'));
     await screen.findByPlaceholderText('e.g. Sunway Pyramid loading bay');
 
-    // No name: the client refuses before any POST.
     fireEvent.click(screen.getByText('Add location'));
     expect(authedFetch).not.toHaveBeenCalledWith('/saved-locations', expect.objectContaining({ method: 'POST' }));
 
-    // Name + an address line: it POSTs.
     fireEvent.change(screen.getByPlaceholderText('e.g. Sunway Pyramid loading bay'), { target: { value: 'New Point' } });
     fireEvent.change(screen.getByPlaceholderText('Street / unit'), { target: { value: '88 Jalan Perindustrian' } });
     fireEvent.click(screen.getByText('Add location'));

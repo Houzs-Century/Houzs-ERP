@@ -55,9 +55,6 @@ export function lastMileSideOf(o: LastMileRow, date: string): LastMileSide | nul
 //    place the two merge (lastMileListSideOf).
 export type LastMileListSide = LastMileSide | 'TO_ARRANGE';
 
-/* The list sides in rail order, each with its chip label. ONE home for the
-   vocabulary: FleetDay's chips, its per-side counts and its labels all derive
-   from this array, so a fourth side is added here and nowhere else. */
 export const LAST_MILE_LIST_SIDES: ReadonlyArray<{ side: LastMileListSide; label: string }> = [
   { side: 'TO_ARRANGE', label: 'To arrange' },
   { side: 'TIME_ARRANGED', label: 'Time arranged' },
@@ -73,8 +70,6 @@ type ToArrangeRow = Pick<
   'row_type' | 'trip_date' | 'delivery_state' | 'effective_delivery_date' | 'customer_delivery_date' | 'processing_date'
 >;
 
-/* The day a not-yet-arranged order is DUE — the same effective date the board
-   and the mobile run-sheet bucket on (amended ?? original, then processing). */
 const toArrangeDateOf = (o: ToArrangeRow): string | null =>
   o.effective_delivery_date || o.customer_delivery_date || o.processing_date || null;
 
@@ -151,20 +146,6 @@ export function isLastMileJobRow(
   return d != null && String(d).slice(0, 10) === date && !!o.crew?.lorry_plate;
 }
 
-/* East Malaysia (Sabah / Sarawak / Labuan) and Singapore ship by their OWN
-   channel — consolidated out of KL and sent by freight, not on the local
-   last-mile lorry run — so they are kept OFF the Last Mile board (owner
-   2026-10-25). They still appear on the Delivery Planning board and in their own
-   EM / SG modules; this exclusion is Last-Mile-only, applied by FleetDay (the
-   admin board + its day map) and the mobile driver run-sheet, never in the
-   shared backend feed.
-
-   'EM' is the config region bucket for East Malaysia. Singapore folds into
-   'Southern', so it is caught by COUNTRY, not region. The state check is a
-   belt-and-braces fallback for East Malaysia in case the region config is
-   renamed. Takes the three geography fields by generic name so the SAME rule
-   serves both a board row (region / customer_state / customer_country) and a
-   day-map point (region / state / country). */
 export function isEastMalaysiaOrSingaporeStop(loc: {
   region?: string | null;
   state?: string | null;

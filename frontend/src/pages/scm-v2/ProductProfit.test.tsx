@@ -40,7 +40,6 @@ const draw = (search = '?tab=products&from=2026-09-01&to=2026-09-30') => render(
     <Routes><Route path="*" element={<><ProductProfitTab /><Where /></>} /></Routes>
   </MemoryRouter>,
 );
-/* Inside a shell, to read the header's grey line the report sets. */
 const subtitle = vi.fn();
 const drawInShell = (search: string) => {
   const slots: ShellSlots = { actionsHost: null, setSubtitle: subtitle, inPlaceHost: null, setInPlace: () => {} };
@@ -150,7 +149,6 @@ describe('Product profit', () => {
     drawInShell('?tab=products&from=2026-09-01&to=2026-09-30');
     expect(asked).toHaveBeenLastCalledWith({ from: '2026-09', to: '2026-09' });
     expect(lastSubtitle()).toBe('September 2026 · by SO date · All · gifts included');
-    /* The shell's shared dates, not a month box of its own. */
     expect(screen.queryByLabelText('Month')).toBeNull();
   });
 

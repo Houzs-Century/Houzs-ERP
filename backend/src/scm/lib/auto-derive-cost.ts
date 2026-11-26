@@ -1,26 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────
-// auto-derive-cost.ts — the recompute hook (auto-derive stage 2b).
-//
-// When a supplier's price/binding for a SKU changes, recompute that ONE SKU's
-// derived cost (whole-set max supplier, `deriveProductCostFromSuppliers`) and
-// write it onto mfg_products. This REPLACES the near-unused is_cost_anchor
-// mirror (1 SKU in production): the suppliers are the source, the product cost
-// is derived from them.
-//
-// GATED, INERT BY DEFAULT. `autoDeriveEnabled` reads an app_config flag that
-// defaults OFF (row absent = off), mirroring write-freeze. While OFF the routes
-// keep today's behaviour exactly (the old is_cost_anchor mirror); only when the
-// owner turns it ON does the recompute drive the product cost. A read failure
-// fails CLOSED (returns false) so a blip cannot silently flip the mechanism.
-//
-// PERFORMANCE. The recompute is per-SKU: one product read + one binding read
-// (indexed by idx_smb_material on (material_kind, item_code)) + one product
-// update. No catalogue scan, and it runs only on a supplier-price WRITE — the
-// read paths (Products list, Sales Report, SO form) are unchanged column reads.
-//
-// BACKEND-ONLY. Nothing here touches the frontend; the product cost column the
-// UI already reads is simply kept fresh by the backend.
-// ─────────────────────────────────────────────────────────────────────────
 
 import {
   deriveProductCostFromSuppliers,
@@ -34,7 +11,6 @@ import { todayMyt } from './my-time';
  *  OFF (today's behaviour). */
 export const AUTO_DERIVE_FLAG_KEY = 'scm.auto_derive_product_cost';
 
-// The SCM routes carry an untyped supabase-js client.
 type Sb = { from: (t: string) => any }; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 /**
@@ -77,11 +53,6 @@ export async function autoDeriveEnabled(sb: Sb, companyId: number | null | undef
   }
 }
 
-/** One slot of the sofa seat grid. The two money fields have DIFFERENT OWNERS:
- *  `priceSen` is COST (this file derives it), `sellingPriceSen` is RETAIL
- *  (authored only from 2990's POS SKU Master). They share a jsonb array and
- *  nothing in the column's type keeps them apart, which is the whole reason
- *  `mergeRetailOntoDerivedSeatGrid` exists. */
 type SeatGridSlot = {
   height?: unknown;
   tier?: unknown;
@@ -137,14 +108,10 @@ export type DerivedCostIO = {
   loadProduct(companyId: number | null | undefined, code: string): Promise<{ id: string; category: string | null } | null>;
   loadBindings(companyId: number | null | undefined, code: string): Promise<SupplierBindingCost[]>;
   writeProductCost(productId: string, patch: DerivedProductCost): Promise<void>;
-  /** The latest derived-cost history row for (company, code), for dedup — so an
-   *  unchanged recompute does not append a redundant row. */
   latestCostHistory(
     companyId: number | null | undefined,
     code: string,
   ): Promise<{ base_price_sen: number | null; price1_sen: number | null; seat_height_prices: unknown } | null>;
-  /** Append a derived-cost history row effective `effectiveFrom` (YYYY-MM-DD) —
-   *  the as-of timeline the SO recompute reads (stage 3c). */
   appendCostHistory(
     companyId: number | null | undefined,
     code: string,
@@ -154,9 +121,6 @@ export type DerivedCostIO = {
   ): Promise<void>;
 };
 
-/** Does the derived patch differ from the latest history row? Compares the three
- *  cost lanes; a missing history row always counts as changed. Seat grids are
- *  compared order-independently. */
 function costHistoryChanged(
   latest: { base_price_sen: number | null; price1_sen: number | null; seat_height_prices: unknown } | null,
   patch: DerivedProductCost,
@@ -215,11 +179,6 @@ export async function recomputeDerivedProductCost(
 
   await io.writeProductCost(product.id, derived.patch);
 
-  // Append the as-of timeline row (stage 3b) so the SO recompute can read the
-  // budget cost as-of the order's date and historical figures don't move. Only
-  // when the derived cost actually changed, so repeated no-op recomputes do not
-  // pile up identical rows. Effective from today (MYT) — a supplier-price change
-  // takes effect from when it is recorded.
   const latest = await io.latestCostHistory(companyId, code);
   if (costHistoryChanged(latest, derived.patch)) {
     await io.appendCostHistory(companyId, code, derived.patch, derived.chosenSupplierId, todayMyt());
@@ -234,9 +193,6 @@ export function makeSupabaseDerivedCostIO(sb: Sb): DerivedCostIO {
       let q = sb.from('mfg_products').select('id, category').eq('code', code);
       if (companyId != null) q = q.eq('company_id', companyId);
       const { data, error } = await q.maybeSingle();
-      // Bind the error: a failed read must not masquerade as "product not found"
-      // (which would silently skip the recompute). Throw — the best-effort
-      // caller logs it, same as loadBindings.
       if (error) throw new Error(`product read failed for ${code}: ${error.message}`);
       return (data as { id: string; category: string | null } | null) ?? null;
     },
@@ -267,33 +223,17 @@ export function makeSupabaseDerivedCostIO(sb: Sb): DerivedCostIO {
       if ('base_price_sen' in patch) update.base_price_sen = patch.base_price_sen ?? null;
       if ('price1_sen' in patch) update.price1_sen = patch.price1_sen ?? null;
       if (patch.seat_height_prices !== undefined) {
-        /* ⚠️ seat_height_prices carries TWO owners. `priceSen` is the COST this
-           derivation produces; `sellingPriceSen` is the RETAIL price authored
-           ONLY from 2990's POS SKU Master. Assigning the derived array outright
-           — which is what this line used to do — deletes every retail price on
-           the SKU, because sofaSeatRowsFromMatrix emits {height, tier, priceSen}
-           and nothing else. That is exactly what happened: the 2026-09-16
-           stage-4 run plus four days of the ON hook erased 193 retail prices
-           across 82 company-2 SKUs (restored 2026-09-20 from
-           scm.master_price_history; see BUG-HISTORY).
-
-           So: read what is stored and carry the retail dimension across. Cost is
-           still wholly ours to replace. */
         const { data: stored, error } = await sb
           .from('mfg_products')
           .select('seat_height_prices')
           .eq('id', productId)
           .maybeSingle();
-        // Bind the error rather than merging onto an assumed-empty grid: a failed
-        // read must not look like "this SKU had no retail price".
         if (error) throw new Error(`seat grid read failed for ${productId}: ${error.message}`);
         update.seat_height_prices = mergeRetailOntoDerivedSeatGrid(
           (stored as { seat_height_prices?: unknown } | null)?.seat_height_prices,
           patch.seat_height_prices,
         );
       }
-      // Keyed by the product's own id (PK) — the loadProduct read already scoped
-      // to the active company, so the id belongs to this company.
       await sb.from('mfg_products').update(update).eq('id', productId);
     },
     async latestCostHistory(companyId, code) {
@@ -369,8 +309,6 @@ export async function recordSupplierPriceHistorySafe(
   if (!code || !args.supplierId) return;
   const effectiveFrom = (args.effectiveFrom ?? '').trim() || todayMyt();
   try {
-    // Compared against the row live on effectiveFrom, not the newest-dated one:
-    // a price scheduled for a later date is not what the binding holds now.
     let q = sb
       .from('supplier_binding_price_history')
       .select('unit_price_sen, price_matrix')
@@ -391,7 +329,7 @@ export async function recordSupplierPriceHistorySafe(
       Number(prev.unit_price_sen ?? 0) === Number(args.unitPriceSen ?? 0) &&
       JSON.stringify(prev.price_matrix ?? null) === JSON.stringify(args.priceMatrix ?? null)
     ) {
-      return; // unchanged — do not pile up an identical history row
+      return;
     }
     const { error: insErr } = await sb.from('supplier_binding_price_history').insert({
       company_id: args.companyId,
@@ -402,7 +340,6 @@ export async function recordSupplierPriceHistorySafe(
       price_matrix: args.priceMatrix ?? null,
       is_main_supplier: Boolean(args.isMainSupplier),
       effective_from: effectiveFrom,
-      // A snapshot of what the flat binding already holds — nothing to apply.
       applied_at: new Date().toISOString(),
       notes: 'supplier price snapshot',
     });

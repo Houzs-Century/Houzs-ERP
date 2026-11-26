@@ -151,7 +151,6 @@ describe('Daily Bank (cash book) — its own page beside the original', () => {
     test('Finance ticks an approved voucher; a ticked one stays on its line, marked, its amount not taken off; untick deducts it again', withTicks(true, async () => {
       renderAt('?view=accounts');
       const may = screen.getByLabelText('310-0010 CASH AT BANK - MAYBANK');
-      /* One tick per voucher: the typed receipt has none. */
       expect(within(may).getAllByRole('checkbox').map((b) => b.getAttribute('aria-label'))).toEqual(["Don't deduct HPV-101", "Don't deduct HPV-077"]);
       const open = within(may).getByLabelText("Don't deduct HPV-101") as HTMLInputElement;
       expect(open.checked).toBe(false);
@@ -163,7 +162,6 @@ describe('Daily Bank (cash book) — its own page beside the original', () => {
       expect(row.textContent).toContain('OWN TRANSFER · OtherNot deducted: already in the starting balance · ticked by Mei Ling · 2026/11/25 10:30');
       expect(row.querySelector('[class*="notDeductedAmount"]')!.textContent).toBe('31,000.00');
       expect(within(row).getByRole('button', { name: 'History of HPV-077 on the cash book' })).toBeTruthy();
-      /* The subtotal is the board's: the ticked voucher is not in it. */
       expect(may.querySelector('tfoot')!.textContent).toBe('Subtotal3,000.001,200.50');
       fireEvent.click(ticked);
       await waitFor(() => expect(unskip).toHaveBeenCalledWith({ pvId: 'pv-7' }));

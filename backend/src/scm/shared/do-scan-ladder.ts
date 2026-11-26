@@ -1,27 +1,5 @@
 import type { DoStatus } from './do-shipped-states';
-// ----------------------------------------------------------------------------
-// do-scan-ladder — the three scans on the paper that travels with the goods,
-// declared ONCE for both the screen and the server.
-//
-// WHY IT LEFT do-next-step.ts (2026-08-26). It was declared there, in the
-// FRONTEND, and that was fine while the only caller was the logged-in scan page.
-// It stopped being fine the moment the same ladder had to be reachable without a
-// login: the public scan endpoint must decide the target status ON THE SERVER —
-// a rung named in a request body is a rung an attacker chooses — so the server
-// needed the ladder too. A second copy of it in backend/ is precisely the
-// duplicated-decision class this repo gates on, and the ladder is the worst
-// possible thing to hold twice: one copy gaining a rung the other has not is a
-// delivery order that moves on the phone and not in the books.
-//
-// So it lives HERE, as a mirrored rule module: backend/src/scm/shared/ is the
-// original, frontend/src/vendor/shared/ is the byte-identical copy, and
-// backend/scripts/check-shared-mirrors.mjs --strict fails the build when they
-// differ. Same mechanism that has kept do-shipped-states.ts honest.
-// do-next-step.ts re-exports every symbol below, so nothing that imported the
-// ladder from there had to change.
-// ----------------------------------------------------------------------------
 
-/** Normalise a raw status off a row into the lower-case token used here. */
 function norm(status: string | null | undefined): string {
   return String(status ?? '').trim().toLowerCase();
 }
@@ -66,17 +44,8 @@ function norm(status: string | null | undefined): string {
 // DELIVERED, INVOICED, CANCELLED.
 
 export type DoScanStep = {
-  /** Target delivery_orders.status to PATCH. A `scm.do_status` member by TYPE. */
   status: Extract<DoStatus, 'LOADED' | 'DISPATCHED' | 'IN_TRANSIT' | 'DELIVERED'>;
-  /** The words on the one button. */
   label: string;
-  /* THE LINE UNDER THE BUTTON, CARRIED HERE RATHER THAN IN A MAP BESIDE THE
-     CALLER. It started life as a `Record<DoScanStep['status'], string>` on the
-     scan page and `check-duplicated-decisions` caught it at Jaccard 0.80
-     against SI_TRANSFERABLE_DO_STATES — correctly: a second hand-typed set of
-     the same four labels is a second place to forget a rung. Attaching the
-     sentence to the rung means adding a rung cannot leave one behind, and the
-     compiler says so. */
   note: string;
 };
 
@@ -142,14 +111,8 @@ export function doScanBlockReason(
   }
   const s = norm(status);
   if (s === 'cancelled') {
-    /* The backend refuses every transition out of CANCELLED outright
-       (`do_cancelled_final`), so a button here could not succeed. The words are
-       aimed at somebody standing at a lorry, not at a screen. */
     return 'This delivery order is cancelled. Do not load or move these goods — call the office.';
   }
-  /* SIGNED sits with DELIVERED because doCountsAsDelivered returns true for it:
-     the delivery is closed everywhere that reads it, so there is genuinely
-     nothing left for a scan to do. */
   if (s === 'signed' || s === 'delivered' || s === 'invoiced') {
     return 'Nothing left to do on this document.';
   }

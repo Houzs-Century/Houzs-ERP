@@ -43,8 +43,6 @@ export function MobileProjectChat({
   onPosted,
 }: {
   projectId: number;
-  /** Called after a successful send — the parent reloads so the sales panel
-   *  picks up any bill the chat parser recognised. */
   onPosted: () => void;
 }) {
   const { user, can } = useAuth();
@@ -60,15 +58,10 @@ export function MobileProjectChat({
   });
 
   const [draft, setDraft] = useState("");
-  // `failed` is an error (red). `notice` is neutral status (amber) — the
-  // "Saved, refreshing..." line after a send whose refetch hasn't caught up
-  // yet, so the sender does not re-send over a successful post.
   const [failed, setFailed] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Textarea grows with pasted content so the whole sales report is readable
-  // before sending. Resets to one row after a successful send.
   useEffect(() => {
     const el = taRef.current;
     if (!el) return;
@@ -115,16 +108,11 @@ export function MobileProjectChat({
       }
       setPending((prev) => prev.filter((p) => p.id !== localId));
       if (!landed) {
-        // Server accepted it but we couldn't see it after the retries: let the
-        // sender know the paste is saved, so they don't send it again while
-        // the next poll catches up.
         setNotice("Saved — the chat will refresh in a moment. Don't send again.");
       }
       onPosted();
     },
     onError: (e, { localId, note }) => {
-      // Restore the draft so the sender can retry without re-typing, and lift
-      // the pending bubble so they don't see a phantom unsent message.
       setPending((prev) => prev.filter((p) => p.id !== localId));
       setDraft((cur) => (cur ? cur : note));
       setFailed(e instanceof Error ? e.message : "Couldn't send. Try again.");
@@ -133,18 +121,11 @@ export function MobileProjectChat({
 
   const notes = (activityResponse?.data ?? []).filter((a) => a.action === "note");
   const listRef = useRef<HTMLDivElement | null>(null);
-  // Auto-scroll to the newest message every time the count changes — fires for
-  // both the optimistic "sending" row and the real one that replaces it, so
-  // the floor sees their paste land without hunting for it in the scroller.
   useEffect(() => {
     const el = listRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [notes.length, pending.length]);
-  // Clear the "Saved — refreshing" notice when the next poll comes in with a
-  // bigger note count than we had when the notice was shown. A ref captures
-  // the snapshot at set-time so a later refetch that includes the just-sent
-  // note trips the clear exactly once.
   const noticeAtCountRef = useRef<number | null>(null);
   useEffect(() => {
     if (notice && noticeAtCountRef.current == null) {
@@ -164,9 +145,6 @@ export function MobileProjectChat({
   const send = () => {
     const trimmed = draft.trim();
     if (!trimmed || post.isPending) return;
-    // Client-side id so the optimistic row can be cleared on the matching
-    // response — Date.now is unique enough on a phone (no sub-ms sends) and
-    // keeps the id stable across React re-renders.
     const localId = `local-${Date.now()}`;
     post.mutate({ localId, note: trimmed });
   };
@@ -180,9 +158,6 @@ export function MobileProjectChat({
         </svg>
       </summary>
       <div className="pbody">
-        {/* Message list — tallest card on the phone is the P&L above us, so cap
-            the chat at ~60vh and let it scroll on its own. Newest at bottom to
-            match every chat app the floor already uses. */}
         <div
           ref={listRef}
           style={{
@@ -282,9 +257,6 @@ export function MobileProjectChat({
           ))}
         </div>
 
-        {/* Compose row — only when the user holds the chat permission. The
-            server runs the same gate (requireAnyPermission on
-            [projects.write, projects.chat]) so a stale frontend never writes. */}
         {canPost && (
           <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "flex-end" }}>
             <textarea
@@ -294,9 +266,6 @@ export function MobileProjectChat({
               disabled={post.isPending}
               onChange={(e) => { setDraft(e.target.value); setFailed(null); setNotice(null); }}
               onKeyDown={(e) => {
-                /* Enter-to-send on the phone soft keyboard is unreliable (Go/Done
-                   often inserts a newline instead), so the Send button is the
-                   authoritative action; this shortcut only helps a hardware kb. */
                 if (e.key === "Enter" && !e.shiftKey && (e.ctrlKey || e.metaKey)) {
                   e.preventDefault();
                   send();

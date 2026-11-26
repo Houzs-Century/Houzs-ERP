@@ -96,7 +96,6 @@ export function financeColumns<R extends FinanceSenRow, L>(group: string | undef
   ];
 }
 
-/** A line unit price: RM on screen, ringgit with up to 4 places in the file. */
 function unitPriceColumn<R extends { lines?: L[] }, L extends { unit_price_sen: number | null }>(key: string, label: string, group: string | undefined): Column<R, L> {
   return {
     ...lineTextColumn<R, L>({
@@ -156,7 +155,7 @@ export function doChargeColumns<R extends { lines?: DoListLine[] }>(): Column<R,
     lineSumColumn<R, DoListLine>({
       key, label, linesOf, pick: (l) => pick(l) ?? null, exportFormat: "money",
       toExport: (sen) => senToRinggit(sen, 2), format: (sum) => fmtSen(sum), defaultHidden: true,
-      group: COLUMN_GROUPS.amounts, // "transport" alone would file it under Logistics
+      group: COLUMN_GROUPS.amounts,
     });
   return [
     charge("transport_charges", "Transport Charges", (l) => l.transport_sen),

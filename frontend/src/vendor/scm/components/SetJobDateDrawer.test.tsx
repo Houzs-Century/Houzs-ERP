@@ -50,7 +50,6 @@ describe('SetJobDateDrawer — amend reason', () => {
   });
 
   test('a date-only change writes the schedule date, not the reason', () => {
-    // Opens on the requested date with no confirmed date yet -> the date is dirty.
     render(<SetJobDateDrawer order={leg({ amended_delivery_date: null, customer_delivery_date: '2026-11-20' })} onClose={vi.fn()} />);
     fireEvent.click(screen.getByText('Save'));
     expect(schedMutate).toHaveBeenCalledTimes(1);

@@ -1,8 +1,3 @@
-// Pure state-machine coverage for the PO amendment workflow — sibling of
-// so-amendment.test.ts. The simplified lifecycle (REQUESTED -> APPROVED, with
-// REJECTED as the terminal close for both reject and withdraw) is the ONLY thing
-// standing between a Purchase Order and an out-of-order transition, so a silent
-// edit to FLOW must be caught here.
 
 import { describe, it, expect } from "vitest";
 import {

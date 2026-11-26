@@ -80,7 +80,6 @@ vi.mock("../../auth/AuthContext", () => ({ useAuth: () => ({ can: () => true, pa
 import { SalesInvoiceDetailV2 } from "./SalesInvoiceDetailV2";
 import { ADD_LINE_LABEL } from "../../vendor/scm/lib/add-line-handoff";
 
-/** Mutable so one test can drop the operator to read-only without a new mock. */
 const access = { current: "full" as "full" | "view" };
 
 const ID = "11111111-2222-3333-4444-555555555555";
@@ -138,12 +137,8 @@ function setup(overrides: { status?: string; pageAccess?: "full" | "view" } = {}
 
 const addLineButton = () => screen.queryByRole("button", { name: ADD_LINE_LABEL });
 
-/* Scoped to the add row's own fieldset. The line TABLE's column headers carry
-   "Unit price" / "Discount" filter buttons with those exact accessible names,
-   so an unscoped query matches two elements and the field is unaddressable. */
 const row = () => within(screen.getByRole("group", { name: /new line/i }));
 
-/** Fill the add row. MoneyInput commits on BLUR, so money goes change+blur. */
 function fillRow(opts: { code?: string; description?: string; qty?: string; price?: string; discount?: string } = {}) {
   const r = row();
   if (opts.code !== undefined) {
@@ -173,8 +168,6 @@ const saveRow = () => fireEvent.click(screen.getByRole("button", { name: /^add t
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // jsdom ships no layout, so no scrollIntoView; the page calls it in a rAF
-  // where a throw escapes as an unhandled error.
   Element.prototype.scrollIntoView = vi.fn();
   addMutateAsync.mockResolvedValue({ item: { id: "new" } });
   confirm.mockResolvedValue(true);
@@ -183,9 +176,6 @@ afterEach(cleanup);
 
 describe("Sales invoice — adding a line by hand", () => {
   it("offers the action from the page you start on, under the shared name", async () => {
-    /* THE GAP. Before this change the page rendered no such control on any
-       surface, and `useAddSalesInvoiceItem` had zero call sites — so this
-       assertion is the whole defect in one line. */
     setup();
     await screen.findByText(/line items/i);
     expect(addLineButton()).not.toBeNull();
@@ -206,8 +196,6 @@ describe("Sales invoice — adding a line by hand", () => {
     expect(payload.itemCode).toBe("ACC-001");
     expect(payload.description).toBe("Scatter cushion");
     expect(payload.qty).toBe(3);
-    /* Sen, not ringgit. `buildItemRow` multiplies qty × unitPriceSen straight
-       into line_total_sen — a ringgit here would under-bill by 100×. */
     expect(payload.unitPriceSen).toBe(5_500);
     expect(payload.discountSen).toBe(500);
   });
@@ -224,8 +212,6 @@ describe("Sales invoice — adding a line by hand", () => {
   });
 
   it("refuses an empty item code WITHOUT calling the server", async () => {
-    /* The backend answers 400 `item_code_required`. Saying so inline costs one
-       round trip less and keeps what the operator typed. */
     setup();
     await screen.findByText(/line items/i);
     fireEvent.click(addLineButton()!);
@@ -237,11 +223,6 @@ describe("Sales invoice — adding a line by hand", () => {
   });
 
   it("shows the server's refusal INLINE and keeps the row open", async () => {
-    /* The repo's recurring bug class is a refusal that reaches nobody
-       (vendor/scm/lib/mutation-error.ts). The 409s this endpoint can answer —
-       an unknown item code, a line still pending on the source Delivery Order,
-       an over-remaining quantity — all carry a sentence worth reading, and it
-       has to arrive next to the row that caused it, still holding the typing. */
     setup();
     await screen.findByText(/line items/i);
     fireEvent.click(addLineButton()!);
@@ -256,9 +237,6 @@ describe("Sales invoice — adding a line by hand", () => {
   });
 
   it("is absent once the invoice is ISSUED — the backend 409s it, so do not offer it", async () => {
-    /* `isIssuedSi` = any status but DRAFT and CANCELLED. Lines are frozen
-       wholesale there: adding one raises what the customer owes and void+reposts
-       the GL, without the PDF in their hand changing. */
     setup({ status: "SENT" });
     await screen.findByText(/line items/i);
     expect(addLineButton()).toBeNull();
@@ -271,8 +249,6 @@ describe("Sales invoice — adding a line by hand", () => {
   });
 
   it("is absent for an operator with read-only access to sales invoices", async () => {
-    /* Gated exactly as the page's own Edit affordance is — `pageAccess` in
-       ("edit" | "full") — so one permission answers for both. */
     setup({ pageAccess: "view" });
     await screen.findByText(/line items/i);
     expect(addLineButton()).toBeNull();

@@ -16,7 +16,6 @@ import { ReconcilePickContext } from './bank-reconcile-pick';
 import type { LedgerEntry } from './bank-queries';
 import look from './BankStatements.module.css';
 
-/** A sales order number: HC-SO-2608-001, 2990-SO-2609-016, HC-SO-013512. */
 const ORDER_NO = /^[A-Z0-9]+-SO-\d[\d-]*$/;
 
 /** The document text, cut where the server joined its parts, each part saying whether it is an order. */
@@ -33,7 +32,6 @@ export function EntryDocument({ text }: { text: string }) {
     rememberReturnScroll();
     pick?.keepForReturn();
   };
-  /* In the cell's own type (a bold document stays bold), with the Finance link's dotted underline. */
   return (
     <span className={look.entryDoc}>
       {orderLinkParts(text).map((p, i) => (p.order

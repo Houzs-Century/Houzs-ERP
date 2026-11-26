@@ -3,9 +3,6 @@ import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { transportFeeRegion } from './so-transport-fee';
 
-/* The transport-fee rule has ONE text and two copies: the server refuses on it
- * and the New SO forms show the Transport fee box from it. If they drift, the
- * box is missing where the server demands a fee. */
 describe('the two copies of so-transport-fee are the same file', () => {
   const norm = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n');
 

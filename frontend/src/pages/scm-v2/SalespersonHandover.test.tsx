@@ -1,8 +1,3 @@
-// A handover rewrites who owns live Sales Orders, so the two things this test
-// pins are the two that would hurt: the operator must SEE the orders before
-// committing, and the run must be chunked to the batch cap the API enforces (a
-// single 60-order POST is a 400, and a UI that sends it looks like a failure
-// with no orders moved).
 import { cleanup, render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,10 +6,6 @@ vi.mock("../../vendor/scm/lib/authed-fetch", () => ({
   authedFetch: (...args: unknown[]) => authedFetch(...args),
   API_URL: "",
 }));
-/* The From picker lists ORDER HOLDERS, not the staff roster — the roster is
-   scoped by a person's company link and hid the resigned reps the panel exists
-   for. `alicia` is the resigned holder: inactive, and NOT in the pickable
-   roster below, so a test that passes with her selectable is proving the fix. */
 vi.mock("../../vendor/scm/lib/sales-order-queries", () => ({
   useSoHandoverHolders: () => ({
     data: [
@@ -52,8 +43,6 @@ const preview = (count: number) => ({
 beforeEach(() => authedFetch.mockReset());
 afterEach(cleanup);
 
-/* SearchableSelect is an input + a portalled <li> menu, so a pick is
-   focus → (optionally type) → mousedown the row, not a <select> change. */
 function pick(label: string, optionText: string | RegExp) {
   const input = screen.getByRole("combobox", { name: label });
   fireEvent.focus(input);
@@ -63,10 +52,6 @@ const pickFrom = (optionText: string | RegExp) =>
   pick("Orders currently with", optionText);
 
 describe("SalespersonHandover", () => {
-  /* The list is ORDER HOLDERS, biggest book first, with the count in the label
-     — not the staff roster A→Z. `alicia` is inactive AND absent from the
-     pickable roster, so her being here at all is the regression this pins:
-     under the old source she was unselectable and her 30 orders unreachable. */
   it("lists who holds orders, most first, with the count", () => {
     render(<SalespersonHandover />);
     fireEvent.focus(screen.getByRole("combobox", { name: "Orders currently with" }));
@@ -79,9 +64,8 @@ describe("SalespersonHandover", () => {
     render(<SalespersonHandover />);
     pickFrom("alicia (inactive) — 30");
     await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
-    expect(screen.getByText("2")).toBeTruthy();          // the count
+    expect(screen.getByText("2")).toBeTruthy();
     expect(screen.getByText("HC-SO-2")).toBeTruthy();
-    // Nothing written yet — the preview is a GET.
     expect(authedFetch).toHaveBeenCalledTimes(1);
     expect(authedFetch.mock.calls[0][1]).toBeUndefined();
   });
@@ -93,8 +77,6 @@ describe("SalespersonHandover", () => {
     await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
 
     pick("Hand them to", "Bernard");
-    // The component re-previews after a run, so route by path rather than by
-    // call order.
     authedFetch.mockImplementation((path: string) =>
       Promise.resolve(path === "/so-handover/apply" ? { moved: [], skipped: [] } : preview(0)),
     );
@@ -165,7 +147,6 @@ describe("SalespersonHandover — sharing", () => {
         mode: "add",
       });
     });
-    /* The whole point of the owner's ruling: sharing never touches attribution. */
     expect(authedFetch.mock.calls.filter((c) => c[0] === "/so-handover/apply")).toHaveLength(0);
   });
 
@@ -193,8 +174,6 @@ describe("SalespersonHandover — sharing", () => {
     await waitFor(() => expect(screen.getByText("HC-SO-1")).toBeTruthy());
 
     expect(screen.queryByRole("button", { name: /Share with/ })).toBeNull();
-    /* And the handover button is still gated by ITS own field, not by the
-       sharing one. */
     expect(screen.getByRole("button", { name: /Move to/ }).hasAttribute("disabled")).toBe(true);
   });
 });

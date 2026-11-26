@@ -12,6 +12,7 @@ function fakeCtx(routes: Partial<Record<string, (q: Record<string, unknown> | un
   const ctx: R3Ctx = {
     read: async (path, q) => {
       calls.push({ path, q });
+      // eslint-disable-next-line houzs/no-imperative-timers -- a fake slow read: the test times it to prove the reads run in parallel
       if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
       const h = routes[path];
       return h ? h(q) : { ok: false, status: 404, message: "not found", note: "", target: path };
@@ -115,7 +116,7 @@ describe("FAQ tools through a fake ERP", () => {
       },
     });
     const got = await pagedRows(ctx, "/api/scm/mfg-sales-orders", "salesOrders", {}, 9, (last) => String(last.customer_delivery_date) > "2026-11-25");
-    expect(got.ok && got.rows.length).toBe(500); // page 0 + one wave of 4, then stopped
+    expect(got.ok && got.rows.length).toBe(500);
     expect(got.ok && got.truncated).toBe(false);
     expect(reads).toBe(5);
   });

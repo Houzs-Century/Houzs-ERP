@@ -22,11 +22,6 @@ import { hydrateTableLayouts } from "../lib/tableLayouts";
 import { headStartFailed } from "../lib/lazyPage";
 import { forgetNativeSession, rememberNativeSession } from "../lib/nativeSession";
 
-/** Stage 2: store the signed staff pass beside the token when a login response
- *  carries one. Absent (`session_pass` undefined = the signing secret is unset
- *  on the server) → nothing stored, everything runs on the token as before. The
- *  pass is not sent or verified yet; stage 3 does that. Persistent tracks the
- *  same Remember-me choice the token used, so the two live in the same store. */
 function storeSessionPass(res: unknown, persistent?: boolean): void {
   const sp = (res as { session_pass?: string } | null)?.session_pass;
   if (sp) passStore.set(sp, persistent);
@@ -34,35 +29,11 @@ function storeSessionPass(res: unknown, persistent?: boolean): void {
 import { registerNativePush, unregisterNativePush } from "../lib/nativePush";
 import type { AccessLevel, AuthUser } from "../types";
 
-/**
- * A new sign-in must never inherit the previous session's cached reads.
- * Identity scopes almost every response (own-vs-downline SO rows, finance
- * fields, page access), but no cache key carries the user — so ['mfg-sales-
- * orders','all'] is the SAME key for an admin and a restricted rep. Signing out
- * reloads (see logout), which covers the common path; this covers every other
- * way a session ends without one — most importantly a 401 expiry, where forcing
- * a reload would throw away whatever the user was typing.
- *
- * Called at the moment a token is accepted and BEFORE /auth/me resolves, which
- * is the safe window: the login screen is the only thing mounted, so clear()
- * cannot race a live observer into an immediate refetch.
- */
 function resetMemoryCaches(): void {
   queryClient.clear();
   clearApiCache();
 }
 
-/**
- * Everything a session may take with it when it ends: transient nav handoffs,
- * the bound storage identity, in-memory caches and the persisted query
- * snapshots.
- *
- * It does NOT take the durable payment-retry intents. Those are payments the
- * operator has already collected and the server has not accepted yet; a 401 is
- * a routine event (a 7-day session simply expired) and must never be the reason
- * money collected at the counter stops existing. clearAllScmHandoffs leaves
- * them alone by design — see lib/scmHandoffStorage.
- */
 function resetSessionCaches(): void {
   clearAllScmHandoffs();
   clearBrowserStorageIdentity();
@@ -81,48 +52,27 @@ export type LoginResult = { kind: "ok" } | { kind: "totp"; challenge: string };
 
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string, remember?: boolean) => Promise<LoginResult>;
-  /** Crew sign-in: staff code (the digits after EMP-) + 6-digit PIN. The
-   *  server stamps the session as a field session and holds it to the crew
-   *  screens; the device keeps it like a remembered login. */
   pinLogin: (login: string, pin: string) => Promise<LoginResult>;
-  /** Second step of a 2FA login — exchange the challenge + code for a session. */
   verifyTotpLogin: (challenge: string, code: string, remember?: boolean) => Promise<void>;
   logout: () => Promise<void>;
   bootstrap: (email: string, name: string, password: string) => Promise<void>;
   acceptInvite: (token: string, name: string, password: string) => Promise<void>;
-  /** True if the current user has the given permission. O(1) via Set. */
   can: (perm: string) => boolean;
-  /** True if the user has at least one of `perms`. Short-circuits. */
   canAny: (perms: readonly string[]) => boolean;
-  /** True if the user has every perm in `perms`. */
   canAll: (perms: readonly string[]) => boolean;
-  /**
-   * Read the user's access level for a given page (mig 073). The `*`
-   * wildcard short-circuits to "full"; otherwise reads from
-   * `user.page_access[page]`. Missing key → "none".
-   */
   pageAccess: (page: string) => AccessLevel;
-  /** Reload /me — useful after role/permission changes. */
   reload: () => Promise<void>;
-  /** The required-change screen: swap the restricted session for an ordinary
-   *  one by choosing a new password. Throws the server's refusal (wrong current
-   *  password, too weak, same as before) for the screen to show. */
   completePasswordChange: (current: string, next: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-/* /api/auth/me started by main.tsx before React mounts, so the session check
-   overlaps the render instead of waiting for AuthProvider's first effect. Taken
-   at most once, and only while the token it was sent with is still the stored
-   one, so it can never answer for a different session. */
 let primedMe: { token: string; request: Promise<{ user: AuthUser }> } | null = null;
 
 export function primeAuthMe(): void {
   const token = tokenStore.get();
   if (!token || primedMe) return;
   const request = api.get<{ user: AuthUser }>("/api/auth/me");
-  // fetchMe owns the outcome; this only stops an unconsumed rejection surfacing.
   request.catch(headStartFailed);
   primedMe = { token, request };
 }
@@ -141,11 +91,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
 
   const fetchMe = useCallback(async () => {
-    // Validate the stored token. CRUCIAL: only a genuine 401 means the session is
-    // gone — clear it and show login. A transient failure (cold-pool 503, a brief
-    // network drop, a timeout) must NOT wipe a still-valid 7-day session, or the
-    // user is logged out every time the app cold-starts. Retry a few times, and if
-    // it still fails, keep the token so a later reload re-validates in place.
     for (let attempt = 0; ; attempt++) {
       try {
         const res = await ((attempt === 0 ? takePrimedMe() : null) ?? api.get<{ user: AuthUser }>("/api/auth/me"));
@@ -163,8 +108,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await new Promise((r) => setTimeout(r, 1500));
           continue;
         }
-        // Transient + exhausted: keep the token (do NOT log the user out); just
-        // drop the loading gate. A reload once the server is reachable restores them.
         setState((prev) => ({ ...prev, loading: false }));
         return;
       }
@@ -180,34 +123,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Boot: check if there are users at all, and try to validate any
-  // existing token.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // The token is read FIRST because it is the only thing the two hops ever
-      // shared, and it is synchronous — localStorage, not a request. Once it is
-      // in hand the hops are independent: /api/auth/status is a public
-      // COUNT(*) of active users (backend routes/auth.ts:39) that reads no
-      // token, and /api/auth/me validates the bearer header (:508) without
-      // consulting status. Awaiting status before starting me therefore bought
-      // nothing and cost a full round trip — and both paths sit in
-      // api/cache.ts NEVER_CACHE, so no dedupe layer absorbed it. AuthGate
-      // splashes until `loading` clears, so that dead RTT was in front of every
-      // app open, for every user, on every reload.
       const token = tokenStore.get();
       if (!token) {
-        // Nothing to validate, so there is no second hop to overlap. Keep
-        // awaiting status before dropping the gate: hasUsers === false picks
-        // the bootstrap screen (AuthScreens.tsx:713), and clearing `loading`
-        // first would show a flash of the login screen ahead of it.
         await fetchStatus();
         if (cancelled) return;
         setState((prev) => ({ ...prev, loading: false }));
         return;
       }
-      // Both in flight together; fetchMe clears `loading` on every one of its
-      // exits, exactly as it did when it ran second.
       await Promise.all([fetchStatus(), fetchMe()]);
     })();
     return () => {
@@ -215,17 +140,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [fetchMe, fetchStatus]);
 
-  /* Column layouts live on the server now (this user's own + each company's
-     admin-set default). Fetched ONCE per signed-in session, deliberately NOT
-     awaited by the boot gate: every table still renders from localStorage on
-     the first paint, and hydration only matters on a machine this user hasn't
-     arranged yet. Failure is silent by design — see lib/tableLayouts.ts. */
   useEffect(() => {
     if (!state.user) return;
     void hydrateTableLayouts();
   }, [state.user?.id]);
 
-  // Listen for global 401s — clear token + bounce.
   useEffect(() => {
     return onUnauthorized(() => {
       tokenStore.clear();
@@ -267,28 +186,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // sessionStorage, which is why everyone was signed out weekly.
         { email, password, remember },
       );
-      // Remember the account (email ONLY, never the password) so the login screen
-      // pre-fills it next time — or forget it when Remember me is unchecked.
       try {
         writeRememberedEmail(remember ? email : null);
-      } catch { /* storage disabled (private mode) — non-fatal */ }
-      // 2FA accounts get a challenge instead of a token — the caller collects a
-      // code and calls verifyTotpLogin. No token is stored yet.
+      } catch { }
       if (res.totp_required && res.challenge) {
         return { kind: "totp", challenge: res.challenge };
       }
-      // remember → persist in localStorage (survives close); else session-only.
       resetSessionCaches();
       tokenStore.set(res.token!, remember);
       storeSessionPass(res, remember);
-      /* Mirror into the Keychain so the next launch can unlock with Face ID
-         instead of a password. Flag-gated and fire-and-forget inside — a vault
-         write that fails costs one password entry, never the login. */
-      // A change-password-only session is not one Face ID should unlock later.
       if (!res.password_change_required) rememberNativeSession(res.token!);
-      /* Register this device for APNs (native app only; permission prompt on
-         first call). After the token store is set so the POST rides the new
-         session; fire-and-forget inside — push must never gate a login. */
       void registerNativePush();
       await fetchMe();
       await fetchStatus();
@@ -354,7 +261,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         name,
         password,
       });
-      // A colleague may well be accepting the invite on a shared browser.
       resetSessionCaches();
       tokenStore.set(res.token);
       storeSessionPass(res);
@@ -365,9 +271,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
-    /* BEFORE the token is cleared — the server delete needs the session. A
-       signed-out phone must stop receiving work notifications. No-op off the
-       app. */
     unregisterNativePush();
     try {
       await api.post("/api/auth/logout");
@@ -377,17 +280,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // has already left, and it must never keep them signed in.
     }
     tokenStore.clear();
-    /* The Keychain vault is NOT flag-gated here, on purpose: if the biometric
-       flag is turned off while a session is already saved, signing out must
-       still erase it. Gating would strand a live token in the Keychain of a
-       phone whose user believes they have signed out. No-op off the app. */
     forgetNativeSession();
     resetSessionCaches();
-    // Sticky list/calendar filters must not survive a sign-out (owner
-    // 2026-09-30: "remain filter unless u log out ..."). They live in
-    // sessionStorage under `filters:<page>:u<user>:c<company>`, which a reload
-    // does NOT clear, so sweep them here. Same-key re-login would otherwise
-    // resurrect the previous session's filters.
     try {
       for (const store of [sessionStorage, localStorage]) {
         for (const k of Object.keys(store)) {
@@ -395,27 +289,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch {
-      // storage unavailable — nothing to clear
     }
-    // Signing out is an identity-context change, and identity scopes every read
-    // (own-vs-downline SO rows, finance fields, page access). Nothing from the
-    // outgoing user may survive into the next sign-in. A logout is an SPA state
-    // change with NO page reload, so both in-memory caches — react-query
-    // (gcTime 30min) and the api/cache Map — otherwise persist straight through
-    // it: signing out of an admin account and back in as a restricted one served
-    // the admin's cached rows on first paint, which the scoped refetch then
-    // removed (the render-then-hide the owner reported). Reload for the same
-    // reason the company switcher does (see components/TopNavbar.tsx): clearing
-    // in place can't guarantee it — react-query keys carry no identity and
-    // queryClient.clear() doesn't re-trigger a mounted observer. A full reboot
-    // is the only bulletproof cut, and sign-out is a deliberate, terminal action
-    // where the cost is irrelevant.
     window.location.reload();
   }, []);
 
-  // Pre-compute a Set so every can() / canAny() / canAll() call is
-  // O(1). Rebuilt only when the actual permissions array reference
-  // changes (i.e. login / logout / role-update via reload()).
   const permSet = useMemo(
     () => new Set(state.user?.permissions ?? []),
     [state.user?.permissions],
@@ -463,8 +340,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         "/api/auth/me/password",
         { current, next, remember: persistent },
       );
-      // The server ended the restricted session; without the new token every
-      // request from here on would be signed out.
       if (res.token) {
         resetSessionCaches();
         tokenStore.set(res.token, persistent);
@@ -476,8 +351,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [fetchMe],
   );
 
-  // Memoize the context value so consumers don't re-render whenever
-  // AuthProvider rerenders for unrelated reasons (status poll, etc.).
   const value = useMemo<AuthContextValue>(
     () => ({
       ...state,

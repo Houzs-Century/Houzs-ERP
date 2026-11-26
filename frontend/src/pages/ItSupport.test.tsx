@@ -53,7 +53,6 @@ beforeEach(() => {
   api.post.mockReset();
   api.postForm.mockReset();
   api.fetchBlobUrl.mockReset();
-  // The picture previews; jsdom has no object URLs.
   URL.createObjectURL = vi.fn(() => "blob:preview");
   URL.revokeObjectURL = vi.fn();
 });
@@ -65,7 +64,6 @@ describe("IT Support — my requests", () => {
     open("/it-support");
     expect(await screen.findByText("Delivery order will not save")).toBeTruthy();
     expect(api.get.mock.calls[0][0]).toBe("/api/it-support/tickets");
-    // A signal is passed so the read cache is bypassed: IT may have just replied.
     expect(api.get.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
     expect(screen.getByText("New reply")).toBeTruthy();
     expect(screen.getByText("Waiting for you")).toBeTruthy();
@@ -154,11 +152,9 @@ describe("IT Support — report a problem", () => {
     expect(form.get("priority")).toBe("high");
     expect(form.get("type")).toBe("development");
     expect(form.get("page_url")).toBe("/scm/delivery-orders");
-    // The module was picked from the page it came from.
     expect(form.get("module")).toBe("Supply Chain · Sales Order");
     expect(Number.isNaN(Date.parse(String(form.get("occurred_at"))))).toBe(false);
     expect((form.getAll("files") as File[]).map((f) => f.name)).toEqual(["shot.png"]);
-    // Who is reporting is the server's business, never the form's.
     expect(form.get("reporter_name")).toBeNull();
   });
 
@@ -254,7 +250,6 @@ describe("IT Support — one request", () => {
 
   it("opens a file through the authorised blob fetch, and says so when it cannot", async () => {
     api.get.mockResolvedValue(detail("in_progress"));
-    // The tab opens inside the click (a phone blocks one opened after the fetch), then loads the file.
     const tab = { opener: {}, location: { href: "" }, close: vi.fn() };
     const opened = vi.spyOn(window, "open").mockImplementation(() => tab as unknown as Window);
     api.fetchBlobUrl.mockResolvedValueOnce("blob:test");

@@ -104,8 +104,6 @@ describe('edit-view fills are not changes (HC-0103)', () => {
 });
 
 describe('amendmentLinePriceOnly', () => {
-  // A full no-op baseline (every field equals `stored`), so patching ONE field
-  // isolates that field as the only thing that moved.
   const base = {
     salesOrderItemId: 'li-bed', changeType: 'SPEC', newItemCode: 'JAGER-(K)',
     newVariants: phoneBlob, newQty: 1, newUnitPriceSen: 0, newRemark: stored.remark, newDiscountSen: 0,
@@ -175,7 +173,6 @@ describe('dropNoopAmendmentLines', () => {
 });
 
 describe('splitPriceFromSpec (DEV-70)', () => {
-  /* HC-SO-013490/A1's King mattress line: the set price sat on it. */
   const cur: StoredLine = { id: 'li', item_code: 'AKEMI SOLITUDE MATT (K)', qty: 1, unit_price_sen: 850000, variants: null, remark: null, discount_sen: 0 };
 
   it('a SKU swap that re-fills the price splits into a price-less spec half and a price-only half', () => {

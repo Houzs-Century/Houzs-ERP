@@ -15,17 +15,7 @@ import {
   type SalesItemInput,
   type SalesPaymentInput,
 } from "../services/salesEntries";
-// Multi-company (Phase 0b): active-company resolver. sales_entries + its item /
-// payment / activity / change-request children are a PER-COMPANY module (the
-// top-bar switcher isolates the two companies' books), so list/detail SELECTs
-// filter by the active company and every INSERT stamps it. companyContext runs
-// on the whole /api/* surface (index.ts), so c.get('companyId') is available
-// here; it's undefined only pre-migration / DB cold-start, and the scoping +
-// stamping both no-op in that case so single-company Houzs is unchanged.
 import { activeCompanyId } from "../scm/lib/companyScope";
-// THE one name for this date, and the seam that folds the other spellings onto
-// it. Imported rather than re-typed so this module moves with a future rename
-// instead of quietly stopping matching — see the SO_FORM_TEXT_FIELDS note below.
 import {
   canonicaliseSoHeaderChanges,
   SO_PROCESSING_DATE_COLUMN,
@@ -33,10 +23,6 @@ import {
 } from "../scm/shared/so-processing-date";
 import { todayMyt } from "../scm/lib/my-time";
 
-/* The context the extracted handlers below receive. They are exported so the
-   route tests can drive them directly; the shape is exactly what app.get/post
-   would have passed to an inline handler — including the PATH literal, which is
-   what keeps c.req.param("reqId") a plain string rather than string | undefined. */
 type HandlerCtx<P extends string> = Context<{ Bindings: Env }, P>;
 const app = new Hono<{ Bindings: Env }>();
 
@@ -155,34 +141,17 @@ export const canonicaliseSalesEntryBody = (
   body: Record<string, any> | null | undefined,
 ): Record<string, any> => canonicaliseSoHeaderChanges(body, SALES_ENTRY_KEY_ALIASES) ?? {};
 
-// Quick-log marker. Reps logging from a busy event capture only
-// amount + ref_no; the customer_name column (NOT NULL on the
-// schema) gets this sentinel so the row lands as a draft that
-// can't be submitted until back-filled. Frontend / project ledger
-// renderers swap it out for a friendlier "Quick log · {ref}" label.
 export const QUICK_LOG_SENTINEL = "(quick log)";
 
-/**
- * Roll the project's total_sales after a sales_entry mutation. No-op
- * for unscoped (walk-in) entries. Failures are swallowed — the rollup
- * is best-effort; a stale total is preferable to a 500 on the user's
- * "Save sale" click.
- */
 async function bumpProjectFinance(env: Env, projectId: number | null | undefined) {
   if (!projectId) return;
   try {
     await syncFinanceRollup(env, projectId);
   } catch (e) {
-    // Surface to Wrangler logs so a silently-failed rollup doesn't
-    // hide a corrupt `project_finance.total_sales`. We still don't
-    // re-throw — the rollup is best-effort and shouldn't 500 the
-    // user's "Save sale" click.
     console.error("[bumpProjectFinance]", projectId, e);
   }
 }
 
-// Append-only edit history for a sales entry (mig 0015 sales_entry_activity).
-// Best-effort — a logging failure must never break the user's save.
 async function logSalesActivity(
   env: Env,
   entryId: number,
@@ -191,9 +160,6 @@ async function logSalesActivity(
   note: string | null = null,
   companyId?: number,
 ) {
-  // Phase 0b: stamp company_id (NOT NULL after mig 0061) from the parent
-  // entry's active company; omit the column when unresolved so single-company
-  // Houzs keeps logging.
   const stampCo = companyId != null;
   try {
     await env.DB.prepare(
@@ -207,13 +173,6 @@ async function logSalesActivity(
   }
 }
 
-// ── Scoping helper ───────────────────────────────────────────
-// Reps (role.scope_to_pic=1) without sales.manage only see entries
-// they created. Anyone with sales.manage, or any unscoped role, sees
-// everything.
-// Returns a single WHERE-fragment (no leading/trailing AND) that the
-// caller stitches into the final clause via " AND ". Returning a leading
-// AND here used to double up with the join — `WHERE x AND AND y`.
 function buildOwnershipWhere(user: any, canManage: boolean) {
   if (canManage) return { sql: "", binds: [] as any[] };
   if (user?.scope_to_pic) {
@@ -222,15 +181,6 @@ function buildOwnershipWhere(user: any, canManage: boolean) {
   return { sql: "", binds: [] as any[] };
 }
 
-// ── List ─────────────────────────────────────────────────────
-// Read gate is ADDITIVE (owner 2026-07): the flat page-access matrix for
-// "sales" OR a code-keyed Sales/director (position/department). A Sales
-// Director's POSITION is never backfilled into the matrix, so the project
-// page's Sales section used to render (page authorised by the org-position
-// tier) and then 403 here. requirePageAccessOrSalesView admits them by code
-// and sets access_level (director → full = sees every entry; sales staff →
-// partial = own+downline via buildOwnershipWhere) without weakening any
-// non-sales caller. WRITE routes below keep requirePageAccess("sales","full").
 app.get("/entries", requirePageAccessOrSalesView("sales"), async (c) => {
   const user = c.get("user");
   const canManage = c.get("access_level") === "full";
@@ -240,10 +190,6 @@ app.get("/entries", requirePageAccessOrSalesView("sales"), async (c) => {
   const dateFrom = c.req.query("date_from") || "";
   const dateTo = c.req.query("date_to") || "";
   const includeArchived = c.req.query("include_archived") === "1";
-  // Quick-log filter — drives the dedicated "Quick Logs" tab on the
-  // Sales page. Either narrow to *only* quick-logs (?quick_log=1) or
-  // exclude them entirely (?quick_log=0) so the All view doesn't
-  // double up against the dedicated tab.
   const quickLogParam = c.req.query("quick_log");
   const page = parseInt(c.req.query("page") || "1", 10);
   const perPage = Math.min(parseInt(c.req.query("per_page") || "50", 10), 200);
@@ -252,8 +198,6 @@ app.get("/entries", requirePageAccessOrSalesView("sales"), async (c) => {
   const companyId = activeCompanyId(c);
   const where: string[] = [];
   const binds: any[] = [];
-  // Per-company isolation: only the active company's sales entries. No-op when
-  // the active company is unresolved (pre-migration / cold-start).
   if (companyId != null) {
     where.push("s.company_id = ?");
     binds.push(companyId);
@@ -268,7 +212,6 @@ app.get("/entries", requirePageAccessOrSalesView("sales"), async (c) => {
     binds.push(projectId);
   }
   if (dateFrom) {
-    // substr, not date(): keeps the comparison text-vs-text on Postgres.
     where.push("substr(s.occurred_at, 1, 10) >= substr(?, 1, 10)");
     binds.push(dateFrom);
   }
@@ -322,7 +265,6 @@ app.get("/entries", requirePageAccessOrSalesView("sales"), async (c) => {
     .bind(...fullBinds, perPage, offset)
     .all();
 
-  // Sum filtered totals for the header tiles.
   const totals = await c.env.DB.prepare(
     `SELECT COALESCE(SUM(s.amount), 0) as total_amount,
             COUNT(*) as total_count,
@@ -335,9 +277,6 @@ app.get("/entries", requirePageAccessOrSalesView("sales"), async (c) => {
     .bind(...fullBinds)
     .first<any>();
 
-  // Standalone count of quick-logs awaiting completion — not bound by
-  // the current filters, so the tab badge shows the inbox-style total
-  // even when the user is on a narrowed view.
   const quickLogTotal = await c.env.DB.prepare(
     `SELECT COUNT(*) as count
        FROM sales_entries s
@@ -372,17 +311,6 @@ app.get("/entries", requirePageAccessOrSalesView("sales"), async (c) => {
   });
 });
 
-// ── CSV export ───────────────────────────────────────────────
-// Returns a CSV with the columns the sales team uses for chasing up
-// balances post-event: ref_no, date, customer, amount, deposit (with
-// payment method), balance (derived = amount - deposit), sales person.
-// Honours the same project_id / status / search / date filters as the
-// list endpoint and the same row-ownership scoping (scoped reps only
-// get their own entries unless they have sales.manage). Written in
-// Drizzle per the new-code convention.
-//
-// MUST be declared before /entries/:id — Hono matches in order, so the
-// :id route would otherwise eat /entries/export with id="export".
 app.get("/entries/export", requirePageAccess("sales"), async (c) => {
   const user = c.get("user");
   const canManage =
@@ -401,9 +329,6 @@ app.get("/entries/export", requirePageAccess("sales"), async (c) => {
 
   const companyId = activeCompanyId(c);
   const conds: any[] = [];
-  // Per-company isolation. company_id isn't in the Drizzle schema (added by the
-  // raw-SQL migration 0061), so scope via a sql fragment on the table. No-op
-  // when the active company is unresolved.
   if (companyId != null) conds.push(sql`${sales_entries}.company_id = ${companyId}`);
   if (!includeArchived) conds.push(isNull(sales_entries.archived_at));
   if (status) conds.push(eq(sales_entries.status, status));
@@ -412,12 +337,6 @@ app.get("/entries/export", requirePageAccess("sales"), async (c) => {
   if (dateTo) conds.push(lte(sql`date(${sales_entries.occurred_at})`, sql`date(${dateTo})`));
   if (search) {
     const likeStr = `%${search}%`;
-    /* ILIKE, not LIKE — this export runs through Drizzle/postgres.js, which
-       BYPASSES the d1-compat shim that silently upgrades LIKE to ILIKE for the
-       sibling list endpoint (`/entries`, raw env.DB.prepare). With plain LIKE
-       the two disagreed on case: a rep searched "acme", saw rows in the list,
-       exported, and got a CSV missing every row stored as "ACME" — a filtered
-       export that looks complete is worse than one that errors. */
     conds.push(
       or(
         ilike(sales_entries.customer_name, likeStr),
@@ -427,8 +346,6 @@ app.get("/entries/export", requirePageAccess("sales"), async (c) => {
       )!
     );
   }
-  // Reps without sales.manage only export their own rows. Same rule as
-  // the list endpoint's buildOwnershipWhere.
   if (!canManage && user?.scope_to_pic) {
     conds.push(eq(sales_entries.created_by, user.id));
   }
@@ -525,7 +442,6 @@ app.get("/entries/export", requirePageAccess("sales"), async (c) => {
     );
   }
 
-  // BOM so Excel opens UTF-8 cleanly.
   const csv = "﻿" + lines.join("\r\n") + "\r\n";
   const today = todayMyt();
   const filename = !isNaN(projectId)
@@ -539,12 +455,6 @@ app.get("/entries/export", requirePageAccess("sales"), async (c) => {
   });
 });
 
-// ── Change-request queue (edit approval) ─────────────────────
-// Registered BEFORE "/entries/:id" so the literal segment wins over the param.
-//
-// GET   list requests (managers see all; a rep sees only their own)
-// POST  /:reqId/approve   re-applies the parked payload, marks approved
-// POST  /:reqId/reject    discards it with an optional note
 app.get("/entries/change-requests", requirePageAccess("sales"), async (c) => {
   const user = c.get("user");
   const canManage = c.get("access_level") === "full";
@@ -560,7 +470,6 @@ app.get("/entries/change-requests", requirePageAccess("sales"), async (c) => {
           LEFT JOIN users du ON du.id = cr.decided_by
               WHERE cr.status = ?`;
   const binds: any[] = [status];
-  // Per-company isolation. No-op when the active company is unresolved.
   if (companyId != null) {
     sql += ` AND cr.company_id = ?`;
     binds.push(companyId);
@@ -581,15 +490,6 @@ export const approveChangeRequestHandler = async (c: HandlerCtx<"/entries/change
   const companyId = activeCompanyId(c);
   const note = await c.req.json<{ note?: string }>().then((b) => b?.note ?? null).catch(() => null);
 
-  /* Both loads carry the SAME company predicate that PATCH /entries/:id already
-     applies, because they feed the SAME applyEntryPatch UPDATE. That UPDATE is
-     blind by id and is safe only because its caller proved the row is in scope
-     first — which the PATCH did and this approve did not. The fix is to match
-     the scoped caller, NOT to add a second predicate inside applyEntryPatch:
-     the PATCH would then filter twice, and the two could drift apart.
-     The `!= null` degrade is deliberately copied verbatim from the PATCH — a
-     single-company deployment with an unresolved company must keep approving
-     its own change requests, and diverging here would refuse them. */
   const cr = await c.env.DB.prepare(
     `SELECT id, entry_id, payload, status, requested_by FROM sales_entry_change_requests
       WHERE id = ?${companyId != null ? " AND company_id = ?" : ""}`,
@@ -615,11 +515,9 @@ export const approveChangeRequestHandler = async (c: HandlerCtx<"/entries/change
   } catch {
     return c.json({ error: "Stored change payload is corrupt" }, 500);
   }
-  // Re-validate against the CURRENT row (amounts may have moved since queued).
   const invalid = await validateEntryPatch(c.env, entry.id, body);
   if (invalid) return c.json({ error: `Can't apply: ${invalid.error}` }, invalid.status as 400);
 
-  // Attribute the edit to the original requester; record the approver here.
   await applyEntryPatch(c.env, entry.id, body, cr.requested_by ?? user?.id, entry.project_id, companyId);
   await c.env.DB.prepare(
     `UPDATE sales_entry_change_requests
@@ -640,9 +538,6 @@ export const rejectChangeRequestHandler = async (c: HandlerCtx<"/entries/change-
   const companyId = activeCompanyId(c);
   const note = await c.req.json<{ note?: string }>().then((b) => b?.note ?? null).catch(() => null);
 
-  /* Same predicate as the approve twin above. Rejecting is still a cross-company
-     WRITE — it terminates the other company's queued edit — so it gets the same
-     boundary even though it never touches sales_entries. */
   const cr = await c.env.DB.prepare(
     `SELECT id, entry_id, status FROM sales_entry_change_requests
       WHERE id = ?${companyId != null ? " AND company_id = ?" : ""}`,
@@ -665,7 +560,6 @@ export const rejectChangeRequestHandler = async (c: HandlerCtx<"/entries/change-
 };
 app.post("/entries/change-requests/:reqId/reject", requirePageAccess("sales", "full"), rejectChangeRequestHandler);
 
-// ── Detail ───────────────────────────────────────────────────
 app.get("/entries/:id", requirePageAccess("sales"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -692,12 +586,10 @@ app.get("/entries/:id", requirePageAccess("sales"), async (c) => {
     .first<any>();
   if (!row) return c.json({ error: "Not found" }, 404);
 
-  // Scoped rep can only see own entries.
   if (!canManage && user?.scope_to_pic && row.created_by !== user.id) {
     return c.json({ error: "Not found" }, 404);
   }
 
-  // Fetch UDF values. The UDF layer expects row_key as TEXT so cast id.
   const udf = await c.env.DB.prepare(
     `SELECT field_key, value FROM udf_values
       WHERE table_name = 'sales_entries' AND row_key = ?`
@@ -708,7 +600,6 @@ app.get("/entries/:id", requirePageAccess("sales"), async (c) => {
   const custom: Record<string, string | null> = {};
   for (const r of udf.results ?? []) custom[r.field_key] = r.value;
 
-  // Mig 070 — items + payments
   const itemsRes = await c.env.DB.prepare(
     `SELECT id, entry_id, line_no, item_code, item_description, remarks,
             qty, unit_price, amount, group_tag
@@ -728,7 +619,6 @@ app.get("/entries/:id", requirePageAccess("sales"), async (c) => {
     .bind(id)
     .all();
 
-  // Full edit history — who touched the entry and when (sales_entry_activity).
   const activityRes = await c.env.DB.prepare(
     `SELECT a.id, a.action, a.note, a.created_at, u.name as user_name
        FROM sales_entry_activity a
@@ -748,7 +638,6 @@ app.get("/entries/:id", requirePageAccess("sales"), async (c) => {
   });
 });
 
-// ── Create ───────────────────────────────────────────────────
 app.post("/entries", requirePageAccess("sales"), async (c) => {
   const user = c.get("user");
   const body = await c.req.json<{
@@ -766,14 +655,9 @@ app.post("/entries", requirePageAccess("sales"), async (c) => {
     occurred_at?: string;
     notes?: string | null;
     custom?: Record<string, any>;
-    // Mig 070 form fields — header text columns + line items + payments.
     items?: SalesItemInput[];
     payments?: SalesPaymentInput[];
     [k: string]: any;
-    // Quick-log path — rep is on the floor and only has amount + ref_no.
-    // The row lands as a draft tagged with the QUICK_LOG_SENTINEL in
-    // customer_name. The /submit endpoint blocks the rep from
-    // promoting this to 'submitted' until they back-fill a real name.
     quick_log?: boolean;
   }>();
 
@@ -790,8 +674,6 @@ app.post("/entries", requirePageAccess("sales"), async (c) => {
   const items = Array.isArray(body.items) ? body.items : [];
   const payments = Array.isArray(body.payments) ? body.payments : [];
 
-  // Validate payment dates / methods up front so we don't insert the
-  // header and orphan a bad payment.
   for (const p of payments) {
     if (!/^\d{4}-\d{2}-\d{2}/.test(String(p.paid_at || ""))) {
       return c.json({ error: "payments[].paid_at must be yyyy-mm-dd" }, 400);
@@ -805,8 +687,6 @@ app.post("/entries", requirePageAccess("sales"), async (c) => {
     }
   }
 
-  // Deposit derives from payments when supplied; otherwise honour the
-  // legacy single-deposit body fields (quick-log + old client paths).
   const paySummary = summarisePayments(payments);
   let depositAmount: number | null = null;
   let paymentType: string | null = null;
@@ -838,12 +718,8 @@ app.post("/entries", requirePageAccess("sales"), async (c) => {
     );
   }
 
-  // Mint doc_no if the client didn't supply one.
   const docNo = (body.doc_no?.trim() as string | undefined) || (await nextSalesEntryDocNo(c.env));
 
-  // Build the dynamic insert. Static columns first, then the new
-  // mig-070 text fields driven by SO_FORM_TEXT_FIELDS minus doc_no
-  // (which we already minted above).
   const cols: string[] = [
     "doc_no",
     "project_id", "ref_no", "customer_name", "customer_code",
@@ -868,10 +744,6 @@ app.post("/entries", requirePageAccess("sales"), async (c) => {
     user?.id ?? 0,
     body.sales_person_id ?? user?.id ?? null,
   ];
-  /* Same fold as the PATCH path: a create that sends the ERP-canonical
-     `processingDate` must land in the same column as one sending
-     `processing_date`, or the two roads in disagree about a field the operator
-     filled on the same form. */
   const canonBody = canonicaliseSalesEntryBody(body);
   for (const k of SO_FORM_TEXT_FIELDS) {
     if (k === "doc_no") continue;
@@ -880,9 +752,6 @@ app.post("/entries", requirePageAccess("sales"), async (c) => {
     vals.push(typeof v === "string" ? v.trim() || null : v ?? null);
   }
 
-  // Phase 0b: stamp the active company (sales_entries.company_id NOT NULL after
-  // mig 0061). Omitted when unresolved (pre-migration / cold-start) so the
-  // single-company insert keeps working.
   const companyId = activeCompanyId(c);
   if (companyId != null) {
     cols.push("company_id");
@@ -901,9 +770,6 @@ app.post("/entries", requirePageAccess("sales"), async (c) => {
   if (items.length) await replaceItems(c.env, id, items, companyId ?? null);
   if (payments.length) await replacePayments(c.env, id, payments, companyId ?? null);
 
-  // Persist custom field values via the existing UDF store. Silent-drop
-  // anything with an unknown key so a renamed field doesn't 500 the
-  // create — the matching GET will just omit it.
   if (body.custom) {
     await writeCustomFields(c.env, id, body.custom);
   }
@@ -915,7 +781,6 @@ app.post("/entries", requirePageAccess("sales"), async (c) => {
   return c.json({ id, doc_no: docNo }, 201);
 });
 
-// ── Patch ────────────────────────────────────────────────────
 app.patch("/entries/:id", requirePageAccess("sales"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -938,15 +803,9 @@ app.patch("/entries/:id", requirePageAccess("sales"), async (c) => {
 
   const body = await c.req.json<Record<string, any>>();
 
-  // Cheap field validation up front so the rep gets the same immediate
-  // feedback whether the edit applies now or goes to the approval queue.
   const invalid = await validateEntryPatch(c.env, id, body);
   if (invalid) return c.json({ error: invalid.error }, invalid.status as 400);
 
-  // Approval queue (Part B) — a non-manager editing their OWN entry once it
-  // has LEFT draft does not mutate it: the proposed change is parked as a
-  // pending request for a Sales Director to approve (re-apply) or reject.
-  // Managers (sales=full) and edits to a still-draft entry apply immediately.
   if (!canManage && current.status !== "draft") {
     const requestId = await queueEntryChange(c.env, id, body, user?.id, companyId);
     await logSalesActivity(c.env, id, user?.id, "change_requested", null, companyId);
@@ -957,10 +816,7 @@ app.patch("/entries/:id", requirePageAccess("sales"), async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Sales-entry edit helpers (shared by PATCH + the approval queue) ──────
 
-/** Cheap field validation for a sales-entry PATCH body. Returns an error
- *  descriptor (mapped to a 400 by the caller) or null when the patch is OK. */
 async function validateEntryPatch(
   env: Env,
   id: number,
@@ -971,7 +827,6 @@ async function validateEntryPatch(
       return { error: "deposit_payment_type must be one of cash, card_cc, card_db, epp", status: 400 };
     }
   }
-  // deposit ≤ amount — fall back to the stored amount when only one moves.
   if ("deposit_amount" in body && body.deposit_amount != null) {
     const d = Number(body.deposit_amount);
     if (!isFinite(d) || d < 0) {
@@ -1001,9 +856,6 @@ async function validateEntryPatch(
   return null;
 }
 
-/** Apply a (pre-validated) sales-entry PATCH body to the row — fields, items,
- *  payments, custom fields, project-finance rollup, activity log. Called by the
- *  direct PATCH path AND when a Director approves a queued change request. */
 async function applyEntryPatch(
   env: Env,
   id: number,
@@ -1012,10 +864,6 @@ async function applyEntryPatch(
   currentProjectId: number | null,
   companyId?: number,
 ): Promise<void> {
-  /* STAGE 1 of the Processing-Date name unification (see SO_FORM_TEXT_FIELDS).
-     BOTH callers pass through here — the direct PATCH and the change-request
-     APPROVE, which replays a payload parked days ago — so folding the spellings
-     once, here, is what makes a body from either era write the same column. */
   body = canonicaliseSalesEntryBody(body);
   const sets: string[] = [];
   const binds: any[] = [];
@@ -1043,8 +891,6 @@ async function applyEntryPatch(
     }
   }
 
-  // Items + payments — replace-all when arrays are supplied. Mirrors the
-  // deposit_amount / deposit_payment_type so the legacy list view renders.
   if (Array.isArray(body.items)) {
     await replaceItems(env, id, body.items as SalesItemInput[], companyId ?? null);
   }
@@ -1074,8 +920,6 @@ async function applyEntryPatch(
     await writeCustomFields(env, id, body.custom);
   }
 
-  // Roll up the new project; if the patch re-targeted the entry, refresh the
-  // old one too so it stops double-counting the moved row.
   const nextProjectId = "project_id" in body ? (body.project_id ?? null) : currentProjectId;
   await bumpProjectFinance(env, nextProjectId);
   if (currentProjectId && currentProjectId !== nextProjectId) {
@@ -1088,9 +932,6 @@ async function applyEntryPatch(
 /** Short human-readable summary of which fields a change request touches. */
 export function summariseChange(body: Record<string, any>): string {
   const parts: string[] = [];
-  /* The summary is what the approver reads before pressing approve, so it must
-     name the field the apply will actually write — not the spelling the client
-     happened to send. */
   for (const k of Object.keys(canonicaliseSalesEntryBody(body))) {
     if (k === "custom") parts.push("custom fields");
     else if (k === "items" && Array.isArray(body.items)) parts.push(`items(${body.items.length})`);
@@ -1109,10 +950,6 @@ export async function queueEntryChange(
   requestedBy: number | null | undefined,
   companyId?: number,
 ): Promise<number> {
-  /* Canonicalise BEFORE the payload is frozen, so a request parked today is
-     already keyed the way stage 2 will require. The approve path folds again on
-     the way out, which is what covers the rows parked before this shipped —
-     applying the fold twice is a no-op (an already-canonical key has no alias). */
   body = canonicaliseSalesEntryBody(body);
   await env.DB.prepare(
     `UPDATE sales_entry_change_requests
@@ -1121,7 +958,6 @@ export async function queueEntryChange(
   )
     .bind(entryId)
     .run();
-  // Phase 0b: stamp company_id (NOT NULL after mig 0061); omit when unresolved.
   const stampCo = companyId != null;
   const res = await env.DB.prepare(
     `INSERT INTO sales_entry_change_requests (entry_id, payload, summary, requested_by${stampCo ? ", company_id" : ""})
@@ -1164,9 +1000,6 @@ app.post("/entries/:id/submit", requirePageAccess("sales"), async (c) => {
   if (current.status !== "draft") {
     return c.json({ error: `Can't submit a ${current.status} entry` }, 400);
   }
-  // Quick-log gate: a row sitting on the QUICK_LOG_SENTINEL hasn't
-  // been back-filled with real customer details. Don't let it
-  // promote to 'submitted' (and from there toward AutoCount push).
   if (current.customer_name === QUICK_LOG_SENTINEL) {
     return c.json(
       { error: "Fill customer details before submitting" },
@@ -1184,7 +1017,6 @@ app.post("/entries/:id/submit", requirePageAccess("sales"), async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Unsubmit (back to draft; managers only) ──────────────────
 app.post("/entries/:id/unsubmit", requirePageAccess("sales", "full"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -1200,7 +1032,6 @@ app.post("/entries/:id/unsubmit", requirePageAccess("sales", "full"), async (c) 
   return c.json({ ok: true });
 });
 
-// ── Void ─────────────────────────────────────────────────────
 app.post("/entries/:id/void", requirePageAccess("sales", "full"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -1224,7 +1055,6 @@ app.post("/entries/:id/void", requirePageAccess("sales", "full"), async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Delete (soft) ────────────────────────────────────────────
 app.delete("/entries/:id", requirePageAccess("sales"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -1255,12 +1085,6 @@ app.delete("/entries/:id", requirePageAccess("sales"), async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Push to AutoCount ────────────────────────────────────────
-// Placeholder — the actual push handler lives behind AutoCount's write
-// surface which is currently disabled (backend/src/services/autocount.ts
-// AUTOCOUNT_WRITES_DISABLED). Flipping this to a real push is a separate
-// change; for now the endpoint exists so the frontend can wire the
-// "Push" button without a 404.
 app.post("/entries/:id/push", requirePageAccess("sales", "full"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -1273,13 +1097,11 @@ app.post("/entries/:id/push", requirePageAccess("sales", "full"), async (c) => {
   );
 });
 
-// ── Helper: write custom field values ────────────────────────
 async function writeCustomFields(
   env: Env,
   entryId: number,
   custom: Record<string, any>
 ) {
-  // Fetch the defined fields once, filter incoming keys against them.
   const defs = await env.DB.prepare(
     `SELECT field_key FROM udf_fields WHERE table_name = 'sales_entries'`
   ).all<{ field_key: string }>();

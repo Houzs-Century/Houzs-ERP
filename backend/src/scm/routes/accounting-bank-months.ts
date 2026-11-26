@@ -42,19 +42,10 @@ import { bankGuard, freshDecisions, withQrSales } from './accounting-bank';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
-/** A row as it comes back: keys known, values not. Read through the helpers
-    below rather than trusted, so a column that changes shape fails here and
-    not three screens later. */
 type Row = Record<string, unknown>;
 
-/* The Supabase client this tree passes around is untyped, and acc/bank.ts
-   already declares what it takes. Borrowing that type rather than writing a
-   fresh one keeps the two from drifting and adds no new unchecked surface —
-   it is the same client, named once. */
 type Db = Parameters<typeof loadAccountLedger>[0];
 
-/** Whatever came back, as rows. Null, undefined and a non-array are all "no
-    rows" — the alternative is a read that half-succeeds and is counted. */
 const rowsOf = (data: unknown): Row[] => (Array.isArray(data) ? (data as Row[]) : []);
 const textOf = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
 const dayOf = (v: unknown): string | null => {
@@ -71,7 +62,6 @@ const LINE_FIELDS =
   + ' kind, state, posted_je_no, note, acquirer_code, trading_date, merchant_no,'
   + ' matched_batch_id, split, contra_line_id';
 
-/** The statement shape acc/bank-month wants, off a database row. */
 const asMonthStatement = (s: Row): MonthStatement => ({
   id: Number(s.id),
   fileName: textOf(s.file_name) ?? '',
@@ -112,7 +102,6 @@ const claimedOutside = (
   return out;
 };
 
-/** The movement shape the reconciliation wants, off a line row. */
 const asMovement = (l: Row, jeNo: string | null, jeNos: string[] = []): StatementMovement => ({
   id: Number(l.id),
   bookedOn: dayOf(l.booked_on) ?? '',
@@ -139,7 +128,6 @@ const matchesByLineOf = (matches: Row[]): Map<number, Row[]> => {
   return out;
 };
 
-/** The entries a line's match rows name, by line. */
 const jeNosByLine = (matches: Row[]): Map<number, string[]> => {
   const out = new Map<number, string[]>();
   for (const m of matches) {
@@ -163,8 +151,6 @@ const asTypedBalance = (r: Row): TypedBalance => ({
   note: textOf(r.note),
 });
 
-/** Every typed month-end figure of the company — or of one account — keyed
-    account|month. One read for a whole list, the same as the locks. */
 async function loadTypedBalances(
   sb: Db, companyId: number, accountCode?: string,
 ): Promise<{ ok: true; byKey: Map<string, TypedBalance> } | { ok: false; reason: string }> {
@@ -194,7 +180,6 @@ const balancesFor = (byKey: Map<string, TypedBalance>, statements: MonthStatemen
 
 const userName = (c: Ctx) => (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
 
-/* ── GET /bank/months — every account × month that has anything in it ─────── */
 
 export const bankMonths = bankGuard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -212,10 +197,6 @@ export const bankMonths = bankGuard(async (c) => {
     .eq('company_id', co.companyId).order('id').range(lo, hi));
   if (lineRes.error) return c.json({ error: 'load_failed', reason: lineRes.error.message }, 500);
 
-  /* Which months are already closed. One read for the whole list rather than
-     one per month: the list is the screen that decides whether to offer a
-     Reconcile button at all, and a month that looks workable and is not wastes
-     the press and the trip. */
   const lockRes = await sb.from('acc_bank_month_locks')
     .select('account_code, period_month, locked_by, locked_at')
     .eq('company_id', co.companyId).is('released_at', null);
@@ -230,16 +211,11 @@ export const bankMonths = bankGuard(async (c) => {
     });
   }
 
-  /* And which months have a figure typed for them — the list has to say
-     whether a Maybank month can be trusted without opening it. */
   const typedRes = await loadTypedBalances(sb, co.companyId);
   if (!typedRes.ok) return c.json({ error: 'load_failed', reason: typedRes.reason }, 500);
 
   const byId = new Map<number, Row>(statements.map((s) => [Number(s.id), s]));
 
-  /* A month is a bucket of LINES (rule 1: a movement belongs to the month its
-     own date falls in), and the files that fed it come out of which lines
-     landed there — not out of a label on the file. */
   type Bucket = {
     accountCode: string;
     month: string;
@@ -278,8 +254,6 @@ export const bankMonths = bankGuard(async (c) => {
     const state = String(l.state);
     at.statementIds.add(Number(stmt.id));
     at.lines += 1;
-    /* IGNORED is out of both sides — a movement somebody has declared none of
-       our business, most often a repeat of one already recorded. */
     if (state !== 'IGNORED') {
       if (amount >= 0) at.inSen += amount; else at.outSen += -amount;
     }
@@ -309,14 +283,12 @@ export const bankMonths = bankGuard(async (c) => {
     buckets.set(key, at);
   }
 
-  /* Each account's files, for the month a previous month's printed closing opens (rule 5). */
   const filesOfAccount = new Map<string, MonthStatement[]>();
   for (const s of statements) {
     const code = textOf(s.account_code) ?? '';
     filesOfAccount.set(code, [...(filesOfAccount.get(code) ?? []), asMonthStatement(s)]);
   }
 
-  /* Newest first — the month he is working is the one he just uploaded into. */
   const months = [...buckets.values()]
     .sort((a, b) => b.month.localeCompare(a.month) || a.accountCode.localeCompare(b.accountCode))
     .map((b) => {
@@ -336,16 +308,12 @@ export const bankMonths = bankGuard(async (c) => {
         openPayoutCount: b.openPayouts,
         inSen: b.inSen,
         outSen: b.outSen,
-        /* Enough for the list to say whether a month can be trusted, without
-           making it fetch every month's full reconciliation. */
         periodFrom: assembly?.periodFrom ?? null,
         periodTo: assembly?.periodTo ?? null,
         openingBalanceSen: assembly?.statementOpeningSen ?? null,
         closingBalanceSen: assembly?.statementClosingSen ?? null,
         complete: assembly?.complete ?? false,
         gapCount: assembly?.gaps.length ?? 0,
-        /* Null means open, and the list says WHO closed it — the operator who
-           finds a month he cannot work needs the name, not a padlock. */
         locked: lockedMonths.get(`${b.accountCode}|${b.month}`) ?? null,
       };
     });
@@ -436,7 +404,6 @@ export async function loadMonthForLock(
   };
 }
 
-/* ── GET /bank/months/:accountCode/:month — one month, reconciled ─────────── */
 
 export const bankMonthDetail = bankGuard(async (c) => {
   const co = requireActiveCompanyId(c);
@@ -459,11 +426,6 @@ export const bankMonthDetail = bankGuard(async (c) => {
   const allStatements = rowsOf(stmtRes.data);
   const ids = allStatements.map((s) => Number(s.id));
 
-  /* An account with no statements still gets a reconciliation: the books may
-     hold entries the bank has never been asked about, and saying so is the
-     point. So this is an empty read, not an early return. */
-  /* By the day, then by where it sat in its file: the reader is holding a
-     month and reads it downwards. Paged, as is every read below (Conts #334). */
   const linesP = loadStatementLines(sb, co.companyId, ids, LINE_FIELDS);
 
   const matchP = loadCompanyMatches(sb, co.companyId, 'id, bank_line_id, je_no, amount_sen, match_reason');
@@ -497,9 +459,6 @@ export const bankMonthDetail = bankGuard(async (c) => {
     })
     .map((l): Row => ({ ...l, ...(fresh.get(Number(l.id)) ?? {}) }));
 
-  /* The entry a movement claims: its own first, and the match table only where
-     it has none. Two sources for one fact, in a fixed order, so the answer
-     cannot depend on which read came back first. */
   /* Only a POSTED line claims anything — a match row on an OPEN line is what
      an older undo left behind (docs/bugs/0802), not a claim. */
   const jeOf = (l: Row): string | null =>
@@ -508,10 +467,6 @@ export const bankMonthDetail = bankGuard(async (c) => {
   const jesOf = jeNosByLine(rowsOf(matchRes.data));
   const movements = lines.map((l) => asMovement(l, jeOf(l), jesOf.get(Number(l.id)) ?? []));
 
-  /* The files that fed this month — the ones a line came from, plus an empty
-     statement filed under it. A file uploaded against this account whose every
-     movement is in another month has no business speaking for this one's
-     balances. */
   const fed = feedersOf(allStatements, new Set(lines.map((l) => Number(l.statement_id))), window);
   const assembly = assembleMonth(month, fed.map(asMonthStatement), movements, balances);
   if (!assembly) return c.json({ error: 'bad_month' }, 400);
@@ -528,10 +483,6 @@ export const bankMonthDetail = bankGuard(async (c) => {
   const named = await withJournalRefs(sb, co.companyId, ledger.movements);
   if (!named.ok) return c.json({ error: 'load_failed', reason: named.reason }, 500);
   ledger.movements = named.entries;
-  /* A LOCK THE SCREEN CANNOT READ IS A REFUSAL, not an omission. A month that
-     draws its buttons as though it were open, because the lock read quietly
-     failed, is the one way this can mislead somebody into attempting a write
-     the server will then bounce. */
   if (!held.ok) return c.json({ error: 'load_failed', reason: held.reason }, 500);
 
   const firstPeriodFrom = allStatements.map((s) => dayOf(s.period_from) ?? '').filter(Boolean).sort()[0] ?? null;
@@ -569,9 +520,6 @@ export const bankMonthDetail = bankGuard(async (c) => {
   const repeated = repeatsAmong(everyLine.map((l) => lineForRepeats(l, '')));
   const repeatLines = lines.filter((l) => repeated.has(Number(l.id)));
   const repeats = { count: repeatLines.length, statementIds: [...new Set(repeatLines.map((l) => Number(l.statement_id)))] };
-  /* The day's QR money is matched to its sales, not booked as a payout. Only a
-     real claim — a POSTED line of the account holding the entry — stands in
-     its way; the books-start rule above is the reconciliation's, not a match. */
   const decided = withQrSales(lines, rules.rules, qrReports.reports,
     claimedOutside(everyLine, new Set<number>(), matchesByLine, '9999-12-31'), accountCode);
 
@@ -580,16 +528,12 @@ export const bankMonthDetail = bankGuard(async (c) => {
     month,
     assembly,
     reconciliation,
-    /* Null means open. The screen renders the LOCK rather than inferring one
-       from a disabled button, so a closed month says who closed it and why. */
     lock: held.lock,
     repeats,
     /* The typed month-end figures as stored — this month's and the previous
        month's — so the screen can show what was typed even where a file
        printed the balance and the typed one was not used (docs/bugs/0858). */
     balances,
-    /* Named, in the order they cover the month, so a break can be chased to the
-       two files it is between. */
     statements: [...fed]
       .sort((a, b) => String(a.period_from).localeCompare(String(b.period_from)))
       .map((s) => ({ ...s, spanning: assembly.spanningIds.includes(Number(s.id)) })),
@@ -597,18 +541,11 @@ export const bankMonthDetail = bankGuard(async (c) => {
       const acquirer = textOf(l.acquirer_code);
       return {
         ...l,
-        /* Which file this movement came off — a month mixes them, and "line 12"
-           means nothing until you know of what. */
         file_name: fileNameOf(Number(l.statement_id)),
         matches: String(l.state) === 'POSTED' ? (matchesByLine.get(Number(l.id)) ?? []) : [],
-        /* Recomputed live, exactly as the single-statement view does it: a
-           batch paid since the upload must not still be offered. */
         candidates: String(l.kind).startsWith('PAYOUT')
           ? batches.batches.filter((b) => b.acquirerCode === acquirer)
           : [],
-        /* And which LEDGER ENTRY it could be — the answer for everything on a
-           statement that is not card money, which is most of it. Same ranking
-           as the single-file view, from the same function. */
         entryCandidates: String(l.state) === 'OPEN'
           ? entryCandidatesFor(
             { bookedOn: dayOf(l.booked_on) ?? '', amountSen: Number(l.amount_sen ?? 0) },
@@ -650,15 +587,9 @@ export const bankMonthClosing = bankGuard(async (c) => {
   const note = noteText ? noteText : null;
   const sb = c.get('supabase');
 
-  /* Only an account set up to take a statement. A figure typed against an
-     account nobody reconciles is a stray row, and the refusal names what IS
-     set up. */
   const config = await loadBankConfig(sb, co.companyId, accountCode);
   if (!config.ok) return c.json({ error: 'no_such_account', message: config.reason }, 400);
 
-  /* A CLOSED MONTH REFUSES THE WRITE that would change what it says — and the
-     closing of this month is what the NEXT month opens at, so while the next
-     month is closed this figure cannot move either. */
   const next = nextMonth(month);
   const [held, heldNext] = await Promise.all([
     loadLiveMonthLock(sb, co.companyId, accountCode, month),
@@ -678,8 +609,6 @@ export const bankMonthClosing = bankGuard(async (c) => {
   if (existing.error) return c.json({ error: 'load_failed', reason: existing.error.message }, 500);
   const current = existing.data ? (existing.data as unknown as Row) : null;
 
-  /* Null removes the figure — the one way to take back a typed number once a
-     file that prints the balance has arrived, or a wrong month was typed. */
   if (closingSen == null) {
     if (current) {
       const gone = await sb.from('acc_bank_month_balances').delete()

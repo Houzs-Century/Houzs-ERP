@@ -17,7 +17,6 @@ import { loadSettledKeysFor } from './settled-keys';
 import { listOnce, recordedNotArrived, type PaymentCandidate } from './settlement-match';
 import type { resolveRoles } from './rules';
 
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 
 export type WaitingMerchant = { code: string; display_name: string; date_tolerance_days: number; so_names?: string[] | null };
@@ -34,7 +33,6 @@ export async function loadWaitingCardPayments(
     if (!got.ok) return { ok: false, reason: got.reason };
     pooled.push(...got.payments);
   }
-  /* Claimed or not, asked of the pooled payments only (see loadSettledKeysFor). */
   const settled = await loadSettledKeysFor(sb, companyId, pooled);
   if (!settled.ok) return { ok: false, reason: settled.reason };
   const payments: WaitingCardPayment[] = [];

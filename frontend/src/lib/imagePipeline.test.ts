@@ -7,11 +7,6 @@ import {
   thumbUrlFor,
 } from "./imagePipeline";
 
-// ---------------------------------------------------------------------------
-// Environment stubs. jsdom ships neither createImageBitmap nor a real canvas
-// 2d context, which conveniently IS the graceful-fallback environment; the
-// happy-path tests stub both.
-// ---------------------------------------------------------------------------
 
 function fileOfSize(bytes: number, name: string, type: string): File {
   return new File([new Uint8Array(bytes)], name, { type });
@@ -21,8 +16,6 @@ function stubBitmap(width: number, height: number) {
   return { width, height, close: vi.fn() } as unknown as ImageBitmap;
 }
 
-/** Stub document.createElement("canvas") with a canvas whose toBlob yields
- *  blobs from `plan` in call order. Non-canvas tags pass through. */
 function stubCanvas(plan: Array<{ type: string; size: number } | null>) {
   let call = 0;
   const real = document.createElement.bind(document);
@@ -39,8 +32,6 @@ function stubCanvas(plan: Array<{ type: string; size: number } | null>) {
           cb(null);
           return;
         }
-        // Mirror the real API: an unsupported requested type silently falls
-        // back to PNG. The plan's `type` is what the "browser" produces.
         void requestedType;
         cb(new Blob([new Uint8Array(step.size)], { type: step.type }));
       },
@@ -54,7 +45,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-// ---------------------------------------------------------------------------
 
 describe("thumb key vocabulary", () => {
   it("appends the deterministic sibling suffix", () => {
@@ -106,7 +96,6 @@ describe("prepareImageForUpload — compression", () => {
   it("re-encodes a large jpeg to a smaller webp and generates a thumb", async () => {
     const cib = vi.fn().mockResolvedValue(stubBitmap(4000, 3000));
     vi.stubGlobal("createImageBitmap", cib);
-    // Call 1 = main webp (600 KB), call 2 = thumb webp (20 KB).
     stubCanvas([
       { type: "image/webp", size: 600 * 1024 },
       { type: "image/webp", size: 20 * 1024 },
@@ -115,8 +104,6 @@ describe("prepareImageForUpload — compression", () => {
     const jpg = fileOfSize(6 * 1024 * 1024, "IMG_0042.jpg", "image/jpeg");
     const out = await prepareImageForUpload(jpg);
 
-    // EXIF orientation must be requested from the decoder — canvas re-encode
-    // strips the EXIF tag, so the pixels have to be upright already.
     expect(cib).toHaveBeenCalledWith(jpg, { imageOrientation: "from-image" });
     expect(out.compressed).toBe(true);
     expect(out.file.type).toBe("image/webp");
@@ -129,8 +116,6 @@ describe("prepareImageForUpload — compression", () => {
 
   it("falls back to jpeg when the browser cannot encode webp", async () => {
     vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(stubBitmap(4000, 3000)));
-    // Each render tries webp first (browser answers png = unsupported), then
-    // jpeg. Main: png, jpeg(500 KB). Thumb: png, jpeg(18 KB).
     stubCanvas([
       { type: "image/png", size: 5 * 1024 * 1024 },
       { type: "image/jpeg", size: 500 * 1024 },
@@ -147,7 +132,6 @@ describe("prepareImageForUpload — compression", () => {
 
   it("never converts a png to jpeg (alpha would flatten) - keeps the original", async () => {
     vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(stubBitmap(3000, 2000)));
-    // webp unsupported (browser falls back to png) on every encode attempt.
     stubCanvas([{ type: "image/png", size: 2 * 1024 * 1024 }]);
 
     const png = fileOfSize(4 * 1024 * 1024, "shot.png", "image/png");
@@ -159,7 +143,6 @@ describe("prepareImageForUpload — compression", () => {
 
   it("keeps the original when the re-encode comes out larger", async () => {
     vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(stubBitmap(2400, 1800)));
-    // Main webp LARGER than the source; thumb still small and useful.
     stubCanvas([
       { type: "image/webp", size: 900 * 1024 },
       { type: "image/webp", size: 15 * 1024 },

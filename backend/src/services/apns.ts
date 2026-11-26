@@ -1,25 +1,3 @@
-// ---------------------------------------------------------------------------
-// APNs sender — direct HTTP/2 to api.push.apple.com from the Worker.
-//
-// WHY NO LIBRARY. Every popular APNs package rides Node's http2 module, which
-// does not exist in Workers. Apple's provider API is plain HTTPS + a JWT, and
-// Cloudflare's fetch speaks HTTP/2 to origins that support it (APNs does), so
-// a bare fetch is the whole client.
-//
-// SHIPS DARK, like RESEND_API_KEY: with the APNS_* secrets unset every send is
-// a logged no-op that never throws. The secrets arrive only after the Apple
-// Developer enrolment completes (docs/ios-app-store.md) — an APNs auth KEY
-// (.p8), which unlike certificates does not expire:
-//   APNS_TEAM_ID     — 10-char Apple Developer Team ID
-//   APNS_KEY_ID      — 10-char key ID of the .p8
-//   APNS_PRIVATE_KEY — the .p8 file's PEM contents (ES256 / P-256)
-//   APNS_SANDBOX     — "1" to hit the sandbox gateway (TestFlight uses PROD)
-//
-// TOKEN CACHE. Apple rejects providers that mint a JWT per request (TooManyProviderTokenUpdates)
-// AND tokens older than an hour. Cache in module scope for 45 minutes — module
-// scope survives across requests within a Worker isolate, which is exactly the
-// lifetime this needs; a cold isolate simply mints a fresh one.
-// ---------------------------------------------------------------------------
 
 import type { Env } from "../types";
 
@@ -71,7 +49,6 @@ async function providerJwt(env: Env): Promise<string> {
   const header = b64url(JSON.stringify({ alg: "ES256", kid: keyId }));
   const claims = b64url(JSON.stringify({ iss: env.APNS_TEAM_ID, iat: Math.floor(now / 1000) }));
   const signingInput = `${header}.${claims}`;
-  // WebCrypto ECDSA already returns the raw r||s form JWTs want (no DER step).
   const sig = await crypto.subtle.sign(
     { name: "ECDSA", hash: "SHA-256" },
     key,
@@ -130,7 +107,6 @@ export async function sendApnsAlert(
       const body = (await res.json()) as { reason?: string };
       if (body?.reason) reason = body.reason;
     } catch {
-      /* keep the status-based reason */
     }
     const tokenDead = res.status === 410 || reason === "BadDeviceToken" || reason === "Unregistered";
     return { ok: false, status: res.status, reason, tokenDead };

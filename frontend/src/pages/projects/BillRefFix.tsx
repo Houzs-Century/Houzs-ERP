@@ -24,7 +24,6 @@ export function BillRefFix({ projectId, from, onSaved }: { projectId: number; fr
     } finally { setBusy(false); }
   };
 
-  /* The report takes a second to recount; the row says so instead of looking unsaved. */
   if (saved) return <span className="ml-2 font-sans text-[11.5px] text-ink-muted">Saved as {saved}, updating…</span>;
   if (value === null) {
     return <button type="button" className="ml-2 text-[11.5px] text-primary hover:underline" onClick={(e) => { e.stopPropagation(); setValue(from); }}>Edit</button>;

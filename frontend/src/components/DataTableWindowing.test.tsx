@@ -1,9 +1,3 @@
-/* A long table mounts only the rows on screen, but everything that acts on
-   "the rows" must still see all of them: Export writes every filtered row, the
-   toolbar search finds a row that is not mounted, and a pinned column stays
-   pinned in the windowed rows. The Delivery Planning board relies on this since
-   it dropped its 200-row "Load more" cap (3,000 rows scroll in as you go).
-   Group-by under windowing is pinned in DataTableGroupByVirtual.test.tsx. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { DataTable, type Column } from "./DataTable";

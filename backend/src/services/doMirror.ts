@@ -1,19 +1,3 @@
-// ── AutoCount Delivery Order mirror ─────────────────────────────
-// Refresh of the DO HEADER mirror (autocount_delivery_orders, mig 0215),
-// which feeds the ASSR list's DO No column for Houzs cases (Nico
-// 2026-07-27; 2990 cases resolve through the SCM module instead).
-//
-// Two paths, newest-first:
-//   1. INCREMENTAL — /DeliveryOrder/getSince/{checkpoint} (middleware
-//      PR #1): slim nine-column rows, LastModified-ascending, checkpoint
-//      advanced from the last row exactly like the SO pull.
-//   2. FULL — /DeliveryOrder/getAll (~70 MB JSON for ~11k docs because
-//      every header carries 181 fields, some with embedded signature
-//      images). Used until the middleware upgrade deploys (getSince
-//      404s → null) and on first run (no checkpoint yet). The body is
-//      stream-parsed — a brace scanner holds one document plus one
-//      flush batch at a time, so memory stays flat — and a clean full
-//      run seeds the checkpoint so later runs go incremental.
 
 import type { Env, ACDeliveryOrder } from "../types";
 import { AutoCountClient, dateOnly } from "./autocount";
@@ -124,9 +108,6 @@ export async function runDoMirrorSync(
   };
 
   try {
-    // Incremental first. Only meaningful once a full run has seeded the
-    // checkpoint; getSince returning null means the middleware hasn't
-    // been upgraded yet — fall through to the full dump either way.
     const cp = await env.DB.prepare(
       `SELECT value FROM system_settings WHERE key = '${CHECKPOINT_KEY}'`
     ).first<{ value: string }>();
@@ -143,11 +124,6 @@ export async function runDoMirrorSync(
     const res = await client.fetchAllDeliveryOrders();
     const reader = res.body!.getReader();
     const dec = new TextDecoder();
-    // Top-level-array scanner: track brace depth outside strings; each
-    // depth-0 → 0 close marks one complete document, which is parsed on
-    // its own and sliced out of the buffer so `buf` never grows past a
-    // chunk plus one document (~8 MB worst case: a header with an
-    // embedded signature image).
     let buf = "";
     let pos = 0;
     let depth = 0;
@@ -188,8 +164,6 @@ export async function runDoMirrorSync(
       }
     }
     await flush();
-    // A clean full pass seeds/advances the checkpoint so the next run can
-    // go incremental as soon as the middleware supports it.
     if (failed === 0 && maxLastModified) await saveCheckpoint(env, maxLastModified);
     return await finish("full");
   } catch (err) {

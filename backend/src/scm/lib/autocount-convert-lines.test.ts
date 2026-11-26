@@ -1,22 +1,8 @@
-// A conversion must name the lines it actually took — the tests for
-// autocount-convert-lines.ts.
-//
-// SPLIT OUT OF autocount-outbox.test.ts on 2026-08-18 with the module they
-// cover, when the merged-conversion tests pushed that file over the 2,000-line
-// cap. The harness below is deliberately the SMALL half of the original: these
-// tests need a toggle, an outbox and two sales-order line tables, and nothing
-// else.
-//
-// What they pin, in one sentence: `enqueueConvert` sends `DtlKeys` naming the
-// lines the ERP moved, and where it cannot name them it REFUSES rather than
-// letting AcSyncService fall back to every still-outstanding line on the source.
 import { describe, expect, test, beforeEach } from 'vitest';
 import { enqueueConvert } from './autocount-outbox';
 import { resetWritebackFlagCache } from './autocount-writeback-flag';
 import { fakeSb, type Row } from './fake-postgrest';
 
-/* A sales order that names nobody is REFUSED (FK_SO_SalesAgent), so every
-   fixture is attributed — the same default the sibling suite runs under. */
 const SALESPERSON = { id: 'staff-1', name: 'Nurul Hidayah' };
 
 const withFlag = (value: string | null, extra: Record<string, Row[]> = {}) =>
@@ -36,13 +22,6 @@ const outbox = (sb: { tables: Record<string, Row[]> }) => sb.tables.autocount_ou
 
 beforeEach(() => resetWritebackFlagCache());
 
-/* ── A CONVERSION MUST NAME THE LINES IT TOOK ────────────────────────────────
-   The defect these pin: enqueueConvert sent no DtlKeys, so AcSyncService fell
-   through to DtlKeys() and transferred EVERY still-outstanding line on the
-   parent (AcSyncService.cs:382-411). A delivery order shipping 2 of a sales
-   order's 5 lines therefore produced an AutoCount DO of all 5 — stock moving in
-   a live account book that never moved here. Partial shipment is the daily
-   case, so this is not an edge condition. */
 describe('a partial conversion transfers only the lines it actually took', () => {
   const soLines = (keys: Array<number | null>) => keys.map((k, i) => ({
     id: `so-item-${i + 1}`, doc_no: 'HC-SO-9', item_code: `SKU-${i + 1}`,
@@ -71,29 +50,21 @@ describe('a partial conversion transfers only the lines it actually took', () =>
     const [row] = outbox(sb);
     expect(row.status).toBe('pending');
     expect(row.payload.body.DtlKeys).toEqual([9001, 9002]);
-    /* The whole point: the third line's key is NOT in the payload, so AutoCount
-       cannot transfer goods the ERP did not ship. */
     expect(row.payload.body.DtlKeys).not.toContain(9003);
   });
 
   test('a PARTIAL transfer whose source line has no key is REFUSED, not sent blind', async () => {
     const sb = withFlag('1', {
-      /* so-item-2 was never keyed, and the DO leaves so-item-3 behind. */
       mfg_sales_order_items: soLines([9001, null, 9003]),
       delivery_order_items: [
         { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'so-item-1', item_code: 'SKU-1' },
         { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'so-item-2', item_code: 'SKU-2' },
       ],
     });
-    /* NOTHING WAS QUEUED, and `queued` says so — the same word the two create
-       routes use for a refusal that files a `skipped` row and sends nothing
-       (enqueueSoCreate's catch, autocount-outbox.ts:703). The row below is the
-       assertion that matters; this one only says the transfer did not go. */
     expect((await convertDo(sb)).queued).toBe(false);
     const [row] = outbox(sb);
     expect(row.status).toBe('skipped');
     expect(row.last_error).toContain('cannot name the subset');
-    /* A refusal must not also queue the wrong thing. */
     expect(outbox(sb).filter((r) => r.status === 'pending')).toHaveLength(0);
   });
 
@@ -108,8 +79,6 @@ describe('a partial conversion transfers only the lines it actually took', () =>
     expect((await convertDo(sb)).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.status).toBe('pending');
-    /* "All outstanding" and "the lines we took" are the same set here, and the
-       account book is the better authority on which are still open. */
     expect(row.payload.body.DtlKeys).toBeUndefined();
   });
 
@@ -132,29 +101,14 @@ describe('a partial conversion transfers only the lines it actually took', () =>
     expect(row.payload.body.DtlKeys).toEqual([9001, 9002]);
   });
 
-  /* ── PARTIALITY IS PER PARENT, and a merge is what makes that reachable ──
-     `conversionIsPartial` decides whether an un-nameable subset is safe to
-     degrade into "transfer everything outstanding". It used to read the parent
-     of the FIRST taken line and compare THAT document's line count against the
-     total taken from ALL of them, which only ever saw one parent because only
-     single-source conversions could enqueue.
-
-     Two sales orders of two lines each, three shipped, and one of the three
-     carrying no DtlKey: the first parent holds 2 and the caller took 3, so
-     `2 > 3` is false, the transfer reads as whole-document, no DtlKeys are sent
-     — and AutoCount moves every outstanding line on BOTH orders, including the
-     fourth, which is still in the warehouse. Counted per parent it is partial,
-     and a partial transfer the ERP cannot name is refused. */
   test('a MERGE that leaves one parent line behind is partial, and an unnameable subset is REFUSED', async () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: [
         { id: 'a-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 9001, cancelled: false },
         { id: 'a-2', doc_no: 'HC-SO-9', item_code: 'SKU-2', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 9002, cancelled: false },
-        /* Never keyed — this is what forces the question to be asked at all. */
         { id: 'b-1', doc_no: 'HC-SO-10', item_code: 'SKU-3', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: null, cancelled: false },
         { id: 'b-2', doc_no: 'HC-SO-10', item_code: 'SKU-4', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 9004, cancelled: false },
       ],
-      /* Both of SO-9, one of SO-10. b-2 stays behind. */
       delivery_order_items: [
         { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'a-1', item_code: 'SKU-1' },
         { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'a-2', item_code: 'SKU-2' },
@@ -172,14 +126,10 @@ describe('a partial conversion transfers only the lines it actually took', () =>
       docType: 'DO',
       docNo: 'HC-DO-1',
       docId: 'do-1',
-    /* queued FALSE: this merge was REFUSED, and nothing went. Same word the
-       create routes use for a refusal that files a skipped row (:703). */
     })).queued).toBe(false);
     const [row] = outbox(sb);
     expect(row.status).toBe('skipped');
     expect(row.last_error).toContain('cannot name the subset');
-    /* And nothing was queued alongside the refusal — the failure this pins is a
-       PENDING row with no DtlKeys, which is the blind whole-document transfer. */
     expect(outbox(sb).filter((r) => r.status === 'pending')).toHaveLength(0);
   });
 
@@ -212,12 +162,6 @@ describe('a partial conversion transfers only the lines it actually took', () =>
     expect(row.payload.fromDocs?.map((r: { key: string }) => r.key)).toEqual(['HC-SO-9', 'HC-SO-10']);
   });
 
-  /* ── PARTIAL BY QUANTITY: "3 of 5 on this line" ───────────────────────────
-     The one shape DtlKeys alone cannot express. AddPartialTransferDetail moves
-     each NAMED line's whole outstanding quantity, so a delivery of 2 out of 5
-     booked 5 in a licensed account book and answered ok — silently, because
-     nothing on either side disagreed. `Details[].Qty` is how the service was
-     taught to hear it, and it is all-or-nothing per document. */
   test('a DO shipping 2 of a 5-unit line names the QUANTITY, not just the line', async () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: [
@@ -241,11 +185,6 @@ describe('a partial conversion transfers only the lines it actually took', () =>
   });
 
   test('a DO shipping the WHOLE line sends no quantity at all', async () => {
-    /* Deliberate, and the reason is the failure mode on the other side: a
-       quantity routes the service onto the documented PartialTransfer
-       overloads and it REFUSES to fall back from them. The plain shape is the
-       one proven against this book on every conversion type, and 46,308 of the
-       46,318 lines that ever moved were whole. */
     const sb = withFlag('1', {
       mfg_sales_order_items: [
         { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 5, unit_price_sen: 100, linked_ac_dtlkey: 9001, cancelled: false },
@@ -267,10 +206,6 @@ describe('a partial conversion transfers only the lines it actually took', () =>
   });
 
   test('one partial line makes EVERY named line carry a quantity', async () => {
-    /* PlanTransfer throws on a key named with no Qty while another on the same
-       document carries one — "a line with no number would silently move its
-       whole outstanding quantity". So the ERP must not send a half-quantified
-       document, and this pins that it does not. */
     const sb = withFlag('1', {
       mfg_sales_order_items: [
         { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 5, unit_price_sen: 100, linked_ac_dtlkey: 9001, cancelled: false },
@@ -310,16 +245,6 @@ describe('a partial conversion transfers only the lines it actually took', () =>
   });
 });
 
-/* ── A SOFA IS ONE LINE IN THE BOOK AND SEVERAL IN THE ERP ───────────────────
-   Measured in AED_HOUZS on 2026-09-08: SO-013224 holds exactly two lines,
-   901830 HOK-5535 SOFA and 901831 HOK-LONG PILLOW, while the ERP holds three —
-   two sofa pieces both keyed 901830, plus the pillow. Sending one key per ERP
-   line therefore handed the host `[901830, 901830, 901831]`, and it answered
-
-     of 3 line key(s) given, only 2 exist on a SO
-
-   which reads as a missing key and is not: all three are real and two are the
-   same one. HC-DO-2609-004 and -009 spent every attempt on that sentence. */
 describe('several ERP lines sharing one book line', () => {
   const convertDo = (sb: unknown) => enqueueConvert(sb as never, {
     companyId: 1,
@@ -331,7 +256,6 @@ describe('several ERP lines sharing one book line', () => {
     docId: 'do-1',
   });
 
-  /* Two sofa pieces on ONE book key, plus a pillow on its own. */
   const sofaSo = (pieceQty = 1) => [
     { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'HOK-5535 SOFA', qty: pieceQty, unit_price_sen: 100, linked_ac_dtlkey: 901830, cancelled: false },
     { id: 'so-2', doc_no: 'HC-SO-9', item_code: 'HOK-5535 SOFA', qty: pieceQty, unit_price_sen: 100, linked_ac_dtlkey: 901830, cancelled: false },
@@ -350,13 +274,9 @@ describe('several ERP lines sharing one book line', () => {
     expect((await convertDo(sb)).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.status).toBe('pending');
-    /* THE WHOLE FIX: two 901830s collapse to one, and the order is first-seen. */
     expect(row.payload.body.DtlKeys).toEqual([901830, 901831]);
   });
 
-  /* Summing the pieces would send 2 against a book line of 1 — an over-transfer
-     of a licensed account book. Whole, no quantity is sent at all and the
-     service moves each named line's outstanding, so one sofa moves once. */
   test('no quantity rides with a shared key, so the piece count cannot over-transfer', async () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: sofaSo(),
@@ -371,14 +291,10 @@ describe('several ERP lines sharing one book line', () => {
     expect(row.payload.body.Details).toBeUndefined();
   });
 
-  /* HALF A SOFA HAS NO SHAPE IN THE BOOK, so it WAITS — option C, the owner's
-     ruling of 2026-09-08. What used to happen is that the whole document was
-     refused for it, which held a pillow hostage to a sofa. */
   test('the sofa WAITS and the pillow goes on time', async () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: sofaSo(),
       delivery_order_items: [
-        /* one of the two sofa pieces ships; the pillow ships too */
         { id: 'd1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
         { id: 'd3', delivery_order_id: 'do-1', so_item_id: 'so-3', item_code: 'HOK-LONG PILLOW', qty: 3 },
       ],
@@ -386,7 +302,6 @@ describe('several ERP lines sharing one book line', () => {
     expect((await convertDo(sb)).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.status).toBe('pending');
-    /* THE PILLOW ONLY. 901830 is the sofa and its second piece is still here. */
     expect(row.payload.body.DtlKeys).toEqual([901831]);
   });
 
@@ -396,7 +311,6 @@ describe('several ERP lines sharing one book line', () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: sofaSo(),
       delivery_order_items: [
-        /* BOTH sofa pieces ship; the pillow does not */
         { id: 'd1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
         { id: 'd2', delivery_order_id: 'do-1', so_item_id: 'so-2', item_code: 'HOK-5535 SOFA', qty: 1 },
       ],
@@ -406,29 +320,20 @@ describe('several ERP lines sharing one book line', () => {
     expect(row.payload.body.DtlKeys).toEqual([901830]);
   });
 
-  /* COUNTED ACROSS EVERY DELIVERY, not just this one. Each trip takes ONE
-     piece, so "did THIS document take them all" answers no on the very trip
-     that completes it — the sofa would wait for ever. */
   test('the delivery that covers the LAST piece carries the sofa', async () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: sofaSo(),
       delivery_order_items: [
-        /* piece 1 went out on an EARLIER delivery order */
         { id: 'd0', delivery_order_id: 'do-0', so_item_id: 'so-1', item_code: 'HOK-5535 SOFA', qty: 1 },
-        /* this one takes the last piece */
         { id: 'd2', delivery_order_id: 'do-1', so_item_id: 'so-2', item_code: 'HOK-5535 SOFA', qty: 1 },
       ],
     });
     expect((await convertDo(sb)).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.payload.body.DtlKeys).toEqual([901830]);
-    /* And still no quantity: the ERP counts pieces, the book counts sofas. */
     expect(row.payload.body.Details).toBeUndefined();
   });
 
-  /* A transfer with NO lines is not a transfer - the service falls back to
-     every outstanding line on the source, which is the defect this whole
-     function exists to prevent. */
   test('a document that is ONLY an incomplete sofa is refused, not sent empty', async () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: sofaSo(),
@@ -443,8 +348,6 @@ describe('several ERP lines sharing one book line', () => {
     expect(outbox(sb).filter((r) => r.status === 'pending')).toHaveLength(0);
   });
 
-  /* The 1:1 case must be untouched: a document with no shared key still sends
-     its per-line quantities on a genuine part-quantity shipment. */
   test('a document with no shared key still sends quantities on a real partial', async () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: [

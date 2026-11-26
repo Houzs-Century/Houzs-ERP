@@ -1,40 +1,8 @@
-// ─────────────────────────────────────────────────────────────────────────
-// salesScope.ts — row-level "own / downline" visibility for the SCM
-// sales-side documents (sales orders, delivery orders, sales invoices,
-// consignment orders).
-//
-// HOUZS VOCABULARY (2026-07 fix — this was the non-admin 500):
-//   · The caller identity must be the REAL Houzs user (integer public.users
-//     id from c.get('houzsUser')), NOT c.get('user').id — the SCM auth
-//     bridge pins user.id to ONE system scm.staff uuid, and feeding that
-//     uuid into the old sales_reps integer lookup threw
-//     "invalid input syntax for type integer" → 500 for every caller
-//     without scm.so.view_all.
-//   · The scope this returns is a list of scm.staff UUIDs (matching the
-//     `salesperson_id` column stamped from the mig-0066 staff picker), NOT
-//     Houzs integer user ids. Integer ids against the uuid column would
-//     22P02 the PostgREST filter — the second half of the same 500.
-//
-// VISIBILITY RULE (owner spec, 2026-07): view-all callers (`*` wildcard or
-// `scm.so.view_all`) are unrestricted; everyone else sees SELF + FULL
-// REPORTING CHAIN — every user under them in the public.users.manager_id
-// tree, any depth (services/orgScope.ts). This supersedes the old
-// sales_reps-subtree tier AND the old "non-reps see all" fallback: a
-// non-admin caller without view_all is ALWAYS scoped now.
-//
-// Keep this as the single source of truth so every sales-doc list/detail
-// scopes identically.
-// ─────────────────────────────────────────────────────────────────────────
 
 import type { Env } from "../../types";
 import { subtreeUserIds } from "../../services/orgScope";
 import { chunkIn } from "./paginate-all";
 
-/* An all-zeros uuid no scm.staff row ever carries (the seeded system row is
-   …-000000000001). Returned instead of an EMPTY scope list because
-   PostgREST rejects an empty `in.()` filter (400 → the routes would 500);
-   a one-element impossible id keeps `.in('salesperson_id', scope)` valid
-   while matching nothing — fail closed, never open. */
 const MATCH_NOTHING_STAFF_ID = "00000000-0000-0000-0000-000000000000";
 
 /**
@@ -53,21 +21,16 @@ export async function resolveSalesScopeIds(
   houzsUserId: number | null | undefined,
   canViewAll: boolean,
 ): Promise<string[] | null> {
-  if (canViewAll) return null; // view-all tier
+  if (canViewAll) return null;
   if (houzsUserId == null || !Number.isFinite(Number(houzsUserId))) {
     return [MATCH_NOTHING_STAFF_ID];
   }
-  // Self + full downline chain (users.manager_id tree, cycle-guarded).
   const userIds = await subtreeUserIds(env, Number(houzsUserId));
-  // Map integer user ids → scm.staff uuids via the mig-0066 sync link
-  // (staff.user_id). Every non-disabled user has a deterministic staff row
-  // (md5('houzs-user:'||id)::uuid) from the 0066 backfill + trigger.
   const { data, error } = await sb
     .from("staff")
     .select("id")
     .in("user_id", userIds);
   if (error) {
-    // Fail CLOSED (own/none) — never fail open to the whole book.
     console.log(
       `[salesScope] staff uuid lookup failed for user=${houzsUserId}: ${error.message}`,
     );
@@ -92,7 +55,7 @@ export async function salesDocOutOfScope(
   salespersonId: number | string | null | undefined,
 ): Promise<boolean> {
   const ids = await resolveSalesScopeIds(sb, env, houzsUserId, canViewAll);
-  if (ids === null) return false; // unrestricted
+  if (ids === null) return false;
   return salespersonId == null || !ids.includes(String(salespersonId));
 }
 
@@ -126,14 +89,6 @@ export async function salesDocOutOfScope(
  */
 export function applySoScope<T>(q: T, scopeIds: string[] | null): T {
   if (!scopeIds) return q;
-  /* "in my scope OR open to all". A single PostgREST or= of one array-overlap
-     (access_staff_ids && scope) plus one scalar (open_to_all is true) — NOT the
-     two-array `in.(…) , ov.{…}` nesting 20260909T1000 deliberately avoided; the
-     only commas here are the array literal's. open_to_all is a boolean on both
-     the base table and the payment-totals VIEW (mig 20260911T1500), so this is
-     valid whether `q` reads the table or the view. The match-nothing sentinel
-     still matches nothing on the overlap term (no order carries the all-zeros
-     uuid); such a caller now additionally sees open orders, which is the point. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM PostgREST client is untyped throughout this module.
   return (q as any).or(
     `access_staff_ids.ov.{${scopeIds.join(",")}},open_to_all.is.true`,
@@ -165,9 +120,9 @@ export async function soDocOutOfScope(
     openToAll?: boolean | null;
   },
 ): Promise<boolean> {
-  if (doc.openToAll) return false; // open to all — in scope for everyone
+  if (doc.openToAll) return false;
   const ids = await resolveSalesScopeIds(sb, env, houzsUserId, canViewAll);
-  if (ids === null) return false; // unrestricted
+  if (ids === null) return false;
   const access = (doc.accessStaffIds ?? []).filter((x): x is string => !!x);
   if (access.length > 0) return !access.some((a) => ids.includes(String(a)));
   return doc.salespersonId == null || !ids.includes(String(doc.salespersonId));

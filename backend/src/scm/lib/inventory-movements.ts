@@ -1,15 +1,3 @@
-// ----------------------------------------------------------------------------
-// Inventory movement helpers — single source of truth for writing
-// IN / OUT rows whenever a document posts. Imported by GRN, DO, Consignment,
-// and Purchase Return post handlers.
-//
-// Trading-company model (commander 2026-05-25):
-//   IN  ← GRN posted (qty_accepted per item), Consignment RETURN note post
-//   OUT ← DO dispatched, Purchase Return posted, Consignment OUT note post
-//
-// Best-effort: a failed movement insert does NOT roll back the document
-// post (audit-DLQ style). We log + return false so the caller can decide.
-// ----------------------------------------------------------------------------
 
 import { pgrestIn } from './pgrest-in-list';
 
@@ -17,67 +5,21 @@ type MovementInput = {
   movement_type: 'IN' | 'OUT' | 'ADJUSTMENT';
   warehouse_id: string;
   item_code: string;
-  /** Migration 0095 — canonical attribute-composition bucket key
-   *  (packages/shared computeVariantKey). Stock is bucketed by
-   *  (warehouse_id, item_code, variant_key). Omit / '' = unclassified. */
   variant_key?: string;
   product_name?: string | null;
-  /** For IN / OUT: positive count. For ADJUSTMENT: signed delta
-   *  (positive = found stock / IN-style, negative = write-off / OUT-style).
-   *  The DB column is INTEGER and accepts both. */
   qty: number;
-  /** PR #37 — for IN rows: per-unit cost in sen. Trigger uses this to
-   *  create the FIFO lot. OUT rows leave this unset; the trigger computes
-   *  the consumed cost from the lots it pulls from. */
   unit_cost_sen?: number;
-  /** On a reversing IN, the OUT it undoes (migration 20261123T0100): the FIFO
-   *  trigger re-opens only what that OUT took from the lots. */
   reverses_movement_id?: string;
-  /** PR — Inv PR5 (2026-05-27) — added STOCK_TAKE. ADJUSTMENT remains
-   *  for the manual one-off adjustment route. */
   source_doc_type:
     | 'GRN' | 'DO' | 'DR' | 'CONSIGNMENT_NOTE' | 'PURCHASE_CONSIGNMENT_NOTE'
     | 'PURCHASE_RETURN' | 'STOCK_TRANSFER' | 'STOCK_TAKE' | 'ADJUSTMENT'
-    /* Sales-consignment loaner movements (value-neutral warehouse transfer, NOT
-       COGS). CS_DO = a Consignment Note ships a loaner OUT to the consignment
-       warehouse; CS_DR = a Consignment Return brings it back. Their partial
-       UNIQUE indexes (uq_inv_mov_cs_do_source / uq_inv_mov_cs_dr_source,
-       migration 0153) are the per-doc idempotency backstop. */
     | 'CS_DO' | 'CS_DR'
-    /* Purchase-consignment ON-ledger movements (request 2026-06-05 — consigned
-       stock at a showroom must show in Inventory). PC_RECEIVE = a Purchase
-       Consignment Receive books goods IN to its warehouse; PC_RETURN = a
-       Purchase Consignment Return takes them back OUT. Reversed on cancel via
-       reverseMovements. Excluded from MRP by warehouse separation. */
     | 'PC_RECEIVE' | 'PC_RETURN';
   source_doc_id?: string;
   source_doc_no?: string;
-  /** GL redesign item 4 — the BUSINESS date this movement belongs to
-   *  ('YYYY-MM-DD'): a GRN's received date, a DO's dispatch date. Month-end
-   *  stock value replays on THIS, so a document keyed late still counts in
-   *  its own month. Omitted = today (MYT) — right for everything keyed as it
-   *  happens. */
   movement_date?: string;
-  /** Multi-company (migration 0061): inventory_movements.company_id is NOT NULL.
-   *  Callers pass the ACTIVE company (or the source doc's company) via the
-   *  writeMovements `companyId` arg, which stamps this; the FIFO trigger then
-   *  copies it onto the lot / consumption it creates. Row-level value wins. */
   company_id?: number | null;
-  /** Migration 0120 — production batch (source PO number). On IN rows the FIFO
-   *  trigger copies this onto the lot it creates, so sofa set components share a
-   *  batch and can be shipped as a whole set from one dye lot. Omit for
-   *  un-batched stock. */
   batch_no?: string | null;
-  /** Migration 0279 — NULL (omit) = this row is the document's PRIMARY posting.
-   *  1..N = a numbered CORRECTION to it, written by resyncInventoryForDo when a
-   *  line is edited on an already-shipped DO.
-   *
-   *  It exists for exactly one reason: uq_inv_mov_do_source_v2 keys on
-   *  COALESCE(correction_seq, 0), so a correction no longer collides with the
-   *  first ship while a double-post of the first ship is still rejected. Before
-   *  0279 the prod-only uq_inv_mov_do_source had no such discriminator and every
-   *  edit-after-ship delta was silently refused. Do not set it on any other
-   *  path. */
   correction_seq?: number | null;
   performed_by?: string | null;
   notes?: string | null;
@@ -160,7 +102,6 @@ export function distributeAssignedToLots(
   claims: Array<{ soDocNo: string; deliveryDate: string | null; qty: number }> | null | undefined,
 ): LotAssignmentSplit[] {
   let remainingAssigned = Math.max(0, Math.round(assigned || 0));
-  // Mutable claim queue (copy qtys so the caller's array is untouched).
   const queue = (claims ?? [])
     .map((cl) => ({ soDocNo: cl.soDocNo, deliveryDate: cl.deliveryDate ?? null, qty: Math.max(0, Math.round(cl.qty || 0)) }))
     .filter((cl) => cl.qty > 0);
@@ -199,27 +140,17 @@ export function distributeAssignedToLots(
 export async function writeMovements(
   sb: any,
   rows: MovementInput[],
-  /** Multi-company: stamp this company_id on every row that doesn't already
-   *  carry one. Undefined (single-company Houzs / unresolved) leaves rows as-is. */
   companyId: number | null | undefined,
 ): Promise<{ ok: boolean; reason?: string }> {
   if (rows.length === 0) return { ok: true };
   if (companyId != null) {
     rows = rows.map((r) => (r.company_id != null ? r : { ...r, company_id: companyId }));
   }
-  /* EVERY row carries its business date (GL redesign item 4): callers that
-     know one pass it (GRN → received date); everything else is dated today in
-     MYT, the day it was keyed. Always-filled is what lets the month-end
-     replay use a plain `lte` — a NULL here would silently fall out of every
-     as-of filter. */
   const todayMyt = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
   rows = rows.map((r) => (r.movement_date ? r : { ...r, movement_date: todayMyt }));
   try {
     const { error } = await sb.from('inventory_movements').insert(rows);
     if (error) {
-      // Migration 0120 forward-compat: if batch_no isn't in the schema cache yet
-      // (column not created on this DB), strip it and retry so inbound stock
-      // still enters inventory. Once 0120 is applied the first attempt succeeds.
       const msg = error.message ?? '';
       const batchMissing = msg.includes('batch_no');
       if (batchMissing && rows.some((r) => 'batch_no' in r)) {
@@ -230,14 +161,6 @@ export async function writeMovements(
         console.error('[inventory] movement insert failed (post batch_no strip):', retry.error.message);
         return { ok: false, reason: retry.error.message };
       }
-      /* Migration 0279 forward-compat, same shape as batch_no above: on a DB that
-         has not applied 0279 yet, strip correction_seq and retry so the write is
-         attempted rather than lost to an unknown-column error. The retry then
-         behaves exactly as it did before 0279 — a resync delta on an
-         already-shipped bucket collides with uq_inv_mov_do_source and is
-         refused, which the caller records as RECOUNT_FAILED. Degrading to the
-         old, LOUD failure is correct; degrading to a silent success would not
-         be. */
       const seqMissing = msg.includes('correction_seq');
       if (seqMissing && rows.some((r) => 'correction_seq' in r)) {
         const stripped = rows.map(({ correction_seq: _s, ...rest }) => rest);
@@ -247,11 +170,6 @@ export async function writeMovements(
         console.error('[inventory] movement insert failed (post correction_seq strip):', retry.error.message);
         return { ok: false, reason: retry.error.message };
       }
-      /* 20260905T1200 forward-compat, same shape again: a worker that went
-         live moments before the movement_date migration applied must not lose
-         the goods receipt over the new column. The stripped retry behaves
-         exactly like the pre-item-4 world (the migration backfills the date
-         from the source document afterwards). */
       const dateMissing = msg.includes('movement_date');
       if (dateMissing && rows.some((r) => 'movement_date' in r)) {
         const stripped = rows.map(({ movement_date: _d, ...rest }) => rest);
@@ -350,7 +268,7 @@ export async function resolveWarehouseLotBatches(
         byBucket.set(k, set.size === 1 ? [...set][0]! : null);
       }
     }
-  } catch { /* view/column absent — every line un-batched (plain FIFO) */ }
+  } catch { }
   return byBucket;
 }
 
@@ -389,7 +307,7 @@ export async function resolveWarehouseLotCosts(
         byBucket.set(k, a.qty > 0 ? Math.round(a.cost / a.qty) : 0);
       }
     }
-  } catch { /* view absent — no cost fallback available */ }
+  } catch { }
   return byBucket;
 }
 
@@ -411,7 +329,6 @@ export async function reconcileDropshipBatches(
   buckets: Array<{ warehouse_id: string; item_code: string; variant_key: string; batch_no: string | null }>,
   performedBy: string | null,
 ): Promise<{ ok: boolean; reconciled: number; affectedDoIds: string[]; reason?: string }> {
-  // Dedupe to one call per distinct batched bucket.
   const seen = new Set<string>();
   const distinct = buckets.filter((b) => {
     if (!b.batch_no) return false;
@@ -426,7 +343,7 @@ export async function reconcileDropshipBatches(
     try {
       const { error } = await sb.rpc('fn_reconcile_dropship_batch', {
         p_warehouse_id: b.warehouse_id,
-        p_product_code: b.item_code, // the function's own parameter name (see oversell-retrocost.ts)
+        p_product_code: b.item_code,
         p_variant_key: b.variant_key ?? '',
         p_batch_no: b.batch_no,
         p_created_by: performedBy,
@@ -442,9 +359,6 @@ export async function reconcileDropshipBatches(
       console.error('[dropship] reconcile exception:', e);
     }
   }
-  // Collect the DOs that have a (drop-ship) OUT movement for any reconciled
-  // batch+bucket, so the caller can restamp their actual COGS (the reconcile
-  // bumped those OUT movements' total_cost_sen from the arriving lots).
   const affectedDoIds = new Set<string>();
   if (reconciled > 0) {
     try {
@@ -519,13 +433,6 @@ export async function reverseMovements(
   performedBy: string | null,
 ): Promise<{ ok: boolean; reversed: number; skipped: number; failed: number; reason?: string }> {
   const { openedLotRows, ...rev } = await reverseMovementsCore(sb, sourceDocType, sourceDocId, performedBy);
-  /* Oversell retro-cost (0154) — reversing an OUT writes an IN, which re-opens
-     a lot. A prior "ship anyway" DO whose short units went out at RM0 in that
-     warehouse can now be costed from it. Wired 2026-07-29: until then only the
-     GRN post reconciled, so a cancelled PR / stock transfer put stock back
-     without ever repairing the earlier shipment (COE §2). Runs ONCE for the
-     whole reversal, after every row is committed. Best-effort — never throws,
-     never rolls a reversal back. */
   if (openedLotRows.length > 0) {
     const { reconcileUncostedAfterIn } = await import('./oversell-retrocost');
     await reconcileUncostedAfterIn(sb, openedLotRows, performedBy);
@@ -544,10 +451,6 @@ export async function reverseMovementsCore(
 ): Promise<{ ok: boolean; reversed: number; skipped: number; failed: number; reason?: string; openedLotRows: MovementInput[] }> {
   const none: MovementInput[] = [];
   try {
-    /* Select batch_no so a reversing row restores the EXACT dye-lot batch the
-       original movement consumed/created (FIFO trigger reverses per-batch, not
-       plain-FIFO). Forward-compat: pre-0120 the column doesn't exist → retry
-       without it and every reversing row stays un-batched (old behaviour). */
     let movsRes = await sb
       .from('inventory_movements')
       .select('id, movement_type, warehouse_id, item_code, variant_key, batch_no, product_name, qty, unit_cost_sen, source_doc_no, company_id')
@@ -579,32 +482,23 @@ export async function reverseMovementsCore(
     const rows = (data ?? []) as Row[];
     if (rows.length === 0) return { ok: true, reversed: 0, skipped: 0, failed: 0, openedLotRows: none };
 
-    // ── Idempotency: signed net per (product, variant, warehouse) bucket.
-    // Buckets already at net 0 are fully reversed → we won't touch them.
     const netByBucket = new Map<string, number>();
-    // batch_no joins the bucket key so a batched (sofa) lot reverses against its
-    // own dye-lot, not a co-mingled plain-FIFO net. Non-batched rows segment '' .
     const bucketKey = (r: Row) => `${r.warehouse_id}::${r.item_code}::${r.variant_key ?? ''}::${r.batch_no ?? ''}`;
     for (const r of rows) {
       if (r.movement_type !== 'IN' && r.movement_type !== 'OUT') continue;
-      /* Number(): through the transaction shim (postgres.js) a numeric qty reads
-         back as TEXT, and '1' + 1 concatenates. PostgREST answers a number. */
       const signed = r.movement_type === 'IN' ? Number(r.qty) : -Number(r.qty);
       const k = bucketKey(r);
       netByBucket.set(k, (netByBucket.get(k) ?? 0) + signed);
     }
 
     let reversed = 0, skipped = 0, failed = 0;
-    // Reversing rows that OPENED a lot (an IN) — the retro-cost input below.
     const openedLotRows: MovementInput[] = [];
-    // Track how much of each bucket's net we still need to neutralise as we walk
-    // the original rows, so we don't over-reverse a bucket that's already square.
     const remaining = new Map(netByBucket);
     for (const r of rows) {
       if (r.movement_type !== 'IN' && r.movement_type !== 'OUT') { skipped += 1; continue; }
       const k = bucketKey(r);
       const net = remaining.get(k) ?? 0;
-      if (net === 0) { skipped += 1; continue; } // bucket already fully reversed
+      if (net === 0) { skipped += 1; continue; }
 
       const opposite: 'IN' | 'OUT' = r.movement_type === 'IN' ? 'OUT' : 'IN';
       const row: MovementInput = {
@@ -614,35 +508,20 @@ export async function reverseMovementsCore(
         variant_key: r.variant_key ?? '',
         product_name: r.product_name,
         qty: Number(r.qty),
-        // A reversing IN must carry the lot cost so stock re-enters at its
-        // original basis; a reversing OUT lets the FIFO trigger compute COGS.
         ...(opposite === 'IN' ? { unit_cost_sen: Number(r.unit_cost_sen ?? 0) } : {}),
-        // A reversing IN names the OUT it undoes, so the trigger re-opens only
-        // what that OUT took (a short OUT took less than its qty).
         ...(opposite === 'IN' && r.id ? { reverses_movement_id: r.id } : {}),
-        // Carry the original row's batch (only when set) so the FIFO trigger
-        // reverses the EXACT dye-lot, not any plain-FIFO lot. Non-batched stays NULL.
         ...(r.batch_no ? { batch_no: r.batch_no } : {}),
         source_doc_type: sourceDocType as MovementInput['source_doc_type'],
         source_doc_id: sourceDocId,
         source_doc_no: r.source_doc_no ?? undefined,
-        // Multi-company: a reversal belongs to the same company as the row it undoes.
         company_id: r.company_id,
         performed_by: performedBy,
         notes: `Reversal of ${sourceDocType} ${r.source_doc_no ?? sourceDocId} (cancel/line-delete)`,
       };
-      // Insert individually so a single collision (DO/DR same-key unique index)
-      // doesn't abort the whole reversal.
-      /* undefined = leave the rows as they are, which is correct here and only
-         here: `row` above already carries `company_id: r.company_id`, copied
-         from the movement being reversed, because a reversal belongs to the
-         same company as the row it undoes. Stamping an ambient company over
-         that would be the bug. Typed out rather than omitted. */
       const res = await writeMovements(sb, [row], undefined);
       if (res.ok) {
         reversed += 1;
         if (opposite === 'IN') openedLotRows.push(row);
-        // Walk the remaining net toward 0 by the reversed direction's signed qty.
         remaining.set(k, net + (opposite === 'IN' ? Number(r.qty) : -Number(r.qty)));
       } else {
         failed += 1;

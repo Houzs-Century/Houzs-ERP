@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// PurchaseConsignmentReturnNew — full-page Create at
-// /purchase-consignment-return/new.
-//
-// Faithful clone of PurchaseReturnNew.tsx. It reuses the SAME shared components
-// UNCHANGED — MoneyInput, ItemGroupPill, the supplier / product / maintenance
-// data hooks — and the SAME card-per-line editor with the per-category variant
-// block. Only the create + post mutations are repointed at
-// `/purchase-consignment-returns` (the pc-return hooks) and the page title /
-// back link point at /purchase-consignment-return.
-//
-// Dropped from the PR clone (per scope): the from-GRN picker that points at real
-// Goods Receipts. Instead the form accepts a `?fromPcReceive=<id>` prefill from
-// a Purchase Consignment Receive, OR a `?fromPcOrder=<id>` prefill from a
-// Purchase Consignment Order, OR free manual entry. Numbering is PCT-…
-// ----------------------------------------------------------------------------
 
 import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
@@ -118,17 +102,12 @@ export const PurchaseConsignmentReturnNew = () => {
   const orderQ     = usePurchaseConsignmentOrderDetail(orderId);
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
 
-  // Free-form mode = no source receive and no source order.
   const isManual = !receiveId && !orderId;
 
   const maintQ = useMaintenanceConfig('master');
   const maint  = maintQ.data?.data ?? null;
   const fabrics = useFabricTrackings().data ?? [];
 
-  /* One key for the one return this page is open to raise (lib/idempotency.ts).
-     Route-level form, navigates to the return detail on success, so the MOUNT is
-     exactly one return: stable across re-renders and across a re-press after a
-     stalled submit, fresh on remount. */
   const idemKey = useIdempotencyKey();
   const create = useCreatePurchaseConsignmentReturn();
   const post   = usePostPurchaseConsignmentReturn();
@@ -140,16 +119,11 @@ export const PurchaseConsignmentReturnNew = () => {
   const [notes, setNotes]             = useState<string>('');
   const [lines, setLines]             = useState<DraftLine[]>([]);
 
-  // Free-form mode — seed ONE blank starter line.
   useEffect(() => {
     if (!isManual) return;
     setLines((prev) => prev.length > 0 ? prev : [newLine()]);
   }, [isManual]);
 
-  // From-Receive multi-picker merge (fromPicks) — the operator chose specific
-  // receive lines + quantities on /purchase-consignment-return/from-receive. The
-  // header still binds to the first picked receive (via ?fromPcReceive=), but the
-  // LINES come from the stash (picked subset + picked qty).
   const [picksLoaded, setPicksLoaded] = useState(false);
   useEffect(() => {
     if (!fromPicks || picksLoaded) return;
@@ -179,9 +153,8 @@ export const PurchaseConsignmentReturnNew = () => {
     setPicksLoaded(true);
   }, [fromPicks, picksLoaded]);
 
-  // Pre-fill lines + supplier from the source Receive.
   useEffect(() => {
-    if (fromPicks) return; // the picker stash drives the lines, not the whole receive
+    if (fromPicks) return;
     if (!receiveQ.data) return;
     const grn = receiveQ.data.grn as { supplier_id?: string } | null;
     setSupplierId(grn?.supplier_id ?? '');
@@ -206,7 +179,6 @@ export const PurchaseConsignmentReturnNew = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- seed-once from the nav prefill; the loaded-flag guard makes any re-run a no-op
   }, [receiveQ.data]);
 
-  // Pre-fill lines + supplier from the source Order (no grnItemId linkage).
   useEffect(() => {
     if (!orderQ.data) return;
     const po = orderQ.data.purchaseOrder;
@@ -238,9 +210,6 @@ export const PurchaseConsignmentReturnNew = () => {
   );
 
   const [productQuery, setProductQuery] = useState<string>('');
-  /* Perf — debounce the datalist search so a fast typist fires one
-     /mfg-products request per pause, not per keystroke. Native <datalist>
-     renders <option>s directly, so no render cap is needed — only the refetch. */
   const debouncedProductQuery = useDebouncedValue(productQuery, 250);
   const productsQ = useMfgProducts({
     search: debouncedProductQuery,
@@ -377,7 +346,6 @@ export const PurchaseConsignmentReturnNew = () => {
         </div>
       </section>
 
-      {/* Items card — card-per-line. */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items to Return</h2>
@@ -535,7 +503,6 @@ export const PurchaseConsignmentReturnNew = () => {
                     </div>
                   )}
 
-                  {/* Fields row — Qty Returned · Unit Price · Reason · Refund. */}
                   <div className={styles.formGrid4}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Qty Returned</span>
@@ -578,7 +545,6 @@ export const PurchaseConsignmentReturnNew = () => {
         </div>
       </section>
 
-      {/* Totals card aligned right — lg:pr-32 clears the fixed FAB cluster. */}
       <div className="lg:pr-32" style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <section className={styles.card} style={{ maxWidth: 360, width: '100%' }}>
           <div className={styles.cardBody}>

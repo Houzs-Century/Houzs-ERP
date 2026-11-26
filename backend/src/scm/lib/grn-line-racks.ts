@@ -1,18 +1,3 @@
-// grn-line-racks — one GRN line's goods split over several racks
-// (scm.grn_item_racks), e.g. 6 on L3.1 and 4 on L3.2.
-//
-//   GET /grns/:id/racks                    every split row of the GRN's lines
-//   PUT /grns/:id/items/:itemId/racks      replace one line's split
-//
-// A split is a PLAN for a DRAFT: the storekeeper scans shelf by shelf, and the
-// purchaser's post places the goods (grn-rack-sync reads planGrnPlacements).
-// Posting refuses while a split does not account for every accepted unit. Once
-// posted, the rack board is where goods move — this path refuses, the same
-// boundary the one-rack PATCH (grn-line-rack.ts) keeps for a placed line.
-//
-// grn_items.rack_id stays meaningful: the single rack when the split uses one
-// rack, NULL when it uses several, so a reader that only knows rack_id never
-// names one shelf for goods that are on three.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Context } from 'hono';

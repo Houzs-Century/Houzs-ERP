@@ -1,6 +1,3 @@
-// Finance's To do — the design's built-in rules (Finance-1a-To-do, owner's
-// Claude Design redesign 2026-11-02): which facts raise which job, whose desk
-// it is on, how long it has waited, and the month's checklist.
 
 import { describe, it, expect } from 'vitest';
 import { addDays, bankName, buildFinanceTodo, raiseJobs, type TodoFacts, type TodoViewer } from './finance-todo';
@@ -87,7 +84,6 @@ describe('merchant reports', () => {
       cardRows: [{ acquirer: 'GHL', batchId: 3, bucket: 'UNMATCHED', byReference: false, grossSen: 5_000, txnDate: '2026-10-28', uploadedOn: '2026-10-29' }],
     }), FINANCE);
     expect(mine[0]?.title).toBe('Choose payments for 1 GHL merchant line');
-    /* Every line with no sale at all: the job opens on No sale found, at the one report. */
     expect(mine[0]?.action.to).toBe('/scm/merchant-recon?acq=GHL&batch=3&tab=no-sale');
     expect(mine[0]?.detail).toContain('GHL lines never match on their own, so each one is picked by amount and date');
   });
@@ -166,7 +162,6 @@ describe('receipts and invoices', () => {
   it('draft transfer receipts are one job to confirm the money arrived', () => {
     const { mine } = raiseJobs(facts({ transfers: [{ amountSen: 50_000, paidOn: '2026-10-25' }, { amountSen: 7_000, paidOn: null }] }), FINANCE);
     expect(mine[0]).toMatchObject({ rule: 'transfers', group: 'other', title: 'Confirm 2 transfers arrived', amountSen: 57_000, since: '2026-10-25' });
-    /* Review opens Receipts on the official drafts of every month (batch 5 §2). */
     expect(mine[0]!.action).toMatchObject({ label: 'Review', to: '/scm/receipts?kind=official&status=draft&month=all' });
   });
 

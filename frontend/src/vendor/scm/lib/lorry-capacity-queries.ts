@@ -1,13 +1,3 @@
-// Lorry Capacity queries — STAGE 5B (final) of the Delivery / TMS module.
-// Reads the performance dashboard (GET /lorry-capacity) and manages the two
-// inline edits: the In-house checkbox (PATCH …/in-house) and the Repair Days
-// number (PUT …/repair-days). Cloned from the lorries / delivery-planning query
-// pattern (TanStack Query + authedFetch). Rows are snake_case as the API emits
-// them; money fields are integer cents (centi) — divide by 100 for RM display.
-//
-// HOUZS VENDOR NOTE: 1:1 from 2990's apps/backend/src/lib/lorry-capacity-queries.ts.
-// The source had no `supabase` import to drop; all calls go through authedFetch
-// (→ /api/scm). Everything else is copied verbatim.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -15,9 +5,6 @@ import { writeFailed } from './mutation-error';
 
 export type FleetFilter = 'all' | 'internal' | 'outsourced';
 
-/* Per-lorry metric row. Counts are integers; utilisation / orders_per_trip are
-   fractions/ratios already rounded server-side; *_sen are integer cents (null
-   when the denominator was zero → render "—"). */
 export type LorryCapacityRow = {
   lorry_id: string;
   plate: string;
@@ -26,7 +13,7 @@ export type LorryCapacityRow = {
   work_days: number;
   repair_days: number;
   available_days: number;
-  utilisation: number | null;          // fraction (0..n); render as %
+  utilisation: number | null;
   total_trips: number;
   delivery_days: number;
   deliveries: number;
@@ -37,8 +24,8 @@ export type LorryCapacityRow = {
   delivery_revenue_sen: number;
   revenue_per_order_sen: number | null;
   revenue_per_trip_sen: number | null;
-  km: number | null;                   // GPS km in range (Velocity fixes); null when km_incomplete
-  running_cost_sen: number | null;     // km x RM/km; null when no rate set
+  km: number | null;
+  running_cost_sen: number | null;
 };
 
 export type LorryCapacityTotals = {
@@ -57,11 +44,9 @@ export type LorryCapacityResponse = {
   totals: LorryCapacityTotals;
   workingDays: number;
   range: { from: string; to: string; fleet: FleetFilter };
-  /** Why km and running cost are not given (range too long, or too many GPS fixes), else null. */
   km_incomplete: string | null;
 };
 
-/* The dashboard. from/to are YYYY-MM-DD; fleet = all | internal | outsourced. */
 export function useLorryCapacity(opts: { from: string; to: string; fleet?: FleetFilter }) {
   const fleet = opts.fleet ?? 'all';
   return useQuery({
@@ -77,7 +62,6 @@ export function useLorryCapacity(opts: { from: string; to: string; fleet?: Fleet
   });
 }
 
-/* Toggle a lorry's In-house flag (is_internal) inline. */
 export function useToggleLorryInHouse() {
   const qc = useQueryClient();
   return useMutation({
@@ -86,13 +70,11 @@ export function useToggleLorryInHouse() {
         `/lorry-capacity/lorries/${id}/in-house`,
         { method: 'PATCH', body: JSON.stringify({ isInternal }) },
       ),
-    /* The flag is the lorry master's: the lorry lists and the overview read it too. */
     onSuccess: () => Promise.all([['lorry-capacity'], ['lorries'], ['logistic-overview']].map((queryKey) => qc.invalidateQueries({ queryKey }))),
     onError: writeFailed,
   });
 }
 
-/* Set a lorry's repair days for the queried period (single managed window). */
 export function useSetRepairDays() {
   const qc = useQueryClient();
   return useMutation({
@@ -101,7 +83,6 @@ export function useSetRepairDays() {
         `/lorry-capacity/lorries/${id}/repair-days`,
         { method: 'PUT', body: JSON.stringify({ from, to, days }) },
       ),
-    /* Repair days are workshop windows the overview's available days read as well. */
     onSuccess: () => Promise.all([['lorry-capacity'], ['logistic-overview']].map((queryKey) => qc.invalidateQueries({ queryKey }))),
   });
 }

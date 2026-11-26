@@ -4,17 +4,59 @@
     "@typescript-eslint/no-explicit-any": 1002,
     "@typescript-eslint/no-floating-promises": 1,
     "@typescript-eslint/no-unnecessary-condition": 2600,
+    "houzs/no-imperative-timers": 18,
+    "houzs/no-prose-comments": 605,
     "no-restricted-syntax": 180
   },
   "files": {
+    "src/acc/credit-note-allocations.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/acc/credit-note-si.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/acc/deposit-invoices.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/acc/deposit-refunds.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/acc/engine.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/acc/masters-company.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/acc/payment-reconciled.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/acc/payments.ts": {
+      "houzs/no-prose-comments": 3
+    },
+    "src/acc/receipts.ts": {
+      "houzs/no-prose-comments": 5
+    },
+    "src/acc/rules.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/acc/settlement.ts": {
+      "houzs/no-prose-comments": 2
+    },
     "src/db/d1-compat.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 8
+      "@typescript-eslint/no-unnecessary-condition": 8,
+      "houzs/no-imperative-timers": 3
+    },
+    "src/db/supabase.ts": {
+      "houzs/no-imperative-timers": 2
     },
     "src/index.ts": {
       "@typescript-eslint/no-unnecessary-condition": 10
     },
     "src/lib/mail-attachments.ts": {
       "@typescript-eslint/no-unnecessary-condition": 4
+    },
+    "src/lib/translate-announcement.ts": {
+      "houzs/no-imperative-timers": 1
     },
     "src/middleware/auth.ts": {
       "@typescript-eslint/no-explicit-any": 1,
@@ -42,7 +84,8 @@
     },
     "src/routes/assrFormIntake.ts": {
       "@typescript-eslint/no-explicit-any": 1,
-      "@typescript-eslint/no-unnecessary-condition": 3
+      "@typescript-eslint/no-unnecessary-condition": 3,
+      "houzs/no-imperative-timers": 4
     },
     "src/routes/assrPortal.ts": {
       "@typescript-eslint/no-explicit-any": 8,
@@ -57,9 +100,18 @@
     "src/routes/branding.ts": {
       "@typescript-eslint/no-unnecessary-condition": 6
     },
+    "src/routes/chatCallback.ts": {
+      "houzs/no-imperative-timers": 1
+    },
     "src/routes/clientErrors.ts": {
       "@typescript-eslint/no-explicit-any": 1,
       "@typescript-eslint/no-unnecessary-condition": 2
+    },
+    "src/routes/connect-payments.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/routes/deliverySheetSync.ts": {
+      "houzs/no-imperative-timers": 1
     },
     "src/routes/departments.ts": {
       "@typescript-eslint/no-explicit-any": 1,
@@ -134,6 +186,9 @@
     "src/routes/tableLayouts.ts": {
       "@typescript-eslint/no-unnecessary-condition": 23
     },
+    "src/routes/track.ts": {
+      "houzs/no-imperative-timers": 1
+    },
     "src/routes/udf.ts": {
       "@typescript-eslint/no-explicit-any": 1,
       "@typescript-eslint/no-unnecessary-condition": 5
@@ -160,8 +215,26 @@
       "@typescript-eslint/no-explicit-any": 2,
       "@typescript-eslint/no-unnecessary-condition": 1
     },
+    "src/scm/lib/ap-invoice-settlement.ts": {
+      "houzs/no-prose-comments": 3
+    },
     "src/scm/lib/ar-aging.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
+    },
+    "src/scm/lib/auto-derive-cost.test.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/auto-derive-cost.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/auto-final-invoice.ts": {
+      "houzs/no-prose-comments": 3
+    },
+    "src/scm/lib/autocount-held-edit-resend.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/autocount-line-keys.ts": {
+      "houzs/no-prose-comments": 14
     },
     "src/scm/lib/autocount-outbox.test.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1,
@@ -170,6 +243,7 @@
     "src/scm/lib/autocount-outbox.ts": {
       "@typescript-eslint/no-explicit-any": 3,
       "@typescript-eslint/no-unnecessary-condition": 30,
+      "houzs/no-prose-comments": 1,
       "no-restricted-syntax": 2
     },
     "src/scm/lib/autocount-requeue.test.ts": {
@@ -180,8 +254,17 @@
       "@typescript-eslint/no-explicit-any": 5,
       "@typescript-eslint/no-unnecessary-condition": 3
     },
+    "src/scm/lib/autocount-so-po-doc-no.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/autocount-so-to-po-keys.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/scm/lib/autocount-writeback-flag.ts": {
       "@typescript-eslint/no-explicit-any": 6
+    },
+    "src/scm/lib/board-deliverable.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/bridge-2990-command.ts": {
       "@typescript-eslint/no-unnecessary-condition": 4
@@ -191,20 +274,32 @@
     },
     "src/scm/lib/check-stock-availability.ts": {
       "@typescript-eslint/no-explicit-any": 1,
-      "@typescript-eslint/no-unnecessary-condition": 4
+      "@typescript-eslint/no-unnecessary-condition": 4,
+      "houzs/no-prose-comments": 4
+    },
+    "src/scm/lib/committed-shipments.ts": {
+      "houzs/no-prose-comments": 2
     },
     "src/scm/lib/companyScope.test.ts": {
       "no-restricted-syntax": 12
     },
     "src/scm/lib/companyScope.ts": {
-      "@typescript-eslint/no-explicit-any": 2
+      "@typescript-eslint/no-explicit-any": 2,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/compartments-from-module-lines.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
     },
+    "src/scm/lib/concurrency.test.ts": {
+      "houzs/no-imperative-timers": 1
+    },
     "src/scm/lib/consignment-loaner.ts": {
       "@typescript-eslint/no-explicit-any": 4,
-      "@typescript-eslint/no-unnecessary-condition": 5
+      "@typescript-eslint/no-unnecessary-condition": 5,
+      "houzs/no-prose-comments": 2
+    },
+    "src/scm/lib/consignment-return-reversal.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/convert-ceilings.test.ts": {
       "@typescript-eslint/no-explicit-any": 7,
@@ -218,29 +313,88 @@
     },
     "src/scm/lib/customer-credits.ts": {
       "@typescript-eslint/no-explicit-any": 8,
-      "@typescript-eslint/no-unnecessary-condition": 6
+      "@typescript-eslint/no-unnecessary-condition": 6,
+      "houzs/no-prose-comments": 14
+    },
+    "src/scm/lib/debtor-bill-settlement.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/deliver-due-shipped.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/delivery-planning-nonso-edit.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/delivery-rate-card.ts": {
       "@typescript-eslint/no-unnecessary-condition": 3
     },
+    "src/scm/lib/delivery-return-stock.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/scm/lib/deliveryScope.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 2
+      "@typescript-eslint/no-unnecessary-condition": 2,
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/derive-line-branding.ts": {
+      "houzs/no-prose-comments": 2
     },
     "src/scm/lib/do-email.ts": {
       "@typescript-eslint/no-explicit-any": 3
     },
+    "src/scm/lib/do-goods.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/do-item-row.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/do-line-racks.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/scm/lib/do-line-remaining.ts": {
       "@typescript-eslint/no-explicit-any": 3,
-      "@typescript-eslint/no-unnecessary-condition": 5
+      "@typescript-eslint/no-unnecessary-condition": 5,
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/do-line-warehouses.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/do-live-allocator.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/do-not-ready-lines.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/do-pod-attempts.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/do-read-guards.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/do-reversal.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
     },
+    "src/scm/lib/do-shipped-from-grn.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/do-shipped-from-retry.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/do-shipped-from-stamp.ts": {
+      "houzs/no-prose-comments": 3
+    },
+    "src/scm/lib/do-totals.ts": {
+      "houzs/no-prose-comments": 2
+    },
+    "src/scm/lib/do-unlinked-coverage.ts": {
+      "houzs/no-prose-comments": 4
+    },
     "src/scm/lib/do-unlinked-so-lines.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
+      "@typescript-eslint/no-unnecessary-condition": 1,
+      "houzs/no-prose-comments": 3
     },
     "src/scm/lib/doc-no.ts": {
-      "@typescript-eslint/no-explicit-any": 3
+      "@typescript-eslint/no-explicit-any": 3,
+      "houzs/no-prose-comments": 2
     },
     "src/scm/lib/downstream-lock.test.ts": {
       "no-restricted-syntax": 2
@@ -252,6 +406,21 @@
     "src/scm/lib/dp-no-mint.ts": {
       "@typescript-eslint/no-explicit-any": 1,
       "@typescript-eslint/no-unnecessary-condition": 3
+    },
+    "src/scm/lib/driver-availability.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/dropship-batch.test.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/dropship-batch.ts": {
+      "houzs/no-prose-comments": 2
+    },
+    "src/scm/lib/entity-audit.ts": {
+      "houzs/no-prose-comments": 7
+    },
+    "src/scm/lib/event-tags.ts": {
+      "houzs/no-prose-comments": 2
     },
     "src/scm/lib/fabric-supplier-code.ts": {
       "@typescript-eslint/no-explicit-any": 6
@@ -267,10 +436,12 @@
       "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/scm/lib/fleet-availability.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
+      "@typescript-eslint/no-unnecessary-condition": 1,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/free-gift-reconcile.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 6
+      "@typescript-eslint/no-unnecessary-condition": 6,
+      "houzs/no-prose-comments": 2
     },
     "src/scm/lib/fx-guard.ts": {
       "@typescript-eslint/no-explicit-any": 3
@@ -279,12 +450,35 @@
       "@typescript-eslint/no-explicit-any": 1,
       "@typescript-eslint/no-unnecessary-condition": 1
     },
+    "src/scm/lib/geocode.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/grn-line-rack.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/grn-line-racks.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/grn-po-supplier.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/grn-rack-sync.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/grn-scan-review.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/scm/lib/grn-unlinked-po-lines.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
+      "@typescript-eslint/no-unnecessary-condition": 1,
+      "houzs/no-prose-comments": 2
+    },
+    "src/scm/lib/hard-bound-cost-batch.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/inventory-movements.ts": {
       "@typescript-eslint/no-explicit-any": 5,
-      "@typescript-eslint/no-unnecessary-condition": 4
+      "@typescript-eslint/no-unnecessary-condition": 4,
+      "houzs/no-prose-comments": 11
     },
     "src/scm/lib/inventory-value-consignment.test.ts": {
       "@typescript-eslint/no-unnecessary-condition": 2
@@ -299,6 +493,15 @@
     "src/scm/lib/lead-time.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
     },
+    "src/scm/lib/line-link-item-identity.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/list-mrp-source.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/main-mix.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/scm/lib/maps.ts": {
       "@typescript-eslint/no-unnecessary-condition": 12
     },
@@ -312,23 +515,83 @@
     "src/scm/lib/mirror-map.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
     },
+    "src/scm/lib/mrp-delivered.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/mrp-snapshot.ts": {
+      "houzs/no-prose-comments": 5
+    },
+    "src/scm/lib/non-selling-warehouse.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/null-warehouse-signal.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/scm/lib/optional-param-noop.test.ts": {
+      "houzs/no-prose-comments": 2,
       "no-restricted-syntax": 1
     },
+    "src/scm/lib/outstanding-so-lines.ts": {
+      "houzs/no-prose-comments": 2
+    },
     "src/scm/lib/oversell-retrocost.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 9
+      "@typescript-eslint/no-unnecessary-condition": 9,
+      "houzs/no-prose-comments": 8
+    },
+    "src/scm/lib/own-fleet-load.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/paginate-all.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/pg-supabase-transaction.ts": {
       "@typescript-eslint/no-explicit-any": 10,
       "@typescript-eslint/no-unnecessary-condition": 4,
       "no-restricted-syntax": 2
     },
+    "src/scm/lib/photoProxyFallback.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/pi-assigned-sos.ts": {
+      "houzs/no-prose-comments": 2
+    },
+    "src/scm/lib/pi-audit-trail.ts": {
+      "houzs/no-prose-comments": 2
+    },
+    "src/scm/lib/pi-create-refusals.ts": {
+      "houzs/no-prose-comments": 2
+    },
+    "src/scm/lib/pi-from-grn-core.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/pi-grn-source-guard.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/pi-money-rollups.ts": {
+      "houzs/no-prose-comments": 6
+    },
     "src/scm/lib/pi-settlement.ts": {
       "@typescript-eslint/no-explicit-any": 2,
-      "@typescript-eslint/no-unnecessary-condition": 5
+      "@typescript-eslint/no-unnecessary-condition": 5,
+      "houzs/no-prose-comments": 4
+    },
+    "src/scm/lib/planning-po-nos.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/pms-checklist-source.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/po-allocations.ts": {
       "@typescript-eslint/no-unnecessary-condition": 7
+    },
+    "src/scm/lib/po-grn-links.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/po-line-rederive.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/po-line-supplier-sku.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/po-over-convert.ts": {
       "@typescript-eslint/no-unnecessary-condition": 5
@@ -345,13 +608,15 @@
     },
     "src/scm/lib/post-si-revenue.ts": {
       "@typescript-eslint/no-explicit-any": 3,
-      "@typescript-eslint/no-unnecessary-condition": 7
+      "@typescript-eslint/no-unnecessary-condition": 7,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/postgrest-search.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
     },
     "src/scm/lib/product-lookup-company-scope.test.ts": {
-      "@typescript-eslint/no-explicit-any": 4
+      "@typescript-eslint/no-explicit-any": 4,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/product-pricing-history.test.ts": {
       "@typescript-eslint/no-explicit-any": 4
@@ -360,8 +625,14 @@
       "@typescript-eslint/no-explicit-any": 2,
       "@typescript-eslint/no-unnecessary-condition": 2
     },
+    "src/scm/lib/purchase-return-repair-held.ts": {
+      "houzs/no-prose-comments": 2
+    },
     "src/scm/lib/pv-rate-adoption.test.ts": {
       "no-restricted-syntax": 3
+    },
+    "src/scm/lib/pv-refund.ts": {
+      "houzs/no-prose-comments": 2
     },
     "src/scm/lib/pwp-claim-single.ts": {
       "@typescript-eslint/no-explicit-any": 2,
@@ -373,6 +644,9 @@
     "src/scm/lib/qty-cap.ts": {
       "@typescript-eslint/no-explicit-any": 3
     },
+    "src/scm/lib/read-failure.ts": {
+      "houzs/no-prose-comments": 2
+    },
     "src/scm/lib/reaper.ts": {
       "@typescript-eslint/no-explicit-any": 1
     },
@@ -382,10 +656,20 @@
     },
     "src/scm/lib/recost.ts": {
       "@typescript-eslint/no-explicit-any": 5,
-      "@typescript-eslint/no-unnecessary-condition": 4
+      "@typescript-eslint/no-unnecessary-condition": 4,
+      "houzs/no-prose-comments": 11
+    },
+    "src/scm/lib/ref-in-company.ts": {
+      "houzs/no-prose-comments": 3
+    },
+    "src/scm/lib/return-unlinked-lines.ts": {
+      "houzs/no-prose-comments": 7
     },
     "src/scm/lib/salesScope.ts": {
       "@typescript-eslint/no-explicit-any": 3
+    },
+    "src/scm/lib/scan-ocr.ts": {
+      "houzs/no-imperative-timers": 1
     },
     "src/scm/lib/scan-sample-review.test.ts": {
       "@typescript-eslint/no-explicit-any": 5,
@@ -394,10 +678,14 @@
     },
     "src/scm/lib/scan-sample-review.ts": {
       "@typescript-eslint/no-explicit-any": 3,
-      "@typescript-eslint/no-unnecessary-condition": 2
+      "@typescript-eslint/no-unnecessary-condition": 2,
+      "houzs/no-prose-comments": 3
     },
     "src/scm/lib/scm-areas.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
+    },
+    "src/scm/lib/scopedDb.test.ts": {
+      "houzs/no-prose-comments": 2
     },
     "src/scm/lib/service-line-guard.test.ts": {
       "no-restricted-syntax": 1
@@ -411,9 +699,28 @@
     "src/scm/lib/ship-commitment.ts": {
       "@typescript-eslint/no-unnecessary-condition": 2
     },
+    "src/scm/lib/si-credit-notes.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/si-from-do.ts": {
+      "houzs/no-prose-comments": 6
+    },
+    "src/scm/lib/si-list-stamps.ts": {
+      "houzs/no-prose-comments": 2
+    },
+    "src/scm/lib/si-order-deposit.ts": {
+      "houzs/no-prose-comments": 9
+    },
+    "src/scm/lib/si-payment-row.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/scm/lib/size-variant-description.ts": {
       "@typescript-eslint/no-explicit-any": 2,
-      "@typescript-eslint/no-unnecessary-condition": 1
+      "@typescript-eslint/no-unnecessary-condition": 1,
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/sku-category.ts": {
+      "houzs/no-prose-comments": 2
     },
     "src/scm/lib/sku-usage.test.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1,
@@ -422,8 +729,17 @@
     "src/scm/lib/sku-usage.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
     },
+    "src/scm/lib/so-after-do-lines.ts": {
+      "houzs/no-prose-comments": 2
+    },
+    "src/scm/lib/so-after-do.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/scm/lib/so-agent.test.ts": {
       "no-restricted-syntax": 2
+    },
+    "src/scm/lib/so-audit.ts": {
+      "houzs/no-prose-comments": 2
     },
     "src/scm/lib/so-cancel-vouchers.ts": {
       "@typescript-eslint/no-explicit-any": 2
@@ -434,11 +750,25 @@
     "src/scm/lib/so-confirm-gate.ts": {
       "@typescript-eslint/no-explicit-any": 1
     },
+    "src/scm/lib/so-converted-po.ts": {
+      "houzs/no-prose-comments": 6
+    },
+    "src/scm/lib/so-create-warehouse-default.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/so-deliverable-remaining.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/so-delivery-fee-rebuild.ts": {
+      "houzs/no-prose-comments": 2
+    },
     "src/scm/lib/so-delivery-sync.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 5
+      "@typescript-eslint/no-unnecessary-condition": 5,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/so-display-branding.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
+      "@typescript-eslint/no-unnecessary-condition": 1,
+      "houzs/no-prose-comments": 3
     },
     "src/scm/lib/so-generation.ts": {
       "@typescript-eslint/no-explicit-any": 1
@@ -459,23 +789,56 @@
     "src/scm/lib/so-location-gate.ts": {
       "@typescript-eslint/no-explicit-any": 1
     },
+    "src/scm/lib/so-money.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/so-payment-row.ts": {
+      "houzs/no-prose-comments": 7
+    },
+    "src/scm/lib/so-photo-po-carry.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/so-po-lock.ts": {
+      "houzs/no-prose-comments": 5
+    },
+    "src/scm/lib/so-product-change-record.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/so-remaining-by-item.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/scm/lib/so-revision.reviseBoundPo.test.ts": {
       "@typescript-eslint/no-explicit-any": 12
     },
     "src/scm/lib/so-revision.ts": {
       "@typescript-eslint/no-explicit-any": 7,
-      "@typescript-eslint/no-unnecessary-condition": 3
+      "@typescript-eslint/no-unnecessary-condition": 3,
+      "houzs/no-prose-comments": 4
+    },
+    "src/scm/lib/so-set-change-cost.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/so-state-warehouse-rebind.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/so-stock-allocation.ts": {
       "@typescript-eslint/no-explicit-any": 1,
-      "@typescript-eslint/no-unnecessary-condition": 14
+      "@typescript-eslint/no-unnecessary-condition": 14,
+      "houzs/no-prose-comments": 6
+    },
+    "src/scm/lib/so-total-changes.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/so-warehouse.ts": {
       "@typescript-eslint/no-explicit-any": 2,
       "@typescript-eslint/no-unnecessary-condition": 2
     },
+    "src/scm/lib/sofa-batch-guard.ts": {
+      "houzs/no-prose-comments": 8
+    },
     "src/scm/lib/sofa-set-coverage.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
+      "@typescript-eslint/no-unnecessary-condition": 1,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/source-cost.ts": {
       "@typescript-eslint/no-explicit-any": 1,
@@ -483,26 +846,59 @@
     },
     "src/scm/lib/source-po-trace.ts": {
       "@typescript-eslint/no-explicit-any": 14,
-      "@typescript-eslint/no-unnecessary-condition": 3
+      "@typescript-eslint/no-unnecessary-condition": 3,
+      "houzs/no-prose-comments": 3
     },
     "src/scm/lib/special-delivery.ts": {
       "@typescript-eslint/no-explicit-any": 1
     },
     "src/scm/lib/stock-allocation-job.ts": {
       "@typescript-eslint/no-explicit-any": 6,
-      "@typescript-eslint/no-unnecessary-condition": 1
+      "@typescript-eslint/no-unnecessary-condition": 1,
+      "houzs/no-prose-comments": 3
+    },
+    "src/scm/lib/stock-bucket-key.ts": {
+      "houzs/no-prose-comments": 2
+    },
+    "src/scm/lib/stock-take-racks.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/lib/stock-transfer-atomic.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
     },
+    "src/scm/lib/stop-geo.test.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/supplier-bindings.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/supplier-price-apply.test.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/supplier-price-apply.ts": {
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/supplier-price-history.ts": {
+      "houzs/no-prose-comments": 2
+    },
+    "src/scm/lib/threepl-charge-load.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/scm/lib/tripReconcile.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
+      "@typescript-eslint/no-unnecessary-condition": 1,
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/lib/unlinked-line-edit-guard.ts": {
+      "houzs/no-prose-comments": 6
     },
     "src/scm/lib/validate-item-codes.test.ts": {
       "@typescript-eslint/no-explicit-any": 1
     },
     "src/scm/lib/validate-item-codes.ts": {
       "@typescript-eslint/no-explicit-any": 1
+    },
+    "src/scm/lib/venture-portal-outbox.ts": {
+      "houzs/no-imperative-timers": 1
     },
     "src/scm/lib/venue-binding.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
@@ -512,14 +908,16 @@
     },
     "src/scm/lib/zero-cost-receipt-guard.ts": {
       "@typescript-eslint/no-explicit-any": 2,
-      "@typescript-eslint/no-unnecessary-condition": 1
+      "@typescript-eslint/no-unnecessary-condition": 1,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/middleware/area-guard.ts": {
       "@typescript-eslint/no-unnecessary-condition": 6
     },
     "src/scm/routes/accounting.ts": {
       "@typescript-eslint/no-explicit-any": 5,
-      "@typescript-eslint/no-unnecessary-condition": 7
+      "@typescript-eslint/no-unnecessary-condition": 7,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/routes/addons.ts": {
       "@typescript-eslint/no-explicit-any": 1
@@ -527,21 +925,27 @@
     "src/scm/routes/ar-reconciliation.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
     },
+    "src/scm/routes/autocount-outbox.ts": {
+      "houzs/no-prose-comments": 3
+    },
     "src/scm/routes/categories.ts": {
       "@typescript-eslint/no-unnecessary-condition": 5
     },
     "src/scm/routes/consignment-notes.ts": {
       "@typescript-eslint/no-explicit-any": 8,
       "@typescript-eslint/no-unnecessary-condition": 68,
+      "houzs/no-prose-comments": 3,
       "no-restricted-syntax": 3
     },
     "src/scm/routes/consignment-orders.ts": {
       "@typescript-eslint/no-unnecessary-condition": 73,
+      "houzs/no-prose-comments": 7,
       "no-restricted-syntax": 3
     },
     "src/scm/routes/consignment-returns.ts": {
       "@typescript-eslint/no-explicit-any": 10,
       "@typescript-eslint/no-unnecessary-condition": 63,
+      "houzs/no-prose-comments": 2,
       "no-restricted-syntax": 3
     },
     "src/scm/routes/currencies.ts": {
@@ -553,34 +957,54 @@
     "src/scm/routes/delivery-messages.ts": {
       "@typescript-eslint/no-unnecessary-condition": 4
     },
+    "src/scm/routes/delivery-order-revert.ts": {
+      "houzs/no-prose-comments": 4
+    },
     "src/scm/routes/delivery-orders-mfg.ts": {
       "@typescript-eslint/no-explicit-any": 27,
       "@typescript-eslint/no-unnecessary-condition": 88,
+      "houzs/no-prose-comments": 33,
       "no-restricted-syntax": 3
     },
+    "src/scm/routes/delivery-places.ts": {
+      "houzs/no-prose-comments": 4
+    },
     "src/scm/routes/delivery-planning-regions.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
+      "@typescript-eslint/no-unnecessary-condition": 1,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/routes/delivery-planning.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 16
+      "@typescript-eslint/no-unnecessary-condition": 16,
+      "houzs/no-prose-comments": 7
+    },
+    "src/scm/routes/delivery-pod-context.ts": {
+      "houzs/no-prose-comments": 2
     },
     "src/scm/routes/delivery-rate-cards.ts": {
       "@typescript-eslint/no-explicit-any": 1,
-      "@typescript-eslint/no-unnecessary-condition": 1
+      "@typescript-eslint/no-unnecessary-condition": 1,
+      "houzs/no-prose-comments": 3
     },
     "src/scm/routes/delivery-returns.ts": {
       "@typescript-eslint/no-explicit-any": 16,
       "@typescript-eslint/no-unnecessary-condition": 47,
+      "houzs/no-prose-comments": 6,
       "no-restricted-syntax": 3
     },
     "src/scm/routes/delivery-zones.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 2
+      "@typescript-eslint/no-unnecessary-condition": 2,
+      "houzs/no-prose-comments": 2
     },
     "src/scm/routes/document-flow.ts": {
-      "@typescript-eslint/no-explicit-any": 80
+      "@typescript-eslint/no-explicit-any": 80,
+      "houzs/no-prose-comments": 2
+    },
+    "src/scm/routes/document-hold-routes.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/routes/dp-orders.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 9
+      "@typescript-eslint/no-unnecessary-condition": 9,
+      "houzs/no-prose-comments": 2
     },
     "src/scm/routes/driver-leave.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
@@ -607,14 +1031,16 @@
     },
     "src/scm/routes/fleet-maintenance.ts": {
       "@typescript-eslint/no-explicit-any": 3,
-      "@typescript-eslint/no-unnecessary-condition": 101
+      "@typescript-eslint/no-unnecessary-condition": 101,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/routes/free-item-campaigns.ts": {
       "@typescript-eslint/no-unnecessary-condition": 5
     },
     "src/scm/routes/grns.ts": {
       "@typescript-eslint/no-explicit-any": 19,
-      "@typescript-eslint/no-unnecessary-condition": 74
+      "@typescript-eslint/no-unnecessary-condition": 74,
+      "houzs/no-prose-comments": 8
     },
     "src/scm/routes/helpers.ts": {
       "@typescript-eslint/no-explicit-any": 1,
@@ -629,7 +1055,8 @@
     },
     "src/scm/routes/inventory.ts": {
       "@typescript-eslint/no-explicit-any": 5,
-      "@typescript-eslint/no-unnecessary-condition": 30
+      "@typescript-eslint/no-unnecessary-condition": 30,
+      "houzs/no-prose-comments": 9
     },
     "src/scm/routes/localities.ts": {
       "@typescript-eslint/no-unnecessary-condition": 3
@@ -653,11 +1080,13 @@
     },
     "src/scm/routes/mfg-purchase-orders.ts": {
       "@typescript-eslint/no-explicit-any": 21,
-      "@typescript-eslint/no-unnecessary-condition": 62
+      "@typescript-eslint/no-unnecessary-condition": 62,
+      "houzs/no-prose-comments": 3
     },
     "src/scm/routes/mfg-sales-orders.ts": {
       "@typescript-eslint/no-explicit-any": 53,
       "@typescript-eslint/no-unnecessary-condition": 166,
+      "houzs/no-prose-comments": 43,
       "no-restricted-syntax": 2
     },
     "src/scm/routes/model-free-gifts.ts": {
@@ -667,25 +1096,33 @@
       "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/scm/routes/mrp.test.ts": {
-      "@typescript-eslint/no-explicit-any": 13
+      "@typescript-eslint/no-explicit-any": 13,
+      "houzs/no-imperative-timers": 2
     },
     "src/scm/routes/mrp.ts": {
       "@typescript-eslint/no-explicit-any": 1,
-      "@typescript-eslint/no-unnecessary-condition": 13
+      "@typescript-eslint/no-unnecessary-condition": 13,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/routes/outstanding.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 2
+      "@typescript-eslint/no-unnecessary-condition": 2,
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/routes/payment-vouchers-finish.ts": {
+      "houzs/no-prose-comments": 12
     },
     "src/scm/routes/payment-vouchers.ts": {
       "@typescript-eslint/no-explicit-any": 5,
-      "@typescript-eslint/no-unnecessary-condition": 11
+      "@typescript-eslint/no-unnecessary-condition": 11,
+      "houzs/no-prose-comments": 3
     },
     "src/scm/routes/personal-quick-picks.ts": {
       "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/scm/routes/po-amendments.ts": {
       "@typescript-eslint/no-explicit-any": 5,
-      "@typescript-eslint/no-unnecessary-condition": 7
+      "@typescript-eslint/no-unnecessary-condition": 7,
+      "houzs/no-prose-comments": 2
     },
     "src/scm/routes/po-so-coverage.ts": {
       "@typescript-eslint/no-explicit-any": 18,
@@ -698,30 +1135,36 @@
       "@typescript-eslint/no-unnecessary-condition": 11
     },
     "src/scm/routes/product-models.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 22
+      "@typescript-eslint/no-unnecessary-condition": 22,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/routes/products.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
     },
     "src/scm/routes/purchase-consignment-orders.ts": {
       "@typescript-eslint/no-explicit-any": 5,
-      "@typescript-eslint/no-unnecessary-condition": 22
+      "@typescript-eslint/no-unnecessary-condition": 22,
+      "houzs/no-prose-comments": 2
     },
     "src/scm/routes/purchase-consignment-receives.ts": {
       "@typescript-eslint/no-explicit-any": 11,
-      "@typescript-eslint/no-unnecessary-condition": 56
+      "@typescript-eslint/no-unnecessary-condition": 56,
+      "houzs/no-prose-comments": 3
     },
     "src/scm/routes/purchase-consignment-returns.ts": {
       "@typescript-eslint/no-explicit-any": 8,
-      "@typescript-eslint/no-unnecessary-condition": 46
+      "@typescript-eslint/no-unnecessary-condition": 46,
+      "houzs/no-prose-comments": 3
     },
     "src/scm/routes/purchase-invoices.ts": {
       "@typescript-eslint/no-explicit-any": 12,
-      "@typescript-eslint/no-unnecessary-condition": 65
+      "@typescript-eslint/no-unnecessary-condition": 65,
+      "houzs/no-prose-comments": 18
     },
     "src/scm/routes/purchase-returns.ts": {
       "@typescript-eslint/no-explicit-any": 12,
-      "@typescript-eslint/no-unnecessary-condition": 32
+      "@typescript-eslint/no-unnecessary-condition": 32,
+      "houzs/no-prose-comments": 8
     },
     "src/scm/routes/pwp-codes.ts": {
       "@typescript-eslint/no-explicit-any": 1,
@@ -745,10 +1188,12 @@
     "src/scm/routes/sales-invoices.ts": {
       "@typescript-eslint/no-explicit-any": 13,
       "@typescript-eslint/no-unnecessary-condition": 60,
+      "houzs/no-prose-comments": 17,
       "no-restricted-syntax": 3
     },
     "src/scm/routes/scan-payment.ts": {
-      "@typescript-eslint/no-explicit-any": 3
+      "@typescript-eslint/no-explicit-any": 3,
+      "houzs/no-prose-comments": 1
     },
     "src/scm/routes/scan-so.ts": {
       "@typescript-eslint/no-explicit-any": 3,
@@ -757,13 +1202,20 @@
     "src/scm/routes/so-amendments.ts": {
       "@typescript-eslint/no-explicit-any": 9,
       "@typescript-eslint/no-floating-promises": 1,
-      "@typescript-eslint/no-unnecessary-condition": 11
+      "@typescript-eslint/no-unnecessary-condition": 11,
+      "houzs/no-prose-comments": 2
     },
     "src/scm/routes/so-dropdown-options.ts": {
       "@typescript-eslint/no-unnecessary-condition": 2
     },
+    "src/scm/routes/so-payment-backdate-requests.ts": {
+      "houzs/no-prose-comments": 3
+    },
     "src/scm/routes/so-settings.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
+    },
+    "src/scm/routes/sofa-combo-presets.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/routes/sofa-combos.ts": {
       "@typescript-eslint/no-unnecessary-condition": 8
@@ -786,27 +1238,35 @@
     },
     "src/scm/routes/stock-takes.ts": {
       "@typescript-eslint/no-explicit-any": 11,
-      "@typescript-eslint/no-unnecessary-condition": 9
+      "@typescript-eslint/no-unnecessary-condition": 9,
+      "houzs/no-prose-comments": 10
     },
     "src/scm/routes/stock-transfers.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 5
+      "@typescript-eslint/no-unnecessary-condition": 5,
+      "houzs/no-prose-comments": 2
     },
     "src/scm/routes/suppliers.ts": {
       "@typescript-eslint/no-explicit-any": 1,
       "@typescript-eslint/no-unnecessary-condition": 41
     },
     "src/scm/routes/threepl-companies.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 1
+      "@typescript-eslint/no-unnecessary-condition": 1,
+      "houzs/no-prose-comments": 1
+    },
+    "src/scm/routes/threepl-do-charges.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/scm/routes/trips.ts": {
       "@typescript-eslint/no-explicit-any": 2,
-      "@typescript-eslint/no-unnecessary-condition": 12
+      "@typescript-eslint/no-unnecessary-condition": 12,
+      "houzs/no-prose-comments": 2
     },
     "src/scm/routes/venues.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
     },
     "src/scm/routes/warehouse.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 23
+      "@typescript-eslint/no-unnecessary-condition": 23,
+      "houzs/no-prose-comments": 3
     },
     "src/scm/shared/amendment-lane.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
@@ -866,7 +1326,8 @@
       "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/scm/shared/sofa-build.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 7
+      "@typescript-eslint/no-unnecessary-condition": 7,
+      "houzs/no-prose-comments": 2
     },
     "src/scm/shared/sofa-combo-pricing.ts": {
       "@typescript-eslint/no-unnecessary-condition": 3
@@ -895,14 +1356,19 @@
     },
     "src/services/agents/cs-agent.ts": {
       "@typescript-eslint/no-explicit-any": 1,
-      "@typescript-eslint/no-unnecessary-condition": 6
+      "@typescript-eslint/no-unnecessary-condition": 6,
+      "houzs/no-prose-comments": 1
     },
     "src/services/agents/data-quality.ts": {
       "@typescript-eslint/no-unnecessary-condition": 2
     },
+    "src/services/agents/delivery-agent-geo.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/services/agents/delivery-agent.ts": {
       "@typescript-eslint/no-explicit-any": 2,
-      "@typescript-eslint/no-unnecessary-condition": 2
+      "@typescript-eslint/no-unnecessary-condition": 2,
+      "houzs/no-prose-comments": 6
     },
     "src/services/agents/document-agent.ts": {
       "@typescript-eslint/no-unnecessary-condition": 15
@@ -920,7 +1386,8 @@
       "@typescript-eslint/no-unnecessary-condition": 1
     },
     "src/services/agents/pms-agent.ts": {
-      "@typescript-eslint/no-unnecessary-condition": 3
+      "@typescript-eslint/no-unnecessary-condition": 3,
+      "houzs/no-prose-comments": 1
     },
     "src/services/agents/procurement-agent.ts": {
       "@typescript-eslint/no-unnecessary-condition": 4
@@ -975,6 +1442,9 @@
     "src/services/assrNotify.ts": {
       "@typescript-eslint/no-unnecessary-condition": 2
     },
+    "src/services/assrOrderPos.ts": {
+      "houzs/no-prose-comments": 8
+    },
     "src/services/assrVisibility.ts": {
       "@typescript-eslint/no-explicit-any": 4
     },
@@ -986,10 +1456,14 @@
       "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/services/autocount-item-code.test.ts": {
+      "houzs/no-prose-comments": 3,
       "no-restricted-syntax": 4
     },
     "src/services/autocount-item-code.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
+    },
+    "src/services/autocount-sofa-collapse.test.ts": {
+      "houzs/no-prose-comments": 6
     },
     "src/services/autocount-sofa-collapse.ts": {
       "@typescript-eslint/no-unnecessary-condition": 3
@@ -1001,8 +1475,14 @@
       "@typescript-eslint/no-explicit-any": 8,
       "@typescript-eslint/no-unnecessary-condition": 3
     },
+    "src/services/backdateRequestNotify.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/services/branding.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
+    },
+    "src/services/cancelRequestNotify.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/services/clientErrors.ts": {
       "@typescript-eslint/no-unnecessary-condition": 9
@@ -1027,6 +1507,9 @@
     "src/services/pageAccess.ts": {
       "@typescript-eslint/no-unnecessary-condition": 2
     },
+    "src/services/passwordStrength.test.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/services/personalNotice.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
     },
@@ -1038,10 +1521,14 @@
       "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/services/printQr.ts": {
-      "@typescript-eslint/no-explicit-any": 1
+      "@typescript-eslint/no-explicit-any": 1,
+      "houzs/no-prose-comments": 1
     },
     "src/services/printTracker.ts": {
       "@typescript-eslint/no-unnecessary-condition": 3
+    },
+    "src/services/productRequestNotify.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/services/projectCostRates.ts": {
       "@typescript-eslint/no-unnecessary-condition": 1
@@ -1062,12 +1549,21 @@
     "src/services/salesTeam.ts": {
       "@typescript-eslint/no-unnecessary-condition": 2
     },
+    "src/services/session-token.test.ts": {
+      "houzs/no-prose-comments": 1
+    },
     "src/services/sessionCache.ts": {
       "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/services/stockItems.ts": {
       "@typescript-eslint/no-explicit-any": 4,
       "@typescript-eslint/no-unnecessary-condition": 2
+    },
+    "src/services/totpCheck.ts": {
+      "houzs/no-prose-comments": 2
+    },
+    "src/services/totpSecret.ts": {
+      "houzs/no-prose-comments": 1
     },
     "src/types.ts": {
       "@typescript-eslint/no-explicit-any": 3

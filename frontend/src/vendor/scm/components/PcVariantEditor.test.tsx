@@ -12,9 +12,6 @@ import { render, screen, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { MaintenanceConfig } from '../lib/mfg-products-queries';
 
-// Mock the two react-query hooks PcVariantEditor calls at runtime. The addon is
-// defined INSIDE the factory (vi.mock is hoisted above the imports, so it can't
-// close over a top-level const).
 vi.mock('../lib/mfg-products-queries', () => {
   const HB = {
     id: 'HB_FULL', code: 'HB_FULL', label: 'HB Fully Cover', soDescription: 'HB Fully Cover',
@@ -29,8 +26,6 @@ vi.mock('../lib/mfg-products-queries', () => {
 import { PcVariantEditor } from './PcVariantEditor';
 import { withMasterPickerPools } from '../lib/picker-maint';
 
-// Minimal maintenance config — the bedframe branch only reads the (empty) option
-// pools; the specials pool comes from the mocked useSpecialAddons.
 const MAINT = { gaps: [], divanHeights: [], legHeights: [], sofaSizes: [], sofaLegHeights: [] } as unknown as MaintenanceConfig;
 
 afterEach(cleanup);
@@ -91,7 +86,6 @@ describe('PcVariantEditor — unified Special Orders (consignment)', () => {
 });
 
 describe('PcVariantEditor — sofa pickers follow master (BUG-60)', () => {
-  // 2990's Home: HOOKKA INDUSTRIES' 2026-05-29 overlay vs master after DEFAULT was added.
   const HOOKKA = {
     gaps: [], divanHeights: [], legHeights: [],
     sofaSizes: ['24', '26', '28', '30', '32', '35'],

@@ -29,6 +29,11 @@
     "explain:write": "node scripts/explain.mjs --write",
     "explain:check-docs": "node scripts/explain.mjs --check-docs",
     "explain:test": "node --test scripts/explain.test.mjs",
-    "migration:new": "node scripts/new-migration.mjs"
+    "migration:new": "node scripts/new-migration.mjs",
+    "check:layout": "node scripts/check-layout.mjs",
+    "check:new-markdown": "node scripts/check-new-markdown.mjs",
+    "agent-check": "node scripts/agent-check.mjs",
+    "verify:probe": "node scripts/verify-probe.mjs",
+    "verify:tla": "node scripts/run-tla.mjs formal/ac-outbox-claim/AcOutboxClaim.cfg"
   }
 }

@@ -1,34 +1,13 @@
 import { describe, expect, test } from 'vitest';
 import { bookSpellingOrOwn } from '../../services/autocount-writeback';
-/* `?raw`, NOT node:fs / require — backend/tsconfig.json types Workers only, so
-   either one typechecks red even though vitest runs them fine. */
 import convertSrc from './autocount-convert-lines.ts?raw';
 import { readWarehouseCode, withLocations } from './autocount-read';
 import { LOCATION_MAP } from '../../services/autocount-master-maps';
 
-/* ---------------------------------------------------------------------------
-   THE WAREHOUSE A CONVERSION SENDS MUST BE THE BOOK'S SPELLING.
-
-   Measured on the host's own log, 2026-08-25, on a PO -> GR carrying
-   KL WAREHOUSE:
-
-     set skipped: Cannot set column 'Location'. The value violates the
-                  MaxLength limit of this column.
-
-   AutoCount SKIPS the assignment and saves the document anyway. The goods
-   received landed in a licensed book with no warehouse on it, and nothing said
-   so — not the outbox row, not the page, not the ERP log. A silent wrong answer
-   is worse than a refusal, which is why this is pinned rather than left to the
-   next reader to rediscover from a Windows log file.
-   ------------------------------------------------------------------------ */
 describe('the conversion header sends the book spelling of a warehouse', () => {
   const AC_LOCATION_MAX = 8;
 
   test('every value the map can send fits the account book column', () => {
-    /* The ceiling is not typed here from a manual; it is READ OFF the map,
-       which is the book's own set of location codes. If someone adds a longer
-       one this fails, which is the moment to check the column rather than the
-       moment a document silently loses its warehouse. */
     for (const [ours, theirs] of Object.entries(LOCATION_MAP)) {
       expect(theirs.length, `${ours} -> ${theirs} is ${theirs.length} chars`)
         .toBeLessThanOrEqual(AC_LOCATION_MAX);
@@ -36,25 +15,17 @@ describe('the conversion header sends the book spelling of a warehouse', () => {
   });
 
   test('the ERP warehouse code that broke it now maps to the book code', () => {
-    /* `warehouses.code` on production really is the long form — the owner's own
-       list reads CODE: KL WAREHOUSE / NAME: BALAKONG WAREHOUSE. */
     expect(bookSpellingOrOwn('KL WAREHOUSE', LOCATION_MAP)).toBe('KL');
     expect(bookSpellingOrOwn('PG WAREHOUSE', LOCATION_MAP)).toBe('PG');
     expect('KL WAREHOUSE'.length).toBeGreaterThan(AC_LOCATION_MAX);
   });
 
   test('a warehouse the map does not know still travels as its own code', () => {
-    /* UNCHANGED BEHAVIOUR, and deliberately so: inventing a book spelling for a
-       warehouse nobody has mapped would put a location in the account book that
-       nobody chose. The mapped ones are fixed; the rest keep the old answer. */
     expect(bookSpellingOrOwn('SOME NEW PLACE', LOCATION_MAP)).toBe('SOME NEW PLACE');
     expect(bookSpellingOrOwn(null, LOCATION_MAP)).toBeNull();
   });
 
   test('the conversion composer runs the warehouse through the map', () => {
-    /* Asserted on the SOURCE, because the composer needs a Supabase client and
-       a warehouse row to run, and what matters is that it cannot go back to
-       sending the raw code without this failing. */
     const body = convertSrc as string;
     const line = body.split('\n').find((l) => l.includes('locationCode = '));
     expect(line, 'locationCode assignment not found').toBeTruthy();
@@ -80,7 +51,6 @@ describe('the conversion header sends the book spelling of a warehouse', () => {
    里面它却变成了 HQ」 — the book's default, showing because nothing was written.
    ------------------------------------------------------------------------ */
 describe('a purchase order sends the book spelling of its warehouse', () => {
-  /** The one `warehouses` read `readWarehouseCode` makes, with a canned row. */
   const sbWith = (row: { code?: string | null; name?: string | null } | null) => ({
     from: () => ({
       select: () => ({
@@ -97,10 +67,6 @@ describe('a purchase order sends the book spelling of its warehouse', () => {
   });
 
   test('a NULL code falls back to the name, and then maps', async () => {
-    /* `??`, so only a NULL code falls back — a blank one is a blank answer, not
-       a missing one. That is the contract `withLocations` already had and this
-       function already matched; the mapping is added AFTER the fallback, so
-       neither side's answer to "which warehouse" changes, only its spelling. */
     expect(await readWarehouseCode(sbWith({ code: null, name: 'PG WAREHOUSE' }), 'w3')).toBe('PG');
     expect(await readWarehouseCode(sbWith({ code: '  ', name: 'PG WAREHOUSE' }), 'w3b')).toBeNull();
   });
@@ -113,9 +79,6 @@ describe('a purchase order sends the book spelling of its warehouse', () => {
   });
 
   test('the LINE warehouse resolver maps every code it hands back', async () => {
-    /* `withLocations` moved next to `readWarehouseCode` in this change, which is
-       what makes it reachable from a test at all — it used to be private to the
-       outbox. One `in` query, so the fake answers with the whole set. */
     const sbLines = {
       from: () => ({
         select: () => ({

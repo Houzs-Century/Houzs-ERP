@@ -45,7 +45,6 @@ const zero = (): RegionSen => ({ PG: 0, KL: 0, EM: 0, SG: 0 });
 const total = (r: RegionSen): number => r.PG + r.KL + r.EM + r.SG;
 const upper = (s: string | null | undefined): string => String(s ?? '').toUpperCase().trim();
 
-/* ── Months ───────────────────────────────────────────────────────────────── */
 export function addMonths(month: string, n: number): string {
   const i = Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1 + n;
   return `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}`;
@@ -69,7 +68,6 @@ export function monthNamed(text: string | null | undefined): string | null {
   return `${year}-${String(idx + 1).padStart(2, '0')}`;
 }
 
-/* ── The accounts: each one's Logistics row on the Chart of Accounts ──────── */
 /** A bill line worded as a transport recharge, on whatever account. */
 export const isRechargeWording = (text: string | null | undefined): boolean =>
   /^\s*(LOGISTICS?|TRANSPORT(ATION)?)\s+(CHARGES?|FEES?|INCOME)\b/i.test(String(text ?? ''));
@@ -113,7 +111,6 @@ export function pnlAccountsOf(chart: readonly ChartAccount[]): PnlAccounts & { a
   return { outsource, income, petrol, upkeep, otherLorry, roadTax, instalment, salary, all };
 }
 
-/* ── The areas a setup or dismantle trip is priced by ─────────────────────── */
 export type Area = { key: string; label: string; region: RegionCode; defaultRateSen: number | null };
 /** Owner 2026-10-29: 400 for KL, 600 for other areas, each way — Kuala Lumpur,
     Selangor and Putrajaya at the KL rate; East Malaysia and Singapore carry no
@@ -153,7 +150,6 @@ export const isAreaKey = (key: string): boolean => AREAS.some((a) => a.key === k
 export const rateOf = (area: Area, rates: ReadonlyMap<string, number | null>): number | null =>
   rates.has(area.key) ? rates.get(area.key)! : area.defaultRateSen;
 
-/* ── Setup and dismantle trips ────────────────────────────────────────────── */
 export type TripKind = 'setup' | 'dismantle';
 export type Fair = { id: number; code: string | null; name: string; state: string | null; venue: string | null; startDate: string | null; endDate: string | null };
 export type SetupTrip = {
@@ -161,9 +157,7 @@ export type SetupTrip = {
   area: string | null; areaLabel: string; region: RegionCode;
   fairs: Array<{ id: number; code: string | null; name: string }>;
   rateSen: number | null;
-  /** An outsourced bill covers it (a 3PL bill line or a fair-transport line on one of its fairs). */
   outsourced: boolean;
-  /** Finance's own tick (true) or untick (false); null = the rule decides. */
   mark: boolean | null;
   inHouse: boolean;
   amountSen: number;
@@ -223,13 +217,11 @@ export function coveredKinds(kind: string | null | undefined, words: string | nu
   return ['setup', 'dismantle'];
 }
 
-/* ── Bills spread over months ─────────────────────────────────────────────── */
 export type SpreadKind = 'upkeep' | 'roadtax';
 export const DEFAULT_SPREAD: Record<SpreadKind, number> = { upkeep: 1, roadtax: 12 };
 export const MAX_SPREAD = 36;
 export type SpreadLeg = {
   lineId: string; kind: SpreadKind; accountCode: string; accountName: string | null; day: string; docNo: string | null; notes: string | null; amountSen: number;
-  /** The document that posted it (a PV or JV number), when the ledger names one. */
   sourceDocNo?: string | null;
 };
 export type SpreadRow = SpreadLeg & { months: number; isDefault: boolean; perMonthSen: number; inRangeSen: number; lastMonth: string };
@@ -255,7 +247,6 @@ export function spreadBills(legs: readonly SpreadLeg[], months: ReadonlyMap<stri
   return { sen, rows };
 }
 
-/* ── What Finance billed extra ────────────────────────────────────────────── */
 export type IncomeRow = 'houzs' | 'conts' | 'hookka' | '2990';
 export const incomeRowOf = (debtorName: string | null | undefined): IncomeRow => {
   const n = upper(debtorName);
@@ -288,15 +279,12 @@ export const pctLabel = (bp: number): string => (bp / 100).toFixed(2).replace(/\
 /** One fair's transport income: its sales × the rate, in whole sen. */
 export const fairIncomeOf = (salesSen: number, bp: number): number => Math.round((salesSen * bp) / 10_000);
 
-/* ── The P&L ──────────────────────────────────────────────────────────────── */
 export type Leg = {
   lineId: string; accountCode: string; accountName: string | null; day: string; debitSen: number; creditSen: number; notes: string | null; docNo: string | null;
-  /** The document that posted it (API = an AP invoice, by its number) and the party on the line. */
   sourceType?: string | null; sourceDocNo?: string | null; partyName?: string | null;
 };
 export type PnlAccounts = {
   outsource: ReadonlyMap<string, RegionCode>;
-  /** The Transport Income accounts Other Debtor bill lines are read on. */
   income: ReadonlyMap<string, RegionCode>;
   petrol: ReadonlySet<string>;
   upkeep: ReadonlySet<string>;
@@ -312,19 +300,15 @@ export type PnlRowKey =
 export type PnlRow = { key: PnlRowKey; label: string; sen: Record<RegionCode, number | null>; totalSen: number | null };
 export type PnlInput = {
   from: string; to: string;
-  /** The DOs of the months asked for, each in its region. */
   dos: ReadonlyArray<{ region: RegionCode; valueSen: number }>;
   doIncomeBp: number;
-  /** Each fair opened in the months, in its region: its sales (Project Overview's), × fairIncomeBp. */
   fairs: ReadonlyArray<{ region: RegionCode; salesSen: number }>;
   fairIncomeBp: number;
   income: readonly IncomeLine[];
   trips: readonly SetupTrip[];
-  /** Every leg on the accounts below, from far enough back for the longest spread. */
   legs: readonly Leg[];
   accounts: PnlAccounts;
   spreadMonths: ReadonlyMap<string, number>;
-  /** Our lorries' trips in the months (one lorry, one day). */
   ownTrips: number;
 };
 /** A line the P&L counts in an in-house row it does not spread, with the amount it counts. */
@@ -342,7 +326,6 @@ export type LogisticsPnl = {
   income: IncomeLine[];
   trips: SetupTrip[];
   spreads: SpreadRow[];
-  /** Petrol, other lorry cost, instalment and manpower as counted (upkeep and road tax are `spreads`). */
   inHouseLines: InHouseLine[];
   ownTrips: number;
   inHousePerTripSen: number | null;
@@ -368,7 +351,6 @@ export function buildLogisticsPnl(input: PnlInput): LogisticsPnl {
   const fairIncome = zero();
   for (const f of input.fairs) fairIncome[f.region] += fairIncomeOf(f.salesSen, input.fairIncomeBp);
 
-  /* The books: each leg into its row. Manpower never re-counts an own-lorry account. */
   const outsource = zero();
   const kl = { petrol: 0, instalment: 0, manpower: 0, other: 0 };
   const spreadLegs: SpreadLeg[] = [];

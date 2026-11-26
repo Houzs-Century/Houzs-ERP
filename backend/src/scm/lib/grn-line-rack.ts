@@ -1,17 +1,3 @@
-// grn-line-rack — set / change / clear the destination rack of ONE GRN line
-// after the GRN exists (PATCH /grns/:id/items/:itemId/rack).
-//
-// The rack used to be pickable only on the New GRN form, so a receipt saved
-// without one (or with the wrong one) could never get it. Rack is physical
-// placement only — it moves no FIFO stock and no money — so this path is kept
-// apart from the line PATCH: no PI/PR child-lock, no re-cost, no PO recount.
-//
-// On a POSTED GRN the rack ledger (grn-rack-sync) already reflects the line,
-// so the change is mirrored there: none->rack places the line, rack->rack
-// moves the placed row (keeping source_grn_id so a later cancel still reverses
-// it), rack->none pulls it. If the placed row is no longer where the GRN says
-// (moved or picked on the rack board since), the rack board is the truth and
-// the change is refused rather than placing the goods twice.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Context } from 'hono';
@@ -46,8 +32,6 @@ export function planGrnLineRackChange(args: {
       message: `This GRN is ${status} — its rack can no longer be changed.` } };
   }
   if ((args.fromRackId ?? null) === (args.toRackId ?? null)) return { kind: 'noop' };
-  // Nothing was ever placed for these: DRAFT places at confirm, a migrated
-  // receipt and a zero-accepted line have no goods on a shelf from this GRN.
   if (status === 'DRAFT' || args.migratedNoStock || args.qtyAccepted <= 0) return { kind: 'row_only' };
   if (!args.fromRackId) return { kind: 'place' };
   const row = args.placedRows.find((r) => r.qty === args.qtyAccepted);
@@ -89,9 +73,6 @@ export async function setGrnLineRackHandler(c: Context<{ Bindings: Env; Variable
   if (lineErr) return c.json({ error: 'lookup_failed', reason: lineErr.message }, 500);
   if (!line) return c.json({ error: 'not_found' }, 404);
 
-  /* A line split over several racks (grn-line-racks.ts): on a DRAFT, one rack
-     picked here replaces the split; once posted its goods sit on several racks,
-     which this one-row move cannot follow — the rack board can. */
   const { count: splitCount, error: splitErr } = await scopeToCompanyId(sb.from('grn_item_racks')
     .select('id', { head: true, count: 'exact' }).eq('grn_item_id', itemId), co.companyId);
   if (splitErr) return c.json({ error: 'lookup_failed', reason: splitErr.message }, 500);

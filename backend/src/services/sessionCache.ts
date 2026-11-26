@@ -2,24 +2,6 @@ import type { Env } from "../types";
 import type { AuthUser } from "./auth";
 import { revokeUser } from "./session-revocation";
 
-// KV-backed cache for the hydrated session user. Every authenticated request
-// currently runs a 3-table JOIN (sessions+users+roles) + a page-access load +
-// (for scoped users) a brands query. Caching the assembled AuthUser per session
-// token removes those round-trips on the hot path — the single biggest latency
-// win available (pattern from Hookka's rbac KV cache).
-//
-// Safety: this is a pure optimization layer. Every op is wrapped so any KV
-// miss/error/absence falls straight through to the DB path — worst case is
-// today's behaviour. The binding is OPTIONAL, so the vitest suite (no KV bound)
-// exercises the fallback and must stay green.
-//
-// Freshness: 60s TTL for the hydrated permission/page/brand envelope and
-// display-only fields. Session validity plus every DB value that shapes authz
-// (user/mail identity, role permissions/scope, page rows, position/department
-// identity, the user+manager brand sets, and the code policy revision) is
-// fingerprinted authoritatively on every request.
-// A mismatch rehydrates immediately, so KV invalidation is only an efficiency
-// aid and can never extend revoked access.
 
 const TTL_SECONDS = 60;
 const keyFor = (token: string) => `sess:${token}`;
@@ -30,11 +12,10 @@ export async function getCachedUser(env: Env, token: string): Promise<AuthUser |
     const raw = await env.SESSION_CACHE.get(keyFor(token));
     if (!raw) return null;
     const u = JSON.parse(raw) as AuthUser;
-    // Set does not survive JSON — rebuild the O(1) permission lookup mirror.
     u.permissions_set = new Set(u.permissions ?? []);
     return u;
   } catch {
-    return null; // any cache trouble → caller falls back to the DB
+    return null;
   }
 }
 
@@ -45,7 +26,6 @@ export async function setCachedUser(env: Env, token: string, user: AuthUser): Pr
       expirationTtl: TTL_SECONDS,
     });
   } catch {
-    /* non-fatal: next request just re-reads from the DB */
   }
 }
 
@@ -54,24 +34,10 @@ export async function bustCachedUser(env: Env, token: string): Promise<void> {
   try {
     await env.SESSION_CACHE.delete(keyFor(token));
   } catch {
-    /* non-fatal */
   }
 }
 
-// Bust the cached user for EVERY live session of a user. Disable / password
-// reset / role change delete session ROWS in bulk (DELETE ... WHERE user_id=?)
-// but bypass deleteSession(), so the per-token `sess:<token>` cache entries
-// would otherwise survive until TTL. Call this BEFORE the bulk delete (it reads
-// the live tokens), then bust each key to avoid retaining useless KV entries.
-// `exceptToken` keeps the caller's own session cached (self password-change
-// revokes only the others). Best-effort: an invalidation failure affects cache
-// efficiency only; getUserBySession still rejects deleted/disabled sessions via
-// its authoritative D1 gate.
 export async function bustUserSessions(env: Env, userId: number, exceptToken?: string): Promise<void> {
-  // Void every SIGNED PASS this user holds: a role/permission change or a
-  // disable must take effect on the next request, and a pass verifies with no
-  // DB read. The board is uid-level here (all devices), unlike a logout's
-  // sid-level. Best-effort; passes also self-expire in 8h.
   await revokeUser(env, userId, Date.now());
   if (!env.SESSION_CACHE) return;
   try {
@@ -83,7 +49,6 @@ export async function bustUserSessions(env: Env, userId: number, exceptToken?: s
       await env.SESSION_CACHE.delete(keyFor(r.token));
     }
   } catch {
-    /* non-fatal */
   }
 }
 
@@ -122,12 +87,6 @@ export async function bustUserSessions(env: Env, userId: number, exceptToken?: s
 // the DB is reachable again a revoked session is rejected immediately — the
 // delay is capped at the TTL and only occurs while the DB stays down.
 
-// ── The switch (env var, the repo's established mechanism for an ops toggle:
-// AUTOCOUNT_SYNC_DISABLED / COSTING_DISPLAY_ENABLED / HOUZS_OWNS_2990 all work
-// this way, parsed by a one-function helper with a documented default). It
-// deliberately is NOT a DB row (the D8 no-deploy kill switch): this decision is
-// made ON THE PATH WHERE THE DATABASE IS UNREACHABLE, so a DB-backed switch
-// could not be read at the only moment it matters. ──────────────────────────
 
 /** Default when SESSION_FALLBACK_TTL_MS is unset/invalid. 60s, not a law. */
 export const SESSION_FALLBACK_DEFAULT_TTL_MS = 60_000;
@@ -180,10 +139,6 @@ interface SessionLivenessEntry {
 
 const sessionLiveness = new Map<string, SessionLivenessEntry>();
 
-// Counts consultations of sessionLivenessFallback. Incremented on the outage
-// path only (never on the hot path), and read by the suite to prove that with
-// the switch OFF the fallback is not consulted at all — "off" means the branch
-// is not entered, not that its answer is discarded.
 let sessionLivenessConsultations = 0;
 
 /** Record a session an authoritative DB read just confirmed active. `now` is

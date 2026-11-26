@@ -1,15 +1,8 @@
-// Vendored VERBATIM from packages/shared/src/payment-methods.ts — pure
-// constants + helpers, no imports. Aliased as @2990s/shared/payment-methods.
 
 export type PaymentMethodCode = 'merchant' | 'transfer' | 'installment' | 'cash';
 
 export const PAYMENT_METHOD_CODES = ['merchant', 'transfer', 'installment', 'cash'] as const;
 
-/* MIRRORS backend/src/scm/shared/payment-methods.ts. 'Installment' is NOT in
-   this map, matching the backend: paymentMethodCodeOf must not resolve it
-   (legacy installment ledger rows persist the code directly). The LOCKED set is
-   a separate constant below — this copy used to fold the two together, which is
-   how the UI came to lock a row the API would have let you delete. */
 export const PAYMENT_METHOD_VALUE_TO_CODE: Readonly<Record<string, PaymentMethodCode>> = {
   Merchant:    'merchant',
   Online:      'transfer',

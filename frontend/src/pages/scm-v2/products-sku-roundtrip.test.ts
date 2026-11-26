@@ -12,7 +12,6 @@ type Row = Partial<MfgProductRow> & { code: string };
 const col = (key: string, label: string, getValue: (r: Row) => string | number | null | undefined): Column<Row> =>
   ({ key, label, getValue, render: () => null });
 
-/** DataTable.handleExport's CSV branch, plus the BOM downloadCSV adds. */
 function exportCsv(rows: Row[], cols: Column<Row>[]): string {
   const csvCols = cols.map((c) => ({
     key: c.key,

@@ -20,8 +20,6 @@ export function copyLinesWithoutPwp<T extends { variants?: unknown }>(
 export const pwpDroppedNotice = (n: number): string =>
   `${n} PWP line(s) left out - re-add with a new code`;
 
-/* Call-site entry for the SO desktop and mobile copy seeds: live (non-cancelled) lines, PWP rewards
-   left out, and the operator told when any were. */
 export function copySeedLines<T extends { variants?: unknown; cancelled?: unknown }>(
   items: T[] | null | undefined, sourceStatus: string | null | undefined,
   notify: (n: { title: string; body: string }) => unknown,
@@ -31,7 +29,6 @@ export function copySeedLines<T extends { variants?: unknown; cancelled?: unknow
   return kept;
 }
 
-/* The source order's columns a copy reads (the detail payload's snake_case). */
 export type SoCopySource = {
   debtor_code?: string | null; debtor_name?: string | null; phone?: string | null; email?: string | null;
   salesperson_id?: string | number | null; customer_type?: string | null; building_type?: string | null; note?: string | null;

@@ -1,5 +1,3 @@
-/* A line with 55 source POs filled a whole screen of the Count Sheet. The note
-   shows the first few and folds the rest behind "+ N more". */
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'vitest';

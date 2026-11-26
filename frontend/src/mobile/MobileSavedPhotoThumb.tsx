@@ -2,9 +2,6 @@ import { useEffect, useMemo, type CSSProperties } from "react";
 import { useDeleteSoItemPhoto } from "../vendor/scm/lib/sales-order-queries";
 import { useScmLinePhoto } from "../vendor/scm/lib/so-line-photo";
 
-/* Photo-tile chrome shared by the saved and the staged tiles below. Sized 52
-   square to sit next to the compact camera button in the mobile SO line
-   editor; positioned relative so the delete X can absolute-corner over it. */
 const photoTile: CSSProperties = {
   width: 52, height: 52, flex: "none", borderRadius: 9, overflow: "hidden",
   border: "1px solid var(--hz-c-border)", position: "relative",
@@ -63,8 +60,6 @@ export function MobileSavedPhotoThumb({
   );
 }
 
-/* Staged (this-session) photo — object-URL preview + a delete X. Revokes the
-   URL on unmount / file change (mirrors the desktop pendingPreviews). */
 export function StagedPhotoThumb({ file, onRemove }: { file: File; onRemove: () => void }) {
   const url = useMemo(() => URL.createObjectURL(file), [file]);
   useEffect(() => () => URL.revokeObjectURL(url), [url]);

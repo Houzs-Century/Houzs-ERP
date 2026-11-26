@@ -21,12 +21,9 @@ import type { Ym } from './commission-release-plan';
 type Row = Record<string, unknown>;
 
 export type CommissionFacts = {
-  /** The commission expense account and its name in the chart. */
   code: string;
   name: string | null;
-  /** The bill lines on the prepayment by the month they pay for (the books' opening left out). */
   bills: Array<{ month: Ym; amountSen: number }>;
-  /** What the release booked on the expense, by entry day. */
   releases: Array<{ day: string; sen: number }>;
 };
 
@@ -34,15 +31,11 @@ export type CommissionFacts = {
 export type PeriodCommission = {
   code: string;
   name: string | null;
-  /** The bills for the months starting inside the period. */
   billSen: number;
-  /** The months those bills pay for. */
   months: Ym[];
-  /** What the release booked on the account in the period — left out. */
   releaseSen: number;
 };
 
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Db = Parameters<typeof resolveRoles>[0];
 
 export async function loadCommissionFacts(sb: Db, companyId: number): Promise<{ ok: true; facts: CommissionFacts | null } | { ok: false; reason: string }> {

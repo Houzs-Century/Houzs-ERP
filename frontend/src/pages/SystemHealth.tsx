@@ -32,37 +32,19 @@ import { DatabasePanel } from "./systemHealth/DatabasePanel";
 import { LoginsPanel } from "./systemHealth/LoginsPanel";
 import { HubReportLine } from "./systemHealth/HubReportLine";
 
-// ---------------------------------------------------------------------------
-// System Health — owner-only ("*"). "Real data" phase 1, ported from Hookka's
-// /admin/health but limited to what runs on Houzs's current infra (no
-// Cloudflare Analytics Engine yet): live DB/connection health (so the
-// cold-start stall is visible), KV reachability, headcount, and the
-// audit_events feed. AE-backed latency-percentile / slow-SQL / RUM panels are
-// deferred to phase 2.
-// ---------------------------------------------------------------------------
 
 type LivePayload = {
   ok: boolean;
   time: string;
   db: { ok: boolean; latency_ms: number; error?: string };
   kv: { bound: boolean; ok: boolean; latency_ms: number };
-  // R2 slip/photo bucket, Anthropic-key presence, and the SCM-route probe — all
-  // fed by /live but previously ignored here, so the banner showed green while
-  // SCM or R2 was down. Optional-ish (older deploys may omit them) so the banner
-  // logic guards on presence.
   r2?: { bound: boolean; ok: boolean; latency_ms: number };
   anthropic?: { configured: boolean };
   sessionSigning?: { configured: boolean };
-  /* CONFIGURED IS NOT FIRING. The card above reads the SETTING; this reads what
-     the request that fetched this page actually DID, plus whether the two
-     endpoints behind ~90% of every slow request are hitting their caches.
-     Backend: services/auth-fastpath-probe.ts. */
   authFastPath?: {
     session_pass: {
       configured: boolean;
       this_request: "pass" | "session-db" | "unknown";
-      /* Did the BROWSER send a pass at all — presence only, never the value.
-         It is what makes `unknown` actionable rather than a dead end. */
       client_sent_pass?: boolean;
     };
     config_cache: Record<string, {
@@ -84,8 +66,6 @@ type LivePayload = {
 };
 
 type AuditRow = {
-  // public.audit_events rows are numeric ids; merged SCM rows arrive as
-  // "scm:<uuid>" strings — so the key type is widened to string | number.
   id: number | string;
   created_at: string;
   actor_id: number | string | null;
@@ -115,10 +95,6 @@ type AuditFeed = {
   };
 };
 
-// Self-hosted client error reporting (no Sentry): grouped 7-day summary from
-// GET /api/client-errors/summary. Super-admin only — the query is hard-gated
-// (enabled:false) AND the section not rendered for anyone else, per "off, not
-// hide".
 type ClientErrorsSummary = {
   success: boolean;
   days: number;
@@ -138,8 +114,6 @@ type ClientErrorsSummary = {
 type Range = "24h" | "7d" | "30d" | "90d";
 const RANGES: Range[] = ["24h", "7d", "30d", "90d"];
 
-// Cold-start thresholds (ms). A warm request-path ping is ~0.5s; the
-// Hyperdrive cold-connection stall pushes it to ~20s before it warms.
 const SLOW_MS = 2500;
 const VERY_SLOW_MS = 6000;
 
@@ -229,14 +203,9 @@ export function SystemHealth() {
   const [sensitiveOnly, setSensitiveOnly] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const { can } = useAuth();
-  // Client errors panel is super-admin only (the backend gates /summary on "*"
-  // too). Hard-gate the query so a caller without "*" never fires a 403 fetch.
   const isOwner = can("*");
 
   const live = useQuery<LivePayload>("/api/admin/health/live", () => api.get("/api/admin/health/live"));
-  // Inventory-ledger integrity — the working corruption-check endpoint that was
-  // previously never called by the frontend. Surfaces silent partial stock
-  // writes as a count the operator can act on.
   const ledger = useQuery<LedgerPayload>("/api/admin/health/ledger", () => api.get("/api/admin/health/ledger"));
   const clientErrors = useQuery<ClientErrorsSummary>(
     "/api/client-errors/summary?days=7",
@@ -264,10 +233,6 @@ export function SystemHealth() {
         label: `Database very slow (${fmtMs(d.db.latency_ms)}) — cold-connection stall`,
         detail,
       };
-    // SCM / R2 outages: the backend already flips d.ok for these, but surface the
-    // specific subsystem so the banner names what's down instead of silently
-    // staying green. SCM 500ing or slip-photo storage unreachable is red — those
-    // break document flows and photo/slip storage outright.
     const scmDown = !!(d.scm && d.scm.configured && !d.scm.ok);
     const r2Down = !!(d.r2 && d.r2.bound && !d.r2.ok);
     if (scmDown || r2Down) {
@@ -313,7 +278,6 @@ export function SystemHealth() {
                 live.reload();
                 feed.reload();
                 ledger.reload();
-                // reload() bypasses `enabled`, so only refetch for the owner.
                 if (isOwner) clientErrors.reload();
               }}
             >
@@ -393,8 +357,6 @@ export function SystemHealth() {
                       : "accent"
                 }
               />
-              {/* SCM-route probe — one bounded PostgREST read; red when the SCM
-                  stack is configured but 500ing (the page must not stay green). */}
               <StatCard
                 icon={<Boxes size={14} />}
                 label="SCM stack"
@@ -408,7 +370,6 @@ export function SystemHealth() {
                 }
                 tone={d.scm && d.scm.configured && !d.scm.ok ? "error" : "neutral"}
               />
-              {/* R2 slip/photo bucket reachability. */}
               <StatCard
                 icon={<HardDrive size={14} />}
                 label="R2 storage"
@@ -422,7 +383,6 @@ export function SystemHealth() {
                 }
                 tone={d.r2 && d.r2.bound && !d.r2.ok ? "error" : "neutral"}
               />
-              {/* Anthropic key presence — SO-slip OCR /extract 503s when unset. */}
               <StatCard
                 icon={<KeyRound size={14} />}
                 label="Anthropic key"
@@ -436,8 +396,6 @@ export function SystemHealth() {
                 }
                 tone={d.anthropic && !d.anthropic.configured ? "warning" : "neutral"}
               />
-              {/* Signed sessions — unset, every API request pays for two joined
-                  authorization reads before the route runs. */}
               <StatCard
                 icon={<KeyRound size={14} />}
                 label="Signed sessions"
@@ -482,8 +440,6 @@ export function SystemHealth() {
               />
             </div>
 
-            {/* The plain sentence, derived from the numbers above rather than
-                written beside them, so it cannot drift away from them. */}
             {d.authFastPath && (
               <p className="mt-3 text-[12.5px] leading-relaxed text-ink-secondary">
                 {d.authFastPath.reading}
@@ -497,7 +453,6 @@ export function SystemHealth() {
               </p>
             )}
 
-            {/* DB / connection health explainer — the cold-start signal. */}
             <div className="rounded-lg border border-border bg-surface px-5 py-5 shadow-stone">
               <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
                 <Gauge size={13} className="text-accent" /> Database / connection
@@ -527,7 +482,6 @@ export function SystemHealth() {
             <DatabasePanel />
             <LoginsPanel />
 
-            {/* Audit feed — who changed what, from audit_events. */}
             <div className="rounded-lg border border-border bg-surface px-5 py-5 shadow-stone">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
@@ -614,12 +568,6 @@ export function SystemHealth() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Client Errors (7d) — read-only rollup of the self-hosted error reporter
-// (client_errors table, grouped by dedup hash). Super-admin only: the caller
-// renders it behind can("*") and the query is hard-gated to match the
-// backend's requirePermission("*") on /api/client-errors/summary.
-// ---------------------------------------------------------------------------
 
 type ClientErrorRow = ClientErrorsSummary["data"][number];
 
@@ -695,17 +643,7 @@ function ClientErrorsPanel({ q }: { q: QueryState<ClientErrorsSummary> }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Performance & Slow Queries — placeholder.
-// Once a Cloudflare Analytics Engine endpoint exists, this becomes the
-// p50/p95/p99 + slow-SQL + Web Vitals panels (see Final design F1). Until then
-// we render the "AE not wired · Phase 2" empty state from the States design:
-// ghosted scaffolding for the 4 percentile stat cards + a latency chart card
-// with an overlay explaining what's needed.
-// ---------------------------------------------------------------------------
 
-// Eyebrow = bare metric name (per shared pattern); plain-language read goes in
-// the sub-label so the row reads at a glance.
 const PERSENLE_SLOTS: Array<{
   label: string;
   sub: string;
@@ -843,12 +781,6 @@ function LegendDot({ color, label }: { color: string; label: string }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// SetupNotesCard — petrol-tinted disclosure listing what's needed to take the
-// Performance & Slow Queries panel out of "Phase 2" mode. Stays present even
-// when AE is wired (per the shared "Setup notes" pattern: owners can always
-// find the infra notes for this page).
-// ---------------------------------------------------------------------------
 
 function SetupNotesCard({ onClose }: { onClose: () => void }) {
   return (

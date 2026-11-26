@@ -1,8 +1,3 @@
-/* The phone Sales Order form's pre-create payment row (method, date, amount,
-   sub-fields, slip). Moved out of MobileNewSO.tsx unchanged, to free room under
-   its size ceiling. The recorded-payment ledger is RecordedPaymentsList; this is
-   the only OTHER payment editor on the phone, so the shared method / slip rules
-   below are imported, never re-implemented. */
 import { useRef } from "react";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { uploadSlipFull } from "../vendor/scm/lib/slip";
@@ -17,30 +12,21 @@ import { CONVERT_LABEL, type ConvertSource } from "../vendor/scm/lib/so-money-qu
 import { DateField } from "../vendor/scm/components/DateField";
 import { Field, SpecSel } from "./mobile-fields";
 
-/* Same parse as MobileNewSO's num/toSen: RM as typed, commas allowed. */
 const toSen = (s: string) => Math.round((parseFloat(String(s).replace(/,/g, "")) || 0) * 100);
 
 export type Payment = {
-  /** React list key. NOT usable as an idempotency key: uid() is 8 base36
-   *  chars and carries no money semantics. */
   key: string;
-  /** Money idempotency key — minted ONCE per payment row and reused by every
-   *  retry of that row, so a re-submitted create cannot book it twice.
-   *  recordNewPayments has two call sites and the rows survive a failed
-   *  submit, which is exactly the double-fire this closes. */
   idempotencyKey: string;
-  method: string; // Cash / Merchant / Online / Installment / Convert from another SO
-  convertedFromDocNo?: string; // the cancelled order a converted row draws on
+  method: string;
+  convertedFromDocNo?: string;
   date: string;
-  amount: string; // RM as typed
-  account: string; // account sheet ref
-  approval: string; // approval code
-  collectedBy: string; // staff.id (uuid) | ""
-  // Method-aware sub-fields
-  bank: string; // Merchant provider
-  plan: string; // Merchant / Installment plan
-  online: string; // Online sub-type
-  // Slip capture
+  amount: string;
+  account: string;
+  approval: string;
+  collectedBy: string;
+  bank: string;
+  plan: string;
+  online: string;
   slipName: string;
   slipSession: string;
   slipPhase: "" | "uploading" | "done" | "error";
@@ -48,9 +34,6 @@ export type Payment = {
 
 export function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pay: Payment; staff: Array<{ id: string; name: string }>; convertSources: ConvertSource[]; onChange: (patch: Partial<Payment>) => void; onRemove: () => void }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
-  /* Live payment dropdowns from the maintenance catalog (same API the desktop
-     SalesOrderNew uses); FALLBACK_OPTIONS only backs an offline load. Was
-     hardcoded ("Maybank"/"One Shot") and never hit the API — that was the drift. */
   /* "Convert from another SO" joins the list while the customer has an order with money to give (docs/bugs/0933). */
   const methodOpts = withConvertOption(optionsOrFallback("payment_method", useSoDropdownOptions("payment_method").data), convertSources.length > 0 || pay.method === CONVERT_LABEL);
   const bankOpts = optionsOrFallback("payment_merchant", useSoDropdownOptions("payment_merchant").data);
@@ -102,8 +85,6 @@ export function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pa
             <input className="fld-i money" inputMode="decimal" value={pay.amount} onChange={(e) => onChange({ amount: e.target.value })} />
           </Field>
         </div>
-        {/* Merchant needs BOTH (missingMethodSubField); marked required now that
-            they seed blank instead of inventing "MBB" / "One-off". */}
         {pay.method === "Merchant" && (
           <div style={{ display: "flex", gap: 9 }}>
             <SpecSel label="Bank" required value={pay.bank} opts={bankOpts} onChange={(vv) => onChange({ bank: vv })} />
@@ -122,7 +103,6 @@ export function PayCard({ pay, staff, convertSources, onChange, onRemove }: { pa
         {pay.method === "Online" && (
           <SpecSel label="Sub-type" required value={pay.online} opts={onlineOpts} onChange={(vv) => onChange({ online: vv })} />
         )}
-        {/* Which cancelled order the money comes from; picking one fills an empty amount with what is left there. */}
         {pay.method === CONVERT_LABEL && (
           <ConvertSourceField sources={convertSources} value={pay.convertedFromDocNo ?? ""}
             onChange={(d, left) => onChange({ convertedFromDocNo: d, ...(toSen(pay.amount) > 0 ? {} : { amount: rmInput(left) }) })} />

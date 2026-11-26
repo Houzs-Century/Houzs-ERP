@@ -42,15 +42,11 @@ export type ZeroCostRefusalLine = {
   id: string | null;
   itemCode: string;
   qtyAccepted: number;
-  /** What this SKU is KNOWN to have cost before — the evidence that the zero is
-   *  a missing price rather than a free unit. Shown, never written. */
   knownUnitCostSen: number;
 };
 
 export type ZeroCostRefusal = {
-  /** The server's own sentence; null when it sent none. */
   message: string | null;
-  /** The two ways out, in the operator's vocabulary, from the server. */
   remedy: string[];
   lines: ZeroCostRefusalLine[];
 };
@@ -75,9 +71,6 @@ export function parseZeroCostRefusal(raw: string | null | undefined): ZeroCostRe
   } catch {
     return null;
   }
-  /* `unknown`, not a cast to an object type: JSON.parse('null') and
-     JSON.parse('7') both succeed, and a cast that promises an object would make
-     the property read below a runtime throw inside an error path. */
   if (!parsed || typeof parsed !== 'object') return null;
   const body = parsed as Record<string, unknown>;
   if (body.error !== ZERO_COST_RECEIPT_ERROR) return null;

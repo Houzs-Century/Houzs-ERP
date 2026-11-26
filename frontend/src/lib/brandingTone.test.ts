@@ -1,10 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { brandingToneForCategory, brandingToneForLabel } from "./brandingTone";
 
-/* THE OWNER'S BUG, as a test. He reported two mattresses in two colours:
- * `2990S MATTRESS` was green because the old rule matched on the digits "2990",
- * and `HAPPI.S MATTRESS` was amber because it matched nothing and fell through.
- * The colour was decided by whose brand name contained a number. */
 describe("the reported bug: two mattresses, two colours", () => {
   test("every mattress brand is the same colour, whoever makes it", () => {
     const tones = ["2990S MATTRESS", "HAPPI.S MATTRESS", "HAPPI.S MATTRES", "2990s Mattress", "Mattress"]
@@ -36,8 +32,6 @@ describe("brandingToneForCategory — the accurate entry point", () => {
     expect(brandingToneForCategory(category)).toBe(tone);
   });
 
-  /* A row with no readable category must not crash and must not pick a
-     meaningful colour it cannot justify. */
   test.each([null, undefined, "", "   "])("an unreadable category (%p) is neutral", (c) => {
     expect(brandingToneForCategory(c)).toBe("neutral");
   });
@@ -49,9 +43,6 @@ describe("brandingToneForCategory — the accurate entry point", () => {
 });
 
 describe("brandingToneForLabel — the bridge for lists with no category", () => {
-  /* "ZANOTTI" names no furniture. Before this module a Zanotti sofa read as
-     OTHER and turned grey next to a 2990s sofa that was green — the same
-     product, two colours, one tenant apart. */
   test.each(["ZANOTTI", "Zanotti", "2990s Sofa", "2990S SOFA", "SOFA"])(
     "%s is the sofa colour", (label) => {
       expect(brandingToneForLabel(label)).toBe("success");
@@ -68,9 +59,6 @@ describe("brandingToneForLabel — the bridge for lists with no category", () =>
     },
   );
 
-  /* MATTRESS wins over SOFA when a label somehow carries both words: the
-     mattress noun is the more specific claim, and the order of the checks is
-     what decides it. Pinned so a later edit cannot reorder them silently. */
   test("a label carrying both nouns reads as the more specific one", () => {
     expect(brandingToneForLabel("SOFA BED MATTRESS")).toBe("warning");
   });

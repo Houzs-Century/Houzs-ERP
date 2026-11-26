@@ -42,15 +42,12 @@ type Row = Record<string, any>;
 export const supplierMaintenance = new Hono<{ Bindings: Env; Variables: Variables }>();
 supplierMaintenance.use('*', supabaseAuth);
 
-/* An invoice still owing: posted and not paid down, or held (still owed). */
 const OPEN_PI = [...OPEN_PI_STATUSES];
 const OPEN_API = ['POSTED', 'PARTIALLY_PAID'];
 
 const LIST_COLS = 'id, code, name, status, currency, payment_terms, tin_number, business_reg_no, registration_no, '
   + 'for_purchasing, bank_name, bank_account_no, bank_account_name';
 
-/** The row keys that carry the Finance part on this list — what a caller who is
-    not Finance does not read (the same fields shared/supplier-finance-fields names). */
 const FINANCE_ROW_KEYS = ['tinNumber', 'businessRegNo', 'registrationNo', 'bankName', 'bankAccountNo', 'bankAccountName', 'forPurchasing'] as const;
 
 const blank = (v: unknown) => !String(v ?? '').trim();
@@ -65,10 +62,8 @@ type OpenInvoice = {
   currency: string;
   totalSen: number;
   outstandingSen: number;
-  /** In MYR — a foreign purchase invoice converted at its own rate. */
   outstandingMyrSen: number;
   status: string;
-  /** Brought over from AutoCount: never booked here, so not in "owed". */
   preErp: boolean;
 };
 
@@ -91,7 +86,6 @@ const apiOpen = (r: Row): OpenInvoice => {
   };
 };
 
-/* ── GET / ─────────────────────────────────────────────────────────────────── */
 export const listSupplierMaintenanceHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -181,7 +175,6 @@ export const listSupplierMaintenanceHandler = async (c: any): Promise<Response> 
 };
 supplierMaintenance.get('/', listSupplierMaintenanceHandler);
 
-/* ── GET /:id ──────────────────────────────────────────────────────────────── */
 export const getSupplierMaintenanceHandler = async (c: any): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);

@@ -6,13 +6,6 @@ import { todayMyt } from "../scm/lib/my-time";
 import { scrubError, serviceVerdict } from "../services/serviceHealth";
 import { aiServiceQuery } from "../services/healthMeasures";
 
-// ---------------------------------------------------------------------------
-// GET /api/admin/health/services (DEV-35): one row per outside service, built
-// ONLY from what the ERP already records. Mounted inside systemHealth.ts, so
-// the IT pages gate applies. Every count here is system-wide on purpose: this
-// is "is Resend / AutoCount / APNs up", not anyone's business data, and no row
-// content leaves except a scrubbed error string.
-// ---------------------------------------------------------------------------
 
 type Status = "ok" | "warning" | "critical" | "not_tracked" | "not_tracked_yet" | "unknown";
 
@@ -52,8 +45,6 @@ const empty = (key: string, name: string): ServiceRow => ({
 
 type PgError = { code?: string; message?: string; cause?: { code?: string; message?: string } };
 
-// Drizzle wraps the driver error ("Failed query: <sql>"), so the Postgres code
-// and the useful message may sit on `cause`.
 const isMissingTable = (e: PgError | null): boolean =>
   e?.code === "42P01" || e?.cause?.code === "42P01";
 
@@ -104,9 +95,6 @@ app.get("/services", async (c) => {
   const pushCutoffDay = todayMyt(-1);
 
   const services = await Promise.all([
-    // execution_logs.started_at is text, always written by toISOString()
-    // (services/logger.ts), so a text compare against an ISO cutoff is exact.
-    // SKIPPED is neither a success nor a failure.
     measure(db, "autocount_pull", "AutoCount pulls",
       // company-scope: system-wide IT health aggregates plus one scrubbed error string
       sql`SELECT
@@ -118,8 +106,6 @@ app.get("/services", async (c) => {
             count(*) FILTER (WHERE status = 'FAILED' AND started_at >= ${cutoff})::int AS failures_24h
           FROM execution_logs`),
 
-    // Terminal rows only: 'sent' at sent_at, 'failed' at updated_at. A pending
-    // row with last_error is a retry or a wait, not a failure.
     measure(db, "autocount_writeback", "AutoCount write-back",
       // company-scope: system-wide IT health aggregates plus one scrubbed error string
       sql`SELECT
@@ -132,9 +118,6 @@ app.get("/services", async (c) => {
             count(*) FILTER (WHERE status = 'failed' AND updated_at >= ${cutoff})::int AS failures_24h
           FROM scm.autocount_outbox`),
 
-    // email_log, not email_outbox: the log has one timestamped row per attempt,
-    // the outbox's 'failed' rows carry no failure time. created_at is ISO text
-    // (0098 default). 'skipped' (channel off, no address) is not an attempt.
     measure(db, "email", "Email (Resend)",
       // company-scope: system-wide IT health aggregates plus one scrubbed error string
       sql`SELECT
@@ -157,11 +140,7 @@ app.get("/services", async (c) => {
             count(*) FILTER (WHERE NOT success AND created_at >= ${cutoff})::int AS failures_24h
           FROM scm.wa_message_log`),
 
-    // APNs keeps per-device state only: a MYT date stamp on success, and a
-    // last_error with no time on failure. So failures cannot be placed in the
-    // 24 h window; the note counts live devices carrying an error instead.
-    // ponytail: success time is the start of the MYT day; an events table
-    // would give real times if this ever needs to be exact.
+    // company-scope: system-wide IT health aggregate over push_devices
     measure(db, "push", "iPhone notifications (APNs)",
       sql`SELECT
             (max(last_reminder_sent_on) || 'T00:00:00+08:00') AS last_success_at,
@@ -191,8 +170,6 @@ app.get("/services", async (c) => {
             count(*) FILTER (WHERE status = 'failed' AND updated_at >= ${cutoff})::int AS failures_24h
           FROM scm.venture_portal_outbox`),
 
-    // The table arrives with the AI usage work; until then this row says so.
-    // Shared with the IT Hub health report (services/healthHub.ts).
     measure(db, "ai", "AI (Anthropic)", aiServiceQuery(cutoff),
       { missingTable: "AI calls are not recorded yet." }),
   ]);

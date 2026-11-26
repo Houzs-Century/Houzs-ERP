@@ -3,9 +3,6 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { columnDescription } from "./columnDescriptions";
 
-/* A description for a column that no longer exists is a silent lie in waiting:
-   every table id listed must be on a page, and every key must be a column key
-   that page still declares. */
 
 const SRC = join(__dirname, "..");
 function* files(dir: string): Generator<string> {

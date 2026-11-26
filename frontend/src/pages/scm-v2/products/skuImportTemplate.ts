@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// skuImportTemplate — a blank sheet for creating SKUs through Import SKUs
-// (2990-0025, Sim: "need have import template for item master create").
-//
-// The import already creates a SKU for a code it does not hold; what a person
-// lacked was a file to start from. Export SKUs is a lean PRICE sheet with no
-// description / model / branding / status, so it was the wrong start for a
-// new item. Sheet 1 is the header row only — the importer reads the first
-// sheet and its first row as headers — so an example row can never be imported
-// by mistake. Sheet 2 says what goes in each column.
-// ----------------------------------------------------------------------------
 import type { SheetData } from 'write-excel-file';
 import { loadedProductCategories } from '../../../vendor/scm/lib/product-categories-store';
 import type { BatchImportResult } from '../../../vendor/scm/lib/mfg-products-queries';
@@ -16,7 +5,6 @@ import type { BatchImportResult } from '../../../vendor/scm/lib/mfg-products-que
 type TemplateCol = { key: string; required: boolean; note: string; width: number };
 
 export function skuTemplateColumns(sofaSizes: string[]): TemplateCol[] {
-  // The registry list the screen loaded (the template is built on a click, after it).
   const categories = loadedProductCategories().filter((c) => c.isActive).map((c) => c.name).join(', ');
   return [
     { key: 'code', required: true, width: 22, note: 'Product code. A code not in SKU Master creates a new SKU; a code already there edits that SKU.' },

@@ -66,12 +66,8 @@ type HeaderDraft = {
   creditNoteRef: string;
   notes: string;
 };
-/* T12 — widened with identity/variant fields so an EXISTING MANUAL line
-   (pc_receive_item_id == null) can edit its description + bedframe/sofa variants;
-   receive-sourced lines keep them read-only. (Owner decision: NO manual
-   free-add — this is the ONLY new editing capability here.) */
 type LineDraft = {
-  qty: number;            // maps to qty_returned
+  qty: number;
   unitPriceSen: number;
   materialName: string;
   itemGroup: string | null;
@@ -89,8 +85,6 @@ type PrItemRow = Record<string, unknown> & {
   material_kind?: string | null;
   description?: string | null;
   variants?: Record<string, unknown> | null;
-  /* Receive-sourced lines carry the source PC Receive line id; their identity +
-     variants stay read-only. Manual lines have it null → variant editing. */
   pc_receive_item_id?: string | null;
 };
 
@@ -124,8 +118,6 @@ export const PurchaseConsignmentReturnDetail = () => {
   const pr = detail.data?.purchaseReturn ?? null;
   const items = (detail.data?.items ?? []) as PrItemRow[];
 
-  /* T12 — maintenance config + fabrics drive the per-category variant editor on
-     MANUAL bedframe/sofa lines in Edit mode (shared PcVariantEditor). */
   const maintQ = useMaintenanceConfig('master');
   const maint  = maintQ.data?.data ?? null;
   const fabrics = useFabricTrackings().data ?? [];
@@ -147,9 +139,6 @@ export const PurchaseConsignmentReturnDetail = () => {
     }
   }, [isLocked, isEditing]);
 
-  /* The line-total helpers sit above the guards because usePrintPreview does —
-     `refundTotal` is what the PDF header's Value column reports, and it is
-     derived only from `items` + the drafts, neither of which needs `pr`. */
   const visibleItems = items;
   const lineOf = (it: PrItemRow): LineDraft => lineDrafts[it.id] ?? lineSnapshot(it);
   const lineTotalOf = (it: PrItemRow): number => {
@@ -159,15 +148,6 @@ export const PurchaseConsignmentReturnDetail = () => {
   };
   const refundTotal = visibleItems.reduce((s, it) => s + lineTotalOf(it), 0);
 
-  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
-     until 2026-08-17, so the loading render called fewer hooks than the loaded
-     one and React threw #310 ("rendered more hooks than during the previous
-     render") the moment the query resolved — a blank "Something went wrong
-     loading this page." on a direct URL / refresh. Arriving from the list hid
-     it: react-query already had the detail cached, so the isPending branch
-     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
-     pr; it can only ever be CALLED from the preview dialog, which does not
-     exist until the record has loaded. */
   const deliverPrintPdf = (action: PdfAction) => {
     if (!pr) return;
     const pdfHeader = {
@@ -226,8 +206,6 @@ export const PurchaseConsignmentReturnDetail = () => {
   const setLine = (it: PrItemRow, patch: Partial<LineDraft>) =>
     setLineDrafts((prev) => ({ ...prev, [it.id]: { ...(prev[it.id] ?? lineSnapshot(it)), ...patch } }));
 
-  /* T12 — patch one variant key on a line + auto-compute bedframe Total Height
-     (= Divan + Leg + Gap), mirroring the consignment New flow's setVariant. */
   const setVariant = (it: PrItemRow, key: string, value: unknown) =>
     setLineDrafts((prev) => {
       const cur = prev[it.id] ?? lineSnapshot(it);
@@ -255,8 +233,6 @@ export const PurchaseConsignmentReturnDetail = () => {
         const d = lineDrafts[it.id];
         if (!d) continue;
         const snap = lineSnapshot(it);
-        /* Identity/variants are editable only on MANUAL lines (no
-           pc_receive_item_id); receive-sourced lines never send those keys. */
         const manual = !it.pc_receive_item_id;
         const identityChanged = manual && (
           d.materialName !== snap.materialName ||
@@ -271,8 +247,6 @@ export const PurchaseConsignmentReturnDetail = () => {
           await updateItem.mutateAsync({
             id: pr.id, itemId: it.id,
             qty: d.qty, unitPriceSen: d.unitPriceSen,
-            /* T12 — only manual lines send identity/variants; the server
-               recomputes description2 + resyncs the return's inventory. */
             ...(manual ? {
               materialName: d.materialName,
               description:  d.materialName,
@@ -294,7 +268,6 @@ export const PurchaseConsignmentReturnDetail = () => {
 
   return (
     <div className="space-y-4">
-      {/* ── Header ──────────────────────────────────────────────── */}
       <PageHeader back
         eyebrow="Procurement"
         title={`${pr.return_number} — ${pr.supplier?.name ?? pr.supplier?.code ?? '—'}`}
@@ -355,7 +328,6 @@ export const PurchaseConsignmentReturnDetail = () => {
         }
       />
 
-      {/* ── Supplier / dates / reason / notes ───────────────────── */}
       <SupplierCard
         pr={pr}
         draft={headerView}
@@ -364,7 +336,6 @@ export const PurchaseConsignmentReturnDetail = () => {
         isEditing={isEditing}
       />
 
-      {/* ── Line items ──────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Items ({visibleItems.length})</h2>
@@ -388,9 +359,6 @@ export const PurchaseConsignmentReturnDetail = () => {
             <tbody>
               {visibleItems.map((it) => {
                 const d = lineOf(it);
-                /* T12 — identity + variants are editable only on MANUAL lines
-                   (no pc_receive_item_id); receive-sourced lines stay read-only.
-                   Owner decision: NO manual free-add — variant editing only. */
                 const manual = !it.pc_receive_item_id;
                 const showVariantEditor =
                   isEditing && manual && !isLocked &&
@@ -462,10 +430,6 @@ export const PurchaseConsignmentReturnDetail = () => {
                       </>
                     )}
                   </tr>
-                  {/* T12 — expanded editor row (Edit mode, MANUAL lines): an
-                      editable Description + the shared PcVariantEditor. A
-                      receive-sourced line gets no editor — identity stays
-                      read-only (owner decision: no manual free-add). */}
                   {isEditing && manual && (
                     <tr>
                       <td colSpan={7} style={{ background: 'var(--c-paper)', borderTop: 'none' }}>
@@ -506,7 +470,6 @@ export const PurchaseConsignmentReturnDetail = () => {
         )}
       </section>
 
-      {/* ── Totals ────────────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Totals</h2>
@@ -524,9 +487,6 @@ export const PurchaseConsignmentReturnDetail = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Supplier / header card — controlled by the page's draft.
-   ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
   pr, draft, onField, locked, isEditing = true,

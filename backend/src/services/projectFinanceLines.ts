@@ -28,11 +28,6 @@ export async function eventFinanceLines(
   ]);
   const { lines, books } = applyEventBooks(projectId, ledger, withCheckedVouchers(posted, checked), costCategories);
 
-  // Sales entries surface as virtual income rows in the ledger so the
-  // Finance section reflects rep-entered sales without double-bookkeeping.
-  // sales_entries is the source of truth (managed via the Sales section);
-  // these synthetic rows carry source='sales_entry' so the UI suppresses
-  // edit/delete controls.
   const salesEntryLines = await env.DB.prepare(
     `SELECT s.id, s.amount, s.occurred_at, s.created_at,
             s.customer_name, s.ref_no, s.notes,
@@ -56,10 +51,6 @@ export async function eventFinanceLines(
       notes: string | null;
       created_by_name: string | null;
     }>();
-  // Quick-log rows (rep entered amount + ref_no only at the project)
-  // carry the sentinel "(quick log)" in customer_name. Render them
-  // with a friendlier "Quick log · {ref}" label in the project finance
-  // ledger so the boss isn't squinting at a parenthesised placeholder.
   const QUICK_LOG_SENTINEL = "(quick log)";
   const synthIncome = (salesEntryLines.results ?? []).map((s) => ({
     id: -s.id,

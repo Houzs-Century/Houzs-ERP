@@ -1,7 +1,3 @@
-// B3 (2026-09-17) — the bulk-import auto-create parse. buildCreates must turn an
-// UNKNOWN internal_code in the sheet into a create row (with prices parsed to
-// sen), leave KNOWN codes alone, and always carry a non-empty supplier_sku +
-// materialName (the batch-create endpoint requires them).
 import { describe, expect, test } from 'vitest';
 import { bindingsHeader, buildCreates, detectImportFormat } from './SupplierBindingsCsv';
 import type { BindingRow } from '../../vendor/scm/lib/suppliers-queries';
@@ -20,11 +16,11 @@ describe('buildCreates — bulk import auto-create', () => {
     const c = creates[0]!;
     expect(c.itemCode).toBe('ACC-1');
     expect(c.supplierSku).toBe('SUP-ACC-1');
-    expect(c.unitPriceSen).toBe(5125); // 51.25 RM → sen
+    expect(c.unitPriceSen).toBe(5125);
     expect(c.leadTimeDays).toBe(7);
     expect(c.moq).toBe(2);
     expect(c.isMainSupplier).toBe(true);
-    expect(c.materialName).toBe('ACC-1'); // no catalogue row → fall back to code
+    expect(c.materialName).toBe('ACC-1');
     expect(c.materialKind).toBe('mfg_product');
   });
 
@@ -45,7 +41,7 @@ describe('buildCreates — bulk import auto-create', () => {
     const creates = buildCreates(rows, LONG_HEADER, 'long', new Map(), products, ['30']);
     expect(creates).toHaveLength(1);
     const c = creates[0]!;
-    expect(c.materialName).toBe('Sofa X'); // catalogue name preferred
+    expect(c.materialName).toBe('Sofa X');
     expect(c.supplierSku).toBe('SUP-SOFA-X');
     expect(c.priceMatrix).toEqual({ '30': { P1: 100000, P2: 120000 } });
   });

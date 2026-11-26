@@ -51,7 +51,7 @@ describe('by region & trip', () => {
       month: '2026-10', dos: [], regionOf, lorries, charged: new Set(), inHouseSen: 0, bills,
       legs: [
         { accountRegion: 'KL', netSen: 39_000, billNo: 'API-1', partyName: null },
-        { accountRegion: 'PG', netSen: 20_000, billNo: 'API-2', partyName: null },  // the bill's lines say more: scaled down
+        { accountRegion: 'PG', netSen: 20_000, billNo: 'API-2', partyName: null },
         { accountRegion: 'SG', netSen: 7_000, billNo: null, partyName: 'SG MOVERS' },
       ],
     });

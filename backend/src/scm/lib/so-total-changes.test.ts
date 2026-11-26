@@ -2,9 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { fakeSb } from './fake-postgrest';
 import { changeSourceOf, recordSoTotalChange, snapshotSoTotals } from './so-total-changes';
 
-/* The upsales / drop sales Event Commission lists come from these rows (owner
-   2026-10-20): one per change of an order's goods or total, written where the
-   header is rolled up. */
 
 const ctx = (path: string | null, name = 'Siti') =>
   path == null ? null : { req: { path }, get: (k: string) => (k === 'houzsUser' ? { name } : undefined) };

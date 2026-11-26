@@ -28,10 +28,6 @@ type ConfirmFn = (o: {
   danger?: boolean;
 }) => Promise<boolean>;
 
-/* One chip per file with its ×. Rendered ONLY for real task attachments — the
-   legacy project-level plans the Unfilled/Filled tiles fall back to are a
-   different store and this endpoint would not find them. Every control
-   stopPropagation()s, or the tap opens the lightbox instead of removing. */
 export function PlanFileChips({
   files,
   busy,
@@ -49,9 +45,6 @@ export function PlanFileChips({
 }) {
   if (files.length === 0) return null;
 
-  // Same endpoint the tasklist chip and the stock-transfer row use — the file
-  // belongs to the checklist task either way, so all three surfaces stay one
-  // file.
   const removeFile = async (attId: number, name: string | null) => {
     if (confirm && !(await confirm({ title: `Remove ${name || "this file"}?`, confirmLabel: "Remove", danger: true }))) return;
     setBusy(true);

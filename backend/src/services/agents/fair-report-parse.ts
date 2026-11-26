@@ -1,60 +1,29 @@
-// ----------------------------------------------------------------------------
-// fair-report-parse.ts — PMS Roadshow Agent (Job B): parse an owner's FAIR
-// REPORT worksheet into the per-event P&L the agent fills into a project.
-//
-// The FAIR REPORT (owner's "raw data") is one worksheet PER EVENT, named
-// `<date><BRAND>@<VENUE>` (e.g. "19-2411AKEMI@SUTERA MALL"). Each sheet lists
-// one row PER ORDER with the columns (labels live across a 2-row header):
-//   AMOUNT (list) · MATTRESS (cost) · BEDFRAME (cost) · ACCESSORIES · SELLING
-//   (the ACTUAL sold price = revenue) · MARGIN · payment split · SALES PERSON
-//
-// Column semantics were VERIFIED against the report's own MARGIN column:
-// for every order, MARGIN == (SELLING - (MATTRESS + BEDFRAME)) / SELLING, which
-// pins revenue = SELLING, product COGS = MATTRESS (matt/sofa) + BEDFRAME. See
-// fair-report-parse.test.ts, which asserts this on the real figures.
-//
-// This module is PURE (cell arrays in, structured event out) so it is unit-
-// tested with no DB. The frontend reads the .xlsx with SheetJS and hands each
-// sheet's rows here; the caller then matches the event to a `projects` row and
-// writes `project_finance_lines` via createLedgerLine (gated by the PMS agent's
-// autonomy stage). This module writes NOTHING.
-//
-// COGS categories map 1:1 to the system's LEDGER_COST_CATEGORIES:
-//   SELLING     -> income  / sales
-//   MATTRESS    -> cost    / cogs_matt_sofa
-//   BEDFRAME    -> cost    / cogs_bedframe
-//   ACCESSORIES -> cost    / cogs_accessories   (see ACCESSORIES note below)
-// rental / setup are NOT in these detail sheets (they come from the setup
-// invoice, Job E) and transport/commission/merchandise are auto-derived by the
-// existing recomputeAutoCostLines engine — so this parser never emits them.
-// ----------------------------------------------------------------------------
 
 export type Cell = string | number | null | undefined;
 export type SheetRows = Cell[][];
 
 export interface SalespersonTotal {
   name: string;
-  sales: number; // whole RM (SELLING summed for this person)
+  sales: number;
 }
 
 export interface FairEvent {
   brand: string;
   venue: string;
-  /** First / last order date seen in the sheet, as printed (e.g. "27/6"). */
   dateFirst: string | null;
   dateLast: string | null;
   orders: number;
-  sales: number;            // revenue = sum(SELLING), whole RM
-  cogsMattSofa: number;     // sum(MATTRESS)
-  cogsBedframe: number;     // sum(BEDFRAME)
-  cogsAccessories: number;  // sum(ACCESSORIES cost)
+  sales: number;
+  cogsMattSofa: number;
+  cogsBedframe: number;
+  cogsAccessories: number;
   salespeople: SalespersonTotal[];
 }
 
 export interface FinanceLine {
   kind: 'income' | 'cost';
   category: string;
-  amount: number; // whole RM, non-negative
+  amount: number;
 }
 
 const norm = (v: Cell): string => (v == null ? '' : String(v).trim());
@@ -120,7 +89,7 @@ export function parseFairSheet(name: string, rows: SheetRows): FairEvent | null 
 
   for (const row of rows) {
     const selling = num(row[cols.selling]);
-    if (selling <= 0) continue; // not an order row (header / total / blank)
+    if (selling <= 0) continue;
     orders += 1;
     sales += selling;
     if (cols.mattress >= 0) cogsMattSofa += num(row[cols.mattress]);

@@ -9,9 +9,6 @@ import { soDocNosByPoNumber, soDocNosByPoNumberInCompanies } from './so-list-po-
 
 type Row = Record<string, unknown>;
 
-/** A fake PostgREST builder: each method narrows `rows` and `then` resolves it.
- *  `errorOn` makes the read of a named table return an error, to prove the
- *  resolver throws rather than dropping matches. */
 function fakeSb(tables: Record<string, Row[]>, errorOn?: string) {
   class Q {
     rows: Row[];
@@ -41,8 +38,6 @@ function fakeSb(tables: Record<string, Row[]>, errorOn?: string) {
   return { from: (table: string) => new Q(table, tables[table] ?? []) };
 }
 
-/** A company context: `companyId` resolved to `id`, nothing else. `null` leaves
- *  the legacy unresolved state (scopeToCompany adds no predicate). */
 const ctx = (id: number | null) => ({ get: (k: string) => (k === 'companyId' && id != null ? id : undefined) });
 
 const po = (id: string, poNumber: string, status: string, companyId?: number): Row =>
@@ -77,7 +72,6 @@ describe('soDocNosByPoNumber', () => {
       purchase_order_items: [poItem('po-dead', 'si-1'), poItem('po-live', 'si-2')],
       mfg_sales_order_items: [soItem('si-1', 'HC-SO-DEAD'), soItem('si-2', 'HC-SO-LIVE')],
     });
-    // Only the DRAFT PO's order surfaces; the CANCELLED one's does not.
     expect(await soDocNosByPoNumber(sb, ctx(null), 'HC-PO-0090')).toEqual(['HC-SO-LIVE']);
   });
 
@@ -114,9 +108,6 @@ describe('soDocNosByPoNumber', () => {
   });
 
   test('a company id scopes every read — no other company leaks through', async () => {
-    // Both companies carry a PO whose number starts HC-PO-5; with company 2
-    // named, only company 2's order may answer. A row of company 1 leaking
-    // through ANY of the three reads would add HC-SO-C1.
     const sb = fakeSb({
       purchase_orders: [
         po('po-1', 'HC-PO-5001', 'SUBMITTED', 1),

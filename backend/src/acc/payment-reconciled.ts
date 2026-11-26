@@ -50,8 +50,6 @@ export const SO_PAYMENT_BACKDATE = 'scm.payment.backdate';
     the SO's own history, not only in a permission table. */
 export const SLIP_DATE_OVERRIDE_NOTE = 'Slip date outside the 14-day window, recorded on the backdate right.';
 
-/* Borrowed from the poster rather than spelled out again — a new file's lint
-   ceiling is zero, and a second name for the same client would be worse. */
 type Db = Parameters<typeof postSoPayment>[0];
 
 export type PaymentReconciliation =
@@ -66,9 +64,6 @@ export async function paymentReconciliation(
   paymentId: string,
   source: 'SOPAY' | 'SIPAY' = 'SOPAY',
 ): Promise<PaymentReconciliation> {
-  /* 1. THE MERCHANT REPORT. First because it is the cheapest, the most exact
-        (the table's unique index is on the payment itself) and the only one
-        that answers for a payment with no ledger entry at all. */
   const { data: matched, error: matchErr } = await sb.from('acc_settlement_matches')
     .select('settlement_row_id, created_at')
     .eq('company_id', companyId)
@@ -119,14 +114,8 @@ export async function paymentReconciliation(
   if (jeErr) return { ok: false, reason: `entry read: ${jeErr.message}` };
   const live = ((jes ?? []) as Array<{ id: string; je_no: string; entry_date: string | null; reversed: boolean | null }>)
     .find((r) => !r.reversed);
-  /* No live entry: nothing for a bank statement or a month lock to have closed
-     over. Not reconciled — and the unbooked Self-check card is the one that
-     speaks for this state, not this function. */
   if (!live) return { ok: true, by: null };
 
-  /* 3. THE BANK STATEMENT. Keyed by je_no, which is what the matches table
-        carries — see its own column comment for why it is the number and not
-        the uuid. */
   const { data: claimed, error: claimErr } = await sb.from('acc_bank_statement_matches')
     .select('je_no')
     .eq('company_id', companyId)
@@ -137,9 +126,6 @@ export async function paymentReconciliation(
     return { ok: true, by: { kind: 'bank', jeNo: live.je_no } };
   }
 
-  /* 4. THE CLOSED MONTH, read off the entry's MONEY leg. The credit leg is
-        Trade Debtors and is never a bank account, so a guard that took the
-        wrong line would find no lock and wave everything through. */
   const { data: lineRows, error: lineErr } = await sb.from('journal_entry_lines')
     .select('account_code, debit_sen')
     .eq('journal_entry_id', live.id);
@@ -180,7 +166,6 @@ export async function paymentMayChange(
   p: {
     companyId: number;
     paymentId: string;
-    /** The MY calendar day the ROW was keyed — never the date on the document. */
     createdDateMyt: string;
     todayDateMyt: string;
     soIsDraft: boolean;
@@ -188,8 +173,6 @@ export async function paymentMayChange(
     source?: 'SOPAY' | 'SIPAY';
   },
 ): Promise<PaymentRowMutability> {
-  /* A DRAFT order is exempt before anything is read: its payments were never
-     locked, and there is no reason to ask the settlement tables about one. */
   if (p.soIsDraft) return { mutable: true, problem: null, via: 'draft' };
 
   const found = await paymentReconciliation(sb, p.companyId, p.paymentId, p.source ?? 'SOPAY');

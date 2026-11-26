@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// Driver Leave — Fleet Module A3. The small master where the dispatcher records
-// a driver's date-ranged absence (MC, annual leave, ...). The Auto-Schedule
-// auto-assigner reads these rows and skips an on-leave driver on the covered
-// days — the driver half of the A3 constraints (the lorry half is Module B's
-// maintenance status, already folded into assignment).
-//
-// There is no structured HR leave/attendance source in this ERP, so this page +
-// scm.driver_leave (mig 0206) is it. Route /scm/driver-leave, nav "Driver Leave"
-// under Transportation. Mirrors the Residence Rules / Delivery Zones masters.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type ReactNode, type CSSProperties } from 'react';
 import { Button } from '@2990s/design-system';
@@ -43,7 +32,6 @@ export const DriverLeave = () => {
   const notify = useNotify();
   const askConfirm = useConfirm();
 
-  // WS2: leave covers drivers AND helpers (storekeepers are in the helper list).
   const [crewKind, setCrewKind] = useState<'driver' | 'helper'>('driver');
   const [driverId, setDriverId] = useState<string>('');
   const [helperId, setHelperId] = useState<string>('');
@@ -51,10 +39,6 @@ export const DriverLeave = () => {
   const [endDate, setEndDate] = useState<string>(todayMY());
   const [reason, setReason] = useState<string>('');
 
-  // Leave is an internal-crew concept only — you do not track a 3PL's crew's
-  // absences. Only in-house drivers are offered in the picker; the backend POST
-  // rejects an external driver too. Helpers have no external case yet (all
-  // internal today — see mig 0208), so every active helper is offered.
   const internalDrivers = useMemo(
     () => (drivers.data ?? []).filter((d) => (d.inHouse ?? d.in_house) !== false),
     [drivers.data],
@@ -64,8 +48,6 @@ export const DriverLeave = () => {
     [helpers.data],
   );
 
-  // Name maps keep ALL drivers/helpers so any historical leave row still resolves
-  // a name in the list below, even for one later deactivated.
   const driverName = useMemo(() => {
     const m = new Map<string, string>();
     for (const d of drivers.data ?? []) m.set(d.id, d.name);
@@ -77,7 +59,6 @@ export const DriverLeave = () => {
     return m;
   }, [helpers.data]);
 
-  // Resolve a leave row to "who" + a driver/helper tag.
   const crewOf = (r: { driverId: string | null; helperId: string | null }): { kind: 'Driver' | 'Helper'; name: string } =>
     r.helperId
       ? { kind: 'Helper', name: helperName.get(r.helperId) ?? r.helperId }
@@ -131,7 +112,6 @@ export const DriverLeave = () => {
         description="Record when a driver or helper is unavailable for delivery. On the covered days the Auto-Schedule assigner will not crew them, and the trip assignment pickers flag them as on leave — you can still hand-pick anyone, the flag is a warning, not a block."
       />
 
-      {/* Create */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-end', padding: '14px 16px', borderRadius: 10, background: 'var(--bg-subtle, rgba(0,0,0,0.03))' }}>
         <Ctl label="Who">
           <select value={crewKind} onChange={(e) => setCrewKind(e.target.value as 'driver' | 'helper')} style={{ ...selStyle, minWidth: 110 }}>
@@ -169,7 +149,6 @@ export const DriverLeave = () => {
         </Button>
       </div>
 
-      {/* List */}
       <DataTable<DriverLeaveRow>
         tableId="driver-leave"
         exportName="driver-leave"

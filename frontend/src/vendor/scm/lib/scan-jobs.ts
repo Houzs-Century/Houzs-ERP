@@ -15,12 +15,9 @@ import { instantToMytLocal, mytDayOf, todayMyt } from "./dates";
 
 export type ScanJob = {
   id: string;
-  status: string; // queued | running | done | error
+  status: string;
   soDocNo: string | null;
-  // The generic produced-doc link (migration 20260919T1000): == soDocNo for an
-  // SO scan, the GRN number for a GR scan. null while pending / needs-review.
   linkedDocNo: string | null;
-  // The produced doc's id, so the card can open it. GR scans only; null otherwise.
   linkedDocId: string | null;
   error: string | null;
   duplicateOf: string | null;
@@ -29,9 +26,6 @@ export type ScanJob = {
 };
 export type ScanJobsResp = { success?: boolean; data?: { jobs?: Array<Record<string, unknown>> } };
 
-/* GET /scan-so/jobs payload → typed rows, dual-read camelCase ?? snake_case
-   (jobToJson camelizes today, but the pg camelCase rule means we never trust
-   one casing). Rows without an id are dropped. */
 export function normalizeJobs(resp: ScanJobsResp | undefined): ScanJob[] {
   const raw = resp?.data?.jobs ?? [];
   return raw
@@ -58,23 +52,8 @@ export const isTodayTs = (t: number): boolean => {
   return mytDayOf(new Date(t).toISOString()) === todayMyt();
 };
 export const hhmm = (t: number): string => instantToMytLocal(new Date(t).toISOString()).slice(11, 16);
-/* A job is "active" while the server is still working it — the only states that
-   keep a poll interval running. */
 export const isActiveJob = (j: ScanJob): boolean => j.status === "queued" || j.status === "running";
 
-/* ── The known-reps list, shared for the same reason as the jobs poll ────────
-   The salesperson sent with a scan is the OCR LEARNING KEY: the backend loads
-   that rep's distilled rules and few-shot examples to read the slip
-   (`loadPromptInjections(svc, job.salesperson)`), files the resulting sample
-   under that name, and filters the Recent-scans list by it. Desktop's modal
-   defaults it to whoever is signed in and keeps it EDITABLE against this list,
-   "for the occasional someone-else slip"; mobile had a `const` off the signed-in
-   user, so an office person working through a stack of colleagues' slips read
-   every one of them against their OWN handwriting rules. The endpoint is named
-   ONCE here so the two surfaces cannot offer different lists.
-
-   NOT the SO's own salesperson_id: that is stamped server-side from the authed
-   caller (`resolveScanUploaderStaffId`) and is not caller-trusted. */
 export const SCAN_SALESPEOPLE_PATH = "/scan-so/salespeople";
 export type ScanSalespeopleResp = { data?: { salespeople?: unknown } };
 

@@ -1,27 +1,3 @@
-// ----------------------------------------------------------------------------
-// null-warehouse-signal — say something when a goods line is written with no
-// warehouse, instead of letting it disappear.
-//
-// WHY. Stock allocation buckets by (warehouse, item, variant). A goods line
-// with `warehouse_id = NULL` matches no bucket, so it can never be allocated:
-// it never gets `allocated_batch_no`, never leaves PENDING, and never shows an
-// incoming PO — while the goods for it may be received and sitting in the right
-// bucket in the right warehouse. On 2990-SO-2607-028 that read to the operator
-// as "the system did not capture the data" (2026-08-18), and 18 live lines were
-// found in that state going back to June.
-//
-// THE FAILURE IS THAT NOTHING SAYS ANYTHING. The write succeeds, the row looks
-// ordinary, and the line simply never appears in any bucket the allocator
-// walks. Two of the three known causes were only identifiable afterwards, by
-// timestamp forensics; one is still unexplained because there is no record of
-// which path wrote it.
-//
-// SO THIS ONLY LOGS. It does not throw and does not block: a NULL warehouse is
-// legitimate on an order that genuinely has no address yet (10 of those 18),
-// and refusing the write would turn a reporting gap into an outage. What it
-// buys is attribution — the next occurrence names its own route, document and
-// item in the Worker log, and the hourly sentinel counts it.
-// ----------------------------------------------------------------------------
 
 import { isServiceLine } from '../shared';
 

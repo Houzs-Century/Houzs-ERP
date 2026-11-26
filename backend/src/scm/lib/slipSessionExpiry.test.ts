@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FIELD_PHOTO_HOLD_HOURS, parseSlipPurpose, slipSessionExpiry } from './slip';
 
-/* A field photo is uploaded when it is taken and claimed only at Complete. If
-   its session expired after the usual hour, the slip reaper would delete the
-   photo during a long installation and Complete would refuse it. */
 describe('slipSessionExpiry', () => {
   const now = new Date('2026-11-08T02:00:00.000Z');
 

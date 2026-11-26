@@ -33,17 +33,14 @@ import ui from '../MoneyIn.module.css';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
 
-/** The design's own boxes; every other party field rides under More details. */
 const MAIN = new Set<keyof DebtorPartyValues>(['name', 'businessRegNo', 'phone', 'email', 'address1', 'address2', 'postcode', 'city', 'state', 'country']);
 const FIELD = new Map<keyof DebtorPartyValues, DebtorPartyField>(DEBTOR_PARTY_GROUPS.flatMap((g) => g.fields.map((f) => [f.key, f] as const)));
 const MORE: DebtorPartyField[] = DEBTOR_PARTY_GROUPS.flatMap((g) => g.fields.filter((f) => !MAIN.has(f.key)));
 
 export function DebtorFormPage({ debtor, backLabel, onClose, onAdded }: {
-  /** The debtor an Edit starts from; null for a new one. */
   debtor: OtherDebtor | null;
   backLabel: string;
   onClose: () => void;
-  /** A new debtor's page, opened once it is saved. */
   onAdded?: (id: string) => void;
 }) {
   const toast = useToastOptional();
@@ -56,7 +53,6 @@ export function DebtorFormPage({ debtor, backLabel, onClose, onAdded }: {
   const [active, setActive] = useState(debtor?.is_active ?? true);
   const [more, setMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /* An edit keeps the code it has; a new debtor's follows the name until it is typed over. */
   const [codeTyped, setCodeTyped] = useState(debtor != null);
   const saving = create.isPending || update.isPending;
   const set = (key: keyof DebtorPartyValues, value: string) => setV((p) => ({ ...p, [key]: value }));
@@ -132,7 +128,6 @@ export function DebtorFormPage({ debtor, backLabel, onClose, onAdded }: {
             {box('businessRegNo', { label: 'Registration no.', placeholder: 'Company or IC number' })}
             {box('phone')}
             {box('email')}
-            {/* Active / Inactive — the old Deactivate / Reactivate; a new debtor starts active. */}
             {debtor && (
               <div className={ui.formField}>
                 <span className={ui.formLabel}>Status</span>

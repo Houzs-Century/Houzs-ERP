@@ -49,14 +49,8 @@ export { CONVERT_TO_DO_DRAFT_LABEL };
 import { DO_STOCK_OUT_STATES, doHasArrived } from "../../vendor/shared/do-shipped-states";
 import { rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
 
-/** What every menu needs from a row: something to identify it, a status, and
- *  the mig-0324 hold marker. `HoldFields` rather than a hand-typed `on_hold`,
- *  so the four columns are spelled once for the whole app. */
 type StatusRow = { status?: string | null } & HoldFields;
 
-/** Server-decided: carried across from AutoCount AND the cutover lock is on for
- *  this company. Optional so a cached pre-deploy list row still type-checks; an
- *  absent value reads as "not locked", which is the pre-2026-09 menu exactly. */
 type MigratedRow = { migrated_readonly?: boolean | null };
 
 /* ── THE HOLD, ON ALL FIVE DOCUMENTS (owner 2026-08-22) ──────────────────────
@@ -93,9 +87,6 @@ function holdEntries<R extends StatusRow>(
   r: R,
   setHold: (r: R, onHold: boolean) => void,
 ): Array<RowMenuItem | false> {
-  /* `rowIsHeld` reads the FLAG or the retired ON_HOLD status, so a legacy row
-     is still offered "Take Off Hold" rather than a second "Put On Hold" that
-     would do nothing it can see. */
   const held = rowIsHeld(r);
   return [
     !held && { label: "Put On Hold", onClick: () => setHold(r, true) },
@@ -145,9 +136,6 @@ function printEntries(chain: PrintChain, h: { print: (t: PrintTarget) => void; o
 
 const norm = (s: string | null | undefined) => String(s ?? "").toUpperCase();
 
-/* The server's answer (backend so-list-rows.ts `reopenable`): a CANCELLED order
-   the status PATCH will take back — only one carried over from AutoCount. A
-   cancel the ERP ran is final, so its Reopen could only ever fail. */
 export const SO_REOPEN_FINAL_HINT = "Cancelled in the ERP: this cancel is final. Use Copy as new instead.";
 export function soOffersReopen(r: { status?: string | null; reopenable?: boolean | null }): boolean {
   return norm(r.status) === "CANCELLED" && r.reopenable === true;
@@ -221,14 +209,9 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow
   /** Open a DRAFT DO for every remaining line, before the goods arrive (owner 2026-11-18). */
   convertToDoDraft: (r: R) => void;
   setStatus: (r: R, status: string) => void;
-  /** Stop chasing the remainder. Its own handler, not a setStatus, because the
-   *  confirmation wording is the point — see MfgSalesOrdersListV2. */
   close: (r: R) => void;
-  /** Put the mig-0324 hold marker on, or take it off. NEVER a status write. */
   setHold: (r: R, onHold: boolean) => void;
   cancel: (r: R) => void;
-  /** Hard-delete a DRAFT (DELETE /:docNo). A draft is discarded, never
-   *  cancelled — see use-discard-draft-action.ts. */
   discard: (r: R) => void;
   reopen: (r: R) => void;
   canDeliver: boolean;
@@ -238,9 +221,6 @@ export function salesOrderRowMenu<R extends StatusRow & SoChainRow & MigratedRow
     const isDraft = s === "DRAFT";
     const isCancelled = s === "CANCELLED";
     const isClosed = s === "CLOSED";
-    /* Only `Close remaining` reads this. The hold entries deliberately do not:
-       since mig 0324 a hold is a MARKER, so it is offered on every row and says
-       nothing about where the order is. */
     const live = !isDraft && !isCancelled && !isClosed;
     /* CUTOVER (owner 2026-09-08) — an order carried across from AutoCount is
        view-only until its payments are reconciled, so the menu offers Open and
@@ -399,17 +379,6 @@ export function deliveryOrderRowMenu<R extends StatusRow & DoChainRow>(h: {
 }): (r: R) => RowMenuItem[] {
   return (r) => {
     const s = norm(r.status);
-    /* Confirmed or later, from the SHARED set rather than a list typed here — a
-       fourth hand-written copy of the delivery ladder is the exact shape
-       check-duplicated-decisions hunts, and it caught this one when it was one.
-       DO_STOCK_OUT_STATES is also the RIGHT question: these entries are offered
-       precisely where the stock has already gone out, which is what makes them
-       unable to move it. DRAFT, CANCELLED and any status this file does not
-       recognise fall out by not being members — naming a step for an unknown
-       state is the COMPLETED mistake, and offering nothing is the cheap answer. */
-    /* A delivered row gets none of them: every one would move it BACK, which is
-       an un-delivery and goes through "Undo delivered" on the detail page (reason
-       + audit + invoice check). The server refuses it here too (`use_revert`). */
     const canMark = h.canSetStatus(r) && (DO_STOCK_OUT_STATES as readonly string[]).includes(s) && !doHasArrived(s);
     return buildRowMenu(
       [
@@ -421,13 +390,8 @@ export function deliveryOrderRowMenu<R extends StatusRow & DoChainRow>(h: {
         h.canInvoice(r) && { label: transferToLabel("si"), onClick: () => h.transferToSi(r) },
         h.canReturn(r) && { label: transferToLabel("dr"), onClick: () => h.transferToDr(r) },
       ],
-      /* Confirm, the ladder, Hold, then Cancel — Confirm first and Hold last, so
-         the "same three, same order" shape the other four menus keep is intact
-         with the three manual rungs sitting inside it in ladder order. */
       [
         h.canConfirm(r) && { label: "Confirm", onClick: () => h.confirm(r) },
-        /* The status the row already carries is left out: re-writing it is a
-           no-op the operator would read as a real choice. */
         canMark && s !== "DISPATCHED" && { label: "Mark Loaded", onClick: () => h.setStatus(r, "DISPATCHED") },
         canMark && s !== "IN_TRANSIT" && { label: "Mark In Transit", onClick: () => h.setStatus(r, "IN_TRANSIT") },
         canMark && s !== "DELIVERED" && { label: "Mark Delivered", onClick: () => h.setStatus(r, "DELIVERED") },
@@ -438,10 +402,6 @@ export function deliveryOrderRowMenu<R extends StatusRow & DoChainRow>(h: {
   };
 }
 
-/* ── Purchase Order ─────────────────────────────────────────────────────────
-   PO -> GRN is the one transfer in this system that was already complete from
-   the source side (detail, row drawer AND a list bulk bar), so the menu adds
-   the entry point rather than the capability. */
 export function purchaseOrderRowMenu<R extends StatusRow & PoChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
@@ -469,11 +429,6 @@ export function purchaseOrderRowMenu<R extends StatusRow & PoChainRow>(h: {
   );
 }
 
-/* ── Goods Received Note ────────────────────────────────────────────────────
-   Two transfers out of one document — the invoice and the return — which is why
-   this list's drawer already carried both and the menu simply mirrors it.
-   `Post` stays here because it is the GRN's confirm step and it is what moves
-   the stock IN; it reads as a status change and is grouped as one. */
 export function grnRowMenu<R extends StatusRow & GrnChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
@@ -505,11 +460,6 @@ export function grnRowMenu<R extends StatusRow & GrnChainRow>(h: {
   );
 }
 
-/* ── Sales Invoice ──────────────────────────────────────────────────────────
-   No transfer: a Sales Invoice is the end of the sales chain. SO -> SI does not
-   exist in this system in either direction — the only converter the backend
-   exposes is `from-dos`, which is why the button that once pointed at
-   `/scm/sales-invoices/from-so` was REMOVED rather than repointed. */
 export function salesInvoiceRowMenu<R extends StatusRow & SiChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
@@ -517,9 +467,6 @@ export function salesInvoiceRowMenu<R extends StatusRow & SiChainRow>(h: {
   recordPayment: (r: R) => void;
   canPay: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
-  /* NO CANCEL here either, same reason as the delivery order: the list has no
-     cancel handler, and cancelling an issued invoice REVERSES revenue and AR.
-     That belongs on the detail page with its own words around it. */
   return (r) => buildRowMenu(
     [
       { label: "Open", onClick: () => h.open(r) },
@@ -553,17 +500,6 @@ export function salesInvoiceRowMenu<R extends StatusRow & SiChainRow>(h: {
    DELIVERED, applied to the rest of the system.
    ════════════════════════════════════════════════════════════════════════════ */
 
-/* ── Purchase Invoice ───────────────────────────────────────────────────────
-   The list he right-clicked and got Chrome's menu.
-
-   CANCEL WAS ALREADY BUILT AND WIRED TO NOTHING. `useCancelPurchaseInvoice()`
-   was called in the list and its result never used — the page held the whole
-   capability and offered the operator no way to reach it. `noUnusedLocals` is
-   false on the frontend tsconfig, so nothing said a word.
-
-   The server refuses a cancel once any money has been paid
-   (`cancelPurchaseInvoiceHandler`: PAID or `paid_sen > 0` → 409), so `canCancel`
-   has to know that too — an entry the server will refuse is a menu that lies. */
 export function purchaseInvoiceRowMenu<R extends StatusRow & PiChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
@@ -602,13 +538,6 @@ export function purchaseInvoiceRowMenu<R extends StatusRow & PiChainRow>(h: {
   );
 }
 
-/* ── Purchase Return ────────────────────────────────────────────────────────
-   The one of the five that needed nothing new: Post, Complete and Cancel are
-   all handlers the list already had on its drawer.
-
-   COMPLETE IS DELIBERATELY ABSENT. It records the supplier's credit note — a
-   money statement that wants the reference field the drawer's Complete tab
-   asks for, and a right-click cannot ask for it. */
 export function purchaseReturnRowMenu<R extends StatusRow & PrChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
@@ -618,7 +547,6 @@ export function purchaseReturnRowMenu<R extends StatusRow & PrChainRow>(h: {
   canConfirm: (r: R) => boolean;
   canCancel: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
-  // Hold follows: ON_HOLD is being converted from a status into a flag.
   return (r) => buildRowMenu(
     [
       { label: "Open", onClick: () => h.open(r) },
@@ -630,18 +558,6 @@ export function purchaseReturnRowMenu<R extends StatusRow & PrChainRow>(h: {
   );
 }
 
-/* ── Delivery Return ────────────────────────────────────────────────────────
-   NO CONFIRM, and it is not an omission. A Delivery Return has no draft step:
-   it is RECEIVED the moment it is created and the stock is already back in, so
-   there is no "make this real" transition for a person to perform. Its states
-   are Received, Inspected, Refunded, Credit noted, Rejected, Cancelled —
-   `document-status-vocabulary.md` has no Confirmed row for this document
-   because there is nothing to put in it.
-
-   CANCEL IS FINAL HERE, which is why `canCancel` excludes an already-cancelled
-   row rather than relying on the server: un-cancelling is refused outright
-   (`patchDeliveryReturnStatusHandler` — the cancel's stock drain would be left
-   in place), so a second Cancel is a dead entry, not a no-op. */
 export function deliveryReturnRowMenu<R extends StatusRow & DrChainRow>(h: {
   open: (r: R) => void;
   edit: (r: R) => void;
@@ -649,7 +565,6 @@ export function deliveryReturnRowMenu<R extends StatusRow & DrChainRow>(h: {
   cancel: (r: R) => void;
   canCancel: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
-  // Hold follows: ON_HOLD is being converted from a status into a flag.
   return (r) => buildRowMenu(
     [
       { label: "Open", onClick: () => h.open(r) },
@@ -691,7 +606,6 @@ export function stockTransferRowMenu<R extends StatusRow>(h: {
   cancel: (r: R) => void;
   canCancel: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
-  // Hold follows: ON_HOLD is being converted from a status into a flag.
   return (r) => buildRowMenu(
     [
       { label: "Open", onClick: () => h.open(r) },
@@ -740,7 +654,6 @@ export function stockTakeRowMenu<R extends StatusRow>(h: {
   reject?: (r: R) => void;
   canApprove?: (r: R) => boolean;
 }): (r: R) => RowMenuItem[] {
-  // Hold follows: ON_HOLD is being converted from a status into a flag.
   return (r) => buildRowMenu(
     [
       { label: "Open", onClick: () => h.open(r) },

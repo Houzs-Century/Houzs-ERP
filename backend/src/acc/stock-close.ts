@@ -81,7 +81,7 @@ export function monthEdges(month: string): { ok: true; lastDay: string; nextFirs
 export function sweepMonths(nowMs: number = Date.now()): string[] {
   const myt = new Date(nowMs + 8 * 3600_000);
   const y = myt.getUTCFullYear();
-  const m = myt.getUTCMonth(); // 0-based, current month
+  const m = myt.getUTCMonth();
   const pad = (n: number) => String(n).padStart(2, '0');
   const monthOf = (yy: number, mm0: number): string => {
     const d = new Date(Date.UTC(yy, mm0, 1));
@@ -90,7 +90,6 @@ export function sweepMonths(nowMs: number = Date.now()): string[] {
   return [monthOf(y, m - 1), monthOf(y, m - 2)];
 }
 
-/* ── The replay ──────────────────────────────────────────────────────────── */
 
 type MovementRow = {
   item_code?: string | null; warehouse_id?: string | null; movement_type?: string | null; qty?: number | null;
@@ -98,14 +97,6 @@ type MovementRow = {
 };
 const REPLAY_COLS = 'item_code, warehouse_id, movement_type, qty, total_cost_sen, source_doc_type, source_doc_no';
 
-/**
- * Every OWNED movement up to END OF `date` (inclusive), on the BUSINESS date.
- * Rows written by a not-yet-redeployed worker in the minutes around the
- * migration carry NO movement_date and would silently fall out of the lte;
- * they count by their keyed time instead — the pre-item-4 meaning.
- * Consignment-sourced rows (the supplier's goods) are left out here, once,
- * for every reader.
- */
 async function ownedMovementsAsOf(sb: any, companyId: number, date: string): Promise<{ ok: true; rows: MovementRow[] } | { ok: false; reason: string }> {
   const { data, error } = await paginateAll((from, to) => sb
     .from('inventory_movements')
@@ -168,10 +159,8 @@ export async function stockValueByBucketAsOf(
   return { ok: true, buckets, totalSen: STOCK_BUCKETS.reduce((s, b) => s + buckets[b], 0) };
 }
 
-/* ── The replay, preloaded once and folded per date (the Dashboard) ───────── */
 
 export type OwnedMovement = MovementRow & { movement_date?: string | null; created_at?: string | null };
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 
 /**
@@ -216,7 +205,6 @@ export function foldStockByBucket(rows: OwnedMovement[], of: (warehouseId: unkno
   return { buckets, totalSen: STOCK_BUCKETS.reduce((s, b) => s + buckets[b], 0) };
 }
 
-/** Quantity, signed the way signedCost signs money. */
 const signedQty = (r: MovementRow): number => {
   const q = Number(r.qty ?? 0);
   const type = String(r.movement_type);
@@ -279,13 +267,11 @@ export async function stockBreakdownAsOf(
   return { ok: true, items };
 }
 
-/* ── The close ───────────────────────────────────────────────────────────── */
 
 export type CloseOutcome = {
   companyId: number;
   month: string;
   valueSen: number;
-  /** The three closing stocks the value is made of. */
   buckets?: Record<StockBucket, number>;
   action: 'posted' | 'unchanged' | 'reposted' | 'failed';
   jeNo?: string;
@@ -295,7 +281,6 @@ export type CloseOutcome = {
 
 type ActiveJe = { id: string; je_no: string; total_debit_sen: number };
 
-/** The ACTIVE (non-reversed) entry for a doc, or null. */
 async function activeJe(sb: any, companyId: number, docNo: string): Promise<
   { ok: true; je: ActiveJe | null } | { ok: false; reason: string }
 > {
@@ -311,7 +296,6 @@ async function activeJe(sb: any, companyId: number, docNo: string): Promise<
   return { ok: true, je };
 }
 
-/** The lines an entry carries, as `code|dr|cr` — what "the same entry" means. */
 async function lineShape(sb: any, companyId: number, jeId: string): Promise<{ ok: true; shape: string } | { ok: false; reason: string }> {
   const { data, error } = await sb
     .from('journal_entry_lines')
@@ -324,7 +308,6 @@ async function lineShape(sb: any, companyId: number, jeId: string): Promise<{ ok
 const shapeOf = (lines: Array<{ account_code: string; debit_sen: number; credit_sen: number }>): string =>
   lines.map((l) => `${l.account_code}|${Number(l.debit_sen)}|${Number(l.credit_sen)}`).sort().join(';');
 
-/** The split as the run log and the narration say it. */
 const splitText = (buckets: Record<StockBucket, number>): string =>
   STOCK_BUCKETS.filter((b) => buckets[b] !== 0).map((b) => `${b} ${fmtSen(buckets[b])}`).join(', ');
 
@@ -381,8 +364,6 @@ export async function closeStockMonth(
   if (!curRev.ok) return record({ companyId, month, valueSen: totalSen, buckets, action: 'failed', note: `read: ${curRev.reason}` });
 
   const wasPosted = cur.je != null;
-  /* "Unchanged" is the LINES, not the total: the same money on other accounts
-     (the buckets split, a warehouse re-bucketed) re-posts like a moved value. */
   let sameLines = false;
   if (cur.je && curRev.je && totalSen > 0) {
     const [a, r] = await Promise.all([lineShape(sb, companyId, cur.je.id), lineShape(sb, companyId, curRev.je.id)]);
@@ -394,12 +375,6 @@ export async function closeStockMonth(
     return record({ companyId, month, valueSen: totalSen, buckets, action: 'unchanged', jeNo: cur.je.je_no, revJeNo: curRev.je.je_no });
   }
 
-  /* The replacement must be able to post BEFORE the old pair comes out. The
-     reversal below is followed by the fresh post; if that post then fails
-     (an account the chart does not carry yet — a new bucket's accounts not
-     opened), the month is left with its closing stock reversed and nothing in
-     its place until a later run succeeds. Checked with the engine's own gate,
-     both legs, and refused with the old pair untouched. */
   if (totalSen > 0) {
     const legs = [
       { lines: closingLines, entryDate: edges.lastDay, sourceDocNo: adjDoc, narration: `Closing stock ${month}` },
@@ -416,9 +391,6 @@ export async function closeStockMonth(
     }
   }
 
-  /* Value or shape moved (or a half-posted pair): take the old pair out FIRST
-     — a contra each, dated at its own month edge so entry and series stay in
-     the month they describe — then post fresh. */
   if (cur.je && !sameLines) {
     const r1 = await reverseJournal(sb, { sourceType: 'STOCKADJ', sourceDocNo: adjDoc, companyId, entryDate: edges.lastDay, narration: (o) => `Re-close of ${month} — replaces ${o.je_no}` });
     if (!r1.ok) return record({ companyId, month, valueSen: totalSen, buckets, action: 'failed', note: `reverse: ${r1.reason ?? r1.status}` });
@@ -455,8 +427,6 @@ export async function closeStockMonth(
     lines: openingLines,
   });
   if (!rev.ok) {
-    /* The closing leg IS in the ledger; say so and let the next sweep heal the
-       missing reversal (the pair-check above re-enters this path). */
     return record({ companyId, month, valueSen: totalSen, buckets, action: 'failed', jeNo: post.jeNo, note: `reversal post: ${rev.reason ?? rev.status} (closing leg ${post.jeNo} DID post — the next run completes the pair)` });
   }
 

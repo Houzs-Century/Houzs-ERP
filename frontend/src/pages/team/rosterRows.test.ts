@@ -38,7 +38,6 @@ describe("rosterRows", () => {
   });
 
   test("the Disabled attention node still shows its removed members under 'all'", () => {
-    // Its scope is already disabled-only; onDisabledView keeps the exclusion off.
     const removedOnly = [m(3, "disabled")];
     expect(rosterRows(removedOnly, "all", true).map((u) => u.id)).toEqual([3]);
   });

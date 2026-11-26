@@ -31,8 +31,6 @@ import {
 
 type JsPdf = import('jspdf').jsPDF;
 
-/* The real 2990 letterhead — long enough that its address reaches the right
-   margin, which is what made the two header columns collide. */
 const BRANDING_2990 = {
   ...DEFAULT_BRANDING,
   companyName: '2990 HOME SDN. BHD.',
@@ -44,9 +42,6 @@ const BRANDING_2990 = {
   logoR2Key: '',
 };
 
-/* A logo is not incidental to the collision — it is the cause: the letterhead
-   text starts ~33mm in when one is present. 1x1 PNG; only the declared
-   dimensions feed the layout. */
 const LOGO: BrandingLogo = {
   key: 'test-logo',
   dataUrl:
@@ -60,8 +55,6 @@ const LOGO: BrandingLogo = {
 const HEADER = {
   do_number: '2990-DO-2608-006',
   status: 'dispatched',
-  // Null by default; the one-page test sets it so the "SCAN AT EACH STEP" QR is
-  // part of the letterhead height, as it is on a real DO.
   scanToken: null as string | null,
   do_date: '2026-08-06',
   so_doc_no: '2990-SO-2606-015',
@@ -71,9 +64,6 @@ const HEADER = {
   dispatched_at: null,
   signed_at: null,
   delivered_at: null,
-  // Annotated rather than inferred: the tests below build variants that DO
-  // carry a driver / note / customer reference, and an inferred `null` would
-  // make every one of those a type error rather than a case.
   driver_name: null as string | null,
   vehicle: null as string | null,
   address1: '50, Jalan Elitis Suria, Valencia',
@@ -103,8 +93,6 @@ type Span = { text: string; left: number; right: number; y: number; page: number
 type Fill = { rgb: [number, number, number]; y: number };
 type Rgb = [number, number, number];
 
-/** jsPDF's colour setters take (grey), (r, g, b) or ('#rrggbb'); autoTable
- *  applies styles through the same setters. Normalised so a test can compare. */
 function rgbOf(args: unknown[]): Rgb {
   if (args.length >= 3) return [Number(args[0]), Number(args[1]), Number(args[2])];
   const a = args[0];
@@ -115,11 +103,6 @@ function rgbOf(args: unknown[]): Rgb {
   throw new Error(`unrecognised colour ${JSON.stringify(args)}`);
 }
 
-/** Text spans with the horizontal extent they occupied, plus every filled
- *  rectangle and the colour it was painted with, plus every ink, face and size
- *  the document was ever set to. Widths and colours are read INSIDE the spies,
- *  while the font / fill state that produced them is still in effect — reading
- *  afterwards would report whatever was set last. */
 function capture(doc: JsPdf): {
   spans: Span[];
   fills: Fill[];
@@ -158,8 +141,6 @@ function capture(doc: JsPdf): {
   }) as typeof doc.setFontSize);
 
   const record = (style: unknown, y: unknown) => {
-    // jsPDF paints on 'F' / 'FD' / 'DF'; 'S' (or nothing) only strokes, so the
-    // rules and the signature lines are correctly ignored.
     if (typeof style === 'string' && /f/i.test(style) && typeof y === 'number') {
       fills.push({ rgb: [...fill] as [number, number, number], y });
     }
@@ -220,8 +201,6 @@ describe('Delivery Order — Theme C template', () => {
     setBrandingCache({ ...BRANDING_2990 }, '2990');
     const { spans } = await renderDo([itemAt(1)]);
 
-    // The right column: the two title words, the doc number and the issued
-    // date — everything drawn above the header rule at the right edge.
     const meta = spans.filter(
       (s) => ['DELIVERY', 'ORDER', `No. : ${HEADER.do_number}`, 'Issued 2026/08/06'].includes(s.text) && s.y < 50,
     );
@@ -234,8 +213,6 @@ describe('Delivery Order — Theme C template', () => {
     expect(company.length).toBeGreaterThan(0);
     expect(Math.max(...company.map((s) => s.right))).toBeLessThan(metaLeft);
 
-    // The company block sits BESIDE the logo — that indent is what narrows the
-    // measure, so losing it would hide the bug rather than fix it.
     expect(Math.min(...company.map((s) => s.left))).toBeGreaterThan(20);
   });
 
@@ -257,17 +234,10 @@ describe('Delivery Order — Theme C template', () => {
      is measured off the DRAWN output: autoTable applies its cell styles through
      the same setters, so its cells are in the population too. */
   test('the sheet is black on white: no fill of any colour, every ink pure black', async () => {
-    /* A pale fill — the old paper panel, the brass doc-number pill, the teal
-       status pill, the rounded header band — has no grey ribbon to print with:
-       the driver dithers it into a field of dots UNDER the text. Grey text
-       dithers the same way, and the second carbonless ply gets a fainter copy.
-       So: NO fills at all (the QR's white backing and black modules are the
-       only exception, and this fixture carries no scan token), and every
-       setTextColor call is [0, 0, 0]. */
     setBrandingCache({ ...BRANDING_2990 }, '2990');
     const { fills, inks, spans } = await renderDo([itemAt(1), itemAt(2), itemAt(3)]);
 
-    expect(spans.length).toBeGreaterThan(20); // the spies are live
+    expect(spans.length).toBeGreaterThan(20);
     expect(fills).toEqual([]);
     expect(inks.length).toBeGreaterThan(0);
     const notBlack = inks.filter((rgb) => rgb.some((c) => c !== 0));
@@ -294,15 +264,10 @@ describe('Delivery Order — Theme C template', () => {
   });
 
   test('the page is Letter — the 9.5 x 11 continuous form between its perforations', async () => {
-    /* 9.5 x 11 continuous paper is 8.5 in wide once the tractor strips are
-       torn off and 11 in tall: exactly Letter. A4 is 18mm taller, so a print
-       dialog set to fit was shrinking every sheet, and the type with it. */
     const { doc } = await renderDo([itemAt(1)]);
     const size = doc.internal.pageSize;
     expect(size.getWidth()).toBeCloseTo(215.9, 0);
     expect(size.getHeight()).toBeCloseTo(279.4, 0);
-    // And the layout was laid out for that sheet, not for A4: the footer sits
-    // inside the bottom padding of THIS page, not 18mm past its edge.
     const { spans } = await renderDo([itemAt(1)]);
     const footer = spans.find((s) => s.text.startsWith('By signing above'));
     expect(footer).toBeDefined();
@@ -314,7 +279,6 @@ describe('Delivery Order — Theme C template', () => {
     setBrandingCache({ ...BRANDING_2990 }, '2990');
     const { spans } = await renderDo([itemAt(1), itemAt(2)]);
     expect(spans.some((s) => s.text === 'TOTAL')).toBe(true);
-    // The wrap this replaced.
     expect(spans.some((s) => s.text === 'TOT' || s.text === 'AL')).toBe(false);
   });
 
@@ -324,8 +288,6 @@ describe('Delivery Order — Theme C template', () => {
     expect(spans.some((s) => s.text === '01')).toBe(true);
     expect(spans.some((s) => s.text === '09')).toBe(true);
     expect(spans.some((s) => s.text === '11')).toBe(true);
-    // The unpadded forms never appear in the rail. (They DO appear as Qty
-    // values, so this checks the rail's own column, not the whole page.)
     const railX = spans.find((s) => s.text === '01')!.left;
     expect(spans.some((s) => Math.abs(s.left - railX) < 0.5 && /^\d$/.test(s.text))).toBe(false);
   });
@@ -335,16 +297,11 @@ describe('Delivery Order — Theme C template', () => {
     const { doc, spans } = await renderDo(Array.from({ length: 30 }, (_, i) => itemAt(i + 1)));
     expect(doc.getNumberOfPages()).toBeGreaterThan(1);
 
-    // The header band is redrawn on every page the table reaches — a second
-    // sheet of unlabelled numbers is not a delivery note. (The closing block
-    // can take a page of its own when the rows run to the bottom of the last
-    // sheet; that page carries no rows, so it needs no header.)
     const headerPages = new Set(spans.filter((s) => s.text === 'ITEM CODE').map((s) => s.page));
     const rowPages = new Set(spans.filter((s) => s.text.startsWith('XAMMAR-')).map((s) => s.page));
     expect(rowPages.size).toBeGreaterThan(1);
     for (const page of rowPages) expect(headerPages.has(page)).toBe(true);
 
-    // Exactly one signature block, on the last page.
     const signatures = spans.filter((s) => s.text === 'Customer Acknowledged Receipt');
     expect(signatures).toHaveLength(1);
     expect(signatures[0]!.page).toBe(doc.getNumberOfPages());
@@ -357,9 +314,6 @@ describe('Delivery Order — Theme C template', () => {
   });
 
   test('a combined export numbers each DO from 1, not from the file', async () => {
-    /* The batch "Export PDF" puts several DOs in one file. The page counter is
-       scoped to the DO, so the customer reading sheet 2 of a 2-page DO is not
-       told it is "page 4 of 6" of someone else's bundle. */
     setBrandingCache({ ...BRANDING_2990 }, '2990');
     const [{ jsPDF }, { default: autoTable }, { renderDeliveryOrderInto }] = await Promise.all([
       import('jspdf'),
@@ -405,7 +359,6 @@ describe('Delivery Order — Theme C template', () => {
     const two990 = await renderDo([itemAt(1)], withRefs as typeof HEADER);
     expect(two990.spans.some((s) => s.text === 'SO Ref')).toBe(true);
     expect(two990.spans.some((s) => s.text === 'Ref No.')).toBe(false);
-    // 2990's sheet must not leak the customer reference into the details block.
     expect(two990.spans.some((s) => s.text === 'CUST-PO-8891')).toBe(false);
   });
 
@@ -450,8 +403,6 @@ describe('Delivery Order — Theme C template', () => {
   });
 
   test('an unassigned run prints no dashed Driver / Vehicle rows', async () => {
-    // A dash against "Driver" tells the reader nothing and costs a line on a
-    // sheet whose whole job is to be scanned in a warehouse doorway.
     setBrandingCache({ ...BRANDING_2990 }, '2990');
     const { spans } = await renderDo([itemAt(1)]);
     expect(spans.some((s) => s.text === 'Driver')).toBe(false);
@@ -473,8 +424,6 @@ describe('Delivery Order — Theme C template', () => {
   });
 
   test('the ship-from warehouse prints by name, falls back to its code, and is omitted when unrecorded', async () => {
-    /* Conts-ERP #717: with several warehouses the paper DO must say where the
-       goods leave from. The DO detail GET carries warehouse_name / warehouse_code. */
     setBrandingCache({ ...BRANDING_2990 }, '2990');
     const named = await renderDo(
       [itemAt(1)],
@@ -539,11 +488,7 @@ describe('Delivery Order — Theme C template', () => {
       short(5, 'NTYR-MEMORY FOAM CONTOUR PILLOW'),
       short(6, 'MATTRESS PROTECTOR TENCEL (KING)'),
     ];
-    // A real DO carries a scan token, so the "SCAN AT EACH STEP" QR is part of
-    // the letterhead height — the case only reproduces HC-DO-2609-167 with it.
     const { doc, spans } = await renderDo(items, { ...HEADER, scanToken: 'a'.repeat(64) });
-    // The table must genuinely run into the band the old ~26mm reserve rejected
-    // (content past ~207mm spilled before), or this proves nothing.
     const finalY = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 0;
     expect(finalY).toBeGreaterThan(206.8);
     expect(doc.getNumberOfPages()).toBe(1);
@@ -580,22 +525,17 @@ describe('Delivery Order — Theme C template', () => {
     };
 
     setBrandingCache({ ...BRANDING_2990 }, '2990');
-    const wide = await measure(3508, 1561);   // 2990's mark
-    const square = await measure(1024, 1024); // a stacked lockup
+    const wide = await measure(3508, 1561);
+    const square = await measure(1024, 1024);
 
-    // The wide mark still fills the box's width exactly — unchanged by the
-    // taller allowance, so 2990's letterhead did not move.
     expect(wide.w).toBeCloseTo(28.8, 1);
     expect(wide.h).toBeCloseTo(28.8 / (3508 / 1561), 1);
 
-    // The square one is no longer capped at 14.6mm...
     expect(square.h).toBeGreaterThan(14.6);
-    // ...and now carries comparable weight: within 15% of the wide mark's area.
     const ratio = (square.w * square.h) / (wide.w * wide.h);
     expect(ratio).toBeGreaterThan(0.85);
     expect(ratio).toBeLessThan(1.15);
 
-    // Neither is distorted.
     expect(wide.w / wide.h).toBeCloseTo(3508 / 1561, 1);
     expect(square.w / square.h).toBeCloseTo(1, 1);
   });
@@ -614,9 +554,6 @@ describe('Delivery Order — Theme C template', () => {
   });
 
   test('an unset contact falls back to that same company phone and email', async () => {
-    /* The dedicated fields are an override, not a requirement (owner
-       2026-08-07). The fallback reads THIS company's row — which is what keeps
-       a 2990 sheet from ever printing a Houzs desk. */
     setBrandingCache(
       { ...BRANDING_2990, csPhone: '', csEmail: '', phone: '+60 3-1234 5678', email: 'hello@2990shome.com' },
       '2990',
@@ -624,7 +561,6 @@ describe('Delivery Order — Theme C template', () => {
     const { spans } = await renderDo([itemAt(1)]);
     expect(spans.some((s) => s.text === 'Customer Service')).toBe(true);
     expect(spans.some((s) => s.text.includes('hello@2990shome.com'))).toBe(true);
-    // The load-bearing half: never the other company's.
     expect(spans.some((s) => s.text.includes('houzscentury.com'))).toBe(false);
   });
 
@@ -655,7 +591,6 @@ describe('Delivery Order — Theme C template', () => {
     const { spans } = await renderDo([itemAt(1)]);
     expect(spans.some((s) => s.text === 'Customer Service')).toBe(true);
     expect(spans.some((s) => s.text.includes('ops@2990shome.com'))).toBe(true);
-    // No orphaned separator when only one side is set.
     expect(spans.some((s) => s.text.trim().startsWith('·') || s.text.trim().endsWith('·'))).toBe(false);
   });
 
@@ -675,7 +610,6 @@ describe('Delivery Order — Theme C template', () => {
       logo: LOGO,
     });
 
-    // The title splits one word per line, so both halves are drawn.
     expect(spans.some((s) => s.text === 'CONSIGNMENT')).toBe(true);
     expect(spans.some((s) => s.text === 'NOTE')).toBe(true);
     expect(spans.some((s) => s.text === 'SOURCE PO')).toBe(false);
@@ -683,11 +617,6 @@ describe('Delivery Order — Theme C template', () => {
     expect(spans.some((s) => s.text === 'QTY')).toBe(true);
   });
 
-  /* Photos follow the line (owner spec 2026-08). The block's grouping, layout
-     and page-fit are unit-tested in pdf-item-photos.test.ts; what belongs to
-     THIS file is the DO wiring: the marker on the row, and best-effort — a
-     photo that cannot be fetched must cost the sheet nothing. The fetch is
-     mocked to fail, so the marker prints while the block (empty) does not. */
   test('a photo-carrying line is marked, and a failed fetch never breaks the sheet', async () => {
     const queries = await import('./sales-order-queries');
     vi.spyOn(queries, 'fetchDoItemPhotoBlob').mockRejectedValue(new Error('offline'));
@@ -698,8 +627,6 @@ describe('Delivery Order — Theme C template', () => {
     ] as unknown as ReturnType<typeof itemAt>[];
     const { spans } = await renderDo(withPhoto, { ...HEADER, id: 'do-row-1' } as typeof HEADER);
 
-    /* autoTable wraps the long description, so "(photo)" can start a wrapped
-       line rather than end the first one — assert presence, not position. */
     expect(spans.some((s) => s.text.includes('(photo)'))).toBe(true);
     expect(spans.some((s) => s.text === 'ITEM PHOTOS')).toBe(false);
   });

@@ -4,7 +4,6 @@ import { Hono } from "hono";
 import health from "./systemHealth";
 import { connectionVerdict, lockWaitVerdict, longTransactionVerdict, POOLER_CONNECTION_CAP } from "./systemHealthDatabase";
 
-// Canned catalog answers, one per metric in the order the route reads them.
 const { rows } = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown> | Error> }));
 vi.mock("../db/client", () => ({
   getDb: () => ({
@@ -12,7 +11,7 @@ vi.mock("../db/client", () => ({
       let call = 0;
       return cb({
         execute: async () => {
-          if (call++ === 0) return []; // SET LOCAL statement_timeout
+          if (call++ === 0) return [];
           const next = rows.shift();
           if (next instanceof Error) throw next;
           return [next];

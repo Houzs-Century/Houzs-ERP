@@ -52,14 +52,12 @@ export const BUILT_IN_GROUP_LABELS: Record<(typeof BUILT_IN_GROUPS)[number], str
 export type TodoTaskRef = {
   id: string;
   occursOn: string;
-  /** The day it falls, moved or not. */
   due: string;
   kind: 'task' | 'routine';
   action: TaskAction;
   remarkCount: number;
   link: TaskLink | null;
   repeats: boolean;
-  /** Waiting on others only: the one-off task is done. */
   done: boolean;
 };
 export type TodoTone = 'cards' | 'bank' | 'out' | 'money' | 'err' | 'routine' | 'manual';
@@ -96,14 +94,12 @@ export type FinanceTodo = {
   money: { bankCashSen: number; awaitingSen: number; onTheWaySen: number } | null;
   checklist: { month: string; daysLeft: number; items: TodoCheck[] };
   problems: string[];
-  /** Groups Finance added beside the four, in the order they were added. */
   groups: TodoGroupDef[];
   viewer: { id: number | null; name: string };
 };
 
 export type TodoGroupDef = { id: string; label: string };
 
-/* ── The facts the rules read ─────────────────────────────────────────────── */
 
 export type TodoAcquirer = { code: string; name: string; hasUniqueRef: boolean };
 
@@ -115,7 +111,6 @@ export type TodoCardRow = {
   byReference: boolean;
   grossSen: number;
   txnDate: string;
-  /** The day its report was uploaded (MYT). */
   uploadedOn: string;
 };
 
@@ -135,37 +130,28 @@ export type TodoSelfCheck = { ranOn: string; findings: number; items: string[] }
 export type TodoFacts = {
   today: string;
   acquirers: TodoAcquirer[];
-  /** Each active acquirer's last report day, or null when none was ever uploaded. */
   lastReportTo: Record<string, string | null>;
-  /** The days before today, after its last report, a card payment was keyed under the acquirer's name. */
   keyedCardDays: Record<string, string[]>;
   cardRows: TodoCardRow[];
   bankAccounts: TodoBankAccount[];
   lastStatementTo: Record<string, string | null>;
   bankLines: TodoBankLine[];
-  /** Accounts whose LAST month is locked. */
   lockedLastMonth: string[];
   requests: TodoRequest[];
   vouchers: TodoVoucher[];
   transfers: TodoTransfer[];
   overdue: TodoOverdue[];
-  /** Self-check's newest run; null when it never ran (a failed read is named in problems). */
   selfCheck: TodoSelfCheck | null;
-  /** Σ debit − Σ credit over every posted line (the trial balance); null when it could not be read. */
   trialBalanceDiffSen: number | null;
-  /** The stock close: whether its last run for last month failed; null when it could not be read. */
   stockClose: { lastMonthFailed: boolean } | null;
   money: FinanceTodo['money'];
   done: TodoDone[];
   problems: string[];
-  /** Tasks and routines, with the occurrences somebody touched and how many remarks each has. */
   tasks: TodoTask[];
   occurrences: Record<string, TaskOccurrence[]>;
   remarkCounts: Record<string, number>;
-  /** Setup › To do rules: the built-in rules switched off, and Finance's own groups. */
   rulesOff: string[];
   groups: TodoGroupDef[];
-  /** Finance's own rules (from a template) that are on, with what each found. */
   customRules: CustomRuleFacts[];
 };
 
@@ -178,19 +164,15 @@ export type CustomItem = { no: string; name: string; amountSen: number | null; d
 export type CustomRuleFacts = { rule: CustomRule; items: CustomItem[] };
 
 export type TodoViewer = {
-  /** public.users id and name — whose tasks are "mine", and how "done by" reads. */
   id: number | null;
   name: string;
-  /** Works Finance (prepares or posts vouchers): the Finance rules are theirs. */
   finance: boolean;
-  /** Whose desk checking / approving is on, and the names to show when it is not the viewer's. */
   checker: boolean;
   approver: boolean;
   checkerNames: string[];
   approverNames: string[];
 };
 
-/* ── Small helpers ───────────────────────────────────────────────────────── */
 
 /** The ERP's one date format (YYYY/MM/DD). */
 export const showDate = (ymd: string): string => fmtDate(ymd);
@@ -203,16 +185,13 @@ const dayRange = (days: string[]): string => {
   if (s.length === 0) return '';
   return s.length === 1 ? showDate(s[0]!) : `${showDate(s[0]!)} – ${showDate(s[s.length - 1]!)}`;
 };
-/** A month by its name ("October") — a period, not a date. */
 const monthOf = (ymd: string): string =>
   new Date(`${ymd.slice(0, 7)}-01T00:00:00Z`).toLocaleString('en-MY', { month: 'long', timeZone: 'UTC' });
-/** The first three, then how many more — a detail line stays one line. */
 const firstFew = (names: string[], n = 3): string => {
   const uniq = [...new Set(names.filter(Boolean))];
   return uniq.length > n ? `${uniq.slice(0, n).join(' · ')} · +${uniq.length - n} more` : uniq.join(' · ');
 };
 
-/** How the bank names itself to the people who use it (the setup carries only its code). */
 const BANK_NAMES: Record<string, string> = {
   MBB: 'Maybank', MAYBANK: 'Maybank', HLB: 'Hong Leong', PBB: 'Public Bank', PBE: 'Public Bank',
   CIMB: 'CIMB', UOB: 'UOB', ALLIANCE: 'Alliance', ABB: 'Alliance', ABMB: 'Alliance', RHB: 'RHB',
@@ -224,24 +203,19 @@ export const bankName = (code: string): string => BANK_NAMES[code.trim().toUpper
 const MERCHANT_PAGE = '/scm/merchant-recon';
 const BANK_PAGE = '/scm/bank-recon';
 
-/** A job opens Merchant reports at its acquirer, at the report when its lines
-    are all one report, on the tab they sit in (the redesign's ?acq=&batch=&tab=). */
 const merchantLink = (acquirer: string, batchIds: number[], tab: 'to-confirm' | 'to-choose' | 'no-sale'): string => {
   const ids = [...new Set(batchIds)];
   return `${MERCHANT_PAGE}?acq=${encodeURIComponent(acquirer)}${ids.length === 1 ? `&batch=${ids[0]}` : ''}&tab=${tab}`;
 };
-/** A job opens Bank statements at its account — on a month, or on the files to upload one. */
 const bankLink = (accountCode: string, at: { month: string } | 'upload'): string =>
   `${BANK_PAGE}?account=${encodeURIComponent(accountCode)}${at === 'upload' ? '&view=files' : `&month=${at.month}`}`;
 
-/* ── The rules ───────────────────────────────────────────────────────────── */
 
 type Raised = Omit<TodoJob, 'who' | 'task'> & { desk: 'finance' | 'checker' | 'approver' };
 
 function cardJobs(f: TodoFacts): Raised[] {
   const out: Raised[] = [];
   for (const a of f.acquirers) {
-    /* card-missing — swipes keyed on an order with no report after them by the next morning. */
     const days = [...new Set(f.keyedCardDays[a.code] ?? [])].sort();
     if (days.length > 0) {
       out.push({
@@ -253,7 +227,6 @@ function cardJobs(f: TodoFacts): Raised[] {
       });
     }
     const rows = f.cardRows.filter((r) => r.acquirer === a.code);
-    /* card-matched — lines matched to an order, waiting for a confirm. */
     const matched = rows.filter((r) => r.bucket === 'MATCHED');
     if (matched.length > 0) {
       const byRef = matched.every((r) => r.byReference);
@@ -265,7 +238,6 @@ function cardJobs(f: TodoFacts): Raised[] {
         action: { label: 'Confirm', to: merchantLink(a.code, matched.map((r) => r.batchId), 'to-confirm'), primary: true }, desk: 'finance',
       });
     }
-    /* card-choose — lines that fit more than one order, or none. */
     const choose = rows.filter((r) => r.bucket !== 'MATCHED');
     if (choose.length > 0) {
       out.push({
@@ -277,7 +249,6 @@ function cardJobs(f: TodoFacts): Raised[] {
         amountSen: sum(choose.map((r) => r.grossSen)), since: minDay(choose.map((r) => r.uploadedOn)),
         action: {
           label: 'Open', primary: false,
-          /* Lines with no sale at all sit under No sale found; any with one to pick, under To choose. */
           to: merchantLink(a.code, choose.map((r) => r.batchId), choose.every((r) => r.bucket === 'UNMATCHED') ? 'no-sale' : 'to-choose'),
         }, desk: 'finance',
       });
@@ -324,7 +295,6 @@ function bankJobs(f: TodoFacts): Raised[] {
         ? `${b.accountCode} · ${first.periodTo ? `${monthOf(first.periodTo)} statement` : 'statement'} · uploaded ${showDate(first.uploadedOn)}`
         : `${b.accountCode} · ${statements.length} statements${months.length ? ` · ${months.join(', ')}` : ''}`,
       amountSen: sum(lines.map((l) => Math.abs(l.amountSen))), since: minDay(lines.map((l) => l.uploadedOn)),
-      /* The oldest month with a line to decide: months are closed in order. */
       action: { label: 'Match', to: bankLink(b.accountCode, { month: lines.map((l) => l.month).sort()[0]! }), primary: false }, desk: 'finance',
     });
   }
@@ -340,7 +310,6 @@ function paymentJobs(f: TodoFacts): Raised[] {
       title: n === 1 ? 'Turn 1 payment request into a voucher' : `Turn ${n} payment requests into vouchers`,
       detail: firstFew(f.requests.map((r) => r.payee)),
       amountSen: sum(f.requests.map((r) => r.amountSen)), since: minDay(f.requests.map((r) => r.createdOn)),
-      /* Review opens To do's Payment requests drawer (the redesign, batch 4 step 10). */
       action: { label: 'Review', to: '/scm/finance?drawer=requests', primary: true }, desk: 'finance',
     });
   }
@@ -378,12 +347,9 @@ function otherJobs(f: TodoFacts): Raised[] {
       title: `Confirm ${t} ${plural(t, 'transfer')} arrived`,
       detail: 'Official receipts stay draft until the money is seen',
       amountSen: sum(f.transfers.map((x) => x.amountSen)), since: minDay(f.transfers.map((x) => x.paidOn)),
-      /* Receipts, opened on the drafts of every month (the merged page, batch 5 §2). */
       action: { label: 'Review', to: '/scm/receipts?kind=official&status=draft&month=all', primary: false }, desk: 'finance',
     });
   }
-  /* Self-check (batch 6 c3): its newest run found something. Read from the
-     run's own summary — the check itself is too heavy for every To do read. */
   const sc = f.selfCheck;
   if (sc && sc.findings > 0) {
     out.push({
@@ -400,7 +366,6 @@ function otherJobs(f: TodoFacts): Raised[] {
       title: `${o} customer ${plural(o, 'invoice')} more than ${OVERDUE_DAYS} days overdue`,
       detail: firstFew([...f.overdue].sort((a, b) => a.dueDate.localeCompare(b.dueDate)).map((x) => `${x.invoiceNo} ${x.debtor}`.trim())),
       amountSen: sum(f.overdue.map((x) => x.outstandingSen)),
-      /* An invoice joins the list the day it passes 30 days late. */
       since: addDays(minDay(f.overdue.map((x) => x.dueDate))!, OVERDUE_DAYS + 1),
       action: { label: 'Open', to: '/scm/accounting?tab=ar', primary: false }, desk: 'finance',
     });
@@ -412,10 +377,8 @@ function otherJobs(f: TodoFacts): Raised[] {
 export const OVERDUE_DAYS = 30;
 
 const SELF_CHECK_PAGE = '/scm/accounting?tab=check';
-/** 1,234.56 — a figure the checklist prints. */
 const figure = (sen: number): string => (sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-/* ── The month's checklist ──────────────────────────────────────────────── */
 
 const lastDayOfMonth = (ymd: string): number => {
   const y = Number(ymd.slice(0, 4));
@@ -440,7 +403,6 @@ function checklist(f: TodoFacts, jobs: Raised[]): FinanceTodo['checklist'] {
     { key: 'bank-open', label: 'Bank lines open', value: String(bankOpen), state: bankOpen ? 'open' : 'ok', to: BANK_PAGE },
     {
       key: 'months-locked', label: `${monthOf(prevMonth)} locked`, value: `${locked} / ${accounts}`,
-      /* Last month should be shut by mid-month; until then it is simply still open. */
       state: locked >= accounts ? 'ok' : Number(f.today.slice(8, 10)) > 15 ? 'late' : 'open', to: BANK_PAGE,
     },
     {
@@ -448,7 +410,6 @@ function checklist(f: TodoFacts, jobs: Raised[]): FinanceTodo['checklist'] {
       value: toCheck + toApprove === 0 ? 'none' : [toCheck && `${toCheck} to check`, toApprove && `${toApprove} to approve`].filter(Boolean).join(' · '),
       state: toCheck + toApprove ? 'open' : 'ok', to: '/scm/payment-vouchers',
     },
-    /* Books (batch 6 c3): the newest Self-check, the trial balance, the stock close. */
     {
       key: 'selfcheck', label: 'Self-check',
       value: f.selfCheck == null ? 'not run yet' : f.selfCheck.findings > 0 ? `${f.selfCheck.findings} to look at` : 'Clean',
@@ -470,7 +431,6 @@ function checklist(f: TodoFacts, jobs: Raised[]): FinanceTodo['checklist'] {
   return { month: f.today.slice(0, 7), daysLeft: lastDayOfMonth(f.today) - Number(f.today.slice(8, 10)), items };
 }
 
-/* ── The page ───────────────────────────────────────────────────────────── */
 
 function whoseDesk(desk: Raised['desk'], v: TodoViewer): { mine: boolean; who: string } {
   if (desk === 'checker') return { mine: v.checker, who: v.checkerNames.join(', ') || 'Checker' };
@@ -478,11 +438,9 @@ function whoseDesk(desk: Raised['desk'], v: TodoViewer): { mine: boolean; who: s
   return { mine: v.finance, who: 'Finance' };
 }
 
-/* ── Tasks and routines ─────────────────────────────────────────────────── */
 
 const DAY_MS = 86_400_000;
 const daysBetween = (a: string, b: string): number => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY_MS);
-/** A done one-off task stays under "Waiting on others" this many days, so whoever asked sees it was done. */
 const DONE_SHOWN_DAYS = 3;
 
 function taskRef(f: TodoFacts, t: TodoTask, occursOn: string, due: string, done = false): TodoTaskRef {
@@ -492,7 +450,6 @@ function taskRef(f: TodoFacts, t: TodoTask, occursOn: string, due: string, done 
   };
 }
 
-/** The tasks and routines waiting now: a routine is Finance's, a task its assignee's; whoever asked sees it waiting on them. */
 function taskJobs(f: TodoFacts, v: TodoViewer): { mine: TodoJob[]; others: TodoJob[] } {
   const mine: TodoJob[] = [];
   const others: TodoJob[] = [];
@@ -538,7 +495,6 @@ function taskJobs(f: TodoFacts, v: TodoViewer): { mine: TodoJob[]; others: TodoJ
       });
       continue;
     }
-    /* A one-off task done lately: whoever asked sees it was done. */
     const doneOcc = t.repeat === 'none' ? occ.find((o) => o.occursOn === t.dueDate && o.doneAt) : undefined;
     if (doneOcc?.doneAt && daysBetween(doneOcc.doneAt.slice(0, 10), f.today) <= DONE_SHOWN_DAYS) {
       others.push({
@@ -550,7 +506,6 @@ function taskJobs(f: TodoFacts, v: TodoViewer): { mine: TodoJob[]; others: TodoJ
   return { mine, others };
 }
 
-/** Tasks and routines marked done today, by anyone in Finance. */
 function tasksDoneToday(f: TodoFacts, v: TodoViewer, doneToday: (iso: string) => boolean, clock: (iso: string) => string): TodoDone[] {
   const out: TodoDone[] = [];
   for (const t of f.tasks) {
@@ -568,11 +523,9 @@ function tasksDoneToday(f: TodoFacts, v: TodoViewer, doneToday: (iso: string) =>
   return out;
 }
 
-/* ── Finance's own rules ─────────────────────────────────────────────── */
 
 const rm = (sen: number): string => (sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
-/** What each template's job says, and where it is handled (the design's TEMPLATES). */
 function customJobs(f: TodoFacts): Raised[] {
   const out: Raised[] = [];
   for (const { rule, items } of f.customRules) {
@@ -591,7 +544,6 @@ function customJobs(f: TodoFacts): Raised[] {
       out.push({
         ...base, tone: 'money', icon: 'file-text', title: `${n} ${plural(n, 'draft')} older than ${rule.param} days`,
         detail: firstFew(items.map((i) => i.no)), amountSen: null,
-        /* A draft joins the list the day it turns too old. */
         since: earliest ? addDays(earliest, rule.param + 1) : null,
         action: { label: 'Open', to: '/scm/payment-vouchers?status=DRAFT', primary: false },
       });
@@ -622,7 +574,6 @@ export function raiseJobs(f: TodoFacts, viewer: TodoViewer): { mine: TodoJob[]; 
   return { mine: [...mine, ...tasks.mine], others: [...others, ...tasks.others], raised };
 }
 
-/** The Malaysian day and HH:MM of an instant. */
 const mytOf = (iso: string): string => new Date(new Date(iso).getTime() + 8 * 3_600_000).toISOString();
 
 export function buildFinanceTodo(f: TodoFacts, viewer: TodoViewer): FinanceTodo {

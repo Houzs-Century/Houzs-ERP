@@ -1,7 +1,3 @@
-// PurchaseInvoicesListV2 — Theme C redesign of the Purchase Invoice listing.
-// Procurement-side twin of SalesInvoicesListV2: same payment-lifecycle
-// framing, but the money flows OUT to the supplier instead of in from the
-// customer. Outstanding here is what WE owe, not what customers owe us.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
@@ -85,18 +81,14 @@ import { OVERDUE_CLASS, isPastDue } from "../../lib/tableHighlight";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
 
 type PiRow = HoldFields & {
-  /** The AutoCount invoice number, when the invoice is in the book. */
   linked_ac_docno?: string | null;
   supplier_invoice_ref?: string | null;
   exchange_rate?: number | string | null;
   subtotal_sen?: number | null;
   tax_sen?: number | null;
-  /** Every line, AutoCount-spelled (GET /purchase-invoices?page= and /export/rows). */
   lines?: PiListLine[];
-  /** The "vs PO price" summary, stamped on exported rows only (pi-list-export.ts). */
   po_price_summary?: PiPoPriceSummary;
   id: string;
   invoice_number: string;
@@ -123,8 +115,6 @@ type PiRow = HoldFields & {
       parent PO (resolved pi.grn_id → grn → PO), server-side for the whole page. */
   assigned_sos?: OriginAssignment[];
   assigned_so_linked?: boolean;
-  /** PR-3 (2026-08-07) — the parallel stored-origin "bought for" SO(s),
-      rendered muted beside the precedence chips. Optional: older backend. */
   assigned_so_provenance?: OriginAssignment[];
   /** "Delivered" column (owner 2026-07-31) — the DO(s) that shipped the parent
       PO's goods + qty per DO. EVERY DO renders; empty when nothing shipped. */
@@ -146,7 +136,6 @@ type PiItem = {
 
 type StatusTab = "all" | "draft" | "posted" | "partial" | "paid" | "cancelled" | "on_hold";
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtRm = (centi: number): string => fmtSen(centi);
 
@@ -160,7 +149,6 @@ const outstandingOf = (r: PiRow): number => Math.max(0, totalOf(r) - paidOf(r));
 const sourceOf = (r: PiRow): string =>
   r.grn?.grn_number || r.purchase_order?.po_number || "—";
 
-// PI lifecycle: DRAFT → POSTED → PARTIALLY_PAID → PAID / CANCELLED.
 const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
@@ -170,9 +158,6 @@ const STATUS_TONE: Record<
   PARTIALLY_PAID: { tone: "warning", label: "Partially paid",  bucket: "partial" },
   PAID:           { tone: "success", label: "Paid",            bucket: "paid" },
   CANCELLED:      { tone: "error",   label: "Cancelled",       bucket: "cancelled" },
-  /* ON_HOLD (mig 0320) — the disputed bill that must not be paid while it is
-     queried. This is the ONE hold of the three that needed a written guard:
-     payment-vouchers.ts refuses to settle a held invoice (allocation_on_hold). */
   ON_HOLD:        { tone: "warning", label: "On Hold",         bucket: "on_hold" },
 };
 
@@ -185,7 +170,6 @@ const statusFor = (
     bucket: "posted",
   };
 
-// ─── Split-menu + view toggle ──────────────────────────────────────────────
 
 function SplitDropdown({
   onFromGrn,
@@ -257,7 +241,6 @@ function ViewToggle({
   );
 }
 
-// ─── Cards grid ────────────────────────────────────────────────────────────
 
 function CardsGrid({ rows, onOpen }: { rows: PiRow[]; onOpen: (r: PiRow) => void }) {
   if (rows.length === 0) {
@@ -335,7 +318,6 @@ function CardsGrid({ rows, onOpen }: { rows: PiRow[]; onOpen: (r: PiRow) => void
   );
 }
 
-// ─── Detail drawer ─────────────────────────────────────────────────────────
 
 function DetailDrawer({
   row,
@@ -546,26 +528,15 @@ function TotalRow({
   );
 }
 
-// Table column key → backend sort-whitelist column. PI backend whitelist is
-// { invoice_date, invoice_number, status, total_sen }; only `total` differs
-// from its backend name. Non-whitelisted columns carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
   total: "total_sen",
 };
 
-// ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
-// Inline per-line breakdown for one PI, lazy-fetched via the SAME
-// usePurchaseInvoiceDetail hook the drawer uses (TanStack-cached). Group + item
-// code/variant + Qty + Amount (line value), via the shared
-// DocumentLinesExpansion. A purchase invoice is a purchase-side money doc with
-// no MRP coverage on its lines, so the SO/DO-only Stock + Incoming PO columns
-// are absent.
 function PiLinesExpansion({ id }: { id: string }) {
   const navigate = useNavigate();
   const detailQ = usePurchaseInvoiceDetail(id);
   const covQ = usePoSoCoverage("pi", id);
   const byCode = originsByCode(covQ.data);
-  // PR-3: the parallel stored-origin "bought for" slot, per SKU.
   const provByCode = provenanceByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
   const deliveredMap = deliveredByCode(covQ.data);
@@ -605,7 +576,6 @@ function PiLinesExpansion({ id }: { id: string }) {
   );
 }
 
-// ─── Main page ──────────────────────────────────────────────────────────────
 
 export function PurchaseInvoicesListV2() {
   const navigate = useNavigate();
@@ -637,9 +607,6 @@ export function PurchaseInvoicesListV2() {
   );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
-  // Send the active tab's BUCKET NAME as `status`; the backend resolves it to
-  // the raw status it covers (draft/posted/partial/paid/cancelled are 1:1).
-  // `all` omits the filter.
   const apiStatus = status === "all" ? undefined : status;
 
   const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = usePurchaseInvoicesPaged({
@@ -659,10 +626,6 @@ export function PurchaseInvoicesListV2() {
     hasError: Boolean(error),
   });
   const listLoading = isLoading || searchTransition.isSearching;
-  // The list below is replaced by a pending panel while a search is in flight,
-  // and these tiles summarise the SAME payload - so a settled-looking "RM 0.00"
-  // (or the PREVIOUS term's money under a placeholder page) would outlive the
-  // rows it describes. Same flag SearchScopeHint already uses for its count.
   const statsFailed = Boolean(error);
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
@@ -678,10 +641,6 @@ export function PurchaseInvoicesListV2() {
     onDone: () => setSelectedIds(new Set()),
   });
 
-  // Server already filtered + sorted this page — render verbatim. The four
-  // MRP-derived columns (Assigned SO / Delivered) arrive from the deferred
-  // enrichment endpoint a beat later and are merged in here, so opening the list
-  // no longer waits on a company-wide computeMrp (perf/pi-list-mrp-off-load).
   const serverRows = (data?.purchaseInvoices ?? []) as PiRow[];
   const { rows, mrp: mrpStatus } = useEnrichedPiListRows(serverRows, !listLoading);
   /* PO price vs invoice price, per invoice (owner 2026-09-14) — a quiet marker,
@@ -704,8 +663,6 @@ export function PurchaseInvoicesListV2() {
      contradictory numbers on one screen. */
   const visible = useVisibleRows(rows);
 
-  // Money KPIs sum the rows ON SCREEN (the paginated contract has no full-set
-  // money sums), so the cards and the table can never disagree.
   const money = useMemo(() => {
     let billed = 0;
     let owed = 0;
@@ -790,7 +747,6 @@ export function PurchaseInvoicesListV2() {
   const printDocument = usePrintDocument();
   const goFullPage = (r: PiRow) => navigate(`/scm/purchase-invoices/${r.id}`);
 
-  // ─── Multi-select → batch "Print all" ─────────────────────────────────────
   const toggleSelect = (rowId: string) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -807,8 +763,6 @@ export function PurchaseInvoicesListV2() {
     });
   const clearSelection = () => setSelectedIds(new Set());
 
-  // One PI's full detail for the PDF generator, via the vendored authedFetch
-  // (→ /api/scm); same endpoint + shape as the single-row detail page.
   const fetchPiBundle = async (
     row: PiRow
   ): Promise<{ header: unknown; items: unknown[] }> => {
@@ -818,8 +772,6 @@ export function PurchaseInvoicesListV2() {
     return { header: json.purchaseInvoice, items: json.items };
   };
 
-  // Batch "Print all" — one ticked PI downloads straight; several prompt
-  // combined-vs-separate.
   const deliverSelectedPis = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
@@ -834,9 +786,6 @@ export function PurchaseInvoicesListV2() {
         clearSelection();
         return;
       }
-      /* View / Print always render ONE document — a preview or a print run
-         is about the stack, not N separate files. Only the download exit
-         still asks combined-vs-separate. */
       const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} purchase invoices`,
         options: [
@@ -898,7 +847,6 @@ export function PurchaseInvoicesListV2() {
         }),
     });
   };
-  /* Ticked on this page and still a draft: a posted or held row is left out. */
   const draftsPicked = rows.filter((r) => selectedIds.has(r.id) && (r.status || "").toUpperCase() === "DRAFT" && !rowIsHeld(r));
   const doCancelPi = async (r: PiRow) => {
     if (!(await askConfirm({
@@ -917,12 +865,6 @@ export function PurchaseInvoicesListV2() {
         }),
     });
   };
-  /* The server refuses a cancel once ANY money has been paid against the
-     invoice (PAID, or paid_sen > 0 -> 409), so the menu must not offer it
-     there. Mark paid and Record payment stay on the drawer, beside the
-     outstanding figure that justifies them. */
-  /* Keyed by `id`: the route is `PATCH /purchase-invoices/:id/hold`. Only the
-     Sales Order's is keyed by document number (document-hold-routes.ts). */
   const holdAction = useHoldAction("pi");
   const setPiHold = (r: PiRow, onHold: boolean) => holdAction(r.id, r.invoice_number, onHold);
 
@@ -962,8 +904,6 @@ export function PurchaseInvoicesListV2() {
     ...lineCols,
     invoice_number: {
       key: "invoice_number",
-      /* AutoCount's own invoice number when the invoice is in the book, else ours —
-         the ERP number stays on ERP Doc No. */
       label: PI_LABELS.docNo,
       width: "140px",
       alwaysVisible: true,
@@ -987,16 +927,15 @@ export function PurchaseInvoicesListV2() {
     supplier_code: {
       key: "supplier_code", label: PI_LABELS.creditorCode, width: "120px", disableSort: true,
       getValue: (r) => r.supplier?.code ?? "",
-      filterSeedValues: supplierCodes, // server-filterable; seed with every creditor code
+      filterSeedValues: supplierCodes,
       render: (r) => <span className="font-mono text-[11.5px] text-ink-secondary">{supplierCodeOf(r)}</span>,
     },
     supplier: {
       key: "supplier", label: PI_LABELS.creditorName, disableSort: true,
       getValue: (r) => r.supplier?.name ?? "",
-      filterSeedValues: supplierNames, // server-filterable; seed with every creditor name
+      filterSeedValues: supplierNames,
       render: (r) => <div className="min-w-0 truncate text-[13px] font-semibold text-ink">{supplierNameOf(r)}</div>,
     },
-    /* A purchase invoice names no purchase agent in this ERP. */
     agent: blankCol("agent", PI_LABELS.agent),
     currency: {
       key: "currency", label: PI_LABELS.currCode, width: "90px", disableSort: true,
@@ -1006,7 +945,6 @@ export function PurchaseInvoicesListV2() {
       key: "exchange_rate", label: PI_LABELS.currRate, width: "90px", disableSort: true, exportFormat: "number",
       getValue: (r) => rateOf(r), render: (r) => <span className="text-[12.5px] text-ink-secondary">{rateOf(r)}</span>,
     },
-    /* This ERP keeps no tax-inclusive flag on the document: blank, never a guess. */
     inclusive: blankCol("inclusive", PI_LABELS.inclusive),
     subtotal: {
       key: "subtotal", label: PI_LABELS.subTotalEx, width: "128px", align: "right", disableSort: true,
@@ -1132,13 +1070,11 @@ export function PurchaseInvoicesListV2() {
       label: "Status",
       defaultHidden: true,
       width: "132px",
-      // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       // The export writes the word on screen, hold included (owner 2026-09-15).
       getValue: (r) => { const w = statusFor(r.status).label; return rowIsHeld(r) && r.status.toUpperCase() !== "ON_HOLD" ? `${w} (On Hold)` : w; },
       render: (r) => {
         const st = statusFor(r.status);
-        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
         return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
@@ -1148,7 +1084,6 @@ export function PurchaseInvoicesListV2() {
       defaultHidden: true,
       width: "128px",
       align: "right",
-      // Derived (Total − Paid) — not a backend-sortable column.
       disableSort: true,
       getValue: (r) => outstandingOf(r),
       exportValue: (r) => senToRinggit(outstandingOf(r), 2),
@@ -1365,7 +1300,6 @@ export function PurchaseInvoicesListV2() {
               <DataTable<PiRow, PiListLine>
                 tableId="purchase-invoices-v2"
                 rows={rows}
-                /* Feeds the stat strip so the tiles describe what is on screen. */
                 onFilteredRowsChange={visible.onFilteredRowsChange}
                 onColFiltersChange={onColFiltersChange}
                 loading={listLoading}

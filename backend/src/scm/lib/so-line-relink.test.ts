@@ -1,7 +1,3 @@
-// Unit tests for planSoLineRelink — the PURE half of "a delete-and-reinsert of
-// SO lines must not silently null every downstream so_item_id". Plan/apply are
-// separated (the oversell-retrocost.ts precedent) precisely so the decision can
-// be pinned here with no database in sight.
 import { describe, expect, test } from 'vitest';
 import {
   planSoLineRelink,
@@ -17,8 +13,6 @@ const poLink = (rowId: string, soItemId: string): SoLinkRow =>
 
 describe('planSoLineRelink', () => {
   test('a TBC fabric confirm keeps the same module SKUs, so every link follows', () => {
-    // The routine case: the operator confirms the fabric, the build is split
-    // into the SAME three module SKUs, only the variants changed.
     const oldLines = [oldL('O1', 'BOOQIT-1B(LHF)', 1), oldL('O2', 'BOOQIT-CNR', 2), oldL('O3', 'BOOQIT-2A(RHF)', 3)];
     const newLines = [oldL('N1', 'BOOQIT-1B(LHF)', 1), oldL('N2', 'BOOQIT-CNR', 2), oldL('N3', 'BOOQIT-2A(RHF)', 3)];
     const plan = planSoLineRelink(oldLines, newLines, [poLink('P1', 'O1'), poLink('P2', 'O2'), poLink('P3', 'O3')]);
@@ -43,8 +37,6 @@ describe('planSoLineRelink', () => {
   });
 
   test('a SKU with no counterpart in the new build is DROPPED, never re-pointed', () => {
-    // Genuine model change: the 2-seater is gone. Re-pointing its PO line at the
-    // 3-seater would make the link lie about what the supplier is building.
     const plan = planSoLineRelink(
       [oldL('O1', 'SEAT-2', 1), oldL('O2', 'CNR', 2)],
       [oldL('N1', 'SEAT-3', 1), oldL('N2', 'CNR', 2)],
@@ -186,8 +178,6 @@ describe('planSoLineRelink — the bucket is (code, variant), not code alone', (
     ({ id, itemCode, lineNo, variantSig: colour });
 
   test('pairs same-SKU lines by COLOUR, not by position', () => {
-    /* The new build lists the two fabrics in the opposite order. Bucketed by
-       code alone the ordinal zip swaps them; bucketed by identity it does not. */
     const plan = planSoLineRelink(
       [v('O-BLUE', 'PC151-2S', 'BLUE', 1), v('O-GREY', 'PC151-2S', 'GREY', 2)],
       [v('N-GREY', 'PC151-2S', 'GREY', 1), v('N-BLUE', 'PC151-2S', 'BLUE', 2)],

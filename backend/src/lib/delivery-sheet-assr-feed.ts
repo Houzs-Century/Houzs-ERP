@@ -70,7 +70,6 @@ export type AssrFeedRow = {
   case_postcode: string | null;
   case_city: string | null;
   case_state: string | null;
-  /** The linked Sales Order's country and town. */
   customer_country: string | null;
   so_postcode: string | null;
   so_city: string | null;
@@ -208,17 +207,11 @@ export function caseTownLines(row: AssrFeedRow): [string | null, string | null] 
   return [own3 ?? town, own4 ?? tidy(row.so_state)];
 }
 
-/** The fields shared by every leg of one case — the customer, the address and
- *  the region the leg routes to. `SalesLocation` is book-normalised exactly as
- *  the SO feed does, so `sheetRegion` lands the leg in the same regional tab a
- *  Sales Order for that customer would. */
 function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "TransferTo" | "Remark2" | "SalesExemptionExpiryDate"> {
   const salesLocation = bookSpellingOrOwn(row.location, LOCATION_MAP);
   const [addr1, addr2, addr3, rawAddr4] = caseSheetLines(row);
   return {
     ErpDocNo: row.assr_no,
-    // Farra parity: col D the complaint date, col AA the case PO. Ref (col E) and
-    // SOUDF_BRANDING (col F) carry the leg word, so they are set per leg below.
     DocDate: blankToNull(row.complained_date),
     Ref: null,
     SOUDF_BRANDING: null,
@@ -245,37 +238,18 @@ function legBase(row: AssrFeedRow): Omit<AssrLegRecord, "Kind" | "DocNo" | "Tran
     Ctn: null,
     EmDeliveryStatus: null,
     Status: "PENDING",
-    // Readiness is an SO concept; an ASSR leg's entry condition is the own-team
-    // gate, already applied by the SQL — so it is never withheld for readiness.
     Ready: false,
     Region: sheetRegion(salesLocation, addr3, row.customer_country),
     LastModified: row.last_modified_text,
   };
 }
 
-/**
- * Expand one case row into its own-team leg records (0–3). The SQL guarantees
- * at least one, but a case can carry all three; each leg schedules on the sheet
- * independently, so the delivery-back leg is the only one that carries the DO
- * number (`TransferTo`). `SalesExemptionExpiryDate` (the sheet's dispatch date,
- * col O) is the leg's own date — the day the team is due to go.
- */
-/** The word each leg carries in its sheet key. The delivery-back leg is
- *  "SERVICE" (not "DELIVERY"): the delivery tabs already run on the ASSR Case
- *  linkage's vocabulary — key `<S/O>-<SERVICE|PICKUP|INSPECTION>` in col B and
- *  the ASSR number in col C — and `syncDeliveryDateToASSR` in ASSRDeliverySync.gs
- *  keys off exactly those (`ASSR_LINK_PATTERN`, then col C) to write a scheduled
- *  date back to the case and the ERP. Matching that convention makes an
- *  ERP-pulled leg the SAME row an old Farra edit would have made, not a
- *  duplicate, and keeps the date write-back working. */
 const LEG_KEY_WORD: Record<AssrLegKind, "INSPECTION" | "PICKUP" | "SERVICE"> = {
   INSPECT: "INSPECTION",
   PICKUP: "PICKUP",
   DELIVERY: "SERVICE",
 };
 
-/** The sheet's col B key for one leg. The S/O carries it; the ASSR number is the
- *  fallback only if a case somehow has no doc_no (NOT NULL in the schema). */
 function legKey(row: AssrFeedRow, kind: AssrLegKind): string {
   return `${blankToNull(row.doc_no) ?? row.assr_no}-${LEG_KEY_WORD[kind]}`;
 }
@@ -290,8 +264,6 @@ export const PAST_PICKUP_STAGES = new Set(["pending_item_ready", "pending_delive
 export function toAssrLegRecords(row: AssrFeedRow): AssrLegRecord[] {
   const base = legBase(row);
   const ref = blankToNull(row.ref_no);
-  // col E (Ref) mirrors the Farra refTag: "<ref>-<word>", or the bare word when
-  // the case has no reference. col F (SOUDF_BRANDING) is the bare word.
   const legRef = (kind: AssrLegKind): string => (ref ? `${ref}-${LEG_KEY_WORD[kind]}` : LEG_KEY_WORD[kind]);
   const legs: AssrLegRecord[] = [];
   const pickupPast = PAST_PICKUP_STAGES.has(row.stage ?? "");

@@ -1,21 +1,3 @@
-// ---------------------------------------------------------------------------
-// chat-request-patch.ts — what a customer's WhatsApp tap is allowed to write
-// onto the Sales Order.
-//
-// /api/chat-callback records every tap in scm.wa_message_log. This module
-// decides which of the SO's REQUEST columns that tap also fills, so the
-// Delivery Planning board shows it in the columns it already has:
-//   amend_date_from_customer    → "Customer Request Date"
-//   amend_reason_from_customer  → "Customer Amend Reason"
-//   delivery_message_status     → "Delivery Message Status"
-// These are the request/evidence fields the HC Delivery sheet used to fill from
-// Seampify. They are NOT the schedule: customer_delivery_date and
-// amended_delivery_date (the dates trips are planned around) are never in a
-// patch from here — a human applies a requested date from the board. Nor is
-// amend_reason: that is OUR reason (the board's preset list, printed by the
-// Postpone notice after "due to"), chosen by staff; until 2026-10-14 the
-// customer's tap overwrote it. The test beside this file pins both lists.
-// ---------------------------------------------------------------------------
 
 import { normDate } from "../services/agents/schedule-reconcile";
 
@@ -51,18 +33,9 @@ export const CHAT_FORBIDDEN_SO_COLUMNS = [
 export const CHAT_MESSAGE_STATUS = {
   confirm: "Done Scheduling",
   amend: "Pending Reschedule (D)",
-  // The postage conversation (Postage Confirm flow) is recorded in the log;
-  // the board has no column for it, so no status moves.
   postage_confirm: null,
   postage_amend: null,
-  // The Property Details form answers — written to the house / disposal
-  // columns, no board status moves (the order was "Done Scheduling" already).
   property: null,
-  // East Malaysia prep callback: the customer's confirmed final-mile delivery
-  // details (recipient / phone / address / remark) after the Prep Notice. Like
-  // the postage address, these are RECORDED on the message-log row (the route
-  // folds them into its note) and never written onto the Sales Order — the SO's
-  // address is staff's to change — so no column patch and no board status moves.
   eastmy_ack: null,
 } as const;
 
@@ -80,13 +53,9 @@ export type ChatRequestPatch = Partial<
  * so nothing is lost and nothing wrong lands in a date column.
  */
 export interface PropertyAnswers {
-  /** Landed / Condo / Apartment -> the board's "Building Type". */
   houseType?: string | null;
-  /** Move-in New House / Replace Furniture -> "New House / Replacement". */
   deliveryPurpose?: string | null;
-  /** "Dispose of old items?" Yes / No. */
   needDisposal?: string | null;
-  /** The items to dispose, free text (only when needDisposal is Yes). */
   disposalItem?: string | null;
 }
 
@@ -103,10 +72,6 @@ export function chatRequestPatch(
     if (iso) patch.amend_date_from_customer = iso;
     if (reason) patch.amend_reason_from_customer = reason;
   }
-  // Property Details form: each answer fills its board column. A blank answer
-  // is not written, so a re-send never erases one the customer already gave.
-  // "Disposal Request" is what to do with the old item: the items when they
-  // said Yes, else their Yes/No answer verbatim.
   if (event === "property" && property) {
     const houseType = String(property.houseType ?? "").trim();
     const purpose = String(property.deliveryPurpose ?? "").trim();

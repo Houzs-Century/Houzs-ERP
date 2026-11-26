@@ -69,8 +69,6 @@ export const inventoryAdjustments = new Hono<{ Bindings: Env; Variables: Variabl
 inventoryAdjustments.use('*', supabaseAuth);
 
 const HEADER = 'id, adjustment_no, warehouse_id, notes, created_by, created_at, updated_at, source_stock_take_id';
-/* unit_cost_sen is deliberately NOT read back: cost is finance-only, and the
-   movement rows (stripped for non-finance callers) are where it lives. */
 const LINE =
   'id, stock_adjustment_id, line_no, item_code, product_name, item_group, variants, description2, ' +
   'variant_key, batch_no, qty, reason_code, notes';
@@ -82,8 +80,6 @@ const nextAdjustmentNo = (db: ScopedDb, c: Ctx): Promise<string> =>
     'library hand-off: mintMonthlyDocNo partitions by the per-company DOC-NUMBER PREFIX, not by a predicate — its .like() for HC-SA-2610-% never matches another company\'s numbers',
   ), 'stock_adjustments', 'adjustment_no', `${companyDocPrefix(c)}SA-${docMonthTag(null)}`);
 
-/** Open qty in one bucket of the warehouse. A null batch means the un-batched
-    lots only — the same reading the pre-document POST used. */
 async function openQty(db: ScopedDb, c: Ctx, warehouseId: string, b: Bucket): Promise<number> {
   let q = db.from('v_inventory_lots_open', companyScope(c))
     .select('qty_remaining')
@@ -96,7 +92,6 @@ async function openQty(db: ScopedDb, c: Ctx, warehouseId: string, b: Bucket): Pr
   return (data as Array<{ qty_remaining: number | null }>).reduce((s, l) => s + Number(l.qty_remaining ?? 0), 0);
 }
 
-/** Every bucket whose net goes DOWN by more than it holds, as one sentence. */
 async function shortages(db: ScopedDb, c: Ctx, warehouseId: string, deltas: readonly BucketDelta[]): Promise<string[]> {
   const out: string[] = [];
   for (const d of deltas) {
@@ -119,7 +114,6 @@ export async function increaseCostSen(
     .eq('warehouse_id', warehouseId)
     .eq('item_code', b.item_code)
     .eq('variant_key', b.variant_key);
-  // Unread lots are not "no cost history": the caller refuses instead of pricing the stock.
   if (error) return new Error(error.message);
   const forced = resolveForcedUnitCostSen({ operatorCostSen: preferredSen, lots: (lots ?? []) as LotCostRow[] });
   return forced.ok ? forced.unitCostSen : null;
@@ -131,13 +125,10 @@ const costRequired = (b: Bucket) => ({
 });
 
 async function performerStaffId(c: Ctx & { get(k: 'houzsUser'): unknown; get(k: 'supabase'): unknown; get(k: 'user'): unknown }): Promise<string> {
-  /* Stamp the caller's REAL scm.staff uuid (mig-0066 bridge), not the pinned
-     system uuid the scm auth sets as user.id — that one resolves to nobody, and
-     "Performed By" read "Unknown user" for every adjustment until 2026-08-08. */
   let staffId: string | null = null;
   try {
     staffId = await resolveCallerStaffId(c.get('supabase'), (c.get('houzsUser') as { id?: number } | null)?.id ?? null);
-  } catch { /* fallback below */ }
+  } catch { }
   return staffId ?? (c.get('user') as { id: string }).id;
 }
 
@@ -146,7 +137,6 @@ type MovementRow = Record<string, unknown> & { movement_type: 'ADJUSTMENT'; ware
 const lineSummary = (lines: ReadonlyArray<{ item_code: string; qty: number; reason_code: string | null }>) =>
   lines.map((l) => `${l.item_code} ${l.qty > 0 ? '+' : ''}${l.qty}${l.reason_code ? ` ${l.reason_code}` : ''}`).join('; ');
 
-// ── List ──────────────────────────────────────────────────────────────
 inventoryAdjustments.get('/', async (c) => {
   const db = scmDb(c);
   const warehouseId = c.req.query('warehouseId');
@@ -188,7 +178,6 @@ inventoryAdjustments.get('/', async (c) => {
   return c.json({ adjustments: headers.map((h) => ({ ...h, lines: byDoc.get(h.id) ?? [] })) });
 });
 
-// ── Detail ────────────────────────────────────────────────────────────
 inventoryAdjustments.get('/:id', async (c) => {
   const db = scmDb(c);
   const id = c.req.param('id');
@@ -203,7 +192,6 @@ inventoryAdjustments.get('/:id', async (c) => {
   return c.json({ adjustment: { ...(header as Record<string, unknown>), lines } });
 });
 
-// ── Create + post ─────────────────────────────────────────────────────
 inventoryAdjustments.post('/', async (c) => {
   const db = scmDb(c);
   let body: Record<string, unknown>;
@@ -220,17 +208,10 @@ inventoryAdjustments.post('/', async (c) => {
     return c.json({ error: 'adjustment_incomplete', message: `${incomplete.item_code}: ${incomplete.increase_errors.join(' ')}` }, 422);
   }
 
-  /* THE WAREHOUSE IS A BODY FIELD and this handler writes movements that open
-     and consume lots. The lot reads below are company-scoped, so a foreign
-     warehouse id would read as "no stock here" and an INCREASE would land goods
-     in the other company's warehouse. See lib/ref-in-company.ts. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const whCheck = await assertWarehouseInCompany(c.get('supabase'), warehouseId, co.companyId);
   if (!whCheck.ok) return c.json(whCheck.body, whCheck.status);
-  /* Found stock joins the canonically equal bucket already on the shelf, keyed by
-     the SKU's category (lib/stock-bucket-key.ts). Create only: an edit sends the
-     keys its lines were stored under, and the ledger diff compares those. */
   await resolveIncreaseKeys(c.get('supabase'), co.companyId, warehouseId, lines);
 
   const deltas = bucketDeltas([], lines);
@@ -251,8 +232,6 @@ inventoryAdjustments.post('/', async (c) => {
     costs.set(l.line_no, sen);
   }
 
-  /* Everything above is read-only, so refusing here leaves nothing changed. The
-     audit row below cannot say that: it runs after stock has moved. */
   const pf = await assertAuditWritable(db.unscoped(AUDIT_CLIENT), { entityType: 'INVENTORY_ADJUSTMENT', action: 'CREATE', companyId: co.companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
@@ -278,9 +257,6 @@ inventoryAdjustments.post('/', async (c) => {
     return c.json({ error: 'lines_insert_failed', reason: lErr.message }, 500);
   }
 
-  /* ONE insert statement, so the FIFO trigger runs every line inside one
-     transaction: a failure moves nothing at all. Found stock goes first so a
-     write-off in the same bucket consumes lots that already exist. */
   const movements: MovementRow[] = [...lines]
     .sort((a, b) => Number(b.qty > 0) - Number(a.qty > 0))
     .map((l) => ({
@@ -293,7 +269,6 @@ inventoryAdjustments.post('/', async (c) => {
       batch_no: l.batch_no,
       product_name: l.product_name,
       qty: l.qty,
-      // A write-off's cost is stamped by the trigger from the lots it consumes.
       unit_cost_sen: l.qty > 0 ? costs.get(l.line_no) ?? 0 : 0,
       source_doc_type: 'ADJUSTMENT',
       source_doc_id: header.id,
@@ -308,9 +283,6 @@ inventoryAdjustments.post('/', async (c) => {
     return c.json({ error: 'insert_failed', reason: mErr.message }, 500);
   }
 
-  /* Oversell retro-cost (0154): found stock opens lots, so an earlier "ship
-     anyway" DO that went out at RM0 here can now be costed. Best-effort — the
-     movements are committed and must not be undone by a failed repair. */
   await reconcileUncostedAfterIn(c.get('supabase'), movements, performedBy);
 
   await recordEntityAudit(db.unscoped(AUDIT_CLIENT), {
@@ -329,9 +301,7 @@ inventoryAdjustments.post('/', async (c) => {
     ]),
   });
 
-  /* Every stock-mutating path re-walks the SO allocation (audit 2026-06-10
-     #12): a write-off must un-READY lines whose stock just vanished. */
-  try { await recomputeAllocationAfterSave(c.get('supabase'), 'post-adjustment'); } catch { /* best-effort */ }
+  try { await recomputeAllocationAfterSave(c.get('supabase'), 'post-adjustment'); } catch { }
   return c.json({ id: header.id, adjustmentNo: header.adjustment_no }, 201);
 });
 
@@ -353,7 +323,6 @@ function lineRow(docId: string, l: AdjustmentLine, costSen: number | null) {
   };
 }
 
-// ── Edit ──────────────────────────────────────────────────────────────
 inventoryAdjustments.patch('/:id', async (c) => {
   const db = scmDb(c);
   const id = c.req.param('id');
@@ -397,9 +366,6 @@ inventoryAdjustments.patch('/:id', async (c) => {
     if (olErr) return c.json({ error: 'load_failed', reason: olErr.message }, 500);
     oldLines = ol as unknown as typeof oldLines;
 
-    /* What the document has ALREADY moved is read from the ledger, not from
-       its old lines: the movements are the truth about stock, and after an
-       edit they are the only record of the net each bucket carries. */
     const { data: mv, error: mvErr } = await db.from('inventory_movements', companyScope(c))
       .select('item_code, variant_key, batch_no, qty, unit_cost_sen')
       .eq('source_doc_type', 'ADJUSTMENT')
@@ -460,14 +426,11 @@ inventoryAdjustments.patch('/:id', async (c) => {
   });
 
   if (movements.length) {
-    // One statement — every bucket's correction lands, or none does.
     const { error: mErr } = await db.from('inventory_movements', companyScope(c)).insert(movements);
     if (mErr) return c.json({ error: 'update_failed', reason: mErr.message }, 500);
   }
 
   if (raw) {
-    /* New lines in BEFORE the old ones go, so a failure part-way leaves the
-       document with too many lines (visible, fixable) rather than none. */
     const costFor = (l: AdjustmentLine) => (l.qty > 0 ? costs.get(bucketKeyOf(l)) ?? null : null);
     const { error: insErr } = await db.from('stock_adjustment_lines', companyScope(c))
       .insert(lines.map((l) => lineRow(id, l, costFor(l))));
@@ -508,7 +471,7 @@ inventoryAdjustments.patch('/:id', async (c) => {
   });
 
   if (movements.length) {
-    try { await recomputeAllocationAfterSave(c.get('supabase'), 'post-adjustment-edit'); } catch { /* best-effort */ }
+    try { await recomputeAllocationAfterSave(c.get('supabase'), 'post-adjustment-edit'); } catch { }
   }
 
   const { data: after } = await db.from('stock_adjustments', companyScope(c)).select(HEADER).eq('id', id).maybeSingle();

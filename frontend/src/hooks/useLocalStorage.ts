@@ -18,14 +18,6 @@ export function useLocalStorage<T>(
   };
   const [value, setValue] = useState<T>(read);
 
-  /* The key can MOVE after mount: DataTable's layout keys gain a `c<company>:`
-     prefix once the active company resolves (after /auth/me returns). With a
-     one-shot initialiser the state kept whatever the OLD key held, and the
-     write below then copied it over the NEW key's saved value — the user's
-     arrangement, overwritten on every open (DataGrid's twin, BUG-HISTORY
-     2026-08-20). On a genuine key change, re-read and skip that write; a
-     same-key re-render never re-reads, so an edit on screen is never
-     clobbered. */
   const keyRef = useRef(key);
   useEffect(() => {
     if (keyRef.current !== key) {
@@ -36,7 +28,6 @@ export function useLocalStorage<T>(
     try {
       localStorage.setItem(key, JSON.stringify(value));
     } catch {
-      // quota / privacy mode — ignore
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, legacyKey, value]);

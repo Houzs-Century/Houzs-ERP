@@ -1,15 +1,3 @@
-/* How a LINE column looks on a grid that shows one row per DOCUMENT (owner
- * 2026-09-15). Every list that adopts DataTable `exportLines` renders its line
- * columns through here, so they read the same everywhere:
- *
- *   one distinct value      -> the value
- *   several distinct values -> the first value, then "+N" (N more), every value
- *                              in the cell's tooltip
- *   no value                -> "—"
- *
- * `lineTextColumn` builds the whole column (compact cell, the funnel over every
- * line's value, the per-line export cell); `lineSumColumn` shows a quantity or an
- * amount as the SUM over the document's lines. */
 
 import type { ReactNode } from "react";
 import type { Column } from "./DataTable";
@@ -40,7 +28,6 @@ export function LineValuesCell({
   mono,
 }: {
   values: readonly LineCellValue[];
-  /** Display form of one value (a date shown dd/mm/yyyy, money with RM). */
   format?: (v: string) => ReactNode;
   mono?: boolean;
 }) {

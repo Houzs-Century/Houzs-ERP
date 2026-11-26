@@ -102,7 +102,6 @@ export async function savePerformanceSettings(sb: Db, companyId: number, s: Perf
   return { ok: true };
 }
 
-/* ── The owner's groups ──────────────────────────────────────────────────── */
 
 export const PERFORMANCE_GROUPS = [
   { key: 'bedframe', label: 'Bedframe' },
@@ -129,7 +128,6 @@ export function performanceGroupOf(line: { item_group: string | null; item_code:
   return 'others';
 }
 
-/* ── The report ──────────────────────────────────────────────────────────── */
 
 export type PerfOrder = { doc_no: string; so_date: string; status: string; delivery_fee_sen: number | null };
 export type PerfLine = {
@@ -150,32 +148,22 @@ export type PerformanceGroup = { key: PerformanceGroupKey; label: string; lines:
 export type PerformanceReport = {
   from: string; to: string;
   orders: { counted: number; notDelivered: number; excludedDraft: number; excludedCancelled: number };
-  /** The six, in the owner's order, then OTHERS only when a line landed there. */
   groups: PerformanceGroup[];
   totals: { salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null; salesExServiceSen: number };
   operatingExpense: {
     rateBp: number; baseSen: number; amountSen: number;
     account: string; accountName: string | null; accountFound: boolean;
-    /** What the ledger booked on that account in the period — shown, left out of the expenses. */
     bookedSen: number;
-    /** The other accounts the rate covers, as named (each with the accounts under it). */
     also: Array<{ code: string; name: string | null }>;
-    /** What the ledger booked on those in the period — left out of the expenses too. */
     alsoBookedSen: number;
   };
-  /** The covered accounts that booked something in the period — shown at nil. */
   inRate: PerfExpense[];
-  /** The ledger's OTHER INCOMES + EXTRA-ORDINARY INCOME accounts as booked, by code. */
   otherIncome: PerfExpense[];
   otherIncomeSen: number;
-  /** Every other EXPENSES-section account as booked, by code. */
   otherExpenses: PerfExpense[];
   otherExpensesSen: number;
   netSen: number; netPct: number | null;
   settings: PerformanceSettings;
-  /** The commission: the bills for the period's months on the commission
-      expense, in place of what the monthly release booked there (owner
-      2026-11-25); null when the company keeps no commission prepayment. */
   commission: PeriodCommission | null;
 };
 
@@ -184,16 +172,11 @@ const pct = (part: number, whole: number): number | null => (whole > 0 ? Math.ro
 export function buildPerformanceReport(p: {
   from: string; to: string;
   orders: PerfOrder[]; lines: PerfLine[]; expenses: PerfExpense[];
-  /** Other income as the ledger booked it (credit-positive). */
   otherIncome?: PerfExpense[];
   settings: PerformanceSettings;
-  /** The named account as the chart has it, or null when the chart does not. */
   account: { code: string; name: string } | null;
-  /** The accounts `settings.also` covers, expanded to every account under them (accountsUnder). */
   alsoCodes?: ReadonlySet<string>;
-  /** `settings.also` as the chart names them. */
   alsoNamed?: Array<{ code: string; name: string | null }>;
-  /** The period's commission bills and what the release booked (acc/performance-commission.ts). */
   commission?: PeriodCommission | null;
 }): PerformanceReport {
   const excludedDraft = p.orders.filter((o) => String(o.status) === 'DRAFT').length;
@@ -214,9 +197,6 @@ export function buildPerformanceReport(p: {
     a.cogsSen += cost;
     if (isDeliveryFeeServiceCode(l.item_code)) hasFeeLine.add(l.doc_no);
   }
-  /* A legacy order whose delivery fee sits only on its header (no
-     SVC-DELIVERY line): the fee is service income the lines do not carry —
-     the same rule the order's own totals follow. */
   for (const o of live) {
     if (!hasFeeLine.has(o.doc_no) && Number(o.delivery_fee_sen ?? 0) > 0) at.get('service')!.salesSen += Number(o.delivery_fee_sen);
   }
@@ -236,8 +216,6 @@ export function buildPerformanceReport(p: {
 
   const opexSen = Math.round((salesExServiceSen * p.settings.rateBp) / 10000);
   const code = p.settings.account;
-  /* The commission expense reads the bills for the period's months, not the
-     release: what the release booked on it leaves, the bills come in. */
   const commission = p.commission ?? null;
   const booked = commission
     ? (p.expenses.some((e) => e.code === commission.code) ? p.expenses : [...p.expenses, { code: commission.code, name: commission.name ?? commission.code, amountSen: 0 }])
@@ -245,10 +223,6 @@ export function buildPerformanceReport(p: {
     : p.expenses;
   const replaced = booked.find((e) => e.code === code) ?? null;
   const accountFound = p.account != null;
-  /* Only the named account is replaced — and only when the chart carries
-     it; a code the chart does not know replaces nothing, and the report
-     says so rather than quietly dropping a booked expense. */
-  /* The other accounts the rate covers are inside it, not beside it. */
   const alsoCodes = p.alsoCodes ?? new Set<string>();
   const inRate = booked.filter((e) => alsoCodes.has(e.code) && e.code !== code && e.amountSen !== 0)
     .sort((a, b) => a.code.localeCompare(b.code));
@@ -290,7 +264,6 @@ export function buildPerformanceReport(p: {
 
 export type PerformanceLayout = {
   stored: boolean;
-  /** Sales of the period — what every % is of; null when nothing sold. */
   baseSen: number | null;
   otherIncome: LaidNode[];
   expenses: LaidNode[];

@@ -1,16 +1,7 @@
-// ownServiceAndProjectRowKeys — the self-scope that puts a driver's OWN Setup /
-// Dismantle (project) rows on their run-sheet. The bug these pin: the project
-// crew match used to read only the scalar *_user_id columns, so a driver crewed
-// through the per-lorry editor (which stores {name,phone} JSON with NO user ids)
-// never saw their own Setup/Dismantle job — and would have been 403'd on it.
-// The fix reuses the project module's canonical rule (scalar id OR a name in the
-// setup_crew/dismantle_crew JSON), via getUserPhasesOnProject.
 import { describe, expect, it } from 'vitest';
 import type { Env } from '../env';
 import { ownServiceAndProjectRowKeys } from './delivery-pod-context';
 
-/** A fake env whose DB.first() returns one project row (getUserPhasesOnProject
- *  reads the crew columns off it). */
 function envWithProject(project: Record<string, unknown>): Env {
   const db = {
     prepare: (_sql: string) => ({
@@ -30,7 +21,6 @@ const NO_IDS = {
 describe('ownServiceAndProjectRowKeys — Setup/Dismantle crew scope', () => {
   const scope = { driverIds: new Set<string>(), helperIds: new Set<string>() };
   const projectRows = [{ row_type: 'project', so_doc_no: 'PRJ:123#SETUP' }];
-  // sb is only touched for ASSR rows; the project path never reads it.
   const sb = {} as unknown as Parameters<typeof ownServiceAndProjectRowKeys>[0];
 
   it('includes the Setup row when the driver is in setup_crew JSON by NAME (no user id)', async () => {

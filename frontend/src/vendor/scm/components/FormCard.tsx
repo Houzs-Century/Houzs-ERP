@@ -25,7 +25,6 @@ import { SearchableSelect } from './SearchableSelect';
 
 export const FormCard = ({ title, actions, children }: {
   title: string;
-  /** Right-hand side of the header — a button, a count, a status chip. */
   actions?: ReactNode;
   children: ReactNode;
 }) => (
@@ -46,9 +45,7 @@ export const FormGrid = ({ children }: { children: ReactNode }) => (
 export const FormField = ({ label, required, hint, span, children }: {
   label: string;
   required?: boolean;
-  /** Shown under the control — the place for a format, not a placeholder. */
   hint?: string;
-  /** Widen past one column when the value is long (an address). */
   span?: number;
   children: ReactNode;
 }) => (
@@ -67,8 +64,6 @@ export const FormField = ({ label, required, hint, span, children }: {
  *  to reach into another page's stylesheet for it — which is what the first
  *  draft of the 3PL rebuild did, referencing a `styles` binding that did not
  *  exist in that file at all. */
-/* The same look for a control that renders its own <label> (AddressPostcodeField,
-   AddressTripleFields) — one grid cell each, like a FormField. */
 export const FORM_FIELD_CLASSES = {
   field: styles.field,
   label: styles.fieldLabel,

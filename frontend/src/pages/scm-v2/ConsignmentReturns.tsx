@@ -1,15 +1,3 @@
-// Consignment Returns list — DataGrid clone of the Delivery Returns list
-// (DeliveryReturnsList.tsx), which is itself an SO/DO-clone. Same chrome:
-// 4 KPI tiles, shared column-aware ColumnFilterBar (quick search + add-a-column
-// filters), status chips, ~visible/hidden column set, right-click context menu,
-// click-to-expand line drill-down, and double-click-to-open. Wired to the
-// consignment-return list hook + the parallel /consignment-returns API.
-//
-// The DR-specific "From Delivery Order" toolbar button and the do_doc_no
-// "Transfer From (DO)" column are intentionally DROPPED — a consignment return
-// is free-entry.
-//
-// UNIQUE localStorage key ('pr-g.crn-list.layout.v1') — never reuse the DR/DO/SO keys.
 
 import { useEffect, useMemo, useState } from 'react';
 import { canViewScmCosting } from "../../auth/salesAccess";
@@ -43,11 +31,9 @@ import { FilterPills } from '../../components/FilterPills';
 import soDetailStyles from './SalesOrderDetail.module.css';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 
-/* ── Row shape (CRN header — mirrors the DR header) ─────────────────────── */
 type CrnRow = {
   id: string;
   return_number: string;
-  /* Source Consignment Note number — on the list select (consignment-returns.ts). */
   do_doc_no?: string | null;
   return_date: string;
   debtor_code: string | null;
@@ -110,7 +96,6 @@ const StatusPill = ({ status }: { status: string }) => (
 
 const deriveBranding = (r: CrnRow): string => r.branding ?? '';
 
-/* ── Drilldown — per-line breakdown for one CRN, mirrors ExpandedDrLines ── */
 type CrnItem = {
   id: string;
   item_code: string | null;
@@ -150,12 +135,6 @@ const crnLineMarginOf = (it: CrnItem): number =>
     ? Number(it.line_margin_sen)
     : crnLineTotalOf(it) - crnLineCostOf(it);
 
-/* canFinance — the finance-viewer gate (auth/me = isFinanceViewer, the same
-   signal the SO/DO/SI/DR surfaces use, #574/#589). The cost/margin columns are
-   only DECLARED for a finance-viewer: off, not hidden — no column, no "—"
-   placeholder, no RM 0.00. The backend also omits the keys from the payload
-   (canViewScmFinance), so rendering them for a non-finance user could only ever
-   print zeros. */
 const buildCrnDrilldownColumns = (canFinance: boolean): GridColumn<CrnItem>[] => [
   {
     key: 'group', label: 'Group', width: 90, groupable: true,
@@ -306,20 +285,12 @@ const ExpandedCrnLines = ({ id, canFinance }: { id: string; canFinance: boolean 
   );
 };
 
-/* Status TONE for the drawer badge — the Delivery Return list's buckets
-   (same delivery_return_status enum): open loop = warning, closed happily =
-   success, closed unhappily = error. The LABEL is this page's STATUS_LABEL. */
 const STATUS_TONE: Record<string, 'success' | 'warning' | 'error' | 'neutral'> = {
   PENDING: 'warning', RECEIVED: 'warning', INSPECTED: 'warning',
   REFUNDED: 'success', CREDIT_NOTED: 'success',
   REJECTED: 'error', CANCELLED: 'error',
 };
 
-/* ─── Quick-view drawer ────────────────────────────────────────────────────
-   Row click opens the same right slide-over the Sales Order / Delivery Order
-   lists have (ResizableDetailDrawer): header · meta · customer · returned
-   lines · value · actions, with "Open full page" for the editor. Lines come
-   from the SAME detail query the expand-chevron drill-down uses. */
 export function ConsignmentReturnDrawer({
   row,
   canFinance,
@@ -536,8 +507,6 @@ export const ConsignmentReturns = () => {
   const navigate = useNavigate();
   const askConfirm = useConfirm();
   const notify = useNotify();
-  /* Finance-viewer gate — same signal the SO/DO/SI/DR surfaces use
-     (auth/me = isFinanceViewer, #574 / #589). */
   const { user } = useAuth();
   const canFinance = canViewScmCosting(user);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -546,12 +515,8 @@ export const ConsignmentReturns = () => {
   const [pageSize, setPageSize] = useLocalStorage<number>('scm:perpage:consignment-returns', 50);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
-  // Debounce the search box so each keystroke doesn't fire a server round-trip.
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
-  /* Server-side pagination + search (mirrors Suppliers.tsx). Status chip +
-     free-text search drive the SERVER query; reset to page 0 whenever either
-     changes so we never strand the operator on an out-of-range page. */
   useEffect(() => { setPage(0); }, [statusChip, debouncedSearch]);
 
   const { data, isLoading, isFetching, isPlaceholderData, error } = useConsignmentReturnsPaged({
@@ -570,10 +535,6 @@ export const ConsignmentReturns = () => {
   });
   const listLoading = isLoading || searchTransition.isSearching;
 
-  /* Server page rows + grand total. Status + search are resolved server-side;
-     the DataGrid's own per-column funnel filters + grouping now operate on the
-     LOADED PAGE only (documented reduction). The KPI tiles below stay FULL-SET
-     via `aggregates`, so page-scoped funnels never distort the headline money. */
   const exportLines = {
     fetchRows: () => fetchConsignmentReturnsExportRows<CrnRow>({
       status: statusChip === 'all' ? undefined : statusChip,
@@ -594,21 +555,10 @@ export const ConsignmentReturns = () => {
     setSearchParams(next, { replace: true });
   };
 
-  // Row-click multi-select (mirrors the DR / GRN lists) — ticks the row; the
-  // ▸ chevron still drills down via its own stopPropagation handler.
   const [sel, setSel] = useState<Set<string>>(new Set());
-  /* Row click → quick-view drawer (same as the Sales Order / DO lists). */
   const [selected, setSelected] = useState<CrnRow | null>(null);
-  /* Clear the selection whenever the visible row set shifts (page / status /
-     search) — a lingering selection would act on rows no longer on screen. */
   useEffect(() => { setSel(new Set()); }, [page, statusChip, debouncedSearch]);
 
-  /* KPI tiles — FULL-SET via the server `aggregates` (summed over the same
-     status + search filters as the page). Defensive fallback: if aggregates is
-     absent (old backend / mid-deploy) sum the loaded page and flag it.
-     Cost / Margin resolve to 0 for a non-finance viewer (the server omits both
-     the aggregate and the row keys) — their tiles are not rendered at all, so
-     the zeros never reach the page. */
   const kpis = useMemo(() => {
     const agg = data?.aggregates;
     if (agg) return { revenue: agg.revenueSen, cost: agg.costSen ?? 0, margin: agg.marginSen ?? 0, fullSet: true };
@@ -649,8 +599,6 @@ export const ConsignmentReturns = () => {
       });
   };
 
-  /* Reopen — bring a cancelled return back to RECEIVED. Shared by the context
-     menu and the drawer CTA. */
   const doReopen = async (row: CrnRow) => {
     if (!(await askConfirm({
       title: `Reopen ${row.return_number} back to RECEIVED?`,
@@ -806,7 +754,6 @@ export const ConsignmentReturns = () => {
   );
 };
 
-/* ── Columns — mirrors the DR list set, minus the DO transfer-from column. ── */
 const buildColumns = (staffById: Map<string, string>, canFinance: boolean): GridColumn<CrnRow>[] => [
   {
     key: 'return_number', label: 'Return No.', width: 150, sortable: true,
@@ -875,7 +822,6 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Grid
       <span style={{ fontWeight: 700, color: 'var(--c-ink)', fontVariantNumeric: 'tabular-nums' }}>{fmtSen(r.local_total_sen)}</span>
     ),
     searchValue: (r) => fmtSen(r.local_total_sen),
-    /* Export the NUMBER in ringgit so Excel can SUM the column. */
     exportValue: (r) => (r.local_total_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => a.local_total_sen - b.local_total_sen,
@@ -899,7 +845,6 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Grid
     groupValue: (r) => r.status,
     sortFn: (a, b) => (a.status ?? '').localeCompare(b.status ?? ''),
   },
-  /* ── Default-hidden long-tail ── */
   {
     key: 'debtor_code', label: 'Customer Code', width: 120, sortable: true, defaultHidden: true,
     accessor: (r) => r.debtor_code ?? '',
@@ -945,10 +890,6 @@ const buildColumns = (staffById: Map<string, string>, canFinance: boolean): Grid
     accessor: (r) => r.note ?? '',
     searchValue: (r) => r.note ?? '',
   },
-  /* FINANCE columns — DECLARED ONLY for a finance-viewer so the column chooser
-     never lists an always-empty finance column for a non-finance user; the
-     backend also omits these keys from the payload (canViewScmFinance). Same
-     rule + shape as the SO list (#574 / #589). */
   ...(canFinance
     ? ([
   {

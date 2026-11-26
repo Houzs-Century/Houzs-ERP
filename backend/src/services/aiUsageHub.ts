@@ -1,19 +1,3 @@
-// ---------------------------------------------------------------------------
-// aiUsageHub.ts — daily AI cost summary sent to the Houzs IT Hub.
-//
-// The hub reads Anthropic's real cost per workspace; it cannot see which feature
-// or company spent it. This sends what only this system knows: the last 7 UTC
-// days of ai_usage_events, priced with costUsd, per day x company x feature. The
-// hub uses the amounts only as SHARES of the real cost, so prices that drift from
-// Anthropic's do not change any total there. Days are UTC to line up with
-// Anthropic's daily cost buckets; every day is sent, empty ones too, because the
-// hub replaces each day it receives.
-//
-// One report covers every company, each row carrying its company code; it goes
-// out with ONE company's hub key, named by IT_HUB_AI_USAGE_COMPANY (the company
-// whose Anthropic workspace this system's key belongs to). Unset address, company
-// or key => nothing is sent. Run from the daily 02:00 UTC cron.
-// ---------------------------------------------------------------------------
 import { sql } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb } from "../db/client";

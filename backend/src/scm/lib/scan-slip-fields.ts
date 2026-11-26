@@ -1,5 +1,3 @@
-// The slip fields the OCR report (services/ocrStats.ts) and the correction capture
-// (scan-sample-review.ts) both compare, kept in one place so they cannot drift apart.
 
 export const HEADER_FIELDS: Array<[string, string]> = [
   ["customerName", "Customer name"],
@@ -53,11 +51,8 @@ export function changedFields(extracted: unknown, corrected: unknown): string[] 
   const aiLines = Array.isArray(ai.lines) ? (ai.lines as Array<Record<string, unknown>>) : [];
   const opLines = Array.isArray(op.lines) ? (op.lines as Array<Record<string, unknown>>) : [];
   if (aiLines.length !== opLines.length) {
-    // ponytail: with a line added or removed the per-line fields are not compared;
-    // pairing lines would need alignSoLinesToSlip's matching, add it if this hides misses.
     out.add(LINES_CHANGED);
   } else {
-    // Compared as sorted lists so the review's line re-ordering is not a change.
     const col = (lines: Array<Record<string, unknown>>, key: string) => lines.map((l) => j(asObj(l)?.[key])).sort().join("|");
     for (const [key, label] of LINE_FIELDS) if (col(aiLines, key) !== col(opLines, key)) out.add(label);
   }

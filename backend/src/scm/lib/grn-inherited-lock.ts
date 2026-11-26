@@ -69,7 +69,6 @@ export function grnInheritedLockedRefusal(changed: string[]) {
  * warehouse (which carries its own stock-relocation handling) stay editable.
  * Keyed by DB column name; the norm() collapses null/undefined/'' like the PO
  * lock so a form re-sending an unchanged blank does not read as a change. */
-/* Columns from the ONE rulebook (document-policy.ts) so this set can't drift. */
 export const GRN_HEADER_INHERITED_COLS: ReadonlySet<string> = GRN_LOCK_COLS;
 
 const normLock = (v: unknown): string => (v === null || v === undefined ? '' : String(v));
@@ -95,11 +94,6 @@ export function grnHeaderInheritedChanges(
 /** The 409 body when a header PATCH moves an inherited field on a GRN that
     already has a Purchase Invoice / Purchase Return. */
 export function grnHeaderInheritedRefusal(cols: string[]) {
-  /* The LABELS come from the same rulebook as the COLUMNS (GRN_LOCK_COLS, above).
-     They were re-typed here, so adding a column to the rulebook gave it a human
-     label in every sibling document's refusal and a raw `allocation_method` in
-     this one — the label map is a second answer to a question document-policy.ts
-     calls "the single source". */
   const label = GRN_LOCK_LABELS;
   return {
     error: 'grn_header_inherited_locked',

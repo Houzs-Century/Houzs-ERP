@@ -12,9 +12,7 @@
 export type FloorPlanTileKey = "Display" | "3D Design" | "2D Design" | "Unfilled" | "Filled";
 
 export interface FloorPlanTileGate {
-  /** driver / helper / storekeeper */
   crewPlanView?: boolean;
-  /** ops/office cohort + purchaser view */
   hidePlanTiles?: boolean;
 }
 

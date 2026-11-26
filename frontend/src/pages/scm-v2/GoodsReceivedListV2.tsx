@@ -1,7 +1,3 @@
-// GoodsReceivedListV2 — Theme C redesign of the GRN listing. Stock-in doc:
-// goods land at a warehouse, PO's received_qty rolls up. Not a money doc,
-// so the framing is stock-in (received value + line count) rather than
-// outstanding/owed.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { grnRowMenu } from "./row-menus";
@@ -85,12 +81,10 @@ import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 type GrnRow = HoldFields & {
   id: string;
   grn_number: string;
-  /** The AutoCount GR number (server: lib/grn-export-rows.ts grnAcDocNo). */
   ac_doc_no?: string | null;
   exchange_rate?: number | string | null;
   subtotal_sen?: number | null;
   tax_sen?: number | null;
-  /** Every line of the receipt, AutoCount-spelled (GET /grns?page= and /export/rows). */
   lines?: GrnListLine[];
   status: string;
   received_at: string | null;
@@ -107,8 +101,6 @@ type GrnRow = HoldFields & {
       parent PO's coverage, resolved server-side for the whole page. */
   assigned_sos?: OriginAssignment[];
   assigned_so_linked?: boolean;
-  /** PR-3 (2026-08-07) — the parallel stored-origin "bought for" SO(s),
-      rendered muted beside the precedence chips. Optional: older backend. */
   assigned_so_provenance?: OriginAssignment[];
   /** "Delivered" column (owner 2026-07-31) — the DO(s) that shipped the parent
       PO's goods + qty per DO. EVERY DO renders; empty when nothing shipped. */
@@ -123,14 +115,11 @@ type GrnItem = {
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
   uom?: string;
-  // The GRN detail GET returns qty_accepted (landed in stock) + qty_received, NOT
-  // qty/received_qty — reading those rendered 0 on every line in the quick-view.
   qty_accepted?: number;
   qty_received?: number;
   unit_price_sen?: number;
   line_total_sen?: number;
   warehouse_code?: string | null;
-  // The PO the line was received from; one GRN can draw on several POs.
   source_po_number?: string | null;
 };
 
@@ -143,13 +132,6 @@ const supplierCodeOf = (r: GrnRow): string => r.supplier?.code || "—";
 const poOf = (r: GrnRow): string => r.purchase_order?.po_number || "—";
 const totalOf = (r: GrnRow): number => r.total_sen ?? 0;
 
-// grns.status → filter bucket. Must match GRN_STATUS_BUCKETS server-side
-// (backend/src/scm/routes/grns.ts), which is what the tab COUNTS are computed
-// from — a row bucketed differently here is shown in one tab and counted in
-// another. CLOSED is spelled out rather than left to the fallback below: it is
-// a real enum member (grn_status = DRAFT / POSTED / CLOSED / CANCELLED) and it
-// files under `posted` because its stock IN stands — only CANCELLED had its
-// receipt reversed.
 /* The LABEL is NOT declared here. It comes from `vendor/scm/lib/status-pill.ts`,
    the one canonical map — docs/modules/document-status-vocabulary.md §1. What
    stays is what is genuinely this page's own: the tone palette (four names, not
@@ -159,9 +141,6 @@ const STATUS_OWN: Record<string, { tone: "success" | "warning" | "error" | "neut
   POSTED:    { tone: "success", bucket: "posted" },
   CLOSED:    { tone: "neutral", bucket: "posted" },
   CANCELLED: { tone: "error",   bucket: "cancelled" },
-  /* ON_HOLD (mig 0319) — a paperwork pause, NOT a stock event: the inventory
-     IN fired at POSTED and a hold moves nothing. A held GRN cannot be
-     invoiced, because the billable-GRN read is .eq(status, POSTED). */
   ON_HOLD:   { tone: "warning", bucket: "on_hold" },
 };
 
@@ -489,25 +468,15 @@ function TotalRow({ k, v, strong }: { k: string; v: string; strong?: boolean }) 
   );
 }
 
-// Table column key → backend sort-whitelist column. GRN backend whitelist is
-// { received_at, grn_number, status, total_sen }; only `total` differs from
-// its backend name. Non-whitelisted columns carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
   total: "total_sen",
 };
 
-// ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
-// Inline per-line breakdown for one GRN, lazy-fetched via the SAME useGrnDetail
-// hook the drawer uses (TanStack-cached, so re-expanding is instant). Group +
-// item code/variant + Qty (received) + Amount (received value), via the shared
-// DocumentLinesExpansion. A GRN is a warehouse-receipt doc with no MRP coverage
-// on its lines, so the SO/DO-only Stock + Incoming PO columns are absent.
 function GrnLinesExpansion({ id }: { id: string }) {
   const navigate = useNavigate();
   const detailQ = useGrnDetail(id);
   const covQ = usePoSoCoverage("grn", id);
   const byCode = originsByCode(covQ.data);
-  // PR-3: the parallel stored-origin "bought for" slot, per SKU.
   const provByCode = provenanceByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
   const deliveredMap = deliveredByCode(covQ.data);
@@ -575,8 +544,6 @@ export function GoodsReceivedListV2() {
   );
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
-  // Send the active tab's BUCKET NAME as `status`; the backend resolves it to
-  // the raw statuses it covers (draft/posted/cancelled are 1:1). `all` omits it.
   const apiStatus = status === "all" ? undefined : status;
 
   const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = useGrnsPaged({
@@ -596,10 +563,6 @@ export function GoodsReceivedListV2() {
     hasError: Boolean(error),
   });
   const listLoading = isLoading || searchTransition.isSearching;
-  // The list below is replaced by a pending panel while a search is in flight,
-  // and these tiles summarise the SAME payload - so a settled-looking "RM 0.00"
-  // (or the PREVIOUS term's money under a placeholder page) would outlive the
-  // rows it describes. Same flag SearchScopeHint already uses for its count.
   const statsFailed = Boolean(error);
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
@@ -616,17 +579,11 @@ export function GoodsReceivedListV2() {
   const cancelGrn = useCancelGrn();
   const holdAction = useHoldAction("grn");
 
-  // Server already filtered + sorted this page — render verbatim. The MRP-derived
-  // columns (Assigned SO / Delivered) arrive from the deferred enrichment endpoint
-  // a beat later and are merged in here, so opening the list no longer waits on a
-  // company-wide computeMrp (perf/po-grn-list-mrp-off-load).
   const serverRows = (data?.grns ?? []) as GrnRow[];
   const { rows, mrp: mrpStatus } = useEnrichedGrnListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? { all: 0, draft: 0, posted: 0, cancelled: 0, on_hold: 0 };
 
-  // Money KPIs are summed over the CURRENT page only (paginated contract has no
-  // full-set money sums), so their cards are labelled "on this page".
   const money = useMemo(() => {
     let received = 0;
     let draft = 0;
@@ -710,7 +667,6 @@ export function GoodsReceivedListV2() {
   const goConvertToPi = (r: GrnRow) => navigate(convertToLink('grnToPi', r.id));
   const goConvertToPr = (r: GrnRow) => navigate(convertToLink('grnToPr', r.id));
 
-  // ─── Multi-select → batch "Print all" ─────────────────────────────────────
   const toggleSelect = (rowId: string) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -727,8 +683,6 @@ export function GoodsReceivedListV2() {
     });
   const clearSelection = () => setSelectedIds(new Set());
 
-  // One GRN's full detail for the PDF generator, via the vendored authedFetch
-  // (→ /api/scm); same endpoint + shape as the single-row detail page.
   const fetchGrnBundle = async (
     row: GrnRow
   ): Promise<{ header: unknown; items: unknown[] }> => {
@@ -738,8 +692,6 @@ export function GoodsReceivedListV2() {
     return { header: json.grn, items: json.items };
   };
 
-  // Batch "Print all" — one ticked GRN downloads straight; several prompt
-  // combined-vs-separate, then render into one merged file or one per GRN.
   const deliverSelectedGrns = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
@@ -755,9 +707,6 @@ export function GoodsReceivedListV2() {
         clearSelection();
         return;
       }
-      /* View / Print always render ONE document — a preview or a print run
-         is about the stack, not N separate files. Only the download exit
-         still asks combined-vs-separate. */
       const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} goods-received notes`,
         options: [
@@ -791,15 +740,6 @@ export function GoodsReceivedListV2() {
   };
   const batchPrint = usePrintPreview(deliverSelectedGrns);
 
-  /* POSTED is the only billable state (the billable-GRN read is
-     .eq(status, POSTED)).
-
-     THE HOLD USED TO RIDE ALONG FOR FREE AND NO LONGER DOES. Since mig 0324 a
-     held GRN still reads POSTED, so the marker is checked explicitly — and on
-     the server too (purchase-invoices.ts), which is the half that decides
-     whether a supplier actually gets billed. */
-  /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status.
-     The prompt wording and the write live in ./use-hold-action.ts. */
   const setGrnHold = (r: GrnRow, onHold: boolean) => holdAction(r.id, r.grn_number, onHold);
   const grnContextMenu = grnRowMenu<GrnRow>({
     open: goFullPage, edit: goEdit, print: printDocument,
@@ -818,7 +758,6 @@ export function GoodsReceivedListV2() {
       postGrn.mutate(r.id, { onSuccess: () => setSelected(null) });
     }
   };
-  /* Ticked on this page and still a draft: a posted or held row is left out. */
   const draftsPicked = rows.filter((r) => selectedIds.has(r.id) && r.status.toUpperCase() === "DRAFT" && !rowIsHeld(r));
   const doCancel = async (r: GrnRow) => {
     if (await askConfirm({
@@ -846,8 +785,6 @@ export function GoodsReceivedListV2() {
     ...lineCols,
     grn_number: {
       key: "grn_number",
-      /* AutoCount's own GR number when the receipt is in the book, else ours —
-         the ERP number stays on ERP Doc No. */
       label: GRN_LABELS.docNo,
       width: "166px",
       alwaysVisible: true,
@@ -880,7 +817,7 @@ export function GoodsReceivedListV2() {
       width: "120px",
       disableSort: true,
       getValue: (r) => r.supplier?.code ?? "",
-      filterSeedValues: supplierCodes, // server-filterable; seed with every creditor code
+      filterSeedValues: supplierCodes,
       render: (r) => <span className="font-mono text-[11.5px] text-ink-secondary">{supplierCodeOf(r)}</span>,
     },
     supplier: {
@@ -888,10 +825,9 @@ export function GoodsReceivedListV2() {
       label: GRN_LABELS.creditorName,
       disableSort: true,
       getValue: (r) => r.supplier?.name ?? "",
-      filterSeedValues: supplierNames, // server-filterable; seed with every creditor name
+      filterSeedValues: supplierNames,
       render: (r) => <div className="min-w-0 truncate text-[13px] font-semibold text-ink">{supplierNameOf(r)}</div>,
     },
-    /* A goods receipt names no purchase agent in this ERP. */
     agent: blankCol("agent", GRN_LABELS.agent),
     currency: {
       key: "currency", label: GRN_LABELS.currCode, width: "90px", disableSort: true,
@@ -901,7 +837,6 @@ export function GoodsReceivedListV2() {
       key: "exchange_rate", label: GRN_LABELS.currRate, width: "90px", disableSort: true, exportFormat: "number",
       getValue: (r) => rateOf(r), render: (r) => <span className="text-[12.5px] text-ink-secondary">{rateOf(r)}</span>,
     },
-    /* This ERP keeps no tax-inclusive flag on the document: blank, never a guess. */
     inclusive: blankCol("inclusive", GRN_LABELS.inclusive),
     subtotal: {
       key: "subtotal", label: GRN_LABELS.subTotalEx, width: "128px", align: "right", disableSort: true,
@@ -982,13 +917,11 @@ export function GoodsReceivedListV2() {
       label: "Status",
       defaultHidden: true,
       width: "120px",
-      // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       // The export writes the word on screen, hold included (owner 2026-09-15).
       getValue: (r) => { const w = statusFor(r.status).label; return rowIsHeld(r) && r.status.toUpperCase() !== "ON_HOLD" ? `${w} (On Hold)` : w; },
       render: (r) => {
         const st = statusFor(r.status);
-        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
         return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },

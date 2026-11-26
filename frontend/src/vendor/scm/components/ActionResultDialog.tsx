@@ -36,14 +36,8 @@ const primaryBtn: CSSProperties = { ...btnBase, border: '1px solid var(--c-orang
 export type ActionResultDialogProps = {
   title: string;
   body: string;
-  /** When set, shows a primary action button (e.g. "Open Goods Receipts")
-   *  alongside a "Stay here"; otherwise a single OK button. */
   primaryLabel?: string;
   onPrimary?: () => void;
-  /** Optional middle action between "Stay here" and the primary (owner
-   *  2026-07-23: "Need a button to new purchase invoice" — the batch-entry
-   *  loop wants a one-click "start the next document" without detouring
-   *  through the list). Ghost-styled so the primary keeps the emphasis. */
   secondaryLabel?: string;
   onSecondary?: () => void;
   onClose: () => void;

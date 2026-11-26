@@ -1,24 +1,3 @@
-// ---------------------------------------------------------------------------
-// APNs registration for the native iOS app.
-//
-// The counterpart of backend routes/push.ts: after a signed-in user grants
-// notification permission, the device token goes to POST /api/push/devices and
-// the daily fleet-reminder job (backend services/pushFleetReminders.ts) takes
-// it from there. What a push may contain is decided server-side — this file
-// only moves the token.
-//
-// SAME ZERO-DEPENDENCY PATTERN as nativeSession.ts / native-location.ts: the
-// plugin (@capacitor/push-notifications) lives in `native/`, and its JS wrapper
-// is a thin shim over `window.Capacitor.Plugins.PushNotifications` — calling
-// that directly costs zero bytes in the web bundle, which sits at its size
-// ceiling. Types below mirror the plugin's definitions, narrowed to what is
-// used here.
-//
-// EVERY failure path returns quietly: no plugin, permission denied, network
-// down — the app keeps working exactly as it does today; only the lock-screen
-// banner is lost. The token is remembered in localStorage so logout can delete
-// the SERVER row even though the OS token itself stays valid on the phone.
-// ---------------------------------------------------------------------------
 
 import { api } from "../api/client";
 
@@ -57,14 +36,12 @@ const plugin = (): PushPlugin | undefined => {
   }
 };
 
-// The registration listener outlives any one call (iOS can re-issue tokens);
-// attach it once per page lifetime.
 let listenersAttached = false;
 
 function rememberToken(token: string): void {
   try {
     localStorage.setItem(PUSH_TOKEN_KEY, token);
-  } catch { /* private mode — logout cleanup just has nothing to do */ }
+  } catch { }
 }
 
 function recallToken(): string {
@@ -119,6 +96,6 @@ export function unregisterNativePush(): void {
   if (!token) return;
   try {
     localStorage.removeItem(PUSH_TOKEN_KEY);
-  } catch { /* still attempt the server delete */ }
+  } catch { }
   void api.del(`/api/push/devices/${token}`).catch(() => {});
 }

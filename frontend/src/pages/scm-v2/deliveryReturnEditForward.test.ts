@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// Delivery Return "Edit" must open an editor (BUG-62).
-//
-// The V2 detail page is read-only; its Edit button navigates to `?edit=1`.
-// Nothing read that flag, and the editor it should open was deleted in #794 as
-// "unrouted, no importer", so Edit rewrote the URL and the page stayed
-// read-only. Same bug and same fix as purchaseReturnEditForward.test.ts.
-// ----------------------------------------------------------------------------
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";

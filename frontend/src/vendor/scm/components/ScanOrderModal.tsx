@@ -86,96 +86,53 @@ import styles from './ScanOrderModal.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-/* ── Handoff contract with SalesOrderNew.tsx ───────────────────────────── */
 export type ScanPrefillLine = {
-  itemCode:       string;        // '' when no SKU matched — operator picks in the form
-  itemGroup:      string;        // 'sofa' | 'bedframe' | 'mattress' | 'accessory' | 'service' | 'others'
+  itemCode:       string;
+  itemGroup:      string;
   description:    string;
   qty:            number;
-  unitPriceSen: number;        // RM handwriting × 100, rounded
-  remark:         string;        // short "Slip: …" chip (rawText capped ~40c) + notes; full rawText below
-  /* Verification + learning carry-through. rawText is the slip's verbatim row
-     (the source of truth the edit-gate pairs against the corrected code);
-     confidence/suggestedCode drive the per-line "scanned · NN%" chip in the
-     New SO form and let it tell a confirmed AI match from an operator pick. */
+  unitPriceSen: number;
+  remark:         string;
   rawText:        string;
-  fabricCode:     string;        // matched fabric ('' = none)
-  suggestedCode:  string;        // the SKU code Claude suggested ('' = none)
-  confidence:     number;        // 0-1 confidence of the suggested SKU
-  /* Configured SOFA special-add-on CODES the slip remark resolved to (already
-     validated server-side against the catalog + the line model's
-     allowed_options.specials). The New SO line-seed auto-checks these specials.
-     [] when none. */
+  fabricCode:     string;
+  suggestedCode:  string;
+  confidence:     number;
   specialCodes:   string[];
 };
 
-/* SO-Maintenance-matched payment block → seeds ONE PaymentDraft row in the
-   New SO Payments table (visible + editable + deletable there — no hidden
-   writes). methodValue is the payment_method row VALUE (the immutable key
-   PaymentsTable's methodLabel select stores: Merchant / Online /
-   Installment / Cash); bank / plan / online sub-type are the L2 picks. */
 export type ScanPrefillPayment = {
   methodValue:      string;
-  bankValue:        string;        // payment_merchant value ('' = none)
-  installmentLabel: string;        // installment_plan value, e.g. '12 months'
-  onlineTypeValue:  string;        // online_type value ('' = none)
-  approvalCode:     string;        // card-terminal approval / ref no. ('' = none)
-  depositSen:     number;        // deposit on slip ×100 (0 = operator fills)
+  bankValue:        string;
+  installmentLabel: string;
+  onlineTypeValue:  string;
+  approvalCode:     string;
+  depositSen:     number;
 };
 
 export type ScanPrefill = {
   customerName:   string;
-  phone:          string;        // first phone, raw string
-  phones:         string[];      // all phones (carried so the edit-gate sees the full set)
+  phone:          string;
+  phones:         string[];
   address1:       string;
-  /* Structured address parts → the New SO form's State / City / Postcode
-     dropdowns. addressState is a real my_localities state VALUE (validated
-     server-side; '' = no confident match → leave the dropdown alone). city /
-     postcode are reconciled against the form's locality cascade for the chosen
-     state ('' = none). */
   addressState:    string;
   addressCity:     string;
   addressPostcode: string;
-  /* The customer's own order reference (e.g. "HC14032") → Customer SO Ref. */
   customerSoRef:  string;
-  note:           string;        // genuine order remark only (+ unresolved venue / non-date delivery)
-  deliveryDate:   string | null; // only when a clean YYYY-MM-DD
-  /* The SLIP'S OWN written date (ExtractedSlip.slipDate), only when a clean
-     YYYY-MM-DD. NOT the SO's Processing Date — desktop DERIVES that from
-     Delivery − 6 weeks and never reads this field. */
+  note:           string;
+  deliveryDate:   string | null;
   slipDate:       string | null;
-  customerType:   string;        // customer_type value matched to SO Maintenance ('' = none)
-  buildingType:   string;        // building_type value matched to SO Maintenance ('' = none)
-  /* VENUE UNIFY — a REAL venue id from the SAME useVenues() master the New SO
-     form's Venue dropdown renders ('' = no confident match → the form keeps
-     its salesperson-default venue). The raw OCR location text never lands in
-     the dropdown; it survives in the Note. */
+  customerType:   string;
+  buildingType:   string;
   venueId:        string;
   payment:        ScanPrefillPayment | null;
   lines:          ScanPrefillLine[];
-  // R2 key of the scanned slip image ('' = none/PDF). Carried onto the New SO
-  // create body so the SO detail page can show it as "Original Slip" proof.
   slipImageKey:   string;
-  // R2 key of the scanned card-terminal payment receipt ('' = none). Carried
-  // onto the New SO create body so the SO detail page can show it as "Payment
-  // Receipt" proof alongside the order slip.
   receiptImageKey: string;
-  /* Edit-gate carry-through — the learning POST now fires from the New SO
-     save. sampleId addresses the so_scan_samples row; salesperson rides along
-     so the per-rep pool grows + rules re-distill; aiOriginal is the FROZEN
-     AI-extracted slip the save compares the operator's final values against
-     (no diff = no learning POST). */
   sampleId:       string | null;
   salesperson:    string | null;
   aiOriginal:     ExtractedSlip | null;
 };
 
-/* ── The AI-extraction shape ────────────────────────────────────────────────
-   Kept here (and exported) because it is part of the ScanPrefill handoff
-   contract SalesOrderNew.tsx reads back — `aiOriginal` is the frozen snapshot
-   its save diffs against to decide whether to fire the edit-gate learning POST.
-   This modal no longer calls /scan-so/extract itself; the background job does
-   the reading. */
 type SkuMatch = { code: string; confidence: number; reason: string };
 type ExtractedLine = {
   rawText: string;
@@ -183,22 +140,13 @@ type ExtractedLine = {
   priceRmGuess: number | null;
   skuMatch: SkuMatch | null;
   fabricMatch: SkuMatch | null;
-  /* Configured SOFA special add-ons the row asks for (validated server-side
-     against the catalog + the line's model allowed_options.specials). [] when
-     none — seeds the New SO line's checked specials. */
   specialsMatch: SkuMatch[];
   notes: string | null;
 };
-/* SO-Maintenance option match — value is a so_dropdown_options row VALUE,
-   already validated server-side against the ACTIVE list. */
 type OptionMatch = { value: string; confidence: number; reason: string };
 export type ExtractedSlip = {
   customerName: string | null;
   address: string | null;
-  /* Structured address parts (the New SO form fills State / City / Postcode
-     from these). addressStateMatch is snapped server-side to the live
-     my_localities state list (never-invent rule), city/postcode are free text
-     reconciled against the form's locality cascade. */
   addressLine1: string | null;
   city: string | null;
   postcode: string | null;
@@ -206,15 +154,8 @@ export type ExtractedSlip = {
   phones: string[];
   location: string | null;
   deliveryDate: string | null;
-  /* THE SLIP'S OWN DATE — the date the rep wrote on the handwritten slip.
-     It is NOT the Sales Order's Processing Date (internal_expected_dd, the
-     factory-start date), and NOT a card receipt's printed transaction date.
-     All three were once called "processingDate"; the SO's is still called that,
-     these two are not. */
   slipDate: string | null;
   salesRep: string | null;
-  /* The customer's own order reference (top-right of the slip, e.g. "HC14032")
-     → seeds the form's Customer SO Ref field. */
   customerSoRef: string | null;
   paymentMethod: string | null;
   depositRm: number | null;
@@ -230,22 +171,9 @@ export type ExtractedSlip = {
   locationMatch: OptionMatch | null;
   lines: ExtractedLine[];
 };
-/* POST /scan-so/enqueue — 202 the instant the photos land, BEFORE any OCR. */
 type EnqueueResp = { job_id: string; status: string };
 
-/* The OCR → New SO prefill MAPPING lives in one shared, pure reconciler
-   (../lib/scan-prefill). It is called SERVER-side by the background job for both
-   desktop and phone scans, so the mapping can never drift between the two. The
-   ScanPrefill types above stay exported: they are the sessionStorage handoff
-   contract SalesOrderNew.tsx reads. */
 
-/* One queued order in the session: a single order slip + ZERO OR MORE payment
-   receipts. `id` is a stable client key (independent of array index so removing
-   an order doesn't reshuffle React keys). Mirrors mobile's OrderDraft (front +
-   payShots[]): an order can be paid across several receipts (deposit + balance,
-   split card terminals), and the background job books ONE payment per receipt.
-   The /scan-so/enqueue contract is positional-agnostic — the slip is appended
-   first, then every receipt, all under the `file` field. */
 type OrderRow = { id: string; slip: File | null; receipts: File[] };
 let ORDER_SEQ = 0;
 const newOrder = (): OrderRow => ({ id: `ord-${++ORDER_SEQ}-${Date.now()}`, slip: null, receipts: [] });
@@ -263,35 +191,20 @@ interface Props {
 export const ScanOrderModal = ({ onClose }: Props) => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  // ONE hidden slip input + ONE hidden receipt input, both re-targeted to the
-  // active order right before each pick (activeOrderIdRef).
   const slipInputRef = useRef<HTMLInputElement>(null);
   const receiptInputRef = useRef<HTMLInputElement>(null);
   const activeOrderIdRef = useRef<string | null>(null);
 
-  // The session is an ARRAY of orders (one order in the common case). Each order
-  // = one slip + an optional receipt. ONE order and TEN take the identical
-  // background /enqueue path — there is no review-first branch any more.
   const [orders, setOrders] = useState<OrderRow[]>(() => [newOrder()]);
-  const [dragOver, setDragOver] = useState<string | null>(null); // "<orderId>:<kind>" while dragging
-  const [submitting, setSubmitting] = useState(false); // photo upload in flight
+  const [dragOver, setDragOver] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Per-order 409 duplicate_slip WARNING on /enqueue, keyed by OrderRow.id.
   const [orderErrors, setOrderErrors] = useState<Record<string, string>>({});
-  // The order id currently being re-queued via "Create anyway" (force=1).
   const [forcingId, setForcingId] = useState<string | null>(null);
-  // Job ids returned by /enqueue this session — the results list polls their
-  // status via the shared /scan-so/jobs helper.
   const [enqueuedJobIds, setEnqueuedJobIds] = useState<string[]>([]);
 
   const multiOrder = orders.length > 1;
 
-  // Salesperson — each rep has their own handwriting/notation habits, so the
-  // extractor learns PER REP (rules + few-shot filtered to this rep). Owner
-  // (2026-06-23): default this to whoever is logged in (the usual case — staff
-  // scan their OWN slips), kept editable for the occasional someone-else slip.
-  // It also rides into the prefill so the New SO save can attribute the
-  // learning sample.
   const [salesperson, setSalesperson] = useState(() => user?.name ?? '');
   const [knownReps, setKnownReps] = useState<string[]>([]);
 
@@ -299,24 +212,14 @@ export const ScanOrderModal = ({ onClose }: Props) => {
     let alive = true;
     authedFetch<unknown>(SCAN_SALESPEOPLE_PATH)
       .then((r) => { if (alive) setKnownReps(normalizeScanSalespeople(r)); })
-      .catch(() => { /* datalist is a convenience — field stays free-text */ });
+      .catch(() => { });
     return () => { alive = false; };
   }, []);
 
-  // Pre-warm the Anthropic catalog prompt-cache the moment the modal opens, so
-  // it's hot by the time the background job reads the slip. Fire-and-forget —
-  // never blocks or errors the modal (it's a pure optimisation; a cold cache
-  // just means the first job pays full price).
   useEffect(() => {
-    authedFetch('/scan-so/warm', { method: 'POST' }).catch(() => { /* best-effort warm */ });
+    authedFetch('/scan-so/warm', { method: 'POST' }).catch(() => { });
   }, []);
 
-  /* ── Results — the SHARED background-job status poll ─────────────────────
-     After /scan-so/enqueue the OCR + DRAFT create run server-side. We poll the
-     SAME GET /scan-so/jobs endpoint the mobile Scan screen uses (via the shared
-     normalizeJobs helper) and show only the jobs THIS session enqueued. Poll
-     every 4s while any tracked job is still queued/running or hasn't surfaced
-     yet; a fully-settled list stops the interval. */
   const repParam = salesperson.trim();
   const { data: jobsData } = useQuery({
     queryKey: ['scan-modal-jobs', repParam],
@@ -326,7 +229,7 @@ export const ScanOrderModal = ({ onClose }: Props) => {
         repParam ? `/scan-so/jobs?salesperson=${encodeURIComponent(repParam)}` : '/scan-so/jobs',
       ),
     staleTime: 0,
-    retry: false, // fail-soft — a jobs hiccup just leaves the rows pending
+    retry: false,
     refetchInterval: (query) => {
       if (enqueuedJobIds.length === 0) return false;
       const tracked = normalizeJobs(query.state.data).filter((j) => enqueuedJobIds.includes(j.id));
@@ -342,11 +245,6 @@ export const ScanOrderModal = ({ onClose }: Props) => {
       .sort((a, b) => jobTs(a.createdAt) - jobTs(b.createdAt));
   }, [jobsData, enqueuedJobIds]);
 
-  /* ── Slot capture ───────────────────────────────────────────────────────
-     Re-target the hidden input to the active order, then open the file picker.
-     The slip is a single file (a re-pick replaces it); receipts are a list —
-     each pick APPENDS (the receipt input is `multiple`), and each receipt has
-     its own remove control. */
   const pickSlip = (orderId: string) => {
     if (submitting) return;
     activeOrderIdRef.current = orderId;
@@ -367,10 +265,8 @@ export const ScanOrderModal = ({ onClose }: Props) => {
   const setSlip = (orderId: string, file: File | null) => {
     setOrders((cur) => cur.map((o) => (o.id === orderId ? { ...o, slip: file } : o)));
     setError(null);
-    clearOrderError(orderId); // a new photo invalidates that order's dup warning
+    clearOrderError(orderId);
   };
-  // Append accepted receipt files to an order (each = one payment). No cap — an
-  // order can take as many receipts as it was paid across.
   const addReceipts = (orderId: string, files: File[]) => {
     const accepted = files.filter(isAcceptedFile);
     if (accepted.length === 0) return;
@@ -411,7 +307,6 @@ export const ScanOrderModal = ({ onClose }: Props) => {
     setOrders((cur) => [...cur, newOrder()]);
     setError(null);
   };
-  // Never let the list go empty — removing the last order resets it to blank.
   const removeOrder = (orderId: string) => {
     if (submitting) return;
     setOrders((cur) => {
@@ -422,28 +317,14 @@ export const ScanOrderModal = ({ onClose }: Props) => {
     setError(null);
   };
 
-  /* ── The ONE scan path (single order or a stack) ─────────────────────────
-     Reuse the SAME endpoint mobile uses: POST /scan-so/enqueue per order
-     returns a job id, and the OCR + DRAFT SO create finish server-side. The
-     await below is the PHOTO UPLOAD only — never the model round-trip — so the
-     operator is free in seconds and may close this modal at once: the job row
-     is durable before we respond, and the draft + its private notice land on
-     their own. A 409 duplicate_slip refusal for one order is surfaced inline on
-     that order's card (the others still enqueue). While the modal stays open the
-     results list polls /scan-so/jobs for the drafts as they land in Orders. */
   // One /scan-so/enqueue POST for an order. force=1 = the operator confirmed
   // "create anyway" on a duplicate-slip warning, so the backend skips its hard
   // reject and queues the order (owner 2026-07-15: duplicate = warn, not block).
   const enqueueOrder = async (order: OrderRow, force = false): Promise<EnqueueResp> => {
     const fd = new FormData();
-    // Downscale first — same helper mobile uses, so both surfaces send the model
-    // the same shape of image. A PDF drop passes through untouched. The slip is
-    // appended first, then EVERY receipt (each becomes one payment on the draft):
-    // the same repeated-`file` shape mobile's enqueueOne sends, so desktop and
-    // mobile hit the identical enqueue contract.
-    fd.append('file', await compressForOcr(order.slip!));  // order slip first
+    fd.append('file', await compressForOcr(order.slip!));
     for (const receipt of order.receipts) {
-      fd.append('file', await compressForOcr(receipt));    // one file per payment receipt
+      fd.append('file', await compressForOcr(receipt));
     }
     const repTyped = salesperson.trim();
     if (repTyped) fd.append('salesperson', repTyped);
@@ -451,9 +332,6 @@ export const ScanOrderModal = ({ onClose }: Props) => {
     return authedFetch<EnqueueResp>('/scan-so/enqueue', { method: 'POST', body: fd });
   };
 
-  // "Create anyway" — re-queue a duplicate-slip-warned order with force=1. On
-  // success the card drops off (like a normal queue) and its warning clears; the
-  // background job still marks it a soft duplicate for the trail.
   const createAnyway = async (orderId: string) => {
     const order = orders.find((o) => o.id === orderId);
     if (!order || !order.slip || forcingId) return;
@@ -496,22 +374,16 @@ export const ScanOrderModal = ({ onClose }: Props) => {
           const r = await enqueueOrder(order);
           if (r?.job_id) {
             newJobIds.push(r.job_id);
-            // Track EACH job the instant it is accepted, not after the whole
-            // stack uploads — the results list starts polling straight away and
-            // a mid-stack close still leaves the queued ones accounted for.
             setEnqueuedJobIds((prev) => [...prev, r.job_id]);
           }
         } catch (e) {
           const err = e as Error & { status?: number; body?: string };
-          // 409 duplicate_slip = this order's slip already created an SO. Owner
-          // 2026-07-15: WARN, don't block — keep it on screen with the reason +
-          // a "Create anyway" button (force=1); the OTHER orders still enqueue.
           if (err.status === 409 && typeof err.body === 'string' && err.body.includes('duplicate_slip')) {
             let reason = 'This slip was already uploaded.';
             try {
               const b = JSON.parse(err.body) as { reason?: string };
               if (typeof b.reason === 'string' && b.reason.trim() !== '') reason = b.reason;
-            } catch { /* body wasn't JSON — keep the fallback wording */ }
+            } catch { }
             dupErrors[order.id] = reason;
             continue;
           }
@@ -520,9 +392,6 @@ export const ScanOrderModal = ({ onClose }: Props) => {
       }
 
       if (Object.keys(dupErrors).length > 0) {
-        // Keep ONLY the refused orders on screen (with their inline reason); the
-        // queued ones are already running server-side and appear in the results
-        // list below.
         setOrders((cur) => {
           const keep = cur.filter((o) => dupErrors[o.id]);
           return keep.length ? keep : [newOrder()];
@@ -530,7 +399,6 @@ export const ScanOrderModal = ({ onClose }: Props) => {
         setOrderErrors(dupErrors);
         if (newJobIds.length === 0) return;
       } else {
-        // All queued cleanly — reset the capture area to a fresh blank order.
         setOrders([newOrder()]);
       }
 
@@ -547,8 +415,6 @@ export const ScanOrderModal = ({ onClose }: Props) => {
   const busy = submitting;
   const ready = orders.length > 0 && orders.every((o) => o.slip !== null);
 
-  /* The single "Order slip" slot — a dashed dropzone when empty, a solid
-     filename card with a remove control when filled. */
   const renderSlipSlot = (order: OrderRow) => {
     const key = `${order.id}:slip`;
     return (
@@ -585,9 +451,6 @@ export const ScanOrderModal = ({ onClose }: Props) => {
     );
   };
 
-  /* The "Payment receipts" slot — a LIST of receipt cards (each removable, each
-     becoming one payment on the draft) plus an "add another receipt" dropzone.
-     Optional: an order with no receipt still lands a draft with no payment. */
   const renderReceiptSlot = (order: OrderRow) => {
     const key = `${order.id}:receipt`;
     const count = order.receipts.length;
@@ -650,8 +513,6 @@ export const ScanOrderModal = ({ onClose }: Props) => {
         <div className={styles.body}>
           {error && <div className={styles.error}>{error}</div>}
 
-          {/* Hidden inputs — one for slips, one for receipts, both re-targeted to
-              the active order before each pick. */}
           <input
             ref={slipInputRef}
             type="file"
@@ -681,9 +542,6 @@ export const ScanOrderModal = ({ onClose }: Props) => {
             {sortByText(knownReps).map((r) => <option key={r} value={r} />)}
           </datalist>
 
-          {/* One card per queued order, each grouping its labeled slip + receipt
-              slots. The single order in the common case renders the same way,
-              without a removable header. */}
           {orders.map((order, oi) => (
             <div key={order.id} className={styles.orderCard}>
               {multiOrder && (
@@ -729,7 +587,6 @@ export const ScanOrderModal = ({ onClose }: Props) => {
             </div>
           ))}
 
-          {/* Add another order → one more slip on the same background queue. */}
           <button
             type="button"
             className={styles.addOrderBtn}
@@ -739,9 +596,6 @@ export const ScanOrderModal = ({ onClose }: Props) => {
             <Plus size={ICON.size} strokeWidth={ICON.strokeWidth} /> Add another order
           </button>
 
-          {/* Results — the shared /scan-so/jobs poll. Shown once anything has
-              been enqueued this session. Closing the modal does NOT stop these
-              jobs; it only stops watching them here. */}
           {enqueuedJobIds.length > 0 && (
             <div>
               <div className={styles.sectionLabel} style={{ marginBottom: 6 }}>

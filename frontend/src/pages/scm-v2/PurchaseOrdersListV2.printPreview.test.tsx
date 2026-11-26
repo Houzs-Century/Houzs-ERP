@@ -107,8 +107,6 @@ const tick = (n: number) => {
   for (let i = 0; i < n; i += 1) fireEvent.click(boxes[i]!);
 };
 
-/* The page also carries other dialogs (the row drawer), so the preview is found
-   by its own title rather than by role alone. */
 const openPreview = async (n: number): Promise<HTMLElement> => {
   tick(n);
   fireEvent.click(screen.getByRole("button", { name: `Print all (${n})` }));
@@ -136,7 +134,6 @@ describe("Purchase Order list: Print all goes through the Print preview", () => 
     const dialog = await openPreview(2);
     expect(within(dialog).getByText("Purchase Orders")).toBeTruthy();
     expect(within(dialog).getByText("2 documents")).toBeTruthy();
-    // The revised order is named as the list shows it.
     expect(within(dialog).getByText(/HC-PO-2609-092 · HC-PO-2609-093_R1/)).toBeTruthy();
     expect(h.choose).not.toHaveBeenCalled();
     expect(h.gen).not.toHaveBeenCalled();

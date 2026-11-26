@@ -30,12 +30,6 @@ export type EnrichableMrpRow = {
   delivered_dos?: DeliveredDo[];
 };
 
-/* C16 GUARD (Hookka frontend bug class: "a field that heals on one surface via
-   enrichment but stays stored-only elsewhere"). The SINGLE source of truth for
-   which list-row fields the deferred MRP enrichment heals. Its backend twin is
-   LIST_MRP_ENRICHMENT_KEYS in each module's *-list-enrichment.ts route; a parity
-   test asserts the sets are equal, so a new MRP-derived list field added on only
-   one side fails CI with the drifting key named. */
 export const LIST_MRP_DERIVED_FIELDS = [
   'assigned_sos',
   'assigned_so_linked',

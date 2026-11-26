@@ -1,5 +1,3 @@
-/* Import SKUs tells the owner which model a category change moved, with how
- * many SKUs, and that orders already written keep the old category. */
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { ImportModelsMoved } from './ImportModelsMoved';

@@ -1,8 +1,3 @@
-// attachOrderDeliveryDates — the Customer card's DO No + Delivery Date. The DO
-// numbers come from attachDeliveryOrders; this pins where each one's DATE comes
-// from (SCM delivered_at > do_date, else the AutoCount mirror's doc_date), that
-// SCM reads stay inside the case's company, and that the case's own do_date
-// (the SERVICE delivery leg) is never used.
 import { describe, expect, test, vi } from 'vitest';
 
 type Row = Record<string, unknown>;
@@ -10,7 +5,6 @@ type Row = Record<string, unknown>;
 const scmRows: Row[] = [
   { do_number: 'HC-DO-2609-244', do_date: '2026-09-26', delivered_at: null, company_id: 1 },
   { do_number: 'HC-DO-2609-300', do_date: '2026-09-20', delivered_at: '2026-09-22T03:00:00+00:00', company_id: 1 },
-  // Same number in the OTHER company: must never date a Houzs case.
   { do_number: 'DO-2609-001', do_date: '2025-01-01', delivered_at: null, company_id: 2 },
 ];
 

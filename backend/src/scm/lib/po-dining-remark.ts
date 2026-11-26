@@ -32,7 +32,6 @@ export const diningLineNote = (
 export interface DiningRemarkLine {
   itemGroup: string | null;
   soDocNo: string | null;
-  /** The source SO's header NOTE (`mfg_sales_orders.note`). */
   soNote: string | null;
 }
 

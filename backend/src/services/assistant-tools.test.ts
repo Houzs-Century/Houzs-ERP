@@ -12,11 +12,6 @@ import {
   type AssistantToolCtx,
 } from './assistant-tools';
 
-// The backend test runtime is the Cloudflare Workers pool (workerd), which does
-// NOT support vi.mock module replacement — so the reader cannot be stubbed. The
-// security-critical logic (query cap, redaction, routing trace) is therefore
-// exercised through the PURE helpers the dispatcher is built from, on arbitrary
-// hit shapes a real search would never have to emit.
 
 const OWNER: AssistantScope = { wildcard: true, canSeeMargin: true, canSeeCommission: true, orderScope: 'all' };
 const REP: AssistantScope = { canSeeMargin: false, canSeeCommission: false, orderScope: 'own' };
@@ -78,7 +73,6 @@ describe('normalizeSearchQuery', () => {
 
 describe('shapeSearchResult — the redaction boundary', () => {
   it('redacts money keys from a hit for a role that may not see them', () => {
-    // A hypothetical priced field on a hit MUST NOT reach a rep's context window.
     const ctx = ctxFor(REP);
     const res = shapeSearchResult(ctx, 'P1', [{ type: 'product', id: 'P1', title: 'P1', margin: 999 }]);
     const hits = res.hits as Array<Record<string, unknown>>;

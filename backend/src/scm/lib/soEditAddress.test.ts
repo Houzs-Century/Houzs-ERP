@@ -1,17 +1,3 @@
-// The delivery address an EDIT carries.
-//
-// Split out of autocount-outbox.test.ts, which hit its 2,000-line cap when this
-// arrived. Its own file rather than three fewer assertions: the defect these
-// pin is the THIRD instance of one shape — the CREATE path fills a field and
-// the EDIT path does not — and that shape has earned its own place to grow.
-//
-// WHAT THE BOOK ACTUALLY SAID, 2026-08-16, read through LINQPad on the host:
-//   HC-SO-2608-002  address typed in by an EDIT    InvAddr1 dsdsd   DeliverAddr1 EMPTY
-//   HC-SO-2608-003  address present at CREATE      InvAddr1 gjhghj  DeliverAddr1 gjhghj
-//   SO-013264/5/6   Inistate's own documents       filled           identical to Inv
-//
-// Inistate is the connector this ERP replaces, so its documents are the
-// specification, not a reference point: whatever it writes, we write.
 import { beforeEach, describe, expect, test } from 'vitest';
 
 import { fakeSb, type Row } from './fake-postgrest';
@@ -20,8 +6,6 @@ import { enqueueEdit } from './autocount-outbox';
 
 beforeEach(() => resetWritebackFlagCache());
 
-/* A real cutover code — since D10 an invented SKU tests the refusal, not the
-   flow. Same fixture shape as the outbox suite this came from. */
 const ERP_ITEM = 'AKEMI APEX MATT (SP)';
 const SALESPERSON = { id: 'staff-1', name: 'Nurul Hidayah' };
 
@@ -70,17 +54,12 @@ describe('an EDIT carries the delivery address, not only the invoice one', () =>
     for (const n of [1, 2, 3, 4]) {
       expect(h[`DeliverAddr${n}`], `DeliverAddr${n}`).toBe(h[`InvAddr${n}`]);
     }
-    /* The packing itself, so a change to soInvoiceAddress cannot quietly
-       reshape what the delivery copy says: postcode and city share one line,
-       the state gets its own. */
     expect(h.InvAddr3).toBe('01560 Kangar');
     expect(h.InvAddr4).toBe('Perlis');
     expect(h.DeliverAddr3).toBe('01560 Kangar');
     expect(h.DeliverAddr4).toBe('Perlis');
   });
 
-  /* Omit-when-absent still holds for BOTH copies: an order with no address
-     must not blank the book's own on either side. */
   test('an order with no address sends neither copy', async () => {
     const sb = addressed({
       address1: null, address2: null, address3: null, address4: null,
@@ -94,8 +73,6 @@ describe('an EDIT carries the delivery address, not only the invoice one', () =>
     }
   });
 
-  /* And a CLEARED address clears both, or the book keeps a street on the
-     delivery side that the order no longer has. */
   test('clearing the address nulls both copies', async () => {
     const sb = addressed({
       address1: null, address2: null, address3: null, address4: null,

@@ -1,5 +1,3 @@
-// HR labour maths: working days, a punch's hours and dock, day-typed OT, and
-// what a logged day costs (ported from Hookka's labor-day-cost / attendance-deduct).
 import { describe, expect, test } from "vitest";
 import { DEFAULT_PAY_RULES } from "./hr-pay-rules";
 import { toAttendanceRules } from "./hr-attendance";
@@ -10,8 +8,8 @@ const none = new Set<string>();
 
 describe("working days", () => {
   test("Monday to Saturday, not Sunday, not a public holiday", () => {
-    expect(isWorkingDay("2026-10-24", none)).toBe(true); // Saturday
-    expect(isWorkingDay("2026-10-25", none)).toBe(false); // Sunday
+    expect(isWorkingDay("2026-10-24", none)).toBe(true);
+    expect(isWorkingDay("2026-10-25", none)).toBe(false);
     expect(isWorkingDay("2026-10-20", new Set(["2026-10-20"]))).toBe(false);
   });
   test("October 2026 has 27 working days, 26 with Deepavali", () => {

@@ -2,10 +2,6 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-/* The 2026-07-16 reskin deleted header / KPI / filter-card classes from shared
-   CSS modules while other pages kept reading them, so `styles.x` resolved to
-   undefined and those pages rendered as bare text. Every class a file reads
-   from a CSS module must still exist in that module. */
 const root = __dirname;
 const stripCss = (css: string) => css.replace(/\/\*[\s\S]*?\*\//g, '');
 const stripTs = (ts: string) => ts.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');

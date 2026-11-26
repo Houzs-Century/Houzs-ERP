@@ -21,8 +21,6 @@ const { fetchBlobUrl, post, patch, del, putBinary, notify } = vi.hoisted(() => (
 vi.mock("../api/client", () => ({ api: { fetchBlobUrl, post, patch, del, putBinary } }));
 vi.mock("../auth/AuthContext", () => ({ useAuth: () => ({ user: { id: 9, permissions: [] } }) }));
 vi.mock("../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => notify }));
-// The lightbox drags in portal/video machinery this structural test never
-// opens; a stub keeps the render about the card itself.
 vi.mock("../components/MediaLightbox", () => ({ MediaLightbox: () => null }));
 
 import {
@@ -34,7 +32,6 @@ import { DefectActionsCtx } from "./MobilePmsDefectActions";
 
 afterEach(cleanup);
 beforeEach(() => {
-  // Pending forever → previews keep their placeholder; no blob URLs needed.
   fetchBlobUrl.mockReturnValue(new Promise(() => {}));
 });
 
@@ -46,8 +43,6 @@ const att = (id: number, itemId: number, name: string, caption?: string): TaskAt
 });
 
 const noop = vi.fn();
-// Typed stubs, not `as never` casts — the card's dialog props keep their real
-// signatures so a prop change here fails the test instead of sliding past it.
 const notifyFn: NotifyFn = async () => {};
 const promptFn: PromptFn = async () => null;
 const confirmFn: ConfirmFn = async () => false;
@@ -87,15 +82,12 @@ function mount() {
 describe("the B2 document card", () => {
   test("a document file is a full-width preview with its name chipped on, plus its remark", () => {
     mount();
-    // The chip carries the file name; big previews have no per-file View button.
     expect(screen.getByText("permit-2026.jpg")).toBeTruthy();
-    // The non-defect caption renders as the Remark strip.
     expect(screen.getByText(/valid until Sept/)).toBeTruthy();
   });
 
   test("Stock In keeps the COMPACT row — name + View, never a big preview", () => {
     mount();
-    // Exactly one View button on the card: the stock record's.
     const views = screen.getAllByRole("button", { name: "View" });
     expect(views.length).toBe(1);
     expect(screen.getByText("stock-in.jpg")).toBeTruthy();
@@ -106,13 +98,11 @@ describe("the B2 document card", () => {
     expect(screen.getByRole("button", { name: "Done Clean" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Exchange" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Service" })).toBeTruthy();
-    // Its caption reaches every viewer via the defect remark strip.
     expect(screen.getByText(/torn cushion/)).toBeTruthy();
   });
 
   test("an editable document offers the upload path", () => {
     mount();
-    // Permit + Defect get "+ Add more"; the stock row keeps its own controls.
     expect(screen.getAllByRole("button", { name: "+ Add more" }).length).toBeGreaterThanOrEqual(2);
   });
 });

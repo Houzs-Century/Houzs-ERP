@@ -1,6 +1,3 @@
-/* New Project panel: the name is derived from state, brand, organizer slot and
- * venue (never typed), the venue carries its state in, and Create posts that
- * derived name. */
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";

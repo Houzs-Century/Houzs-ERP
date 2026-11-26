@@ -25,7 +25,6 @@ export type SoServerFunnels = {
   currencies: string[] | undefined;
   brandings: string[] | undefined;
   cols: Record<string, string[]> | undefined;
-  /* The SO Date column's date filter, run by the server like its ticks. */
   from: string | undefined;
   to: string | undefined;
 };
@@ -47,12 +46,9 @@ export const SO_COLUMN_FUNNEL_KEYS: readonly string[] = [
   "phone", "email", "debtor_code", "address1", "address2", "city", "postcode", "customer_state",
   "paid", "balance", "venue", "processing_date", "customer_delivery_date", "note", "customer_type",
   "building_type", "customer_country",
-  // Finance columns: the backend honours these for a finance viewer only.
   ...FINANCE_COLUMN_KEYS,
 ];
 
-/* The grid's date-range / number-range condition tokens start with \u0001
-   (components/dataTableConditionFilters); the server matches values only. */
 const isCondition = (v: string): boolean => v.startsWith("\u0001");
 
 const ticked = (cf: SoColFilters, key: string): string[] | undefined => {

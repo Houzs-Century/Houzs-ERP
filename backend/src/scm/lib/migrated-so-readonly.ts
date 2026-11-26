@@ -93,13 +93,6 @@ export function soDocNoFromPath(path: string): string | null {
   try { return decodeURIComponent(raw); } catch { return raw; }
 }
 
-/* scm.so_amendments.id is `uuid PRIMARY KEY` (mig 0080). The shape matters to
-   the guard, not just to the query: a segment that is not a uuid cannot address
-   a row in a uuid column, and asking anyway makes Postgres raise
-   `invalid input syntax for type uuid` — which this guard would read as "the
-   read failed", i.e. LOCK. There is no non-GET static route on the amendment
-   router today, so nothing hits that; the check is here so the FIRST one added
-   does not arrive as a 409 nobody can explain. */
 const AMENDMENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -129,9 +122,6 @@ async function readLock(read: ConfigReader): Promise<LockState> {
     cached = { at: now, state };
     return state;
   } catch {
-    /* FAIL OPEN, deliberately — the OUTAGE case, not the typo case. An
-       unreachable app_config is not an instruction, and the migrated documents
-       are still sitting behind the write freeze underneath this guard. */
     const state: LockState = { value: { scope: 'off', malformed: false, byVerdict: false }, message: null };
     cached = { at: now, state };
     return state;
@@ -144,24 +134,11 @@ type SupabaseLike = {
   from(t: string): {
     select(cols: string): {
       eq(col: string, v: string): { maybeSingle(): PromiseLike<{ data: unknown; error: unknown }> };
-      /* The LIST's batched verdict read. One statement per page rather than one
-         per row: the list renders 50 orders and a per-row round trip would make
-         the page's cost a function of how much of the cutover is still open. */
       in(col: string, v: readonly string[]): PromiseLike<{ data: unknown; error: unknown }>;
     };
   };
 };
 
-/* The route's own client when there is one, else the service client. This
-   middleware is mounted in scm/index.ts, AHEAD of the sales-order router's
-   supabaseAuth, so `supabase` is not in the context yet at that point — the same
-   position write-freeze.ts is mounted at, and it makes its own client for the
-   same reason. The detail/list stampers below run INSIDE the router and do have
-   one; sharing this accessor keeps both paths reading one app_config row. */
-/* Cast via `unknown` on purpose. Typing the real supabase client structurally
-   makes the compiler unroll its generics (TS2589, "excessively deep") — the same
-   trap so-is-migrated.ts records at its own boundary. This module needs two
-   reads, not a database client. */
 const clientFor = (c: Context): SupabaseLike =>
   (c.get('supabase') as unknown as SupabaseLike | undefined)
   ?? (getSupabaseService(c.env) as unknown as SupabaseLike);
@@ -170,9 +147,7 @@ const lockReader = (sb: SupabaseLike): ConfigReader =>
   () => sb.from('app_config').select('value, description').eq('key', LOCK_KEY).maybeSingle() as PromiseLike<{ data: ConfigRow; error: unknown }>;
 
 export interface MigratedSoReadonlyState {
-  /** May this caller write to this document right now? */
   locked: boolean;
-  /** The sentence to show. Null whenever `locked` is false. */
   reason: string | null;
 }
 
@@ -193,21 +168,12 @@ export async function migratedSoReadonlyState(
   c: Context,
   docNo: string | null,
   isMigrated: boolean | null,
-  /* The verdict, when the caller already has it. The LIST reads a whole page's
-     worth in one statement and passes each row's answer in; the DETAIL and the
-     middleware have one document and let this function fetch it. `undefined`
-     means "not supplied", which is NOT the same as `null` ("looked, found
-     nothing") — hence the sentinel rather than an optional that collapses the
-     two. */
   suppliedVerdict?: SoReconcileVerdict | null,
 ): Promise<MigratedSoReadonlyState> {
   const { value, message } = await readLock(lockReader(clientFor(c)));
   if (value.scope === 'off') return { locked: false, reason: null };
   if (callerBypasses(c)) return { locked: false, reason: null };
 
-  /* ORIGIN MODE — the pre-2026-09-08 answer, and no verdict is read at all.
-     Deliberately short-circuited BEFORE the lookup: while the switch says '1'
-     this file must cost exactly what it cost yesterday. */
   if (!value.byVerdict) {
     if (!migratedSoIsLocked(value, activeCompanyId(c) ?? null, isMigrated, null)) {
       return { locked: false, reason: null };
@@ -215,9 +181,6 @@ export async function migratedSoReadonlyState(
     return { locked: true, reason: migratedSoLockMessage(message) };
   }
 
-  /* CORRECTNESS MODE. Company and origin are settled BEFORE the verdict read,
-     so a native order and the other company never pay for a lookup whose answer
-     could not change theirs. */
   const companyId = activeCompanyId(c) ?? null;
   const outOfScope = value.scope !== 'all'
     && (companyId == null || !value.scope.includes(companyId));
@@ -233,10 +196,6 @@ export async function migratedSoReadonlyState(
   return { locked: true, reason: migratedSoVerdictMessage(docNo, verdict) };
 }
 
-/* ── reading the published verdict ─────────────────────────────────────────
-   scm.so_reconcile_verdict is written ONLY by
-   scripts/publish-so-reconcile-verdict.mjs, from a reconcile run. Nothing in
-   the request path writes it, and nothing hand-maintains it. */
 const VERDICT_TABLE = 'so_reconcile_verdict';
 const VERDICT_COLS = 'doc_no, clean, axes, measured_at';
 
@@ -247,14 +206,6 @@ async function fetchVerdict(sb: SupabaseLike, docNo: string): Promise<SoReconcil
   );
 }
 
-/**
- * A whole page's verdicts in one statement.
- *
- * A document the read did not return is ABSENT, and absent is 'unknown', which
- * LOCKS — so a partial answer can never open a row. A read that FAILED returns
- * an empty map for the same reason: every row then reads as unpublished, and
- * the page shows locked rather than showing rows it cannot vouch for.
- */
 async function fetchVerdicts(
   sb: SupabaseLike,
   docNos: readonly string[],
@@ -263,24 +214,10 @@ async function fetchVerdicts(
   const out = new Map<string, SoReconcileVerdict>();
   if (docNos.length === 0) return out;
   try {
-    /* CHUNKED BY URL BYTES, not by a number typed here. The SO list has a
-       LEGACY arm that reads .limit(500), so this can be handed 500 doc numbers
-       at once (~9.5KB of `in.(…)`) - the exact size that has been observed
-       REFUSED in production, which is why chunkSizeForUrl exists and why every
-       other docNos read on that route already goes through it. A refused URL
-       here would answer "no verdicts", locking every row on the page while the
-       API happily accepted the writes: safe, but a list that disagrees with its
-       own endpoint. Serial rather than through chunkIn because that helper
-       needs a .range()-shaped query, and typing this module's client that
-       structurally makes the compiler unroll its generics (TS2589 - the trap
-       so-is-migrated.ts records). Two round trips for a 500-row page. */
     const size = chunkSizeForUrl(docNos);
     const rows: Array<Record<string, unknown>> = [];
     for (let i = 0; i < docNos.length; i += size) {
       const { data, error } = await sb.from(VERDICT_TABLE).select(VERDICT_COLS).in('doc_no', docNos.slice(i, i + size));
-      /* One failed batch means we cannot vouch for ANY row on this page - the
-         rows already collected would render as open while the rest render as
-         locked, from one read. Drop the lot; absent locks. */
       if (error || !Array.isArray(data)) return out;
       rows.push(...(data as Array<Record<string, unknown>>));
     }
@@ -297,32 +234,10 @@ async function fetchVerdicts(
         now,
       ));
     }
-  } catch { /* every row stays absent, and absent LOCKS */ }
+  } catch { }
   return out;
 }
 
-/* ── The guard, once, for both prefixes ─────────────────────────────────────
-
-   TWO ROUTERS CAN WRITE ONE MIGRATED SALES ORDER, and the first version of this
-   file guarded one of them. `/mfg-sales-orders/*` holds the SO's own writes;
-   `/so-amendments/:id/*` holds the amendment gates, and `approve-so` there is
-   not a status flip — it runs applySoAmendment, which rewrites the SO's header
-   and its lines in place (lib/so-revision.ts). No NEW amendment can be raised on
-   a migrated order once the lock is on, because `POST /:docNo/amendments` lives
-   on the SO router and is behind the guard — but one that was ALREADY OPEN when
-   the lock shipped could still be driven through. docs/migrated-so-lock.md §7
-   recorded that as a known hole; this closes it.
-
-   ONE FACTORY, TWO MOUNTS, so the two prefixes cannot drift apart: the same
-   refusal body, the same bypass cohort, the same fail-closed answer to "the read
-   did not run". The ONLY difference between them is how a request names the
-   document it is about — a doc number in the path, or an amendment id that has
-   to be resolved to one — which is exactly the `keyFromPath` + `resolve` pair.
-
-   The ORDER of the steps is load-bearing and is the original's, unchanged: the
-   path is read FIRST, so a request naming no document (create) never reads
-   app_config at all; then the switch; then the bypass; and only then the
-   per-document lookup. */
 
 type GuardTarget = { docNo: string | null; isMigrated: boolean | null };
 
@@ -335,31 +250,21 @@ function migratedGuard(
     if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return next();
 
     const key = keyFromPath(c.req.path);
-    if (key == null) return next(); // create, or a collection-level route
+    if (key == null) return next();
 
     const sb = clientFor(c);
 
-    /* Cheap exit BEFORE the per-document read: when the switch is off there is
-       nothing to look up, and that is the state this whole file is built to be
-       retired into. */
     const { value } = await readLock(lockReader(sb));
     if (value.scope === 'off') return next();
     if (callerBypasses(c)) return next();
 
     const target = await resolve(sb, key);
-    if (target == null) return next(); // the key names no sales order
+    if (target == null) return next();
 
     const state = await migratedSoReadonlyState(c, target.docNo, target.isMigrated);
     if (!state.locked) return next();
 
     const text = state.reason ?? migratedSoLockMessage(null);
-    /* Both `reason` and `message` carry the same sentence on purpose: the
-       vendored SCM client reads `reason` (vendor/scm/lib/authed-fetch.ts) and
-       the core api/client.ts reads `message`/`detail`. Sending one field is how
-       a deliberate refusal came to render as a generic outage line once already
-       (see write-freeze.ts). 409, not 503: this is a permanent property of THIS
-       document, not a service that is briefly away, and api/client.ts retries a
-       503 four times. */
     return c.json(
       { error: MIGRATED_SO_READONLY_ERROR, reason: text, message: text, docNo: target.docNo },
       409,
@@ -367,9 +272,6 @@ function migratedGuard(
   };
 }
 
-/* `null` = we could not tell, and null LOCKS (see migrated-so-lock.ts).
-   soIsMigrated THROWS on a failed read rather than answering false, so this
-   catch is where "could not tell" is actually produced. */
 async function migratedByDocNo(sb: SupabaseLike, docNo: string): Promise<GuardTarget> {
   try {
     return {
@@ -407,24 +309,13 @@ export type AmendmentSoReader = (id: string) => PromiseLike<{ data: unknown; err
 export async function amendmentSoDocNo(read: AmendmentSoReader, id: string): Promise<string | null> {
   const { data, error } = await read(id);
   if (error) throw new Error(`amendmentSoDocNo: ${(error as { message?: string }).message ?? 'read failed'}`);
-  if (data == null) return null; // no such amendment — the handler answers 404
+  if (data == null) return null;
   const row = data as { so_doc_no?: unknown; soDocNo?: unknown };
   const v = row.so_doc_no ?? row.soDocNo;
   if (typeof v === 'string' && v.length > 0) return v;
   throw new Error('amendmentSoDocNo: the amendment row carries no readable so_doc_no');
 }
 
-/* THE AMENDMENT READ IS NOT COMPANY-SCOPED, and that is safe here for a reason
-   worth writing down rather than re-deriving. The guard runs ahead of the
-   router's own scoping, so it has no company predicate to reuse — but the only
-   thing it takes from the row is `so_doc_no`, and the only thing it can emit is
-   a 409 naming that document. A caller in the OTHER company never reaches that
-   emit: migratedSoIsLocked answers false for a company the lock does not name,
-   so the request passes and the router's own scoped load answers 404. A caller
-   in company 1 gets a doc number their amendment list already showed them.
-   `linked_ac_docno` is written only by the Houzs AutoCount import, so no 2990
-   document carries one today — if that ever changes, this echo is the line to
-   revisit. */
 async function migratedByAmendmentId(sb: SupabaseLike, id: string): Promise<GuardTarget | null> {
   let docNo: string | null = null;
   try {
@@ -433,8 +324,6 @@ async function migratedByAmendmentId(sb: SupabaseLike, id: string): Promise<Guar
       id,
     );
   } catch {
-    /* The amendment read itself failed. We do not know which document this is
-       about, so we cannot know it is safe — LOCK. */
     return { docNo: null, isMigrated: null };
   }
   if (docNo == null) return null;
@@ -467,17 +356,8 @@ export function migratedSoAmendmentReadonly() {
   return migratedGuard(amendmentIdFromPath, migratedByAmendmentId);
 }
 
-/* Re-exported so routes/mfg-sales-orders.ts reaches the whole migrated-document
-   policy through ONE import. Not a second home for the fact — so-is-migrated.ts
-   is still the only place it is decided, and this file is already its biggest
-   consumer. The router is on its size ceiling and a second import line there is
-   a line that has to come from somewhere. */
 export { soIsMigrated } from './so-is-migrated';
 
-/* ── The two call sites in the sales-order router ───────────────────────────
-   Both live HERE, not in routes/mfg-sales-orders.ts, so that file pays ONE line
-   per site. It is a 12,000-line router already sitting on its size ceiling, and
-   the answer to "where does this logic go" is never "a block in there". */
 
 /** Stamp the DETAIL payload and hand it back, so the call site is the ONE
  *  expression it already had. `acDocNo` is the header's `linked_ac_docno`, which
@@ -487,12 +367,7 @@ export async function withSoMigratedReadonly(
   salesOrder: Record<string, unknown>,
   acDocNo: string | null,
 ): Promise<Record<string, unknown>> {
-  /* The ERP document number, off the payload the caller already built. It is
-     what the salesperson sees, so it is what the refusal names — the AutoCount
-     number the reconcile keys on means nothing on their screen. */
   const docNo = typeof salesOrder.doc_no === 'string' ? salesOrder.doc_no : null;
-  /* The PAIR, not the presence of the column — see so-is-migrated.ts. The
-     detail select already reads both, so this still costs no extra query. */
   const mig = await migratedSoReadonlyState(c, docNo, soIsMigratedShape(docNo, acDocNo));
   salesOrder.migrated_readonly = mig.locked;
   salesOrder.migrated_readonly_reason = mig.reason;
@@ -521,18 +396,11 @@ export async function migratedSoListGate(
 
   const { value } = await readLock(lockReader(clientFor(c)));
 
-  /* ORIGIN MODE — one answer covers the page, exactly as before. */
   if (!value.byVerdict) {
     const { locked } = await migratedSoReadonlyState(c, null, true, null);
     return (docNo: string) => ({ migrated_readonly: locked && migrated.has(docNo) });
   }
 
-  /* CORRECTNESS MODE — the answer is per row, so the page reads the verdicts
-     for its OWN migrated documents in one statement. A row whose verdict did
-     not come back is absent, and absent locks: the list can only ever show
-     MORE locked than the API would refuse, never fewer. A list that offered
-     Edit on a row the endpoint then refused is the "button does nothing"
-     failure this repo keeps paying for. */
   const verdicts = await fetchVerdicts(clientFor(c), [...migrated]);
   const states = new Map<string, boolean>();
   for (const docNo of migrated) {

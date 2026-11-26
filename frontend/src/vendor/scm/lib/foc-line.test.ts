@@ -1,11 +1,3 @@
-/* foc-line — one answer to "is this line free?", replacing four that disagreed.
- *
- * The two disagreements are pinned as cases, because each was invisible on the
- * surface that had it right:
- *   - a 0-priced line with a NON-ZERO total read FOC on the delivery order and
- *     "Sale" on the invoice for the same goods;
- *   - a line with a NULL price read FOC on the delivery order and mobile, and
- *     not on the two desktop surfaces. */
 import { describe, it, expect } from 'vitest';
 import { isFocLine, isFreeGiftLine, focLineCount } from './foc-line';
 
@@ -34,8 +26,6 @@ describe('isFocLine', () => {
   });
 
   it('a promotional gift is free whatever the numbers say', () => {
-    /* A PWP gift can carry a granted base price for costing while costing the
-       customer nothing, so the marker wins over the arithmetic. */
     expect(isFocLine({ unit_price_sen: 25_000, line_total_sen: 25_000, variants: { freeGift: true } })).toBe(true);
     expect(isFocLine({ unit_price_sen: 25_000, line_total_sen: 25_000, variants: { freeGift: 'SOFA-PILLOW' } })).toBe(true);
   });
@@ -48,9 +38,6 @@ describe('isFocLine', () => {
   });
 
   it('the line total is read from whichever column the document calls it', () => {
-    /* The Sales Order's column is `total_sen`; every other document's is
-       `line_total_sen`. A helper that knew only one of them would call every
-       sales-order line free. */
     expect(isFocLine({ unit_price_sen: 0, total_sen: 25_000 })).toBe(false);
     expect(isFocLine({ unit_price_sen: 0, line_total_sen: 25_000 })).toBe(false);
   });

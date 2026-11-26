@@ -1,21 +1,3 @@
-// ----------------------------------------------------------------------------
-// PoAmendmentDetailV2 — the PO-amendment job card. A dedicated read-first detail
-// page for one Purchase Order revision, reachable from the PO Amendments queue
-// (pages/scm-v2/PoAmendments.tsx). The PO-side sibling of AmendmentDetailV2.tsx,
-// built to the owner's SIMPLIFIED single-approver model:
-//
-//   • a revision-status hero (Requested -> Approved), tone + label from the
-//     canonical resolveStatusPill('poAmendment')
-//   • a main column with the before -> after diff per changed line
-//     (qty / spec / cost / delivery / add / remove) and the header changes
-//     (supplier / delivery / notes)
-//   • an aside with Requested-by, the "Print amendment" PDF button (the shared
-//     amendment-pdf template + poAmendmentToPdfInput), and the single approver
-//     gate — approve / reject / withdraw, exactly what the backend allows.
-//
-// There is deliberately NO supplier-confirm / two-gate / send chain here (unlike
-// the SO amendment): the whole point of this module is the single-approver gate.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -69,7 +51,6 @@ import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/Prin
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
 const asStr = (v: unknown): string | null => {
   if (v == null) return null;
@@ -77,9 +58,6 @@ const asStr = (v: unknown): string | null => {
   return s ? s : null;
 };
 
-/* Every failed gate action reports through here — authedFetch hangs the raw
-   status + body off the thrown error, which humanApiError turns into the house
-   plain sentence. */
 const plainError = (e: unknown): string => {
   const err = e as { status?: number; body?: string; message?: string };
   if (typeof err?.status === "number" && typeof err?.body === "string") {
@@ -88,7 +66,6 @@ const plainError = (e: unknown): string => {
   return err?.message ?? "Something went wrong. Please try again.";
 };
 
-// ─── Revision-status hero (2 stages: Requested -> Approved) ──────────────────
 
 type Stage = { key: string; label: string };
 const STAGES: Stage[] = [
@@ -100,7 +77,7 @@ const stageIndexOf = (status: string): number => {
   switch (status) {
     case "REQUESTED": return 0;
     case "APPROVED": return 1;
-    default: return -1; // REJECTED / unknown
+    default: return -1;
   }
 };
 
@@ -231,7 +208,6 @@ function RevisionHero({
   );
 }
 
-// ─── Main page ─────────────────────────────────────────────────────────────
 
 export function PoAmendmentDetailV2() {
   const { id } = useParams<{ id: string }>();
@@ -255,10 +231,6 @@ export function PoAmendmentDetailV2() {
     source_so_amendment_id?: string | null;
     source_so_amendment_no?: string | null;
   }) | null;
-  /* Two-lane rework: a FOLLOW-UP row was auto-raised by an SO amendment's
-     product-lane apply. Its lines are a PREVIEW — confirming re-derives this PO
-     from the Sales Order's CURRENT truth (reviseBoundPo), so the wording below
-     says "confirm", and the source amendment is one click away. */
   const sourceSoAmendmentId = asStr(amendment?.source_so_amendment_id);
   const sourceSoAmendmentNo = asStr(amendment?.source_so_amendment_no);
   const isFollowUp = sourceSoAmendmentId != null;
@@ -266,8 +238,6 @@ export function PoAmendmentDetailV2() {
   const lines = useMemo(() => (data?.lines ?? []) as PoAmendmentLine[], [data]);
   const purchaseOrder = data?.purchaseOrder ?? null;
 
-  /* Header change rows — the AMENDABLE_HEADER keys (supplier / delivery / notes)
-     paired against the old snapshot. */
   const headerDiffs = useMemo(
     () => poAmendmentHeaderDiffRows(
       (amendment?.header_changes ?? null) as Record<string, string | null> | null,
@@ -278,8 +248,6 @@ export function PoAmendmentDetailV2() {
 
   const changeCount = headerDiffs.length + lines.length;
 
-  /* Every routable atom this amendment moves — lines + header — for the type
-     badge(s) and the department-routing block. */
   const allFieldKinds = useMemo<AmendmentFieldKind[]>(() => {
     const fromLines = lines.flatMap((l) => poLineFieldKinds(l));
     const fromHeader = headerDiffs
@@ -301,9 +269,6 @@ export function PoAmendmentDetailV2() {
 
   const reason = asStr(amendment?.reason);
 
-  /* Printable amendment document — the shared client-side jsPDF template already
-     handles PO via poAmendmentToPdfInput. Status label is the SIMPLIFIED
-     Requested / Approved the owner asked for. */
   const deliverPrintPdf = (action: PdfAction) => {
     if (!amendment) return;
     const input = poAmendmentToPdfInput({
@@ -328,8 +293,6 @@ export function PoAmendmentDetailV2() {
 
   const canApprove = can("scm.po_amendment.approve");
   const canReject = canApprove;
-  /* Withdraw — the requester's own escape hatch. The server says whether the
-     caller raised it (see AmendmentDetailV2); it also re-checks on withdraw. */
   const isRequester = data?.viewerIsRequester === true;
   const canWithdraw = status === "REQUESTED" && (isRequester || canApprove);
 
@@ -473,7 +436,6 @@ export function PoAmendmentDetailV2() {
 
   return (
     <div className="pb-10">
-      {/* ─── Desktop sticky header ──────────────────────────────────── */}
       <div className="sticky top-12 lg:top-[52px] z-20 -mx-4 border-b border-border bg-bg/95 px-4 py-4 backdrop-blur-sm sm:-mx-6 sm:px-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3 min-w-0">
@@ -518,7 +480,6 @@ export function PoAmendmentDetailV2() {
         </div>
       </div>
 
-      {/* ─── Body ───────────────────────────────────────────────────── */}
       <div className="py-5">
         <DetailGrid>
           <DetailMain>
@@ -574,8 +535,6 @@ export function PoAmendmentDetailV2() {
               rejectionReason={asStr(amendment.rejection_reason)}
             />
 
-            {/* Two-lane rework — where this follow-up came from, one click back
-                to the SO amendment that already applied. */}
             {isFollowUp && (
               <div className="rounded-lg border border-accent/40 bg-accent/10 px-3.5 py-3 text-[12px] leading-relaxed text-ink">
                 Auto-raised from SO amendment{" "}
@@ -654,8 +613,6 @@ export function PoAmendmentDetailV2() {
               </Button>
             </AsideCard>
 
-            {/* Single approver gate — approve / reject / withdraw, exactly what
-                the backend state machine allows. */}
             {status === "REQUESTED" && (
               <AsideCard title="Gate actions">
                 <div className="space-y-2">

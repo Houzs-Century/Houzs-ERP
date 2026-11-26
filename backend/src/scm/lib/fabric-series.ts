@@ -1,19 +1,4 @@
-/* A fabric code's selling-library id, and the named series that group them.
 
-   Two different things are both called "series" here:
-     • the selling-library id (fabric_library.id) — the code before its colour
-       number: BROWNIE-03 → BROWNIE, KN07 → KN07. Item KPI fabric rules and
-       order lines (variants.fabricId) use THIS.
-     • fabric_trackings.series — the name the business groups fabrics under:
-       EMBRACE = KN01..KN13, HOMELY = BROWNIE.
-   fabricSeriesGroups maps the second onto the first, so a KPI rule can be
-   picked by the name staff use. */
-
-/* Everything BEFORE the trailing colour number, not everything before the
-   first dash. "AM275-02" -> AM275 either way, but "SF-AT-01" is SF-AT and
-   "ALPINE-5311-13" is ALPINE-5311; splitting on the first dash calls them SF
-   and ALPINE and mirrors the colour into the wrong series. Matches how
-   normalize-fabric-codes.mjs derives it. */
 export const seriesOf = (code: string): string => {
   const v = (code || '').trim().toUpperCase();
   const m = /^(.+)[\s-]+\d{1,3}$/.exec(v);

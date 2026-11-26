@@ -23,7 +23,6 @@ import { ReportExports, ReportHeaderActions, ReportMessage, ReportTiles, type Re
 import { gridSheet, pctOf } from './logisticsColumns';
 import { BASIS_WORDS, datesOf, monthColumns, pctText, rateText, scopeOf, short, spanText, whole, type Mode } from './departmentPnlParts';
 
-/* ── The Operation sheet's lines as a panel prints them (the sheet and the unit share them) ── */
 
 type RegionsOf = { regions: ReadonlyArray<{ code: OpRegion; name: string }>; logisticsIncomeBp: number };
 export const regionNameOf = (p: Pick<RegionsOf, 'regions'>, r: OpRegion) => p.regions.find((x) => x.code === r)?.name ?? r;
@@ -41,7 +40,6 @@ export function opDrillRow(p: RegionsOf, l: OpLine, sen: number, regions: readon
   const touched = regions.filter((r) => l.cells[r] !== 0);
   const where = touched.length > 1 && touched.length === p.regions.length ? 'All regions' : touched.map((r) => regionNameOf(p, r)).join(', ');
   let account = l.accountCode ? `${l.accountCode}${l.accountName ? ` · ${l.accountName}` : ''}` : null;
-  /* Who was billed, then the bill line's words; a fair's name, then its venue. */
   let text = l.party && l.text ? (l.src === 'fair' ? `${l.text} · ${l.party}` : `${l.party} · ${l.text}`) : (l.text ?? l.party);
   let how: string | null = null;
   const h = l.how;
@@ -55,7 +53,6 @@ export function opDrillRow(p: RegionsOf, l: OpLine, sen: number, regions: readon
   return { id: l.id, day: l.day, month: l.month, row, region: where || null, ref: l.ref, account, text, how, sen };
 }
 
-/* ── A charge: each month's sales excluding service, at the rate ──────────── */
 
 /** What a charge opens: each month of the column, its sales excluding service and the rate of it. */
 export function RatePanel({ title, sub, bp, months, base, cells, onClose }: {
@@ -69,9 +66,7 @@ export function RatePanel({ title, sub, bp, months, base, cells, onClose }: {
   return <DrillPanel title={title} sub={sub} rows={rows} ledger={null} onClose={onClose} />;
 }
 
-/* ── One unit ─────────────────────────────────────────────────────────────── */
 
-/** The note under a unit's table: where each of its figures comes from. */
 function footOf(p: DepartmentUnit): ReactNode {
   if (p.unit === 'operation') return <>
     Operation is paid {rateText(p.rates.operationBp)}% of the selling department&rsquo;s sales excluding service and keeps what Finance bills for
@@ -93,7 +88,6 @@ function footOf(p: DepartmentUnit): ReactNode {
   </>;
 }
 
-/** The rate each charge row is at, keyed by the unit's own row keys. */
 const rateOfRow = (p: DepartmentUnit, key: string): number | null => {
   if (key === 'from_selling') return p.unit === 'operation' ? p.rates.operationBp : p.unit === 'setupDismantle' ? p.rates.setupDismantleBp : null;
   if (key === 'from_operation' || key === 'to_logistics') return p.rates.logisticsBp;
@@ -102,7 +96,6 @@ const rateOfRow = (p: DepartmentUnit, key: string): number | null => {
 
 export function UnitReport({ p, basis, mode, showPct, period, tools }: {
   p: DepartmentUnit; basis: DeptBasis; mode: Mode; showPct: boolean; period: string;
-  /** Above the table: the rate Finance keeps, a note. */
   tools: ReactNode;
 }) {
   const columns = useMemo(() => monthColumns(p.months, mode, showPct), [p.months, mode, showPct]);

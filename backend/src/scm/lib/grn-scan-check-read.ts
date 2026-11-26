@@ -1,9 +1,3 @@
-// ---------------------------------------------------------------------------
-// grn-scan-check-read — from a delivery order as read to the working copy of the
-// check step: match it, mark taught free gifts, and fill what a person can then
-// confirm. Shared by the scan pipeline and the upgrade of copies written before
-// a change to what a copy holds (REVIEW_VERSION).
-// ---------------------------------------------------------------------------
 
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
 import { buildReview, type GrnReview } from './grn-scan-check';
@@ -23,7 +17,6 @@ export async function reviewOfRead(svc: SupabaseClient, companyId: number | null
   const products = await loadCatalogueProducts(svc, companyId, taught.map((t) => t.itemCode));
   const gifts = giftLines(ctx.match, taught, products);
   const review = buildReview(parsed, ctx.supplierId, ctx.match, gifts, ctx.openLines.filter((l) => l.supplierId === ctx.supplierId), scanDate);
-  // Every row placed: the matcher's complaint is no longer the operator's problem.
   const placed = review.lines.length > 0 && review.lines.every((l) => l.poItemId || l.gift);
   return { review, note: placed || ctx.match.picks.length > 0 ? null : ctx.otherCompany ?? buildNeedsReviewNote(parsed, ctx.match, ctx.allPos, ctx.supplierId) };
 }

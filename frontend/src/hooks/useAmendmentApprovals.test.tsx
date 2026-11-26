@@ -1,8 +1,3 @@
-/* The sidebar's red counts (hooks/useAmendmentApprovals.ts). Pinned: a page
-   load costs ONE combined request, not one per count; each answer lands under
-   that count's own key, so a writer invalidating it re-reads just that count;
-   a count the server could not answer shows no badge; a backend without the
-   combined route falls back to the per-count reads. */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
@@ -52,9 +47,6 @@ describe("sidebar counts", () => {
     const { result } = renderHook(() => useApprovalBadgeCounts(), { wrapper: wrap(client) });
 
     await waitFor(() => expect(result.current["amendment-approvals"]).toBe(3));
-    // Nobody here holds the other gates, so only the two open counts are asked
-    // for. The one the server could not answer gets one direct try of its own
-    // (it fails here too) and shows no badge; the answered one costs nothing more.
     await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(2));
     expect(apiGet.mock.calls.map((c) => c[0])).toEqual([
       "/api/badge-counts?sources=amendment-approvals,po-amendment-approvals",
@@ -121,7 +113,6 @@ describe("sidebar counts", () => {
       "/api/badge-counts?sources=amendment-approvals,po-amendment-approvals,it-support-replies,meetings-unread",
     );
     expect(client.getQueryData(MEETINGS_UNREAD_KEY)).toEqual({ count: 120 });
-    // Marking them read re-reads the count alone.
     await act(async () => {
       await client.invalidateQueries({ queryKey: MEETINGS_UNREAD_KEY });
     });

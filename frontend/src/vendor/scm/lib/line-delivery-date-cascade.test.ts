@@ -1,7 +1,3 @@
-// The cascade the owner found MISSING on the delivery order while it worked on
-// the sales order. Each case below is one of the two halves a hand-written copy
-// gets wrong: moving the lines that follow, and NOT moving the one somebody
-// typed.
 import { describe, expect, it } from 'vitest';
 
 import { cascadeLineDeliveryDate } from './line-delivery-date-cascade';
@@ -40,7 +36,6 @@ describe('cascadeLineDeliveryDate', () => {
       const out = cascadeLineDeliveryDate([follower('2026-09-24')], empty);
       expect(out?.[0]?.lineDeliveryDate).toBeNull();
     }
-    // ...and clearing an already-blank follower is not a change
     expect(cascadeLineDeliveryDate([follower(null)], '')).toBeNull();
   });
 
@@ -63,10 +58,6 @@ describe('cascadeLineDeliveryDate', () => {
     expect(cascadeLineDeliveryDate([], '2026-09-24')).toBeNull();
   });
 
-  /* An UNDEFINED flag is the shape a line loaded from the API has before
-     anything touches it (`lineDeliveryDateOverridden` is optional). It must
-     read as "following", not as "typed" - the stricter reading here would
-     freeze every imported line. */
   it('treats a missing override flag as following', () => {
     const out = cascadeLineDeliveryDate([{ lineDeliveryDate: '2026-09-19' }], '2026-09-24');
     expect(out?.[0]?.lineDeliveryDate).toBe('2026-09-24');

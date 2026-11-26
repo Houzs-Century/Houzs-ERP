@@ -1,4 +1,3 @@
-/* The small form pieces every POS Admin tab shares, in the app's own tokens. */
 import type { ReactNode } from "react";
 import { cn } from "../../lib/utils";
 

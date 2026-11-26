@@ -1,7 +1,3 @@
-/* Regression: the emailed POS summary CSV wrote till-typed text (salesman,
-   item description, void reason) as-is, so "=HYPERLINK(...)" ran as a formula
-   in the manager's Excel. Text cells now get the OWASP single-quote prefix;
-   amounts, negative ones included, stay numeric. */
 import { describe, expect, test } from "vitest";
 import { guardFormula, unguardFormula } from "./csv-guard";
 import { aggregateSales, summaryCsv, type ReportSale } from "./pos-report";

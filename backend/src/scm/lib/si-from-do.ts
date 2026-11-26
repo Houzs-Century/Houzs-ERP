@@ -72,16 +72,14 @@ export async function recordSiCreate(
       .select('id, invoice_number, status, company_id, debtor_code, debtor_name, so_doc_no, ' +
         'delivery_order_id, invoice_date, due_date, currency, salesperson_id, total_sen, paid_sen')
       .eq('id', siId).maybeSingle();
-    /* A read that did not answer is not a rolled-back invoice: it is logged
-       and the CREATE row is skipped, the same silence as before, out loud. */
     if (error) {
       // eslint-disable-next-line no-console
       console.error('[si-audit] create row skipped — invoice read failed:', siId, error.message);
       return;
     }
     row = (data ?? null) as Record<string, unknown> | null;
-  } catch { /* best-effort */ }
-  if (!row) return; // rolled back (or unreadable): a CREATE row here would be a lie
+  } catch { }
+  if (!row) return;
   await recordEntityAudit(sb, {
     entityType: 'SALES_INVOICE',
     entityId: siId,
@@ -101,42 +99,16 @@ export async function recordSiCreate(
       fieldChange('dueDate', null, row.due_date ?? null),
       fieldChange('currency', null, row.currency ?? null),
       fieldChange('salespersonId', null, row.salesperson_id ?? null),
-      /* INTEGER SEN, straight off the column. */
       fieldChange('totalSen', null, row.total_sen ?? null),
       fieldChange('lineCount', null, lineCount),
     ]),
   });
 }
 
-/* Re-derive the SI header's per-category revenue/cost totals + grand total from
-   its line items. Mirrors the DO recomputeTotals plain per-category rollup. Also
-   keeps subtotal_sen / total_sen in sync (they back the GL posting + the
-   legacy payments path). Called after every item mutation.
-
-   Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
-   recomputeTotals (mfg-sales-orders.ts), which carries the full rationale. Two
-   separate decisions: (1) every read below aborts the whole recompute on error,
-   because a header written from a read we cannot vouch for is a lie that looks
-   like a fact, while a stale header is merely old and self-heals on the next
-   successful edit; (2) it aborts by LOGGING, not throwing, because this roll-up
-   only ever runs AFTER its triggering line write has already committed — a throw
-   cannot undo that write, it can only turn it into a 500 the client retries,
-   which on the create/add-line paths is a DUPLICATE LINE. See BUG-HISTORY
-   2026-07-17 (fix/zeroing-twins). */
 export async function recomputeTotals(sb: Db, salesInvoiceId: string): Promise<void> {
   const { data: items, error: itemsErr } = await sb.from('sales_invoice_items')
     .select('item_code, item_group, line_total_sen, line_cost_sen')
     .eq('sales_invoice_id', salesInvoiceId);
-  /* A failed READ is not an empty invoice, and `?? []` cannot tell them apart:
-     supabase-js resolves a failed select to { data: null, error } and does NOT
-     throw, so a transient blip used to fold nothing and write subtotal_sen /
-     total_sen / every category bucket to ZERO on an invoice whose lines were
-     intact. total_sen backs the GL, and postSiRevenue treats a zero total as
-     `zero_total` — a status its callers deliberately swallow — so the zeroing
-     ALSO silently skipped the AR/revenue posting entirely. The ERROR is the
-     signal, never the emptiness: a genuinely empty invoice (last line deleted)
-     resolves error === null with data === [] and MUST still fall through to zero
-     the header. */
   if (itemsErr) {
     /* eslint-disable-next-line no-console */
     console.error('[si-recompute] item read failed — header left unchanged:', salesInvoiceId, itemsErr.message);
@@ -156,16 +128,8 @@ export async function recomputeTotals(sb: Db, salesInvoiceId: string): Promise<v
     else if (g.includes('accessor')) { accessories += lineTotal; accessoriesCost += lineCost; }
     else { others += lineTotal; othersCost += lineCost; }
   }
-  /* Fold any header-level discount/tax into the grand total. These columns are
-     currently never written (all discount/tax is per-line, already inside
-     line_total_sen), so this is a no-op today — but it stops a future
-     header-discount UI that populates them from silently overstating the posted
-     revenue (total_sen backs the GL). subtotal_sen stays the line sum. */
   const { data: siHdr, error: hdrErr } = await sb.from('sales_invoices')
     .select('discount_sen, tax_sen').eq('id', salesInvoiceId).maybeSingle();
-  /* A failed read here reads as "no header discount/tax" and would write a
-     total that silently ignores both. A header that genuinely carries neither
-     is error === null with nulls, and still legitimately folds in zero. */
   if (hdrErr) {
     /* eslint-disable-next-line no-console */
     console.error('[si-recompute] header discount/tax read failed — header left unchanged:', salesInvoiceId, hdrErr.message);
@@ -195,29 +159,18 @@ export async function recomputeTotals(sb: Db, salesInvoiceId: string): Promise<v
     total_sen: grand,
     updated_at: new Date().toISOString(),
   }).eq('id', salesInvoiceId);
-  /* The write's own result was discarded until 2026-07-17, so a rejected UPDATE
-     left the header STALE with nothing logged and every caller reporting
-     success. Logged, not thrown: see the contract note on this function. */
   if (updErr) {
     /* eslint-disable-next-line no-console */
     console.error('[si-recompute] header update failed — totals left STALE:', salesInvoiceId, updErr.message);
   }
 }
 
-/* Build one sales_invoice_items insert row from a client line payload. */
 export function buildItemRow(salesInvoiceId: string, it: Record<string, unknown>, lineNo?: number | null) {
   const qty = Number(it.qty ?? 1);
   const unitPrice = Number(it.unitPriceSen ?? 0);
   const discount = Number(it.discountSen ?? 0);
   const tax = Number(it.taxSen ?? 0);
   const unitCost = Number(it.unitCostSen ?? 0);
-  /* Clamp at 0 — the operator's screen already does (SalesInvoiceNew.tsx:250-252
-     computes Math.max(0, qty*price − disc) per line). Without the clamp a line
-     whose discount exceeds its gross recorded a NEGATIVE total: the operator saw
-     one grand total on screen and the invoice persisted a lower one, because
-     recomputeTotals sums the raw line totals and only clamps the GRAND total.
-     Tax is inside the clamp so the two sides stay byte-identical (tax is 0 on
-     every one of the owner's invoices; it is carried, not used). */
   const lineTotal = Math.max(0, (qty * unitPrice) - discount + tax);
   const lineCost = qty * unitCost;
   const itemGroup = (it.itemGroup as string | null | undefined) ?? null;
@@ -241,8 +194,6 @@ export function buildItemRow(salesInvoiceId: string, it: Record<string, unknown>
     line_margin_sen: lineTotal - lineCost,
     variants,
     line_delivery_date: (it.lineDeliveryDate as string | null) ?? null,
-    /* Migration 0058 — carry the dedicated variant-breakdown columns onto the SI
-       line (sales_invoice_items has all 8). Source is the convert payload `it`. */
     gap_inches: (it.gapInches as number | null) ?? null,
     divan_height_inches: (it.divanHeightInches as number | null) ?? null,
     divan_price_sen: Number(it.divanPriceSen ?? 0),
@@ -303,20 +254,14 @@ export async function migratedRefusalForDeliveries(
   };
 }
 
-/* ── The core ────────────────────────────────────────────────────────────── */
 
 export type SiFromDoInput = {
-  /** The company the invoice belongs to; null keeps the reads open (legacy, no active company). */
   companyId: number | null;
-  /** The document prefix the number is minted under (companyDocPrefix / docPrefixForCode). */
   docPrefix: string;
   picks: Array<{ doItemId: string; qty: number }>;
   asDraft: boolean;
-  /** created_by on the header — the Supabase user id the route carries, or null for automation. */
   createdBy: string | null;
-  /** The REAL Houzs user for the audit row and the AutoCount enqueue; null for automation. */
   actor: AuditActor | null | undefined;
-  /** The audit row's note; defaults to "Converted from Delivery Order(s) …". */
   auditNote?: string;
   /** The invoice's date (YYYY-MM-DD). Defaults to today (MYT) — the picker's
       rule; a delivery invoiced after the fact passes its delivery day so the
@@ -326,7 +271,6 @@ export type SiFromDoInput = {
 
 export type SiFromDoStatus = 201 | 400 | 404 | 409 | 500 | 503;
 export type SiFromDoRevenue = { posted: boolean; jeNo?: string; status: string };
-/** The AutoCount enqueue's own problem sentences, passed through untouched. */
 type AcProblems = NonNullable<Awaited<ReturnType<typeof enqueueConvert>>>['problems'];
 export type SiFromDoOutcome =
   | { ok: true; status: 201; body: { id: string; invoiceNumber: string; revenue: SiFromDoRevenue; creditApplied: number; acNotSent?: AcProblems } }
@@ -350,11 +294,6 @@ export async function createSalesInvoiceFromDoLines(sb: Db, input: SiFromDoInput
   }
   if (pickQtyById.size === 0) return refuse(400, { error: 'picks_required' });
   const pickedIds = [...pickQtyById.keys()];
-  /* SOURCE LOAD, SCOPED — the caller's doItemIds enter here, so this read plus
-     the scoped DO-header read below decide what the conversion can see: another
-     company's line resolves to NO ROW and falls out at `do_item_not_found`.
-     THE COST is the message, because naming the other company needs an UNSCOPED
-     read this path otherwise never makes. */
   const { data: pickedItemRows, error: pErr } = await scopeToCompanyIdOrOpen(sb
     .from('delivery_order_items')
     .select('id, delivery_order_id')
@@ -365,22 +304,12 @@ export async function createSalesInvoiceFromDoLines(sb: Db, input: SiFromDoInput
   const missing = pickedIds.filter((id) => !idToDo.has(id));
   if (missing.length > 0) return refuse(404, { error: 'do_item_not_found', missing });
   const doIds = [...new Set([...idToDo.values()])];
-  /* A delivery carried over from AutoCount is invoiced by the migrated-invoice
-     converter, never here. AutoCount already raised the invoice and already
-     booked its revenue, so this path would mint a second one under an ERP
-     number (breaking the owner's "keep AutoCount's number" rule), post
-     Dr 1100 / Cr 4000 for revenue already recognised, and enqueue a do_to_iv
-     transfer that duplicates the invoice in the live account book. It would
-     also consume the DO line's Pending pool, so the mistake could not be undone
-     without cancelling the invoice. See lib/migrated-chain.ts. */
   {
     const mig = await migratedRefusalForDeliveries(sb, { doIds });
     if (!mig.ok) return refuse(500, { error: 'load_failed', reason: mig.reason });
     if (mig.refusal) return refuse(409, mig.refusal);
   }
   const remainingResult = await doLineRemaining(sb, doIds, 'invoiceable');
-  /* Pre-write refusal — every qty below is capped by `line.remaining`, and an
-     empty map surfaced as a 404 blaming the pick for a database error. */
   if (!remainingResult.ok) return refuse(503, remainingUnavailableResponse(remainingResult.reason));
   const remainingMap = remainingResult.lines;
   const customers = new Set<string>();
@@ -425,7 +354,6 @@ export async function createSalesInvoiceFromDoLines(sb: Db, input: SiFromDoInput
     'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
     'customer_so_no, po_doc_no, sales_location, customer_state, customer_country, note, address1, address2, city, state, postcode, phone, currency, ' +
     'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship';
-  // HEADER half of the same source document — same predicate as the lines.
   const { data: doHeaderRow, error: hLoadErr } = await scopeToCompanyIdOrOpen(sb
     .from('delivery_orders')
     .select(DO_HEADER)
@@ -443,7 +371,7 @@ export async function createSalesInvoiceFromDoLines(sb: Db, input: SiFromDoInput
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; invoice_number: string }>(
     () => nextSiNumber(sb, input.docPrefix),
     (invoiceNumber) => sb.from('sales_invoices').insert({
-    ...(companyId != null ? { company_id: companyId } : {}), // multi-company: stamp the caller's company
+    ...(companyId != null ? { company_id: companyId } : {}),
     invoice_number: invoiceNumber,
     so_doc_no: (head.so_doc_no as string | null) ?? null,
     delivery_order_id: firstDoId,
@@ -495,7 +423,6 @@ export async function createSalesInvoiceFromDoLines(sb: Db, input: SiFromDoInput
     uom: line.uom,
     qty: pickQtyById.get(line.doItemId)!,
     unitPriceSen: line.unitPriceSen,
-    // This invoice's share of the DO line's discount, not all of it.
     discountSen: lineDiscountShare(line.discountSen, line.delivered, line.delivered - line.remaining, pickQtyById.get(line.doItemId)!),
     unitCostSen: line.unitCostSen,
     variants: line.variants,
@@ -517,17 +444,12 @@ export async function createSalesInvoiceFromDoLines(sb: Db, input: SiFromDoInput
     if (isDoLineOverInvoiced(iErr)) return refuse(409, { error: 'race_conflict', message: 'Another operator just invoiced overlapping qty from this Delivery Order. Refresh and try again.', reason: iErr.message });
     return refuse(500, { error: 'items_insert_failed', reason: iErr.message });
   }
-  /* Race-condition guard — same as the POST / path, and the SI counterpart of
-     "Edge #E" in delivery-orders-mfg.ts. This is the picker path, so EVERY line
-     carries a do_item_id and the whole invoice is exposed to the race, not just
-     the linked part of it. */
   {
     const pickedDoItemIds = rows
       .map((r) => (r as { do_item_id?: string | null }).do_item_id)
       .filter((x): x is string => !!x);
     if (pickedDoItemIds.length > 0) {
       const recheck = await doRemainingByItemId(sb, pickedDoItemIds, 'invoiceable');
-      // Recheck unreadable -> roll back, under the honest reason (as POST / above).
       if (!recheck.ok) {
         await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
         await sb.from('sales_invoices').delete().eq('id', h.id);
@@ -546,15 +468,10 @@ export async function createSalesInvoiceFromDoLines(sb: Db, input: SiFromDoInput
     }
   }
   await recomputeTotals(sb, h.id);
-  /* Past the items-insert rollback — the invoice is permanent from here. */
   await recordSiCreate(
     sb, input.actor, companyId, h.id, rows.length,
     input.auditNote ?? `Converted from ${distinctDoNumbers.length > 1 ? 'Delivery Orders' : 'Delivery Order'} ${distinctDoNumbers.join(', ')}`,
   );
-  /* ERP -> AutoCount DO->Invoice, MERGED OR NOT. An invoice covering several
-     delivery orders names them all; AcSyncService takes FromDocNos. What this
-     used to skip on was the primitive's single-source key array, which the
-     service now works around by grouping per source document. */
   const ac = doIds.length ? await enqueueConvert(sb, {
       companyId,
       op: 'do_to_iv',
@@ -566,16 +483,12 @@ export async function createSalesInvoiceFromDoLines(sb: Db, input: SiFromDoInput
       createdBy: input.actor?.id ?? null,
   }) : null;
   const acNotSent = ac?.problems.length ? { acNotSent: ac.problems } : {};
-  /* LEAK GUARD (DRAFT) — no AR/GL revenue, no customer credit on a DRAFT SI.
-     Both move to the confirm transition (PATCH /:id/status DRAFT→SENT). */
   if (isDraft) {
     return { ok: true, status: 201, body: { id: h.id, invoiceNumber: h.invoice_number, revenue: { posted: false, status: 'draft' }, creditApplied: 0, ...acNotSent } };
   }
   let revenue: SiFromDoRevenue = { posted: false, status: 'skipped' };
   const post = await postSiRevenue(sb, h.invoice_number);
   if (post.ok) {
-    /* 'migrated_source' carries no jeNo and needs none: AutoCount already booked
-       the revenue, so the correct number of journal entries here is zero. */
     revenue = post.status === 'migrated_source'
       ? { posted: false, status: post.status }
       : { posted: post.status === 'posted', jeNo: post.jeNo, status: post.status };
@@ -589,8 +502,6 @@ export async function createSalesInvoiceFromDoLines(sb: Db, input: SiFromDoInput
   let creditApplied = 0;
   try {
     const { data: latest, error: latestErr } = await sb.from('sales_invoices').select('total_sen, paid_sen, debtor_code, debtor_name').eq('id', h.id).maybeSingle();
-    /* A failed read is not "no debtor": the credit is simply not applied on
-       this pass (the next roll can), and the reason is written down. */
     if (latestErr) throw new Error(`invoice read: ${latestErr.message}`);
     const l = latest as { total_sen: number | null; paid_sen: number | null; debtor_code: string | null; debtor_name: string | null } | null;
     if (l?.debtor_code) {

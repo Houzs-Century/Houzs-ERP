@@ -83,8 +83,6 @@ export async function linkScanFiles(
     if (f.keys.length > 0) {
       q = q.in('storage_key', f.keys);
     } else {
-      /* The same photo scanned twice leaves two unlinked rows with one sha256:
-         link the newest only, so the second document still finds its own. */
       const { data: row, error: pickErr } = await sb.from('scan_files').select('id')
         .eq('company_id', f.companyId).eq('kind', f.kind).is('document_id', null).eq('sha256', f.sha256)
         .order('created_at', { ascending: false }).limit(1).maybeSingle();

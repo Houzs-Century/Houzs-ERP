@@ -48,7 +48,6 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-/** Mount the page on a delivery order in the given state. */
 const at = (status: string, opts: { onHold?: boolean | null } = {}) => {
   detail.mockReturnValue({
     data: {
@@ -74,10 +73,8 @@ const at = (status: string, opts: { onHold?: boolean | null } = {}) => {
   );
 };
 
-/** Every button on screen that is not the "open the full DO" link. */
 const buttons = () => screen.queryAllByRole("button");
 
-/** Press the one action button and return the body the page tried to PATCH. */
 const press = (): { id: string; status: string } => {
   const [only, ...rest] = buttons();
   expect(rest, "the scan must offer exactly one button").toHaveLength(0);
@@ -86,17 +83,6 @@ const press = (): { id: string; status: string } => {
   return mutate.mock.calls[0]![0] as { id: string; status: string };
 };
 
-/* The ladder as the owner dictated it, read off the SCREEN. The label is what
-   he approved in English and the status is what the row must end up holding.
-
-   HAND-TYPED ON PURPOSE, and the lint rule against hand-typed DO status lists is
-   disabled here rather than obeyed. That rule exists because ELEVEN copies of
-   "which statuses have shipped" drifted apart; this is not a partition of the
-   enum, it is the OWNER'S SPEC transcribed — from-state, the English on the
-   button, and what the row must end up holding. Deriving it from
-   DO_STATUSES would make the test assert the code against itself, which is the
-   decorative-test failure this file was written to avoid. Membership of the enum
-   IS checked, separately and from the shared constant, in the 0530 block below. */
 /* eslint-disable no-restricted-syntax -- the owner's spec, not a partition of do_status; see above */
 const LADDER: Array<[from: string, label: string, writes: string]> = [
   ["DRAFT", "Confirm loading", "LOADED"],
@@ -126,11 +112,6 @@ describe("the scan offers the next step, and only the next step", () => {
     }
   });
 
-  /* No going back: nothing on this page can write a status EARLIER than the one
-     the document already holds. The server refuses a shipped→pre-ship move
-     (`illegal_status_transition`) but accepts every lateral and backward move
-     within the shipped states, so this is the client's own rule and nothing
-     else enforces it. */
   it("never writes a rung the document has already passed", () => {
     // eslint-disable-next-line no-restricted-syntax -- an ORDERING, not a set: DO_STATUSES carries no rung order
     const order = ["DRAFT", "LOADED", "DISPATCHED", "IN_TRANSIT", "DELIVERED"];
@@ -144,9 +125,6 @@ describe("the scan refuses, out loud, where there is no step", () => {
   it.each([
     ["DELIVERED", "Nothing left to do on this document."],
     ["INVOICED", "Nothing left to do on this document."],
-    /* SIGNED is a real enum member that counts as delivered everywhere
-       (doCountsAsDelivered), so a row still carrying it is finished, not
-       unexpected. Nothing writes it any more — see the SIGNED test below. */
     ["SIGNED", "Nothing left to do on this document."],
   ])("%s says: %s", (status, sentence) => {
     at(status);
@@ -169,8 +147,6 @@ describe("the scan refuses, out loud, where there is no step", () => {
     }
   });
 
-  /* Never silent — the standing rule this module's own header states. A status
-     nobody planned for still gets a sentence rather than a blank card. */
   it("an unrecognised status says so instead of showing nothing", () => {
     at("COMPLETED");
     expect(buttons()).toHaveLength(0);
@@ -179,10 +155,6 @@ describe("the scan refuses, out loud, where there is no step", () => {
 });
 
 describe("bug 0481 / 0480 — the delivered scan admits what it does not collect", () => {
-  /* 0481's sentence: "the status is literally named for the evidence it does not
-     collect". This page collects none of the three, so the words beside the
-     button have to name all three losses AND name the screen that does capture
-     them, or it is that button again behind a QR code. */
   it("names the signature, the photo and the location it does not take", () => {
     at("IN_TRANSIT");
     const note = screen.getByText(/not a signed receipt/i).textContent;
@@ -192,9 +164,6 @@ describe("bug 0481 / 0480 — the delivered scan admits what it does not collect
     expect(note, "0480: name the remedy that DOES exist").toMatch(/proof of delivery/i);
   });
 
-  /* 0480's second half: the planning board promised a remedy that did not
-     exist. The other three rungs are not deliveries, so they must NOT carry
-     this disclaimer — a warning on every screen is a warning nobody reads. */
   it.each([["DRAFT"], ["LOADED"], ["DISPATCHED"]])(
     "%s does not claim anything about proof of delivery",
     (from) => {
@@ -203,9 +172,6 @@ describe("bug 0481 / 0480 — the delivered scan admits what it does not collect
     },
   );
 
-  /* The page sends a bare status and no evidence keys — the third assertion in
-     do-status-evidence.test.tsx, restated from this caller: a status change must
-     never blank a POD already on the row. */
   it("sends the status alone, never an empty evidence field", () => {
     at("IN_TRANSIT");
     expect(press()).toEqual({ id: "do-1", status: "DELIVERED" });
@@ -224,11 +190,6 @@ describe("bug 0530 — every status this page can write is a real do_status memb
     }
   });
 
-  /* SIGNED IS NEVER PRODUCED. It is a legal enum member and it counts as
-     delivered, which is exactly why a bare button writing it was bug 0481.
-     Nothing has written it since 2026-08-21 and this ladder does not reopen
-     that: sweep every member of the enum through the page and prove no press
-     ever sends it. */
   it("no status anywhere in the enum leads to a scan that writes SIGNED", () => {
     for (const status of DO_STATUSES) {
       at(status);
@@ -244,7 +205,6 @@ describe("one scan is one step", () => {
   it("shows a confirmation and no button after a rung is written", () => {
     at("LOADED");
     const [button] = buttons();
-    /* Run the caller's own onSuccess, which is what a resolved PATCH does. */
     fireEvent.click(button!);
     const [, opts] = mutate.mock.calls[0] as [unknown, { onSuccess: () => void }];
     act(() => opts.onSuccess());

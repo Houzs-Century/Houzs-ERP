@@ -4,8 +4,6 @@ import type { Env } from "../types";
 import { auth } from "./auth";
 import { ACTION_ALLOWLIST, MCP_ACTION_HEADER, MCP_INNER_HEADER, armAction, mcpInnerSecret, rememberVerified } from "../services/mcp-inner";
 
-// The AI Connector's write fence at the auth gate: an hzmcp_ token reaches a
-// non-GET route ONLY as the confirmed-action call (services/mcp-inner.ts).
 const TOKEN = "hzmcp_test_token_write_fence";
 const OTHER = "hzmcp_test_token_other";
 const user = { id: 7, name: "Tester", status: "active", permissions_set: new Set<string>() };

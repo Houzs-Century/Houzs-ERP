@@ -1,25 +1,3 @@
-// ----------------------------------------------------------------------------
-// amendment-command — the SO-amendment write-back dispatch service (design
-// docs/2990-mirror-full-design.md §3.2, D2: command-mirror, not state-merge).
-//
-// A user acts on a MIRRORED (2990-) amendment in Houzs. Instead of writing the
-// row (so-mirror would revert it — F2), the five gates in routes/so-amendments.ts
-// call enqueueAmendmentCommand() here. This module owns:
-//
-//   • the flag (scm.sync_config.mirror_commands_enabled) — ships dark, no deploy
-//     to flip (D8);
-//   • enqueue with layer-1 idempotency (sha256 key, unique index — the same
-//     decision cannot enqueue twice);
-//   • dispatchOne — the HTTPS call to 2990's own API via bridge-2990-command,
-//     with layer-2 idempotency (2990's state machine: on 409 bad_transition, read
-//     the amendment status back and treat "at or past target" as CONVERGED);
-//   • drainCommands — the cron sweep that retries anything left PENDING, so a
-//     failed dispatch is never lost.
-//
-// The dispatch NEVER blocks the user: the gate enqueues, fires one inline attempt
-// on c.executionCtx.waitUntil, and returns promptly. The state change appears
-// when the existing mirror delivers 2990's new status back down (seconds).
-// ----------------------------------------------------------------------------
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Env } from '../env';
@@ -40,14 +18,8 @@ import {
 
 export const AMENDMENT_ENTITY = 'so_amendment';
 
-// attempts cap (§3.2): past this the command is surfaced to the owner as FAILED
-// instead of retrying forever.
 const MAX_ATTEMPTS = 10;
 
-// A SENT row younger than this is assumed to be a live inline attempt; the cron
-// sweep leaves it alone to avoid double-dispatching (harmless — 2990 is
-// idempotent — but wasteful). Older SENT rows are re-attempted (the isolate that
-// marked them SENT likely died mid-flight).
 const SENT_STALE_MS = 2 * 60 * 1000;
 
 const DRAIN_BATCH = 25;
@@ -86,23 +58,14 @@ async function sha256Hex(input: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Layer-1 idempotency key (§3.2): a decision is (entity, entity_key, action,
- *  target_status). target_status comes from the ACTION, not the observed status,
- *  so it is stable across a stale read. */
 async function idempotencyKey(entityKey: string, action: AmendAction, target: AmendStatus): Promise<string> {
   return sha256Hex(`${AMENDMENT_ENTITY}|${entityKey}|${action}|${target}`);
 }
 
 export interface EnqueueInput {
-  // The VERBATIM 2990 amendment uuid (D4) — the mirrored row's id IS 2990's id,
-  // so it addresses the right row with no translation.
   entityKey: string;
   action: AmendAction;
-  // The endpoint body (supplier-confirm: {ref,note?,attachmentKey?}; reject:
-  // {reason?}; approve-so/approve-po/send: {}).
   payload: Record<string, unknown>;
-  // The REAL Houzs public.users id — the authoritative approver (§3.5). NEVER the
-  // pinned SCM system user.
   requestedBy: number | null;
   companyId: number | null;
 }
@@ -142,8 +105,6 @@ export async function enqueueAmendmentCommand(
 
   if (!error && inserted) return { row: inserted as SyncCommandRow, created: true };
 
-  // 23505 = unique_violation on idempotency_key: the decision is already queued.
-  // Return the existing row so the caller reflects its current state.
   const { data: existing } = await sb
     .from('sync_command')
     .select('*')
@@ -151,7 +112,6 @@ export async function enqueueAmendmentCommand(
     .maybeSingle();
   if (existing) return { row: existing as SyncCommandRow, created: false };
 
-  // Neither inserted nor found — a real DB error, surface it.
   throw new BridgeCommandError('command_enqueue_failed', 'Could not queue the change for 2990.', 500, error?.message);
 }
 
@@ -216,7 +176,6 @@ export async function dispatchOne(
   try {
     resp = await patchAmendmentGate(cfg, row.entity_key, row.action, row.payload ?? {});
   } catch (e) {
-    // BridgeCommandError (unreachable / sign-in) is retryable by construction.
     await retryable(e instanceof BridgeCommandError ? e.message : e instanceof Error ? e.message : 'Unknown dispatch error.');
     return;
   }
@@ -227,8 +186,6 @@ export async function dispatchOne(
   }
 
   if (resp.status === 409 && resp.body?.error === 'bad_transition') {
-    // Layer-2 idempotency: 2990 already moved this amendment. Read its real
-    // status back; if it is at or past our target, the intent is satisfied.
     const current = await fetchAmendmentStatus(cfg, row.entity_key);
     if (current && statusSatisfies(current as AmendStatus, target)) {
       await done('CONVERGED');
@@ -257,7 +214,6 @@ export async function dispatchOne(
     return;
   }
 
-  // 5xx and anything else: transient, keep retrying.
   await retryable(refusalMessage(resp.body, `2990 responded with status ${resp.status}.`));
 }
 
@@ -295,7 +251,6 @@ export async function drainCommands(env: Env): Promise<{
 
   const now = Date.now();
   const rows = (data as SyncCommandRow[]).filter((r) => {
-    // Skip a SENT row that a fresh inline attempt is likely still driving.
     if (r.status === 'SENT') {
       const age = now - new Date(r.updated_at).getTime();
       return age >= SENT_STALE_MS;
@@ -307,8 +262,6 @@ export async function drainCommands(env: Env): Promise<{
   for (const row of rows) {
     summary.processed += 1;
     await dispatchOne(sb, cfg.config, row);
-    // Re-read the terminal state for the summary (dispatchOne mutates the row in
-    // the DB, not our local copy).
     const { data: after } = await sb.from('sync_command').select('status').eq('id', row.id).maybeSingle();
     const st = (after as { status?: string } | null)?.status;
     if (st === 'DONE') summary.done += 1;

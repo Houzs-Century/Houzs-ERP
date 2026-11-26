@@ -46,8 +46,6 @@ const FINANCE_ONLY = { error: 'forbidden', message: 'Bringing in a 3PL bill read
 const mayRead = (c: any) => hasHouzsPerm(c, 'scm.finance.accounting');
 const ASSIGNS: ReadonlyArray<LineAssign> = ['do', 'service', 'event', 'none'];
 
-/** The request's reach: the active company pays, the allowed companies' DOs
- *  may be named on its bills. */
 function depsOf(c: any, companyId: number): BillDeps {
   return {
     sb: c.get('supabase'),
@@ -61,7 +59,6 @@ function depsOf(c: any, companyId: number): BillDeps {
 const refuse = (c: any, f: BillFail) => c.json({ error: f.error, message: f.message }, f.status);
 const personOf = (c: any): string => String(c.get('houzsUser')?.name ?? c.get('user')?.user_metadata?.name ?? 'a person').slice(0, 80);
 
-// ── GET /from-ap/invoices ────────────────────────────────────────────────────
 export const listApBillsHandler = async (c: any) => {
   if (!mayRead(c)) return c.json(FINANCE_ONLY, 403);
   const co = requireActiveCompanyId(c);
@@ -122,13 +119,12 @@ export const listApBillsHandler = async (c: any) => {
   return c.json({ invoices, carriers: carriers.rows.map((k) => ({ id: String(k.id), name: String(k.name ?? '') })) });
 };
 
-// ── POST /from-ap/:apInvoiceId/read ─────────────────────────────────────────
 export const readApBillHandler = async (c: any) => {
   if (!mayRead(c)) return c.json(FINANCE_ONLY, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   let body: Row = {};
-  try { body = await c.req.json(); } catch { /* no body: the carrier is the supplier's */ }
+  try { body = await c.req.json(); } catch { }
   const deps = depsOf(c, co.companyId);
   const bill = await loadApBill(deps, c.req.param('apInvoiceId'));
   if (!bill.ok) return refuse(c, bill);
@@ -137,7 +133,6 @@ export const readApBillHandler = async (c: any) => {
 
   const codes = companyCodeMap(c);
   const apNo = String(bill.inv.invoice_number);
-  /* As the reading assigns the lines: a bill's shared price is on its DOs too. */
   const charges = chargesPerDo(assignedLines(reading.lines, reading.assignments, reading.dos), reading.expectedOf, reading.goodsOf);
   return c.json({
     invoice: {
@@ -169,9 +164,6 @@ export const readApBillHandler = async (c: any) => {
   });
 };
 
-/** A line the preview sent back, checked into the shape kept. A DO line keeps
- *  only the DOs the person kept; none kept, it waits for them — as their
- *  choice, so the reader does not put it back on that DO. */
 function keptFromBody(raw: Row, i: number, kept: ReadonlySet<string>, person: string): KeptLine | null {
   const amount = raw.amountSen == null ? null : Number(raw.amountSen);
   if (amount != null && !Number.isInteger(amount)) return null;
@@ -191,7 +183,6 @@ function keptFromBody(raw: Row, i: number, kept: ReadonlySet<string>, person: st
   };
 }
 
-// ── POST /from-ap/:apInvoiceId/confirm ──────────────────────────────────────
 export const confirmApBillHandler = async (c: any) => {
   if (!mayRead(c)) return c.json(FINANCE_ONLY, 403);
   const co = requireActiveCompanyId(c);
@@ -225,7 +216,6 @@ export const confirmApBillHandler = async (c: any) => {
   if (gone.length) return c.json({ error: 'do_not_found', message: `${gone.length} delivery order(s) are cancelled or not yours to see.` }, 409);
 
   const kept = new Set(doIds);
-  /* A preview from before the lines were kept sends only its DOs: one line each. */
   const lines: KeptLine[] = bodyLines
     ? bodyLines.map((l, i) => keptFromBody(l, i, kept, personOf(c))).filter((l): l is KeptLine => !!l)
     : clean.map((r, i) => ({ lineNo: i + 1, text: String(rows[i]!.note ?? '').slice(0, 300), date: null, kind: 'delivery', amountSen: r.billedSen, printed: [], readStatus: 'matched', assignment: { assign: 'do', doIds: [r.doId as string], serviceRef: null, projectId: null } }));
@@ -239,7 +229,6 @@ export const confirmApBillHandler = async (c: any) => {
   return c.json({ saved: saved.saved, skipped: saved.skipped });
 };
 
-// ── GET /bill-lines ─────────────────────────────────────────────────────────
 export const listBillLinesHandler = async (c: any) => {
   if (!mayRead(c)) return c.json(FINANCE_ONLY, 403);
   const co = requireActiveCompanyId(c);
@@ -247,8 +236,6 @@ export const listBillLinesHandler = async (c: any) => {
   const sb = c.get('supabase');
   const apInvoiceId = str(c.req.query('apInvoiceId'));
   const onlyOpen = c.req.query('open') === '1';
-  /* PAGED: `.limit(2000)` was still cut at PostgREST's 1,000 rows, so past
-     1,000 bill lines the later bills' lines (and their open charges) vanished. */
   const { data, error, truncated } = await paginateAll<Row>((from, to) => {
     let q = scopeToCompanyId(sb.from('threepl_bill_lines')
       .select('id, ap_invoice_id, threepl_company_id, line_no, text, line_date, kind, amount_sen, printed, read_status, assign, do_ids, service_ref, project_id, assigned_by, assigned_at'), co.companyId);
@@ -290,7 +277,6 @@ export const listBillLinesHandler = async (c: any) => {
   });
 };
 
-// ── PATCH /bill-lines/:id ───────────────────────────────────────────────────
 export const assignBillLineHandler = async (c: any) => {
   if (!mayRead(c)) return c.json(FINANCE_ONLY, 403);
   const co = requireActiveCompanyId(c);
@@ -304,7 +290,6 @@ export const assignBillLineHandler = async (c: any) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!line) return c.json({ error: 'not_found', message: 'That bill line is not in the company you are working in.' }, 404);
   const input: AssignInput = { assign: body.assign ?? null, doNumber: str(body.doNumber), serviceRef: str(body.serviceRef), projectId: body.projectId == null ? null : Number(body.projectId) };
-  /* A fair is a project of this company (public.projects, as the fair links read it). */
   if (input.assign === 'event' && Number.isInteger(input.projectId) && Number(input.projectId) > 0) {
     const found = await c.env.DB.prepare(`SELECT p.id AS id FROM projects p WHERE p.id = ?${activeCompanySql(c, 'p.company_id')}`).bind(Number(input.projectId)).all();
     if (!(found.results ?? []).length) return c.json({ error: 'fair_not_found', message: 'That fair is not in the company you are working in.' }, 404);
@@ -318,7 +303,6 @@ export const assignBillLineHandler = async (c: any) => {
     assigned_by: a.assign ? personOf(c) : null, assigned_at: a.assign ? now : null, updated_at: now,
   }), co.companyId).eq('id', String(line.id));
   if (uErr) return c.json({ error: 'save_failed', reason: uErr.message }, 500);
-  /* The bill's DO charges follow its DO lines. */
   const carrierId = str(line.threepl_company_id);
   if (carrierId) {
     const bill = await loadApBill(deps, String(line.ap_invoice_id));

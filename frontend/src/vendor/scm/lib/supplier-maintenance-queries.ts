@@ -19,10 +19,8 @@ export type SupplierMaintenanceRow = {
   status: string;
   currency: string;
   paymentTerms: string | null;
-  /** TRADE posts to the AP control (400-0000), OTHER to other creditors (405-0000). */
   controlKind: 'TRADE' | 'OTHER';
   controlCode: string;
-  /* The Finance part — absent for a caller who is not Finance. */
   tinNumber?: string | null;
   businessRegNo?: string | null;
   registrationNo?: string | null;
@@ -31,13 +29,11 @@ export type SupplierMaintenanceRow = {
   bankAccountNo?: string | null;
   bankAccountName?: string | null;
   forPurchasing?: boolean;
-  /** What the books say is owed to the supplier (credit less debit on its AP lines). */
   owedSen: number;
   advanceSen: number;
   creditSen: number;
   openInvoices: number;
   openSen: number;
-  /** Purchase invoices brought over from AutoCount — open, never booked here. */
   preErpSen: number;
 };
 
@@ -110,7 +106,6 @@ export type SupplierMaintenanceBody = {
   bankAccountNo?: string | null;
   bankAccountName?: string | null;
   forPurchasing?: boolean;
-  /** Create only: 400 or 405 — the kind the server numbers a blank code under. */
   codeKind?: '400' | '405';
   postcode?: string | null;
   state?: string | null;
@@ -122,7 +117,6 @@ const refreshSuppliers = (qc: ReturnType<typeof useQueryClient>, id?: string) =>
   void qc.invalidateQueries({ queryKey: ['supplier-maintenance'] });
   void qc.invalidateQueries({ queryKey: ['suppliers'] });
   void qc.invalidateQueries({ queryKey: ['suppliers-paged'] });
-  /* The number just used is no longer the next one. */
   void qc.invalidateQueries({ queryKey: ['supplier-next-code'] });
   if (id) void qc.invalidateQueries({ queryKey: ['supplier-detail', id] });
 };

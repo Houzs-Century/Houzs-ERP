@@ -77,11 +77,8 @@ type HeaderDraft = {
   currency: string;
   notes: string;
 };
-/* T12 — widened with the line's identity/variant fields so a MANUAL receive line
-   (pc_order_item_id == null) can edit its description + bedframe/sofa variants in
-   Edit mode; PCO-sourced lines keep them read-only. */
 type LineDraft = {
-  qty: number;            // maps to qty_received
+  qty: number;
   unitPriceSen: number;
   discountSen: number;
   deliveryDate: string | null;
@@ -105,8 +102,6 @@ type GrnItemRow = Record<string, unknown> & {
   variants?: Record<string, unknown> | null;
   source_po_number?: string | null;
   received_at?: string | null;
-  /* PCO-sourced lines carry the source order line id; identity + variants stay
-     read-only on those. Manual lines have it null → full editing. */
   pc_order_item_id?: string | null;
   downstream?: { docNumber: string; docType: string; qty: number; status: string }[];
 };
@@ -143,13 +138,9 @@ export const PurchaseConsignmentReceiveDetail = () => {
   const cancel = useCancelPurchaseConsignmentReceive();
 
   const grn = detail.data?.grn ?? null;
-  /* The PC Receive record stores its number as receive_number; grn_number is
-     the GRN field this page was cloned from and is never returned (DEV-57). */
   const recvNo: string = grn?.receive_number ?? grn?.grn_number ?? '';
   const items = (detail.data?.items ?? []) as GrnItemRow[];
 
-  /* T12 — maintenance config + fabrics drive the per-category variant editor on
-     MANUAL bedframe/sofa lines in Edit mode (shared PcVariantEditor). */
   const maintQ = useMaintenanceConfig('master');
   const maint  = maintQ.data?.data ?? null;
   const fabrics = useFabricTrackings().data ?? [];
@@ -177,18 +168,8 @@ export const PurchaseConsignmentReceiveDetail = () => {
     }
   }, [hardLocked, isEditing]);
 
-  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
-     until 2026-08-17, so the loading render called fewer hooks than the loaded
-     one and React threw #310 ("rendered more hooks than during the previous
-     render") the moment the query resolved — a blank "Something went wrong
-     loading this page." on a direct URL / refresh. Arriving from the list hid
-     it: react-query already had the detail cached, so the isPending branch
-     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
-     grn; it can only ever be CALLED from the preview dialog, which does not
-     exist until the record has loaded. */
   const deliverPrintPdf = (action: PdfAction) => {
     if (!grn) return;
-    // A consignment receive has no QC accept/reject — accepted = received.
     const pdfHeader = {
       grn_number: recvNo,
       status: String(grn.status),
@@ -244,8 +225,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(grn)), [k]: v }));
-    /* When a PC Return exists the LINES are locked, so a Received-Date edit must
-       NOT fan into the line drafts (would 409 on the locked line PATCH). */
     if (lockedDueToChildren) return;
     if (k === 'receivedAt') {
       setLineDrafts((prev) => {
@@ -261,8 +240,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
   const setLine = (it: GrnItemRow, patch: Partial<LineDraft>) =>
     setLineDrafts((prev) => ({ ...prev, [it.id]: { ...(prev[it.id] ?? lineSnapshot(it)), ...patch } }));
 
-  /* T12 — patch one variant key on a line + auto-compute bedframe Total Height
-     (= Divan + Leg + Gap), mirroring New consignment receive's setVariant. */
   const setVariant = (it: GrnItemRow, key: string, value: unknown) =>
     setLineDrafts((prev) => {
       const cur = prev[it.id] ?? lineSnapshot(it);
@@ -290,8 +267,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
         const d = lineDrafts[it.id];
         if (!d) continue;
         const snap = lineSnapshot(it);
-        /* Identity/variants are only editable on MANUAL lines (no
-           pc_order_item_id); PCO-sourced lines never send those keys. */
         const manual = !it.pc_order_item_id;
         const identityChanged = manual && (
           d.materialName !== snap.materialName ||
@@ -309,8 +284,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
             grnId: grn.id, itemId: it.id,
             qty: d.qty, unitPriceSen: d.unitPriceSen,
             discountSen: d.discountSen, deliveryDate: d.deliveryDate,
-            /* T12 — only manual lines send identity/variants; the server
-               recomputes description2 + resyncs inventory. */
             ...(manual ? {
               materialName: d.materialName,
               description:  d.materialName,
@@ -332,7 +305,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
 
   return (
     <div className="space-y-4">
-      {/* ── Header ──────────────────────────────────────────────── */}
       <PageHeader back
         eyebrow="Procurement"
         title={`${recvNo} — ${grn.supplier?.name ?? grn.supplier?.code ?? '—'}`}
@@ -407,7 +379,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
         </div>
       )}
 
-      {/* ── Supplier / dates / warehouse / currency / notes ─────── */}
       <SupplierCard
         grn={grn}
         draft={headerView}
@@ -417,7 +388,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
         isEditing={isEditing}
       />
 
-      {/* ── Line items ──────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Line Items ({visibleItems.length})</h2>
@@ -433,8 +403,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
               const variantSummary = buildVariantSummary(it.item_group ?? null, it.variants as Record<string, unknown> | null)
                 || it.description
                 || it.material_name;
-              /* T12 — identity + variants are editable only on MANUAL lines
-                 (no pc_order_item_id); PCO-sourced lines stay read-only. */
               const isManualLine = !it.pc_order_item_id;
               const showVariantEditor =
                 isEditing && isManualLine && !isLocked &&
@@ -511,8 +479,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
                     </label>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Description</span>
-                      {/* T12 — Description editable on MANUAL lines in Edit;
-                          read-only on PCO-sourced lines + in View. */}
                       {isEditing && isManualLine ? (
                         <input
                           type="text" value={d.materialName} disabled={isLocked}
@@ -529,9 +495,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
                     </label>
                   </div>
 
-                  {/* T12 — variants. Edit + MANUAL bedframe/sofa line → the shared
-                      PcVariantEditor; otherwise the read-only summary. PCO-sourced
-                      lines stay locked to the summary. */}
                   {showVariantEditor ? (
                     <div style={{ background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)' }}>
                       <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-11)', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--fg-muted)', marginBottom: 'var(--space-2)' }}>{d.itemGroup} Variants</div>
@@ -575,7 +538,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
                     </span>
                   </div>
 
-                  {/* Fields row — Received · Unit Price · Discount · Delivery Date. */}
                   <div className={styles.formGrid4}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Received</span>
@@ -649,7 +611,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
         )}
       </section>
 
-      {/* ── Totals ────────────────────────────────────────────────── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Totals</h2>
@@ -675,9 +636,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
   );
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Supplier / header card — controlled by the page's draft.
-   ════════════════════════════════════════════════════════════════════════ */
 
 const SupplierCard = ({
   grn, draft, onField, locked, identityLocked = false, isEditing = true,
@@ -690,7 +648,6 @@ const SupplierCard = ({
   identityLocked?: boolean;
   isEditing?: boolean;
 }) => {
-  // Inherited fields (supplier / currency) freeze on a hard lock OR a live PC Return.
   const inheritedLocked = locked || identityLocked;
   const suppliersQ = useSuppliers();
   const suppliers = suppliersQ.data ?? [];

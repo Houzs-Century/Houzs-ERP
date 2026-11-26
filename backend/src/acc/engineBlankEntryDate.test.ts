@@ -1,27 +1,9 @@
-// A blank entryDate must never reach the ledger.
-//
-// `POST /api/scm/accounting/journal-entries` read `body.entryDate ?? todayMyt()`
-// and `??` is NULLISH, so a cleared date input — Accounting.tsx:430 is a bare
-// `<input type="date">` and line 412 sends the key unconditionally — posted "".
-// Two things then broke at once, and the second is the quiet one:
-//
-//   1. journal_entries.entry_date is `date NOT NULL`, so the insert 500s and
-//      the whole manual journal is lost.
-//   2. je_no is minted from `new Date(entryDate)`, and `new Date("")` is
-//      Invalid Date — the month prefix comes out `NaN`, so any path that
-//      tolerated (1) would number the entry `JE-NaNNaN-0001`.
-//
-// The gate coerces at postJournal, not only at the route, because postJournal is
-// THE one posting path (see the file header) and the route is not its only
-// caller. Blank takes the same road an absent key already took: today.
 import { describe, expect, it } from 'vitest';
 
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
 import { todayMyt } from '../scm/lib/my-time';
 import { postJournal } from './engine';
 
-/* Deliberately NOT the AR/AP control codes: a MANUAL journal may not name them
-   (brief §2.4), and the manual journal is the path this bug arrives on. */
 const CHART: Row[] = [
   { account_code: '905-0000', account_name: 'Rental Expense', account_type: 'EXPENSE', parent_code: null, is_active: true, company_id: 1 },
   { account_code: '310-0010', account_name: 'Bank', account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1 },
@@ -50,7 +32,6 @@ describe('postJournal — a blank entry date', () => {
     const today = todayMyt();
     const je = sb.tables.journal_entries[0]!;
     expect(je.entry_date).toBe(today);
-    // JE-YYMM-NNNN off the DOCUMENT date. Uncoerced this read 'JE-NaNNaN-0001'.
     expect(je.je_no).toBe(`JE-${today.slice(2, 4)}${today.slice(5, 7)}-0001`);
   });
 

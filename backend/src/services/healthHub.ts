@@ -1,21 +1,3 @@
-// ---------------------------------------------------------------------------
-// healthHub.ts — Houzs's 5-minute health report for the Houzs IT Hub.
-//
-// The hub's own check of /health only proves the Worker answers. This sends what
-// it cannot see: a live database query, the email outbox backlog, background
-// job health and AI failures by feature and model. The hub draws it on its
-// System health page, so IT see a problem without anyone opening ours.
-//
-// Nothing here is measured twice: jobs, queues and the AI verdict come from the
-// same functions the System Health page uses (healthMeasures.ts, jobHealth.ts,
-// serviceHealth.ts), so the hub and the page always say the same thing.
-//
-// Payload and endpoint mirror the sister systems exactly (Hookka
-// src/api/lib/hub-health.ts, Conts functions/_lib/systemHealth.ts):
-// POST <IT_HUB_URL>/api/v1/sys/health, Bearer <company hub key>,
-// { ok, time, db, counts, checks[], problems[] }. Sent from the */5 cron slot.
-// No hub address or key => nothing is measured or sent, and nothing throws.
-// ---------------------------------------------------------------------------
 import { sql } from "drizzle-orm";
 import type { Env } from "../types";
 import { getDb, type DB } from "../db/client";
@@ -255,7 +237,6 @@ export async function measureHealthForHub(env: Env, nowMs: number): Promise<HubH
     await db.execute(sql`SELECT 1 AS x`);
     dbState = { ok: true, latency_ms: Date.now() - t0 };
   } catch {
-    // Driver messages can name tables or hosts, so they stay out of the report.
     console.error("[health-hub] database check failed");
     dbState = { ok: false, latency_ms: Date.now() - t0, error: "Did not answer a live query" };
   }

@@ -44,14 +44,13 @@ describe('the request filled from the bill', () => {
     const page1 = billOffer({ ...BILL, totalSen: null, dueDate: null, bankName: null, bankAccountNo: null, bankAccountName: null, summary: 'Payroll cost share' });
     const afterPage1 = fillFromBill(EMPTY, page1);
     expect(afterPage1).toMatchObject({ payeeName: 'HOUZS VENTURE HOLDINGS SDN BHD', amountSen: 0, purpose: 'Payroll cost share', bankAccountNo: null });
-    /* They touch the purpose; the second page reads more. */
     const touched = { ...afterPage1, purpose: 'HC share of Aug payroll' };
     const page2 = billOffer({ ...BILL, vendorName: 'Houzs Venture Holdings' });
     const afterPage2 = fillFromBill(touched, page2, page1);
     expect(afterPage2).toMatchObject({
-      payeeName: 'Houzs Venture Holdings',          // untouched — follows the newer read
-      purpose: 'HC share of Aug payroll',           // typed — stays
-      amountSen: 808_233, dueDate: '2026-09-30', bankAccountNo: '123-4567-8901', // empty — filled
+      payeeName: 'Houzs Venture Holdings',
+      purpose: 'HC share of Aug payroll',
+      amountSen: 808_233, dueDate: '2026-09-30', bankAccountNo: '123-4567-8901',
     });
   });
 

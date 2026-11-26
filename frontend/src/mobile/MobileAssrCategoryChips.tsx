@@ -4,35 +4,15 @@ import {
 } from "../lib/assrProductCategories";
 import "./mobile.css";
 
-/* Product-category chips for a service case, on the phone.
- *
- * The desktop twin is `CategoryChips` in `frontend/src/pages/ServiceCases.tsx`.
- * Only the MARKUP differs — desktop is Tailwind inside the app shell, this is
- * the `.hz-m` phone design. Every RULE (which chips exist, that a retired value
- * stays selectable, what a toggle produces) comes from
- * `frontend/src/lib/assrProductCategories.ts`, which both files import. That
- * split is deliberate: re-deriving the rule beside the markup is what put free
- * text on this column in the first place.
- *
- * `onChange` fires per toggle with the FULL next array, matching desktop —
- * `PATCH /api/assr/:id` takes the complete set and rewrites the
- * `assr_case_categories` join rows from it, so a partial list would delete
- * categories the operator did not deselect. */
 export function MobileAssrCategoryChips({
   options,
   value,
   onChange,
   disabled,
 }: {
-  /** Names from `assr_product_categories`, in the lookup's own sort order. */
   options: string[];
-  /** The case's current categories. */
   value: string[];
-  /** Receives the complete next set. */
   onChange: (next: string[]) => void;
-  /** REQUIRED: whether the case is locked / a save is in flight. Not optional —
-   *  an omitted "is this editable" flag defaulting to editable is the
-   *  optional-param-noop class this repo keeps paying for. */
   disabled: boolean;
 }) {
   const chips = categoryChipList(options, value);

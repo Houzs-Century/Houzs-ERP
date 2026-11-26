@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { reshipAfterRevert, retireDoStockCycle } from './do-stock-cycle';
 
-/* Symptom: a DO reverted to Draft and shipped again took no stock out (stock read too high).
-   Cause: the ship's guard saw the first OUT, still tagged 'DO', and no-oped.
-   Fix: an OUT with a revert's reversal beside it is retired, then the ship deducts. */
 
 function db(opts: { reversals: number; readError?: string; retireError?: string }) {
   const calls: string[] = [];

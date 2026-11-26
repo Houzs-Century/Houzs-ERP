@@ -1,22 +1,3 @@
-// ----------------------------------------------------------------------------
-// /accounting — simple double-entry accounting layer (PR #36).
-//
-// Endpoints:
-//   GET    /accounts                  — chart of accounts
-//   GET    /journal-entries           — list (filter by date range / source)
-//   GET    /journal-entries/:id       — one JE w/ lines
-//   POST   /journal-entries           — create draft JE (lines included)
-//   POST   /journal-entries/:id/post  — mark posted (trigger checks balance)
-//   POST   /post/si/:invoiceNumber    — auto-post a SI: Dr AR, Cr Revenue
-//   POST   /post/pi/:invoiceNumber    — auto-post a PI: Dr Inventory, Cr AP
-//   GET    /gl                        — flat GL stream (v_gl_entries)
-//   GET    /balances                  — running account balances (v_account_balances)
-//   GET    /ar-aging                  — the formal debtor aging (accounting-aging.ts)
-//   GET    /ap-aging                  — the formal creditor aging (accounting-aging.ts)
-//
-// Note: this is intentionally minimal — single legal entity, single currency.
-// ERPNext-style chart hierarchy + cost centres are deferred.
-// ----------------------------------------------------------------------------
 
 import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -100,7 +81,6 @@ import {
 } from './accounting-todo-tasks';
 import { todoCalendarHandler } from './accounting-todo-calendar';
 import { rebankListHandler, rebankMoveHandler } from './accounting-rebank';
-/* Its handler stays importable from here, where the tests have always found it. */
 export { dailyBankHandler, loadDailyBankBoard } from './accounting-daily-bank';
 import { openingAccountsPut, openingGet, openingLock, openingPaperCancel, openingPaperCreate, openingPaperUpdate, openingStockPut, openingUnlock } from './accounting-opening';
 import { numberingGet, numberingPut } from './accounting-numbering';
@@ -139,11 +119,6 @@ import {
 export const accounting = new Hono<{ Bindings: Env; Variables: Variables }>();
 accounting.use('*', supabaseAuth);
 
-/* Layer 3 — acquirer settlement reconciliation (brief §3.5). The handlers live
-   in accounting-settlement.ts because it is a feature, not an endpoint; they
-   are registered HERE, one path each, so every one of them appears in the
-   route-capability matrix with its gate. Each handler carries its own
-   permission check (the file's `guard`). */
 accounting.get('/settlement/setup', settlementSetup);
 accounting.patch('/settlement/setup/:code', settlementSetupSave);
 // Maintenance takes the company as a parameter (owner: 我会 overall 维护) — the
@@ -201,18 +176,8 @@ accounting.get('/settlement/charge-accounts', chargeAccountsHandler);
    Owner, 2026-08-19: 我不是应该upload bank statement…然后你也自动核对吗 —
    整张月结单全部对. */
 accounting.get('/bank/setup', bankSetup);
-/* The chart maintenance surface (roadmap A) — union + per-company ticks +
-   the accountant's import. Handlers in accounting-chart.ts. */
-/* The product-group ↔ account registry (GL redesign item 1) — the rules that
-   decide WHICH purchase/sales account a document line posts to. Handlers in
-   accounting-item-groups.ts. */
 accounting.get('/item-groups', itemGroupsList);
-/* One-shot ledger repair (GL redesign item 3): every posted PI reaches the
-   periodic shape — missing journals posted, Dr-330 journals reversed and
-   re-posted — through the SAME functions live documents use. dryRun first. */
 accounting.post('/backfill/pi-periodic', piPeriodicBackfill);
-/* Month-end stock close (GL redesign item 4): the run log + live value, and
-   the manual run — the nightly close itself fires from the cron. */
 accounting.get('/stock-close', stockCloseStatus);
 accounting.post('/stock-close/run', stockCloseRun);
 /* The monthly commission release (owner 2026-11-25): what the prepayment holds
@@ -221,8 +186,6 @@ accounting.get('/commission-release', commissionReleaseStatus);
 accounting.get('/commission-release/orders', commissionReleaseOrders);
 accounting.post('/commission-release/run', commissionReleaseRun);
 accounting.post('/commission-release/settings', commissionReleaseSettings);
-/* The standard statements (GL redesign item 6) — one source (v_gl_entries),
-   AutoCount arithmetic; handlers in accounting-reports.ts. */
 accounting.get('/reports/pnl', pnlReport);
 /* The Overall P&L's views side by side — Actual, Performance, Forecast on the P&L's tree (owner 2026-11-25). */
 accounting.get('/reports/pnl-views', pnlViewsReport);
@@ -230,9 +193,7 @@ accounting.get('/reports/receipts-payments', receiptsPaymentsReport);
 accounting.get('/reports/receipts-payments/opening-bills', openingBillsGet);
 accounting.put('/reports/receipts-payments/opening-bills/place', openingBillPlacePut);
 accounting.get('/reports/receipts-payments/opening-bills/:supplierId', openingBillsOfSupplier);
-/* Its P&L forecast column: the Forecast P&L as cash on the same tree (forecast port step 2). */
 accounting.get('/reports/cash-flow-forecast', cashFlowForecastHandler);
-/* Its Capex & financing table (forecast port step 3): keyed per account and month, forecast only. */
 accounting.get('/reports/cash-flow-forecast/inputs', forecastInputsGetHandler);
 accounting.put('/reports/cash-flow-forecast/inputs', forecastInputsPutHandler);
 accounting.get('/reports/cash-flow-forecast/tf', tfGetHandler);
@@ -253,7 +214,6 @@ accounting.delete('/reports/layout', reportLayoutReset);
    expense in place of one ledger account, the rest as booked (owner
    2026-09-12; docs/bugs/0835). Handlers in accounting-performance.ts. */
 accounting.get('/reports/performance', performanceReport);
-/* Its chart's months — the same builder, the window read once (batch 6 read c6). */
 accounting.get('/reports/performance/months', performanceMonthsHandler);
 /* The monthly product profit ranking (owner 2026-10-05): every product the
    month sold, by model, with its own cost and its share of the gifts.
@@ -278,7 +238,6 @@ accounting.get('/dashboard/forecast-month', dashboardForecastMonthHandler);
    the books raise, and their count for the sidebar badge (routes/accounting-todo.ts). */
 accounting.get('/todo', financeTodoHandler);
 accounting.get('/todo/count', financeTodoCountHandler);
-/* Its tasks, routines, remarks and rule switches (redesign batch 2; routes/accounting-todo-tasks.ts). */
 accounting.get('/todo/people', todoPeopleHandler);
 accounting.get('/todo/settings', todoSettingsGetHandler);
 accounting.put('/todo/settings', todoSettingsPutHandler);
@@ -307,20 +266,14 @@ accounting.post('/opening/papers/:kind/:id/cancel', openingPaperCancel);
 accounting.post('/opening/lock', openingLock);
 accounting.post('/opening/unlock', openingUnlock);
 accounting.post('/reports/performance/settings', savePerformanceSettingsHandler);
-/* Voucher numbering — the owner's own levers (GL redesign item 8a): per-bank
-   letters + suffix width. Handlers in accounting-numbering.ts. */
 accounting.get('/numbering', numberingGet);
 accounting.put('/numbering', numberingPut);
-/* Official Receipts (GL redesign item 9): list / fetch-or-heal / the manual
-   money-confirmed button. Handlers in accounting-receipts.ts. */
 accounting.get('/receipts', receiptsList);
 accounting.post('/receipts/ensure', receiptEnsure);
 accounting.get('/receipts/backfill', receiptsBackfillPlan);
 accounting.get('/receipts/check', receiptsCheck);
 accounting.post('/receipts/backfill', receiptsBackfillRun);
 accounting.post('/receipts/:id/formalise', receiptFormalise);
-/* One receipt for its page (Claude Design, batch 5 §8.3 c7) — after /check and
-   /backfill, so those names are never read as an id. */
 accounting.get('/receipts/:id', receiptDetail);
 accounting.post('/item-groups', itemGroupCreate);
 accounting.put('/item-groups/:code/accounts', itemGroupBind);
@@ -346,10 +299,6 @@ accounting.post('/bank/statements/:id/period', bankStatementPeriod);
 accounting.post('/bank/statements/:id/auto-match', bankStatementAutoMatch);
 /* What an earlier file of the account already recorded, left out (owner 2026-10-14). */
 accounting.post('/bank/statements/:id/repeats', bankStatementRepeats);
-/* The same reconciliation asked of a MONTH rather than a file — registered
-   BEFORE nothing and after the file doors deliberately: `/bank/months` cannot
-   collide with `/bank/statements/:id`, and keeping the two families apart is
-   what lets a month be assembled out of however many files fed it. */
 accounting.get('/bank/months', bankMonths);
 accounting.get('/bank/months/:accountCode/:month', bankMonthDetail);
 /* Closing a reconciled month, and reopening one (owner: 还有lock 起来不可以随便
@@ -375,9 +324,6 @@ accounting.post('/bank/lines/match-group', bankLinesMatchGroup);
 accounting.get('/bank/card-payments', bankCardPayments);
 accounting.post('/bank/lines/:id/match-with-cards', bankLineMatchWithCards);
 
-/* ════════════════════════════════════════════════════════════════════════
-   Helpers
-   ════════════════════════════════════════════════════════════════════════ */
 
 type JeLineIn = {
   accountCode: string;
@@ -389,28 +335,15 @@ type JeLineIn = {
   notes?: string | null;
 };
 
-/* ════════════════════════════════════════════════════════════════════════
-   Chart of Accounts
-   ════════════════════════════════════════════════════════════════════════ */
 
 accounting.get('/accounts', async (c) => {
   const sb = c.get('supabase');
-  // Chart of Accounts is per-company (scm.accounts.company_id NOT NULL, mig 0083)
-  // — scope so one company can't see the other's account codes/names.
   let q = sb
     .from('accounts')
-    /* acc_money marks the accounts that ARE money (bank / cash / e-wallet —
-       the Daily Bank set). The PV "Paid From" picker offers only these; the
-       flag rides along so screens don't hardcode code ranges. special_type is
-       the AutoCount special column (0347) — pickers hide the SDC/SCC/SBS
-       control accounts by it. */
     .select('account_code, account_name, account_type, parent_code, is_active, acc_money, special_type, section');
   q = scopeToCompany(q, c);
   const { data, error } = await q.order('account_code');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  /* `sections` = the AutoCount section vocabulary in render order, so a
-     picker can group its options under the same headers the chart page
-     shows (lib/account-sections.ts, the one home). */
   return c.json({ accounts: data ?? [], sections: ACCOUNT_SECTIONS });
 });
 
@@ -445,8 +378,6 @@ const putDefaultBank = (role: 'BANK_DEFAULT' | 'BANK_PAY_DEFAULT') => async (c: 
   const code = String(body.accountCode ?? '').trim();
   if (!code) return c.json({ error: 'account_required' }, 400);
 
-  /* The default bank must actually BE money — an expense account set here
-     would silently mis-book every transfer payment and daily-bank line. */
   const { data: acct, error: aErr } = await scopeToCompanyId(
     sb.from('accounts').select('account_code, account_name, acc_money, is_active').eq('account_code', code),
     co.companyId,
@@ -469,9 +400,6 @@ export const accountRolesPutBankPayDefault = putDefaultBank('BANK_PAY_DEFAULT');
 accounting.put('/roles/BANK_DEFAULT', accountRolesPutBankDefault);
 accounting.put('/roles/BANK_PAY_DEFAULT', accountRolesPutBankPayDefault);
 
-/* ════════════════════════════════════════════════════════════════════════
-   Journal Entries
-   ════════════════════════════════════════════════════════════════════════ */
 
 export const journalEntriesList = async (c: any): Promise<Response> => {
   const sb = c.get('supabase');
@@ -492,16 +420,11 @@ export const journalEntriesList = async (c: any): Promise<Response> => {
   if (to)          q = q.lte('entry_date', to);
   if (posted === 'true')  q = q.eq('posted', true);
   if (posted === 'false') q = q.eq('posted', false);
-  q = scopeToCompany(q, c); // multi-company: isolate JEs to the active company
+  q = scopeToCompany(q, c);
 
   const { data, error } = await q.limit(500);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  /* THE FIVE JOURNALS (GL redesign item 7) — each entry labelled the
-     AutoCount way (SALES/PURCHASE/BANK/CASH/GENERAL), derived per request
-     from its source type and, for the money-side documents, from which money
-     account its lines actually touch (acc/journal-class.ts). One lines read
-     for the whole page, never one per entry. */
   const rows = (data ?? []) as Array<Record<string, unknown>>;
   const jeIds = rows.map((r) => r.id);
   /* ?withLines=1 — the Journal page grouped per entry (docs/bugs/0935): the
@@ -571,8 +494,6 @@ accounting.get('/journal-entries/:id', async (c) => {
     .eq('journal_entry_id', id)
     .order('line_no');
   if (e2) return c.json({ error: 'load_failed', reason: e2.message }, 500);
-  /* The document it was written from, so the card can open it (batch 6, g3).
-     A failed lookup does not cost the card: it is said, and the entry shows. */
   const row = je as { company_id?: number | null; source_type?: string | null; source_doc_no?: string | null };
   const docCompany = activeCompanyId(c) ?? row.company_id ?? null;
   const doc = docCompany == null
@@ -591,14 +512,7 @@ accounting.post('/journal-entries', async (c) => {
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  /* `??` is NULLISH — a cleared <input type="date"> posts "", which sails past
-     it into journal_entries.entry_date (`date NOT NULL`) and 500s the post.
-     Blank takes the same path an absent key already takes: today. */
   const entryDate = dateOrNull(body.entryDate) ?? todayMyt();
-  /* Hand-written journals are ALWAYS 'MANUAL'. The old route trusted
-     body.sourceType, which let an operator mint an entry that impersonates a
-     document type ('SI', 'PV', …) — colliding with the real document's
-     idempotency and dodging the manual-journal control-account block. */
   const sourceType = 'MANUAL';
   const sourceDocNo = body.sourceDocNo ?? null;
   /* A hand-written journal's words in upper case (owner 2026-11-09; acc/typed-text.ts). */
@@ -617,11 +531,6 @@ accounting.post('/journal-entries', async (c) => {
   const sb = c.get('supabase');
   const jeCompanyId = activeCompanyId(c);
 
-  /* Through the ONE gate (acc/engine), as a DRAFT — posting stays a separate,
-     gated step. The engine additionally validates the chart, which this route
-     never did: an account code the company does not have (or a parent header,
-     or a deactivated account) is now a 400 instead of a line the trial balance
-     can see but the chart cannot explain. */
   const r = await postJournal(sb, {
     companyId: jeCompanyId ?? null,
     entryDate,
@@ -645,29 +554,10 @@ accounting.post('/journal-entries', async (c) => {
     return c.json({ error: 'insert_failed', reason: r.reason }, 500);
   }
   const { data: je, error: jeReadErr } = await sb.from('journal_entries').select('*').eq('id', r.jeId).maybeSingle();
-  // The draft IS created at this point — a failed read-back degrades the
-  // response body, never the outcome.
   if (jeReadErr) return c.json({ journalEntry: { id: r.jeId, je_no: r.jeNo }, lineCount: lines.length }, 201);
   return c.json({ journalEntry: je ?? { id: r.jeId, je_no: r.jeNo }, lineCount: lines.length }, 201);
 });
 
-/* POST /journal-entries/:id/post — mark a journal entry posted.
- *
- * LEAK FIX (audit item 1). This used to post by BLIND ID: no load, no company
- * scope, no status check. `UPDATE journal_entries SET posted = true WHERE id =
- * $1` on a service-role client — RLS is bypassed, so that predicate WAS the
- * isolation boundary and it named only the id. Anyone signed into company A
- * who could produce a company B journal-entry id posted B's GL entry, and the
- * only trace was a posted JE in B's books that nobody in B did.
- *
- * Now: resolve the company (required — see requireActiveCompanyId), LOAD the
- * entry within it, check its status, and scope the UPDATE itself as well. The
- * update carries the company predicate too, rather than trusting the load —
- * they run as two statements, and the one that writes is the one that has to
- * be safe.
- *
- * Exported so the route test can drive it without the supabaseAuth bridge,
- * which cannot run in this harness. */
 export const postJournalEntryHandler = async (c: any) => {
   if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   const id = c.req.param('id');
@@ -676,8 +566,6 @@ export const postJournalEntryHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  // Load within the company first. A miss means "not yours OR not there", and
-  // both answer the same way — telling A that B's id exists is itself a leak.
   const { data: je, error: loadErr } = await scopeToCompanyId(
     sb.from('journal_entries').select('id, je_no, posted, reversed').eq('id', id),
     co.companyId,
@@ -685,7 +573,6 @@ export const postJournalEntryHandler = async (c: any) => {
   if (loadErr) return c.json({ error: 'load_failed', reason: loadErr.message }, 500);
   if (!je) return c.json(NOT_THIS_COMPANY, 404);
 
-  // Status checks the blind update never made.
   if ((je as { posted?: boolean }).posted === true) {
     return c.json({ error: 'already_posted', message: 'This journal entry is already posted.' }, 409);
   }
@@ -701,7 +588,6 @@ export const postJournalEntryHandler = async (c: any) => {
     co.companyId,
   ).select('*').maybeSingle();
   if (error) {
-    // The trigger throws if unbalanced — pass through as 400
     if (String(error.message).includes('not balanced')) {
       return c.json({ error: 'unbalanced', reason: error.message }, 400);
     }
@@ -716,9 +602,6 @@ accounting.post('/journal-entries/:id/post', postJournalEntryHandler);
    own day, post the new (owner 2026-09-15: 我无法 edit). Lives next door. */
 accounting.put('/journal-entries/:id', journalEntryEdit);
 
-/* ════════════════════════════════════════════════════════════════════════
-   Auto-post helpers — SI / PI confirm
-   ════════════════════════════════════════════════════════════════════════ */
 
 accounting.post('/post/si/:invoiceNumber', async (c) => {
   if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
@@ -746,20 +629,13 @@ accounting.post('/post/si/:invoiceNumber', async (c) => {
     }
   }
 
-  // Delegates to the shared idempotent poster (post-si-revenue). Same code path
-  // the SI POST handler uses on confirm, so manual + auto posting can never
-  // diverge or double-post.
   const r = await postSiRevenue(sb, invoiceNumber);
 
   if (r.ok) {
-    /* Nothing to post and nothing wrong: AutoCount already booked this sale.
-       Answered explicitly so the caller is not left inferring it from a missing
-       jeNo. */
     if (r.status === 'migrated_source') {
       return c.json({ ok: true, status: 'migrated_source', posted: false, message: MIGRATED_NO_GL_MESSAGE });
     }
     if (r.status === 'already_posted') {
-      // Keep the historical 409 contract for the explicit re-post endpoint.
       return c.json({ error: 'already_posted', existingJe: { id: r.jeId, je_no: r.jeNo } }, 409);
     }
     return c.json({ ok: true, jeNo: r.jeNo, jeId: r.jeId, totalSen: r.totalSen });
@@ -769,24 +645,11 @@ accounting.post('/post/si/:invoiceNumber', async (c) => {
   return c.json({ error: r.status, reason: r.reason }, 500);
 });
 
-/* ── postPiAccounting (extracted 2026-06-01) — idempotent PI → GL post ──────
-   Writes Dr <each group's purchase account> / Cr AP for the PI total (the
-   AutoCount periodic shape, GL redesign item 2 — Dr INVENTORY until
-   2026-09-05; stock value now reaches the GL only as the month-end
-   adjustment). Shared by
-   the manual POST /post/pi route AND resyncPiAccounting (void+repost on a
-   post-issue line edit). Mirrors postSiRevenue: keyed on an ACTIVE (non-reversed)
-   PI JE, so a reversed original never blocks a fresh re-post. */
 export type PostPiResult =
   | { ok: true; status: 'posted'; jeNo: string; jeId: string; totalSen: number }
   | { ok: true; status: 'already_posted'; jeNo: string; jeId: string }
-  /* Deliberately not posted, and that is a SUCCESS — see the migrated guard
-     below. It is `ok: true` so the confirm handler does not write its
-     "AP/GL post FAILED" audit row for a thing that was never meant to post. */
   | { ok: true; status: 'migrated_source' }
   | { ok: false; status: 'invoice_not_found' | 'zero_total' | 'je_insert_failed' | 'lines_insert_failed' | 'post_failed'
-      /* The periodic-shape refusals (GL redesign item 2): fixable by the
-         operator, mapped to 400 at the manual endpoint. */
       | 'group_unbound' | 'no_lines' | 'line_ungrouped'; reason?: string };
 
 export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<PostPiResult> {
@@ -797,18 +660,9 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
     .single();
   if (error || !piRaw) return { ok: false, status: 'invoice_not_found' };
 
-  /* MIGRATED PAPERWORK POSTS NO JOURNAL (migration 0280). This invoice mirrors
-     one AutoCount already raised, and AutoCount already booked the payable
-     behind it. Posting Dr INVENTORY / Cr AP here would count the same money in two
-     books. The guard lives in this function rather than at its call sites so
-     every caller — the confirm handler, resyncPiAccounting, any future one — is
-     covered by construction. */
   if ((piRaw as unknown as { migrated_no_stock?: boolean | null }).migrated_no_stock === true) {
     return { ok: true, status: 'migrated_source' };
   }
-  // Cast through `unknown` — Supabase JS without generated types returns
-  // `GenericStringError` from `.select(string).single()` even when data is
-  // populated. Project-wide pattern; see routes/admin.ts L97.
   const pi = piRaw as unknown as {
     id: string;
     invoice_number: string;
@@ -821,19 +675,11 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
     suppliers: { code: string | null; name: string | null } | null;
   };
 
-  /* Multi-currency AP (migration 0082) — the PI's total_sen is in the PI's OWN
-     currency (RMB / USD / SGD / MYR). The GL must be MYR, so convert AT POST TIME:
-     exchange_rate = MYR per 1 unit of `currency` (1 for MYR). The PI row is
-     untouched — only the JE legs below carry the converted amount. For an MYR PI
-     the rate is 1, so this is a no-op (totalSen unchanged) and existing MYR GL
-     behaviour is byte-for-byte identical. The single Dr/Cr pair post the SAME
-     figure, so the JE always balances. */
   const foreignTotalSen = Number(pi.total_sen);
   if (foreignTotalSen <= 0) return { ok: false, status: 'zero_total' };
-  const totalSen = toMyrSen(foreignTotalSen, pi.exchange_rate); // MYR posted to the GL
+  const totalSen = toMyrSen(foreignTotalSen, pi.exchange_rate);
 
   const supplier = pi.suppliers ?? { code: null, name: null };
-  // Multi-company (mig 0061): the JE + its lines belong to the PI's company.
   const companyId = pi.company_id ?? null;
 
   /* WHICH PURCHASE ACCOUNT each ringgit belongs to (GL redesign item 2,
@@ -860,10 +706,6 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
   if (!split.ok) return { ok: false, status: split.status, reason: split.reason };
   const groupDebits = split.groups;
 
-  /* Through the ONE gate (acc/engine). The engine owns the idempotency guard
-     (fails closed on a read blip — a blip must never book a SECOND payable),
-     the je_no mint, and the write sequence; this function owns the PI
-     specifics: the fetch, the migrated guard, FX, and the rule's lines. */
   const roles = await resolveRoles(sb, companyId);
   const r = await postJournal(sb, {
     companyId,
@@ -925,8 +767,6 @@ accounting.post('/post/pi/:invoiceNumber', async (c) => {
   if (r.ok) return c.json({ ok: true, jeNo: r.jeNo, jeId: r.jeId, totalSen: r.totalSen });
   if (r.status === 'invoice_not_found') return c.json({ error: 'invoice_not_found' }, 404);
   if (r.status === 'zero_total') return c.json({ error: 'zero_total' }, 400);
-  /* The operator can FIX these (bind the group / repair the line) — a 400
-     with the sentence, not a 500 that reads as "the system broke". */
   if (r.status === 'group_unbound' || r.status === 'no_lines' || r.status === 'line_ungrouped') {
     return c.json({ error: r.status, message: r.reason }, 400);
   }
@@ -961,12 +801,6 @@ export async function reversePiAccounting(
     entryDate?: string;
   } = {},
 ): Promise<{ ok: boolean; status: string; jeNo?: string; jeId?: string; reason?: string }> {
-  /* Through the ONE gate (acc/engine): find the ACTIVE PI JE, write a faithful
-     contra (same accounts + parties, sides swapped), post it, flag the
-     original. The engine fails CLOSED on every read - a failed lookup must
-     never read as "nothing to reverse" while Dr Inventory / Cr Payables stays
-     live against a cancelled invoice. Fallback (line-less original) mirrors
-     the historical canonical contra: Dr AP / Cr Inventory. */
   return reverseJournal(sb, {
     sourceType: 'PI',
     sourceDocNo: invoiceNumber,
@@ -979,12 +813,6 @@ export async function reversePiAccounting(
   });
 }
 
-/* ── resyncPiAccounting (2026-06-01) — re-align a posted PI's GL after a line edit
-   Wei Siang chose "auto void the stale entry + re-post at the new amount". UNLIKE
-   the SI side, a PI does NOT auto-post on create — it only has a JE once someone
-   manually posts it from the accounting page. So this NEVER auto-creates a JE: it
-   only fires when an ACTIVE PI JE already exists and its total no longer matches
-   the invoice. Idempotent + best-effort. */
 export async function resyncPiAccounting(
   sb: any,
   invoiceNumber: string,
@@ -997,16 +825,8 @@ export async function resyncPiAccounting(
   if (jeRowsErr) return { ok: false, status: 'resync_read_failed', reason: `jeRows: ${jeRowsErr.message}` };
   const active = ((jeRows ?? []) as Array<{ id: string; total_debit_sen: number; reversed: boolean | null }>)
     .find((r) => !r.reversed);
-  // Not posted to the GL yet → nothing to keep in sync (PI posts only on demand).
   if (!active) return { ok: true, status: 'not_posted' };
 
-  /* #690 flagged this read as folding "a blip into a changed total and churns a
-     void+repost". It is worse than that: there is no repost. A blip leaves `pi`
-     null, newTotal folds to 0, the live JE is reversed, and `newTotal <= 0` then
-     returns 'reversed_to_zero' BEFORE postPiAccounting is reached — so a healthy
-     PI silently loses its payable on a line edit and the caller is told ok.
-     `error === null && pi === null` (invoice genuinely gone) keeps voiding, as
-     today. */
   const { data: pi, error: piErr } = await sb
     .from('purchase_invoices')
     .select('total_sen, exchange_rate')
@@ -1014,13 +834,9 @@ export async function resyncPiAccounting(
     .maybeSingle();
   if (piErr) return { ok: false, status: 'resync_read_failed', reason: `pi: ${piErr.message}` };
   const piRow = pi as { total_sen?: number; exchange_rate?: string | number | null } | null;
-  // Migration 0082 — the posted JE is in MYR; compare against the MYR-equivalent
-  // of the (foreign) PI total so a foreign PI doesn't churn a void+repost every
-  // edit. MYR ⇒ rate 1, so newTotal === total_sen (unchanged behaviour).
   const newTotal = toMyrSen(Number(piRow?.total_sen ?? 0), safeRate(piRow?.exchange_rate));
   if (Number(active.total_debit_sen) === newTotal) return { ok: true, status: 'unchanged' };
 
-  // Total changed → void the stale JE, then re-post at the new amount.
   const rev = await reversePiAccounting(sb, invoiceNumber);
   if (!rev.ok) return { ok: false, status: rev.status, reason: rev.reason };
   if (newTotal <= 0) return { ok: true, status: 'reversed_to_zero' };
@@ -1028,12 +844,7 @@ export async function resyncPiAccounting(
   return post.ok ? { ok: true, status: 'resynced' } : { ok: false, status: post.status, reason: (post as { reason?: string }).reason };
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   GL stream + balances + aging
-   ════════════════════════════════════════════════════════════════════════ */
 
-/* Exported for the contract test (glStreamSkipsReversalPairs.test.ts): the
-   stream is asserted through a bare Hono app, the way controlCheckHandler is. */
 export const glStreamHandler = async (c: any) => {
   const sb = c.get('supabase');
   const accountCode = c.req.query('accountCode');
@@ -1045,11 +856,9 @@ export const glStreamHandler = async (c: any) => {
      (mig 0290), so the rows that come back carry them for the screen's mark. */
   const showReversed = ['1', 'true'].includes(String(c.req.query('showReversed') ?? ''));
 
-  // PostgREST's 1000-row cap silently truncated the GL export — page through so
-  // a wide account/date range exports every entry, not just the first 1000.
   const { data, error } = await paginateAll((pFrom, pTo) => {
     let q = sb.from('v_gl_entries').select('*');
-    q = scopeToCompany(q, c); // multi-company: isolate GL lines to the active company (view exposes company_id, mig 0106)
+    q = scopeToCompany(q, c);
     if (accountCode) q = q.eq('account_code', accountCode);
     if (from)        q = q.gte('entry_date', from);
     if (to)          q = q.lte('entry_date', to);
@@ -1065,30 +874,22 @@ accounting.get('/gl', glStreamHandler);
    accounting-ledger.ts. */
 accounting.get('/gl/ledger', ledgerReport);
 
-/* The Trial balance. `asOf` (YYYY-MM-DD, the owner's redesign batch 6 read c1)
-   cuts it at a day: the lines the books count dated after it come back off the
-   all-time balances (acc/balances-as-of). Without it, every line, as before.
-   Reads only. Exported for tests/trialBalanceAsOf.test.ts. */
 export const balancesHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase');
   const asOf = c.req.query('asOf') ?? '';
   if (asOf !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
     return c.json({ error: 'bad_request', reason: 'asOf must be a day written YYYY-MM-DD.' }, 400);
   }
-  // PostgREST's 1000-row cap silently truncated the balance list — page through
-  // so every account balance is returned, not just the first 1000.
   const { data, error } = await paginateAll((from, to) => scopeToCompany(sb
     .from('v_account_balances')
-    .select('*'), c) // multi-company: isolate balances to the active company (view exposes company_id, mig 0106)
+    .select('*'), c)
     .order('account_code')
     .range(from, to));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (asOf === '') return c.json({ balances: data ?? [] });
-  /* The same lines the view counts (posted, inside the books) dated after the
-     day; the reversal pairs are left out by balancesAsOf, as the view does. */
   const later = await paginateAll((from, to) => scopeToCompany(sb
     .from('v_gl_entries')
-    .select('account_code, debit_sen, credit_sen, reversed, reversed_by_je'), c) // multi-company: the active company's lines only
+    .select('account_code, debit_sen, credit_sen, reversed, reversed_by_je'), c)
     .gt('entry_date', asOf)
     .order('line_id')
     .range(from, to));
@@ -1104,13 +905,9 @@ accounting.get('/balances', balancesHandler);
 accounting.get('/ar-aging', arAgingHandler);
 accounting.get('/ap-aging', apAgingHandler);
 
-/* ════════════════════════════════════════════════════════════════════════
-   Phase 1 — chart management, manual-JV reversal, control-account self-check
-   ════════════════════════════════════════════════════════════════════════ */
 
 const ACCOUNT_TYPES = new Set(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']);
 
-/* POST /accounts — add an account to the ACTIVE company's chart. */
 accounting.post('/accounts', async (c) => {
   if (!requireGlPost(c)) return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
   const co = requireActiveCompanyId(c);
@@ -1144,9 +941,6 @@ accounting.post('/accounts', async (c) => {
   const { data: created, error } = await sb.from('accounts')
     .insert({
       company_id: co.companyId, account_code: code, account_name: name, account_type: type, parent_code: parent, is_active: true,
-      /* The per-company door names no section: the type's default shelf,
-         the same rule the migration seeded with. The chart page's own door
-         (accounting-chart.ts) takes the section explicitly. */
       section: defaultSectionFor(type, code),
     })
     .select('account_code, account_name, account_type, parent_code, is_active')
@@ -1155,9 +949,6 @@ accounting.post('/accounts', async (c) => {
   return c.json({ account: created }, 201);
 });
 
-/* PATCH /accounts/:code — rename / re-parent / activate-deactivate. The CODE
-   itself is immutable: history references it, and a deactivated row is the
-   alias record a rename leaves behind (brief 2.9). */
 accounting.patch('/accounts/:code', async (c) => {
   if (!requireGlPost(c)) return c.json({ error: "You don't have permission to manage the chart of accounts." }, 403);
   const co = requireActiveCompanyId(c);
@@ -1195,9 +986,6 @@ accounting.patch('/accounts/:code', async (c) => {
   if (body.isActive !== undefined) {
     const active = body.isActive === true;
     if (!active) {
-      /* Deactivating a PARENT would orphan its children's grouping, and
-         deactivating a ROLE account would stop the posting rules dead —
-         refuse both, and say why. */
       const { data: kids, error: kidsErr } = await sb.from('accounts').select('account_code')
         .eq('company_id', co.companyId).eq('parent_code', code).eq('is_active', true).limit(1);
       if (kidsErr) return c.json({ error: 'load_failed', reason: kidsErr.message }, 500);
@@ -1219,9 +1007,6 @@ accounting.patch('/accounts/:code', async (c) => {
   return c.json({ account: updated });
 });
 
-/* POST /journal-entries/:id/reverse — void a MANUAL journal with a contra.
-   Document-sourced entries are NOT reversible here: cancel the document and
-   its own flow writes the contra (one lifecycle per document, brief 2.8). */
 accounting.post('/journal-entries/:id/reverse', async (c) => {
   if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   const co = requireActiveCompanyId(c);
@@ -1252,33 +1037,15 @@ accounting.post('/journal-entries/:id/reverse', async (c) => {
   return c.json({ ok: true, ...('jeNo' in r ? { jeNo: r.jeNo, jeId: r.jeId } : {}), status: r.status });
 });
 
-/* GET /control-check — reconciliation layer 1 (brief 3.5): control account
-   vs the documents that are supposed to explain it, named to the doc.
-
-   For each control role (AR from SI documents, AP from PI documents) it
-   reports DRIFT docs (document total != its ACTIVE journal total, including
-   a confirmed doc with NO journal and a journal whose doc is gone) and
-   FOREIGN lines (control-account lines from a source no rule maps there).
-   Sums run over POSTED, non-reversed entries — the same predicate every
-   balance view uses. */
-/* Exported so a test can mount it on a bare app, the same reason
-   postJournalEntryHandler above is: the router carries supabaseAuth, which
-   cannot run without Worker bindings. */
 export const controlCheckHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  /* The check itself lives in acc/control-check, so Self-check's Run again
-     and the nightly run read what this page reads (batch 6 c2/c3). */
   return c.json(await runControlCheck(c.get('supabase'), co.companyId));
 };
 
 accounting.get('/control-check', controlCheckHandler);
-/* Self-check's Run again: the same reads, summed for To do (batch 6 c3). */
 accounting.post('/self-check/run', selfCheckRunHandler);
 
-/* ════════════════════════════════════════════════════════════════════════
-   Phase 2A — acquirer master + customer-payment backfill
-   ════════════════════════════════════════════════════════════════════════ */
 
 /* GET /acquirers — the §2.13 master: the acquirer the screen names and the
    accounts the ledger books are ONE row. Phase 2B's reconciliation reads the
@@ -1293,12 +1060,6 @@ accounting.get('/acquirers', async (c) => {
   return c.json({ acquirers: data ?? [] });
 });
 
-/* POST /backfill/customer-payments — walk SO payment rows that never reached
-   the ledger and post them through the gate. Batched (default 200, max 500)
-   and idempotent: the engine guard + the acc_je_one_active_source index make
-   re-runs converge instead of double-posting. NOT company-scoped on purpose -
-   each payment resolves its own SO's company, and the historical debt spans
-   both books. Call repeatedly until `remaining` is 0. */
 accounting.post('/backfill/customer-payments', async (c) => {
   if (!requireGlPost(c)) return c.json({ error: "You don't have permission to post to the general ledger." }, 403);
   let body: any = {};
@@ -1313,8 +1074,6 @@ accounting.post('/backfill/customer-payments', async (c) => {
   return c.json(r);
 });
 
-/* GET /daily-bank?date=YYYY-MM-DD — the owner's board (brief 3.6); its reads live in
-   accounting-daily-bank.ts, shared with the To do's "Can move today". */
 accounting.get('/daily-bank', dailyBankHandler);
 /* The owner's cash book, a second Daily Bank beside the original (2026-11-23: 原版的
    daily bank还是要保留哦，我这算是新的daily bank): its board, then each money account's
@@ -1332,13 +1091,7 @@ accounting.delete('/daily-bank/receipts/:id', cashbookReceiptDelete);
 accounting.put('/daily-bank/skips/:pvId', cashbookSkipPut);
 accounting.delete('/daily-bank/skips/:pvId', cashbookSkipDelete);
 
-/* ════════════════════════════════════════════════════════════════════════
-   Daily close (cashup, brief 3.5 layer 2)
-   ════════════════════════════════════════════════════════════════════════ */
 
-/* GET /daily-close?date= — system takings per bucket (live) merged with any
-   saved counts. The system side is recomputed on every read: a count sheet
-   must always face today's truth, not the truth at first open. */
 accounting.get('/daily-close', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -1353,7 +1106,6 @@ accounting.get('/daily-close', async (c) => {
     sb.from('acc_daily_closes')
       .select('bucket, system_sen, counted_sen, diff_sen, status, notes, confirmed_by, confirmed_at')
       .eq('company_id', co.companyId).eq('close_date', date),
-    /* The day's cash over/short entry, when its count differed (acc/daily-close: CASHUP, company-date-cash). */
     sb.from('journal_entries').select('je_no').eq('company_id', co.companyId).eq('source_type', 'CASHUP')
       .eq('source_doc_no', `${co.companyId}-${date}-cash`).eq('reversed', false).limit(1),
   ]);
@@ -1376,7 +1128,6 @@ accounting.get('/daily-close', async (c) => {
       notes: row?.notes ?? null,
     };
   });
-  /* Who closed the day and when — the latest confirmation across its buckets. */
   const confirmed = ((savedRaw ?? []) as Array<{ status: string; confirmed_by: string | null; confirmed_at: string | null }>)
     .filter((r) => r.status === 'CONFIRMED' && r.confirmed_at)
     .sort((a, b) => String(b.confirmed_at).localeCompare(String(a.confirmed_at)))[0];
@@ -1387,7 +1138,6 @@ accounting.get('/daily-close', async (c) => {
   });
 });
 
-/* PUT /daily-close — save counted amounts (draft). Upsert per bucket. */
 accounting.put('/daily-close', async (c) => {
   if (!requireGlPost(c)) return c.json({ error: "You don't have permission to close the day." }, 403);
   const co = requireActiveCompanyId(c);
@@ -1410,8 +1160,6 @@ accounting.put('/daily-close', async (c) => {
       return c.json({ error: 'bad_amount', message: `${bucket}: counted amount must be non-negative integer sen` }, 400);
     }
     const sys = takings.buckets.get(bucket) ?? 0;
-    /* Refuse to edit a CONFIRMED bucket - the day is closed; corrections go
-       through a manual journal, on the record. */
     const { data: existing, error: exErr } = await sb.from('acc_daily_closes')
       .select('id, status').eq('company_id', co.companyId).eq('close_date', date).eq('bucket', bucket).maybeSingle();
     if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);

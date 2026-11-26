@@ -41,8 +41,6 @@ export const soMoneyHandler = async (c: Ctx): Promise<Response> => {
   const sb = c.get('supabase');
   const m = await orderMoney(sb, co.companyId, c.req.param('docNo'));
   if (!m.ok) return c.json({ error: m.error, message: m.message }, m.status);
-  /* The customer's other orders with money — what the Convert button lists
-     beside this one. Only an order with money asks. */
   let others: Awaited<ReturnType<typeof convertSources>> = { ok: true, sources: [] };
   if (m.money.open) {
     others = await convertSources(sb, co.companyId, { customerId: m.money.customer.customerId, debtorCode: m.money.customer.debtorCode, debtorName: m.money.customer.name, phone: m.money.customer.phone, exclude: m.money.docNo });

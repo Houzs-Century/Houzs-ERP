@@ -65,9 +65,7 @@ type DiRow = {
     conversion's — as the page and the close-out read it. */
 export type RefundNote = {
   id: string; noteNumber: string; diNumber: string; totalSen: number; status: string;
-  /** The refund voucher that raised it, or null for a conversion's note. */
   refundPvId: string | null;
-  /** The converted payment row that raised it, or null for a refund's note. */
   convertedPaymentId: string | null;
   noteDate: string;
 };
@@ -129,7 +127,6 @@ export type RefundInput = {
   companyId: number;
   pvId: string;
   pvNumber: string;
-  /** The voucher's day — the notes are dated with it. */
   voucherDate: string;
   soDocNo: string;
   amountSen: number;
@@ -150,7 +147,6 @@ export type DepositTaker =
 
 export type TakeInput = {
   companyId: number;
-  /** The day the notes are dated with — the voucher's day, or the day of the move. */
   noteDate: string;
   soDocNo: string;
   amountSen: number;
@@ -193,7 +189,6 @@ export async function takeFromDepositInvoices(sb: Db, p: TakeInput): Promise<Ref
 
   const taken = await refundedByInvoice(sb, p.companyId, invoices.map((d) => d.di_number));
   if (!taken.ok) return taken;
-  /* This taker's own notes — the retry finds them rather than raising beside. */
   const mine = new Map<string, RefundNote>();
   for (const list of taken.notes.values()) for (const n of list) if (takerOf(n, p.taker)) mine.set(n.diNumber, n);
   const label = p.taker.kind === 'refund' ? `Refund ${p.taker.pvNumber}` : `Moved to ${p.taker.toDocNo}`;
@@ -207,8 +202,6 @@ export async function takeFromDepositInvoices(sb: Db, p: TakeInput): Promise<Ref
   for (const di of invoices) {
     if (left <= 0) break;
     const own = mine.get(di.di_number) ?? null;
-    /* Closed by another paper — the final invoice's note, or another refund's
-       — so nothing stands on it to refund. */
     if (di.credit_note_id && (!own || own.id !== di.credit_note_id)) continue;
     const byOthers = (taken.sen.get(di.di_number) ?? 0) - (own?.totalSen ?? 0);
     const remaining = Number(di.amount_sen) - byOthers;
@@ -243,10 +236,6 @@ export async function takeFromDepositInvoices(sb: Db, p: TakeInput): Promise<Ref
     }
     const posted = await postCreditNote(sb, { companyId: p.companyId, note, actor: p.actor });
     if (!posted.ok) log(`${label}: ${String(note.note_number)} raised for ${di.di_number} but not posted:`, posted.status, posted.reason);
-    /* Refunded in full: the note closes the invoice, the way the final
-       invoice's note would have. The link is written even when the posting
-       was refused, so the note is found (and posted from the notes page)
-       rather than raised a second time. */
     const closed = part >= remaining;
     if (closed && di.credit_note_id !== note.id) {
       const { error: linkErr } = await sb.from('acc_deposit_invoices')
@@ -298,7 +287,6 @@ async function releaseTakerNotes(
   return { ok: true, released };
 }
 
-/* ── The hooks the voucher route calls (best-effort, never throw) ─────────── */
 
 /** After a refund voucher posts. `null` means there is nothing to credit —
     an invoice refund, no document, no company — and is silent. */

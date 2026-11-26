@@ -1,6 +1,3 @@
-// Sister-ERP gap review G11: a combined PO print numbers each PO's own pages,
-// in the header ("<PO no> · Page x of y") and the footer, instead of counting
-// the whole file.
 import { describe, expect, it, vi } from 'vitest';
 import { pdfRawText } from './pdf-raw-text';
 

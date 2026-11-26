@@ -50,9 +50,7 @@
 // ---------------------------------------------------------------------------
 
 export interface RouteAlias {
-  /** The guessable path that does not exist today. */
   from: string;
-  /** The canonical path it should resolve to. */
   to: string;
 }
 
@@ -64,20 +62,12 @@ export interface RouteAlias {
  * real route in App.tsx, or the alias would shadow a working page.
  */
 export const ROUTE_ALIASES: readonly RouteAlias[] = [
-  // ── Reports: the app has TWO report trees (`/reports/*` for cross-module
-  // reports, `/scm/reports/*` for SCM document listings). That split is the
-  // single most likely source of a wrong guess, so bridge it both ways.
-  // NOTE: no `/reports/fulfillment-costing` alias — the Fulfillment Costing
-  // module was removed in #846, so there is no destination to resolve to; a
-  // guess at that path correctly reaches the not-found page.
   { from: "/scm/reports/fair-report", to: "/reports/fair-report" },
   { from: "/reports/sales-order-detail-listing", to: "/scm/reports/sales-order-detail-listing" },
   { from: "/reports/delivery-order-detail-listing", to: "/scm/reports/delivery-order-detail-listing" },
   { from: "/reports/sales-invoice-detail-listing", to: "/scm/reports/sales-invoice-detail-listing" },
   { from: "/reports/delivery-return-detail-listing", to: "/scm/reports/delivery-return-detail-listing" },
 
-  // ── Sales documents: the bare name without the `/scm` prefix is the
-  // natural guess, and every one of these 404s today.
   { from: "/sales-orders", to: "/scm/sales-orders" },
   { from: "/sales-orders/maintenance", to: "/scm/sales-orders/maintenance" },
   { from: "/delivery-orders", to: "/scm/delivery-orders" },
@@ -85,7 +75,6 @@ export const ROUTE_ALIASES: readonly RouteAlias[] = [
   { from: "/delivery-returns", to: "/scm/delivery-returns" },
   { from: "/amendments", to: "/scm/amendments" },
 
-  // ── Procurement.
   { from: "/purchase-orders", to: "/scm/purchase-orders" },
   { from: "/purchase-invoices", to: "/scm/purchase-invoices" },
   { from: "/purchase-returns", to: "/scm/purchase-returns" },
@@ -94,25 +83,20 @@ export const ROUTE_ALIASES: readonly RouteAlias[] = [
   { from: "/products", to: "/scm/products" },
   { from: "/mrp", to: "/scm/mrp" },
 
-  // ── Warehouse.
   { from: "/warehouses", to: "/scm/warehouses" },
   { from: "/inventory", to: "/scm/inventory" },
   { from: "/stock-transfers", to: "/scm/stock-transfers" },
   { from: "/stock-takes", to: "/scm/stock-takes" },
   { from: "/stock-adjustments", to: "/scm/stock-adjustments" },
 
-  // ── Finance.
   { from: "/accounting", to: "/scm/accounting" },
   { from: "/outstanding", to: "/scm/outstanding" },
   { from: "/payment-vouchers", to: "/scm/payment-vouchers" },
 
-  // ── Transportation.
   { from: "/delivery-planning", to: "/scm/delivery-planning" },
   { from: "/trips", to: "/scm/trips" },
   { from: "/fleet", to: "/scm/fleet" },
 
-  // ── Service cases: `/my-cases` sits at the top level while the rest of the
-  // service module lives under `/assr`. Accept the grouped guess.
   { from: "/assr/my-cases", to: "/my-cases" },
   { from: "/scm/my-cases", to: "/my-cases" },
 ];

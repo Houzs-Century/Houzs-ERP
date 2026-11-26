@@ -46,12 +46,10 @@ describe("useInVisitColFilters", () => {
     expect(first.getByTestId("v").textContent).toBe(JSON.stringify({ status: ["Open"] }));
     first.unmount();
 
-    // A client-side remount (module stays loaded) reads the kept value.
     const second = render(<Probe idKey="k3" />);
     expect(second.getByTestId("v").textContent).toBe(JSON.stringify({ status: ["Open"] }));
     second.unmount();
 
-    // A fresh bundle evaluation (page load / F5) reads clean.
     resetInVisitColFilters();
     const third = render(<Probe idKey="k3" />);
     expect(third.getByTestId("v").textContent).toBe("{}");
@@ -63,17 +61,14 @@ describe("useInVisitColFilters", () => {
     act(() => api.set({}));
     expect(getByTestId("v").textContent).toBe("{}");
     unmount();
-    // Cleared to empty → the bucket is gone, so a remount stays clean.
     const again = render(<Probe idKey="k4" />);
     expect(again.getByTestId("v").textContent).toBe("{}");
   });
 
   it("re-reads the new bucket when the idKey moves (company resolves after mount)", () => {
-    // The pre-scoping key holds nothing; the scoped key holds a funnel.
     primeInVisitColFilters("c1:k5", { status: ["Closed"] });
     const view = render(<Probe idKey="k5" />);
     expect(view.getByTestId("v").textContent).toBe("{}");
-    // idKey gains its c<company>: prefix → the hook re-reads the scoped bucket.
     view.rerender(<Probe idKey="c1:k5" />);
     expect(view.getByTestId("v").textContent).toBe(JSON.stringify({ status: ["Closed"] }));
   });
@@ -156,7 +151,6 @@ describe("useKeptColFilters", () => {
     expect(view.getByTestId("k").textContent).toBe("{}");
     view.rerender(<KeptProbe idKey="c1:k5" />);
     expect(view.getByTestId("k").textContent).toBe(JSON.stringify({ status: ["Closed"] }));
-    // The empty pre-scoping value must not have been written over the scoped key.
     expect(JSON.parse(localStorage.getItem("dt:funnels:c1:k5") ?? "null")).toEqual({ status: ["Closed"] });
   });
 });

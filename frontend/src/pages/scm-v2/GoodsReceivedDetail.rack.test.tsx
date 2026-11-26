@@ -1,9 +1,3 @@
-/**
- * GRN detail — the line Rack is settable after the GRN exists (owner
- * 2026-10-01: HC-GRN-2610-005 could not get a rack). Rack is placement only, so
- * it saves through its own endpoint (useSetGrnLineRack) and stays editable
- * when a PI/PR has locked the lines; it never rides the line PATCH.
- */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -60,7 +54,6 @@ vi.mock('../../vendor/scm/lib/mfg-products-queries', () => ({
   useMfgProducts: () => ({ data: [] }),
 }));
 
-// useConfirm / useNotify read a context and throw outside their provider.
 vi.mock('../../vendor/scm/components/ConfirmDialog', () => ({
   useConfirm: () => async () => true,
 }));
@@ -140,7 +133,6 @@ describe('GoodsReceivedDetail — line Rack', () => {
     await user.click(screen.getByRole('button', { name: /^save$/i }));
     await waitFor(() => expect(h.rackMock).toHaveBeenCalledWith({ grnId: 'G1', itemId: 'I1', rackId: 'R1' }));
     expect(h.rackMock.mock.invocationCallOrder[0]).toBeLessThan(h.updateMock.mock.invocationCallOrder[0] ?? Infinity);
-    // The page stays in Edit so the refused edit can be fixed.
     expect(screen.getByRole('button', { name: /^save$/i })).toBeTruthy();
   });
 

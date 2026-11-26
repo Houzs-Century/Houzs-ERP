@@ -39,15 +39,11 @@ export async function resolveSupplierPricesAsOf(
     .order('supplier_id', { ascending: true })
     .order('effective_from', { ascending: false })
     .order('created_at', { ascending: false });
-  // Bind the error: a failed read must not read as "no history" (which would
-  // silently fall back to live prices and hide the failure). Throw — callers
-  // are best-effort and log.
   if (error) throw new Error(`supplier price history read failed for ${c}: ${error.message}`);
   const rows = (data as Array<{
     supplier_id: string; is_main_supplier: boolean | null;
     unit_price_sen: number | null; price_matrix: unknown;
   }> | null) ?? [];
-  // First row per supplier wins (ordered newest-first within each supplier).
   const seen = new Set<string>();
   const out: SupplierBindingCost[] = [];
   for (const r of rows) {

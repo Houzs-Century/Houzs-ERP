@@ -37,7 +37,6 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
 /** One reminder per voucher this often, whoever sends it. */
 export const REMIND_EVERY_MS = 60 * 60_000;
-/** At most this many vouchers in one request. */
 const MAX_IDS = 200;
 /** The bell's tag for these notes. `pv_approval:<company>:<voucher>` opens the
     voucher; `pv_approval:<company>` opens the checked vouchers
@@ -61,7 +60,6 @@ export const mayRemindApprover = (c: Ctx): boolean =>
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const oneLine = (v: unknown): string => String(v ?? '').replace(/\s+/g, ' ').trim();
 const amountOf = (pv: Pv): string => fmtMoneySen(Number(pv.total_sen ?? 0), String(pv.currency ?? 'MYR'));
-/** The ringgit it moves: round(total × rate), as Daily Bank and the post count it. */
 const myrSen = (pv: Pv): number => {
   const rate = Number(pv.exchange_rate ?? 1);
   return Math.round(Number(pv.total_sen ?? 0) * (Number.isFinite(rate) && rate > 0 ? rate : 1));
@@ -74,7 +72,6 @@ function parseIds(body: unknown): string[] | null {
   return ids.length > 0 && ids.length === raw.length ? ids : null;
 }
 
-/** Who reminded each voucher last within the hour, read off the trail. */
 function lastReminders(rows: TrailRow[]): Map<string, TrailRow> {
   const out = new Map<string, TrailRow>();
   for (const r of rows) {
@@ -107,7 +104,6 @@ export function remindNotice(sender: string, companyId: number, pvs: Pv[]): { ti
   };
 }
 
-/** The one sentence a refusal of the whole request carries (under 200 characters, so the client shows it). */
 function refusedSentence(refused: RemindRefusal[], nextAt: (r: RemindRefusal) => string | null): string {
   if (refused.length === 1) return refused[0]!.message;
   if (refused.every((r) => r.error === 'reminded_recently')) {
@@ -128,7 +124,7 @@ export const remindApproverHandler = async (c: Ctx): Promise<Response> => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   let body: unknown = null;
-  try { body = await c.req.json(); } catch { /* refused just below */ }
+  try { body = await c.req.json(); } catch { }
   const ids = parseIds(body);
   if (!ids) return c.json({ error: 'bad_ids', message: 'Which vouchers? Send their ids, each once.' }, 400);
   if (ids.length > MAX_IDS) return c.json({ error: 'too_many', message: `Remind at most ${MAX_IDS} vouchers at a time.` }, 400);
@@ -188,9 +184,6 @@ export const remindApproverHandler = async (c: Ctx): Promise<Response> => {
 
   const sender = oneLine(houzsUser?.name) || oneLine(houzsUser?.email) || 'Finance';
   await postPersonalNotice(c.env, { userIds: audience, category: 'GENERAL', expiresDays: 7, ...remindNotice(sender, co.companyId, due) });
-  /* The trail is the record the hour is read from — after the note went, so a
-     note that never left is never counted. A row that fails to write is logged
-     by recordEntityAudit; the worst it costs is a second reminder too early. */
   for (const pv of due) {
     await recordEntityAudit(sb, {
       entityType: 'PAYMENT_VOUCHER', entityId: String(pv.id), entityDocNo: pv.pv_number, companyId: co.companyId,

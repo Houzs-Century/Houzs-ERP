@@ -1,7 +1,3 @@
-// Pins the "Free Gift" adjustment reason. The same catalogue feeds the
-// StockAdjustmentNew dropdown and the backend isAdjustmentReasonCode gate, so a
-// rename or accidental removal here would silently start rejecting saves that
-// pick it — this catches that drift.
 import { describe, expect, test } from 'vitest';
 import { ADJUSTMENT_REASONS, isAdjustmentReasonCode, adjustmentReasonLabel } from './adjustment-reasons';
 

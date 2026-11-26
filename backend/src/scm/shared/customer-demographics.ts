@@ -1,11 +1,3 @@
-// customer-demographics — race + gender vocabulary and birthday helpers for the
-// Sales Analysis Customer Data tab (single source of truth). In 2990 these are
-// persisted on the customers table (race / birthday / gender), captured at POS
-// handover. Houzs customers has no such columns yet, so the sales-analysis route
-// passes null for all three and every demographic bucket degrades to 'Unknown'.
-// Age is always derived EXACTLY from birthday (no fixed age buckets).
-//
-// Vendored verbatim from 2990 packages/shared/src/customer-demographics.ts.
 
 import { todayMyt } from '../lib/my-time';
 
@@ -37,7 +29,6 @@ export function ageFromBirthday(birthday: string | null | undefined, asOf?: stri
   const ref = asOf && ISO_DATE_RE.test(asOf) ? asOf : todayMyt();
   const [by, bm, bd] = birthday.split('-').map(Number) as [number, number, number];
   const [ry, rm, rd] = ref.split('-').map(Number) as [number, number, number];
-  // Reject impossible dates (e.g. 2021-02-29) — Date would silently roll over.
   const d = new Date(Date.UTC(by, bm - 1, bd));
   if (d.getUTCFullYear() !== by || d.getUTCMonth() !== bm - 1 || d.getUTCDate() !== bd) return null;
   let age = ry - by;

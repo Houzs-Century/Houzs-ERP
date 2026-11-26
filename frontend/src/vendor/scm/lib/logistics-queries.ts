@@ -27,7 +27,6 @@ export type LogisticsReport = {
   gaps: {
     dosNoDeliverer: number;
     dosOutsideNoBill: number;
-    /** DOs with no state and no Singapore address — counted under KL's "others". */
     dosNoState: number;
     unlistedPlates: string[];
     openLines: { count: number; sen: number };
@@ -35,7 +34,6 @@ export type LogisticsReport = {
     monthsWithoutTrips: string[];
   };
   totals: { dos: number; valueSen: number; ownSen: number; threeplSen: number; totalSen: number; setupSen: number; transportSen: number };
-  /** Set when the fairs' books could not be read — Setup & Dismantle is then not known. */
   eventsProblem: string | null;
 };
 
@@ -86,10 +84,8 @@ export type LogisticsMonthCost = {
   ownTrips: number;
   inHouseSen: number;
   lorries: LogisticsLorryLine[];
-  /** In-house cost of a month with no trip of ours: Total only. */
   inHouseNoTripSen: number;
   carriers: LogisticsCarrierLine[];
-  /** What no DO carries yet on the 3PL bills: Total only. */
   threeplNoDo: { lines: number; sen: number };
   outsourceSen: number;
   noDeliverer: Record<PnlRegion, number>;
@@ -99,7 +95,6 @@ export type LogisticsFairBlock = {
   region: PnlRegion; salesSen: number; incomeSen: number;
   chargeTrips: number; chargeSen: number;
   setupSen: number; dismantleSen: number; transportSen: number;
-  /** Project Overview's Setup + Transport Setup & Dismantle rows. */
   booksSen: number;
   who: 'inhouse' | '3pl';
 };
@@ -108,10 +103,8 @@ export type LogisticsMonth = {
   rows: LogisticsPnlRow[];
   dos: Record<PnlRegion, number> & { total: number };
   cost: LogisticsMonthCost;
-  /** Our lorries + 3PL, as the By region & trip view adds them. */
   costTotalSen: number;
   fairs: LogisticsFairBlock[];
-  /** 3PL setup / dismantle lines with no fair picked, by bill month. */
   noFair: { lines: number; sen: number };
 };
 
@@ -120,7 +113,6 @@ export type LogisticsPnl = {
   doIncomeBp: number;
   fairIncomeBp: number;
   perMonth: LogisticsMonth[];
-  /** Set when the fairs' sales or books could not be read — Setup & Dismantle is then not known. */
   fairsProblem: string | null;
   dos: Record<PnlRegion, number> & { total: number };
   rows: LogisticsPnlRow[];
@@ -129,11 +121,8 @@ export type LogisticsPnl = {
   spreads: LogisticsSpreadRow[];
   ownTrips: number;
   inHousePerTripSen: number | null;
-  /** Set when the fairs could not be read — no setup / dismantle trip is priced then. */
   tripsProblem: string | null;
   areaRates: LogisticsAreaRate[];
-  /** Spend by lorry: the in-house rows, one entry per lorry and one for the lines that
-      name no lorry. Absent from a server not yet updated. */
   lorrySpend?: LogisticsLorrySpend[];
 };
 
@@ -160,7 +149,6 @@ export function useLogisticsPnl(from: string, to: string, enabled: boolean) {
   });
 }
 
-/** One of the P&L's settings saved, the P&L read again. */
 function usePnlSetting<B>(path: string, failedAs: string) {
   const qc = useQueryClient();
   return useMutation({

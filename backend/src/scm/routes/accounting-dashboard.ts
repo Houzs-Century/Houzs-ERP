@@ -62,14 +62,12 @@ import {
 } from '../../acc/dashboard';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof resolveRoles>[0];
 const requirePerm = (c: Ctx): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
 const NO_PERM = { error: "You don't have permission to read the financial statements." };
 type Fail = { ok: false; reason: string };
 const failed = (e: unknown): string => String((e as { message?: string }).message ?? e);
 
-/* ── The query ───────────────────────────────────────────────────────────── */
 
 export type DashboardQuery = { granularity: Granularity; periods: number; from: string | null; to: string | null };
 const MAX_MONTHS = 36;
@@ -94,12 +92,10 @@ export function parseDashboardQuery(q: { granularity?: string | null; periods?: 
   return { ok: true, query: { granularity: g, periods, from, to } };
 }
 
-/* ── The payload ─────────────────────────────────────────────────────────── */
 
 export type DashboardPerformance = {
   groups: Array<{ key: string; label: string; salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null }>;
   salesSen: number; cogsSen: number; gpSen: number;
-  /** The reference line's figure — the forecast is keyed per account, not per group, so the card compares totals. */
   totalGpPct: number | null;
 };
 export type DashboardCashFlow = { inSen: number; outSen: number; netSen: number; openingSen: number; closingSen: number; tree: LaidNode[] };
@@ -109,18 +105,13 @@ export type DashboardPeriodPayload = DashboardPeriod & {
   actual: Figures | null;
   forecast: Figures | null;
   performance: DashboardPerformance | null;
-  /** Null only when the compare cannot be read at all; a future period carries its forecast side with the other two null. */
   compare: DashboardCompare | null;
   costStructure: { groups: CostStructureGroup[] } | null;
   cashFlow: DashboardCashFlow | null;
   balanceSheet: BalanceSummary | null;
   ratios: Ratios;
-  /** The Forecast Balance Sheet at the period's last month-end (step 7 of the forecast port): from the
-      current month on; null before it or when the forecast could not be read. */
   forecastBalanceSheet: BalanceSummary | null;
-  /** The same six ratios off the Forecast P&L and the Forecast Balance Sheet; null without a Forecast P&L row. */
   forecastRatios: Ratios | null;
-  /** The period's closing stock is the engine's, provisional until the close books that month-end. */
   stock: { closingProvisional: boolean };
 };
 export type DashboardPayload = {
@@ -132,34 +123,24 @@ export type DashboardPayload = {
   periods: DashboardPeriodPayload[];
 };
 
-/* ── The preload: the window's ledger and stock, read once ──────────────── */
 
 type GlRow = RpGlLine & { line_id?: string; account_type?: string | null };
 const GL_COLS = 'line_id, je_no, entry_date, source_type, source_doc_no, account_code, account_name, account_type, debit_sen, credit_sen, party_type, party_code, party_name, notes, posted, reversed, reversed_by_je';
 
 type Preload = {
-  /** Every line the books count, up to the window's end, in line order. */
   gl: GlRow[];
   moves: OwnedMovement[];
   bucketOf: (warehouseId: unknown) => StockBucket;
   accounts: AccountRow[];
   roles: Record<AccountRole, string>;
-  /** 'YYYY-MM' → the ledger carries an active STOCKADJ closing for that month. */
   closingBooked: Map<string, boolean>;
-  /** The day the books start and the stock they opened with (acc/books-opening.ts); null = no start day. */
   booksOpening: BooksOpening | null;
   layouts: Partial<Record<ReportKey, { ok: true } & ResolvedLayout>>;
-  /** The Forecast P&L as stored — each month's lines and its supplier figures — and the accounts it names. */
   forecast: { grid: ForecastGrid; suppliers: SupplierGrid; accounts: ForecastAccount[] };
-  /** The purchase accounts bound to each cost group's item groups — one account counts once, where it was first bound. */
   purchaseAccountsOf: Map<CostGroupKey, Set<string>>;
-  /** item code → the product's category, for the closing stock by group. */
   categoryOfItem: Map<string, string | null>;
-  /** The compare groups' sales and purchase accounts, from the same bindings. */
   compareAccounts: CompareAccounts;
-  /** The Performance P&L's own inputs, read once for the window: the sales orders and their lines, the rate and account, the rate's account row. */
   perf: { settings: PerformanceSettings; orders: PerfOrder[]; lines: PerfLine[]; rateAccount: { code: string; name: string } | null; commission: CommissionFacts | null };
-  /** The Cash Flow's own inputs, read once: the money accounts and what the window's supplier-payment vouchers settled. */
   rp: { moneyAccounts: Array<{ code: string; name: string }>; splits: Map<string, RpSplit[]>; acquirerTransits: string[]; cardPayouts: CardPayoutFacts; orderPayments: OrderPaymentFacts };
 };
 
@@ -200,7 +181,6 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
     return { ok: true, purchaseAccountsOf, compareAccounts: compareAccountsOf(rows) };
   };
 
-  /* Wave 1 — the window's tables. */
   const [gl, moves, wh, accs, roles, closings, laidPnl, laidBs, laidPerf, laidRp, fAccounts, bindings, settings, orders, money, acquirers, books, cardPayouts, commission] = await Promise.all([
     paginateAll<GlRow>((f, t) => sb.from('v_gl_entries').select(GL_COLS).eq('company_id', companyId).lte('entry_date', windowEnd).order('line_id').range(f, t)),
     loadOwnedMovementsUpTo(sb, companyId, windowEnd),
@@ -243,17 +223,12 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
   const layouts: Preload['layouts'] = { pnl: laidPnl, balance_sheet: laidBs, performance: laidPerf, rp: laidRp };
   const glRows = (gl.data ?? []).filter((r) => countsInTheBooks(r));
 
-  /* Wave 2 — what wave 1 named: the live orders' lines, the moved items'
-     products, the rate's account, and what the window's supplier-payment
-     vouchers settled (the report's own rule, over every money account — the
-     card asks for every column). */
   const liveDocs = orders.orders.filter((o) => !SO_NOT_AN_ORDER.has(String(o.status))).map((o) => o.doc_no);
   const itemCodes = [...new Set(moves.rows.map((r) => String(r.item_code ?? '')).filter(Boolean))];
   const controlCodes = new Set([roles.AR, roles.AP, roles.AP_OTHER, roles.AR_OTHER].filter(Boolean) as string[]);
   const apControls = new Set([roles.AP, roles.AP_OTHER].filter(Boolean) as string[]);
   const moneySet = new Set(money.accounts.map((a) => a.code));
   const vouchers = supplierVouchersOf(glRows.filter((r) => r.entry_date >= windowStart && r.entry_date <= windowEnd), moneySet, apControls);
-  /* The window's customer payments (SOPAY), for their orders' Deposit / Balance. */
   const customerPayments = [...new Set(glRows.filter((r) => r.entry_date >= windowStart && r.entry_date <= windowEnd && String(r.source_type ?? '').replace(/_REVERSAL$/, '') === 'SOPAY' && r.source_doc_no).map((r) => String(r.source_doc_no)))];
   const [lines, prods, rateAccount, splits, orderPayments] = await Promise.all([
     perfDb.lines(liveDocs),
@@ -282,7 +257,6 @@ async function preload(sb: Sb, companyId: number, layoutIds: number[], windowSta
   };
 }
 
-/** The builders' sources, answered from the preload. */
 function sourcesOf(pre: Preload): { report: ReportSources; rp: RpSources; perf: PerfSources } {
   const sums = async (from: string | null, to: string | null) => ({
     ok: true as const,
@@ -311,12 +285,9 @@ function sourcesOf(pre: Preload): { report: ReportSources; rp: RpSources; perf: 
     acquirerTransits: async () => ({ ok: true as const, codes: pre.rp.acquirerTransits }),
     layout: () => layout('rp'),
     cardPayouts: async () => ({ ok: true as const, facts: pre.rp.cardPayouts }),
-    /* The window's orders hold every payment the report can name; the classifier reads them whole. */
     orderPayments: async () => ({ ok: true as const, facts: pre.rp.orderPayments }),
     moneyAccounts: async () => ({ ok: true as const, accounts: pre.rp.moneyAccounts }),
     roles: async () => pre.roles,
-    /* The window's map, cut to the vouchers asked for — a voucher with no
-       allocation is absent, as the database read leaves it. */
     splits: async (pvNumbers) => {
       const byPv = new Map<string, RpSplit[]>();
       for (const n of pvNumbers) {
@@ -340,9 +311,7 @@ function sourcesOf(pre: Preload): { report: ReportSources; rp: RpSources; perf: 
   return { report, rp, perf };
 }
 
-/* ── The figures ─────────────────────────────────────────────────────────── */
 
-/** A laid node's amount by id, anywhere in the tree; null when the tree has no such category. */
 const nodeAmount = (nodes: LaidNode[], id: string): number | null => {
   for (const n of nodes) {
     if (n.id === id) return n.amountSen;
@@ -358,10 +327,8 @@ const figuresOf = (t: PnlReport['totals'], staffCostSen: number): Figures => ({
   profitBeforeTaxSen: t.profitBeforeTaxSen, taxationSen: t.taxationSen, netProfitSen: t.netProfitSen,
 });
 
-/** The P&L's totals, staff cost = the layout's Salary & related category. */
 const actualOf = (r: PnlReport): Figures => figuresOf(r.totals, nodeAmount(r.layout.expenses, STAFF_COST_CATEGORY_ID) ?? 0);
 
-/** The forecast's totals over the period's months that carry a row; null when none does. */
 function forecastOf(pre: Preload, staffCodes: Set<string>, months: string[]): Figures | null {
   const have = months.filter((m) => Object.prototype.hasOwnProperty.call(pre.forecast.grid, m));
   if (have.length === 0) return null;
@@ -372,7 +339,6 @@ function forecastOf(pre: Preload, staffCodes: Set<string>, months: string[]): Fi
   }));
 }
 
-/** Spend = the Performance P&L's cost per group; Purchase = the groups' purchase accounts in the period; Closing stock = the engine by product category on the period's last day. */
 async function costStructureOf(pre: Preload, src: ReportSources, perf: PerformancePayload, p: DashboardPeriod): Promise<{ ok: true; groups: CostStructureGroup[] } | Fail> {
   const by = emptyCostStructure();
   for (const g of perf.groups) {
@@ -390,9 +356,6 @@ async function costStructureOf(pre: Preload, src: ReportSources, perf: Performan
   return { ok: true, groups: costStructureList(by) };
 }
 
-/** Performance vs forecast per group: the ledger's trading income through the
-    groups' sales accounts (the P&L's own section rule, credit-positive), the
-    Performance P&L's groups, the forecast's lines through the same accounts. */
 function compareOf(pre: Preload, secOf: (r: SumRow) => string, sums: SumRow[], perf: PerformancePayload | null, months: string[]): DashboardCompare {
   const by = emptyCompare();
   for (const r of sums) {
@@ -416,7 +379,6 @@ function compareOf(pre: Preload, secOf: (r: SumRow) => string, sums: SumRow[], p
   return { groups: compareList(by, has), totals: compareTotals(by, has) };
 }
 
-/** YYYY-MM of the earliest posted credit on a SALES / SALES ADJUSTMENTS account; null while the books carry no sales. */
 function firstSalesMonth(rows: GlRow[], secOf: (r: SumRow) => string): string | null {
   let first: string | null = null;
   for (const r of rows) {
@@ -444,14 +406,11 @@ export function balanceSummaryOf(
   };
 }
 
-/* ── The build ───────────────────────────────────────────────────────────── */
 
 export async function buildDashboard(sb: Sb, companyId: number, layoutIds: number[], q: DashboardQuery, today: string): Promise<{ ok: true; payload: DashboardPayload } | Fail> {
   const grid = await loadGrid(sb, companyId);
   if (!grid.ok) return { ok: false, reason: `forecast: ${grid.reason}` };
   const forecastMonths = sortedMonths(grid.grid);
-  /* The window as the query alone names it; its end is final, its start may
-     move forward once the ledger says when the sales began (below). */
   const wide = periodsFor({ granularity: q.granularity, periods: q.periods, from: q.from, to: q.to, today, forecastMonths });
   const windowStart = wide[0]!.from;
   const windowEnd = wide[wide.length - 1]!.to;
@@ -492,8 +451,6 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
     const cf = await buildReceiptsPayments(companyId, { from: p.from, to: p.to, byParty: false, wanted: [] }, src.rp);
     if (!cf.ok) return { ok: false, reason: `Cash Flow ${p.key}: ${cf.reason}` };
     const t = cf.report.totals as Partial<RpTotals>;
-    /* The tree's own Cash In / Out: a transfer between two of the report's columns (an
-       acquirer's payout from the Card column into a bank among them) is neither. */
     const inSen = cf.report.layout?.inSen ?? 0;
     const outSen = cf.report.layout?.outSen ?? 0;
     const cashFlow: DashboardCashFlow = { inSen, outSen, netSen: inSen - outSen, openingSen: t.openingTotalSen ?? 0, closingSen: t.closingTotalSen ?? 0, tree: cf.report.layout?.tree ?? [] };
@@ -507,9 +464,6 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
       ratios: ratiosOf(actual, balanceSheet), forecastBalanceSheet: null, forecastRatios: null, stock: { closingProvisional: pnl.report.stock.closingProvisional },
     });
   }
-  /* The Forecast Balance Sheet (step 7 of the forecast port): one build for every period it reaches —
-     a period's forecast sheet is its last month-end's — and the six ratios off it and the Forecast P&L,
-     by the same functions as the actual ones. A forecast that cannot be read leaves them empty. */
   const currentMonth = today.slice(0, 7);
   const reaches = out.some((p) => (p.months.at(-1) ?? '') >= currentMonth);
   const fbs = reaches ? await buildBalanceSheetForecast(sb, companyId, layoutIds, today) : null;
@@ -534,7 +488,6 @@ export async function buildDashboard(sb: Sb, companyId: number, layoutIds: numbe
   };
 }
 
-/* ── The door, with its 60-second memory ────────────────────────────────── */
 
 const CACHE_TTL_MS = 60_000;
 const CACHE_MAX = 64;
@@ -560,7 +513,6 @@ export const dashboardHandler = async (c: Ctx): Promise<Response> => {
   return c.json(r.payload);
 };
 
-/* ── A past month's forecast, back-calculated (step 7 of the forecast port, part 3) ── */
 
 export type DashboardForecastMonth = { month: string; balanceSheet: BalanceSummary | null; ratios: Ratios | null };
 

@@ -58,16 +58,10 @@ export type PositionDuty = (typeof POSITION_DUTIES)[number];
 export interface PositionPolicyRow {
   position_id: number;
   cohort: PositionCohort;
-  /** restricted → which whitelist; sales → director or rep; god / full → null. */
   profile: PositionProfile | null;
-  /** full cohort only: may post journals / raise vouchers (Finance Manager). */
   can_move_money: boolean;
-  /** full cohort only: may write SCM master data without the flat key. */
   can_write_config: boolean;
-  /** restricted cohort only: sees only their OWN delivery jobs and fails closed
-   *  to an empty board when unlinked (Driver / Helper). */
   is_fleet: boolean;
-  /** Job on a project page / around the warehouse — see POSITION_DUTIES. */
   duty: PositionDuty;
 }
 
@@ -170,7 +164,6 @@ export function policyRowFromDb(raw: {
     can_move_money: asFlag(raw.can_move_money) ?? false,
     can_write_config: asFlag(raw.can_write_config) ?? false,
     is_fleet: asFlag(raw.is_fleet) ?? false,
-    // A database that predates the duty column answers undefined: "other".
     duty: raw.duty ?? "other",
   });
   return v.ok ? v.row : null;
@@ -212,7 +205,6 @@ export async function loadAllPositionPolicyRows(env: Env): Promise<Map<number, P
  */
 export interface PositionPolicySeedEntry extends PositionPolicyInputRow {
   slug: string;
-  /** The production name on 2026-09-16 — used by the parity test only. */
   name: string;
   department: string | null;
 }

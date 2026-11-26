@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// MemberOrgPerformance — second tab on MemberDetail (Team page).
-//
-// Left  · Reporting line card (manager → current rep → direct reports, with
-//         elbow connectors). Wrapped in .org-print-area so the existing
-//         window.print path can scope to just the tree.
-// Left  · 6-month sales bar chart (latest month in primary).
-// Right · Dark attainment hero (gold % MTD, sales, progress bar w/ target
-//         marker, inline KPIs — conversion / avg deal / rank).
-// Right · Team leaderboard (rank · avatar · name · attainment bar · % ;
-//         current member row bolded with "You" chip).
-//
-// Backend (per BACKEND-CHECKLIST · C2 — not yet built):
-//   GET /api/sales/team-perf/:userId      → MTD attainment + KPIs
-//   GET /api/sales/by-rep/:userId?months=N → monthly sales for the bar chart
-//   GET /api/sales/team-leaderboard       → ranked attainment list
-// Until C2 lands, every panel renders the "Not yet wired · Setup notes"
-// state. The reporting tree (the LEFT pane) always works — it derives from
-// the members array already loaded by Team.tsx.
-// ----------------------------------------------------------------------------
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -43,17 +23,16 @@ import { cn } from "../../lib/utils";
 import { ACCESS_RANK, type TeamMember } from "../../types";
 import { fmtSen } from "@2990s/shared";
 
-// ── Types ───────────────────────────────────────────────────────────────────
 
 export type TeamPerf = {
   mtd_sen: number;
   target_sen: number;
-  attainment: number; // 0–2 (1 = 100%)
-  conversion: number; // 0–1
+  attainment: number;
+  conversion: number;
   avg_deal_sen: number;
   rank: number;
   total_ranked: number;
-  mom_delta: number; // 0.18 for +18%
+  mom_delta: number;
 };
 
 export type MonthlySales = {
@@ -84,7 +63,6 @@ const initialsOf = (name: string | null, email: string): string => {
   return (parts[0]![0]! + (parts[1]?.[0] ?? "")).toUpperCase();
 };
 
-// ── Component ───────────────────────────────────────────────────────────────
 
 export function MemberOrgPerformance({
   user,
@@ -106,17 +84,6 @@ export function MemberOrgPerformance({
     .slice()
     .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
 
-  // These three panels are sales-performance reads: a rep's attainment/targets
-  // and the ORG-WIDE leaderboard (every rep's numbers). Gate the fetch on the
-  // same capability the /api/sales/* routes enforce server-side
-  // (requirePageAccessOrSalesView("sales")) — matrix "sales" >= partial OR a
-  // code-keyed Sales-staff / director — mirroring the Projects.tsx sales section
-  // verbatim so the two can't drift. Off, not hide: a user who can't access
-  // sales neither renders these panels (see the canViewSales branch below) nor
-  // fires the request, so there is no fetch-then-hide and no render-then-403.
-  // The endpoints are not built yet (BACKEND-CHECKLIST C2), so this is
-  // pre-emptive today — but it must be in place BEFORE C2 makes the leaderboard
-  // return real cross-rep numbers.
   const auth = useAuth();
   const salesLevel = usePageAccess("sales");
   const canViewSales =
@@ -124,7 +91,6 @@ export function MemberOrgPerformance({
     isSalesStaff(auth.user) ||
     isDirectorUser(auth.user);
 
-  // Data queries — gracefully degrade to not-configured.
   const perfQ = useQuery<TeamPerf>({
     queryKey: ["team-perf", user.id],
     queryFn: () => api.get(`/api/sales/team-perf/${user.id}`),
@@ -154,14 +120,10 @@ export function MemberOrgPerformance({
     document.documentElement.style.setProperty("--print-zoom", "0.85");
     window.print();
   };
-  /* Same Print preview every printable surface in the app opens. The chart
-     prints from the page itself (.org-print-area), so there is no PDF to
-     download or open in a tab — Print is the only exit. */
   const print = usePrintPreview(exportOrgChart);
 
   return (
     <div className="space-y-4">
-      {/* Header row — Export + Setup notes */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[10px] font-semibold uppercase tracking-brand text-accent">
@@ -235,11 +197,8 @@ export function MemberOrgPerformance({
         </div>
       )}
 
-      {/* Two-pane body — stacks on mobile */}
       <div className="grid gap-4 lg:grid-cols-[312px_1fr] items-start">
-        {/* LEFT */}
         <div className="space-y-4">
-          {/* Reporting tree */}
           <section
             className="org-print-area rounded-xl border border-border bg-surface p-4 shadow-stone"
             aria-label="Reporting line"
@@ -273,10 +232,8 @@ export function MemberOrgPerformance({
                 </div>
               )}
 
-              {/* Vertical connector */}
               <div className="ml-[26px] h-3.5 w-[2px] bg-border-strong" aria-hidden />
 
-              {/* Current rep — highlighted */}
               <div className="flex items-center gap-2.5 rounded-lg border-[1.5px] border-primary bg-primary-soft px-3 py-2">
                 <Avatar
                   userId={user.id}
@@ -300,7 +257,6 @@ export function MemberOrgPerformance({
                 )}
               </div>
 
-              {/* Reports — elbow connectors */}
               {reports.length > 0 ? (
                 <div className="ml-[26px] mt-0 flex">
                   <div
@@ -344,16 +300,11 @@ export function MemberOrgPerformance({
             </div>
           </section>
 
-          {/* 6-month sales bar chart — sales-performance data (off, not hide). */}
           {canViewSales && (
             <MonthlySalesCard q={monthlyQ} onOpenSetup={() => setShowSetup(true)} />
           )}
         </div>
 
-        {/* RIGHT — attainment + leaderboard are sales-performance data. Absent
-            entirely for a user who can't view sales; their queries are disabled
-            in step with this, so nothing renders and nothing fetches. The
-            reporting tree on the LEFT is org-chart data and stays visible. */}
         <div className="space-y-4">
           {canViewSales && (
             <AttainmentHero
@@ -378,7 +329,6 @@ export function MemberOrgPerformance({
   );
 }
 
-// ── Attainment hero (dark) ──────────────────────────────────────────────────
 
 function AttainmentHero({
   perf,
@@ -427,8 +377,6 @@ function AttainmentHero({
     );
   }
   const pct = Math.round(perf.attainment * 100);
-  // Progress bar fills with petrol→synced; target marker at target/attainment ratio.
-  // If attainment ≥ 1, bar is full (100%) and the marker shows where 100% sits.
   const fillPct = Math.min(100, Math.round(perf.attainment * 100));
   const targetMarkerPct =
     perf.attainment > 0 ? Math.round((1 / perf.attainment) * 100) : 100;
@@ -564,7 +512,6 @@ function DarkNotConfigured({
   );
 }
 
-// ── 6-month bar chart ──────────────────────────────────────────────────────
 
 function MonthlySalesCard({
   q,
@@ -573,9 +520,6 @@ function MonthlySalesCard({
   q: { data?: MonthlySales; isPending: boolean; error: unknown; refetch: () => void };
   onOpenSetup: () => void;
 }) {
-  // isPending, not isLoading — isLoading is false while a query is pending but
-  // not fetching (offline-paused), which would drop through to the
-  // "not configured" branch below before the request had ever run.
   if (q.isPending) {
     return (
       <section className="rounded-xl border border-border bg-surface p-4 shadow-stone">
@@ -680,7 +624,6 @@ function MonthlySalesCard({
   );
 }
 
-// ── Leaderboard ─────────────────────────────────────────────────────────────
 
 function LeaderboardCard({
   q,
@@ -698,7 +641,6 @@ function LeaderboardCard({
   onOpenMember: (id: number) => void;
   onOpenSetup: () => void;
 }) {
-  // isPending, not isLoading — see MonthlySalesCard.
   if (q.isPending) {
     return (
       <section className="rounded-xl border border-border bg-surface p-4 shadow-stone">

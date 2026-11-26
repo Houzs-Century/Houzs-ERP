@@ -1,8 +1,3 @@
-// ---------------------------------------------------------------------------
-// OCR — how well the AI read scanned documents this month, for the active
-// company. IT pages only (ItPagesGuard + the server's requireItPages). Every
-// number comes from GET /api/admin/ocr; the page only lays it out. Desktop only.
-// ---------------------------------------------------------------------------
 import { Link, useSearchParams } from "react-router-dom";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { PageHeader } from "../components/Layout";
@@ -30,7 +25,6 @@ type DocTypeStats = {
   corrected: number;
   imported: number;
   accuracy: { clean: number; reviewed: number } | null;
-  /** SO only: fields read right / fields on the slip, over scans whose edits are recorded exactly. */
   fieldAccuracy: { correct: number; total: number; scans: number } | null;
   avgSec: number | null;
   p90Sec: number | null;
@@ -43,11 +37,8 @@ type ProblemScan = {
   docNo: string | null;
   outcome: "failed" | "needsReview" | "corrected";
   detail: string | null;
-  /** Before/after per changed field; null for scans with no draft snapshot. */
   changes: FieldChange[] | null;
-  /** Corrected sales slips only; null for scans from before edits were recorded exactly. */
   fieldAccuracy: { correct: number; total: number } | null;
-  /** The slip photo the scan read; null when none was kept. */
   slipImageKey: string | null;
 };
 export type OcrReport = {
@@ -60,7 +51,6 @@ export type OcrReport = {
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-/** Fewer reviewed scans than this is not enough to judge. */
 const MIN_SAMPLE = 5;
 
 export const pct = (n: number, d: number) => `${((n / d) * 100).toFixed(1)}%`;

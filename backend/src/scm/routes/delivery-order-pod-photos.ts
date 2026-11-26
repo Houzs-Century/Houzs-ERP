@@ -1,12 +1,3 @@
-/* POST /delivery-orders-mfg/:id/pod-photos — more POD photos on a Delivery Order
-   that is already delivered (the office backing up a crew whose phone died, or a
-   photo sent late). The job twin of POST /delivery-jobs/…/add-photos.
-
-   Delivering a DO stays the status flip (PATCH /:id/status, DELIVERED + podKeys),
-   which carries the SO sync and the customer message; this only appends to the
-   same POD store and moves nothing. A separate file on the DO prefix because
-   delivery-orders-mfg.ts is past its size ceiling; the prefix's area guard makes
-   it a scm.sales.delivery edit, with no driver bypass. */
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';

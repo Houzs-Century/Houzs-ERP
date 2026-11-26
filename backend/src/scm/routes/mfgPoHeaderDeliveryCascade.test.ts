@@ -19,7 +19,6 @@ const CALLER = {
 } as unknown as User;
 
 const { mfgPurchaseOrders } = await import('./mfg-purchase-orders');
-/* The header PATCH needs the version the editor loaded (sister review G6). */
 const withVersion = (body: Record<string, unknown>) => ({
   expectedUpdatedAt: (sb.tables.purchase_orders.find((r) => r.id === 'po-1') as Row | undefined)?.updated_at, ...body,
 });
@@ -53,12 +52,10 @@ beforeEach(() => {
   sb.tables.purchase_order_items = [
     l('open', 1, 2, 0, '2026-10-10'),
     l('hand', 1, 1, 0, '2026-10-20', true),
-    // A different date but NOT hand-set (e.g. built from SO lines with mixed dates): it follows.
     l('mixed', 1, 1, 0, '2026-10-25'),
     l('blank', 1, 1, 0, null),
     l('part', 1, 4, 1, '2026-10-10'),
     l('done', 1, 3, 3, '2026-10-10'),
-    // Another company's line on the same PO id must never be touched.
     l('other', 2, 1, 0, '2026-10-10'),
   ];
 });
@@ -101,7 +98,6 @@ describe('PATCH mfg purchase order header — Delivery Date cascades to lines', 
   });
 
   it('does not touch lines when the editor re-sends an UNCHANGED date with a notes edit', async () => {
-    // PurchaseOrderDetail.tsx sends the whole header snapshot on every save.
     await patch({ notes: 'just a remark', expectedAt: '2026-10-10', poDate: '2026-10-01' });
     expect(line('hand').delivery_date).toBe('2026-10-20');
     expect(line('mixed').delivery_date).toBe('2026-10-25');

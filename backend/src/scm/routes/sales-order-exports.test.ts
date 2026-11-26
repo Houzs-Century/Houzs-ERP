@@ -173,9 +173,6 @@ describe('attachSoLines — one line shape for the screen and the file', () => {
     expect(rows[1]!.lines![0]).toMatchObject({ item_code: erpCode, item_group: 'bedframe', description: 'OUR WORDS' });
   });
 
-  /* Conts #383: a line with neither a warehouse nor a location of its own
-     exported a blank Location, while AutoCount books it at the order's
-     sales_location (autocount-writeback composeDetails defaultLocation). */
   it('a line with no warehouse or location of its own takes the order\'s location, as AutoCount books it', async () => {
     const h = so({ sales_location: 'PG WAREHOUSE' });
     const t = { sos: [h], lines: [soLine(h, { location: null, warehouse_id: null }), soLine(h, { location: null, warehouse_id: 'wh-pg', line_no: 2 })] };
@@ -224,7 +221,6 @@ describe('attachSoLines — one line shape for the screen and the file', () => {
     expect(times(a.read, 'warehouses')).toBe(1);
     expect(times(b.read, 'warehouses')).toBe(0);
 
-    /* A builder read that failed is read again here, so the list still fails loud. */
     const c2 = spy();
     await attachSoLines(c2.sb, ctx(1), [{ ...h }], { ...prior, base: { data: null, error: { message: 'boom' } } });
     expect(times(c2.read, 'mfg_sales_orders')).toBe(times(a.read, 'mfg_sales_orders'));

@@ -205,27 +205,15 @@ function DataTableInner<T, L>({
     getActiveCompanySnapshot,
     getActiveCompanySnapshot,
   );
-  /* Server-side layouts: this user's own (synced across their machines) and
-     each company's admin-set default. Inert until the boot fetch lands, so a
-     table behaves exactly as it always did offline or logged out. */
   const layoutStore = useSyncExternalStore(
     subscribeTableLayouts,
     getTableLayoutsSnapshot,
     getTableLayoutsSnapshot,
   );
   const baseIdKey = layoutFamily || tableId || "_";
-  /* When a company is resolved, prefix it. When NONE is (single-company Houzs,
-     the historical default) the key is byte-identical to before — those installs
-     are unchanged, and the layoutFamily/tableId migration below still applies. */
-  /* A cross-company queue board keeps ONE layout whatever company the window is
-     on (the server keeps these rows unscoped too: SHARED_TABLE_KEYS). */
   const sharedAcrossCompanies = isSharedDataGridStorageKey(baseIdKey);
   const idKey =
     activeCompany != null && !sharedAcrossCompanies ? `c${activeCompany}:${baseIdKey}` : baseIdKey;
-  /* Company-scoped keys fall back to the pre-scoping UNSCOPED key, so a user's
-     existing columns carry over on first load instead of resetting to defaults
-     (both tenants start from the shared value, then diverge as each writes its
-     own bucket — nothing writes back to the shared key, so the bleed stops). */
   const legacyIdKey = activeCompany != null
     ? baseIdKey
     : (layoutFamily && tableId && layoutFamily !== tableId ? tableId : undefined);
@@ -258,9 +246,6 @@ function DataTableInner<T, L>({
     legacyStorageKey("hidden"),
     sanitizeStringList,
   );
-  // `shownList` lets the user opt-IN to a column that's defaultHidden=true.
-  // We need a separate set (rather than relying on hiddenList alone) so a
-  // defaultHidden column stays hidden until the user explicitly enables it.
   const [shownList, setShownList] = useLocalStorage<string[]>(
     `dt:shown:${idKey}`,
     [],
@@ -281,7 +266,6 @@ function DataTableInner<T, L>({
   );
   const sessionSort = useState<SortState | null>(null);
   const [sort, setSort] = persistSort ? storedSort : sessionSort;
-  // Same erase as the non-persisted funnels below, for the same reason.
   const storedSortValue = storedSort[0];
   const legacySortKey = legacyStorageKey("sort");
   useEffect(() => {
@@ -290,13 +274,8 @@ function DataTableInner<T, L>({
       localStorage.removeItem(`dt:sort:${idKey}`);
       if (legacySortKey) localStorage.removeItem(legacySortKey);
     } catch {
-      // storage unavailable: nothing was persisted to erase
     }
   }, [persistSort, idKey, legacySortKey, storedSortValue]);
-  // Mobile-only view preference. "cards" renders the stacked cards
-  // (default for `<sm`); "table" forces the desktop table with a
-  // horizontal scroll. Persisted per-table so each list page
-  // remembers the user's choice.
   const [mobileView, setMobileView] = useLocalStorage<"cards" | "table">(
     `dt:mview:${idKey}`,
     "cards",
@@ -305,9 +284,6 @@ function DataTableInner<T, L>({
   );
   const showTable = embedded || !isSmallViewport || mobileView === "table";
   const showMobileCards = !embedded && isSmallViewport && mobileView === "cards";
-  // Per-column user widths (px). Overrides the column's `width` default.
-  // Keyed by column key; absent = use the column default. Desktop-only —
-  // the mobile card branch ignores widths entirely.
   const widthStorageKey = `dt:widths:${idKey}`;
   const [storedWidths, setStoredWidths] = useLocalStorage<Record<string, number>>(
     widthStorageKey,
@@ -315,9 +291,6 @@ function DataTableInner<T, L>({
     legacyStorageKey("widths"),
     sanitizeColumnWidths,
   );
-  // Column resizing needs live state for immediate visual feedback, but
-  // localStorage is synchronous. Keep the drag width in memory and commit the
-  // final layout only when the gesture ends (matching DataGrid's behaviour).
   const [widths, setWidths] = useState<Record<string, number>>(storedWidths);
   const widthsRef = useRef(widths);
   useEffect(() => {
@@ -353,8 +326,6 @@ function DataTableInner<T, L>({
      A personal preference per table, like the other dt:* keys. */
   const [wrapText, setWrapText] = useLocalStorage<boolean>(`dt:wrap:${idKey}`, false, undefined, (v) => v === true);
   const wrapOn = wrapText && layoutFixed;
-  // Pinned (frozen-left) column keys. Pinned columns render at the front
-  // (after any alwaysVisible columns) and stick during horizontal scroll.
   const [pinned, setPinned] = useLocalStorage<string[]>(
     `dt:pinned:${idKey}`,
     [],
@@ -376,18 +347,12 @@ function DataTableInner<T, L>({
   );
   const pinnedSet = useMemo(() => new Set(pinned), [pinned]);
   const pinnedRightSet = useMemo(() => new Set(pinnedRight), [pinnedRight]);
-  // Header right-click menu — transient (not persisted). Holds the anchor
-  // point and the column it was opened on. null = closed.
   const [headerMenu, setHeaderMenu] = useState<{
     x: number;
     y: number;
     colKey: string;
   } | null>(null);
 
-  // ── Header drag-to-reorder (see reorderTo / onHeaderDrag*) ──
-  // `dragCol` is the column being dragged, `dropCol` the header it is hovering
-  // over. Both transient. `draggedRef` swallows the click the browser fires
-  // after a drag gesture so releasing a column never also toggles its sort.
   const [dragCol, setDragCol] = useState<string | null>(null);
   const [dropCol, setDropCol] = useState<string | null>(null);
   const draggedRef = useRef(false);
@@ -425,7 +390,6 @@ function DataTableInner<T, L>({
   useEffect(() => {
     if (!urlFilterParam || urlSeedRef.current === undefined) return;
     const next = serializeUrlColFilters(colFilters);
-    // The seed has not landed yet: writing now would drop the link's filters.
     if (urlSeedRef.current !== null && next !== urlSeedRef.current) return;
     urlSeedRef.current = null;
     const url = new URL(window.location.href);
@@ -434,29 +398,18 @@ function DataTableInner<T, L>({
     else url.searchParams.delete(urlFilterParam);
     window.history.replaceState(window.history.state, "", url);
   }, [colFilters, urlFilterParam]);
-  /* Erase the pre-2026-09-16 localStorage funnel key (both modes now — funnels
-     no longer persist to disk at all). Re-runs when idKey gains its `c<company>:`
-     prefix after the company resolves, so both the scoped and legacy keys go. */
   const legacyFilterKey = legacyStorageKey("filters");
   useEffect(() => {
     try {
       localStorage.removeItem(`dt:filters:${idKey}`);
       if (legacyFilterKey) localStorage.removeItem(legacyFilterKey);
     } catch {
-      // storage unavailable: nothing was persisted to erase
     }
   }, [idKey, legacyFilterKey]);
-  // The filter BUTTON's rect, not a click point: the positioner needs both
-  // edges. `anchor` is the button itself, measured again on every scroll.
   const [filterMenu, setFilterMenu] = useState<{ left: number; top: number; bottom: number; colKey: string; anchor: HTMLElement } | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
-  // Menu DOM nodes, for viewport clamping.
   const headerMenuRef = useRef<HTMLDivElement | null>(null);
   const rowMenuRef = useRef<HTMLDivElement | null>(null);
-  /* Opens on whichever side of the button has more room, never taller than that
-     room (lib/anchoredPanel). It used to hang DOWNWARD always, so on a table
-     whose header sits low the value checklist and the Select all / Invert /
-     Clear bar fell off the bottom. 236 is the popover's own `w-[236px]`. */
   const filterMenuPos = useFixedWidthPanel(filterMenu, 236, window.innerHeight - 16);
   const headerMenuPos = useViewportClampedPos(headerMenu, headerMenuRef);
 
@@ -473,10 +426,6 @@ function DataTableInner<T, L>({
     });
   }
 
-  // Replace a column's whole allow-list at once — the Select all / Invert /
-  // Clear actions in the funnel. An empty list means "no filter" and drops the
-  // key, so the funnel de-highlights and every row shows again. De-duped so a
-  // repeated value can never inflate the stored set.
   function setColumnFilter(colKey: string, values: string[]) {
     setColFilters((prev) => {
       const out = { ...prev };
@@ -486,7 +435,6 @@ function DataTableInner<T, L>({
     });
   }
 
-  // Sticky funnels count for the toolbar Reset — see ResetFiltersButton for why.
   const colFiltersActive = Object.values(colFilters).some((values) => values.length > 0);
   const clientQueryActive = clientSearching && clientQuery.trim() !== "";
   function handleResetFilters() {
@@ -495,10 +443,6 @@ function DataTableInner<T, L>({
     resetFilters?.onReset();
   }
 
-  /* Report funnel changes so a server-paged page can push its server-filterable
-     columns into the list query (mirrors onSortChange). Published only on an
-     actual value change, in an effect, so a parent that stores the report cannot
-     re-enter this render — same guard as onFilteredRowsChange. */
   const reportedColFiltersRef = useRef<string | null>(null);
   useEffect(() => {
     if (!onColFiltersChange) return;
@@ -508,13 +452,7 @@ function DataTableInner<T, L>({
     onColFiltersChange(colFilters);
   }, [colFilters, onColFiltersChange]);
 
-  // Expanded drill-down rows (opt-in `expandable`). Transient — a Set of
-  // expansion ids so the chevron toggle is O(1) and reloads start collapsed.
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-  // Controlled expansion (opt-in): when the caller supplies `expandedIds`, that
-  // Set is the source of truth everywhere below; otherwise the transient
-  // `expandedRows` above is. `onExpandedChange` reports toggles in controlled
-  // mode. A caller that passes neither is byte-identical to before.
   const expandedRowsEffective = expandable?.expandedIds ?? expandedRows;
   const expansionId = useCallback(
     (row: T) =>
@@ -523,7 +461,6 @@ function DataTableInner<T, L>({
   );
   const toggleExpand = useCallback((id: string) => {
     const controlled = expandable?.expandedIds;
-    // `controlled` truthy already narrows `expandable` to non-null.
     if (controlled && expandable.onExpandedChange) {
       const next = new Set(controlled);
       if (next.has(id)) next.delete(id);
@@ -539,8 +476,6 @@ function DataTableInner<T, L>({
     });
   }, [expandable]);
 
-  // Row right-click menu (opt-in `contextMenu`). Transient — anchor point
-  // plus the items resolved at open time. null = closed.
   const [rowMenu, setRowMenu] = useState<{
     x: number;
     y: number;
@@ -553,16 +488,12 @@ function DataTableInner<T, L>({
   } | null>(null);
   const rowMenuPos = useViewportClampedPos(rowMenu, rowMenuRef);
 
-  // Collapsed group keys (opt-in `groupBy`). Persisted per table so a
-  // user's collapse choices survive reloads, mirroring the other dt:* prefs.
   const [collapsedGroups, setCollapsedGroups] = useLocalStorage<string[]>(
     `dt:groups:${idKey}`,
     [],
     legacyStorageKey("groups"),
     sanitizeStringList,
   );
-  /* Columns the user dragged onto the group banner, outermost first. Part of
-     the saved layout (`groupBy`), unlike the code-set `groupBy` prop. */
   const [userGroups, setUserGroups] = useLocalStorage<string[]>(
     `dt:groupby:${idKey}`,
     [],
@@ -584,20 +515,12 @@ function DataTableInner<T, L>({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ── UDF integration ─────────────────────────────────────
   const udf: UseUdfResult = useUdf(udfTable);
 
-  /**
-   * Build synthetic Column<T> entries from the UDF field definitions so they
-   * slot into the same rendering pipeline as the static columns. Cells edit
-   * via UdfCell, which writes through the hook's setValue.
-   */
   const udfColumns: Column<T>[] = useMemo(() => {
     return udf.fields.map<Column<T>>((field) => ({
       key: `udf:${field.key}`,
       label: field.label,
-      // Every user-defined column belongs to one group by construction — the
-      // page never has to say so.
       group: CUSTOM_FIELDS_GROUP,
       render: (row: T) => {
         const rowKey = String(getRowKey(row));
@@ -617,16 +540,8 @@ function DataTableInner<T, L>({
     }));
   }, [udf.fields, udf.values, getRowKey, udf.setValue]);
 
-  // Unordered universe of columns (static + UDF).
   const rawColumns = useMemo(() => [...columns, ...udfColumns], [columns, udfColumns]);
 
-  /* Every named layout on offer, in panel order. A COMPANY row wins its slot
-     from the server (an admin's saved default) and falls back to the page's
-     seed preset for that company code until one is saved — so the panel shows
-     both companies' views whichever company you are in, which is the whole ask.
-     Where the companies master isn't resolvable (unit tests, single-company
-     installs, a failed/absent boot fetch) this degrades to exactly the
-     page-declared list, `isDefault` and all. */
   const resolvedPresets = useMemo(() => {
     const declared = layoutPresets ?? [];
     if (declared.length === 0 && layoutStore.companies.length === 0 && !layoutSeeds?.length) return [];
@@ -639,29 +554,19 @@ function DataTableInner<T, L>({
       id: string;
       label: string;
       hint?: string;
-      /** Full layout when it came from the server; column list when it is a
-       *  page seed (normalised against the live columns below). */
       layout?: StoredLayout;
       columns?: string[];
       isDefault: boolean;
       fromServer: boolean;
-      /** Set only for the user's own saved layouts — what CRUD acts on. */
       savedId?: number;
-      /** Set only for a company-default row — renaming it goes to /default. */
       companyId?: number;
-      /** The server table a saved row lives under, when not this table's own
-       *  (a named layout saved while the page was still a DataGrid). */
       tableKey?: string;
-      /** A code-shipped page seed; `overridden` = a manager's team-wide copy. */
       seed?: boolean;
       overridden?: boolean;
-      shared?: boolean; // team-published, not a code seed
+      shared?: boolean;
     }> = [];
     const legacyTableKey = legacyGridKey ? dataGridTableKey(legacyGridKey) : null;
     const sharedLayouts = layoutStore.sharedLayouts as Record<string, NamedLayout[] | undefined>;
-    /* Page seeds lead the picker (curated team-wide views). A layout manager's
-       company-shared override wins; one written while the page was a DataGrid is
-       read through the DataGrid rules until someone saves over it. */
     for (const seed of layoutSeeds ?? []) {
       const own = sharedLayouts[baseIdKey]?.find((l) => l.name === seed.id)?.layout;
       const legacy = legacyTableKey
@@ -679,7 +584,6 @@ function DataTableInner<T, L>({
       });
     }
     out.push(...sharedPresetRows(sharedLayouts, baseIdKey, new Set((layoutSeeds ?? []).map((s) => s.id))));
-    // Typed as possibly-missing: a company with no saved default has no entry.
     type ByKey<V> = Record<string, Record<string, V | undefined> | undefined>;
     const defaults = layoutStore.defaults as ByKey<StoredLayout>;
     const names = layoutStore.defaultNames as ByKey<string>;
@@ -694,12 +598,8 @@ function DataTableInner<T, L>({
         (legacyTableKey ? names[String(co.id)]?.[legacyTableKey] : undefined);
       out.push({
         id: `company:${co.id}`,
-        // Named by an admin, or called after the company until one does.
         label: savedName || `${shortCompanyName(co.name)} Layout`,
         companyId: co.id,
-        // The seed's hint describes the SEED. Once an admin has saved a real
-        // default it would be describing a layout that no longer exists —
-        // "Sales desk" over the production columns somebody just published.
         hint: saved ? undefined : seed?.hint,
         layout: saved,
         columns: saved ? undefined : seed?.columns,
@@ -707,8 +607,6 @@ function DataTableInner<T, L>({
         fromServer: Boolean(saved),
       });
     }
-    /* The user's OWN saved layouts (mig 0239) — offered after the company
-       rows, and the only ones that can be renamed or deleted. */
     const myLayouts = layoutStore.myLayouts as Record<string, NamedLayout[] | undefined>;
     for (const saved of myLayouts[baseIdKey] ?? []) {
       out.push({
@@ -733,8 +631,6 @@ function DataTableInner<T, L>({
         tableKey: legacyTableKey!,
       });
     }
-    // Page presets that aren't about a company (and, when there is no company
-    // list at all, the whole declared set) keep their own identity.
     for (const p of declared) {
       if (p.companyCode && layoutStore.companies.length > 0) continue;
       out.push({
@@ -749,10 +645,6 @@ function DataTableInner<T, L>({
     return out;
   }, [layoutPresets, layoutSeeds, layoutStore, baseIdKey, legacyGridKey, rawColumns]);
 
-  /* Turn a preset into the same shape a saved layout has, so ONE rule renders
-     both: a column list means "show exactly these, in this order" — which for
-     the stored form is an explicit hidden list plus an opt-in for any
-     defaultHidden column it names. */
   const presetLayout = useCallback(
     (preset: { layout?: StoredLayout; columns?: string[] }): StoredLayout => {
       if (preset.layout) return preset.layout;
@@ -765,8 +657,6 @@ function DataTableInner<T, L>({
         order: [...wanted, ...rest],
         hidden: rest,
         shown: wanted.filter((k) => byKey.get(k)?.defaultHidden),
-        // A seed preset carries no sizes or frozen columns: those belong to the
-        // screen you are on, not to the view.
         widths: {},
         pinned: [],
         pinnedRight: [],
@@ -776,16 +666,6 @@ function DataTableInner<T, L>({
     [rawColumns],
   );
 
-  /* The default layout, but ONLY while this table is untouched — no stored
-     order, no stored visibility. One gate for both dimensions on purpose: a
-     user who has only ever ticked a column would otherwise keep their column
-     SET while the default silently rearranged it. The first pref of any kind
-     ends the baseline for good, which is what makes changing a company default
-     safe: it reaches only the people who never arranged this table.
-
-     Widths and pinning are deliberately NOT imposed here even when the saved
-     default carries them — an admin's 1920px column widths are not a good
-     default on a 13" laptop. Clicking the layout in the panel applies them. */
   const baselineLayout = useMemo(() => {
     const untouched =
       order.length === 0 && hiddenList.length === 0 && shownList.length === 0;
@@ -796,18 +676,9 @@ function DataTableInner<T, L>({
     return { order: layout.order, hidden: new Set(layout.hidden), shown: new Set(layout.shown) };
   }, [resolvedPresets, presetLayout, order, hiddenList, shownList]);
 
-  // Apply persisted order. alwaysVisible columns are pinned at the front
-  // in their definition order (not reorderable); everything else follows
-  // the user's order, then anything new that isn't yet in the stored
-  // order gets appended (so new columns appear at the end without the
-  // user losing their arrangement).
   const allColumns = useMemo(() => {
     const alwaysFirst = rawColumns.filter((c) => c.alwaysVisible);
     const movable = rawColumns.filter((c) => !c.alwaysVisible);
-    /* Nothing stored → the default preset's order, when one is in play. Its
-       unlisted columns still land at the end via the loop below, exactly like a
-       stored order that predates a newly added column, so a preset only has to
-       name the columns it actually wants up front. */
     const effectiveOrder = order && order.length > 0 ? order : baselineLayout?.order ?? [];
     if (effectiveOrder.length === 0) return [...alwaysFirst, ...movable];
     const byKey = new Map(movable.map((c) => [c.key, c]));
@@ -819,18 +690,12 @@ function DataTableInner<T, L>({
         byKey.delete(k);
       }
     }
-    // Any movable columns not mentioned in the stored order (e.g. newly
-    // added UDFs) land at the end.
     for (const c of movable) {
       if (byKey.has(c.key)) ordered.push(c);
     }
     return [...alwaysFirst, ...ordered];
   }, [rawColumns, order, baselineLayout]);
 
-  /* Effective hidden = hidden ∪ defaultHidden-not-explicitly-shown, reading the
-     BASELINE's two lists while it is in play and the user's own otherwise. One
-     rule, two sources — a preset that names a defaultHidden column shows it,
-     exactly as a user ticking that column does. */
   const effectiveHidden = useMemo(() => {
     const hiddenSource = baselineLayout ? baselineLayout.hidden : userHidden;
     const shownSource = baselineLayout ? baselineLayout.shown : userShown;
@@ -843,7 +708,6 @@ function DataTableInner<T, L>({
   }, [allColumns, userHidden, userShown, baselineLayout]);
 
   const visibleColumns = useMemo(() => allColumns.filter((c) => c.alwaysVisible || !effectiveHidden.has(c.key)), [allColumns, effectiveHidden]);
-  /* Told to a page whose export reaches past this table (Payments not matched yet's Export all). */
   useEffect(() => { onShownColumnsChange?.(visibleColumns); }, [visibleColumns, onShownColumnsChange]);
 
   const mobileColumns = useMemo(() => {
@@ -870,14 +734,6 @@ function DataTableInner<T, L>({
     };
   }, [mobileCard, visibleColumns]);
 
-  // Render order with pinned columns hoisted to the front. alwaysVisible
-  // columns keep their existing front position; pinned-but-not-always
-  // columns slot in directly after them (preserving each group's relative
-  // order). Everything else follows. When nothing is pinned this is
-  // identical to `visibleColumns`, so the default render is unchanged.
-  /* `overlayHidden` narrows what is DRAWN (the delivery boards while their map
-     is open) without touching the user's saved choice; the Columns drawer keeps
-     showing their real prefs. */
   const onScreenColumns = useMemo(() => {
     if (!overlayHidden?.length) return visibleColumns;
     const off = new Set(overlayHidden);
@@ -896,40 +752,23 @@ function DataTableInner<T, L>({
       (c) =>
         !c.alwaysVisible && !pinnedSet.has(c.key) && !pinnedRightSet.has(c.key)
     );
-    // Left run · the scrolling middle · right run. A column pinned to both
-    // sides cannot exist — the cycle moves it, it never adds.
     return [...always, ...pinnedCols, ...rest, ...rightCols];
   }, [onScreenColumns, pinnedSet, pinnedRightSet]);
 
-  // Display index of the header being dragged — decides which side of the drop
-  // target the insertion bar is drawn on. -1 when no drag is in flight.
   const dragIndex = useMemo(
     () => (dragCol ? displayColumns.findIndex((c) => c.key === dragCol) : -1),
     [displayColumns, dragCol]
   );
 
-  // The contiguous run of sticky (frozen) columns at the front: every
-  // alwaysVisible column plus any pinned column. They render with
-  // `position: sticky` and cumulative `left` offsets. We treat the
-  // leading alwaysVisible columns as sticky too so a pinned column never
-  // scrolls "under" an unpinned-but-leading one. `stickyCount` is how many
-  // of the leading `displayColumns` are sticky.
   const stickyCount = useMemo(() => {
     let n = 0;
     for (const c of displayColumns) {
       if (c.alwaysVisible || pinnedSet.has(c.key)) n++;
       else break;
     }
-    // Only freeze the run if at least one column is *explicitly* pinned —
-    // alwaysVisible alone shouldn't start sticking (that would change every
-    // existing caller's scroll behaviour). When nothing is pinned, no
-    // column is sticky.
     return pinnedSet.size === 0 ? 0 : n;
   }, [displayColumns, pinnedSet]);
 
-  // Resolve a column's effective pixel width: user width wins, else the
-  // column's own `width` if it parses as px, else a sane default. Used both
-  // for the inline width style and for computing sticky-left offsets.
   const resolveWidth = useCallback(
     (col: Column<T>): number => {
       const user = widths[col.key];
@@ -942,19 +781,12 @@ function DataTableInner<T, L>({
     [widths, measuredWidths]
   );
 
-  /* Total table width for the fixed-width layout (opt-in `fixedColumnWidths`):
-     the leading select/expand gutters plus every display column's resolved px
-     width. Recomputes as a drag mutates `widths` (via resolveWidth), so the
-     table grows live while a column is resized. undefined when the flag is off. */
   const fixedTableWidth = useMemo(() => {
     if (!layoutFixed) return undefined;
     const lead = (selection ? 36 : 0) + (expandable ? 32 : 0);
     return lead + displayColumns.reduce((acc, c) => acc + resolveWidth(c), 0);
   }, [layoutFixed, selection, expandable, displayColumns, resolveWidth]);
 
-  /* How many TRAILING display columns are frozen to the right. Mirror image
-     of stickyCount: a contiguous run, because a gap in it would let an
-     unfrozen column scroll underneath one that is frozen. */
   const stickyRightCount = useMemo(() => {
     if (pinnedRightSet.size === 0) return 0;
     let n = 0;
@@ -965,10 +797,6 @@ function DataTableInner<T, L>({
     return n;
   }, [displayColumns, pinnedRightSet]);
 
-  /* Cumulative RIGHT offset per trailing sticky column. Accumulated from the
-     last column backwards, which is why this cannot reuse stickyLeft's loop:
-     the offset of a right-frozen column is the total width of everything to
-     its right, not to its left. */
   const stickyRight = useMemo(() => {
     const out: number[] = [];
     let acc = 0;
@@ -979,8 +807,6 @@ function DataTableInner<T, L>({
     return out;
   }, [displayColumns, stickyRightCount, resolveWidth]);
 
-  // Cumulative left offset (px) for each sticky column, by index into
-  // `displayColumns`. Index >= stickyCount → not sticky (offset unused).
   const stickyLeft = useMemo(() => {
     const out: number[] = [];
     let acc = 0;
@@ -999,10 +825,6 @@ function DataTableInner<T, L>({
     [allColumns]
   );
 
-  /* Preset rows for the panel, each already told whether the table currently
-     MATCHES it. Match is computed from the visible key sequence, never from a
-     stored preset id: a stored id goes stale the moment a column is toggled and
-     would then label a hand-edited layout as one of the presets. */
   const presetOptions = useMemo(() => {
     if (resolvedPresets.length === 0) return undefined;
     const movable = allColumns.filter((c) => !c.alwaysVisible);
@@ -1014,8 +836,6 @@ function DataTableInner<T, L>({
       .filter((c) => !c.alwaysVisible)
       .map((c) => c.key);
     const rows = resolvedPresets.map((p) => {
-      // What this layout WOULD render, resolved the same way the table resolves
-      // its own — so "active" means the two agree, not that an id was stored.
       const layout = presetLayout(p);
       const hidden = new Set(layout.hidden);
       const shown = new Set(layout.shown);
@@ -1045,9 +865,6 @@ function DataTableInner<T, L>({
     return withSingleActive(rows);
   }, [resolvedPresets, presetLayout, allColumns, visibleColumns, layoutStore.canManageLayouts]);
 
-  /* Visibility gestures live in dataTableColumnPrefs: under a default layout the
-     two lists below are read PAST, so a gesture that edits only them can write
-     nothing at all. `order` comes back set exactly when that baseline was banked. */
   function writeColumnPrefs(next: ColumnPrefs) {
     if (next.order) setOrder(next.order);
     setHiddenList(next.hidden);
@@ -1065,14 +882,6 @@ function DataTableInner<T, L>({
     setShownList([]);
   }
 
-  /* Applying a layout writes exactly the prefs a hand-arranged one writes —
-     order + hidden/shown (+ widths/pinned when the saved layout carries them) —
-     so the table never enters a "preset mode" the next column toggle would have
-     to escape from. The hidden list is written in FULL rather than only where it
-     differs from the column flags: a layout that happens to equal the flag
-     defaults would otherwise store two empty lists, read as "untouched", and
-     snap the table to the OTHER company's default — precisely the cross-company
-     pick this feature exists to allow. */
   function applyPreset(id: string) {
     onUserAdjustColumns?.();
     const preset = resolvedPresets.find((p) => p.id === id);
@@ -1084,14 +893,10 @@ function DataTableInner<T, L>({
     const orderedSet = new Set(ordered);
     setOrder([
       ...ordered,
-      // Columns the saved layout predates (a newer release added them) go last
-      // rather than vanishing from the order entirely.
       ...[...known].filter((k) => !orderedSet.has(k)),
     ]);
     setShownList(keep(layout.shown));
     setHiddenList(keep(layout.hidden));
-    // A frozen column this layout hides would hold a slot in the freeze run it
-    // can never fill again.
     const hiddenSet = new Set(keep(layout.hidden));
     setPinned(keep(layout.pinned).filter((k) => !hiddenSet.has(k)));
     setPinnedRight(keep(layout.pinnedRight).filter((k) => !hiddenSet.has(k)));
@@ -1100,12 +905,6 @@ function DataTableInner<T, L>({
     if (preset.seed) onApplyLayoutSeed?.(preset.id.slice("seed:".length));
   }
 
-  /* ── Sync this table's layout to the account ──────────────────────────────
-     The store debounces and no-ops until the boot fetch landed. The MOUNT pass
-     is skipped deliberately: merely opening a list must not create a saved
-     layout for a table the user never arranged — and an all-empty layout is a
-     delete, so a Reset propagates instead of being undone by the next
-     hydration. */
   const myLayout = useMemo<StoredLayout>(
     () => ({
       order,
@@ -1123,16 +922,11 @@ function DataTableInner<T, L>({
   useEffect(() => {
     const previous = syncedRef.current;
     syncedRef.current = { key: baseIdKey, signature: myLayoutSignature };
-    // First render, or this instance switched tables: nothing changed HERE.
     if (!previous || previous.key !== baseIdKey) return;
     if (previous.signature === myLayoutSignature) return;
     saveMyLayout(baseIdKey, myLayout);
   }, [baseIdKey, myLayoutSignature, myLayout]);
 
-  /* A page that moved off the SCM DataGrid opens with the layout its user left
-     there, once per table key. Boot hydration writes the account's DataGrid
-     layout into the grid's own local blob, so reading that blob covers both
-     browsers and accounts; the state change then syncs it under THIS key. */
   useEffect(() => {
     if (!legacyGridKey) return;
     const marker = `dt:legacy:${idKey}`;
@@ -1145,7 +939,6 @@ function DataTableInner<T, L>({
       try {
         localStorage.setItem(marker, "1");
       } catch {
-        // storage unavailable: the import simply re-checks next mount
       }
     };
     const own =
@@ -1166,9 +959,6 @@ function DataTableInner<T, L>({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per table key; state read is the mount snapshot
   }, [idKey, legacyGridKey]);
 
-  /* Admin-only: publish the arrangement on screen as this company's default
-     view — the thing that used to be a code constant and a deploy. Reaches
-     only users who have never arranged this table themselves. */
   const [defaultSaveState, setDefaultSaveState] = useState<
     "idle" | "saving" | "saved" | "error"
   >("idle");
@@ -1188,10 +978,6 @@ function DataTableInner<T, L>({
     },
     [baseIdKey],
   );
-  /* What is ON SCREEN, materialised — which is what "save these columns as the
-     default" has to publish. The user's own prefs are the wrong source: an
-     admin who is happy with the layout they inherited has empty prefs, and
-     saving those would publish nothing at all. */
   const renderedLayout = useMemo<StoredLayout>(() => {
     const movable = allColumns.filter((c) => !c.alwaysVisible);
     return {
@@ -1230,20 +1016,12 @@ function DataTableInner<T, L>({
   ]);
 
   function resetOrder() {
-    // Resetting order also clears widths + pinned so the table returns to a
-    // clean default layout (no orphaned per-column sizes or frozen columns
-    // left pointing at a now-rearranged set).
     setOrder([]);
     updateWidths({}, true);
     setPinned([]);
     setPinnedRight([]);
   }
 
-  /* ── Columns drawer ──────────────────────────────────────────────────────
-     One row per movable column, in TABLE order, carrying everything the
-     drawer draws: its group, whether it shows, its effective width and
-     whether it is frozen. Derived — the drawer holds no column state of its
-     own, so every gesture lands on the same prefs a header drag writes. */
   const drawerColumns = useMemo<DrawerColumn[]>(
     () =>
       allColumns
@@ -1251,9 +1029,6 @@ function DataTableInner<T, L>({
         .map((c) => ({
           key: c.key,
           label: headerLabel(c.label || c.key),
-          /* Explicit beats inferred: a page that sorted its columns by hand
-             (Sales Orders) keeps that sort; every other list gets the shared
-             classifier rather than one flat scroll. */
           group: c.group || inferColumnGroup(c.key, c.label || c.key) || "",
           visible: !effectiveHidden.has(c.key),
           canHide: c.canHide !== false,
@@ -1272,7 +1047,6 @@ function DataTableInner<T, L>({
     writeColumnPrefs(showAllColumnPrefs(allColumns, effectiveHidden, Boolean(baselineLayout)));
   }
 
-  /** Back to the active layout: its columns, its order, its widths. */
   function resetLayout() {
     onUserAdjustColumns?.();
     resetVisibility();
@@ -1292,17 +1066,10 @@ function DataTableInner<T, L>({
     setWrapText(false);
   }
 
-  /** True when the columns on screen match no offered layout — the "· edited"
-   *  in the footer. With no layouts to compare against there is nothing to be
-   *  dirty against, so it stays false. */
   const layoutDirty = Boolean(
     presetOptions && presetOptions.length > 0 && !presetOptions.some((p) => p.active)
   );
 
-  /* ── Named layouts (mig 0239) ────────────────────────────────────────────
-     Saving one snapshots the arrangement ON SCREEN, which is the only reading
-     that matches the control's name ("New layout from current columns"). The
-     drawer owns the naming prompt; here we just write. */
   const saveNamedLayout = useCallback(
     (name: string) => createNamedLayout(baseIdKey, name, renderedLayout).then(() => undefined),
     [baseIdKey, renderedLayout]
@@ -1310,17 +1077,12 @@ function DataTableInner<T, L>({
   const duplicateNamedLayout = useCallback(
     (id: string, name: string) => {
       const source = resolvedPresets.find((p) => p.id === id);
-      // Duplicating a COMPANY row is allowed on purpose: "start from the 2990
-      // view and tweak it" is the same gesture as duplicating your own.
       return createNamedLayout(baseIdKey, name, source ? presetLayout(source) : renderedLayout).then(
         () => undefined
       );
     },
     [baseIdKey, resolvedPresets, presetLayout, renderedLayout]
   );
-  /* One handler, two destinations: a layout the user saved is renamed by id;
-     a COMPANY row has no id of its own — its name lives on the default row, so
-     it goes to /default. The drawer doesn't need to know which. */
   const renameLayout = useCallback(
     (id: string, name: string) => {
       const target = resolvedPresets.find((p) => p.id === id);
@@ -1339,7 +1101,6 @@ function DataTableInner<T, L>({
       if (id.startsWith("seed:")) return saveSharedLayout(baseIdKey, id.slice("seed:".length), renderedLayout);
       const target = resolvedPresets.find((p) => p.id === id);
       if (target?.savedId != null && target.tableKey) {
-        // A DataGrid-era layout moves to this table on its first edit.
         await createNamedLayout(baseIdKey, target.label, renderedLayout);
         return deleteNamedLayout(target.tableKey, target.savedId);
       }
@@ -1357,7 +1118,6 @@ function DataTableInner<T, L>({
       deleteNamedLayout(resolvedPresets.find((p) => p.savedId === savedId)?.tableKey ?? baseIdKey, savedId),
     [baseIdKey, resolvedPresets]
   );
-  /** Drop a seed's team-wide override (and a DataGrid-era one), back to the code seed. */
   const resetSeedLayout = useCallback(
     async (id: string) => {
       if (!id.startsWith("seed:")) return;
@@ -1372,8 +1132,6 @@ function DataTableInner<T, L>({
 
   const { share: shareLayout, unshare: unshareLayout } = makeLayoutShareActions(baseIdKey, resolvedPresets, presetLayout);
 
-  /** Download the arrangement as JSON — the drawer's "Export column config".
-   *  Column KEYS and sizes only; no rows, nothing from the data. */
   function exportColumnConfig() {
     const payload = {
       table: baseIdKey,
@@ -1397,17 +1155,9 @@ function DataTableInner<T, L>({
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      // Blob/URL unavailable (very old browser, locked-down webview): the menu
-      // item simply does nothing rather than throwing through the drawer.
     }
   }
 
-  // ── Column resize ──────────────────────────────────────────
-  // Dragging the right-edge handle updates `widths[key]`. The handle is a
-  // dedicated element that stops propagation so it never triggers the
-  // header's sort-on-click. Double-clicking the handle auto-fits (clears
-  // the column's stored width). Pointer events + capture give us a clean
-  // drag without a global listener leak.
   const resizeRef = useRef<{ key: string; startX: number; startW: number } | null>(
     null
   );
@@ -1415,9 +1165,6 @@ function DataTableInner<T, L>({
 
   useEffect(() => {
     return () => {
-      // A route change can unmount the table before mouseup. React state
-      // updates made from an unmount cleanup do not reach useLocalStorage's
-      // persistence effect, so write the last in-memory width directly.
       endResizeRef.current?.(true);
     };
   }, [widthStorageKey]);
@@ -1425,7 +1172,6 @@ function DataTableInner<T, L>({
   function onResizeStart(e: React.MouseEvent, col: Column<T>) {
     e.preventDefault();
     e.stopPropagation();
-    // End an interrupted gesture before replacing its listener closures.
     endResizeRef.current?.();
     const gesture = {
       key: col.key,
@@ -1436,7 +1182,6 @@ function DataTableInner<T, L>({
     const onMove = (ev: MouseEvent) => {
       const r = resizeRef.current;
       if (r !== gesture) return;
-      // Pointer px are screen px; a fitted grid draws each column px smaller.
       const next = Math.max(MIN_COL_WIDTH, r.startW + (ev.clientX - r.startX) / fit.scaleRef.current);
       updateWidths((prev) => ({ ...prev, [r.key]: next }), false);
     };
@@ -1444,8 +1189,6 @@ function DataTableInner<T, L>({
     const onBlur = () => finish();
     const finish = (persistDirectly = false) => {
       if (resizeRef.current !== gesture) return;
-      // Persist once, after the last visual update. Never write synchronous
-      // storage from mousemove: that path runs at pointer-frame frequency.
       resizeRef.current = null;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
@@ -1455,7 +1198,6 @@ function DataTableInner<T, L>({
         try {
           localStorage.setItem(widthStorageKey, JSON.stringify(widthsRef.current));
         } catch {
-          // quota / privacy mode — match useLocalStorage's best-effort policy
         }
       } else {
         setStoredWidths(widthsRef.current);
@@ -1467,9 +1209,6 @@ function DataTableInner<T, L>({
     window.addEventListener("blur", onBlur);
   }
 
-  /* Auto-fit (double-click the edge, or the header menu): the widest of the
-     header and the cells drawn now, measured on one line. With nothing drawn
-     to measure, fall back to the column's natural size. */
   function autoFitColumn(key: string) {
     const cells = scrollWrapRef.current?.querySelectorAll<HTMLElement>(`[data-col-key="${CSS.escape(key)}"]`);
     let widest = 0;
@@ -1492,7 +1231,6 @@ function DataTableInner<T, L>({
     }, true);
   }
 
-  // ── Pin / freeze (left) ────────────────────────────────────
   /**
    * none → left → right → none (design handoff; owner 2026-08-03).
    *
@@ -1515,14 +1253,6 @@ function DataTableInner<T, L>({
   // Owner 2026-09-27: freeze the first N columns in one step (see DataTableFreezeItems).
   const freezeUpTo = (key: string) => { const keys = keysThrough(displayColumns, key); setPinned(keys); setPinnedRight((p) => p.filter((k) => !keys.includes(k))); };
 
-  // ── Column reorder ─────────────────────────────────────────
-  // Shared by the Columns drawer and by dragging a header directly. Moves
-  // `key` to `targetKey`'s slot in the persisted order. The stored order
-  // covers EVERY movable column, hidden ones included, so a hidden column
-  // keeps its place and reappears where the user left it.
-  //
-  // Index-before-removal (not after) is deliberate: it matches the drawer's
-  // long-standing behaviour, so the two gestures can never disagree.
   const reorderTo = useCallback(
     (key: string, targetKey: string) => {
       if (key === targetKey) return;
@@ -1537,18 +1267,8 @@ function DataTableInner<T, L>({
     [allColumns, setOrder]
   );
 
-  /* A header can be picked up unless it is `alwaysVisible` — those are pinned
-     to the front by contract and "can't be reordered past" (see the Column
-     type), so letting one be dragged would promise a move we won't honour. */
   const canDragHeader = (c: Column<T>) => !c.alwaysVisible;
 
-  /* Refuse drops ACROSS the pinned/unpinned divide. Pinned columns are hoisted
-     to the front at render time (displayColumns), so dropping an unpinned
-     column onto a pinned one would faithfully rewrite the stored order and
-     then still render in the old place — a gesture that silently does nothing
-     is worse than one that visibly declines. Within a group, order is honoured
-     verbatim, so those drops are allowed. */
-  /** Which edge a column is frozen to — the thing a drop may not cross. */
   const freezeSideOf = (key: string) =>
     pinnedSet.has(key) ? "left" : pinnedRightSet.has(key) ? "right" : "none";
 
@@ -1556,11 +1276,6 @@ function DataTableInner<T, L>({
     !!dragCol &&
     dragCol !== c.key &&
     canDragHeader(c) &&
-    /* SIDE, not "is it left-pinned": with right-freeze, an unfrozen column and
-       a right-frozen one both answer false to pinnedSet.has, so comparing that
-       would let a right-frozen header be dropped into the scrolling middle —
-       rewriting the stored order while the column stayed put, which is the
-       silent no-op this guard exists to prevent. */
     freezeSideOf(dragCol) === freezeSideOf(c.key);
 
   function endHeaderDrag() {
@@ -1621,14 +1336,11 @@ function DataTableInner<T, L>({
   function handleExport() {
     if (rowActionsDisabled) return;
     if (exportLines) { void handleLineExport(exportLines); return; }
-    // Optional override: the caller exports a broader/full dataset (e.g. all
-    // pages, ignoring a screen-only filter) with the same columns.
     const csvCols = csvColumnsOf(visibleColumns as Column<T, L>[]);
     if (onExport) { onExport(csvCols); return; }
     if (!actionRows || actionRows.rows.length === 0 || csvCols.length === 0) return;
     const date = todayMyt(), outRows = actionRows.rows;
     if (exportXlsx) {
-      // No lines: one sheet row per list row, keeping each column's exportFormat.
       const matrix = buildLineExportMatrix(outRows, () => [], exportableColumns(visibleColumns as Column<T, L>[]));
       const sheet = exportSheet?.(outRows);
       void writeLineExportFile(matrix, sheet?.name ?? "Sheet1", `${exportName || tableId || "export"}-${date}.xlsx`, sheet?.heading);
@@ -1647,27 +1359,12 @@ function DataTableInner<T, L>({
     e.target.value = "";
   }
 
-  // ── Sorting ────────────────────────────────────────────
-  // Clicking a sortable header cycles: none → asc → desc → none.
-  // - Default (client mode): sort applies in-memory to the rows passed in.
-  // - Server mode (serverSort): for columns the backend can sort (no
-  //   `disableSort`), in-memory sort is skipped and the new sort state is
-  //   reported via onSortChange so the parent can re-query with
-  //   sort_by/sort_dir — ordering applies across the full dataset. Columns
-  //   marked `disableSort` (= not in the backend's sort whitelist) fall back
-  //   to CLIENT-side sorting of the loaded page and are NEVER reported, so
-  //   the server query (and pagination) is untouched.
 
-  // Every getValue column is sortable. On client tables `disableSort` opts
-  // out entirely; on server tables it only demotes the column to the
-  // client-side fallback (see above).
   const canSortColumn = useCallback(
     (col: Column<T>) => !!col.sortCompare || (!!col.getValue && (!col.disableSort || !!serverSort)),
     [serverSort]
   );
 
-  // A sort the parent's backend understands: a sort on a non-disableSort
-  // column. Anything else maps to null (backend default order).
   const serverReportable = useCallback(
     (s: SortState | null): SortState | null => {
       if (!s) return null;
@@ -1677,11 +1374,6 @@ function DataTableInner<T, L>({
     [allColumns]
   );
 
-  // Report a sort change to a server-sorted parent, de-duplicated: switching
-  // between two client-fallback columns both maps to null, and re-reporting
-  // null would needlessly reset the parent's pagination on every click. The
-  // `undefined` sentinel guarantees exactly ONE call on mount (the parent's
-  // sortSyncedRef handshake relies on it).
   const lastReportedSortRef = useRef<string | null | undefined>(undefined);
   const reportServerSort = useCallback(
     (next: SortState | null) => {
@@ -1706,9 +1398,6 @@ function DataTableInner<T, L>({
     reportServerSort(next);
   }
 
-  // Set an explicit sort direction for a column (used by the header
-  // context menu's "Sort ascending / descending"). Mirrors onHeaderClick's
-  // server-mode reporting so server-sorted tables re-query.
   function applySort(col: Column<T>, dir: SortDir) {
     if (!canSortColumn(col)) return;
     const next: SortState = { key: col.key, dir };
@@ -1716,19 +1405,11 @@ function DataTableInner<T, L>({
     reportServerSort(next);
   }
 
-  // On mount, if the parent is in server-sort mode and we restored a
-  // sort from localStorage, push it up so the initial query matches.
-  // A restored sort on a client-fallback column reports null — the backend
-  // never saw that key; the loaded page is re-sorted in memory instead.
-  // (Effect, not render, so we don't fire during render.)
   useEffect(() => {
     reportServerSort(sort);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Close the header context menu on any outside click, Escape, or scroll
-  // (the menu is positioned at fixed page coordinates, so a scroll would
-  // detach it from its anchor). Clicks inside the menu stop propagation.
   useEffect(() => {
     if (!headerMenu) return;
     const close = () => setHeaderMenu(null);
@@ -1775,8 +1456,6 @@ function DataTableInner<T, L>({
     };
   }, [filterAnchor]);
 
-  // Close the row context menu on outside click, Escape, or scroll — same
-  // detach-from-anchor reasoning as the header menu (it's fixed-positioned).
   useEffect(() => {
     if (!rowMenu) return;
     const close = () => setRowMenu(null);
@@ -1793,15 +1472,6 @@ function DataTableInner<T, L>({
     };
   }, [rowMenu]);
 
-  // Per-column filters apply first (client-side, loaded rows only), then
-  // sort — the SAME functions the line export runs over every fetched row
-  // (dataTableRows.ts).
-  /* Only build the per-row search index when the box actually has a query.
-     filteredRows already no-ops the index when the trimmed query is empty
-     (`searchBlobs && q ? … : rows`), so gating here is behaviour-identical — but
-     it skips scanning every row × every column on each refetch / poll while the
-     box is empty (the common case), and rebuilds only as the (150ms-debounced)
-     query changes. PERF 2026-10-23. */
   const searchBlobs = useMemo(() => {
     const q = clientQuery.trim();
     return clientSearching && rows && q ? new Map(rows.map((r) => [r, buildSearchBlob(r, allColumns)])) : null;
@@ -1837,13 +1507,11 @@ function DataTableInner<T, L>({
     [sortedRows, rowLimit],
   );
   const hiddenByLimit = (sortedRows?.length ?? 0) - (limitedRows?.length ?? 0);
-  // Ticked rows while any are, else all shown: the footer, Export and Ctrl+C share it.
   const actionRows = useMemo(() => (sortedRows ? tickedOrAll(sortedRows, selection?.selectedIds, getRowKey) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- getRowKey is an inline prop; keys are stable per row
     [sortedRows, selection?.selectedIds]);
   const footerTotals = actionRows?.rows.length && displayColumns.some((c) => c.total) ? actionRows : null;
   const loadMore = () => setRowLimit((n) => (n ?? 0) + (initialRowLimit ?? 200));
-  /* Drag-to-reorder + edge auto-scroll (owner 2026-09): rows drag only while no column sort (the toolbar offers to clear one); a drop reports the new order of the shown rows, persisted by the caller via `defaultSort`. */
   const rowReorderable = !!onRowReorder && sort == null;
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropKey, setDropKey] = useState<string | null>(null);
@@ -1862,12 +1530,6 @@ function DataTableInner<T, L>({
      that stores these in state cannot re-enter this render pass. `rows` is
      undefined while loading; skip rather than publish an empty set, or a
      summary card would blink to zero on every refetch. */
-  /* Published only when the rows actually CHANGED, not when the array is new.
-     A funnel yields a fresh filtered array whenever the memo recomputes, and
-     it recomputes whenever the caller passes new column objects — which every
-     list page does on every render. A parent storing the report then rendered,
-     rebuilt its columns, got a new array, stored it again: an endless render
-     loop on any list with a saved funnel (docs/bugs, 2026-09-15). */
   const reportedRowsRef = useRef<T[] | null>(null);
   useEffect(() => {
     if (!sortedRows) return;
@@ -1877,15 +1539,8 @@ function DataTableInner<T, L>({
     onFilteredRowsChange?.(sortedRows);
   }, [sortedRows, onFilteredRowsChange]);
 
-  // Total column span for full-width body cells (skeleton / error / empty /
-  // expansion). The chevron column (when `expandable`) adds one leading
-  // column that isn't in `displayColumns`. When no chevron, this equals
-  // `displayColumns.length`, so non-expandable callers are unchanged.
   const expandColCount = expandable ? 1 : 0;
   const selectColCount = selection ? 1 : 0;
-  /* In the fixed layout a blank last column takes the slack, so a column made
-     narrower gives its space to the blank instead of to its neighbours. It
-     sits before any right-frozen run, which stays at the right edge. */
   const fillerCount = layoutFixed ? 1 : 0;
   const fillerAt = displayColumns.length - stickyRightCount;
   const totalColSpan = displayColumns.length + expandColCount + selectColCount + fillerCount;
@@ -1896,7 +1551,6 @@ function DataTableInner<T, L>({
     const next: Record<string, number> = {};
     for (const th of heads) {
       const w = th.getBoundingClientRect().width;
-      // Not laid out (a hidden tab): measure on a later paint instead.
       if (w <= 0) return;
       next[th.dataset.colKey!] = Math.max(MIN_COL_WIDTH, Math.round(w));
     }
@@ -1906,19 +1560,10 @@ function DataTableInner<T, L>({
 
   const fit = useTableFitWidth(idKey, fitToWidth && showTable && !isSmallViewport, () => scrollWrapRef.current, fixedTableWidth);
 
-  // ── Group-by (opt-in) ──────────────────────────────────────
-  // Flatten the sorted rows into a list of render instructions — a group
-  // header followed by its rows (unless collapsed). Single level only (the
-  // prop is a single key). When `groupBy` is unset we keep a plain
-  // `{ kind: "row" }` stream so the tbody map below is identical to the old
-  // flat render. Grouping needs a `getValue` on the target column for a
-  // stable bucket key; if that's missing we silently fall back to flat.
   const headerText = (c: Column<T>) => c.label || c.key;
   type RenderItem =
     | { kind: "group"; path: string; level: number; label: string; count: number; collapsed: boolean }
     | { kind: "row"; row: T; rowIdx: number };
-  /* Banner groups (user-dragged, any depth) win over the code-set single
-     `groupBy`. A column without `getValue` has no stable bucket and is skipped. */
   const groupLevels = useMemo(() => {
     const byKey = new Map(allColumns.map((c) => [c.key, c]));
     if (groupBanner && userGroups.length > 0) {
@@ -1939,9 +1584,6 @@ function DataTableInner<T, L>({
     }
     const out: RenderItem[] = [];
     let rowIdx = 0;
-    // First-seen bucket order at every level, so an active sort still reads
-    // top to bottom. The level-0 path is the bare value: collapse state saved
-    // before nesting existed keeps working.
     const walk = (rowsIn: T[], level: number, parentPath: string) => {
       const { col, label } = groupLevels[level];
       const order: string[] = [];
@@ -1961,8 +1603,6 @@ function DataTableInner<T, L>({
         const collapsed = collapsedGroupSet.has(path);
         out.push({ kind: "group", path, level, label: label(val), count: bucket.length, collapsed });
         if (collapsed) {
-          // Keep the zebra index advancing past collapsed rows so re-expanding
-          // doesn't shift the stripe pattern of later rows.
           rowIdx += bucket.length;
         } else if (level + 1 < groupLevels.length) {
           walk(bucket, level + 1, path);
@@ -1991,26 +1631,15 @@ function DataTableInner<T, L>({
   );
   const expandAllGroups = useCallback(() => setCollapsedGroups([]), [setCollapsedGroups]);
 
-  // Density-aware cell padding. Tightened on 2026-05-08 — every row
-  // is one line of data, full stop. Old comfy (py-3.5) and old
-  // compact (py-2) both wasted vertical space; the new values
-  // collapse to a single 13px line + minimal cushion on each side.
-  // Headers stay one notch taller so the column boundary still reads.
-  // Permanently comfy (density toggle removed 2026-06).
   const cellPad = embedded ? "px-2 py-1 leading-tight" : "px-3 py-1.5 leading-tight";
   const headPad = embedded ? "px-2 py-1.5 leading-tight" : "px-3 py-2 leading-tight";
 
-  // Common toolbar button class — used by Import / Export / Density / Columns.
-  // 44 px on mobile (touch-target floor), compresses to 32 px on sm+ where
-  // mouse precision is available.
   const toolbarBtn =
     "inline-flex h-11 sm:h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary disabled:opacity-40 disabled:hover:border-border disabled:hover:bg-surface disabled:hover:text-ink-secondary";
 
   const rowCount = sortedRows?.length ?? 0;
   const visibleCount = chooserOptions.filter((o) => !effectiveHidden.has(o.key)).length;
 
-  // ── Row selection (opt-in `selection`) ─────────────────────────────────────
-  // Select-all operates over the currently-rendered rows (post filter + sort).
   const selectableKeys = useMemo(
     () =>
       selection && sortedRows
@@ -2072,9 +1701,6 @@ function DataTableInner<T, L>({
     end: VIRTUAL_ROW_THRESHOLD * 2,
   });
 
-  /* Scroll-to-row (map pin -> board row, DataGrid parity). The nonce is the
-     trigger, so the same pin clicked twice scrolls again. A windowed row may not
-     be in the DOM yet: jump to its estimated offset first, then settle on it. */
   const [highlightKey, setHighlightKey] = useState<string | null>(null);
   useEffect(() => {
     if (!scrollToRow) return;
@@ -2083,14 +1709,10 @@ function DataTableInner<T, L>({
     const idx = renderList.findIndex((it) => it.kind === "row" && String(getRowKey(it.row)) === key);
     if (idx < 0) return;
     const find = () => tbodyRef.current?.querySelector<HTMLElement>(`tr[data-rowkey="${CSS.escape(key)}"]`);
-    // Block body: Chrome's scrollIntoView returns a Promise, and an effect that
-    // returns it hands React a "cleanup" that crashes when the list closes.
     const settle = () => { find()?.scrollIntoView({ block: "center" }); };
     if (find()) { settle(); return; }
     const offset = idx * (rowHeightRef.current || ROW_HEIGHT_ESTIMATE);
     const wrap = scrollWrapRef.current;
-    // A programmatic scroll does not always emit `scroll` (a background tab never
-    // does), and the row window only moves on that event: send it ourselves.
     if (wrap && wrap.scrollHeight > wrap.clientHeight) {
       wrap.scrollTop = offset;
       wrap.dispatchEvent(new Event("scroll"));
@@ -2108,15 +1730,11 @@ function DataTableInner<T, L>({
       raf = 0;
       const el = tbodyRef.current;
       if (!el) return;
-      /* The average of the items drawn, not the first one: with text wrapped the
-         rows are no longer one height, and a grouped list mixes row heights with
-         group-header (data-vgrp) heights. */
       const drawn = el.querySelectorAll<HTMLElement>("tr[data-vrow], tr[data-vgrp]");
       let sum = 0;
       drawn.forEach((tr) => { sum += tr.offsetHeight; });
       if (drawn.length > 0 && sum > 0) rowHeightRef.current = sum / drawn.length;
       const rh = rowHeightRef.current || ROW_HEIGHT_ESTIMATE;
-      // tbody top relative to viewport, both in table px (a fitted table is zoomed)
       const top = el.getBoundingClientRect().top / fit.scaleRef.current;
       const vh = window.innerHeight / fit.scaleRef.current;
       const first = Math.max(0, Math.floor(-top / rh) - VIRTUAL_OVERSCAN);
@@ -2156,7 +1774,6 @@ function DataTableInner<T, L>({
   return (
     <div ref={freezeRootRef}>
       {urlFilterParam && inRouter && <UrlFilterResync param={urlFilterParam} value={serializeUrlColFilters(colFilters)} />}
-      {/* ── Toolbar (always rendered; an embedded grid has none) ── */}
       <div className={cn("mb-2.5 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between", embedded && "hidden")}>
         <div className="flex flex-1 flex-wrap items-center gap-2 sm:gap-3">
           {search && (
@@ -2256,10 +1873,6 @@ function DataTableInner<T, L>({
             {exporting ? "Exporting…" : actionRows?.picked && !onExport ? `${exportLabel} (${actionRows.rows.length})` : exportLabel}
           </button>
           {toolbarExtra}
-          {/* Density toggle removed 2026-06 — layout is permanently comfy. */}
-          {/* Mobile-only: flip between cards and the desktop-style table
-              (horizontally scrollable). Hidden on `sm+` because the
-              table is already the default there. */}
           <button
             onClick={() =>
               setMobileView(mobileView === "cards" ? "table" : "cards")
@@ -2303,9 +1916,6 @@ function DataTableInner<T, L>({
         </div>
       </div>
 
-      {/* Columns drawer (design handoff "Direction A", 2026-08-01). Mounted
-          only while open: its hooks (viewport media query, key handler) would
-          otherwise run for every table on the page that nobody has opened. */}
       {chooserOpen && (
       <ColumnsDrawer
         open
@@ -2336,10 +1946,6 @@ function DataTableInner<T, L>({
       />
       )}
 
-      {/* ── Table (sm+ always; on `<sm` only when mobileView=table). The
-            outer wrapper drops `overflow-hidden` when forced on mobile
-            so the rounded corners don't clip the horizontal scroll
-            shadow at the right edge. */}
       {showTable && groupBanner && !embedded && (
         <DataTableGroupBanner
           groups={userGroups}
@@ -2378,17 +1984,8 @@ function DataTableInner<T, L>({
           >
           <table
             className="w-full border-separate border-spacing-0 text-sm"
-            // Fixed: every column holds its width; the table is at least their
-            // sum (it scrolls) and at least the container (the filler takes it).
             style={layoutFixed ? { tableLayout: "fixed", minWidth: fixedTableWidth, zoom: fit.fitOn ? fit.fitScale : undefined } : undefined}
           >
-            {/* z-30, ABOVE the body sticky cells (z-20): the thead's own z-index
-                opens a stacking context, so a frozen header <th>'s inline z-30 is
-                scoped to it and cannot out-stack a body sticky cell at the ROOT
-                level. At z-10 the frozen-left/right BODY cells (z-20) painted OVER
-                the frozen header on scroll-down — the header's own corner showed
-                a data row where its heading should be. Lifting the whole thead
-                above z-20 keeps the frozen header on top on both axes. */}
             <thead className="sticky top-0 z-30">
               <tr>
                 {selection && (
@@ -2432,22 +2029,11 @@ function DataTableInner<T, L>({
                   const isSticky = i < stickyCount;
                   const isLastSticky = isSticky && i === stickyCount - 1;
                   const isStickyRight = stickyRight[i] !== undefined;
-                  // The left EDGE of the right run gets the divider, mirroring
-                  // the right edge of the left run.
                   const isFirstStickyRight =
                     isStickyRight && i === displayColumns.length - stickyRightCount;
                   const userW = widths[c.key];
-                  // Inline sizing: a user width (px) always wins; otherwise
-                  // fall through to the column's own `width` string. When a
-                  // width is in force we also pin min/max to it so the cell
-                  // actually holds the size instead of the browser
-                  // redistributing free space.
                   const cellStyle: React.CSSProperties = {};
                   if (layoutFixed) {
-                    // Fixed layout: pin every column to its resolved width so the
-                    // table-layout:fixed grid honours it exactly (widths come from
-                    // this header row) and a resize grows ONLY this column, never
-                    // its neighbours. resolveWidth already folds in a user drag.
                     const w = resolveWidth(c);
                     cellStyle.width = w;
                     cellStyle.minWidth = w;
@@ -2458,22 +2044,12 @@ function DataTableInner<T, L>({
                     cellStyle.maxWidth = userW;
                   } else if (c.width) {
                     cellStyle.width = c.width;
-                    // A declared px width is a CAP, not a suggestion: without
-                    // maxWidth the auto table layout stretches the column to
-                    // its longest nowrap cell, and a long value in a squeezed
-                    // layout paints over the neighbouring column (owner
-                    // 2026-07-24 screenshot — cells must clip, system-wide).
                     const px = parsePxWidth(c.width);
                     if (px != null) cellStyle.maxWidth = px;
                   }
                   if (isSticky) {
                     cellStyle.position = "sticky";
                     cellStyle.left = stickyLeft[i];
-                    // Above the scrollable header cells WITHIN the thead's own
-                    // stacking context (thead is z-30), so a frozen corner header
-                    // stays on top of the scrolling header during a two-axis
-                    // scroll. The thead being z-30 (> body sticky z-20) is what
-                    // keeps the whole header above the body — see the thead above.
                     cellStyle.zIndex = 30;
                   } else if (isStickyRight) {
                     cellStyle.position = "sticky";
@@ -2486,27 +2062,19 @@ function DataTableInner<T, L>({
                     <th
                       data-col-key={c.key}
                       style={cellStyle}
-                      /* Drag the header itself to reorder. HTML5 DnD, same as
-                         the Columns drawer. The resize strip preventDefaults
-                         its mousedown, which stops a drag from starting there,
-                         so resizing the edge still resizes. */
                       draggable={canDragHeader(c)}
                       onDragStart={(e) => {
                         if (!canDragHeader(c)) return;
                         draggedRef.current = true;
                         setDragCol(c.key);
-                        // Firefox refuses to start a drag with no payload.
                         e.dataTransfer.effectAllowed = "move";
                         try {
                           e.dataTransfer.setData("text/plain", c.key);
                         } catch {
-                          // Locked-down dataTransfer — the drag still works in
-                          // Chromium, which reads our React state instead.
                         }
                       }}
                       onDragOver={(e) => {
                         if (!canDropHeader(c)) return;
-                        // Without preventDefault the browser refuses the drop.
                         e.preventDefault();
                         e.dataTransfer.dropEffect = "move";
                         if (dropCol !== c.key) setDropCol(c.key);
@@ -2522,8 +2090,6 @@ function DataTableInner<T, L>({
                       }}
                       onDragEnd={endHeaderDrag}
                       onClick={() => {
-                        // A drag ends in a click on some browsers; that click
-                        // must not also cycle the sort.
                         if (draggedRef.current) {
                           draggedRef.current = false;
                           return;
@@ -2546,18 +2112,11 @@ function DataTableInner<T, L>({
                         c.align === "right" && "text-right",
                         c.align === "center" && "text-center",
                         (c.align === "left" || !c.align) && "text-left",
-                        // First real column owns the left edge gutter only
-                        // when there's no leading select / chevron column
-                        // ahead of it.
                         i === 0 && !expandable && !selection && "pl-5",
                         i === displayColumns.length - 1 && "pr-5",
                         sortable && "cursor-pointer select-none hover:text-primary",
                         active && "text-primary",
-                        // The column being carried dims; everything else stays
-                        // put so the insertion bar is the only thing moving.
                         dragCol === c.key && "opacity-40",
-                        // Delineate the frozen region: a right border on the
-                        // last sticky column reads as the freeze line.
                         isLastSticky && "border-r border-border",
                         isFirstStickyRight && "border-l border-border"
                       )}
@@ -2629,10 +2188,6 @@ function DataTableInner<T, L>({
                           </>
                         )}
                       </span>
-                      {/* Resize handle — a dedicated right-edge strip. It
-                          stops click/contextmenu propagation so dragging it
-                          never sorts or opens the column menu. Double-click
-                          auto-fits (clears the stored width). */}
                       <span
                         role="separator"
                         aria-orientation="vertical"
@@ -2708,7 +2263,6 @@ function DataTableInner<T, L>({
                 !error &&
                 sortedRows &&
                 renderList.slice(vStart, vEnd).map((item) => {
-                  // ── Group header row (opt-in `groupBy`) ──
                   if (item.kind === "group") {
                     return (
                       <tr
@@ -2743,18 +2297,10 @@ function DataTableInner<T, L>({
                     );
                   }
 
-                  // ── Data row ──
                   const { row, rowIdx } = item;
                   const customClass = getRowClassName?.(row);
-                  // Opaque zebra background for sticky cells. A sticky cell
-                  // must occlude the body content scrolling beneath it, so
-                  // it needs a solid fill (the row's own bg sits on the
-                  // <tr>, which doesn't paint over the sliding siblings).
-                  // Odd-row value = `surface-dim` (#ecebe2) at 35% over the
-                  // white surface, pre-blended so there's no visible seam.
                   const stickyBg =
                     rowIdx % 2 === 0 ? "var(--hz-c-surface)" : "var(--hz-dk-row-alt, #f8f8f5)";
-                  // A falsy key means this row has nothing to drill into: no chevron.
                   const expId = expandable ? expansionId(row) || null : null;
                   const isExpanded = expId != null && expandedRowsEffective.has(expId);
                   const selKey = selection ? String(getRowKey(row)) : null;
@@ -2786,10 +2332,6 @@ function DataTableInner<T, L>({
                             : undefined
                         }
                         onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
-                        /* A clickable row is reachable from the keyboard: Enter is the
-                           click, Shift+Enter the double-click (a keyboard has no
-                           second click). Only on the row itself, never on a control
-                           inside it. */
                         tabIndex={onRowClick || onRowDoubleClick ? 0 : -1}
                         onKeyDown={
                           onRowClick || onRowDoubleClick
@@ -2815,9 +2357,6 @@ function DataTableInner<T, L>({
                         }
                         className={cn(
                           "group transition-colors",
-                          /* The zebra only where the row has no colour of its own: the built
-                             CSS emits .bg-surface AFTER .bg-primary/10 / .bg-err-bg, so on one
-                             <tr> the zebra won and a ticked or toned row never painted. */
                           isRowSelected || highlightKey === String(getRowKey(row)) ? "bg-primary/10"
                             : customClass && /(^|\s)!?bg-/.test(customClass) ? null
                             : rowIdx % 2 === 0 ? "bg-surface" : "bg-surface-dim/35",
@@ -2826,9 +2365,6 @@ function DataTableInner<T, L>({
                           customClass
                         )}
                       >
-                        {/* Selection checkbox cell (opt-in `selection`). Stops
-                            click propagation so ticking never also fires
-                            onRowClick (which typically opens a drawer). */}
                         {selection && (
                           <td
                             style={{ width: 36, minWidth: 36, maxWidth: 36 }}
@@ -2850,9 +2386,6 @@ function DataTableInner<T, L>({
                             />
                           </td>
                         )}
-                        {/* Chevron drill-down cell (opt-in `expandable`).
-                            Stops click propagation so toggling the row's
-                            expansion never also fires onRowClick. */}
                         {expandable && (
                           <td
                             style={{ width: 32, minWidth: 32, maxWidth: 32 }}
@@ -2885,9 +2418,6 @@ function DataTableInner<T, L>({
                             )}
                           </td>
                         )}
-                        {/* The data cells are memoised (see DataRowCells): a
-                            scroll / selection / search re-render skips every row
-                            whose data + columns + layout are unchanged. */}
                         <DataRowCells
                           row={row}
                           columns={displayColumns}
@@ -2987,11 +2517,6 @@ function DataTableInner<T, L>({
         </div>
       )}
 
-      {/* ── Mobile card list (<sm) ─────────────────────────────
-          Same data, stacked-card layout. The first visible column
-          becomes the card title; subsequent columns render as
-          label/value rows. Skips the row entirely if the user
-          intentionally hid the first column. */}
       {showMobileCards && (
         <div className="space-y-2 sm:hidden">
         {effectiveLoading && (
@@ -3058,15 +2583,12 @@ function DataTableInner<T, L>({
                   }
                   className={cn(
                     "relative overflow-hidden rounded-lg border border-border shadow-stone transition-colors",
-                    // Same rule as the table row: a card's own background replaces the default.
                     !(customClass && /(^|\s)!?bg-/.test(customClass)) && "bg-surface",
                     onRowClick &&
                       "cursor-pointer active:bg-primary/15 hover:border-primary/40",
                     customClass,
                   )}
                 >
-                {/* Petrol accent rail — subtle anchor on the left edge of a
-                    clickable row card, matches the IdeaList card pattern. */}
                 <span className="pointer-events-none absolute left-0 top-0 h-full w-[2px] bg-gradient-to-b from-primary/0 via-primary/55 to-primary/0" />
                 <div className="p-3">
                   {primaryCol && (
@@ -3089,10 +2611,6 @@ function DataTableInner<T, L>({
                         <dd
                           key={c.key}
                           className={cn(
-                            // Always left-align in card view so cells
-                            // don't zig-zag between the left and right
-                            // edges of their column. `tabular-nums`
-                            // still keeps numeric digits in lockstep.
                             "min-w-0 break-words text-left text-ink-secondary",
                             c.align === "right" && "tabular-nums font-semibold",
                             c.className,
@@ -3119,13 +2637,6 @@ function DataTableInner<T, L>({
                           )}
                           <dd
                             className={cn(
-                              // Always left-align in card view. The
-                              // desktop column's `align: "right"` only
-                              // gets us tabular-nums + a heavier weight
-                              // here — flipping the entire cell to the
-                              // right edge creates a jagged value
-                              // column when stacked with left-aligned
-                              // siblings.
                               "min-w-0 break-words text-left font-medium text-ink",
                               c.align === "right" &&
                                 "tabular-nums font-semibold",
@@ -3147,12 +2658,6 @@ function DataTableInner<T, L>({
         </div>
       )}
 
-      {/* ── Header right-click context menu — portalled to <body> (escapes
-          overflow clip + sticky stacking); closes on outside/Esc/scroll. */}
-      {/* ── Column filter + sort popover — every getValue column (owner
-          2026-07-24), portalled like the menu. Sort A→Z/Z→A, live search over
-          distinct getValue results across LOADED rows (pre-filter so unticking
-          works), Select all / Invert / Clear, checklist with counts. */}
       {filterMenu &&
         (() => {
           const col = allColumns.find((c) => c.key === filterMenu.colKey);
@@ -3177,10 +2682,6 @@ function DataTableInner<T, L>({
           const canSort = canSortColumn(col);
           const sortActive = sort?.key === col.key ? sort.dir : null;
 
-          // Select all / Invert operate on the CURRENTLY SHOWN values (i.e.
-          // respect an active search), leaving any selection outside the
-          // search untouched — so you can search "KL", tick those, clear the
-          // search, search "Selangor", tick those, and keep both.
           const selectAll = () =>
             setColumnFilter(col.key, [...conditionTokens, ...selected, ...shownValues]);
           const invert = () => {
@@ -3206,7 +2707,6 @@ function DataTableInner<T, L>({
                 </span>
               </div>
 
-              {/* Sort */}
               <div className="shrink-0 border-b border-border-subtle py-1">
                 <button
                   type="button"
@@ -3271,7 +2771,6 @@ function DataTableInner<T, L>({
                 />
               )}
 
-              {/* Search */}
               <div className="shrink-0 border-b border-border-subtle px-3 py-1.5">
                 <input
                   autoFocus
@@ -3282,7 +2781,6 @@ function DataTableInner<T, L>({
                 />
               </div>
 
-              {/* Bulk actions */}
               <div className="flex shrink-0 items-center gap-1 border-b border-border-subtle px-2 py-1.5 text-[11px] font-semibold">
                 <button
                   type="button"
@@ -3312,10 +2810,6 @@ function DataTableInner<T, L>({
                 </button>
               </div>
 
-              {/* Value checklist — its own scroller. `overscroll-contain` so a
-                  wheel that hits the top/bottom of the list doesn't chain into
-                  a page scroll (which closes the popover). `shrink-0`: never
-                  squeezed to one row; the whole popover scrolls (2990-0054). */}
               <div className="max-h-[240px] shrink-0 overflow-y-auto overscroll-contain py-1">
                 {shown.length === 0 && (
                   <div className="px-3 py-2 text-[12px] text-ink-muted">No values</div>
@@ -3443,8 +2937,6 @@ function DataTableInner<T, L>({
                 <EyeOff size={13} className="shrink-0 text-ink-muted" />
                 Hide column
               </button>
-              {/* Bring a hidden column back from the header (SCM DataGrid parity:
-                  staff use this on the Delivery Planning board). */}
               {chooserOptions.some((o) => effectiveHidden.has(o.key)) && (
                 <>
                   <div className="my-1 border-t border-border-subtle" />
@@ -3472,12 +2964,6 @@ function DataTableInner<T, L>({
           );
         })()}
 
-      {/* ── Row right-click context menu (opt-in `contextMenu`) ──────
-          Portalled to <body> — same escape-the-overflow/stacking reasoning
-          as the header menu, but at a higher z so it clears the sticky
-          <thead>. Items + danger/divider come from `contextMenu(row)`,
-          resolved when the menu opened. Closes on outside click / Esc /
-          scroll (effect above). */}
       {rowMenu &&
         createPortal(
           <div
@@ -3510,8 +2996,6 @@ function DataTableInner<T, L>({
                       : "text-ink hover:bg-surface-dim"
                   )}
                   onClick={() => {
-                    // Close before firing — a handler may navigate or open a
-                    // dialog, and we don't want a stale menu lingering.
                     setRowMenu(null);
                     it.onClick();
                   }}
@@ -3523,10 +3007,6 @@ function DataTableInner<T, L>({
           </div>,
           document.body
         )}
-      {/* Runway spacer — see the frozen-header block above: restores exactly
-          the page-scroll distance the height cap removed, so scrolling always
-          carries the table box up to the pinned page header before the page
-          runs out. Desktop freeze mode only; costs nothing else. */}
       {showTable && freezeBox && freezeBox.runway > 0 && (
         <div ref={runwaySpacerRef} aria-hidden style={{ height: freezeBox.runway }} />
       )}
@@ -3535,7 +3015,3 @@ function DataTableInner<T, L>({
   );
 }
 
-// ── Sort comparator ──────────────────────────────────────────
-// Handles the common shapes getValue returns: null/undefined last,
-// then numbers numerically, then strings case-insensitively, then
-// booleans (false < true).

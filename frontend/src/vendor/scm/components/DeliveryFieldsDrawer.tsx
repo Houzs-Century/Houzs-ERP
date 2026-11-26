@@ -1,25 +1,3 @@
-// ----------------------------------------------------------------------------
-// DeliveryFieldsDrawer — edit the HC delivery-sheet raw-data fields on one order
-// (migration 0197). Opened from the Delivery Planning board's per-row "Edit HC
-// fields" action.
-//
-// Two groups, split by where the data is owned:
-//   • SO-context  — possession date, house type (New House / Replacement),
-//     replacement disposal, referral. ALWAYS editable (saved on the SO header).
-//   • DO-execution — time window + confirmed, arrival/departure clock, shipout
-//     date, customer-delivered date, port/shipment ref, and the HC "Remark 4"
-//     delivery sub-status. Editable ONLY when the order has a DO; otherwise the
-//     group is disabled with a hint (the SO-context group still saves).
-//
-// Saves via PATCH /delivery-planning/:type/:id/fields (useUpdateDeliveryFields),
-// which invalidates the planning board. Mirrors WarehouseFormDrawer's look +
-// the Suppliers drawer CSS module (2990 cream brand). In-app NotifyDialog only —
-// never a naked alert/confirm.
-//
-// HOUZS VENDOR NOTE: Suppliers.module.css path rewired from '../pages/...' to
-// '../../../pages/scm-v2/Suppliers.module.css' (the vendored components dir is
-// two levels deeper than the 2990 source's `apps/backend/src/components/`).
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import type { CSSProperties } from 'react';
@@ -41,7 +19,6 @@ import { instantToMytLocal, mytLocalToInstant } from "../lib/dates";
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const HOUSE_TYPES = ['New House', 'Replacement'] as const;
 
-/* A YYYY-MM-DD date string → the ISO value DateField takes. */
 const toDateInput = (d: string | null): string => (d ? String(d).slice(0, 10) : '');
 
 export const DeliveryFieldsDrawer = ({
@@ -54,7 +31,6 @@ export const DeliveryFieldsDrawer = ({
   const createAmendment = useCreateAmendment();
   const notify = useNotify();
 
-  // The order always carries an SO doc_no; DO-execution fields need a DO.
   const hasDo = order.delivery_orders.length > 0;
 
   /* Two-lane phase 2 (owner 2026-07-27): Replacement / Disposal is a CONTROLLED
@@ -74,12 +50,10 @@ export const DeliveryFieldsDrawer = ({
   });
 
   const [form, setForm] = useState({
-    // SO-context
     possessionDate: toDateInput(order.possession_date),
     houseType: order.house_type ?? '',
     replacementDisposal: order.replacement_disposal ?? '',
     referral: order.referral ?? '',
-    // DO-execution
     timeRange: order.time_range ?? '',
     timeConfirmed: order.time_confirmed ?? false,
     arrivalAt: instantToMytLocal(order.arrival_at),
@@ -103,14 +77,11 @@ export const DeliveryFieldsDrawer = ({
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) =>
     setForm((s) => ({ ...s, [k]: v }));
 
-  /* Disposal actually changed vs the persisted value ('' and null collapse). */
   const disposalDirty =
     (form.replacementDisposal.trim() || null) !== (order.replacement_disposal ?? null);
   const disposalViaAmendment = procLocked && disposalDirty;
 
   const submit = () => {
-    // Always send SO-context; send DO-execution only when a DO exists (else the
-    // API would just hint anyway — keep the request tight).
     const body: Record<string, unknown> = {
       type: 'so' as const,
       id: order.so_doc_no,
@@ -118,9 +89,6 @@ export const DeliveryFieldsDrawer = ({
       houseType: form.houseType || null,
       referral: form.referral || null,
     };
-    /* Locked + changed → the disposal value is EXCLUDED from the direct save
-       (the API 409s it anyway) and submitted as a DELIVERY-lane amendment
-       below. Unlocked, it saves directly as before. */
     if (!disposalViaAmendment) body.replacementDisposal = form.replacementDisposal || null;
     if (hasDo) {
       Object.assign(body, {
@@ -190,7 +158,6 @@ export const DeliveryFieldsDrawer = ({
         </div>
 
         <div className={styles.drawerBody}>
-          {/* ── SO-context group (always editable) ─────────────────────────── */}
           <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-2)', color: 'var(--c-burnt)' }}>
             Order context
           </div>
@@ -238,7 +205,6 @@ export const DeliveryFieldsDrawer = ({
               onChange={(e) => set('referral', e.target.value)} />
           </label>
 
-          {/* ── DO-execution group (needs a DO) ────────────────────────────── */}
           <div className={styles.eyebrow}
             style={{ margin: 'var(--space-4) 0 var(--space-2)', color: 'var(--c-burnt)' }}>
             Delivery execution {hasDo ? '' : '(needs a DO)'}

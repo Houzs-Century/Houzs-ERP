@@ -1,5 +1,3 @@
-// Fleet Health, the pure rules behind the restyled dashboard and lorry record, so
-// the screens only render.
 import type { LorryBox } from "../scm-v2/fleet/Lorry3D";
 
 const pos = (n: number | null | undefined): number | null => (n != null && Number.isFinite(n) && n > 0 ? n : null);

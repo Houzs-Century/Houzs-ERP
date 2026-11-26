@@ -27,7 +27,6 @@ export type UnitRow = { key: string; label: string; group: 'income' | 'expense' 
 export type UnitMonth = { month: string; incomeSen: number; expenseSen: number; paidSen: number; netSen: number };
 export type UnitView = { unit: UnitKind; months: string[]; rows: UnitRow[]; perMonth: UnitMonth[] };
 
-/** The rows kept (a row that is nil every month is left out), the months added up. */
 function unitView(unit: UnitKind, months: readonly string[], rows: UnitRow[]): UnitView {
   const kept = rows.filter((r) => months.some((m) => (r.cells[m] ?? 0) !== 0));
   const perMonth = months.map((month) => {
@@ -97,7 +96,6 @@ export type OperationMonthRows = ReadonlyMap<string, ReadonlyMap<string, number>
 
 export function buildOperationUnit(input: {
   months: readonly string[]; charges: readonly MonthCharges[]; operationBp: number; logisticsBp: number;
-  /** The sheet's income rows (warehouse, 2990, other charges) and expense rows, with their labels. */
   income: ReadonlyArray<{ key: string; label: string }>;
   expenses: ReadonlyArray<{ key: string; label: string }>;
   rows: OperationMonthRows;

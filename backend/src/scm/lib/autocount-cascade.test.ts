@@ -24,7 +24,6 @@ import { describe, expect, it } from 'vitest';
 import { fakeSb } from './fake-postgrest';
 import { ancestorsNeedingSend, newestOutboxRowFor, unsentEditFor } from './autocount-cascade';
 
-/* One sales chain: SO -> DO -> SI, wired the way the real tables are. */
 const chain = (opts: {
   soInBook?: string | null;
   doInBook?: string | null;
@@ -52,9 +51,6 @@ describe('ancestorsNeedingSend — the sales chain', () => {
   });
 
   it('an ancestor already in the book and up to date is not sent again', async () => {
-    /* The DO is in the book, so the SO must be too — that is how the DO got
-       there — and neither is holding an unsent edit. Sending either would push
-       a document that already arrived, unchanged, into a live account book. */
     const got = await ancestorsNeedingSend(chain({ doInBook: 'DO-99', soInBook: 'SO-99' }), 1, 'IV', 'si-1');
     expect(got).toEqual([]);
   });
@@ -97,9 +93,6 @@ describe('ancestorsNeedingSend — the purchase chain', () => {
 
 describe('a MERGED conversion has no single chain, and says so', () => {
   it('two parents return nothing rather than the first one', async () => {
-    /* Sending one parent and silently leaving the other is worse than sending
-       none: the operator would see a success and still have a document the book
-       cannot build. */
     const merged = fakeSb({
       delivery_orders: [{ id: 'do-1', do_number: 'DO-1', linked_ac_docno: null }],
       delivery_order_items: [
@@ -143,8 +136,6 @@ describe('an ancestor in the book with an unsent edit', () => {
   });
 
   it('a FAILED edit counts too — the book is behind either way', async () => {
-    /* Pending means the sweep has not taken it; failed means the sweep gave up.
-       From the operator's side both are "AutoCount does not have my change". */
     const got = await ancestorsNeedingSend(chain({
       soInBook: 'SO-99', doInBook: 'DO-99',
       outbox: [editRow('HC-SO-2608-005', 'failed', '2026-08-26T01:00:00Z')],
@@ -161,9 +152,6 @@ describe('an ancestor in the book with an unsent edit', () => {
   });
 
   it('reaches a stale ancestor ABOVE a fresh one', async () => {
-    /* THE REASON THE WALK NO LONGER STOPS EARLY. The DO is in the book and up
-       to date; the SO above it is in the book and behind. Stopping at the DO
-       would report nothing to do and build the invoice from the old order. */
     const got = await ancestorsNeedingSend(chain({
       soInBook: 'SO-99', doInBook: 'DO-99',
       outbox: [editRow('HC-SO-2608-005', 'pending', '2026-08-26T01:00:00Z')],
@@ -172,9 +160,6 @@ describe('an ancestor in the book with an unsent edit', () => {
   });
 
   it('a missing ancestor and a stale one come back OUTERMOST FIRST', async () => {
-    /* The SO is in the book but behind; the DO is not in the book at all. The
-       order matters: refreshing the order after transferring it would leave the
-       delivery carrying lines the order no longer has. */
     const got = await ancestorsNeedingSend(chain({
       soInBook: 'SO-99',
       outbox: [editRow('HC-SO-2608-005', 'pending', '2026-08-26T01:00:00Z')],
@@ -184,9 +169,6 @@ describe('an ancestor in the book with an unsent edit', () => {
   });
 
   it('names the EDIT row to send, not merely the newest row', async () => {
-    /* A re-queue of the create is newer than the edit. Sending "the newest row"
-       would re-send the create and leave the change behind — the exact failure
-       this test exists to make impossible. */
     const got = await ancestorsNeedingSend(chain({
       soInBook: 'SO-99', doInBook: 'DO-99',
       outbox: [
@@ -216,8 +198,6 @@ describe('unsentEditFor', () => {
   });
 
   it('returns the OLDEST unsent edit — two changes are two changes, in order', async () => {
-    /* Sending the newer one first would apply them backwards. One press takes
-       one edit; the next press takes the next. */
     const got = await unsentEditFor(sb, 1, 'SO-1');
     expect(got?.id).toBe('edit-SO-1-2026-08-26T01:00:00Z');
   });

@@ -79,9 +79,7 @@ describe('the Other Debtor bill sheet', () => {
     expect(has(draws, 'IG12345678090')).toBe(true);
     expect(has(draws, 'Sublet of showroom corner')).toBe(true);
     expect(has(draws, 'RM 450.00')).toBe(true);
-    /* A blank description prints the account's name — never the code. */
     expect(has(draws, 'WATER & ELECTRICITY INCOME - OFFICE')).toBe(true);
-    /* The text line prints its words and nothing else: no RM 0.00, no third number. */
     expect(has(draws, 'Ground floor, unit 3A')).toBe(true);
     expect(has(draws, 'RM 0.00')).toBe(false);
     expect(draws.some((d) => d.text === '3')).toBe(false);
@@ -136,7 +134,6 @@ HOUZS CENTURY SDN BHD`,
     expect(has(draws, 'TERMS & CONDITIONS')).toBe(true);
     expect(has(draws, '1. Payment within 14 days of the invoice date.')).toBe(true);
     expect(has(draws, '2. Cheques payable to HOUZS CENTURY SDN BHD.')).toBe(true);
-    /* The blocks sit above the signature boxes. */
     const y = (needle: string) => draws.find((d) => d.text.includes(needle))!.y;
     expect(y('PAYMENT DETAILS')).toBeLessThan(y('TERMS & CONDITIONS'));
     expect(y('TERMS & CONDITIONS')).toBeLessThan(y('Issued by'));

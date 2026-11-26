@@ -18,8 +18,6 @@ import type { AiReadStage } from './ai-read-job';
 export type BillRead = Extract<ReadBillResult, { ok: true }>;
 export type BillReadState =
   | { status: 'idle' }
-  /* stage: where the read is on the scan queue (ai-read-job.ts); null while
-     the files are still being sent. */
   | { status: 'reading'; stage: AiReadStage | null }
   | { status: 'failed'; reason: string }
   | { status: 'done'; result: BillRead };
@@ -47,7 +45,6 @@ export function useRequestBillRead() {
       setState({ status: 'failed', reason: e instanceof Error ? e.message : 'The bill could not be read.' });
       return null;
     }
-    // `read` is a fresh object every render; its mutateAsync is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [read.mutateAsync]);
   return { state, run };

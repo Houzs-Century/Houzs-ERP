@@ -1,10 +1,3 @@
-// ---------------------------------------------------------------------------
-// pi-scan-sku — which of our SKUs a printed invoice row is, when the supplier
-// prints ITS code and not ours, and which open Goods Receipt line to propose for
-// it. HOOKKA prints "1013-(Q)" for our JAGER-(Q) and "5540-1A(LHF)" for our
-// 8030-1A(LHF). Pure; everything here only fills the check screen, where each row
-// arrives marked for a person to confirm.
-// ---------------------------------------------------------------------------
 
 import { nameFits } from './grn-scan-check';
 import { normalizeCode } from './pi-scan-match';
@@ -14,7 +7,6 @@ import { familyOf, lineSizeOf, printedSize } from './scan-word-match';
 export const squashCode = (s: string | null | undefined): string => normalizeCode(s).replace(/\s+/g, '');
 
 const ALNUM = /[A-Z0-9]/;
-// A shared tail starts a new part of the code: "-(Q)", "(A)-(K)", "-2A(RHF)".
 const TAIL_START = /[-(/]/;
 
 /** The bed size a printed code names, "(Q)" in "1013-(Q)". */
@@ -71,7 +63,6 @@ export function codeByDescription(printedCode: string | null | undefined, descri
   const size = codeBedSize(printedCode) ?? printedSize(description) ?? printedSize(printedCode);
   const fits = [...new Set(ours)].filter((o) => {
     const family = familyOf(o);
-    // A model needs a real word: a bare "A" or "2" names nothing.
     if (!family.split(/[^A-Z0-9]+/).some((w) => w.length >= 3)) return false;
     return (lineSizeOf(o) ?? null) === size && nameFits(description, family);
   });
@@ -131,8 +122,6 @@ export function proposeGrnLines(rows: ReadonlyArray<SkuRow>, lines: ReadonlyArra
       todo = todo.filter((r) => !done.has(r.key));
       continue;
     }
-    // Equally good receipts: a row only one of them holds is that one's; a row
-    // two of them hold is nobody's to decide here.
     const done = new Set<string>();
     for (const r of todo) {
       const holders = ties.filter((g) => cover.get(g)?.includes(r));

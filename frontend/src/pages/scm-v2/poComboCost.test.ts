@@ -1,6 +1,3 @@
-/* A from-scratch PO prices a sofa SET at the supplier's combo cost, the same as
-   a PO converted from a sales order (2990-0013). The combo in force is the one
-   whose effective date is on or before the PO date. */
 
 import { describe, expect, test } from 'vitest';
 import { applySupplierCombos, type ComboLine } from './poComboCost';

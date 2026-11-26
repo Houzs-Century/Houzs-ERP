@@ -1,7 +1,3 @@
-/* Read the product categories from scm.acc_item_groups, the one list
-   (shared/product-categories.ts says why). The registry is global: it has no
-   company_id, like the enum it mirrors. THROWS on a read error, so a write is
-   refused instead of being checked against an empty list. */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ProductCategory } from '../shared/product-categories';
 

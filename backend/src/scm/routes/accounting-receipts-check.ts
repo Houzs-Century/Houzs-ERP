@@ -31,11 +31,8 @@ export type ReceiptsCheck = {
   payments: { count: number; totalSen: number };
   receipts: { count: number; totalSen: number };
   diffSen: number;
-  /** Payments of the month with no receipt. */
   missing: CheckPayment[];
-  /** Receipts whose amount is not their payment's. */
   mismatched: Array<{ orNumber: string; source: string; paymentId: string; docNo: string | null; paidAt: string; receiptSen: number; paymentSen: number }>;
-  /** Receipts whose payment no longer exists in the month (deleted, or re-dated out of it). */
   orphans: Array<{ orNumber: string; docNo: string | null; paidAt: string; amountSen: number }>;
 };
 
@@ -74,7 +71,6 @@ export const monthRange = (month: string): { from: string; to: string } | null =
   return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` };
 };
 
-/** The month's payments that ought to carry a receipt: money that arrived. */
 async function loadPayments(sb: Db, companyId: number, r: { from: string; to: string }): Promise<{ ok: true; rows: CheckPayment[] } | { ok: false; reason: string }> {
   const so = await paginateAll<Row>((from, to) => sb.from('mfg_sales_order_payments')
     .select('id, so_doc_no, paid_at, method, amount_sen')
@@ -104,8 +100,6 @@ async function loadPayments(sb: Db, companyId: number, r: { from: string; to: st
 }
 
 async function loadReceipts(sb: Db, companyId: number, r: { from: string; to: string }): Promise<{ ok: true; rows: CheckReceipt[] } | { ok: false; reason: string }> {
-  /* A CANCELLED receipt is kept on file but stands for no payment (owner
-     2026-10-29) — it is not one of the month's receipts. */
   const out = await paginateAll<Row>((from, to) => sb.from('acc_official_receipts')
     .select('id, or_number, status, payment_source, payment_id, doc_no, paid_at, amount_sen')
     .eq('company_id', companyId).neq('status', 'CANCELLED').gte('paid_at', r.from).lte('paid_at', r.to)
@@ -124,7 +118,6 @@ async function loadReceipts(sb: Db, companyId: number, r: { from: string; to: st
 const requirePerm = (c: any): boolean =>
   hasHouzsPerm(c, 'scm.payment_voucher.post') || hasHouzsPerm(c, 'scm.sales_order.write');
 
-/* ── GET /accounting/receipts/check?month=YYYY-MM ────────────────────────── */
 export const receiptsCheck = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json({ error: "You don't have permission to see receipts." }, 403);
   const co = requireActiveCompanyId(c);

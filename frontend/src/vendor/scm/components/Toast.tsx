@@ -1,26 +1,3 @@
-// HOUZS VENDOR SHIM — Toast.
-//
-// 2990's Toast is a standalone <ToastProvider> + useToast() variant-toast stack
-// (apps/backend/src/components/Toast.tsx). This shim maps the same `ToastApi`
-// surface (toast() callable + .success/.error/.warning/.info/.push) onto Houzs's
-// own non-blocking corner-toast stack (src/hooks/useToast.tsx), which is mounted
-// once at the app root in main.tsx and therefore wraps every /scm/* page.
-//
-// History — this used to bridge onto useNotify (NotifyDialog): a full-screen
-// modal with an OK button. That turned every fire-and-forget toast.success(...)
-// into a BLOCKING dialog. On SO Maintenance the per-state warehouse <select>
-// fires toast.success(`${state} → ${warehouse}`) on every change, so picking a
-// warehouse popped a modal that stole focus (autoFocus OK) and interrupted bulk
-// assignment — commander couldn't smoothly move to the next state. Routing the
-// informational variants to the auto-dismissing corner toast removes the
-// interruption while keeping the in-app (non-window.alert) surface. Genuine
-// failures still surface via toast.error (a red corner toast) or, where the
-// caller wants a hard stop, an explicit useNotify()/useConfirm() at the call
-// site — those were left untouched.
-//
-// Only `useToast` is consumed by the vendored SO Maintenance page; the
-// ToastProvider export is kept as a no-op pass-through in case a later page
-// expects to wrap a subtree.
 
 import type { ReactNode } from 'react';
 import { useToast as useHouzsToast } from '../../../hooks/useToast';

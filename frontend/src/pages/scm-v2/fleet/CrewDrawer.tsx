@@ -81,7 +81,6 @@ function LeaveCard({ kind, person, rows }: { kind: CrewKind; person: CrewPerson;
   const today = todayMY();
   const [adding, setAdding] = useState(false);
   const [f, setF] = useState({ from: today, to: today, reason: "" });
-  /* Leave is an in-house concept: the route refuses a 3PL driver's leave (driver-leave.ts isInHouseDriver). */
   const allowed = kind === "helper" || person.inHouse;
   const save = () => create.mutate(
     { ...(kind === "driver" ? { driverId: person.id } : { helperId: person.id }), startDate: f.from, endDate: f.to, reason: f.reason.trim() || null },

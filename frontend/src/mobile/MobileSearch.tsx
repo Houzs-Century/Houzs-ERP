@@ -45,51 +45,18 @@ export type SearchNav =
   | { kind: "product"; id: string }
   | { kind: "user"; id: string };
 
-/* Numeric DD/MM/YYYY — the owner-locked mobile date format (never month names),
-   matching MobileSalesOrders / MobileCalendar. Delegates to the shared TZ-aware
-   helper so date-only strings never drift a day on an off-zone device; keeps this
-   surface's empty-string (not em-dash) fallback for a blank/unparseable date. */
 const dm = (d: string | null | undefined): string => {
   if (!d) return "";
   const s = formatDate(d);
   return s === "—" ? "" : s;
 };
 
-/* DISPLAY ORDER, and the reason this map — not a second hand-written array —
- * defines it.
- *
- * The phone has a detail screen for only five of the hit types. The
- * procurement/fulfilment documents (purchase_order / grn / delivery_order /
- * sales_invoice / purchase_invoice) and the finance / master sources
- * (credit_note / receipt / payment_voucher / delivery_return / supplier /
- * customer) are desktop Cmd+K sources with no mobile screen to route to, so a
- * tap on one would be a dead tap.
- *
- * Until 2026-08-21 the answer was to leave those five out of a separate
- * `TYPE_ORDER` array, i.e. to DROP the hits. That silently broke the screen:
- * the "No matches" line below is gated on the RAW hit count, so searching a
- * delivery-order number returned hits, suppressed the empty state, filtered
- * every hit out, and rendered NOTHING — no result, no explanation. A phone that
- * knows the document exists and shows a blank area is worse than one that says
- * it found nothing.
- *
- * So every type renders now, and the ORDER is `Object.keys(TYPE_LABEL)`.
- * TYPE_LABEL is typed `Record<SearchHitType, string>`, so tsc refuses a missing
- * key: a new hit type added to the shared `SearchHitType` union CANNOT go
- * unrendered again — the compiler makes you name it here, and naming it lists
- * it. That is the whole point of deriving the order instead of maintaining a
- * parallel array beside it.
- *
- * Openable types come first; the desktop-only five follow, rendered read-only
- * (see `navFor` — a hit with no navigation intent is not a button). */
 const TYPE_LABEL: Record<SearchHitType, string> = {
-  // Openable on the phone.
   sales_order: "Sales Orders",
   project: "Projects",
   assr_case: "Service Cases",
   product: "Products",
   user: "People",
-  // Found, shown, but only openable on desktop.
   purchase_order: "Purchase Orders",
   grn: "GRNs",
   delivery_order: "Delivery Orders",
@@ -128,17 +95,12 @@ function navFor(hit: SearchHit): SearchNav | null {
       return { kind: "sales_order", docNo: String(hit.id) };
     case "project":
       return { kind: "project", projectId: Number(hit.id), date: hit.date ?? null };
-    // Carry the backend id through so the shell can deep-link the tapped record
-    // rather than discard it and open a bare list.
     case "assr_case":
       return { kind: "assr_case", id: String(hit.id) };
     case "product":
       return { kind: "product", id: String(hit.id) };
     case "user":
       return { kind: "user", id: String(hit.id) };
-    // SCM documents have no mobile screen to route to. Returning null is what
-    // makes the card render read-only ("Open on desktop") instead of as a
-    // button — they ARE listed, they are just not tappable here.
     case "purchase_order":
     case "grn":
     case "delivery_order":
@@ -235,14 +197,8 @@ export function MobileSearch({
             {degradedNotice}
           </div>
         )}
-        {/* `groups` is built from TYPE_ORDER, which is now every SearchHitType,
-            so "no groups" and "no hits" are the same statement and this gate is
-            honest again. It was NOT before: TYPE_ORDER held five of the ten
-            types while this line read the raw hit count, so an SCM-only result
-            set suppressed the empty state and rendered nothing at all. */}
         {term.length >= GLOBAL_SEARCH_MIN_LENGTH && !loading && !error && hits.length === 0 && (
           <div role="status" aria-live="polite" style={{ padding: "40px 16px", textAlign: "center", color: "var(--mut2)", fontSize: 12.5 }}>
-            {/* Must not claim absence when a source went unread — same rule as desktop. */}
             {degradedNotice
               ? `No matches found for "${term}" in what could be searched.`
               : `No matches for "${term}". Try a different keyword.`}
@@ -258,10 +214,6 @@ export function MobileSearch({
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {g.items.map((hit) => {
-                /* `navFor` is the ONE source of truth for "can this phone open
-                   it". A hit with no navigation intent renders as a plain
-                   <div>, not a <button>: showing the record is the fix, offering
-                   a tap that goes nowhere would be a different lie. */
                 const nav = navFor(hit);
                 const status = searchHitStatus(hit, vocab);
                 const body = (

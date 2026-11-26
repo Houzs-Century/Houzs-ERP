@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// BillPlanDialog — Plan date on a supplier bill (the owner's Claude Design,
-// Money out batch 4 step 7): when Finance plans to pay it, beside the
-// supplier's due date — never instead of it, so Overdue still counts by the
-// due date. Opened from Supplier bills' ⋯ and the bill's page; the To do
-// calendar moves the same date by dragging the bill. Posts nothing.
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { Button } from '@2990s/design-system';

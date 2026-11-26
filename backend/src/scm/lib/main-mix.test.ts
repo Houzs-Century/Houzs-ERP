@@ -5,24 +5,7 @@ import {
 } from './main-mix';
 import { parsePgrestInList } from './pgrest-in-list';
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   "May a sofa share an order with a bedframe or a mattress?" — one rule, three
-   FORMS, and the difference between them is the whole risk of this change.
 
-   CREATE asks a FLAT question (does this document mix?). ADD / EDIT / SWAP and
-   AMENDMENT ask a DIFFERENTIAL one (does this change INTRODUCE a mix?). Porting
-   the flat form onto an edit path would make every order that already mixes —
-   every order written before the rule existed — permanently uneditable, which
-   is a worse bug than the hole being closed. The grandfathering cases below are
-   the ones that must never go green by accident.
-
-   And there is a THIRD answer besides yes and no: "we could not tell". Each
-   function returns a refusal or null rather than a boolean so that a failed read
-   cannot arrive dressed as a clean pass.
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-/* The fake client and its chainable builder are structurally typed by the
-   library under test, which takes an untyped client (see `Sb` in main-mix.ts). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see the comment above
 type AnySb = any;
 
@@ -40,9 +23,6 @@ const wireIn = (vs: readonly unknown[]): unknown[] =>
     ? parsePgrestInList(`(${[...new Set(vs)].map((s) => (typeof s === 'string' && /[,()]/.test(s) ? `"${s}"` : `${s}`)).join(',')})`)
     : [...vs];
 
-/** Supabase-shaped mock: chainable `.select().eq().in()`, thenable. Records the
- *  filters so a test can prove the query was actually scoped, and can be told to
- *  fail a named table so the "could not tell" path is reachable. */
 const makeSb = (rows: Row[], failTable?: string) => {
   const calls: Array<{ table: string; eqs: Array<[string, unknown]> }> = [];
   return {
@@ -63,7 +43,6 @@ const makeSb = (rows: Row[], failTable?: string) => {
         order:  () => builder,
         eq: (col: string, v: unknown) => { eqs.push([col, v]); return builder; },
         in: (col: string, vs: unknown[]) => { ins.push([col, wireIn(vs)]); return builder; },
-        /* The escaped in-list path the fix uses: `.filter(col, 'in', pgrestInList(...))`. */
         filter: (col: string, op: string, payload: string) => {
           if (op === 'in') ins.push([col, parsePgrestInList(payload)]);
           return builder;
@@ -104,13 +83,9 @@ const CATALOGUE = [
   product('ACC-PILLOW', 'ACCESSORY'),
 ];
 
-/** The three outcomes, named — so a test that means "allowed" cannot silently
- *  accept "we could not tell". */
 const verdict = (r: MixRefusal | null): 'allowed' | 'refused' | 'unavailable' =>
   r === null ? 'allowed' : r.body.error === SOFA_MIX_ERROR ? 'refused' : 'unavailable';
 
-/* The unavailable path logs the driver's message. Silence it here, and assert on
-   it where that is the point of the test. */
 const quiet = () => vi.spyOn(console, 'error').mockImplementation(() => {});
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -129,10 +104,6 @@ describe('mixesSofaWithOtherMain — the pure predicate', () => {
     expect(mixesSofaWithOtherMain(['SOFA', 'SERVICE', 'ACCESSORY', 'PILLOW', '', null])).toBe(false);
   });
 
-  /* The classifier is so-readiness.normCategory — a SUBSTRING match, so the
-     free-text item_group the create paths fall back to ('Sofa Set', 'BEDFRAME -
-     DIVAN') lands in the right bucket. The old soMainMixIntroduced used exact
-     equality on the catalogue enum and would have missed these. */
   it('normalises free-text groups the way every other category reader does', () => {
     expect(mixesSofaWithOtherMain(['Sofa Set', 'BEDFRAME - DIVAN'])).toBe(true);
     expect(mixesSofaWithOtherMain([' sofa ', ' Mattress  '])).toBe(true);
@@ -142,7 +113,7 @@ describe('mixesSofaWithOtherMain — the pure predicate', () => {
     expect(sofaMixRefusal().body.error).toBe(SOFA_MIX_ERROR);
     expect(sofaMixRefusal().body.error).toBe('so_sofa_no_other_main');
     expect(sofaMixRefusal().status).toBe(400);
-    expect(sofaMixRefusal().body.reason.length).toBeLessThan(200); // authed-fetch discards ≥200
+    expect(sofaMixRefusal().body.reason.length).toBeLessThan(200);
   });
 });
 
@@ -167,9 +138,6 @@ describe('createMixRefusal — the FLAT form (whole document at once)', () => {
   });
 
   it('reads the catalogue within the caller company', async () => {
-    /* Company 2's SOFA-A is a MATTRESS. Scoped to company 1 it is a sofa and
-       the order is refused; scoped to company 2 it is not and the order is a
-       plain mattress + bedframe, which is allowed. */
     const both = [...CATALOGUE, product('SOFA-A', 'MATTRESS', 2), product('BED-A', 'BEDFRAME', 2)];
     expect(verdict(await createMixRefusal(makeSb(both), [{ itemCode: 'SOFA-A' }, { itemCode: 'BED-A' }], 1)))
       .toBe('refused');
@@ -183,9 +151,6 @@ describe('createMixRefusal — the FLAT form (whole document at once)', () => {
     expect(sb.calls).toEqual([]);
   });
 
-  /* A CODE THAT WAS JUST VALIDATED AND DOES NOT COME BACK IS A FAILED READ.
-     validateItemCodes proved it exists moments earlier under the same company
-     predicate. Treating it as "unclassified" is how a blip turns into a pass. */
   it('refuses when a validated code does not come back from the catalogue', async () => {
     quiet();
     const sb = makeSb(CATALOGUE, 'mfg_products');
@@ -195,11 +160,6 @@ describe('createMixRefusal — the FLAT form (whole document at once)', () => {
 });
 
 describe('lineMixRefusal on a CONSIGNMENT ORDER — the hole this closes', () => {
-  /* THE LIVE DEFECT. `POST /:docNo/items` and `PATCH /:docNo/items/:itemId` ran
-     the catalogue guard, the self-scope guard, the downstream lock and the
-     allowed-options gate, and NO composition check. coHasDownstream only blocks
-     once a DO / SI exists, so a fresh bedframe-only CO — which the create path
-     legitimately permits, there being no sofa in it — accepted a sofa line. */
   const co = (rows: Row[], fail?: string) => makeSb([...CATALOGUE, ...rows], fail);
   const ask = (sb: AnySb, exclude: string | null, code: string) =>
     lineMixRefusal(sb, 'consignment_sales_order_items', 'CO-1', exclude, code, 1);
@@ -214,8 +174,6 @@ describe('lineMixRefusal on a CONSIGNMENT ORDER — the hole this closes', () =>
   });
 
   it('ALLOWS the swap that REPLACES the last bedframe with a sofa', async () => {
-    /* After the swap the document is sofa-only. There is no mix to refuse, and
-       refusing it would be the flat form leaking onto an edit path. */
     expect(verdict(await ask(co([coLine('l1', 'CO-1', 'BED-A')]), 'l1', 'SOFA-A'))).toBe('allowed');
   });
 
@@ -229,9 +187,6 @@ describe('lineMixRefusal on a CONSIGNMENT ORDER — the hole this closes', () =>
     expect(verdict(await ask(sb(), null, 'ACC-PILLOW'))).toBe('allowed');
   });
 
-  /* ─── GRANDFATHERING. The risk that would make this change worse than the
-     bug: an order written before the rule existed already mixes, and its
-     operator must still be able to edit it. ─────────────────────────────── */
   it('an ALREADY-MIXED CO still accepts an unrelated line edit', async () => {
     const sb = makeSb([
       ...CATALOGUE,
@@ -239,8 +194,6 @@ describe('lineMixRefusal on a CONSIGNMENT ORDER — the hole this closes', () =>
       coLine('l2', 'CO-OLD', 'BED-A'),
       coLine('l3', 'CO-OLD', 'ACC-PILLOW'),
     ]);
-    // Swapping the accessory for a different accessory changes nothing about
-    // the mix that was already there.
     expect(verdict(await lineMixRefusal(
       sb, 'consignment_sales_order_items', 'CO-OLD', 'l3', 'SVC-DELIVERY', 1,
     ))).toBe('allowed');
@@ -255,8 +208,6 @@ describe('lineMixRefusal on a CONSIGNMENT ORDER — the hole this closes', () =>
     }
   });
 
-  /* ─── CANCELLED LINES. The CO item table carries the same soft-cancel flag as
-     the SO one; a cancelled bedframe is not on the document. ─────────────── */
   it('a CANCELLED bedframe does not block a sofa', async () => {
     expect(verdict(await ask(co([coLine('l1', 'CO-1', 'BED-A', { cancelled: true })]), null, 'SOFA-A')))
       .toBe('allowed');
@@ -270,10 +221,6 @@ describe('lineMixRefusal on a CONSIGNMENT ORDER — the hole this closes', () =>
     expect(lineRead!.eqs).toEqual([['doc_no', 'CO-1'], ['cancelled', false]]);
   });
 
-  /* ─── "WE COULD NOT TELL" is not "allowed". A failed line read makes an order
-     look EMPTY, and an empty order can never mix — so the discarded error the
-     old helper carried was a silent pass on exactly the request the gate
-     exists to refuse. ─────────────────────────────────────────────────────── */
   it('refuses when the line read fails, instead of reading the order as empty', async () => {
     const spy = quiet();
     const sb = co([coLine('l1', 'CO-1', 'BED-A')], 'consignment_sales_order_items');
@@ -307,19 +254,12 @@ describe('lineMixRefusal on a SALES ORDER — same body, other table', () => {
     const sb = makeSb([
       ...CATALOGUE,
       soLine('l1', 'SO-1', 'BED-A'),
-      coLine('l9', 'SO-1', 'SOFA-A'),   // same doc_no in the OTHER table — a trap
+      coLine('l9', 'SO-1', 'SOFA-A'),
     ]);
     await lineMixRefusal(sb, 'mfg_sales_order_items', 'SO-1', null, 'SOFA-A', 1);
     expect(sb.calls.some((x) => x.table === 'consignment_sales_order_items')).toBe(false);
   });
 
-  /* The line whose product left the catalogue. soMainMixIntroduced read the
-     catalogue ONLY, so such a line classified as nothing at all and a sofa
-     could be added on top of a bedframe that was invisible to the gate. Every
-     other category reader in this tree falls back to the stored item_group
-     (delivery-planning, delivery-zones, so-display-branding); this one now does
-     too. It cannot break the grandfathering — a fallback only makes `before`
-     MORE complete, i.e. an already-mixed document MORE editable. */
   it('a line whose code left the catalogue is classified from its stored item_group', async () => {
     const sb = makeSb([...CATALOGUE, soLine('l1', 'SO-1', 'RETIRED-BED', 'bedframe')]);
     expect(verdict(await lineMixRefusal(sb, 'mfg_sales_order_items', 'SO-1', null, 'SOFA-A', 1))).toBe('refused');
@@ -336,9 +276,6 @@ describe('lineMixRefusal on a SALES ORDER — same body, other table', () => {
 });
 
 describe('amendmentMixRefusal — the third home, found while wiring the other two', () => {
-  /* POST /:docNo/amendments is the ONE path that can add a line without going
-     through POST /:docNo/items. It checked the catalogue and not the
-     composition, and applySoAmendment does not check it either. */
   const amd = (l: Partial<{ salesOrderItemId: string | null; changeType: string; newItemCode: string }>) => ({
     salesOrderItemId: l.salesOrderItemId ?? null,
     changeType: l.changeType ?? 'SPEC',
@@ -359,9 +296,6 @@ describe('amendmentMixRefusal — the third home, found while wiring the other t
   });
 
   it('ALLOWS an amendment that REMOVES the last bedframe in the same request as it adds the sofa', async () => {
-    /* The case that makes the naive "does the result mix" check wrong: ignoring
-       REMOVE would refuse a perfectly legal conversion of a bedframe order into
-       a sofa order. Modelled the way applySoAmendment dispatches it. */
     const sb = makeSb([...CATALOGUE, soLine('l1', 'SO-1', 'BED-A')]);
     expect(verdict(await amendmentMixRefusal(sb, 'SO-1', [
       amd({ salesOrderItemId: 'l1', changeType: 'REMOVE' }),

@@ -1,35 +1,17 @@
-// Default Free Gift (accessory) — pure, shared by the POS cart reconciler and
-// the server SO-create validator. NO voucher codes: a gift is deterministic
-// from the trigger's configured `default_free_gifts`. The GIFT is always an
-// accessory; the TRIGGER may be a product (matched by id/model) or a sofa combo
-// (matched by combo, D9). One gift set per qualifying item (qty scales).
 import { parseTargetRefinement, refinementMatchesLine, type TargetRefinement } from './rule-target';
 
 export interface DefaultFreeGift {
-  /** mfg_products.id of an ACCESSORY product (the gift). */
   giftProductId: string;
-  /** count PER qualifying trigger unit (>= 1). */
   qty: number;
-  /** free-text; null/blank => the line shows "Free gift". */
   campaignName: string | null;
-  /** Optional gating: when set, the gift only triggers for lines whose
-   *  size_code / build compartments match (scope 'variant' / 'compartment').
-   *  Absent / scope 'model' = the whole Model (legacy behavior, 2026-06-20). */
   condition?: TargetRefinement;
 }
 
 /** A trigger present in the cart/order, with the gifts it grants. */
 export interface FreeGiftTrigger {
-  /**
-   * cart line key (client) or a stable per-line ref (server).
-   * MUST be unique per trigger line within a single call — the reconciler
-   * keys gift lines off this value.
-   */
   triggerKey: string;
-  /** product id ('product') or combo id ('combo'). */
   triggerRef: string;
   triggerKind: 'product' | 'combo';
-  /** the trigger LINE's qty (gift qty scales by this). */
   triggerQty: number;
   gifts: DefaultFreeGift[];
 }
@@ -60,7 +42,6 @@ export interface FreeGiftRejection {
 export const freeGiftLineKey = (triggerKey: string, entryIndex: number): string =>
   `gift-${triggerKey}-${entryIndex}`;
 
-/** Gift qty = configured-per-trigger × the trigger line's qty, each floored at 1. */
 const scaleGiftQty = (giftQty: number, triggerQty: number): number =>
   Math.max(1, giftQty) * Math.max(1, triggerQty);
 
@@ -76,8 +57,6 @@ export function parseDefaultFreeGifts(raw: unknown): DefaultFreeGift[] {
     if (!giftProductId || !Number.isFinite(qty) || qty < 1) continue;
     const campaignName =
       typeof r.campaignName === 'string' && r.campaignName.trim() !== '' ? r.campaignName.trim() : null;
-    // A 'model'-scope (or absent / malformed) condition is the legacy whole-Model
-    // gift — store no condition so non-gated entries serialize unchanged.
     const cond = parseTargetRefinement(r.condition);
     const entry: DefaultFreeGift = { giftProductId, qty, campaignName };
     if (cond && cond.scope !== 'model') entry.condition = cond;
@@ -112,9 +91,7 @@ export interface ExistingGiftLine {
 }
 
 export interface FreeGiftLineDiff {
-  /** New gift lines to insert (one per changed/added bucket). */
   toInsert: { giftProductId: string; campaignName: string | null; qty: number }[];
-  /** Existing gift line ids to delete. */
   toDeleteIds: string[];
 }
 
@@ -176,8 +153,8 @@ export function diffFreeGiftLines(
     const ex = existingByBucket.get(k);
     const desiredQty = d?.qty ?? 0;
     const existingQty = ex?.qty ?? 0;
-    if (desiredQty === existingQty) continue;          // idempotent no-op
-    if (ex) toDeleteIds.push(...ex.ids);               // bucket changed → drop existing
+    if (desiredQty === existingQty) continue;
+    if (ex) toDeleteIds.push(...ex.ids);
     if (desiredQty > 0 && d) toInsert.push({ giftProductId: d.giftProductId, campaignName: d.campaignName, qty: desiredQty });
   }
   return { toInsert, toDeleteIds };
@@ -229,26 +206,15 @@ export function validateFreeGiftClaims(
  * builder is key-agnostic and never queries.
  */
 export interface TriggerLine {
-  /** stable per-line id: cart line key (POS), `idx-${i}` (create), or row id (reconcile). */
   triggerKey: string;
-  /** SO line item_code (SKU) — used as a non-sofa trigger ref. */
   itemCode: string;
-  /** product category (SOFA / MATTRESS / BEDFRAME / ...). */
   category: string;
   qty: number;
-  /** product_models.id of the line's Model (null = orphan SKU → no gift). */
   modelId: string | null;
-  /** sofa build grouping (variants.buildKey on the SO); null for non-sofa / single-line sofa. */
   buildKey: string | null;
-  /** variants.freeGift present → never a trigger (one-way). */
   isFreeGift: boolean;
-  /** mfg_products.size_code (UPPERCASE) for mattress/bedframe; null otherwise.
-   *  Required by 'variant'-scope gift conditions (2026-06-20). */
   sizeCode: string | null;
-  /** this line's sofa module codes (a split row carries only its own cell;
-   *  the builder unions them across the build). [] for non-sofa. */
   builtCompartments: string[];
-  /** the line's Model gifts, already resolved by the caller. */
   gifts: DefaultFreeGift[];
 }
 
@@ -267,7 +233,6 @@ export function buildFreeGiftTriggers(
   lines: TriggerLine[],
   comboModulesById: Map<string, string[][]> = new Map(),
 ): FreeGiftTrigger[] {
-  // Union each sofa build's compartments across its (possibly split) rows.
   const buildCompartments = new Map<string, string[]>();
   for (const line of lines) {
     if (String(line.category ?? '').toUpperCase() !== 'SOFA') continue;
@@ -292,13 +257,13 @@ export function buildFreeGiftTriggers(
     const gifts = line.gifts.filter((g) => !g.condition || refinementMatchesLine(li, g.condition, comboModulesById));
     if (gifts.length === 0) continue;
     if (isSofa) {
-      if (seenSofaBuilds.has(buildId)) continue;   // one gift per complete sofa
+      if (seenSofaBuilds.has(buildId)) continue;
       seenSofaBuilds.add(buildId);
       triggers.push({
         triggerKey:  buildId,
         triggerRef:  line.modelId ?? buildId,
         triggerKind: 'product',
-        triggerQty:  1,                          // one complete sofa = one gift; never scale by module-row qty
+        triggerQty:  1,
         gifts,
       });
     } else {

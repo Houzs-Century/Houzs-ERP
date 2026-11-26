@@ -1,4 +1,3 @@
-/* The printable case copies print the service case's address in the SO's shape. */
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 

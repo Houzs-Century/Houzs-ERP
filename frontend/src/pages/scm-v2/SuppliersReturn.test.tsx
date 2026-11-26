@@ -1,7 +1,3 @@
-// Coming back to the Suppliers list from a supplier lands where you left it
-// (Conts-ERP #406). The page and the status, category and search choices live in
-// the address, so Back (which returns to the last list address) restores them,
-// and the supplier you opened is scrolled back into view.
 import { act, render, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';

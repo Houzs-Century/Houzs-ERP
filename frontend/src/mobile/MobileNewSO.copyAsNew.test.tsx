@@ -62,19 +62,16 @@ describe("phone Copy as new", () => {
     const seed = soCopyHeaderSeed(source);
     await waitFor(() => expect(screen.getByDisplayValue(seed.debtorName)).toBeTruthy());
     for (const v of [seed.email, seed.note, seed.address1, seed.address2, seed.emergencyName]) expect(screen.getByDisplayValue(v)).toBeTruthy();
-    /* An older order kept the city and postcode in address3 / address4: the copy falls back to them, as on desktop. */
     expect(seed.city).toBe("Shah Alam");
     expect(seed.postcode).toBe("40000");
-    /* Never the refs or the dates: a clean draft. */
     expect(screen.queryByDisplayValue("PO-991")).toBeNull();
     expect(screen.queryByDisplayValue("R-1")).toBeNull();
     expect(screen.queryByDisplayValue("2026-10-20")).toBeNull();
-    /* The lines are copySeedLines' lines: the PWP reward left out, and the operator told. */
     const kept = copySeedLines(ITEMS, source.status, () => undefined).map((i) => i.item_code);
     expect(kept).toEqual(["MT-QUEEN"]);
     expect(container.textContent).toContain("MT-QUEEN");
     expect(container.textContent).not.toContain("PILLOW-PWP");
     expect(notified).toHaveLength(1);
-    expect((container.querySelector('input[aria-label="Qty"]') as HTMLInputElement).value).toBe("2"); // the qty came across
+    expect((container.querySelector('input[aria-label="Qty"]') as HTMLInputElement).value).toBe("2");
   });
 });

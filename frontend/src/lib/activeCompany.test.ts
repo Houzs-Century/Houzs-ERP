@@ -28,16 +28,12 @@ afterEach(() => {
 
 describe("active company persistence", () => {
   it("SURVIVES A RE-LOGIN — a new token must not silently move the user", () => {
-    // The regression this test exists for: the stored key was derived from a
-    // hash of the bearer token, so every login minted a new key and the user's
-    // company selection vanished while the switcher kept showing a name.
     writeAuthToken("first-session-token", true);
     adoptActiveCompanyForUser(42);
     setActiveCompanyId(7);
     expect(companyHeader()).toEqual({ "X-Company-Id": "7" });
 
-    // Session ends and a brand-new token is issued for the SAME person.
-    sessionStorage.clear(); // a new tab: no tab pick to inherit
+    sessionStorage.clear();
     releaseActiveCompanyBinding();
     writeAuthToken("second-session-token", true);
 
@@ -49,8 +45,6 @@ describe("active company persistence", () => {
   it("keeps the pick across a reload of the same tab", () => {
     adoptActiveCompanyForUser(42);
     setActiveCompanyId(3);
-    // A reload keeps sessionStorage but resets module state, so the header is
-    // correct on the very first request, before /auth/me resolves.
     releaseActiveCompanyBinding();
     expect(getActiveCompanyId()).toBe(3);
   });
@@ -67,7 +61,6 @@ describe("active company persistence", () => {
     setActiveCompanyId(9);
     expect(getActiveCompanyId()).toBe(9);
 
-    // …and user 1's own record is untouched by user 2's pick.
     sessionStorage.clear();
     releaseActiveCompanyBinding();
     expect(adoptActiveCompanyForUser(1)).toBe(7);
@@ -104,8 +97,6 @@ describe("active company persistence", () => {
   it("claims a pick this tab made before it knew the user id — without moving the durable default", () => {
     setActiveCompanyId(5);
     expect(adoptActiveCompanyForUser(42)).toBe(5);
-    // The ?company= window seed lands here as an ownerless pick: claiming it
-    // must not rewrite the default every future window boots into.
     expect(localStorage.getItem(ACTIVE_COMPANY_BY_USER_KEY)).toBeNull();
   });
 
@@ -150,10 +141,6 @@ describe("active company persistence", () => {
   });
 
   it("a reload keeps this window's pick without stealing the durable default back", () => {
-    // Window A picked Houzs (7), window B later switched the durable default
-    // to 2990 (4). Window A reloading must stay on 7 AND leave the default 4 —
-    // otherwise every reload of an open window would re-point what a NEW
-    // window boots into.
     sessionStorage.setItem(ACTIVE_COMPANY_TAB_KEY, JSON.stringify({ user: 1, company: 7 }));
     localStorage.setItem(ACTIVE_COMPANY_BY_USER_KEY, JSON.stringify({ u1: 4 }));
 
@@ -190,13 +177,10 @@ describe("?company= window seed", () => {
     window.history.replaceState(null, "", "/?company=4");
     consumeCompanyUrlSeed();
 
-    // The header is right BEFORE /auth/me resolves — the seed exists so the
-    // very first authed request of the new window is already scoped.
     expect(getActiveCompanyId()).toBe(4);
     expect(companyHeader()).toEqual({ "X-Company-Id": "4" });
     expect(window.location.search).toBe("");
 
-    // …and claiming it must not move the durable default for new windows.
     expect(adoptActiveCompanyForUser(42)).toBe(4);
     expect(localStorage.getItem(ACTIVE_COMPANY_BY_USER_KEY)).toBeNull();
   });

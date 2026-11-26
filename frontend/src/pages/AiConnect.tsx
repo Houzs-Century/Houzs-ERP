@@ -1,9 +1,3 @@
-// ---------------------------------------------------------------------------
-// /ai-connect?request=… — the "Allow?" screen an AI app (Claude / ChatGPT)
-// sends a person to when they add the Houzs ERP connector. Rendered by AuthGate
-// for BOTH shells (desktop and phone), after sign-in. The server decides
-// everything (routes/mcpAdmin.ts consent); this only shows it and sends the click.
-// ---------------------------------------------------------------------------
 import { useEffect, useState } from "react";
 import { Check, Info, ShieldCheck } from "lucide-react";
 import { api } from "../api/client";

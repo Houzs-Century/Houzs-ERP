@@ -40,13 +40,10 @@ afterEach(() => { cleanup(); vi.mocked(authedFetch).mockClear(); });
 
 const DOC = "HC-SO-2608-002";
 
-/* Closed a week before the order was keyed: inside 2 Aug's window, long gone from today's. */
 const AUG_FAIR = { key: "aug", venue: "MID VALLEY", organizer: "BIGHOME", startDate: "2026-07-24", endDate: "2026-07-26", projectIds: [11] };
-/* Inside today's window only. */
 const SEP_FAIR = { key: "sep", venue: "IOI CITY MALL", organizer: "HOMELOVE", startDate: "2026-09-18", endDate: "2026-09-20", projectIds: [12] };
 const fairList = (date: string, fair: typeof AUG_FAIR) => ({ date, running: [], earlier: [fair], venues: [] });
 
-/* Keyed on 2 Aug with no venue — the order the owner comes back to fill in. */
 const header = {
   doc_no: DOC, status: "CONFIRMED", so_date: "2026-08-02", debtor_name: "Ada", phone: "+60123456789",
   email: "a@b.c", address1: "1 Jalan", customer_state: "Selangor", city: "Shah Alam", postcode: "40000",
