@@ -11,7 +11,7 @@ import { RowActionsMenu, type MenuItem } from "./RowActionsMenu";
 import { useBranding } from "../hooks/useBranding";
 import { CompanyMark } from "./CompanyMark";
 import { whenPageChunksSettled } from "../lib/lazyPage";
-import { HighlightFromUrl } from "./HighlightFromUrl";
+import { HighlightSlot } from "./HighlightSlot";
 
 interface Props {
   children: ReactNode;
@@ -38,7 +38,7 @@ export function Layout({ children }: Props) {
 
   return (
     <div className="flex h-dvh min-h-dvh w-screen overflow-hidden">
-      <HighlightFromUrl />
+      <HighlightSlot />
       <Sidebar
         collapsed={collapsed}
         onToggle={() => setCollapsed((c) => !c)}
