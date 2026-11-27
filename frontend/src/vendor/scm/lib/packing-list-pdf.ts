@@ -646,10 +646,18 @@ async function newDoc(): Promise<{ doc: Doc; autoTable: AutoTable }> {
   return { doc: new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: DO_PAGE_FORMAT }), autoTable };
 }
 
-async function runUrlFor(list: Pick<PackingListRow, 'trip_id' | 'source'>): Promise<string | null> {
-  if (typeof window === 'undefined' || list.source !== 'trip') return null;
-  const { armPackingScanToken } = await import('./packing-scan-token-arm');
-  return packingRunUrl(window.location.origin, await armPackingScanToken(list.trip_id));
+export async function runUrlFor(
+  list: Pick<PackingListRow, 'trip_id' | 'source' | 'lorry_plate' | 'trip_date' | 'stops'>,
+  date: string,
+): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+  const arm = await import('./packing-scan-token-arm');
+  if (list.source === 'trip') return packingRunUrl(window.location.origin, await arm.armPackingScanToken(list.trip_id));
+  const plate = (list.lorry_plate ?? '').trim();
+  const doIds = loadingOrder(list.stops).map((s) => s.stop.do_id).filter((id): id is string => !!id);
+  if (!plate || doIds.length === 0) return null;
+  const token = await arm.armLorryDayScanToken({ lorryPlate: plate, deliveryDate: list.trip_date ?? date, doIds });
+  return packingRunUrl(window.location.origin, token);
 }
 
 /** One lorry's packing list -> its own file / print job / preview tab. */
@@ -658,7 +666,7 @@ export async function generatePackingListPdf(
   opts: { date: string; action: PdfAction },
 ): Promise<void> {
   const { doc, autoTable } = await newDoc();
-  await renderPackingListInto(doc, autoTable, list, { date: opts.date, runUrl: await runUrlFor(list), logo: null });
+  await renderPackingListInto(doc, autoTable, list, { date: opts.date, runUrl: await runUrlFor(list, opts.date), logo: null });
   deliverPdf(doc, packingListFileName(list, list.trip_date ?? opts.date), opts.action);
 }
 
@@ -672,7 +680,7 @@ export async function generatePackingListsPdf(
   for (let i = 0; i < lists.length; i += 1) {
     if (i > 0) doc.addPage();
     const list = lists[i]!;
-    await renderPackingListInto(doc, autoTable, list, { date: opts.date, runUrl: await runUrlFor(list), logo: null });
+    await renderPackingListInto(doc, autoTable, list, { date: opts.date, runUrl: await runUrlFor(list, opts.date), logo: null });
   }
   deliverPdf(doc, `packing-lists-${opts.date}.pdf`, opts.action);
 }
