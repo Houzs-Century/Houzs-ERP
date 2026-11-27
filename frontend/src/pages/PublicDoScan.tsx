@@ -51,7 +51,6 @@ import {
   requestIdFromResponse,
 } from "../lib/requestCorrelation";
 
-/** A packing list: a trip, or a sheet printed per lorry per delivery day. */
 type SheetKind = "trip" | "lorry_day";
 const isSheet = (kind: string | undefined): kind is SheetKind => kind === "trip" || kind === "lorry_day";
 
