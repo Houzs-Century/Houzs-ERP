@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildXlsx, colName, crc32, flattenRow, moneyHeader, pickColumns, sheetXml, xmlText } from "./mcp-xlsx";
-import { answerCacheKey, cachedAnswer, DAILY_LIMIT_REACHED, rateDecision, RATE_PER_DAY, RATE_PER_MINUTE, stableArgs, TOO_MANY_PER_MINUTE, TtlCache } from "./mcp-ratelimit";
+import { answerCacheKey, cachedAnswer, DAILY_LIMIT_REACHED, rateDecision, rateLimitRefusal, RATE_PER_DAY, RATE_PER_MINUTE, stableArgs, TOO_MANY_PER_MINUTE, TtlCache } from "./mcp-ratelimit";
 import { daysBetween, summariseAfterSales, summariseAttendance } from "./mcp-quick2";
 import { addDays, briefApprovals, briefPurchaseOrders, briefSalesOrders, buildBrief, poDueDate } from "./mcp-brief";
 import { EXPORT_LISTS, EXPORT_MAX_ROWS, exportQuery, fetchAllRows, isRound3Tool, matchesSearch, ROUND3_TOOLS, runRound3Tool, type R3Ctx, type R3Read } from "./mcp-round3";
@@ -88,6 +88,12 @@ describe("xlsx writer", () => {
 });
 
 describe("rate limit and answer cache", () => {
+  it("counts the calls earlier in the same batch, whose log rows are not written yet (R&D 2026-11-27 #9)", async () => {
+    const db = { prepare: () => ({ bind: () => ({ first: async () => ({ m: 0, d: 0 }) }) }) } as unknown as Parameters<typeof rateLimitRefusal>[0];
+    expect(await rateLimitRefusal(db, 1, Date.now(), RATE_PER_MINUTE - 1)).toBeNull();
+    expect(await rateLimitRefusal(db, 1, Date.now(), RATE_PER_MINUTE)).toBe(TOO_MANY_PER_MINUTE);
+  });
+
   it("refuses at 30 a minute and 600 a day, daily first", () => {
     expect(rateDecision({ minute: RATE_PER_MINUTE - 1, day: 10 })).toBeNull();
     expect(rateDecision({ minute: RATE_PER_MINUTE, day: 10 })).toBe(TOO_MANY_PER_MINUTE);

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { classifyPath, leakCheckPaths, moduleCatalog, readablePaths, redactSecrets } from "./mcp-access";
-import { pkceS256, validRedirectUri } from "./mcp-store";
+import { consentAppLabel, pkceS256, validRedirectUri } from "./mcp-store";
 import { publicOrigin } from "../routes/mcp";
 import { isMcpInner, mcpInnerSecret } from "./mcp-inner";
 
@@ -49,11 +49,24 @@ describe("AI Connector access rules", () => {
     expect(await pkceS256("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")).toBe("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
   });
 
-  it("redirect URIs: https, or http on loopback only", () => {
+  it("redirect URIs: https to claude.ai, claude.com or chatgpt.com, or loopback only (R&D 2026-11-27 #1)", () => {
     expect(validRedirectUri("https://claude.ai/api/mcp/auth_callback")).toBe(true);
+    expect(validRedirectUri("https://claude.com/api/mcp/auth_callback")).toBe(true);
+    expect(validRedirectUri("https://chatgpt.com/connector_platform_oauth_redirect")).toBe(true);
     expect(validRedirectUri("http://localhost:6274/cb")).toBe(true);
+    expect(validRedirectUri("http://127.0.0.1:33418/cb")).toBe(true);
     expect(validRedirectUri("http://evil.example.com/cb")).toBe(false);
-    expect(validRedirectUri("https://x.example/cb#frag")).toBe(false);
+    expect(validRedirectUri("https://evil.example.com/cb")).toBe(false);
+    expect(validRedirectUri("https://claude.ai.evil.example/cb")).toBe(false);
+    expect(validRedirectUri("http://claude.ai/cb")).toBe(false);
+    expect(validRedirectUri("https://claude.ai/cb#frag")).toBe(false);
+  });
+
+  it("the consent page names the app by where it returns, not by the name it registered", () => {
+    expect(consentAppLabel("Claude", "https://claude.ai/api/mcp/auth_callback")).toBe("Claude");
+    expect(consentAppLabel("anything", "https://chatgpt.com/connector_platform_oauth_redirect")).toBe("ChatGPT");
+    expect(consentAppLabel("Claude Official", "https://evil.example.com/cb")).toBe("AI app");
+    expect(consentAppLabel("Claude Code", "http://localhost:6274/cb")).toBe("Claude Code (an app on this computer)");
   });
 
   it("the inner marker matches only this isolate's secret", () => {

@@ -36,6 +36,7 @@ relays (`backend/src/routes/meetings.ts`) and draws (`frontend/src/pages/Meeting
 ## Gotchas
 - The 409 body is relayed unchanged; the page builds the conflict dialog from it
   (`lib/meetings.ts` `readConflict`). A hub 401 becomes 502, never 401.
+- Files: `GET /meetings/:id/files/:fid` serves only png / jpeg / gif / webp / pdf as their type (`PREVIEW_TYPES`); anything else is `application/octet-stream` + `attachment`, because the hub keeps the uploader's type. The page passes no type hint.
 - Not connected (no `IT_HUB_URL` or key) = 501, and the menu row is hidden with IT Support's.
 - Emails: the hub writes them; `services/meetingMail.ts` collects this company's with its hub key, sends them
   through `sendEmail` (purpose `meeting`, no outbox retry: the hub retries) and reports each result. Runs after

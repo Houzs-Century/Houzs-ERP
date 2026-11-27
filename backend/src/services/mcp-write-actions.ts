@@ -1,4 +1,4 @@
-import { EMAIL_RE, MAX_BODY_CHARS, MAX_RECIPIENTS } from "./mcp-actions";
+import { COMPANY_MAIL_DOMAINS, EMAIL_RE, MAX_BODY_CHARS, MAX_RECIPIENTS, mayReceive } from "./mcp-actions";
 import { actionRoute } from "./mcp-inner";
 import { ASSR_NOTE_CATEGORIES } from "./assrNoteCategories";
 import type { ActionSwitches } from "./mcp-store";
@@ -56,7 +56,7 @@ export function pickThread(list: unknown, query: string): { ok: true; id: string
 }
 
 /** propose_mail_reply → the body routes/mail-center.ts POST /threads/:id/reply takes, with the recipients fixed so what is shown is what is sent. */
-export function proposeMailReply(args: Obj, detail: unknown, senders: readonly string[]): WriteProposal {
+export function proposeMailReply(args: Obj, detail: unknown, senders: readonly string[], me: string | null): WriteProposal {
   const d = obj(detail);
   const thread = obj(d.thread);
   const id = str(thread.id);
@@ -83,6 +83,9 @@ export function proposeMailReply(args: Obj, detail: unknown, senders: readonly s
   if (to.length + cc.length > MAX_RECIPIENTS) return { ok: false, error: `At most ${MAX_RECIPIENTS} recipients.` };
   const bad = [...to, ...cc].find((a) => !EMAIL_RE.test(a));
   if (bad) return { ok: false, error: `Not a valid email address: ${bad}` };
+  const onThread = new Set([str(thread.counterpartyEmail), ...messages.flatMap((m) => [str(m.fromAddress), ...strList(m.toAddresses), ...strList(m.ccAddresses)])].map((a) => a.toLowerCase()));
+  const outside = [...to, ...cc].find((a) => !onThread.has(a.toLowerCase()) && !mayReceive(a, me));
+  if (outside) return { ok: false, error: `For now the AI may reply only to people already on this email, company addresses (@${COMPANY_MAIL_DOMAINS.join(", @")}) or you. ${outside} is not: reply in the Mail Center.` };
 
   const route = actionRoute("mail_reply", id);
   if (!route) return { ok: false, error: "That Mail Center email cannot be replied to through the AI." };

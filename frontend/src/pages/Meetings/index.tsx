@@ -5,6 +5,7 @@ import { api } from "../../api/client";
 import { TabStrip } from "../../components/TabStrip";
 import { useRefreshMeetingsUnread } from "../../hooks/useAmendmentApprovals";
 import { openLoadedTab } from "../../lib/openLoadedTab";
+import { canPreviewType } from "../MailCenter/mail-attach-preview";
 import { cn } from "../../lib/utils";
 import {
   DAY, MONTH_NAMES, addDays, atHour, draftBody, draftFrom, emptyDraft, fmtDayLong, isMeetingsTab, isoDay, isView, VIEWS, ms, nextStart, peopleOf, readConflict, startOfDay, startOfWeek,
@@ -329,7 +330,7 @@ export function Meetings({ erpName = "Houzs ERP", embedded = false }: { erpName?
       {detail && (
         <MeetingDetail m={detail.m} rooms={rooms} people={people} me={me} x={detail.x} y={detail.y} color={colorOf(detail.m)} history={detail.history} files={detail.files}
           canChange={canChange(detail.m)} busy={saving} onClose={() => setDetail(null)}
-          onFile={(f) => { openLoadedTab(() => api.fetchBlobUrl(`/api/meetings/meetings/${detail.m.id}/files/${f.id}`, f.mime_type), 60_000).catch((e) => showError(e)); }}
+          onFile={(f) => { const path = `/api/meetings/meetings/${detail.m.id}/files/${f.id}`; (canPreviewType(f.mime_type ?? "") ? openLoadedTab(() => api.fetchBlobUrl(path, null), 60_000) : api.downloadFile(path, f.file_name)).catch((e) => showError(e)); }}
           onEdit={() => { setPendingFiles([]); setEditor({ draft: draftFrom(detail.m), isNew: false }); setDetail(null); }}
           onCancel={() => (detail.m.seriesId ? setScopeAsk({ act: "cancel", draft: draftFrom(detail.m), m: detail.m }) : void act(detail.m, "cancel"))}
           onStart={() => void act(detail.m, "start")} onEnd={() => void act(detail.m, "end")} />

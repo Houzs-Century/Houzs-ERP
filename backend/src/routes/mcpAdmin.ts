@@ -9,6 +9,7 @@ import { jsonKeys, leakCheckPaths, SECRET_KEY, SENSITIVE_KEY } from "../services
 import {
   actionSwitches,
   appLabel,
+  consentAppLabel,
   createCode,
   getAuthRequest,
   getClient,
@@ -166,7 +167,7 @@ app.get("/consent/:id", async (c) => {
   const cl = await getClient(c.env.DB, req.clientId);
   const u = c.get("user");
   return c.json({
-    app: appLabel(cl?.clientName ?? ""),
+    app: consentAppLabel(cl?.clientName ?? "", req.redirectUri),
     clientName: cl?.clientName ?? "AI app",
     redirectHost: (() => {
       try {
@@ -197,7 +198,7 @@ app.post("/consent/:id", async (c) => {
   const code = await createCode(c.env.DB, { clientId: req.clientId, userId: u.id, redirectUri: req.redirectUri, codeChallenge: req.codeChallenge });
   back.searchParams.set("code", code);
   const cl = await getClient(c.env.DB, req.clientId);
-  await audit(c, { action: "ai_connector.connect", entityType: "ai_connector", entityId: u.id, summary: `${u.name} connected ${appLabel(cl?.clientName ?? "")}` });
+  await audit(c, { action: "ai_connector.connect", entityType: "ai_connector", entityId: u.id, summary: `${u.name} connected ${consentAppLabel(cl?.clientName ?? "", req.redirectUri)}` });
   return c.json({ redirect: back.toString() });
 });
 

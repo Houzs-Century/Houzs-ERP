@@ -38,6 +38,7 @@ import {
   pdfKind,
   flowSpec,
   pickDateAmount,
+  COMPANY_MAIL_DOMAINS,
   proposeEmail,
   proposeMeeting,
   readBootstrap,
@@ -146,7 +147,7 @@ app.post("/oauth/register", async (c) => {
   }
   const uris = Array.isArray(body.redirect_uris) ? body.redirect_uris.map(String) : [];
   if (uris.length === 0 || uris.length > 5 || uris.some((u) => u.length > 500 || !validRedirectUri(u))) {
-    return c.json({ error: "invalid_redirect_uri", error_description: "1-5 https redirect URIs required" }, 400);
+    return c.json({ error: "invalid_redirect_uri", error_description: "1-5 redirect URIs required, each on claude.ai, claude.com, chatgpt.com or this computer (localhost)" }, 400);
   }
   const cl = await registerClient(c.env.DB, typeof body.client_name === "string" ? body.client_name : "AI app", uris);
   return c.json(
@@ -173,7 +174,7 @@ app.get("/oauth/authorize", async (c) => {
   if (!clientId || !redirectUri) return plain("Invalid request: missing client or redirect address.");
   const cl = await getClient(c.env.DB, clientId);
   if (!cl) return plain("This AI app is not registered. Remove the connector and add it again.");
-  if (!cl.redirectUris.includes(redirectUri)) return plain("Invalid request: the return address does not match this app.");
+  if (!cl.redirectUris.includes(redirectUri) || !validRedirectUri(redirectUri)) return plain("Invalid request: the return address does not match this app.");
   if (q("response_type") !== "code") return plain("Only response_type=code is supported.");
   if (!q("code_challenge") || q("code_challenge_method") !== "S256") return plain("This app must use PKCE (S256).");
   const id = await createAuthRequest(c.env.DB, { clientId, redirectUri, state: q("state"), codeChallenge: q("code_challenge") });
@@ -191,7 +192,8 @@ app.post("/oauth/token", async (c) => {
   }
   const err = (error: string, desc: string, status: 400 | 401 = 400) => c.json({ error, error_description: desc }, status, { "Cache-Control": "no-store" });
   const clientId = f.client_id || "";
-  if (!clientId || !(await getClient(c.env.DB, clientId))) return err("invalid_client", "Unknown client", 401);
+  const tokenClient = clientId ? await getClient(c.env.DB, clientId) : null;
+  if (!tokenClient || !tokenClient.redirectUris.every(validRedirectUri)) return err("invalid_client", "Unknown client", 401);
 
   let userId: number;
   let issued: Awaited<ReturnType<typeof issueTokens>>;
@@ -365,7 +367,7 @@ export const MCP_TOOLS = [
   {
     name: "propose_email",
     title: "Propose an email (the person confirms)",
-    description: `Prepare an email from one of the person's own Mail Center mailboxes. Nothing is sent yet: it returns a summary and a confirmationId. ${CONFIRM_RULE} Once confirmed the email leaves the company. Plain text, no attachments.`,
+    description: `Prepare an email from one of the person's own Mail Center mailboxes. Nothing is sent yet: it returns a summary and a confirmationId. ${CONFIRM_RULE} Recipients must be company addresses (@${COMPANY_MAIL_DOMAINS.join(", @")}) or the person themself. Plain text, no attachments.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -708,7 +710,7 @@ async function proposeTool(c: Context<HonoEnv>, id: Identity, token: string, kin
     if (res.status === 401 || res.status === 403) return { result: text("Not available to your role: you may not send email from the Mail Center.", true), status: res.status, note: "no permission", target };
     const body = (await jsonOrNull(res, "senders")) as { senders?: unknown } | null;
     if (!res.ok || !body || !Array.isArray(body.senders)) return { result: text(`Your mailboxes could not be read (HTTP ${res.status}). Try again in a moment.`, true), status: 502, note: "senders unreadable", target };
-    p = proposeEmail(args, body.senders.map(String));
+    p = proposeEmail(args, body.senders.map(String), id.user.email);
   }
   if (!p.ok) return { result: text(p.error, true), status: 400, note: p.error.slice(0, 120), target };
   const confirmationId = await createPendingAction(c.env.DB, { tokenId: id.tokenId, userId: id.user.id, kind, payload: { company, body: p.payload }, summary: p.logLine, ttlMs: PENDING_TTL_MS });
@@ -758,7 +760,7 @@ async function proposeWriteTool(c: Context<HonoEnv>, id: Identity, token: string
     const detail = det.ok ? await jsonOrNull(det, "mail thread") : null;
     if (detail === null) return { result: text(`The email could not be read (HTTP ${det.status}).`, true), status: 502, note: "thread unreadable", target };
     const senders = snd.ok ? ((await jsonOrNull(snd, "senders")) as { senders?: unknown } | null)?.senders : null;
-    p = proposeMailReply(args, detail, Array.isArray(senders) ? senders.map(String) : []);
+    p = proposeMailReply(args, detail, Array.isArray(senders) ? senders.map(String) : [], id.user.email);
   } else {
     if (args.record_type !== undefined && args.record_type !== "service_case") return { result: text("Only service cases take notes in the ERP (sales orders, purchase orders and customers have no note feature).", true), status: 400, note: "", target };
     const ref = caseIdFrom(args.id);
@@ -840,6 +842,10 @@ async function cancelTool(c: Context<HonoEnv>, id: Identity, confirmationId: str
   return { result: text("Cancelled. Nothing was booked, sent or written."), status: 200, note: "", target: `cancel ${row.summary}` };
 }
 
+const callsEarlierInThisBatch = new WeakMap<Identity, number>();
+/** JSON-RPC requests in one POST. Calls earlier in a batch are counted against the rate limit too: their log rows are written after the reply. */
+export const MAX_BATCH = 10;
+
 async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
   const t0 = Date.now();
   let status = 200;
@@ -849,7 +855,9 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
   const company = companyArg(args);
   const tag = company ? `[${company}] ` : "";
   try {
-    const overLimit = await rateLimitRefusal(c.env.DB, id.user.id, t0);
+    const already = callsEarlierInThisBatch.get(id) ?? 0;
+    callsEarlierInThisBatch.set(id, already + 1);
+    const overLimit = await rateLimitRefusal(c.env.DB, id.user.id, t0, already);
     const cacheKey = CACHEABLE_TOOLS.has(name) ? answerCacheKey(id.user.id, company, name, args) : "";
     if (overLimit) {
       result = text(overLimit, true);
@@ -987,6 +995,7 @@ app.post("/", async (c) => {
     return c.json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
   }
   const msgs = Array.isArray(body) ? (body as RpcReq[]) : [body as RpcReq];
+  if (msgs.length > MAX_BATCH) return c.json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: `At most ${MAX_BATCH} requests in one batch.` } }, 400);
   const out: unknown[] = [];
   for (const m of msgs) {
     const r = await handleRpc(c, id, token, m);
