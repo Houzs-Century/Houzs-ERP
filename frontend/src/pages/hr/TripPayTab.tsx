@@ -217,7 +217,7 @@ export function TripPayTab() {
         </span>
       ),
     },
-    { key: "localTotal", label: "Local Total", align: "right", getValue: (r) => r.localTotalSen, render: (r) => money(r.localTotalSen), total: (rows) => fmtSen(rows.reduce((s, r) => s + r.localTotalSen, 0)) },
+    { key: "localTotal", label: "Local Total", align: "right", getValue: (r) => (r.jobType === "TRANSFER" ? "" : r.localTotalSen), render: (r) => money(r.jobType === "TRANSFER" ? 0 : r.localTotalSen), total: (rows) => fmtSen(rows.reduce((s, r) => s + (r.jobType === "TRANSFER" ? 0 : r.localTotalSen), 0)) },
     { key: "allowance", label: "Allowance", align: "right", getValue: (r) => r.pay.allowanceSen, render: (r) => money(r.pay.allowanceSen), total: (rows) => fmtSen(rows.reduce((s, r) => s + r.pay.allowanceSen, 0)) },
     { key: "outstation", label: "Outstation", align: "right", getValue: (r) => r.pay.outstationSen, render: (r) => money(r.pay.outstationSen), total: (rows) => fmtSen(rows.reduce((s, r) => s + r.pay.outstationSen, 0)) },
     { key: "overnight", label: "Overnight", align: "right", getValue: (r) => r.pay.overnightSen, render: (r) => money(r.pay.overnightSen), total: (rows) => fmtSen(rows.reduce((s, r) => s + r.pay.overnightSen, 0)) },

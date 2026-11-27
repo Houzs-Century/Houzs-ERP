@@ -615,6 +615,19 @@ export function computeTripMonth(input: TripMonthInput): { pay: Map<number, Trip
     rowPay[i].tripOfDay = ord;
   });
 
+  /* A Transfer item (a Singapore delivery the lorry only carries to the border /
+     transporter) pays its flat allowance once per driver per day, however many
+     transfer stops that driver ran that day (owner 2026-11-27). Mark the day's
+     later transfers as the same job so the allowance loop pays them nothing. */
+  const transferSeen = new Set<string>();
+  input.rows.forEach((row, i) => {
+    if (row.jobType !== "TRANSFER") return;
+    const who = resolved[i].driverIds.length ? `#${resolved[i].driverIds[0]}` : normName(row.drivers.length ? row.drivers[0].name : "");
+    const key = `${who}|${row.tripDate}`;
+    if (transferSeen.has(key)) rowPay[i].sameJob = true;
+    else transferSeen.add(key);
+  });
+
   input.rows.forEach((row, i) => {
     const { driverIds, helperIds, crew, state } = resolved[i];
     for (const id of helperIds) acc(id).helped = true;

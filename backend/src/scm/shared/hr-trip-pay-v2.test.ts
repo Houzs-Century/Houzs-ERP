@@ -91,6 +91,29 @@ describe("2nd trip, automatic", () => {
   });
 });
 
+describe("transfer item, once per driver per day", () => {
+  test("a driver's extra transfer stops that day pay the flat RM15 only once", () => {
+    const r = run([
+      row({ jobType: "TRANSFER", eventType: null, docNo: "HC-SO-1" }),
+      row({ jobType: "TRANSFER", eventType: null, docNo: "HC-SO-2", venueKey: "P2" }),
+    ]);
+    expect(r.rows.map((x) => [x.sameJob, x.allowanceSen])).toEqual([
+      [false, 1500],
+      [true, 0],
+    ]);
+    expect(r.pay.get(1)!.jobAllowanceSen).toBe(1500);
+  });
+
+  test("another driver, or another day, is its own transfer again", () => {
+    const r = run([
+      row({ jobType: "TRANSFER", eventType: null }),
+      row({ jobType: "TRANSFER", eventType: null, drivers: [{ name: "ALI", employeeId: 3 }], venueKey: "P2" }),
+      row({ jobType: "TRANSFER", eventType: null, tripDate: "2026-11-04", venueKey: "P3" }),
+    ]);
+    expect(r.rows.map((x) => x.allowanceSen)).toEqual([1500, 1500, 1500]);
+  });
+});
+
 describe("commission", () => {
   test("Delivery orders only, by crew size; a charged service case does not count", () => {
     const p = run([
