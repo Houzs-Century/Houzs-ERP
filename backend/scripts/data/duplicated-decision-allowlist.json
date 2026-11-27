@@ -1,6 +1,11 @@
 {
   "reviewed": [
     {
+      "check": "D2",
+      "key": "ACCESSORIES,BEDFRAME,MATTRESS,OTHER,SOFA ~ BEDFRAME,MATTRESS,OTHER,SOFA",
+      "why": "TWO DIFFERENT QUESTIONS over the product categories. product-profit PRODUCT_CATEGORIES / CATEGORY_ORDER / TONE_BY_BUCKET are the profit report's buckets (accessories folded elsewhere there); packing-list-model PACK_CATEGORY_ORDER is the warehouse PICK ORDER on the packing list (owner 2026-11-27: mattress, bedframe, accessories, sofa), driven by packCategory() over item_group. Divergence costs a section printed in another order, never a wrong figure; tying the pick order to the profit buckets would let a report change reorder the warehouse sheet."
+    },
+    {
       "check": "D1",
       "key": "APPROVED,PENDING,REJECTED|frontend/src/mobile/MobileLeave.tsx frontend/src/mobile/MobilePunchFix.tsx",
       "why": "THE PENDING/APPROVED/REJECTED RENDERING of two separate self-service request tabs on the phone (leave and make-up punch): each file's STATUS_TONE / STATUS_TEXT is how it colours and labels its own request rows, not a business rule. The two tabs happen to share the three-value vocabulary; divergence is a chip colour or wording, never a wrong status. MobileOvertime renders the same idea with CONFIRMED, a different set."

@@ -133,9 +133,12 @@ export function pickingCell(vals: string[] | null | undefined, state: DoItem['so
    its perforations, so this is the sheet the storekeeper tears off — not A4,
    which is 18mm taller and was being scaled down to fit (owner 2026-09-08). */
 export const DO_PAGE_FORMAT = 'letter';
-const PAGE_W = 215.9;
-const PAGE_H = 279.4;
-const M = 14;
+export const DO_PAGE_W = 215.9;
+export const DO_PAGE_H = 279.4;
+export const DO_MARGIN = 14;
+const PAGE_W = DO_PAGE_W;
+const PAGE_H = DO_PAGE_H;
+const M = DO_MARGIN;
 const PAD_BOTTOM = 12;
 const CONTENT_W = PAGE_W - M * 2;
 
@@ -144,23 +147,35 @@ const EM_DASH = '—';
 const LINE = 1.4;
 
 const BASELINE_DROP = 0.78;
-const baselineOf = (topMm: number, sizePt: number): number => topMm + pt(sizePt) * BASELINE_DROP;
+export const baselineOf = (topMm: number, sizePt: number): number => topMm + pt(sizePt) * BASELINE_DROP;
 
-const setInk = (doc: Doc, rgb: Rgb): void => { doc.setTextColor(rgb[0], rgb[1], rgb[2]); };
+export const setInk = (doc: Doc, rgb: Rgb): void => { doc.setTextColor(rgb[0], rgb[1], rgb[2]); };
 const setStroke = (doc: Doc, rgb: Rgb): void => { doc.setDrawColor(rgb[0], rgb[1], rgb[2]); };
 
-const RULE_THIN = 0.25;
-const RULE_HEAVY = 0.6;
+export const RULE_THIN = 0.25;
+export const RULE_HEAVY = 0.6;
 
-const rule = (doc: Doc, x1: number, y: number, x2: number, widthMm: number): void => {
+export const rule = (doc: Doc, x1: number, y: number, x2: number, widthMm: number): void => {
   setStroke(doc, T.line);
   doc.setLineWidth(widthMm);
   doc.line(x1, y, x2, y);
 };
 
-const font = (doc: Doc, sizePt: number, style: 'normal' | 'bold' = 'normal'): void => {
+export const font = (doc: Doc, sizePt: number, style: 'normal' | 'bold' = 'normal'): void => {
   doc.setFont(SANS, style);
   doc.setFontSize(sizePt);
+};
+
+/** What the DO letterhead prints on its right: the title (one entry per printed
+ *  line), the number line, an optional line under it, and the scan QR. The
+ *  packing list draws the same letterhead with its own values (owner
+ *  2026-11-27: same frame as the Delivery Order). */
+export type LetterheadSpec = {
+  titleLines: string[];
+  docNoText: string;
+  subLine: string | null;
+  qr: { url: string; caption: string } | null;
+  logo: BrandingLogo | null;
 };
 
 function drawDoHeader(
@@ -168,8 +183,22 @@ function drawDoHeader(
   header: DoHeader,
   opts: { docTitle: string; logo?: BrandingLogo | null },
 ): number {
+  return drawLetterhead(doc, {
+    titleLines: opts.docTitle.trim().split(/\s+/),
+    // Owner 2026-09-21: label the number "No. :" so it reads as the document
+    // number, not a bare code.
+    docNoText: `No. : ${header.do_number}`,
+    subLine: null,
+    qr: header.scanToken && typeof window !== 'undefined'
+      ? { url: `${window.location.origin}/d/${encodeURIComponent(header.scanToken)}`, caption: 'SCAN AT EACH STEP' }
+      : null,
+    logo: opts.logo ?? null,
+  });
+}
+
+export function drawLetterhead(doc: Doc, spec: LetterheadSpec): number {
   const rightEdge = PAGE_W - M;
-  const titleWords = opts.docTitle.trim().split(/\s+/);
+  const titleWords = spec.titleLines;
   const titleTracking = charSpace(S.title, 0.06);
 
   font(doc, S.title, 'bold');
@@ -187,15 +216,20 @@ function drawDoHeader(
 
   const docNoBaseline = ty - pt(S.title * 1.1) + pt(S.docNo) + 2.5;
   font(doc, S.docNo, 'bold');
-  // Owner 2026-09-21: label the number "No. :" so it reads as the document
-  // number, not a bare code.
-  const docNoText = `No. : ${header.do_number}`;
+  const docNoText = spec.docNoText;
   doc.text(docNoText, rightEdge, docNoBaseline, { align: 'right' });
   rightW = Math.max(rightW, doc.getTextWidth(docNoText));
 
   /* Owner 2026-11-27: the issue date (the day the DO was opened) is kept on
      the record but never printed; the customer only sees the Delivery Date. */
   let rightBottom = docNoBaseline + 1.2;
+  if (spec.subLine) {
+    font(doc, S.meta);
+    const subBaseline = docNoBaseline + pt(S.meta) + 2;
+    doc.text(spec.subLine, rightEdge, subBaseline, { align: 'right' });
+    rightW = Math.max(rightW, doc.getTextWidth(spec.subLine));
+    rightBottom = subBaseline + 1.2;
+  }
 
   /* THE SCAN QR. It points at the PUBLIC page now (2026-08-26): the driver has
      no account, so the link must open without one — the owner's call,
@@ -217,7 +251,7 @@ function drawDoHeader(
      alone pushed a three-line DO's signature onto a second form. Beside the
      title it costs the left column some measure and the letterhead no height.
      The header rule still clears whichever column ran longer. */
-  if (header.scanToken && typeof window !== 'undefined') {
+  if (spec.qr) {
     /* 14mm, DOWN FROM 16 (owner, 2026-08-27: 「我不要 16mm，只想要 10mm，太大了可能
        会有影响」). 10mm was measured and refused back to him: the smallest QR that
        exists is 21 modules square, so 10mm cannot carry a URL at a readable module
@@ -234,13 +268,12 @@ function drawDoHeader(
     const QR_BOX = 20;
     const QR_GAP = 6;
     const qrRight = rightEdge - rightW - QR_GAP;
-    const url = `${window.location.origin}/d/${encodeURIComponent(header.scanToken)}`;
-    const drawn = drawQrIntoPdf(doc, url, qrRight - QR_BOX, M, QR);
+    const drawn = drawQrIntoPdf(doc, spec.qr.url, qrRight - QR_BOX, M, QR);
     font(doc, S.footer, 'bold');
     setInk(doc, T.ink);
-    const caption = 'SCAN AT EACH STEP';
+    const caption = spec.qr.caption;
     const labelBaseline = baselineOf(M + Math.max(drawn, QR_BOX) + 1, S.footer);
-    doc.text('SCAN AT EACH STEP', qrRight, labelBaseline, { align: 'right' });
+    doc.text(caption, qrRight, labelBaseline, { align: 'right' });
     rightW += QR_GAP + Math.max(QR_BOX, drawn, doc.getTextWidth(caption));
     rightBottom = Math.max(rightBottom, labelBaseline + 0.8);
   }
@@ -248,7 +281,7 @@ function drawDoHeader(
   const GUTTER = 7;
   let textX = M;
   let logoBottom = 0;
-  const logo = opts.logo ?? getBrandingLogoCache();
+  const logo = spec.logo ?? getBrandingLogoCache();
   if (logo) {
     /* The box is 28.8 x 20mm: wide enough for 2990's WIDE mark (≈2.25:1) to
        fill edge to edge, tall enough that Houzs's stacked, near-square lockup
@@ -472,7 +505,7 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
   return top + panelH;
 }
 
-const FOOTER_RULE_Y = PAGE_H - PAD_BOTTOM - 6;
+export const FOOTER_RULE_Y = PAGE_H - PAD_BOTTOM - 6;
 /* The MINIMUM blank signing space reserved above the signature rule — a page-
    break threshold, NOT a drawn box: drawClosing always strikes the rule at
    SIG_TITLE_TOP, so a short DO keeps a large blank above it either way. At 20mm
@@ -490,11 +523,25 @@ export function doClosingNeedsNewPage(contentEndY: number): boolean {
 }
 
 function drawClosing(doc: Doc, header: DoHeader, pageOf: { page: number; total: number }): void {
-  const colW = (CONTENT_W - 10) / 2;
-  const blocks: Array<{ x: number; title: string }> = [
-    { x: M, title: 'Customer Acknowledged Receipt' },
-    { x: M + colW + 10, title: `${COMPANY.name} — Driver Signature` },
-  ];
+  drawSignatureClosing(doc, {
+    titles: ['Customer Acknowledged Receipt', `${COMPANY.name} — Driver Signature`],
+    fields: ['Name', 'Date'],
+    footLeft: 'By signing above, the customer confirms receipt of the items listed in good order and condition.',
+    footRight: `${header.do_number} · Page : ${pageOf.page} of ${pageOf.total}`,
+  });
+}
+
+/** The DO's closing — signature blocks side by side above the footer rule,
+ *  pinned to the bottom of the page — for any number of signers. */
+export function drawSignatureClosing(
+  doc: Doc,
+  spec: { titles: string[]; fields: string[]; footLeft: string; footRight: string },
+): void {
+  const GAP = 10;
+  const colW = (CONTENT_W - GAP * (spec.titles.length - 1)) / spec.titles.length;
+  const blocks = spec.titles.map((title, i) => ({ x: M + i * (colW + GAP), title }));
+  font(doc, S.sigField);
+  const labelW = Math.max(doc.getTextWidth('Date') + 3, ...spec.fields.map((f) => doc.getTextWidth(f) + 1));
 
   for (const block of blocks) {
     rule(doc, block.x, SIG_BOX_TOP + SIG_BOX_H, block.x + colW, RULE_THIN);
@@ -506,34 +553,29 @@ function drawClosing(doc: Doc, header: DoHeader, pageOf: { page: number; total: 
 
     font(doc, S.sigField);
     let y = SIG_TITLE_TOP + 2.5 + pt(S.sigTitle) + 2;
-    for (const label of ['Name', 'Date']) {
+    for (const label of spec.fields) {
       const baseline = baselineOf(y, S.sigField);
       doc.text(label, block.x, baseline);
-      const labelW = doc.getTextWidth('Date') + 3;
       rule(doc, block.x + labelW, baseline + 0.8, block.x + colW, RULE_THIN);
       y += SIG_FIELD_ROW;
     }
   }
 
+  drawFooterLine(doc, spec.footLeft, spec.footRight);
+}
+
+/** The footer rule and its one line: a note on the left, page count on the right. */
+export function drawFooterLine(doc: Doc, left: string, right: string): void {
   rule(doc, M, FOOTER_RULE_Y, PAGE_W - M, RULE_THIN);
   const footBaseline = baselineOf(FOOTER_RULE_Y + 3, S.footer);
   font(doc, S.footer);
   setInk(doc, T.ink);
-  doc.text(
-    'By signing above, the customer confirms receipt of the items listed in good order and condition.',
-    M,
-    footBaseline,
-  );
-  doc.text(`${header.do_number} · Page : ${pageOf.page} of ${pageOf.total}`, PAGE_W - M, footBaseline, { align: 'right' });
+  doc.text(left, M, footBaseline);
+  doc.text(right, PAGE_W - M, footBaseline, { align: 'right' });
 }
 
 function drawFooterOnly(doc: Doc, header: DoHeader, pageOf: { page: number; total: number }): void {
-  rule(doc, M, FOOTER_RULE_Y, PAGE_W - M, RULE_THIN);
-  const footBaseline = baselineOf(FOOTER_RULE_Y + 3, S.footer);
-  font(doc, S.footer);
-  setInk(doc, T.ink);
-  doc.text(COMPANY.portalLabel, M, footBaseline);
-  doc.text(`${header.do_number} · Page : ${pageOf.page} of ${pageOf.total}`, PAGE_W - M, footBaseline, { align: 'right' });
+  drawFooterLine(doc, COMPANY.portalLabel, `${header.do_number} · Page : ${pageOf.page} of ${pageOf.total}`);
 }
 
 export async function renderDeliveryOrderInto(

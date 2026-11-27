@@ -32,6 +32,7 @@ import type { MobileConvertPrefill } from "./MobileOrderMoney";
 import type { ConvertTarget } from "./MobileConvertWizard";
 import { MODULE_TO_PURCHASE_DOC, convertInsteadFor, mayCreatePurchaseDoc, type PurchaseDocKind } from "./mobile-purchase-doc";
 import { ScanInvoiceLauncher } from "./MobileScanInvoiceLauncher";
+import { MobilePackingLists } from "./MobilePackingLists";
 const MobileSalesOrders = lazy(() => import("./MobileSalesOrders").then((m) => ({ default: m.MobileSalesOrders })));
 const MobileAmendments = lazy(() => import("./MobileAmendments").then((m) => ({ default: m.MobileAmendments })));
 const MobilePoAmendments = lazy(() => import("./MobilePoAmendments").then((m) => ({ default: m.MobilePoAmendments })));
@@ -674,6 +675,8 @@ function MobileAppInner() {
     const canScanPi = purchaseKind === "pi" && mayCreatePurchaseDoc("pi", can, pageAccess);
     const aboveList = k === "members"
       ? <MobileInvitations />
+      : k === "delivery-orders-mfg"
+        ? <MobilePackingLists />
       : canScanPi
         ? <ScanInvoiceLauncher onClick={() => setScreen({ t: "scan-pi" })} />
         : grnScanEntry;

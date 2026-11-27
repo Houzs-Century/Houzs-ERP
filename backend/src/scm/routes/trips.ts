@@ -9,6 +9,7 @@ import { paginateAll, chunkIn } from '../lib/paginate-all';
 import {
   assemblePackingLists,
   type PackTripRow, type PackStopRow, type PackDoRow, type PackItemRow, type PackLabelRow,
+  type PackSoItemRow, type PackCrewRow,
 } from '../lib/packing-list-view';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { scopeToAllowedCompanies, companyCodeMap, withCompanyCode, activeCompanyId } from '../lib/companyScope';
@@ -421,6 +422,8 @@ trips.get('/packing', async (c) => {
     status: dual<string | null>(r, 'status'),
     lorry_id: dual<string | null>(r, 'lorry_id'),
     driver_id: dual<string | null>(r, 'driver_id'),
+    helper_1_id: dual<string | null>(r, 'helper_1_id'),
+    helper_2_id: dual<string | null>(r, 'helper_2_id'),
     warehouse_id: dual<string | null>(r, 'warehouse_id'),
   }));
   if (packTrips.length === 0) return c.json({ date, lists: [] });
@@ -450,7 +453,9 @@ trips.get('/packing', async (c) => {
   if (doIds.length > 0) {
     const { data: doData, error: doErr } = await chunkIn<Record<string, unknown>>(doIds, (batch, lo, hi) =>
       scopeToAllowedCompanies(
-        sb.from('delivery_orders').select('id, do_number, status, m3_total_milli').in('id', batch).range(lo, hi),
+        sb.from('delivery_orders')
+          .select('id, do_number, status, m3_total_milli, so_doc_no, phone, time_range')
+          .in('id', batch).range(lo, hi),
         c,
       ));
     if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
@@ -459,6 +464,9 @@ trips.get('/packing', async (c) => {
       do_number: dual<string | null>(d, 'do_number'),
       status: dual<string | null>(d, 'status'),
       m3_total_milli: toNumericOrNull(dual(d, 'm3_total_milli')),
+      so_doc_no: dual<string | null>(d, 'so_doc_no'),
+      phone: dual<string | null>(d, 'phone'),
+      time_range: dual<string | null>(d, 'time_range'),
     }));
 
     const readableDoIds = packDos.map((d) => d.id);
@@ -466,7 +474,7 @@ trips.get('/packing', async (c) => {
       const { data: itemData, error: itemErr } = await chunkIn<Record<string, unknown>>(readableDoIds, (batch, lo, hi) =>
         scopeToAllowedCompanies(
           sb.from('delivery_order_items')
-            .select('delivery_order_id, line_no, item_code, description, qty, rack_id, shipped_from')
+            .select('delivery_order_id, line_no, item_code, description, description2, item_group, variants, qty, rack_id, shipped_from, so_item_id, committed_po_batch_no')
             .in('delivery_order_id', batch).range(lo, hi),
           c,
         ));
@@ -479,6 +487,11 @@ trips.get('/packing', async (c) => {
         qty: toNumericOrNull(dual(it, 'qty')),
         rack_id: dual<string | null>(it, 'rack_id'),
         shipped_from: dual<unknown>(it, 'shipped_from') ?? null,
+        item_group: dual<string | null>(it, 'item_group'),
+        variants: (dual<Record<string, unknown> | null>(it, 'variants') ?? null),
+        description2: dual<string | null>(it, 'description2'),
+        so_item_id: dual<string | null>(it, 'so_item_id'),
+        committed_po_batch_no: dual<string | null>(it, 'committed_po_batch_no'),
       }));
     }
   }
@@ -502,11 +515,43 @@ trips.get('/packing', async (c) => {
     }));
   }
 
-  const [lry, drv, wh] = await Promise.all([
+  /* company-scope: 6. The SO lines those DO lines were cut from — scoped. Only for
+        their position (the customer block prints in SO line order) and the SO
+        number when the DO header carries none. */
+  const soItemIds = [...new Set(packItems.map((i) => i.so_item_id).filter((v): v is string => !!v))];
+  let packSoItems: PackSoItemRow[] = [];
+  if (soItemIds.length > 0) {
+    const { data: soItemData, error: soItemErr } = await chunkIn<Record<string, unknown>>(soItemIds, (batch, lo, hi) =>
+      scopeToAllowedCompanies(
+        sb.from('mfg_sales_order_items').select('id, doc_no, line_no').in('id', batch).range(lo, hi),
+        c,
+      ));
+    if (soItemErr) return c.json({ error: 'load_failed', reason: soItemErr.message }, 500);
+    packSoItems = (soItemData as Array<Record<string, unknown>>).map((r) => ({
+      id: String(dual<string>(r, 'id')),
+      doc_no: dual<string | null>(r, 'doc_no'),
+      line_no: toNumericOrNull(dual(r, 'line_no')),
+    }));
+  }
+
+  /* company-scope: crew masters, by id off trips scoped above (the same lookup /trips/day
+     does). A helper can belong to the other company — Houzs crew run 2990's
+     trips — so the id from a scoped trip is the boundary here, not company_id. */
+  const helperIds = [...new Set(packTrips.flatMap((t) => [t.helper_1_id, t.helper_2_id]).filter((v): v is string => !!v))];
+  const [lry, drv, wh, hlp] = await Promise.all([
     sb.from('lorries').select('id, plate'),
-    sb.from('drivers').select('id, name'),
+    sb.from('drivers').select('id, name, phone'),
     sb.from('warehouses').select('id, name'),
+    helperIds.length > 0
+      ? sb.from('helpers').select('id, name, contact').in('id', helperIds)
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
   ]);
+  const toCrew = (rows: unknown, phoneCol: string): PackCrewRow[] =>
+    ((rows ?? []) as Array<Record<string, unknown>>).map((r) => ({
+      id: String(dual<string>(r, 'id')),
+      name: dual<string | null>(r, 'name'),
+      phone: dual<string | null>(r, phoneCol),
+    }));
   const toLabels = (rows: unknown, col: string): PackLabelRow[] =>
     ((rows ?? []) as Array<Record<string, unknown>>).map((r) => ({
       id: String(dual<string>(r, 'id')),
@@ -519,8 +564,10 @@ trips.get('/packing', async (c) => {
     deliveryOrders: packDos,
     items: packItems,
     racks: packRacks,
+    soItems: packSoItems,
     lorries: toLabels(lry.data, 'plate'),
-    drivers: toLabels(drv.data, 'name'),
+    drivers: toCrew(drv.data, 'phone'),
+    helpers: toCrew(hlp.data, 'contact'),
     warehouses: toLabels(wh.data, 'name'),
   });
 

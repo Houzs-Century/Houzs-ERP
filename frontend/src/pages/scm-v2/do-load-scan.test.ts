@@ -54,7 +54,7 @@ describe('the DO print QR', () => {
   });
 
   it('the caption names the repeated scan, not one rung', () => {
-    expect(PDF).toContain("doc.text('SCAN AT EACH STEP'");
+    expect(PDF).toContain("caption: 'SCAN AT EACH STEP'");
     expect(PDF_CODE).not.toContain('MARK LOADED');
   });
 

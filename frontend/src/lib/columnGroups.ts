@@ -50,7 +50,7 @@ const RULES: Rule[] = [
   },
   {
     group: COLUMN_GROUPS.logistics,
-    any: /\bm3\b|\b(mileage|insurance|puspakom|downtime|problem|drops|stops|dos|volume|sets|dispose|disposal|inspection|services?|duration|transfer|ctn|etd|vessel|voyage|port|slot|replacement|consignment|card|delivery|deliveries|deliver|delivered|dispatch|shipout|carrier|tracking|eta|arrival|arrives|departure|driver|helper|lorry|vehicle|plate|fleet|registration|trip|route|zone|warehouse|whse|rack|shelf|venue|location|transport|pickup|pickups|scheduled|unscheduled|sched|processing date|collected|setup|dismantle|lift booking|do|transfer to|transfer from|stock status|expected|earliest|latest|when|time|days left|work days|repair days|utilisation|covers|areas|radius|km|gps|google|drive|on-site|building type)\b/,
+    any: /\bm3\b|\b(mileage|insurance|puspakom|downtime|problem|drops|stops|dos|volume|sets|dispose|disposal|inspection|services?|duration|transfer|ctn|etd|vessel|voyage|port|slot|replacement|consignment|card|delivery|deliveries|deliver|delivered|dispatch|shipout|carrier|tracking|eta|arrival|arrives|departure|driver|helpers?|lorry|loading|vehicle|plate|fleet|registration|trip|route|zone|warehouse|whse|rack|shelf|venue|location|transport|pickup|pickups|scheduled|unscheduled|sched|processing date|collected|setup|dismantle|lift booking|do|transfer to|transfer from|stock status|expected|earliest|latest|when|time|days left|work days|repair days|utilisation|covers|areas|radius|km|gps|google|drive|on-site|building type)\b/,
   },
   {
     group: COLUMN_GROUPS.stock,
@@ -58,7 +58,7 @@ const RULES: Rule[] = [
   },
   {
     group: COLUMN_GROUPS.party,
-    any: /\b(customer|debtor|supplier|creditor|party|payee|contact|phone|email|address|city|postcode|state|country|website|house type|building type|customer type|referral|bank)\b/,
+    any: /\b(customers?|debtor|supplier|creditor|party|payee|contact|phone|email|address|city|postcode|state|country|website|house type|building type|customer type|referral|bank)\b/,
   },
   {
     group: COLUMN_GROUPS.people,
