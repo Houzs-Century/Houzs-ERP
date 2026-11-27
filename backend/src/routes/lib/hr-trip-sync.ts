@@ -3,7 +3,7 @@ import type { Env } from "../../types";
 import { getDb } from "../../db/client";
 import { companies, hr_employees, hr_trip_rows, hr_trip_sync_state } from "../../db/schema";
 import { tripMonthBounds, tripMonthOf } from "../../scm/shared/hr-trip-pay";
-import { changedSourceDays, planningRows, rowHrEdited, tripMonthLocked, type Person, type SourceRow } from "./hr-trip-store";
+import { changedSourceDays, planningRows, rowHrEdited, tripMonthLocked, tripPaySisterCompanies, type Person, type SourceRow } from "./hr-trip-store";
 
 type Db = ReturnType<typeof getDb>;
 type RowRecord = typeof hr_trip_rows.$inferSelect;
@@ -133,11 +133,18 @@ export async function syncTripMonth(
   if (await tripMonthLocked(db, companyId, month)) return none("locked");
   const stored = await db.select().from(hr_trip_rows).where(and(eq(hr_trip_rows.company_id, companyId), eq(hr_trip_rows.trip_month, month)));
   if (opts.mode === "nightly" && stored.some((r) => r.source === "SHEET")) return none("pasted");
-  const source = await planningRows(db, companyId, month, await companyPeople(db, companyId));
+  const people = await companyPeople(db, companyId);
+  const companies = [companyId, ...tripPaySisterCompanies(companyId)];
+  const source = (await Promise.all(companies.map((cid) => planningRows(db, cid, month, people)))).flat();
   const { first, last } = tripMonthBounds(month);
   let days: Set<string> | null = null;
   if (opts.mode === "nightly") {
-    const changed = opts.since ? await changedSourceDays(db, companyId, first, last, opts.since) : "all";
+    let changed: ReadonlySet<string> | "all" = "all";
+    if (opts.since) {
+      const since = opts.since;
+      const sets = await Promise.all(companies.map((cid) => changedSourceDays(db, cid, first, last, since)));
+      changed = new Set(sets.flatMap((s) => [...s]));
+    }
     days = selectSyncDays({ first, last, yesterday: opts.yesterday, changed, stored: stored.filter((r) => r.source === "PLANNING"), source });
   }
   const plan = planSync(stored, source, days);

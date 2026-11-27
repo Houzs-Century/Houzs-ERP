@@ -547,6 +547,14 @@ const doRunCandidates = (companyId: number) => sql`
         LEFT JOIN scm.mfg_sales_orders so ON so.doc_no = d.so_doc_no AND so.company_id = d.company_id
        WHERE d.company_id = ${companyId} AND d.status::text NOT IN ('DRAFT', 'CANCELLED'))`;
 
+/* HOUZS (company 1) pays its crew for 2990 (company 2) trips too: the same people
+   run both and are employed by HOUZS, so 2990's work was earning nothing anywhere
+   (owner 2026-11-27). A company's Trip Pay therefore also reads its sisters'
+   source, each still pulled under its own hard company_id scope (planningRows
+   stays single-company) and attributed to this company's employees by name. */
+const TRIP_PAY_INCLUDES_COMPANIES: Readonly<Record<number, readonly number[]>> = { 1: [2] };
+export const tripPaySisterCompanies = (companyId: number): readonly number[] => TRIP_PAY_INCLUDES_COMPANIES[companyId] ?? [];
+
 /** Everything Delivery Planning and the Projects module say a trip month's crews
  *  did: each stop of our own lorry runs (crew from the DO's crew record, else the
  *  run's; outsourced and cancelled runs and cancelled DOs left out), each
