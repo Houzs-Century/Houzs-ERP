@@ -150,6 +150,7 @@ import { backfillOutboundMessageIds } from "./lib/mail-threading";
 import { DELIVERY_REFRESH_LIMIT, refreshOutboundDelivery } from "./lib/mail-delivery";
 import { pollVelocity } from "./scm/lib/velocity-poll";
 import { pollItrack } from "./scm/lib/itrack-poll";
+import { triggerMailSync } from "./lib/mail-sync-trigger";
 import { runMailAckEscalation } from "./lib/mail-acks";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
@@ -556,6 +557,11 @@ export default {
             if (!r.skipped) console.log(`[cron velocity] ${JSON.stringify(r)}`);
           })
           .catch((e) => console.error("[cron velocity]", e instanceof Error ? e.message : e))
+      );
+      ctx.waitUntil(
+        track("mail-sync-trigger", () => triggerMailSync(env))
+          .then((r) => { if ("ok" in r && !r.ok) console.error(`[cron mail-sync-trigger] github ${r.status}`); })
+          .catch((e) => console.error("[cron mail-sync-trigger]", e instanceof Error ? e.message : e))
       );
       // HC-0050: same, from iTrack (no-op until ITRACK_ACCOUNT + ITRACK_PASSWORD are set).
       ctx.waitUntil(
