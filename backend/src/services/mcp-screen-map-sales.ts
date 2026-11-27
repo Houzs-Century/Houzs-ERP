@@ -616,7 +616,7 @@ export const SALES_SCREENS: ScreenPage[] = [
     "Payment requests",
     "Ask Finance to pay a bill (for example an event's rental) or a customer refund raised from a sales order. Finance works the same page to turn requests into vouchers.",
     "Payment Requests (top of the sidebar); Finance: Finance > Money out > Payment requests",
-    { kind: "perm", any: ["*", "scm.payment_request.create", "scm.payment_voucher.create"], anyAccess: ["scm.sales.orders"], allowSales: true },
+    { kind: "route" },
     ["payment request", "refund request", "申请付款", "退款", "permohonan bayaran"],
     [
       act("New request", "button", "Opens the request form (amount, pay by, event, bill).", "scm.payment_request.create.", "Request sent to Finance."),
@@ -673,7 +673,7 @@ export const SALES_SCREENS: ScreenPage[] = [
       act("New Consignment Order", "button", "Opens a new consignment order.", "Consignment Orders access."),
       act("Open full page", "button", "Drawer: opens the order page.", "Consignment Orders access."),
     ],
-    ["Total Orders", "Revenue", "Outstanding", "Paid"],
+    ["Total Orders", "Revenue", "Outstanding", "Paid", "Order lines"],
   ),
   listPage(
     "/scm/consignment-orders/new",

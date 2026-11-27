@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { frontendRoutes, labelInFrontend, routeExists } from "../../scripts/lib/frontend-honesty.mjs";
 import { SCREENS } from "./mcp-screen-map";
+import { gateForPage } from "./mcp-howto-types";
 
 const redirectOnly = (r: string) => ["/roles", "/scm/official-receipts", "/scm/deposit-invoices", "/scm/lorry-capacity", "/scm/lorry-live-map"].includes(r);
 
@@ -28,6 +29,11 @@ describe("screen map stays honest to the frontend", () => {
     for (const s of SCREENS) expect(s.purpose.length, s.path).toBeGreaterThan(0);
     const full = ["/scm/sales-orders", "/scm/sales-orders/new", "/scm/purchase-orders", "/scm/grns", "/scm/delivery-orders", "/scm/delivery-planning", "/scm/sales-invoices", "/scm/receipts", "/assr", "/scm/inventory", "/scm/products", "/mail-center", "/pos-admin", "/settings"];
     for (const p of full) expect(SCREENS.some((s) => s.path.split("?")[0] === p && s.detail === "full"), p).toBe(true);
+  });
+
+  it("each page's declared gate is its App.tsx route guard (or defers to it)", () => {
+    const bad = SCREENS.filter((s) => s.gate.kind !== "route" && JSON.stringify(s.gate) !== JSON.stringify(gateForPage(s.path))).map((s) => `${s.path}: ${JSON.stringify(s.gate)} vs ${JSON.stringify(gateForPage(s.path))}`);
+    expect(bad).toEqual([]);
   });
 
   it("is English only", () => {

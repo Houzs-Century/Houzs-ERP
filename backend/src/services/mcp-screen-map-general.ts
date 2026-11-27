@@ -10,13 +10,14 @@ const act = (
   gate: HowtoGate | null = null,
 ): ScreenAction => ({ label, kind, does, permission, gate, sideEffects });
 
+const ROUTE: HowtoGate = { kind: "route" };
 const OPEN: HowtoGate = { kind: "open" };
 const SERVICE: HowtoGate = { kind: "page", page: "service_cases", allowSales: true };
 const PROJECTS: HowtoGate = { kind: "page", page: "projects" };
 const TEAM: HowtoGate = { kind: "page", page: "team", allowSalesDirector: true };
 const MAIL: HowtoGate = { kind: "perm", any: ["mail_center.read"] };
 const POS: HowtoGate = { kind: "perm", any: ["*", "pos.manage"] };
-const HR: HowtoGate = { kind: "perm", any: ["*", "hr.employees.read", "hr.employees.manage", "hr.attendance.read", "hr.ot.confirm"] };
+const HR: HowtoGate = ROUTE;
 const IT: HowtoGate = { kind: "itPages" };
 const SC_WRITE = "service_cases.write";
 const SC_MANAGE = "service_cases.manage";
@@ -516,7 +517,7 @@ export const GENERAL_SCREENS: ScreenPage[] = [
     title: "AutoCount Sync",
     purpose: "Every document this company sent to AutoCount, whether it arrived, and what to do when it did not. Filter by type and find a document number.",
     sidebar: "AutoCount Sync",
-    gate: { kind: "perm", any: ["*", "scm.autocount.read", "settings.manage"] },
+    gate: ROUTE,
     keywords: ["autocount", "sync", "accounting sync", "同步", "账簿", "segerak"],
     sections: [],
     tabs: [],
@@ -533,7 +534,7 @@ export const GENERAL_SCREENS: ScreenPage[] = [
     title: "Venture Portal Feed",
     purpose: "Sends delivered orders to the Venture portal: switch per company, receiver address and start date, API key, and the queue of what was or was not delivered.",
     sidebar: "Venture Portal Feed",
-    gate: { kind: "perm", any: ["*", "scm.venture_portal.read", "settings.manage"] },
+    gate: ROUTE,
     keywords: ["venture portal", "feed", "order feed", "推送", "suapan"],
     sections: ["Switch", "Connection", "The queue"],
     tabs: [],
@@ -550,7 +551,7 @@ export const GENERAL_SCREENS: ScreenPage[] = [
     title: "Change Log",
     purpose: "Who changed what and when across the ERP, by people, the system or both, filtered by type.",
     sidebar: "Change Log",
-    gate: { kind: "perm", any: ["*", "scm.changelog.read", "settings.manage"] },
+    gate: ROUTE,
     keywords: ["change log", "audit", "history", "修改记录", "log perubahan"],
     sections: [],
     tabs: [],
