@@ -31,6 +31,7 @@ import { PageHeader } from '../../components/Layout';
 import { cn } from '../../lib/utils';
 import { DeliveryPlanningRegions } from './DeliveryPlanningRegions';
 import { DeliveryResidenceRules } from './DeliveryResidenceRules';
+import { DeliveryAmendReasons } from './DeliveryAmendReasons';
 import { DriversSection, HelpersSection, LorriesSection } from './Fleet';
 import { LorryLiveMap } from './LorryLiveMap';
 import { SavedLocations } from './SavedLocations';
@@ -46,6 +47,7 @@ const TABS: Tab[] = [
   /* Owner 2026-11-08: the Lorry Live Map left the sidebar for a tab here and in Fleet Health. */
   { key: 'live-map', title: 'Live map', path: '/scm/lorry-live-map', render: () => <LorryLiveMap embedded /> },
   { key: 'residence-rules', title: 'Residence rules', path: '/scm/delivery-residence-rules', render: () => <DeliveryResidenceRules embedded /> },
+  { key: 'amend-reasons', title: 'Amend reasons', path: '/scm/delivery-maintenance', render: () => <DeliveryAmendReasons embedded /> },
   { key: 'regions', title: 'Regions', path: '/scm/delivery-planning-regions', render: () => <DeliveryPlanningRegions embedded /> },
   { key: 'saved-locations', title: 'Places', path: '/scm/saved-locations', render: () => <SavedLocations embedded /> },
 ];

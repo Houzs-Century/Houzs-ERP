@@ -24,7 +24,6 @@ import {
   sxeDateOf,
   MESSAGE_STATUSES,
   messageStatusChip,
-  AMEND_REASONS,
   dpJobTypeLabel,
   assrJobKindLabel,
   dateArrangementOf,
@@ -47,6 +46,7 @@ import { crewToCopy, seatsForTarget, type CrewSeats } from "../lib/crew-paste";
 import { useLocalities, postcodeIndex, postcodeLabel } from "../lib/localities-queries";
 import { crewComboOptions, crewComboValue, latestDoId, KEEP_CURRENT } from "../lib/dispatch-cell";
 import { useDeliveryRowMarks, rowMarkTint, useBulkSetRowMark, useBulkClearRowMark, ROW_MARK_PALETTE } from "../lib/delivery-row-mark";
+import { useAmendReasonOptions } from "../lib/delivery-amend-reasons-queries";
 
 const SUBSTATUS_TONE: Record<string, string> = {
   'Pending Pickup': '#767b6e',
@@ -316,7 +316,7 @@ function DeliveryDateEditCell({ order, onSchedule }: { order: PlanningOrder; onS
    pickup / inspection / delivery needs its reason too); a DP job / project has no
    amend reason. SO writes mfg_sales_orders.amend_reason; an ASSR leg writes its
    own per-leg column (jobKind), both through useUpdateDeliveryFields. */
-function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; onUpdateFields: UpdateFieldsMutate }) {
+function AmendReasonEditCell({ order, onUpdateFields, options }: { order: PlanningOrder; onUpdateFields: UpdateFieldsMutate; options: readonly string[] }) {
   const { fields } = useContext(BoardPendingContext);
   if (isDp(order) || isProject(order)) return <NotApplicable />;
   const target = isAssr(order)
@@ -337,10 +337,10 @@ function AmendReasonEditCell({ order, onUpdateFields }: { order: PlanningOrder; 
       }}
     >
       <option value="">—</option>
-      {current && !(AMEND_REASONS as readonly string[]).includes(current)
+      {current && !options.includes(current)
         ? <option value={current}>{current}</option>
         : null}
-      {AMEND_REASONS.map((r) => (
+      {options.map((r) => (
         <option key={r} value={r}>{r}</option>
       ))}
     </select>
@@ -767,6 +767,7 @@ export function DeliveryPlanningBoard({
   const updateTrip = useUpdateTrip();
   const dpCrew = useDpCrew();
   const helpers = useHelpers().data ?? [];
+  const amendReasonOptions = useAmendReasonOptions();
   const localities = useLocalities().data;
   const pcIndex = useMemo(() => postcodeIndex(localities ?? []), [localities]);
 
@@ -1170,7 +1171,7 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'amend_reason', label: 'Amend Reason', width: 220,
-      accessor: (o) => <AmendReasonEditCell order={o} onUpdateFields={updateFieldsMutate} />,
+      accessor: (o) => <AmendReasonEditCell order={o} onUpdateFields={updateFieldsMutate} options={amendReasonOptions} />,
       searchValue: (o) => o.amend_reason ?? '',
       exportValue: (o) => o.amend_reason ?? '',
     },
@@ -1481,7 +1482,7 @@ export function DeliveryPlanningBoard({
     },
     ];
     return cols.sort((a, b) => (pos.get(a.key) ?? 999) - (pos.get(b.key) ?? 999));
-  }, [isEmSg, drivers, lorries, helpers, msgStatuses, salespersonNameOf, pcIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isEmSg, drivers, lorries, helpers, amendReasonOptions, msgStatuses, salespersonNameOf, pcIndex]); // eslint-disable-line react-hooks/exhaustive-deps -- columns rebuild only on these inputs
 
   const overlayHidden = useMemo<string[] | undefined>(() => {
     if (!visibleColumnsOverride || visibleColumnsOverride.length === 0) return undefined;

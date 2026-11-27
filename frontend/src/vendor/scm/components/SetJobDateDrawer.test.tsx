@@ -17,6 +17,10 @@ vi.mock('../lib/delivery-planning-queries', async (importActual) => {
   };
 });
 vi.mock('./NotifyDialog', () => ({ useNotify: () => notify }));
+vi.mock('../lib/delivery-amend-reasons-queries', async () => {
+  const actual = await import('../lib/delivery-planning-queries');
+  return { useAmendReasonOptions: () => actual.AMEND_REASONS };
+});
 
 import { SetJobDateDrawer } from './SetJobDateDrawer';
 import { AMEND_REASONS, type PlanningOrder } from '../lib/delivery-planning-queries';
