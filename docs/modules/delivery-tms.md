@@ -1,6 +1,6 @@
 # Delivery / TMS
 
-Transportation module: the delivery board (what needs delivering), date and time arrangement, crew/lorry assignment, trips, packing lists, live driver GPS, and the fleet masters (drivers, helpers, lorries, 3PL carriers, regions, zones, residence rules, crew leave).
+Transportation module: the delivery board (what needs delivering), date and time arrangement, crew/lorry assignment, trips, packing lists, live driver GPS, and the fleet masters (drivers, helpers, lorries, 3PL carriers, regions, zones, residence rules, amend reasons, crew leave).
 Used by dispatchers/logistics on desktop and by drivers, helpers and storekeepers on the phone run-sheet. One shared fleet and one queue across both companies.
 
 ## Statuses and flow
@@ -39,7 +39,7 @@ Used by dispatchers/logistics on desktop and by drivers, helpers and storekeeper
 
 ## Permissions
 
-- Area `scm.transportation.drivers` gates all TMS mounts: `/drivers`, `/helpers`, `/lorries`, `/lorry-service-records`, `/lorry-capacity`, `/delivery-planning`, `/delivery-planning-regions` (openRead), `/delivery-planning-row-marks` (openRead), `/delivery-planning-row-order` (openRead), `/delivery-residence-rules`, `/delivery-zones`, `/delivery-rate-cards`, `/threepl-companies`, `/driver-leave`, `/trips`, `/dp-orders`, `/delivery-messages`, `/scan-lorry-invoice`. GET = `view`, POST/PATCH/PUT/DELETE = `edit` (proposals are POSTs, so they need `edit`).
+- Area `scm.transportation.drivers` gates all TMS mounts: `/drivers`, `/helpers`, `/lorries`, `/lorry-service-records`, `/lorry-capacity`, `/delivery-planning`, `/delivery-planning-regions` (openRead), `/delivery-planning-row-marks` (openRead), `/delivery-planning-row-order` (openRead), `/delivery-residence-rules`, `/delivery-amend-reasons` (openRead), `/delivery-zones`, `/delivery-rate-cards`, `/threepl-companies`, `/driver-leave`, `/trips`, `/dp-orders`, `/delivery-messages`, `/scan-lorry-invoice`. GET = `view`, POST/PATCH/PUT/DELETE = `edit` (proposals are POSTs, so they need `edit`).
 - Enforced per level only for `scm_l2_configured` users; others pass on `scm.access`; `*` bypasses. No per-endpoint `requirePermission` in this module.
 - Frontend: TMS routes wrapped in `<ScmGuard area="scm.transportation.drivers">`; sidebar entries `hideForSalesRep`; phone Fleet/Drivers/Helpers/Regions rows `gateVia: "/scm/delivery-maintenance"` (must point at a live nav entry, pinned by `mobileMenuGates.test.ts`).
 - Row scope `resolveDeliveryScope` (`lib/deliveryScope.ts`): a restricted-cohort user (Driver, Helper, Storekeeper, Storekeeper Supervisor per `positionPolicy.ts`) with a linked `scm.drivers`/`scm.helpers.user_id` sees only jobs assigned to them.
@@ -165,12 +165,12 @@ Board UI
 ## Where the code is
 
 Backend
-- Routes: `backend/src/scm/routes/delivery-planning.ts` (board, geo, lines, fields, schedule), `trips.ts`, `trip-scan-token.ts`, `dp-orders.ts`, `delivery-zones.ts`, `delivery-planning-regions.ts`, `delivery-residence-rules.ts`, `drivers.ts`, `helpers.ts`, `lorries.ts`, `threepl-companies.ts`, `driver-leave.ts`, `lorry-capacity.ts`, `lorry-service-records.ts`, `delivery-rate-cards.ts`; `backend/src/routes/publicDoScan.ts`; mounts in `backend/src/scm/index.ts`.
+- Routes: `backend/src/scm/routes/delivery-planning.ts` (board, geo, lines, fields, schedule), `trips.ts`, `trip-scan-token.ts`, `dp-orders.ts`, `delivery-zones.ts`, `delivery-planning-regions.ts`, `delivery-residence-rules.ts`, `delivery-amend-reasons.ts`, `drivers.ts`, `helpers.ts`, `lorries.ts`, `threepl-companies.ts`, `driver-leave.ts`, `lorry-capacity.ts`, `lorry-service-records.ts`, `delivery-rate-cards.ts`; `backend/src/routes/publicDoScan.ts`; mounts in `backend/src/scm/index.ts`.
 - Libs: `backend/src/scm/lib/arrangement-stage.ts`, `tripReconcile.ts`, `deliveryScope.ts`, `assr-board-scope.ts`, `packing-list-view.ts`, `do-scan-token.ts`, `tripLocation.ts`, `zone-classify.ts`, `set-count.ts`, `capacity-pack.ts`, `fleet-assign.ts`, `fleet-availability.ts`, `driver-availability.ts`, `sequence-stops.ts`, `propose-route.ts`, `geocode.ts`, `fleet-day-view.ts`, `threepl-link.ts`, `planning-po-nos.ts`; `backend/src/scm/shared/effective-delivery.ts`; `backend/src/services/positionPolicy.ts`.
 - Migrations: `backend/src/db/migrations-pg/0053_scm_delivery_planning_tms.sql` (base), `0159`, `0196`, `0197`, `0199`, `0205`, `0206`, `0208`, `0209`, `0210`, `0237`, `0253`, `0327_scm_fleet_user_link.sql`, `0329_scm_trip_public_scan_token.sql`.
 
 Frontend
-- Pages: `frontend/src/pages/scm-v2/DeliveryPlanning.tsx`, `DeliveryPlanningDriver.tsx`, `AutoSchedule.tsx`, `Trips.tsx`, `FleetDay.tsx`, `FleetRunSheet.tsx`, `DpOrders.tsx`, `Fleet.tsx`, `DeliveryMaintenance.tsx`, `DeliveryPlanningRegions.tsx`, `DeliveryResidenceRules.tsx`, `DeliveryZones.tsx`, `DriverLeave.tsx`, `ThreePLCompanies.tsx`, `LorryCapacity.tsx`, `delivery-propose-ui.tsx`; `frontend/src/pages/PublicDoScan.tsx`.
+- Pages: `frontend/src/pages/scm-v2/DeliveryPlanning.tsx`, `DeliveryPlanningDriver.tsx`, `AutoSchedule.tsx`, `Trips.tsx`, `FleetDay.tsx`, `FleetRunSheet.tsx`, `DpOrders.tsx`, `Fleet.tsx`, `DeliveryMaintenance.tsx`, `DeliveryPlanningRegions.tsx`, `DeliveryResidenceRules.tsx`, `DeliveryAmendReasons.tsx`, `DeliveryZones.tsx`, `DriverLeave.tsx`, `ThreePLCompanies.tsx`, `LorryCapacity.tsx`, `delivery-propose-ui.tsx`; `frontend/src/pages/PublicDoScan.tsx`.
 - Components: `frontend/src/vendor/scm/components/DeliveryPlanningBoard.tsx`, `ScheduleTripDrawer.tsx`, `ScheduleRouteMap.tsx`, `DeliveryFieldsDrawer.tsx`, `NewDpOrderDrawer.tsx`, `ScheduleDpOrderDrawer.tsx`, `PackingListsSection.tsx`, `LiveTripMap.tsx`; `frontend/src/components/scm-v2/DeliveryMapPanel.tsx`.
 - Logic: `frontend/src/vendor/scm/lib/delivery-planning-queries.ts`, `trips-queries.ts`, `trip-locations-queries.ts`, `native-location.ts`, `propose-time.ts`, `propose-days.ts`, `anonymous-runs.ts`, `last-mile.ts`, `arrangement-sort.ts`, `delivery-map-model.ts`, `delivery-geo-queries.ts`, `packing-list-model.ts`, `packing-list-pdf.ts`, `packing-scan-token-arm.ts`, `so-detail-gates.ts`; `frontend/src/vendor/shared/crew-leave.ts`.
 - Mobile: `frontend/src/mobile/MobileDeliveryPlanning.tsx`, `MobileDeliveryFieldsCard.tsx`, `MobilePOD.tsx`, `MobileTrackingBanner.tsx`, `MobileModuleList.tsx`, `MobileApp.tsx`.

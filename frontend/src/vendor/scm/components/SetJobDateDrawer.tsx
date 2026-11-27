@@ -26,9 +26,9 @@ import {
   useScheduleDelivery,
   useUpdateDeliveryFields,
   assrJobKindLabel,
-  AMEND_REASONS,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
+import { useAmendReasonOptions } from '../lib/delivery-amend-reasons-queries';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 import { DateField } from "./DateField";
@@ -44,10 +44,11 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
   const requested = (order.customer_delivery_date ?? '').slice(0, 10);
   const [date, setDate] = useState(current || requested);
 
-  /* The reason this leg's date moved (owner 2026-11-16) — the same preset list the
+  /* The reason this leg's date moved (owner 2026-11-16) — the same managed list the
      board's Amend Reason column offers; free text already on the leg is kept. */
   const currentReason = order.amend_reason ?? '';
   const [reason, setReason] = useState(currentReason);
+  const reasonOptions = useAmendReasonOptions();
 
   const legLabel = assrJobKindLabel(order.job_kind);
   const busy = sched.isPending || updateFields.isPending;
@@ -145,10 +146,10 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
               onChange={(e) => setReason(e.target.value)}
             >
               <option value="">—</option>
-              {currentReason && !(AMEND_REASONS as readonly string[]).includes(currentReason)
+              {currentReason && !reasonOptions.includes(currentReason)
                 ? <option value={currentReason}>{currentReason}</option>
                 : null}
-              {AMEND_REASONS.map((r) => (
+              {reasonOptions.map((r) => (
                 <option key={r} value={r}>{r}</option>
               ))}
             </select>

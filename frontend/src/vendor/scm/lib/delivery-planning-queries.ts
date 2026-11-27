@@ -85,8 +85,12 @@ export const MESSAGE_STATUS_CHIP: Record<MessageStatus, Chip> = {
 export const messageStatusChip = (s: string | null | undefined): Chip | undefined =>
   s ? MESSAGE_STATUS_CHIP[s as MessageStatus] : undefined;
 
-/* Preset amend / reschedule reasons (owner 2026-09-22) — the reason the amend
-   message gives the customer. Picked from a dropdown; free text still allowed. */
+/* Amend / reschedule reasons (owner 2026-09-22) — the reason the amend / postpone
+   message gives the customer. Since owner 2026-11-27 the live list is OWNER-MANAGED
+   (scm.delivery_amend_reasons, edited in Coverage & Fleet > Amend reasons); the
+   board and Set-job-date drawer read it via useAmendReasonOptions. This constant
+   is now just the migration SEED and the offline FALLBACK (used only while that
+   list is loading or its fetch failed), so keep it in step with the migration. */
 export const AMEND_REASONS = [
   'Unexpected transport scheduling issues',
   'Unforeseen medical leave for our assigned driver',
@@ -95,6 +99,7 @@ export const AMEND_REASONS = [
   'Our strict quality control checks',
   'Materials being temporarily out of stock',
   'Unforeseen production constraints',
+  'A public holiday falling on your delivery day',
 ] as const;
 
 export type RegionCode = string;
