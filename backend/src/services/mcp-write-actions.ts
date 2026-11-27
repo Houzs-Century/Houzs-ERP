@@ -1,5 +1,6 @@
 import { EMAIL_RE, MAX_BODY_CHARS, MAX_RECIPIENTS } from "./mcp-actions";
 import { actionRoute } from "./mcp-inner";
+import { ASSR_NOTE_CATEGORIES } from "./assrNoteCategories";
 import type { ActionSwitches } from "./mcp-store";
 
 type Obj = Record<string, unknown>;
@@ -102,7 +103,7 @@ export function proposeMailReply(args: Obj, detail: unknown, senders: readonly s
   return { ok: true, kind: "mail_reply", id, path: route.path, payload, summary: lines.join("\n"), logLine, entity: { type: "email_thread", id } };
 }
 
-export const NOTE_CATEGORIES = ["service", "customer", "supplier", "sales"] as const;
+export const NOTE_CATEGORIES = ASSR_NOTE_CATEGORIES;
 export const MAX_NOTE_CHARS = 4000;
 
 /** "123", "assr_case:123" → the case id; anything else is a case number to look up. */
