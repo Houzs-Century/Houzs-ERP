@@ -22,8 +22,14 @@ function user(perms: string[], pageAccess: Record<string, string> = {}, l2 = tru
 }
 
 describe("round 4b: propose_mail_reply", () => {
+  it("replies only to people on the thread, the company or the person (R&D 2026-11-27 #2)", () => {
+    expect(proposeMailReply({ body: "x", to: ["attacker@evil.test"] }, thread, [], "me@houzs.test")).toMatchObject({ ok: false });
+    expect(proposeMailReply({ body: "x", cc: ["attacker@evil.test"] }, thread, [], "me@houzs.test")).toMatchObject({ ok: false });
+    expect(proposeMailReply({ body: "x", to: ["BOB@cust.test"], cc: ["boss@houzscentury.com"] }, thread, [], "me@houzs.test")).toMatchObject({ ok: true });
+  });
+
   it("replies to the last sender, shows thread, recipients and the draft, and guards against a reply sent since", () => {
-    const p = proposeMailReply({ body: "Yes, Friday works." }, thread, ["sales@houzs.test", "me@houzs.test"]);
+    const p = proposeMailReply({ body: "Yes, Friday works." }, thread, ["sales@houzs.test", "me@houzs.test"], "me@houzs.test");
     expect(p.ok).toBe(true);
     if (!p.ok) return;
     expect(p.path).toBe("/api/mail-center/threads/t-1/reply");
@@ -36,13 +42,13 @@ describe("round 4b: propose_mail_reply", () => {
   });
 
   it("reply_all copies the others once, never our own mailboxes", () => {
-    const p = proposeMailReply({ body: "Noted", reply_all: true }, thread, ["me@houzs.test"]);
+    const p = proposeMailReply({ body: "Noted", reply_all: true }, thread, ["me@houzs.test"], "me@houzs.test");
     expect(p.ok && p.payload.cc).toEqual(["bob@cust.test"]);
   });
 
   it("refuses an empty reply and a bad address", () => {
-    expect(proposeMailReply({ body: "  " }, thread, [])).toMatchObject({ ok: false });
-    expect(proposeMailReply({ body: "x", to: ["not-an-email"] }, thread, [])).toMatchObject({ ok: false, error: "Not a valid email address: not-an-email" });
+    expect(proposeMailReply({ body: "  " }, thread, [], "me@houzs.test")).toMatchObject({ ok: false });
+    expect(proposeMailReply({ body: "x", to: ["not-an-email"] }, thread, [], "me@houzs.test")).toMatchObject({ ok: false, error: "Not a valid email address: not-an-email" });
   });
 
   it("thread_search picks the one match, else lists the candidates", () => {

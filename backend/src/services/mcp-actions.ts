@@ -166,13 +166,13 @@ export const MAX_BODY_CHARS = 20_000;
 
 /** Interim fence (R&D 2026-11-27 #2): the AI can confirm its own proposal, so it may email only the company or the person themself. */
 export const COMPANY_MAIL_DOMAINS = ["houzscentury.com", "2990shome.com"];
-export const mayReceive = (addr: string, me: string): boolean => {
+export const mayReceive = (addr: string, me: string | null): boolean => {
   const a = addr.toLowerCase();
   return (!!me && a === me.toLowerCase()) || COMPANY_MAIL_DOMAINS.includes(a.slice(a.lastIndexOf("@") + 1));
 };
 
 /** propose_email → the body routes/mail-center.ts POST /compose takes, checked the way Compose checks it. */
-export function proposeEmail(args: Obj, senders: string[], me: string): Proposal {
+export function proposeEmail(args: Obj, senders: string[], me: string | null): Proposal {
   const to = strList(args.to);
   const cc = strList(args.cc);
   const subject = str(args.subject).slice(0, 300);

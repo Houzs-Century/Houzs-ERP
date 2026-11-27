@@ -192,7 +192,8 @@ app.post("/oauth/token", async (c) => {
   }
   const err = (error: string, desc: string, status: 400 | 401 = 400) => c.json({ error, error_description: desc }, status, { "Cache-Control": "no-store" });
   const clientId = f.client_id || "";
-  if (!clientId || !(await getClient(c.env.DB, clientId))) return err("invalid_client", "Unknown client", 401);
+  const tokenClient = clientId ? await getClient(c.env.DB, clientId) : null;
+  if (!tokenClient || !tokenClient.redirectUris.every(validRedirectUri)) return err("invalid_client", "Unknown client", 401);
 
   let userId: number;
   let issued: Awaited<ReturnType<typeof issueTokens>>;
@@ -759,7 +760,7 @@ async function proposeWriteTool(c: Context<HonoEnv>, id: Identity, token: string
     const detail = det.ok ? await jsonOrNull(det, "mail thread") : null;
     if (detail === null) return { result: text(`The email could not be read (HTTP ${det.status}).`, true), status: 502, note: "thread unreadable", target };
     const senders = snd.ok ? ((await jsonOrNull(snd, "senders")) as { senders?: unknown } | null)?.senders : null;
-    p = proposeMailReply(args, detail, Array.isArray(senders) ? senders.map(String) : []);
+    p = proposeMailReply(args, detail, Array.isArray(senders) ? senders.map(String) : [], id.user.email);
   } else {
     if (args.record_type !== undefined && args.record_type !== "service_case") return { result: text("Only service cases take notes in the ERP (sales orders, purchase orders and customers have no note feature).", true), status: 400, note: "", target };
     const ref = caseIdFrom(args.id);

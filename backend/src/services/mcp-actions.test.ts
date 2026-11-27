@@ -73,7 +73,7 @@ describe("propose_email", () => {
     expect(proposeEmail({ ...args, to: ["x@houzscentury.com.evil.test"] }, ["s@h.test"], ME)).toMatchObject({ ok: false });
     expect(proposeEmail({ ...args, to: ["Me@Gmail.test"] }, ["s@h.test"], ME)).toMatchObject({ ok: true });
     expect(proposeEmail({ ...args, to: ["other@gmail.test"] }, ["s@h.test"], ME)).toMatchObject({ ok: false });
-    expect(proposeEmail({ ...args, to: ["other@gmail.test"] }, ["s@h.test"], "")).toMatchObject({ ok: false });
+    expect(proposeEmail({ ...args, to: ["other@gmail.test"] }, ["s@h.test"], null)).toMatchObject({ ok: false });
   });
 
   it("validates every address, the subject and the body", () => {

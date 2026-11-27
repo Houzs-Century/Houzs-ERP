@@ -77,7 +77,7 @@ export function validRedirectUri(u: string): boolean {
   try {
     const url = new URL(u);
     if (url.hash) return false;
-    if (LOOPBACK.includes(url.hostname)) return url.protocol === "http:" || url.protocol === "https:";
+    if (LOOPBACK.includes(url.hostname)) return url.protocol === "http:";
     return url.protocol === "https:" && Object.prototype.hasOwnProperty.call(REDIRECT_HOSTS, url.hostname);
   } catch {
     return false;

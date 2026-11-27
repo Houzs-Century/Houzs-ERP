@@ -9,8 +9,11 @@ const PREVIEWABLE_CONTENT_TYPES = new Set([
   "application/pdf",
 ]);
 
+/** A content type the browser may open in a tab without running script. */
+export const canPreviewType = (type: string): boolean => PREVIEWABLE_CONTENT_TYPES.has(type.toLowerCase().split(";")[0].trim());
+
 export function canPreviewAttachment(file: OutboundAttachment): boolean {
-  return PREVIEWABLE_CONTENT_TYPES.has(file.type.toLowerCase());
+  return canPreviewType(file.type);
 }
 
 export function isImageAttachment(file: OutboundAttachment): boolean {
