@@ -280,7 +280,9 @@ secret-guarded ingest fed by the standalone `mail-sync/` poller;
 in-process GET as the person; the only writes are confirm-first actions through
 `services/mcp-inner.ts ACTION_ALLOWLIST` (meeting, email, Mail Center reply, service-case
 note), each behind an admin switch. Tool list, prompts and output schemas per role:
-`services/mcp-round4c.ts`; actions: `services/mcp-write-actions.ts`. Page `pages/AiConnector.tsx`.
+`services/mcp-round4c.ts`; actions: `services/mcp-write-actions.ts`. Morning brief / urgent alert
+emails (cron `*/15` and `*/30`, built as the person): `services/mcp-proactive*.ts`, unsubscribe
+`routes/mcpBrief.ts`. Page `pages/AiConnector.tsx` (+ `AiConnectorBrief.tsx`).
 Rules: `docs/modules/ai-connector.md`.
 
 **Meetings.** Meeting rooms shared by every company and ERP. Rooms, meetings and guest

@@ -27,6 +27,7 @@ beforeEach(() => {
   api.get.mockImplementation(async (path: string) => {
     if (path === "/api/mcp-admin/me") return ME;
     if (path === "/api/mcp-admin/admin/overview") return overview(on);
+    if (path === "/api/mcp-admin/me/brief") return { allowed: true, email: "me@erp.test", prefs: { briefEnabled: false, time: "08:00", days: "weekdays", alertsEnabled: false }, lastBriefDay: null, schedule: { brief: "b", alerts: "a" } };
     throw new Error(`unexpected ${path}`);
   });
   api.post.mockImplementation(async (path: string, body: { enabled?: boolean; kind?: string }) => {
