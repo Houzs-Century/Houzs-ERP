@@ -610,6 +610,33 @@ describe('the two bands', () => {
   });
 });
 
+/* Owner 2026-11-27 (我上传的merchant report 应该是有terminal id 的 → 往后上传后都要保存起来):
+   each line names the card terminal its report printed, under its reference; a line
+   uploaded before then, or whose report names none, says nothing more. */
+describe('the card terminal of each line', () => {
+  const withTerminals = (run: () => void) => {
+    reportRows = [{ ...ROW, terminal_id: '10000015' }, { ...MATCHED_ROW, terminal_id: '10000014' }, SUGGESTED_ROW];
+    try { run(); } finally { reportRows = REPORT_ROWS; }
+  };
+
+  test('the table names it under the reference; a line without one shows only its reference', () => withTerminals(() => {
+    draw();
+    const named = screen.getByText('969745').closest('tr') as HTMLElement;
+    expect(within(named).getByText('Terminal 10000014')).toBeTruthy();
+    const plain = screen.getByText('TYPO9').closest('tr') as HTMLElement;
+    expect(within(plain).queryByText(/^Terminal /)).toBeNull();
+  }));
+
+  test('a line to choose names it beside its reference', () => withTerminals(() => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    openTab('To choose');
+    const card = screen.getByLabelText('Select SO-2608-001').closest('section') as HTMLElement;
+    expect(within(card).getByText('10000015')).toBeTruthy();
+    expect(within(card).getByText(/terminal/)).toBeTruthy();
+  }));
+});
+
 /* 这个是什么? (owner, 2026-08-20) — asked of 27 identical cards sitting under a
    button that would have cleared all 27 at once, each repeating the same
    paragraph about "Set aside". A card is a DECISION; a line already matched by

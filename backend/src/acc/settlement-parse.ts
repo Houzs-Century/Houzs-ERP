@@ -53,6 +53,10 @@ export type ParsedRow = {
       sale itself, so it is matched to the sale, never to card money, and never
       joins what the acquirer owes through its clearing account. Absent = card. */
   channel?: 'QR';
+  /** The card terminal the report names for this line (owner 2026-11-27: 往后上传后都要
+      保存起来): its own column (PBB `TID`, Maybank `Terminal No.`, GHL `terminal_id`),
+      else the `TERMINAL ID` line heading its block (Hong Leong, AEON). Absent: none named. */
+  terminalId?: string;
 };
 
 export type ParseResult =
@@ -184,6 +188,22 @@ function headerIndex(headers: string[], wanted: string): number {
   return headers.findIndex((h) => norm(h) === target);
 }
 
+/* Read by name, not from the acquirer setup: every bank names its terminal one of
+   these ways, in a column or on a TERMINAL ID line holding only that label and its
+   value above the lines it swiped (53 uploaded files checked, owner 2026-11-27). */
+const TERMINAL_NAMES: ReadonlySet<string> = new Set(['tid', 'terminalid', 'terminalno', 'terminalnumber']);
+const isTerminalName = (s: string): boolean => TERMINAL_NAMES.has(s.replace(/[\s_.:#]+/g, '').toLowerCase());
+const terminalValue = (raw: string | undefined): string | null => String(raw ?? '').trim().replace(/^'/, '').trim() || null;
+
+function blockTerminals(lines: readonly string[]): Array<string | null> {
+  let current: string | null = null;
+  return lines.map((line) => {
+    const filled = splitCsvLine(line).filter((c) => c !== '');
+    if (filled.length === 2 && isTerminalName(filled[0])) current = terminalValue(filled[1]) ?? current;
+    return current;
+  });
+}
+
 
 export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
   /* 决定4 not yet delivered for this acquirer: refuse by name. Guessing the
@@ -243,6 +263,8 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
   const idxNet = map.net ? headerIndex(headers, map.net) : -1;
   const idxQr = map.qr ? headerIndex(headers, map.qr) : -1;
   const qrValues = new Set(String(map.qr_values ?? '').split(',').map((v) => v.trim().toUpperCase()).filter(Boolean));
+  const idxTerminal = headers.findIndex(isTerminalName);
+  const blockTerminal = blockTerminals(lines);
 
   const hint = /^\d{4}-\d{2}$/.test(cfg.statementMonth ?? '')
     ? { year: Number((cfg.statementMonth as string).slice(0, 4)), month: Number((cfg.statementMonth as string).slice(5, 7)) }
@@ -297,12 +319,14 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
       }
     }
 
+    const terminalId = (idxTerminal >= 0 ? terminalValue(cells[idxTerminal]) : null) ?? blockTerminal[i];
+    const terminal = terminalId ? { terminalId } : {};
     if (idxQr >= 0 && qrValues.has(String(cells[idxQr] ?? '').trim().toUpperCase())) {
-      rows.push({ lineNo: i + 1, txnDate, ref: null, grossSen, feeSen, netSen, channel: 'QR' });
+      rows.push({ lineNo: i + 1, txnDate, ref: null, grossSen, feeSen, netSen, channel: 'QR', ...terminal });
       continue;
     }
     const ref = idxRef >= 0 ? (cells[idxRef] ?? '').trim().replace(/^'/, '') || null : null;
-    rows.push({ lineNo: i + 1, txnDate, ref, grossSen, feeSen, netSen });
+    rows.push({ lineNo: i + 1, txnDate, ref, grossSen, feeSen, netSen, ...terminal });
   }
 
   if (rows.length === 0) {
