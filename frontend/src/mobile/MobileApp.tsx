@@ -661,7 +661,9 @@ function MobileAppInner() {
         : undefined
       : MODULE_CONFIGS[k]?.form
         ? () => setScreen({ t: "module-form", key: k, mode: "new" })
-        : undefined;
+        : k === "stock-transfers" && allowed("/scm/stock-transfers")
+          ? () => setScreen({ t: "stock-transfer-new", key: k, row: null, title: screen.title })
+          : undefined;
     const grnScanEntry = k === "grns" && canOperateGoodsReceipts(can, pageAccess) ? (
       <button
         onClick={() => setScreen({ t: "grn-scan", key: k, title: screen.title })}
@@ -717,7 +719,9 @@ function MobileAppInner() {
   else if (screen.t === "payment-requests") overlay = <MobilePaymentRequests onBack={back} />;
   else if (screen.t === "product-requests") overlay = <MobileProductRequests onBack={back} />;
   else if (screen.t === "stock-transfer-new") {
-    const backToCard = () => setScreen({ t: "module-detail", key: screen.key, row: screen.row, title: screen.title });
+    const backToCard = () => setScreen(screen.row == null
+      ? { t: "module", key: screen.key, title: screen.title }
+      : { t: "module-detail", key: screen.key, row: screen.row, title: screen.title });
     overlay = <MobileStockTransferNew onBack={backToCard} onCreated={backToCard} />;
   }
   else if (screen.t === "module-detail") {
