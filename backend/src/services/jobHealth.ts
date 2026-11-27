@@ -11,6 +11,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   keepwarm: 5,
   "email-outbox": 5,
   "meeting-mail": 5,
+  "mail-sync-trigger": 5,
   "so-pull": 5,
   "amendment-cmd": 5,
   "ac-writeback": 5,
