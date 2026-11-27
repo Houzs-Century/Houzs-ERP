@@ -104,7 +104,8 @@ function explainScreen(ctx: HowtoCtx, args: Record<string, unknown>): HowtoOutco
 /** where_is: the pages (and the button on them) that best match "where do I open X". */
 export function whereIs(thing: string): { screen: ScreenPage; action: ScreenAction | null; score: number }[] {
   const q = queryTerms(thing);
-  const guide = rank(HOWTO_GUIDES, thing)[0];
+  const ranked = rank(HOWTO_GUIDES, thing);
+  const guide = ranked.length ? ranked[0] : null;
   const guidePage = guide ? basePath(guide.item.page) : null;
   return SCREENS.map((screen) => {
     const pageScore = scoreItem({ id: screen.path, title: screen.title, keywords: [...screen.keywords, screen.title, ...(screen.sidebar ? [screen.sidebar] : [])] }, q);
@@ -118,7 +119,7 @@ export function whereIs(thing: string): { screen: ScreenPage; action: ScreenActi
       }
     }
     const linkable = !screen.path.includes(":");
-    const fromGuide = guidePage && basePath(screen.path) === guidePage ? guide.score * 0.5 : 0;
+    const fromGuide = guide && guidePage && basePath(screen.path) === guidePage ? guide.score * 0.5 : 0;
     return { screen, action: best, score: (pageScore + bestScore * 0.6 + fromGuide) * (linkable ? 1 : 0.5) };
   })
     .filter((x) => x.score > 0)
@@ -130,7 +131,8 @@ function whereIsTool(ctx: HowtoCtx, args: Record<string, unknown>): HowtoOutcome
   if (!thing) return { result: text("Say what you are looking for, e.g. 'new sales order' or 'SO maintenance'.", true), status: 400, note: "", target: "where_is" };
   const hits = whereIs(thing).slice(0, 3);
   if (!hits.length) return answer({ matched: false, message: "No page matches that. Try other words, or call module_overview for the list of modules." }, redactQuestion(thing), NO_GUIDE_NOTE);
-  const guide = rank(HOWTO_GUIDES, thing)[0];
+  const ranked = rank(HOWTO_GUIDES, thing);
+  const guide = ranked.length ? ranked[0] : null;
   return answer(
     {
       places: hits.map(({ screen, action }) => {

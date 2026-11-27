@@ -1969,6 +1969,36 @@
       "check": "D1",
       "key": "ACCOMMODATION,COGS,COGS_ACCESSORIES,COGS_BEDFRAME,COGS_MATT_SOFA,COMMISSION,CONTRACTOR,DEPOSIT,LICENSE,MARKETING,MERCHANDISE,MISC,PERMIT,RENTAL,SETUP,STAFFING,TRANSPORT,TRANSPORT_FEE,TRANSPORT_SETUP_DISMANTLE|backend/src/services/projects.ts frontend/src/vendor/scm/lib/pms-ledger-categories.ts",
       "why": "NOT REVIEWED BY THE OWNER YET. The fair ledger cost categories: backend LEDGER_COST_CATEGORIES decides which lines count as cost in the fair P&L; frontend LEDGER_COST_CATS (#2583) is the picker. The pair is older than PR #6050; the scanner only saw it after #6050 deleted the inline comments that kept the backend array over its 4,000-character limit. A divergence would let a user pick a category the P&L does not count. Open item in tasks/TODO.md."
+    },
+    {
+      "check": "D2",
+      "key": "CUSTOMER & DELIVERY,ORDER LINES,OUTSTANDING,PAID,REVENUE,TOTAL ORDERS ~ ORDER LINES,OUTSTANDING,PAID,REVENUE,TOTAL ORDERS",
+      "why": "AI Connector screen-map data (mcp-screen-map-sales.ts): the visible section headings of two different pages (SO list vs Consignment Orders), recorded so explain_screen can recognise a screenshot. Labels on a screen, not a business rule; a difference is a different page."
+    },
+    {
+      "check": "D2",
+      "key": "HUB,RANTAIAN BEKALAN,SCM,SUPPLY CHAIN,供应链 ~ RANTAIAN BEKALAN,SCM,SUPPLY CHAIN,供应链",
+      "why": "Search keywords for the Supply Chain module (mcp-howto-modules.ts) and the /scm hub page (mcp-screen-map-supply.ts): words staff might type, so how_to / where_is can match them. Not a rule; the hub simply also answers to 'hub'."
+    },
+    {
+      "check": "D2",
+      "key": "ORDER LINES,OUTSTANDING,PAID,REVENUE,TOTAL ORDERS ~ OUTSTANDING,PAID,REVENUE,TOTAL ORDERS",
+      "why": "Section headings of the Consignment Orders page in the AI Connector screen map vs the Sales Report tile captions (FairReport.tsx TILE_LABELS): the screen map copies the visible captions so a screenshot can be recognised; nothing decides anything from them."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,COMPLETED,CONFIRMED,DRAFT ~ CANCELLED,CONFIRMED,DRAFT",
+      "why": "Status TAB labels of the Purchase Returns page as read off the screen for the AI Connector screen map, vs the SO mirror's canonical statuses (so-mirror.ts). Different documents, different question; the screen map only records what the page shows."
+    },
+    {
+      "check": "D2",
+      "key": "CANCELLED,CONFIRMED,DRAFT ~ CANCELLED,CONFIRMED,DRAFT,ON HOLD",
+      "why": "Status TAB labels of the Goods Receipt list as read off the screen for the AI Connector screen map, vs the SO mirror's canonical statuses (so-mirror.ts). Different documents; the screen map only records what the page shows."
+    },
+    {
+      "check": "D2",
+      "key": "KIRA STOK,STOCK COUNT,STOCK TAKE,盘点 ~ KIRA STOK,STOCK TAKE,盘点",
+      "why": "Search keywords for 'stock take' in the AI Connector glossary and screen map: words staff might type (English, Chinese, Malay). Matching vocabulary, not a rule."
     }
   ]
 }

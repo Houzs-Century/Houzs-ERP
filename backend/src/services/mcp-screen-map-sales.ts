@@ -285,7 +285,7 @@ export const SALES_SCREENS: ScreenPage[] = [
       act("Confirm", "menu", "Right-click or drawer on a draft DO: moves it to Confirmed (LOADED) via PATCH /delivery-orders-mfg/:id/status.", DO_WRITE, "Stock goes out of the warehouse; the customer is emailed.", DO_WRITE_GATE),
       act("Mark Loaded", "menu", "Right-click: sets the DO to Loaded (on the lorry) when no QR scan recorded it.", DO_WRITE, "Status only; no stock moves.", DO_WRITE_GATE),
       act("Mark In Transit", "menu", "Right-click: sets the DO to In transit.", DO_WRITE, "Status only.", DO_WRITE_GATE),
-      act("Mark Delivered", "menu", "Right-click: sets the DO to Delivered when the driver did not complete proof of delivery.", DO_WRITE, "Status only; the sales order follows when every line is delivered.", DO_WRITE_GATE),
+      act("Mark Delivered", "menu", "Right-click: sets the DO to Delivered when the driver did not complete proof of delivery.", DO_WRITE, "Status only; the sales order follows once its last open line is delivered.", DO_WRITE_GATE),
       act("Put On Hold", "menu", "Right-click: marks the DO as paused; status unchanged.", DO_WRITE, "Hold marker only.", DO_WRITE_GATE),
       act("Take Off Hold", "menu", "Right-click: removes the hold marker.", DO_WRITE, NONE, DO_WRITE_GATE),
       act("Cancel Delivery Order", "menu", "Right-click: asks for a reason and cancels (status CANCELLED). Refused if a live invoice or return hangs off it.", DO_WRITE, "Stock is added back; final (a cancelled DO cannot be un-cancelled).", DO_WRITE_GATE),
