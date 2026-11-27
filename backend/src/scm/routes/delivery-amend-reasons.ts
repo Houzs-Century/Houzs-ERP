@@ -15,6 +15,11 @@ import {
 // "Amend Reason" column and the Set-job-date drawer read this for their dropdown;
 // the reason a Sales Order carries becomes the Postpone WhatsApp's "due to ..."
 // line (amend_date_reason_2). Company-scoped exactly like delivery-residence-rules.
+// Mounted openRead, so any board user reads the options while only the
+// drivers-config area writes; GET returns active and inactive (the dropdown keeps
+// active, the editor shows all). Deleting only drops a reason from the pick list —
+// one already stored on an order or leg is plain text and keeps working, so
+// deactivating is usually preferred to a hard delete.
 export const deliveryAmendReasons = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryAmendReasons.use('*', supabaseAuth);
 
@@ -40,9 +45,6 @@ function reasonOut(r: ReasonRow) {
   };
 }
 
-// ── GET / — the ACTIVE company's reason list (active and inactive; the board
-//    dropdown filters to active, the admin editor shows all). openRead at the
-//    mount, so any board user can read the options regardless of config rights.
 deliveryAmendReasons.get('/', async (c) => {
   const sb = c.get('supabase');
   const { data, error } = await paginateAll<ReasonRow>((from, to) =>
@@ -127,10 +129,6 @@ deliveryAmendReasons.patch('/:id', async (c) => {
   return c.json({ reason: reasonOut(data as ReasonRow) });
 });
 
-// ── DELETE /:id — remove a reason option. A reason already stored on an SO or a
-//    service-case leg is plain text and keeps working; this only drops it from
-//    the pick list. Prefer deactivating (isActive=false) to keep the history
-//    tidy, but a hard delete is allowed. STRICT company scope.
 deliveryAmendReasons.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);

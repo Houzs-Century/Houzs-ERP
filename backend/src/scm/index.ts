@@ -564,8 +564,6 @@ scm.use("/delivery-planning-row-order/*", scmAreaGuard("scm.transportation.drive
 scm.route("/delivery-planning-row-order", deliveryPlanningRowOrder);
 scm.use("/delivery-residence-rules/*", scmAreaGuard("scm.transportation.drivers"));
 scm.route("/delivery-residence-rules", deliveryResidenceRules);
-// openRead: every Delivery Planning user needs the Amend Reason dropdown options;
-// only the drivers-config area may add / edit / remove them.
 scm.use("/delivery-amend-reasons/*", scmAreaGuard("scm.transportation.drivers", { openRead: true }));
 scm.route("/delivery-amend-reasons", deliveryAmendReasons);
 scm.use("/threepl-companies/*", scmAreaGuard("scm.transportation.drivers"));
