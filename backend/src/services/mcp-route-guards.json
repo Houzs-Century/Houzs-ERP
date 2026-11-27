@@ -116,6 +116,9 @@
       "pos.manage"
     ]
   },
+  "/profile": {
+    "kind": "open"
+  },
   "/projects": {
     "kind": "page",
     "page": "projects"

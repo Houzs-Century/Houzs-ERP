@@ -19,7 +19,8 @@ export type HowtoGate =
   | { kind: "fairReport" }
   | { kind: "soMaintenance" }
   | { kind: "itPages" }
-  | { kind: "assistant" };
+  | { kind: "assistant" }
+  | { kind: "route" };
 
 /** One field on the form: `label` is the exact UI label (checked against frontend/src). */
 export type HowtoField = { label: string; required: boolean; format: string; validation: string; example: string };
@@ -93,6 +94,8 @@ export function gatePasses(gate: HowtoGate, u: AuthUser): boolean {
       return hasCapability(u, "it.pages.view");
     case "assistant":
       return hasCapability(u, "org.assistant.use");
+    case "route":
+      return false;
   }
 }
 

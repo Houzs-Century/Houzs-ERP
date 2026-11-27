@@ -502,3 +502,26 @@ input[data-upper]::placeholder, textarea[data-upper]::placeholder { text-transfo
 @media (pointer: coarse) {
   :root { --pick-opt-pad: 11px 12px; }
 }
+
+@keyframes hz-highlight-pulse {
+  0%, 100% { outline-color: rgba(212, 160, 23, 1); box-shadow: 0 0 0 4px rgba(212, 160, 23, 0.35); }
+  50% { outline-color: rgba(212, 160, 23, 0.45); box-shadow: 0 0 0 10px rgba(212, 160, 23, 0); }
+}
+.hz-highlight {
+  outline: 3px solid #d4a017 !important;
+  outline-offset: 3px;
+  border-radius: 6px;
+  animation: hz-highlight-pulse 1.5s ease-in-out 4;
+}
+.hz-highlight-tip {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #d4a017;
+  color: #1f1600;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}

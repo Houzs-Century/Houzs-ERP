@@ -73,7 +73,9 @@ export function parseRouteGuards() {
   const out = {};
   hits.forEach((m, i) => {
     if (m[1] === "*") return;
-    const end = i + 1 < hits.length ? hits[i + 1].index : app.length;
+    const nextPath = i + 1 < hits.length ? hits[i + 1].index : app.length;
+    const nextRoute = app.indexOf("<Route", m.index);
+    const end = nextRoute > 0 && nextRoute < nextPath ? nextRoute : nextPath;
     const seg = app.slice(m.index, end);
     const g = gateOfSegment(seg);
     if (g) out[m[1]] = g;

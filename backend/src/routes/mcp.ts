@@ -75,6 +75,7 @@ import { caseIdFrom, caseIdFromList, isActionKind, kindAllowed, kindOffText, pic
 import { ROLE_PROMPTS, rolePromptText, visibleRolePrompts, visibleTools, withOutputSchemas, withStructured } from "../services/mcp-round4c";
 import { CACHEABLE_TOOLS, isRound3Tool, mcpXlsxDownload, ROUND3_INSTRUCTIONS, ROUND3_TOOLS, runRound3Tool } from "../services/mcp-round3";
 import { HOWTO_INSTRUCTIONS, HOWTO_PROMPTS, HOWTO_TOOLS, howtoPromptText, isHowtoTool, runHowtoTool } from "../services/mcp-howto";
+import { isScreenTool, runScreenTool, SCREEN_INSTRUCTIONS, SCREEN_PROMPTS, SCREEN_TOOLS, screenPromptText } from "../services/mcp-screen";
 
 type HonoEnv = { Bindings: Env };
 const app = new Hono<HonoEnv>();
@@ -245,7 +246,8 @@ Two companies share the ERP: HOUZS (default) and 2990 (the 2990's POS). Pass com
 Money in the ERP is integer sen (RM x 100) unless a field says RM. Dates are Malaysia time.
 If a call says "not available to your role" or "You don't have permission", tell the person they do not have permission for that data.
 ACTIONS (only booking a meeting, sending an email, replying to a Mail Center email and adding a note to a service case; never orders, money, stock, prices, payroll, approvals or deletes): call propose_meeting, propose_email, propose_mail_reply or propose_note, show the person the summary it returns word for word, and ask them to confirm. Only call confirm_action after they explicitly say yes in their own reply. If they want changes, propose again. If a tool says an action is switched off, tell them their admin has not turned it on.
-${HOWTO_INSTRUCTIONS}`;
+${HOWTO_INSTRUCTIONS}
+${SCREEN_INSTRUCTIONS}`;
 
 const readOnly = { readOnlyHint: true, openWorldHint: false };
 const actionHint = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
@@ -400,6 +402,7 @@ export const MCP_TOOLS = [
   },
   ...ROUND3_TOOLS,
   ...HOWTO_TOOLS,
+  ...SCREEN_TOOLS,
 ];
 
 /** Who an in-process read runs for: the Worker env, its execution context and the public origin links are built on. */
@@ -860,6 +863,8 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
       note = RATE_LIMITED_NOTE;
     } else if (isHowtoTool(name)) {
       ({ result, status, note, target } = runHowtoTool({ user: id.user, origin: originOf(c) }, name, args));
+    } else if (isScreenTool(name)) {
+      ({ result, status, note, target } = runScreenTool({ user: id.user, origin: originOf(c) }, name, args));
     } else if (isRound3Tool(name)) {
       const run = () => runRound3Tool({ read: (p, q) => readValue(c, token, p, q, company), origin: originOf(c), userId: id.user.id, bucket: c.env.POD_BUCKET, now: t0 }, name, args);
       const o = cacheKey ? await cachedAnswer(cacheKey, t0, run, cacheTtlFor(name)) : await run();
@@ -952,13 +957,13 @@ async function handleRpc(c: Context<HonoEnv>, id: Identity, token: string, m: Rp
     case "resources/list":
       return reply({ resources: [] });
     case "prompts/list":
-      return reply({ prompts: [...PROMPTS, ...visibleRolePrompts(id.user, await actionSwitches(c.env.DB)), ...HOWTO_PROMPTS] });
+      return reply({ prompts: [...PROMPTS, ...visibleRolePrompts(id.user, await actionSwitches(c.env.DB)), ...HOWTO_PROMPTS, ...SCREEN_PROMPTS] });
     case "prompts/get": {
       const pname = String(m.params?.name ?? "");
       const pargs = (m.params?.arguments as Record<string, unknown> | undefined) ?? {};
-      const ptext = promptText(pname, pargs) ?? rolePromptText(pname, pargs) ?? howtoPromptText(pname, pargs);
+      const ptext = promptText(pname, pargs) ?? rolePromptText(pname, pargs) ?? howtoPromptText(pname, pargs) ?? screenPromptText(pname, pargs);
       if (ptext === null) return { jsonrpc: "2.0", id: m.id ?? null, error: { code: -32602, message: `Unknown prompt: ${pname}` } };
-      return reply({ description: [...PROMPTS, ...ROLE_PROMPTS, ...HOWTO_PROMPTS].find((x) => x.name === pname)?.description ?? "", messages: [{ role: "user", content: { type: "text", text: ptext } }] });
+      return reply({ description: [...PROMPTS, ...ROLE_PROMPTS, ...HOWTO_PROMPTS, ...SCREEN_PROMPTS].find((x) => x.name === pname)?.description ?? "", messages: [{ role: "user", content: { type: "text", text: ptext } }] });
     }
     default:
       if (m.id === undefined || m.id === null || (m.method ?? "").startsWith("notifications/")) return null;
