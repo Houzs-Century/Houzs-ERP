@@ -31,12 +31,17 @@
 //
 // A REFUND request (owner 2026-10-14, lib/refund-request.ts) is raised from a
 // Sales Order's money panel; it needs no bill, and only a Customer Refund
-// voucher on that order answers it.
+// voucher on that order answers it — once it is APPROVED (owner 2026-11-27:
+// 「只要一级，但这一级的权限和cancel 的第二级一样」): one approval, by whoever
+// holds the key that signs a Sales Order cancellation's second level, and the
+// voucher pays no more than the request asked.
 // ----------------------------------------------------------------------------
 
 import { hasHouzsPerm } from './houzs-perms';
 import { requireActiveCompanyId, scopeToCompany } from './companyScope';
 import { chunkIn } from './paginate-all';
+import { approveKeyFor } from '../shared/document-cancel';
+import { fmtSen } from '../shared/format';
 import { PV_FILES } from '../routes/pv-files';
 import { AP_INVOICE_FILES } from '../routes/ap-invoice-files';
 
@@ -46,11 +51,48 @@ export const PAYMENT_REQUEST_KEY = 'scm.payment_request.create';
 
 export type StoredStatus = 'SUBMITTED' | 'VOUCHERED' | 'REJECTED' | 'WITHDRAWN';
 export type RequestStage =
-  | 'SUBMITTED' | 'PROCESSING' | 'BOOKED' | 'PARTLY_PAID' | 'PAID' | 'BANK_CONFIRMED'
+  | 'AWAITING_APPROVAL' | 'SUBMITTED' | 'PROCESSING' | 'BOOKED' | 'PARTLY_PAID' | 'PAID' | 'BANK_CONFIRMED'
   | 'RETURNED' | 'WITHDRAWN' | 'VOUCHER_CANCELLED';
 
 /** Finance, for a request: whoever may raise the voucher that answers it. */
 export const isRequestFinance = (c: any): boolean => hasHouzsPerm(c, 'scm.payment_voucher.create');
+
+function refundApproveKey(): string {
+  const key = approveKeyFor('SO', 2);
+  if (!key) throw new Error('a Sales Order cancellation has no level-2 key, and the refund approval is that key');
+  return key;
+}
+
+/** The key that approves a refund request: the Sales Order cancellation's
+    level-2 key itself (owner 2026-11-27), so Roles sets both at once. */
+export const REFUND_APPROVE_KEY: string = refundApproveKey();
+
+/** Whoever may approve — or reject — a refund request before Finance answers it. */
+export const mayApproveRefund = (c: any): boolean => hasHouzsPerm(c, REFUND_APPROVE_KEY);
+
+/** A refund request nobody approved yet, at a stage where Finance would
+    otherwise act: it waits for the approval first (owner 2026-11-27). */
+export const awaitsRefundApproval = (r: Row, stage: RequestStage): boolean =>
+  !!r.refund_source_doc_no && !r.refund_approved_at && (stage === 'SUBMITTED' || stage === 'VOUCHER_CANCELLED');
+
+/** How many refund requests wait for this caller's approval, never their own —
+    the Sales Order Amendment badge carries them (owner 2026-11-27), since the
+    desk that signs a cancellation's second level signs these. Fails soft with
+    0, the way that badge does. */
+export async function refundApprovalsWaitingFor(c: any, userId: number | null): Promise<number> {
+  try {
+    const { data, error } = await scopeToCompany(c.get('supabase').from('acc_payment_requests').select('requested_by')
+      .eq('status', 'SUBMITTED').not('refund_source_doc_no', 'is', null).is('refund_approved_at', null), c);
+    if (error) {
+      console.error('[payment-request] refund approvals count failed:', error.message);
+      return 0;
+    }
+    return ((data ?? []) as Array<{ requested_by: number | null }>).filter((r) => userId == null || Number(r.requested_by) !== userId).length;
+  } catch (e) {
+    console.error('[payment-request] refund approvals count threw:', (e as Error).message);
+    return 0;
+  }
+}
 
 /** The caller as a requester: the Houzs user id (public.users.id). */
 export const callerUserId = (c: any): number | null => {
@@ -205,7 +247,7 @@ export async function paymentRequestLinkGuard(c: any, rawId: unknown, answer: An
   if (!id) return { request: null };
   const sb = c.get('supabase');
   const { data: req, error } = await scopeToCompany(sb.from('acc_payment_requests')
-    .select('id, company_id, request_no, status, pv_id, ap_invoice_id, bill_no, bill_date, parent_request_id, refund_source_type, refund_source_doc_no').eq('id', id), c).maybeSingle();
+    .select('id, company_id, request_no, status, amount_sen, pv_id, ap_invoice_id, bill_no, bill_date, parent_request_id, refund_source_type, refund_source_doc_no, refund_approved_at').eq('id', id), c).maybeSingle();
   if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
   if (!req) return { resp: c.json({ error: 'request_not_found', message: 'That payment request is not in the company you are working in.' }, 404) };
   if (req.status === 'WITHDRAWN' || req.status === 'REJECTED') {
@@ -220,6 +262,14 @@ export async function paymentRequestLinkGuard(c: any, rawId: unknown, answer: An
   }
   const wrongAnswer = refundAnswerRefusal(req, answer);
   if (wrongAnswer) return { resp: c.json(wrongAnswer, 409) };
+  if (req.refund_source_doc_no && !req.refund_approved_at) {
+    return {
+      resp: c.json({
+        error: 'refund_not_approved',
+        message: `${req.request_no} is waiting for its approval — whoever approves the second level of a Sales Order's cancellation approves a refund too, then Finance answers it.`,
+      }, 409),
+    };
+  }
   /* A refund request goes without a file (owner 2026-10-14: 退款申请不一定要附件) —
      the order and its payments are the evidence. */
   if (req.refund_source_doc_no) return { request: req };
@@ -250,7 +300,24 @@ export async function paymentRequestsLinkGuard(c: any, rawIds: unknown, answer: 
     if ('resp' in g) return g;
     if (g.request) requests.push(g.request);
   }
+  const over = refundOverRequestsRefusal(requests, answer);
+  if (over) return { resp: c.json(over, 409) };
   return { requests };
+}
+
+/** A refund voucher pays no more than the refund requests it answers asked
+    for — the amount that was approved (owner 2026-11-27). Pure: the refusal to
+    send, or null. */
+export function refundOverRequestsRefusal(requests: readonly Row[], answer: AnswerDraft): { error: string; message: string } | null {
+  const refunds = requests.filter((r) => r.refund_source_doc_no);
+  if (refunds.length === 0 || answer.kind !== 'PV') return null;
+  const askedSen = refunds.reduce((s, r) => s + Number(r.amount_sen ?? 0), 0);
+  const amountSen = Number(answer.body?.refundAmountSen);
+  if (!Number.isFinite(amountSen) || amountSen <= askedSen) return null;
+  return {
+    error: 'refund_over_request',
+    message: `${refunds.map((r) => String(r.request_no)).join(', ')} asked for ${fmtSen(askedSen)} — the refund cannot be more than that (${fmtSen(amountSen)}).`,
+  };
 }
 
 /** Claim every request for the document; if one cannot be claimed, the ones

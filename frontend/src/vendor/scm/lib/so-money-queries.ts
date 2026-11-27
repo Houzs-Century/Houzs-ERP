@@ -23,12 +23,15 @@ export type MoneyPayment = {
 };
 export type MoneyRefund = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
 /** A refund asked of Finance as a payment request (owner 2026-10-14; server:
-    lib/refund-request.ts). WAITING holds its money; ANSWERED — a refund voucher
-    answers it (pvNumber); RETURNED — Finance said no, with why (financeNote). */
+    lib/refund-request.ts). WAITING holds its money — first for its one approval
+    (owner 2026-11-27), then, once approvedBy names who signed, for Finance;
+    ANSWERED — a refund voucher answers it (pvNumber); RETURNED — refused, with
+    why (financeNote). approvedBy is optional for the minute a newer screen reads an older server. */
 export type MoneyRefundRequest = {
   id: string; requestNo: string; amountSen: number;
   state: 'WAITING' | 'ANSWERED' | 'RETURNED' | 'WITHDRAWN';
   reason: string; financeNote: string | null; requestedBy: string | null; requestedOn: string; pvNumber: string | null;
+  approvedBy?: string | null; approvedOn?: string | null;
 };
 export type MoneyConversion = { paymentId: string; toDocNo: string; amountSen: number; paidOn: string; convertedOn: string };
 export type OrderMoney = {

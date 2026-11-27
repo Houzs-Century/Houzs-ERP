@@ -15,7 +15,12 @@
        voucher answers no other request;
      • Finance's Return is the refusal: the money is back on the order and the
        requester reads why; a cancelled answer puts it back to waiting;
-     • requireScmAccess admits a Sales caller to /payment-requests alone.
+     • requireScmAccess admits a Sales caller to /payment-requests alone;
+     • (owner 2026-11-27: 只要一级，但这一级的权限和cancel 的第二级一样) it is
+       approved once before Finance answers it — by a holder of the cancel
+       level-2 key, never by the one who raised it; that approver may reject it
+       while it waits; the voucher pays no more than it asked; and a Sales
+       Order's refund voucher answers a request or is not made.
    Same fake-PostgREST harness as tests/soMoneyConvert.test.ts and
    tests/paymentRequests.test.ts. */
 
@@ -29,8 +34,9 @@ import { soMoneyHandler, soMoneyRefundHandler } from '../src/scm/routes/so-money
 import { paymentRequests } from '../src/scm/routes/payment-requests';
 import { paymentVouchers } from '../src/scm/routes/payment-vouchers';
 import { apInvoices } from '../src/scm/routes/ap-invoices';
+import { soAmendments } from '../src/scm/routes/so-amendments';
 import { refundRequestState } from '../src/scm/lib/refund-request';
-import { refundAnswerRefusal } from '../src/scm/lib/payment-request';
+import { awaitsRefundApproval, refundAnswerRefusal, refundOverRequestsRefusal } from '../src/scm/lib/payment-request';
 
 const CO = 2;
 /* A cancelled order: RM 700 paid and booked (RM 500 + RM 200). */
@@ -47,6 +53,10 @@ const SALES_B = { id: 33, name: 'Sales B', perms: ['scm.access'] };
 const OPS = { id: 32, name: 'Nancy', perms: ['scm.access', 'scm.payment_request.create'] };
 const FINANCE = { id: 9, name: 'Chew', perms: PV_KEYS };
 const OWNER = { id: 1, name: 'Owner', perms: ['*'] };
+/* Purchasers: they sign a cancellation's second level, so they approve refunds. */
+const APPROVER = { id: 41, name: 'Purchaser A', perms: ['scm.access', 'scm.so_cancel.approve_l2'] };
+const APPROVER_B = { id: 42, name: 'Purchaser B', perms: ['scm.access', 'scm.so_cancel.approve_l2'] };
+const LEVEL_ONE = { id: 43, name: 'Sales Director', perms: ['scm.access', 'scm.so_cancel.approve_l1'] };
 
 const CHART: Row[] = [
   { company_id: CO, account_code: '300-0000', account_name: 'ACCOUNT RECEIVEABLE', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false },
@@ -94,6 +104,7 @@ function world() {
       acc_ap_invoice_files: [],
       companies: [{ id: CO, code: '2990' }],
       customer_credits: [],
+      document_cancel_requests: [],
       entity_audit_log: [],
       journal_entries: [
         je('je1', '2990-JE-2607-0001', 'p1', '2026-07-01'),
@@ -142,6 +153,7 @@ function as(w: ReturnType<typeof world>, who: { id: number; name: string; perms:
   app.route('/payment-requests', paymentRequests);
   app.route('/payment-vouchers', paymentVouchers);
   app.route('/ap-invoices', apInvoices);
+  app.route('/so-amendments', soAmendments);
   return async (path: string, method = 'GET', body?: unknown) => {
     const res = await app.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, {});
     return { status: res.status, body: await res.json() as Row };
@@ -158,6 +170,10 @@ const asked = async (w: ReturnType<typeof world>, who = SALES, body: Row = REFUN
   const r = await as(w, who)(`/mfg-sales-orders/${docNo}/money/refund`, 'POST', body);
   expect(r.status, JSON.stringify(r.body)).toBe(201);
   return { id: String(r.body.id), no: String(r.body.requestNo) };
+};
+const approve = async (w: ReturnType<typeof world>, id: string, who = APPROVER) => {
+  const r = await as(w, who)(`/payment-requests/${id}/approve-refund`, 'POST');
+  expect(r.status, JSON.stringify(r.body)).toBe(200);
 };
 /* What Finance's New Customer Refund sends when it answers a request. */
 const refundVoucher = (docNo: string, amountSen: number, requestId: string): Row => ({
@@ -219,8 +235,8 @@ describe('the requester reads it on Payment Requests (option A)', () => {
     const list = await sales('/payment-requests');
     expect(list.status).toBe(200);
     expect(list.body).toMatchObject({ finance: false, mayRaise: false });
-    expect(list.body.requests.map((r: Row) => [r.request_no, r.refund_source_doc_no, r.stage])).toEqual([[no, OLD, 'SUBMITTED']]);
-    expect((await sales(`/payment-requests/${id}`)).body.request).toMatchObject({ refund_source_doc_no: OLD, stage: 'SUBMITTED' });
+    expect(list.body.requests.map((r: Row) => [r.request_no, r.refund_source_doc_no, r.stage])).toEqual([[no, OLD, 'AWAITING_APPROVAL']]);
+    expect((await sales(`/payment-requests/${id}`)).body.request).toMatchObject({ refund_source_doc_no: OLD, stage: 'AWAITING_APPROVAL' });
     /* Another salesperson sees none of it. */
     const other = as(w, SALES_B);
     expect((await other('/payment-requests')).body.requests).toEqual([]);
@@ -253,6 +269,7 @@ describe('Finance answers it with a Customer Refund on that order', () => {
   test('no bill asked; its own amount does not stand in the way; the voucher then holds the money', async () => {
     const w = world();
     const { id } = await asked(w, SALES, { ...REFUND, amountSen: 70_000 });
+    await approve(w, id);
     const fin = as(w, FINANCE);
     /* What New Customer Refund reads: every waiting request held, but not the one it answers. */
     expect((await fin(`/payment-vouchers/refund-source?type=SO&docNo=${OLD}`)).body.source).toMatchObject({ requestedSen: 70_000, refundableSen: 0 });
@@ -321,6 +338,7 @@ describe('Finance\'s Return is the refusal', () => {
   test('a cancelled answer puts it back to waiting — it holds the money again', async () => {
     const w = world();
     const { id } = await asked(w);
+    await approve(w, id);
     const fin = as(w, FINANCE);
     const pv = await fin('/payment-vouchers', 'POST', refundVoucher(OLD, 40_000, id));
     expect(pv.status).toBe(201);
@@ -328,6 +346,121 @@ describe('Finance\'s Return is the refusal', () => {
     const m = await moneyOf(as(w, SALES), OLD);
     expect(m).toMatchObject({ refundedSen: 0, requestedSen: 40_000, remainingSen: 30_000 });
     expect(m.refundRequests.map((r: Row) => r.state)).toEqual(['WAITING']);
+  });
+});
+
+describe('one approval before Finance (owner 2026-11-27)', () => {
+  test('it waits for the approval, not for Finance: Finance cannot answer it yet and does not count it', async () => {
+    const w = world();
+    const { id } = await asked(w);
+    const fin = as(w, FINANCE);
+    const waiting = (await fin(`/payment-requests/${id}`)).body.request as Row;
+    expect(waiting.stage).toBe('AWAITING_APPROVAL');
+    expect(waiting.refund_approved_at ?? null).toBeNull();
+    expect((await fin('/payment-requests/waiting-count')).body.count).toBe(0);
+    const early = await fin('/payment-vouchers', 'POST', refundVoucher(OLD, 40_000, id));
+    expect(early.status).toBe(409);
+    expect(early.body.error).toBe('refund_not_approved');
+    expect(w.sb.tables.payment_vouchers).toHaveLength(0);
+    const m = await moneyOf(as(w, SALES), OLD);
+    expect(m.refundRequests.map((r: Row) => [r.state, r.approvedBy])).toEqual([['WAITING', null]]);
+    expect(m).toMatchObject({ requestedSen: 40_000, remainingSen: 30_000 });
+  });
+
+  test('a holder of the cancel level-2 key approves it once; never its requester, never without the key', async () => {
+    const w = world();
+    const { id } = await asked(w);
+    for (const who of [SALES, LEVEL_ONE, FINANCE]) {
+      const no = await as(w, who)(`/payment-requests/${id}/approve-refund`, 'POST');
+      expect(no.status).toBe(403);
+    }
+    await approve(w, id);
+    expect(w.sb.tables.acc_payment_requests[0]).toMatchObject({ status: 'SUBMITTED', refund_approved_by: 41, refund_approved_by_name: 'Purchaser A' });
+    expect(w.sb.tables.acc_payment_requests[0]!.refund_approved_at).toBeTruthy();
+    expect(w.sb.tables.entity_audit_log.filter((a) => a.entity_type === 'PAYMENT_REQUEST' && a.action === 'APPROVE')).toHaveLength(1);
+    expect((await as(w, APPROVER_B)(`/payment-requests/${id}/approve-refund`, 'POST')).body).toMatchObject({ ok: true, already: true });
+    const fin = as(w, FINANCE);
+    expect((await fin(`/payment-requests/${id}`)).body.request.stage).toBe('SUBMITTED');
+    expect((await fin('/payment-requests/waiting-count')).body.count).toBe(1);
+    expect((await moneyOf(as(w, SALES), OLD)).refundRequests.map((r: Row) => r.approvedBy)).toEqual(['Purchaser A']);
+
+    const own = await asked(w, APPROVER, { ...REFUND, amountSen: 10_000 });
+    const self = await as(w, APPROVER)(`/payment-requests/${own.id}/approve-refund`, 'POST');
+    expect(self.status).toBe(403);
+    expect(self.body.error).toBe('self_approval');
+    await approve(w, own.id, APPROVER_B);
+  });
+
+  test('its approver may reject it while it waits; once approved only Finance returns it', async () => {
+    const w = world();
+    const first = await asked(w, SALES, { ...REFUND, amountSen: 20_000 });
+    const why = 'The customer takes another model instead';
+    expect((await as(w, APPROVER)(`/payment-requests/${first.id}/return`, 'POST', { note: why })).status).toBe(200);
+    expect(w.sb.tables.acc_payment_requests[0]).toMatchObject({ status: 'REJECTED', finance_note: why, decided_by: 'Purchaser A' });
+    const m = await moneyOf(as(w, SALES), OLD);
+    expect(m.refundRequests.map((r: Row) => r.state)).toEqual(['RETURNED']);
+    expect(m.remainingSen).toBe(70_000);
+    expect((await as(w, APPROVER)(`/payment-requests/${first.id}/approve-refund`, 'POST')).body.error).toBe('request_closed');
+
+    const second = await asked(w, SALES, { ...REFUND, amountSen: 20_000 });
+    await approve(w, second.id);
+    const late = await as(w, APPROVER)(`/payment-requests/${second.id}/return`, 'POST', { note: 'Changed my mind' });
+    expect(late.status).toBe(403);
+    expect(late.body.error).toBe('not_yours_to_return');
+    expect((await as(w, FINANCE)(`/payment-requests/${second.id}/return`, 'POST', { note: 'Pay it by cheque next week' })).status).toBe(200);
+
+    const plain = await as(w, OPS)('/payment-requests', 'POST', { payeeName: 'X SUPPLIES', amountSen: 10_000, purpose: 'Repair' });
+    expect((await as(w, APPROVER)(`/payment-requests/${String(plain.body.request.id)}/return`, 'POST', { note: 'No' })).status).toBe(404);
+  });
+
+  test('the approver\'s list: what waits, oldest first; every refund request under All; nobody else reads it', async () => {
+    const w = world();
+    const a = await asked(w, SALES, { ...REFUND, amountSen: 10_000 });
+    const b = await asked(w, SALES_B, { ...REFUND, amountSen: 20_000 }, OLD2);
+    await as(w, OPS)('/payment-requests', 'POST', { payeeName: 'X SUPPLIES', amountSen: 10_000, purpose: 'Repair' });
+    await approve(w, a.id);
+    const open = await as(w, APPROVER)('/payment-requests/refund-approvals');
+    expect(open.body).toMatchObject({ mayApprove: true, me: 41 });
+    expect(open.body.requests.map((r: Row) => [r.request_no, r.refund_source_doc_no, r.stage, r.amount_sen])).toEqual([[b.no, OLD2, 'AWAITING_APPROVAL', 20_000]]);
+    const all = await as(w, APPROVER)('/payment-requests/refund-approvals?scope=all');
+    expect(all.body.requests.map((r: Row) => [r.request_no, r.stage]).sort()).toEqual([[a.no, 'SUBMITTED'], [b.no, 'AWAITING_APPROVAL']].sort());
+    expect((await as(w, SALES)('/payment-requests/refund-approvals')).body).toEqual({ requests: [], mayApprove: false });
+    expect((await as(w, APPROVER)(`/payment-requests/${b.id}`)).body.request).toMatchObject({ request_no: b.no });
+  });
+
+  test('the Sales Order Amendment badge counts them for their approver: not their own, not a wildcard', async () => {
+    const w = world();
+    await asked(w);
+    await asked(w, APPROVER, { ...REFUND, amountSen: 10_000 });
+    expect((await as(w, APPROVER)('/so-amendments/pending-count')).body).toMatchObject({ count: 1, refunds: 1 });
+    expect((await as(w, APPROVER_B)('/so-amendments/pending-count')).body).toMatchObject({ count: 2, refunds: 2 });
+    expect((await as(w, OWNER)('/so-amendments/pending-count')).body.count).toBe(0);
+    expect((await as(w, SALES)('/so-amendments/pending-count')).body.count).toBe(0);
+  });
+
+  test('the voucher pays no more than the request asked — made, or edited after', async () => {
+    const w = world();
+    const { id } = await asked(w);
+    await approve(w, id);
+    const fin = as(w, FINANCE);
+    const over = await fin('/payment-vouchers', 'POST', refundVoucher(OLD, 40_001, id));
+    expect(over.status).toBe(409);
+    expect(over.body.error).toBe('refund_over_request');
+    expect(w.sb.tables.payment_vouchers).toHaveLength(0);
+    const pv = await fin('/payment-vouchers', 'POST', refundVoucher(OLD, 30_000, id));
+    expect(pv.status, JSON.stringify(pv.body)).toBe(201);
+    const edit = await fin(`/payment-vouchers/${String(pv.body.id)}`, 'PATCH', { refundAmountSen: 40_001 });
+    expect(edit.status).toBe(409);
+    expect(edit.body.error).toBe('refund_over_request');
+    expect((await fin(`/payment-vouchers/${String(pv.body.id)}`, 'PATCH', { refundAmountSen: 40_000 })).status).toBe(200);
+  });
+
+  test('a Sales Order refund voucher answers a request, or it is not made', async () => {
+    const w = world();
+    const bare = await as(w, FINANCE)('/payment-vouchers', 'POST', refundVoucher(OLD, 10_000, ''));
+    expect(bare.status).toBe(409);
+    expect(bare.body.error).toBe('refund_needs_request');
+    expect(w.sb.tables.payment_vouchers).toHaveLength(0);
   });
 });
 
@@ -356,6 +489,25 @@ describe('the pure readings', () => {
     expect(refundRequestState('VOUCHERED', false)).toBe('WAITING');
     expect(refundRequestState('REJECTED', false)).toBe('RETURNED');
     expect(refundRequestState('WITHDRAWN', true)).toBe('WITHDRAWN');
+  });
+
+  test('a refund request waits for its approval where Finance would otherwise act', () => {
+    const refund = (approved: string | null) => ({ refund_source_doc_no: OLD, refund_approved_at: approved });
+    expect(awaitsRefundApproval(refund(null), 'SUBMITTED')).toBe(true);
+    expect(awaitsRefundApproval(refund(null), 'VOUCHER_CANCELLED')).toBe(true);
+    expect(awaitsRefundApproval(refund('2026-11-27T03:00:00Z'), 'SUBMITTED')).toBe(false);
+    expect(awaitsRefundApproval(refund(null), 'RETURNED')).toBe(false);
+    expect(awaitsRefundApproval({ refund_source_doc_no: null, refund_approved_at: null }, 'SUBMITTED')).toBe(false);
+  });
+
+  test('a refund voucher against what its requests asked', () => {
+    const req = (no: string, amount: number, refund = true) => ({ request_no: no, amount_sen: amount, refund_source_doc_no: refund ? OLD : null });
+    const pay = (amount: number) => ({ kind: 'PV' as const, body: { refundAmountSen: amount } });
+    expect(refundOverRequestsRefusal([req('PRQ-1', 40_000)], pay(40_000))).toBeNull();
+    expect(refundOverRequestsRefusal([req('PRQ-1', 40_000)], pay(40_001))?.error).toBe('refund_over_request');
+    expect(refundOverRequestsRefusal([req('PRQ-1', 40_000), req('PRQ-2', 10_000)], pay(50_000))).toBeNull();
+    expect(refundOverRequestsRefusal([req('PRQ-3', 100, false)], pay(999))).toBeNull();
+    expect(refundOverRequestsRefusal([req('PRQ-1', 40_000)], { kind: 'API' })).toBeNull();
   });
 
   test('which answer a request takes', () => {

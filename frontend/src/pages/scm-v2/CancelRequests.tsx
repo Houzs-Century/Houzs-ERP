@@ -48,6 +48,7 @@ import {
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
+import { RefundApprovals } from './RefundApprovals';
 
 const STORAGE_KEY = 'cancel-request-list.layout.v1';
 
@@ -235,6 +236,8 @@ export const CancelRequests = () => {
           isLoading={q.isLoading}
           emptyMessage={scope === 'open' ? 'Nothing is waiting for approval.' : 'No cancellation requests yet — raise one from a Sales Order or a Purchase Order.'}
         />
+
+        <RefundApprovals onlyWhenWaiting={false} />
       </div>
     </div>
   );

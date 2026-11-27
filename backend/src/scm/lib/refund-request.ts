@@ -55,6 +55,9 @@ export type MoneyRefundRequest = {
   requestedBy: string | null;
   requestedOn: string;
   pvNumber: string | null;
+  /** Its one approval (owner 2026-11-27) — null while a WAITING request waits for it, not yet for Finance. */
+  approvedBy: string | null;
+  approvedOn: string | null;
 };
 
 /** One request's state, from its stored status and whether a voucher that was
@@ -83,7 +86,7 @@ export async function refundRequestsOn(
   const docs = [...new Set(docNosRaw.map((d) => String(d ?? '').trim()).filter(Boolean))];
   if (docs.length === 0) return { ok: true, byDoc };
   const reqs = await chunkIn<Row>(docs, (batch, f, t) => sb.from('acc_payment_requests')
-    .select('id, request_no, amount_sen, status, pv_id, purpose, finance_note, requested_by_name, created_at, refund_source_doc_no')
+    .select('id, request_no, amount_sen, status, pv_id, purpose, finance_note, requested_by_name, created_at, refund_source_doc_no, refund_approved_by_name, refund_approved_at')
     .eq('company_id', companyId).in('refund_source_doc_no', batch)
     .order('created_at').order('id').range(f, t));
   if (reqs.error) return { ok: false, reason: reqs.error.message };
@@ -107,6 +110,8 @@ export async function refundRequestsOn(
       reason: String(r.purpose ?? ''), financeNote: r.finance_note ?? null, requestedBy: r.requested_by_name ?? null,
       requestedOn: r.created_at ? mytDateOf(String(r.created_at)) : '',
       pvNumber: live ? (pv.pv_number ?? null) : null,
+      approvedBy: r.refund_approved_at ? String(r.refund_approved_by_name ?? '').trim() || 'someone' : null,
+      approvedOn: r.refund_approved_at ? mytDateOf(String(r.refund_approved_at)) : null,
     });
     byDoc.set(doc, list);
   }

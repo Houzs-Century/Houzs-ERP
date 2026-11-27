@@ -44,6 +44,9 @@ const confirm = vi.fn(async (_o: unknown) => true);
 const approveDialog = vi.fn(async (_o: unknown): Promise<string | null> => '');
 const refreshBadges = vi.fn();
 
+/* The refund approvals (owner 2026-11-27) are their own section with their own tests (RefundApprovals.test.tsx). */
+vi.mock('./RefundApprovals', () => ({ RefundApprovals: () => null }));
+vi.mock('../../mobile/MobileRefundApprovals', () => ({ MobileRefundApprovals: () => null }));
 vi.mock('../../vendor/scm/lib/so-amendment-queries', async (orig) => ({
   ...(await orig<typeof import('../../vendor/scm/lib/so-amendment-queries')>()),
   useAmendments: () => ({ data: { amendments: AMENDMENTS }, isLoading: false, error: null }),

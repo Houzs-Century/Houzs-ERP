@@ -22,6 +22,9 @@ const EXPECTED = ['d', 'e', 'a', 'c', 'b', 'f'];
 
 let soRows: Row[] = SO_ROWS;
 let poRows: Row[] = [];
+/* The refund approvals (owner 2026-11-27) are their own section with their own tests (RefundApprovals.test.tsx). */
+vi.mock('./RefundApprovals', () => ({ RefundApprovals: () => null }));
+vi.mock('../../mobile/MobileRefundApprovals', () => ({ MobileRefundApprovals: () => null }));
 vi.mock('../../vendor/scm/lib/so-amendment-queries', () => ({
   useAmendments: () => ({ data: { amendments: soRows }, isLoading: false, error: null }),
 }));

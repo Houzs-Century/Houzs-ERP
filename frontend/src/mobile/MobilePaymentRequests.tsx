@@ -27,7 +27,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import {
-  NO_EVENT_REASON_MIN, STAGE, answerText, awaitsFinance, fetchPaymentRequestFileBlobUrl, financeWorking, hasInstalments, isRefundRequest, mayAskBalance, pctOf, requestPaid, stageLabel,
+  NO_EVENT_REASON_MIN, STAGE, answerText, awaitsFinance, fetchPaymentRequestFileBlobUrl, financeWorking, hasInstalments, isRefundRequest, mayAskBalance, pctOf, refundApprovalText, requestPaid, stageLabel,
   useCreatePaymentRequest, useDeletePaymentRequestFile, usePaymentRequest, usePaymentRequestFiles, usePaymentRequests, useRequestBalance, useReturnPaymentRequest, useUpdatePaymentRequest,
   useUploadPaymentRequestFile, useWithdrawPaymentRequest,
   type PaymentRequest, type PaymentRequestInput,
@@ -259,6 +259,7 @@ function RequestDetailScreen({ id, onBack, onEdit, onBalance }: { id: string; on
         </div>
       )}
       {refund && row("Refund on", r.refund_source_doc_no)}
+      {refund && row("Approval", refundApprovalText(r, fmtDateOrDash) ?? (r.stage === "AWAITING_APPROVAL" ? "Waiting — a cancellation level-2 approver signs it" : "—"))}
       {row("Amount", <b>{fmtSen(r.amount_sen)}</b>)}
       {!refund && row("Pay by", fmtDateOrDash(r.due_date))}
       {!refund && row("Event", eventCellText(labels.data, r.project_id))}
