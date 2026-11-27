@@ -108,9 +108,9 @@ SO, PO, GRN, DO, SI, PI, ASSR, credit note, debit note, delivery return, purchas
 - `so-processing-after-delivery` (sales-orders): The order would be released to purchasing after it is due to be delivered.
 - `so-delivery-date-past` (sales-orders): The Delivery Date is before today, so the order cannot be saved or confirmed.
 - `so-discount-too-big` (sales-orders): A line's discount is bigger than the line's value.
-- `so-locked-downstream` (sales-orders): The order or line is already delivered or invoiced, so it cannot be edited here.
+- `so-locked-downstream` (sales-orders): The order or line has gone on to a delivery or an invoice, so it cannot be edited here.
 - `so-after-do-permission` (sales-orders): Only roles with the 'Edit SO after DO' permission may change an order once it has a Delivery Order.
-- `so-invoiced-locked` (sales-orders): The order is already billed.
+- `so-invoiced-locked` (sales-orders): An invoice has been raised for the order.
 - `so-po-raised-amend` (sales-orders): Purchasing has already ordered the goods, so the order cannot be changed directly.
 - `so-salesperson-change-permission` (sales-orders): Only roles with the 'attribute to another salesperson' permission may change who an order is credited to.
 - `so-edit-lock-stuck` (sales-orders): Your save worked, but the order stays locked for editing for a short while.
@@ -123,13 +123,13 @@ SO, PO, GRN, DO, SI, PI, ASSR, credit note, debit note, delivery return, purchas
 - `cancel-approver-self` (supply-chain): The same person cannot raise and approve, or give both approval levels.
 - `do-over-delivery` (scm-sales-order): Confirming this Delivery Order would deliver more than the order has left.
 - `do-status-capability` (transportation): Your position cannot move the Delivery Order to this step.
-- `do-locked-downstream` (scm-sales-order): The Delivery Order is already invoiced or returned, so it cannot be edited.
+- `do-locked-downstream` (scm-sales-order): The Delivery Order has an invoice or a return on it, so it cannot be edited.
 - `si-draft-no-payment` (scm-sales-order): Payments can only be recorded on an issued invoice.
 - `si-over-invoice` (scm-sales-order): The invoice would bill more than the Delivery Order has left to bill.
 - `dr-not-delivered` (scm-sales-order): Only goods actually delivered can be returned.
-- `dr-over-return` (scm-sales-order): The return quantity is more than was delivered minus what was already returned.
+- `dr-over-return` (scm-sales-order): The return quantity is more than was delivered minus what earlier returns took back.
 - `po-locked-grn` (procurement): Goods have been received on this PO, so it is locked.
-- `grn-already-received` (procurement): These PO lines were already received.
+- `grn-already-received` (procurement): These PO lines have a Goods Receipt on them.
 - `grn-consumed` (procurement): The received goods have already been shipped or used, so the receipt cannot be reversed.
 - `grn-locked-pi` (procurement): The receipt is billed or returned, so it is locked.
 - `grn-on-hold` (procurement): The receipt is on hold and cannot be invoiced.

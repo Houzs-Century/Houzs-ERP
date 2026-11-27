@@ -17,7 +17,6 @@ export const PURCHASING_GUIDES: HowtoGuide[] = [
     ],
     who: "Purchaser / Procurement staff.",
     permission: "Supply Chain > Procurement > Purchase Orders page access (scm.procurement.po). Viewing needs view; creating, editing, confirming and cancelling need edit.",
-    gate: { kind: "scm", area: "scm.procurement.po" },
     page: "/scm/purchase-orders/new",
     sidebar: "Supply Chain > Procurement > Purchase Orders",
     fields: [
@@ -104,7 +103,6 @@ export const PURCHASING_GUIDES: HowtoGuide[] = [
     ],
     who: "Purchaser / Procurement staff.",
     permission: "Supply Chain > Procurement > Purchase Orders page access (scm.procurement.po) with edit to create the PO.",
-    gate: { kind: "scm", area: "scm.procurement.po" },
     page: "/scm/purchase-orders/from-so",
     sidebar: "Supply Chain > Procurement > Purchase Orders",
     fields: [
@@ -162,7 +160,6 @@ export const PURCHASING_GUIDES: HowtoGuide[] = [
     ],
     who: "Storekeeper receives and saves a draft (and sets racks); a Purchaser / Operation Executive / Operation Manager with the Post GRN capability posts it.",
     permission: "Supply Chain > Procurement > Goods Receipt page access (scm.procurement.grn) with edit. Posting additionally needs the Post GRN position capability (scm.grn.post); without it you can only save drafts.",
-    gate: { kind: "scm", area: "scm.procurement.grn" },
     page: "/scm/grns/from-po",
     sidebar: "Supply Chain > Procurement > Goods Receipt",
     fields: [
@@ -233,7 +230,6 @@ export const PURCHASING_GUIDES: HowtoGuide[] = [
     ],
     who: "Purchasing / AP clerk.",
     permission: "Supply Chain > Procurement > Purchase Invoices page access (scm.procurement.pi) with edit to create and post.",
-    gate: { kind: "scm", area: "scm.procurement.pi" },
     page: "/scm/purchase-invoices/from-grn",
     sidebar: "Supply Chain > Procurement > Purchase Invoices",
     fields: [
@@ -295,7 +291,6 @@ export const PURCHASING_GUIDES: HowtoGuide[] = [
     ],
     who: "Finance / AP: a preparer creates and prepares; a checker checks; an approver approves and posts (check and approve can be the same person).",
     permission: "Finance accounting area (scm.finance.accounting) to open the page; scm.payment_voucher.create to create; scm.payment_voucher.write to edit and prepare; scm.payment_voucher.check to check; scm.payment_voucher.approve to approve and post; scm.payment_voucher.cancel to cancel a posted voucher.",
-    gate: { kind: "scm", area: "scm.finance.accounting" },
     page: "/scm/payment-vouchers/new?type=ap",
     sidebar: "Finance > Money out > Payment vouchers",
     fields: [
@@ -359,7 +354,6 @@ export const PURCHASING_GUIDES: HowtoGuide[] = [
     prerequisites: ["The item code or part of its description or barcode."],
     who: "Storekeeper, purchaser, sales support, anyone with inventory access.",
     permission: "Supply Chain > Warehouse > Inventory page access (scm.warehouse.inventory).",
-    gate: { kind: "scm", area: "scm.warehouse.inventory" },
     page: "/scm/inventory",
     sidebar: "Supply Chain > Warehouse > Inventory",
     fields: [],
@@ -399,7 +393,6 @@ export const PURCHASING_GUIDES: HowtoGuide[] = [
     prerequisites: ["The source warehouse holds the stock (check Inventory).", "Both warehouses belong to your company."],
     who: "Storekeeper / Warehouse staff.",
     permission: "Supply Chain > Warehouse > Transfers page access (scm.warehouse.transfers).",
-    gate: { kind: "scm", area: "scm.warehouse.transfers" },
     page: "/scm/stock-transfers/new",
     sidebar: "Supply Chain > Warehouse > Transfers",
     fields: [
@@ -454,7 +447,6 @@ export const PURCHASING_GUIDES: HowtoGuide[] = [
     prerequisites: ["The warehouse and SKU are known.", "For found stock with no cost history: the unit cost."],
     who: "Warehouse supervisor / inventory controller with adjustment rights (a storekeeper with only inventory view does not see this page).",
     permission: "Supply Chain > Warehouse > Adjustments page access (scm.warehouse.adjustments), separate from inventory view.",
-    gate: { kind: "scm", area: "scm.warehouse.adjustments" },
     page: "/scm/stock-adjustments/new",
     sidebar: "Supply Chain > Warehouse > Adjustments",
     fields: [
@@ -501,7 +493,6 @@ export const PURCHASING_GUIDES: HowtoGuide[] = [
     prerequisites: ["Counting staff assigned.", "Ideally no receipts or deliveries at that warehouse while counting."],
     who: "Storekeeper / counters create and count; a stock-take supervisor approves over-limit counts.",
     permission: "Supply Chain > Warehouse > Stock Take page access (scm.warehouse.stock_take). Approving, returning and seeing system qty on a blind count need scm.stock_take.supervise.",
-    gate: { kind: "scm", area: "scm.warehouse.stock_take" },
     page: "/scm/stock-takes/new",
     sidebar: "Supply Chain > Warehouse > Stock Take",
     fields: [
@@ -557,7 +548,6 @@ export const PURCHASING_GUIDES: HowtoGuide[] = [
     ],
     who: "Purchaser, Storekeeper, user with Post GRN rights, AP clerk, Finance preparer, checker and approver.",
     permission: "Each step needs its own page access: scm.procurement.po, scm.procurement.grn (plus scm.grn.post to post), scm.procurement.pi, and scm.finance.accounting with the scm.payment_voucher keys.",
-    gate: { kind: "scm", area: "scm.procurement.po" },
     page: "/scm/purchase-orders",
     sidebar: "Supply Chain > Procurement > Purchase Orders",
     fields: [

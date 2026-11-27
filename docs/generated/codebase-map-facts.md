@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-341 route modules (109 in `backend/src/routes`, 232 in `backend/src/scm/routes`), 1783 endpoint registrations.
+384 route modules (136 in `backend/src/routes`, 248 in `backend/src/scm/routes`), 1982 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -19,347 +19,390 @@ resolves full mounted paths and their gates.
 
 | module | endpoints | lines |
 |---|---|---|
-| `backend/src/routes/agent-console.ts` | 33 | 1304 |
-| `backend/src/routes/aiUsage.ts` | 1 | 25 |
-| `backend/src/routes/announcementApproval.ts` | 5 | 134 |
-| `backend/src/routes/announcementReceipts.ts` | 5 | 362 |
-| `backend/src/routes/announcements.ts` | 10 | 1666 |
-| `backend/src/routes/assistant.ts` | 4 | 228 |
-| `backend/src/routes/assr.ts` | 69 | 3359 |
-| `backend/src/routes/assrAccess.ts` | 0 | 101 |
-| `backend/src/routes/assrFormIntake.ts` | 6 | 953 |
-| `backend/src/routes/assrPortal.ts` | 14 | 545 |
-| `backend/src/routes/assrQuality.ts` | 1 | 90 |
-| `backend/src/routes/assr_print.ts` | 1 | 1372 |
-| `backend/src/routes/attendance.ts` | 5 | 287 |
-| `backend/src/routes/audit.ts` | 1 | 74 |
-| `backend/src/routes/auth.ts` | 14 | 967 |
-| `backend/src/routes/badgeCounts.ts` | 2 | 131 |
-| `backend/src/routes/brandShare.ts` | 2 | 53 |
-| `backend/src/routes/branding.ts` | 5 | 298 |
-| `backend/src/routes/chatCallback.ts` | 1 | 343 |
-| `backend/src/routes/clientErrors.ts` | 2 | 282 |
-| `backend/src/routes/companies.ts` | 1 | 48 |
-| `backend/src/routes/connect-payments.ts` | 1 | 319 |
-| `backend/src/routes/deliverySheetSync.ts` | 11 | 678 |
-| `backend/src/routes/departments.ts` | 4 | 281 |
-| `backend/src/routes/documentRefs.ts` | 5 | 133 |
+| `backend/src/routes/agent-console.ts` | 33 | 1210 |
+| `backend/src/routes/aiUsage.ts` | 1 | 22 |
+| `backend/src/routes/announcementApproval.ts` | 5 | 111 |
+| `backend/src/routes/announcementReceipts.ts` | 5 | 315 |
+| `backend/src/routes/announcements.ts` | 10 | 1340 |
+| `backend/src/routes/assistant.ts` | 4 | 213 |
+| `backend/src/routes/assr.ts` | 71 | 2794 |
+| `backend/src/routes/assrAccess.ts` | 0 | 93 |
+| `backend/src/routes/assrFormIntake.ts` | 6 | 684 |
+| `backend/src/routes/assrPortal.ts` | 14 | 459 |
+| `backend/src/routes/assrQuality.ts` | 1 | 87 |
+| `backend/src/routes/assr_print.ts` | 1 | 1308 |
+| `backend/src/routes/attendance.ts` | 18 | 718 |
+| `backend/src/routes/audit.ts` | 1 | 70 |
+| `backend/src/routes/auth.ts` | 14 | 747 |
+| `backend/src/routes/badgeCounts.ts` | 2 | 108 |
+| `backend/src/routes/brandShare.ts` | 2 | 37 |
+| `backend/src/routes/branding.ts` | 5 | 220 |
+| `backend/src/routes/chatCallback.ts` | 1 | 288 |
+| `backend/src/routes/clientErrors.ts` | 2 | 211 |
+| `backend/src/routes/companies.ts` | 1 | 18 |
+| `backend/src/routes/connect-payments.ts` | 1 | 241 |
+| `backend/src/routes/deliverySheetSync.ts` | 13 | 733 |
+| `backend/src/routes/departments.ts` | 4 | 233 |
+| `backend/src/routes/documentRefs.ts` | 5 | 131 |
 | `backend/src/routes/fieldPinAdmin.ts` | 3 | 188 |
-| `backend/src/routes/fieldPinLogin.ts` | 0 | 172 |
-| `backend/src/routes/finance.ts` | 2 | 467 |
-| `backend/src/routes/fleet.ts` | 1 | 37 |
-| `backend/src/routes/hr-attendance.ts` | 7 | 253 |
-| `backend/src/routes/hr-labor.ts` | 8 | 338 |
-| `backend/src/routes/hr-payroll.ts` | 13 | 497 |
-| `backend/src/routes/hr-trip-pay.ts` | 14 | 531 |
-| `backend/src/routes/hr.ts` | 13 | 374 |
-| `backend/src/routes/inbox.ts` | 1 | 545 |
-| `backend/src/routes/itSupport.ts` | 8 | 275 |
-| `backend/src/routes/lib/actor-company-gate.ts` | 0 | 41 |
+| `backend/src/routes/fieldPinLogin.ts` | 0 | 165 |
+| `backend/src/routes/finance.ts` | 2 | 367 |
+| `backend/src/routes/fleet.ts` | 1 | 20 |
+| `backend/src/routes/hr-attendance.ts` | 8 | 297 |
+| `backend/src/routes/hr-kpi.ts` | 13 | 416 |
+| `backend/src/routes/hr-labor.ts` | 8 | 339 |
+| `backend/src/routes/hr-payroll.ts` | 13 | 517 |
+| `backend/src/routes/hr-shifts.ts` | 6 | 190 |
+| `backend/src/routes/hr-trip-pay.ts` | 14 | 575 |
+| `backend/src/routes/hr.ts` | 15 | 496 |
+| `backend/src/routes/inbox.ts` | 1 | 438 |
+| `backend/src/routes/itSupport.ts` | 8 | 212 |
+| `backend/src/routes/lib/actor-company-gate.ts` | 0 | 40 |
+| `backend/src/routes/lib/assr-export-csv.ts` | 0 | 41 |
 | `backend/src/routes/lib/assr-overview-filter.ts` | 0 | 34 |
-| `backend/src/routes/lib/assr-quality.ts` | 0 | 170 |
-| `backend/src/routes/lib/assr-window.ts` | 0 | 29 |
-| `backend/src/routes/lib/calendar-visibility.ts` | 0 | 75 |
-| `backend/src/routes/lib/hr-attendance-store.ts` | 0 | 86 |
-| `backend/src/routes/lib/hr-attendance-view.ts` | 0 | 184 |
+| `backend/src/routes/lib/assr-quality.ts` | 0 | 162 |
+| `backend/src/routes/lib/assr-window.ts` | 0 | 27 |
+| `backend/src/routes/lib/calendar-visibility.ts` | 0 | 71 |
+| `backend/src/routes/lib/forecast-amount.ts` | 0 | 9 |
+| `backend/src/routes/lib/hr-attendance-allowance.ts` | 0 | 54 |
+| `backend/src/routes/lib/hr-attendance-segments.ts` | 0 | 99 |
+| `backend/src/routes/lib/hr-attendance-store.ts` | 0 | 99 |
+| `backend/src/routes/lib/hr-attendance-view.ts` | 0 | 294 |
+| `backend/src/routes/lib/hr-confirmer-scope.ts` | 0 | 9 |
 | `backend/src/routes/lib/hr-labor-cost.ts` | 0 | 99 |
-| `backend/src/routes/lib/hr-labor-store.ts` | 0 | 222 |
-| `backend/src/routes/lib/hr-payroll-store.ts` | 0 | 239 |
-| `backend/src/routes/lib/hr-payslip.ts` | 0 | 191 |
-| `backend/src/routes/lib/hr-penalty-no.ts` | 0 | 16 |
-| `backend/src/routes/lib/hr-rules.ts` | 0 | 152 |
-| `backend/src/routes/lib/hr-trip-store.ts` | 0 | 330 |
-| `backend/src/routes/lib/pos-admin-rules.ts` | 0 | 133 |
-| `backend/src/routes/lib/pos-alerts.ts` | 0 | 111 |
-| `backend/src/routes/lib/pos-bundle-load.ts` | 0 | 99 |
-| `backend/src/routes/lib/pos-bundle.ts` | 0 | 100 |
+| `backend/src/routes/lib/hr-labor-store.ts` | 0 | 279 |
+| `backend/src/routes/lib/hr-leave.ts` | 0 | 42 |
+| `backend/src/routes/lib/hr-ot.ts` | 0 | 89 |
+| `backend/src/routes/lib/hr-payroll-store.ts` | 0 | 287 |
+| `backend/src/routes/lib/hr-payslip.ts` | 0 | 189 |
+| `backend/src/routes/lib/hr-penalty-no.ts` | 0 | 11 |
+| `backend/src/routes/lib/hr-punch.ts` | 0 | 18 |
+| `backend/src/routes/lib/hr-rules.ts` | 0 | 357 |
+| `backend/src/routes/lib/hr-shift-store.ts` | 0 | 66 |
+| `backend/src/routes/lib/hr-shift.ts` | 0 | 39 |
+| `backend/src/routes/lib/hr-trip-store.ts` | 0 | 697 |
+| `backend/src/routes/lib/hr-trip-sync.ts` | 0 | 196 |
+| `backend/src/routes/lib/mail-outbox-mask.ts` | 0 | 10 |
+| `backend/src/routes/lib/pos-admin-rules.ts` | 0 | 126 |
+| `backend/src/routes/lib/pos-alerts.ts` | 0 | 100 |
+| `backend/src/routes/lib/pos-bundle-load.ts` | 0 | 92 |
+| `backend/src/routes/lib/pos-bundle.ts` | 0 | 94 |
 | `backend/src/routes/lib/pos-ingest.ts` | 0 | 126 |
-| `backend/src/routes/lib/pos-report-load.ts` | 0 | 52 |
-| `backend/src/routes/lib/pos-report.ts` | 0 | 35 |
-| `backend/src/routes/lib/pos-sales-list.ts` | 0 | 280 |
-| `backend/src/routes/lib/pos-sku.ts` | 0 | 67 |
-| `backend/src/routes/lib/pos-sync.ts` | 0 | 141 |
-| `backend/src/routes/lib/project-company-gate.ts` | 0 | 148 |
-| `backend/src/routes/lib/sales-report-bills.ts` | 0 | 416 |
-| `backend/src/routes/lib/sales-report-evidence.ts` | 0 | 177 |
-| `backend/src/routes/logs.ts` | 1 | 66 |
-| `backend/src/routes/mail-acks.ts` | 2 | 25 |
-| `backend/src/routes/mail-center.ts` | 21 | 2262 |
-| `backend/src/routes/mail-inbound.ts` | 1 | 77 |
-| `backend/src/routes/mail-personal.ts` | 6 | 327 |
-| `backend/src/routes/memos.ts` | 5 | 316 |
-| `backend/src/routes/notifications.ts` | 1 | 267 |
-| `backend/src/routes/ocrDashboard.ts` | 1 | 26 |
-| `backend/src/routes/portal.ts` | 6 | 329 |
-| `backend/src/routes/pos-admin.ts` | 35 | 1060 |
-| `backend/src/routes/pos-device.ts` | 6 | 171 |
-| `backend/src/routes/pos.ts` | 9 | 597 |
-| `backend/src/routes/position-capabilities.ts` | 2 | 123 |
-| `backend/src/routes/position-policy.ts` | 3 | 184 |
-| `backend/src/routes/positions.ts` | 5 | 241 |
-| `backend/src/routes/presence.ts` | 2 | 201 |
-| `backend/src/routes/project-pos-sales.ts` | 1 | 183 |
-| `backend/src/routes/project-sales-bills.ts` | 5 | 425 |
-| `backend/src/routes/project-sales-orders.ts` | 1 | 272 |
-| `backend/src/routes/projectDataGaps.ts` | 1 | 239 |
-| `backend/src/routes/projectOverview.ts` | 2 | 306 |
-| `backend/src/routes/projects.ts` | 115 | 5107 |
-| `backend/src/routes/projectsCalendarSearch.ts` | 1 | 76 |
+| `backend/src/routes/lib/pos-reconnect.ts` | 0 | 21 |
+| `backend/src/routes/lib/pos-report-load.ts` | 0 | 49 |
+| `backend/src/routes/lib/pos-report.ts` | 0 | 28 |
+| `backend/src/routes/lib/pos-sale-read.ts` | 0 | 69 |
+| `backend/src/routes/lib/pos-sales-list.ts` | 0 | 267 |
+| `backend/src/routes/lib/pos-sku.ts` | 0 | 61 |
+| `backend/src/routes/lib/pos-sync.ts` | 0 | 136 |
+| `backend/src/routes/lib/project-company-gate.ts` | 0 | 96 |
+| `backend/src/routes/lib/project-overview-bust.ts` | 0 | 27 |
+| `backend/src/routes/lib/sales-report-bills.ts` | 0 | 395 |
+| `backend/src/routes/lib/sales-report-evidence.ts` | 0 | 175 |
+| `backend/src/routes/logs.ts` | 1 | 62 |
+| `backend/src/routes/mail-access-log.ts` | 4 | 118 |
+| `backend/src/routes/mail-acks.ts` | 2 | 21 |
+| `backend/src/routes/mail-center.ts` | 21 | 1969 |
+| `backend/src/routes/mail-claim.ts` | 7 | 317 |
+| `backend/src/routes/mail-inbound.ts` | 1 | 53 |
+| `backend/src/routes/mail-personal.ts` | 5 | 225 |
+| `backend/src/routes/mail-reply-guard.ts` | 2 | 114 |
+| `backend/src/routes/mail-senders.ts` | 1 | 15 |
+| `backend/src/routes/mcp.ts` | 11 | 1034 |
+| `backend/src/routes/mcpAdmin.ts` | 15 | 419 |
+| `backend/src/routes/mcpBrief.ts` | 2 | 47 |
+| `backend/src/routes/meetings.ts` | 25 | 362 |
+| `backend/src/routes/memos.ts` | 5 | 314 |
+| `backend/src/routes/notifications.ts` | 1 | 227 |
+| `backend/src/routes/ocrDashboard.ts` | 1 | 24 |
+| `backend/src/routes/portal.ts` | 6 | 287 |
+| `backend/src/routes/pos-admin.ts` | 36 | 1005 |
+| `backend/src/routes/pos-device.ts` | 11 | 237 |
+| `backend/src/routes/pos.ts` | 9 | 424 |
+| `backend/src/routes/position-capabilities.ts` | 2 | 111 |
+| `backend/src/routes/position-policy.ts` | 3 | 174 |
+| `backend/src/routes/positions.ts` | 5 | 225 |
+| `backend/src/routes/presence.ts` | 2 | 137 |
+| `backend/src/routes/project-pos-sales.ts` | 1 | 152 |
+| `backend/src/routes/project-sales-bills.ts` | 5 | 401 |
+| `backend/src/routes/project-sales-orders.ts` | 1 | 254 |
+| `backend/src/routes/projectDataGaps.ts` | 1 | 232 |
+| `backend/src/routes/projectForecast.ts` | 2 | 82 |
+| `backend/src/routes/projectOverview.ts` | 2 | 336 |
+| `backend/src/routes/projects.ts` | 116 | 4545 |
+| `backend/src/routes/projectsCalendarSearch.ts` | 1 | 58 |
+| `backend/src/routes/projectsDefectList.ts` | 1 | 34 |
 | `backend/src/routes/projectsOutstanding.ts` | 1 | 31 |
-| `backend/src/routes/projects_print.ts` | 1 | 1320 |
-| `backend/src/routes/publicBrandCalendar.ts` | 6 | 138 |
-| `backend/src/routes/publicContractorCalendar.ts` | 5 | 148 |
-| `backend/src/routes/publicDoScan.ts` | 4 | 926 |
-| `backend/src/routes/push.ts` | 2 | 71 |
-| `backend/src/routes/roles.ts` | 7 | 383 |
-| `backend/src/routes/sales.ts` | 13 | 1303 |
-| `backend/src/routes/search.ts` | 1 | 830 |
-| `backend/src/routes/settings.ts` | 4 | 102 |
-| `backend/src/routes/stockItems.ts` | 1 | 28 |
-| `backend/src/routes/supplierPortal.ts` | 9 | 441 |
-| `backend/src/routes/survey.ts` | 2 | 147 |
-| `backend/src/routes/systemHealth.ts` | 9 | 1004 |
-| `backend/src/routes/systemHealthDatabase.ts` | 1 | 229 |
-| `backend/src/routes/systemHealthJobs.ts` | 3 | 87 |
-| `backend/src/routes/systemHealthLogins.ts` | 1 | 66 |
-| `backend/src/routes/systemHealthServices.ts` | 1 | 209 |
-| `backend/src/routes/tableLayouts.ts` | 13 | 751 |
-| `backend/src/routes/totp.ts` | 4 | 163 |
-| `backend/src/routes/track.ts` | 1 | 44 |
-| `backend/src/routes/udf.ts` | 4 | 251 |
-| `backend/src/routes/users.ts` | 24 | 2123 |
-| `backend/src/scm/routes/acc-event-commission.ts` | 0 | 395 |
-| `backend/src/scm/routes/acc-events.ts` | 13 | 204 |
-| `backend/src/scm/routes/acc-logistics-pnl.ts` | 0 | 425 |
-| `backend/src/scm/routes/acc-logistics.ts` | 0 | 235 |
-| `backend/src/scm/routes/accounting-aging.ts` | 0 | 91 |
-| `backend/src/scm/routes/accounting-bank-config.ts` | 0 | 126 |
-| `backend/src/scm/routes/accounting-bank-locks.ts` | 0 | 230 |
-| `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 707 |
-| `backend/src/scm/routes/accounting-bank.ts` | 0 | 1591 |
-| `backend/src/scm/routes/accounting-chart.ts` | 0 | 954 |
-| `backend/src/scm/routes/accounting-collection.ts` | 0 | 184 |
-| `backend/src/scm/routes/accounting-daily-bank.ts` | 0 | 187 |
-| `backend/src/scm/routes/accounting-dashboard.ts` | 0 | 546 |
-| `backend/src/scm/routes/accounting-forecast.ts` | 0 | 155 |
-| `backend/src/scm/routes/accounting-item-groups.ts` | 0 | 289 |
-| `backend/src/scm/routes/accounting-journal-edit.ts` | 0 | 195 |
-| `backend/src/scm/routes/accounting-ledger.ts` | 0 | 260 |
-| `backend/src/scm/routes/accounting-merchant-charges.ts` | 0 | 254 |
-| `backend/src/scm/routes/accounting-numbering.ts` | 0 | 134 |
-| `backend/src/scm/routes/accounting-opening.ts` | 0 | 464 |
-| `backend/src/scm/routes/accounting-payment-corrections.ts` | 0 | 213 |
-| `backend/src/scm/routes/accounting-payouts.ts` | 0 | 286 |
-| `backend/src/scm/routes/accounting-performance.ts` | 0 | 280 |
-| `backend/src/scm/routes/accounting-pi-backfill.ts` | 0 | 149 |
-| `backend/src/scm/routes/accounting-product-profit.ts` | 0 | 117 |
-| `backend/src/scm/routes/accounting-rebank.ts` | 0 | 57 |
-| `backend/src/scm/routes/accounting-receipts-backfill.ts` | 0 | 249 |
-| `backend/src/scm/routes/accounting-receipts-check.ts` | 0 | 141 |
-| `backend/src/scm/routes/accounting-receipts.ts` | 0 | 210 |
-| `backend/src/scm/routes/accounting-report-layouts.ts` | 0 | 205 |
-| `backend/src/scm/routes/accounting-reports.ts` | 0 | 458 |
-| `backend/src/scm/routes/accounting-rp.ts` | 0 | 668 |
-| `backend/src/scm/routes/accounting-self-check.ts` | 0 | 108 |
-| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1884 |
-| `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 68 |
-| `backend/src/scm/routes/accounting-todo-calendar.ts` | 0 | 191 |
-| `backend/src/scm/routes/accounting-todo-tasks.ts` | 0 | 717 |
-| `backend/src/scm/routes/accounting-todo.ts` | 0 | 481 |
-| `backend/src/scm/routes/accounting-unmatched-payments.ts` | 0 | 167 |
-| `backend/src/scm/routes/accounting.ts` | 146 | 1416 |
-| `backend/src/scm/routes/addons.ts` | 4 | 215 |
-| `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
-| `backend/src/scm/routes/ap-bill-plans.ts` | 0 | 68 |
-| `backend/src/scm/routes/ap-bill-print.ts` | 0 | 125 |
-| `backend/src/scm/routes/ap-duplicate-bills.ts` | 0 | 120 |
-| `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 69 |
-| `backend/src/scm/routes/ap-invoice-payments.ts` | 0 | 80 |
-| `backend/src/scm/routes/ap-invoices.ts` | 13 | 541 |
-| `backend/src/scm/routes/ar-invoices.ts` | 3 | 307 |
-| `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 170 |
-| `backend/src/scm/routes/autocount-line-sweep.ts` | 0 | 202 |
-| `backend/src/scm/routes/autocount-outbox.ts` | 10 | 1319 |
-| `backend/src/scm/routes/autocount-relink.ts` | 0 | 238 |
-| `backend/src/scm/routes/categories.ts` | 10 | 509 |
-| `backend/src/scm/routes/change-log.ts` | 1 | 378 |
-| `backend/src/scm/routes/consignment-notes.ts` | 12 | 1278 |
-| `backend/src/scm/routes/consignment-orders.ts` | 19 | 2330 |
-| `backend/src/scm/routes/consignment-returns.ts` | 9 | 1255 |
-| `backend/src/scm/routes/credit-note-files.ts` | 0 | 47 |
+| `backend/src/routes/projects_print.ts` | 1 | 1251 |
+| `backend/src/routes/publicBrandCalendar.ts` | 6 | 132 |
+| `backend/src/routes/publicContractorCalendar.ts` | 5 | 103 |
+| `backend/src/routes/publicDoScan.ts` | 4 | 697 |
+| `backend/src/routes/push.ts` | 2 | 54 |
+| `backend/src/routes/roles.ts` | 7 | 304 |
+| `backend/src/routes/sales.ts` | 13 | 1125 |
+| `backend/src/routes/search.ts` | 1 | 660 |
+| `backend/src/routes/settings.ts` | 4 | 97 |
+| `backend/src/routes/stockItems.ts` | 1 | 18 |
+| `backend/src/routes/supplierPortal.ts` | 9 | 342 |
+| `backend/src/routes/survey.ts` | 2 | 108 |
+| `backend/src/routes/systemHealth.ts` | 9 | 746 |
+| `backend/src/routes/systemHealthDatabase.ts` | 1 | 207 |
+| `backend/src/routes/systemHealthJobs.ts` | 3 | 76 |
+| `backend/src/routes/systemHealthLogins.ts` | 1 | 63 |
+| `backend/src/routes/systemHealthServices.ts` | 1 | 186 |
+| `backend/src/routes/tableLayouts.ts` | 13 | 598 |
+| `backend/src/routes/totp.ts` | 4 | 140 |
+| `backend/src/routes/track.ts` | 1 | 36 |
+| `backend/src/routes/udf.ts` | 4 | 202 |
+| `backend/src/routes/users.ts` | 24 | 1690 |
+| `backend/src/scm/routes/acc-departments.ts` | 0 | 798 |
+| `backend/src/scm/routes/acc-event-commission.ts` | 0 | 694 |
+| `backend/src/scm/routes/acc-events.ts` | 25 | 211 |
+| `backend/src/scm/routes/acc-logistics-pnl.ts` | 0 | 439 |
+| `backend/src/scm/routes/acc-logistics.ts` | 0 | 228 |
+| `backend/src/scm/routes/accounting-aging.ts` | 0 | 89 |
+| `backend/src/scm/routes/accounting-bank-cards.ts` | 0 | 157 |
+| `backend/src/scm/routes/accounting-bank-config.ts` | 0 | 116 |
+| `backend/src/scm/routes/accounting-bank-locks.ts` | 0 | 210 |
+| `backend/src/scm/routes/accounting-bank-months.ts` | 0 | 636 |
+| `backend/src/scm/routes/accounting-bank.ts` | 0 | 1643 |
+| `backend/src/scm/routes/accounting-cashflow-forecast.ts` | 0 | 989 |
+| `backend/src/scm/routes/accounting-chart.ts` | 0 | 927 |
+| `backend/src/scm/routes/accounting-collection.ts` | 0 | 174 |
+| `backend/src/scm/routes/accounting-commission-release.ts` | 0 | 126 |
+| `backend/src/scm/routes/accounting-daily-bank-cashbook.ts` | 0 | 604 |
+| `backend/src/scm/routes/accounting-daily-bank.ts` | 0 | 302 |
+| `backend/src/scm/routes/accounting-dashboard.ts` | 0 | 559 |
+| `backend/src/scm/routes/accounting-forecast.ts` | 0 | 293 |
+| `backend/src/scm/routes/accounting-item-groups.ts` | 0 | 275 |
+| `backend/src/scm/routes/accounting-journal-edit.ts` | 0 | 178 |
+| `backend/src/scm/routes/accounting-ledger.ts` | 0 | 245 |
+| `backend/src/scm/routes/accounting-merchant-charges.ts` | 0 | 242 |
+| `backend/src/scm/routes/accounting-numbering.ts` | 0 | 122 |
+| `backend/src/scm/routes/accounting-opening-bill-places.ts` | 0 | 259 |
+| `backend/src/scm/routes/accounting-opening.ts` | 0 | 446 |
+| `backend/src/scm/routes/accounting-payment-corrections.ts` | 0 | 194 |
+| `backend/src/scm/routes/accounting-payouts.ts` | 0 | 283 |
+| `backend/src/scm/routes/accounting-performance.ts` | 0 | 278 |
+| `backend/src/scm/routes/accounting-pi-backfill.ts` | 0 | 141 |
+| `backend/src/scm/routes/accounting-pnl-views.ts` | 0 | 97 |
+| `backend/src/scm/routes/accounting-previous-payments.ts` | 0 | 78 |
+| `backend/src/scm/routes/accounting-product-changes.ts` | 0 | 66 |
+| `backend/src/scm/routes/accounting-product-profit.ts` | 0 | 110 |
+| `backend/src/scm/routes/accounting-rebank.ts` | 0 | 50 |
+| `backend/src/scm/routes/accounting-receipts-backfill.ts` | 0 | 226 |
+| `backend/src/scm/routes/accounting-receipts-check.ts` | 0 | 134 |
+| `backend/src/scm/routes/accounting-receipts.ts` | 0 | 184 |
+| `backend/src/scm/routes/accounting-report-layouts.ts` | 0 | 194 |
+| `backend/src/scm/routes/accounting-reports.ts` | 0 | 434 |
+| `backend/src/scm/routes/accounting-rp.ts` | 0 | 761 |
+| `backend/src/scm/routes/accounting-self-check.ts` | 0 | 95 |
+| `backend/src/scm/routes/accounting-settlement-sold-by.ts` | 0 | 65 |
+| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1697 |
+| `backend/src/scm/routes/accounting-so-backlog-cover.ts` | 0 | 81 |
+| `backend/src/scm/routes/accounting-stock-close.ts` | 0 | 63 |
+| `backend/src/scm/routes/accounting-todo-calendar.ts` | 0 | 173 |
+| `backend/src/scm/routes/accounting-todo-tasks.ts` | 0 | 683 |
+| `backend/src/scm/routes/accounting-todo.ts` | 0 | 442 |
+| `backend/src/scm/routes/accounting-unmatched-payments.ts` | 0 | 163 |
+| `backend/src/scm/routes/accounting.ts` | 180 | 1233 |
+| `backend/src/scm/routes/addons.ts` | 4 | 182 |
+| `backend/src/scm/routes/amendment-mirror.ts` | 1 | 58 |
+| `backend/src/scm/routes/ap-bill-plans.ts` | 0 | 58 |
+| `backend/src/scm/routes/ap-bill-print.ts` | 0 | 100 |
+| `backend/src/scm/routes/ap-duplicate-bills.ts` | 0 | 116 |
+| `backend/src/scm/routes/ap-invoice-files.ts` | 0 | 68 |
+| `backend/src/scm/routes/ap-invoice-payments.ts` | 0 | 68 |
+| `backend/src/scm/routes/ap-invoices.ts` | 13 | 502 |
+| `backend/src/scm/routes/ar-invoices.ts` | 3 | 274 |
+| `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 149 |
+| `backend/src/scm/routes/autocount-line-sweep.ts` | 0 | 170 |
+| `backend/src/scm/routes/autocount-outbox.ts` | 10 | 1009 |
+| `backend/src/scm/routes/autocount-relink.ts` | 0 | 212 |
+| `backend/src/scm/routes/categories.ts` | 10 | 409 |
+| `backend/src/scm/routes/change-log.ts` | 1 | 333 |
+| `backend/src/scm/routes/consignment-notes.ts` | 12 | 963 |
+| `backend/src/scm/routes/consignment-orders.ts` | 19 | 1962 |
+| `backend/src/scm/routes/consignment-returns.ts` | 9 | 973 |
+| `backend/src/scm/routes/credit-note-files.ts` | 0 | 46 |
 | `backend/src/scm/routes/credit-note-scan.ts` | 0 | 163 |
-| `backend/src/scm/routes/credit-notes.ts` | 18 | 842 |
-| `backend/src/scm/routes/crew-stop-photos.ts` | 3 | 196 |
-| `backend/src/scm/routes/currencies.ts` | 3 | 148 |
-| `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
-| `backend/src/scm/routes/delivery-fees.ts` | 5 | 237 |
-| `backend/src/scm/routes/delivery-issues.ts` | 5 | 141 |
-| `backend/src/scm/routes/delivery-job-progress.ts` | 7 | 561 |
-| `backend/src/scm/routes/delivery-messages.ts` | 3 | 546 |
-| `backend/src/scm/routes/delivery-order-exports.ts` | 1 | 56 |
-| `backend/src/scm/routes/delivery-order-item-photos.ts` | 2 | 151 |
-| `backend/src/scm/routes/delivery-order-pod-attempts.ts` | 2 | 54 |
-| `backend/src/scm/routes/delivery-order-revert.ts` | 0 | 304 |
-| `backend/src/scm/routes/delivery-order-scan-token.ts` | 1 | 53 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5313 |
+| `backend/src/scm/routes/credit-notes.ts` | 20 | 790 |
+| `backend/src/scm/routes/crew-stop-photos.ts` | 3 | 189 |
+| `backend/src/scm/routes/currencies.ts` | 3 | 110 |
+| `backend/src/scm/routes/customer-mirror.ts` | 1 | 31 |
+| `backend/src/scm/routes/delivery-amend-reasons.ts` | 4 | 148 |
+| `backend/src/scm/routes/delivery-fees.ts` | 5 | 209 |
+| `backend/src/scm/routes/delivery-issues.ts` | 5 | 115 |
+| `backend/src/scm/routes/delivery-job-progress.ts` | 7 | 538 |
+| `backend/src/scm/routes/delivery-messages.ts` | 3 | 482 |
+| `backend/src/scm/routes/delivery-order-exports.ts` | 1 | 54 |
+| `backend/src/scm/routes/delivery-order-item-photos.ts` | 2 | 136 |
+| `backend/src/scm/routes/delivery-order-pod-attempts.ts` | 2 | 43 |
+| `backend/src/scm/routes/delivery-order-pod-photos.ts` | 1 | 40 |
+| `backend/src/scm/routes/delivery-order-revert.ts` | 0 | 272 |
+| `backend/src/scm/routes/delivery-order-scan-token.ts` | 1 | 25 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 3711 |
+| `backend/src/scm/routes/delivery-places.ts` | 4 | 200 |
 | `backend/src/scm/routes/delivery-planning-changes.ts` | 0 | 47 |
-| `backend/src/scm/routes/delivery-planning-fields.ts` | 0 | 226 |
-| `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
+| `backend/src/scm/routes/delivery-planning-fields.ts` | 0 | 177 |
+| `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 296 |
 | `backend/src/scm/routes/delivery-planning-row-marks.ts` | 3 | 68 |
 | `backend/src/scm/routes/delivery-planning-row-order.ts` | 2 | 58 |
-| `backend/src/scm/routes/delivery-planning.bands.fixture.ts` | 1 | 116 |
-| `backend/src/scm/routes/delivery-planning.ts` | 7 | 2203 |
-| `backend/src/scm/routes/delivery-pod-context.ts` | 0 | 172 |
-| `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 705 |
-| `backend/src/scm/routes/delivery-remarks.ts` | 3 | 93 |
-| `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
-| `backend/src/scm/routes/delivery-return-exports.ts` | 1 | 42 |
-| `backend/src/scm/routes/delivery-returns.ts` | 11 | 1965 |
-| `backend/src/scm/routes/delivery-zones.ts` | 9 | 816 |
-| `backend/src/scm/routes/deposit-invoices.ts` | 9 | 283 |
-| `backend/src/scm/routes/document-cancel-routes.ts` | 11 | 776 |
-| `backend/src/scm/routes/document-flow.ts` | 2 | 1202 |
-| `backend/src/scm/routes/document-hold-routes.ts` | 0 | 114 |
-| `backend/src/scm/routes/dp-orders.ts` | 6 | 954 |
-| `backend/src/scm/routes/driver-leave.ts` | 3 | 163 |
-| `backend/src/scm/routes/drivers.ts` | 3 | 207 |
-| `backend/src/scm/routes/entity-audit-log.ts` | 1 | 101 |
-| `backend/src/scm/routes/fabric-colours.ts` | 1 | 247 |
-| `backend/src/scm/routes/fabric-library.ts` | 2 | 99 |
-| `backend/src/scm/routes/fabric-tier-addon.ts` | 8 | 323 |
-| `backend/src/scm/routes/fabric-tracking.ts` | 10 | 720 |
-| `backend/src/scm/routes/fleet-breakdown-files.ts` | 3 | 98 |
-| `backend/src/scm/routes/fleet-maintenance.ts` | 23 | 2096 |
-| `backend/src/scm/routes/fleet-off-road.ts` | 3 | 141 |
-| `backend/src/scm/routes/fleet-plan-service.ts` | 1 | 78 |
-| `backend/src/scm/routes/fleet-work-order-files.ts` | 3 | 104 |
-| `backend/src/scm/routes/fleet-work-order-photos.ts` | 1 | 19 |
-| `backend/src/scm/routes/flow-doc-files.ts` | 16 | 159 |
-| `backend/src/scm/routes/free-item-campaigns.ts` | 4 | 115 |
+| `backend/src/scm/routes/delivery-planning.bands.fixture.ts` | 1 | 111 |
+| `backend/src/scm/routes/delivery-planning.ts` | 8 | 1750 |
+| `backend/src/scm/routes/delivery-pod-context.ts` | 0 | 144 |
+| `backend/src/scm/routes/delivery-rate-cards.ts` | 15 | 965 |
+| `backend/src/scm/routes/delivery-remarks.ts` | 3 | 88 |
+| `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 182 |
+| `backend/src/scm/routes/delivery-return-exports.ts` | 1 | 41 |
+| `backend/src/scm/routes/delivery-returns.ts` | 11 | 1193 |
+| `backend/src/scm/routes/delivery-zones.ts` | 9 | 717 |
+| `backend/src/scm/routes/deposit-invoices.ts` | 9 | 279 |
+| `backend/src/scm/routes/document-cancel-routes.ts` | 11 | 670 |
+| `backend/src/scm/routes/document-flow.ts` | 2 | 1002 |
+| `backend/src/scm/routes/document-hold-routes.ts` | 0 | 108 |
+| `backend/src/scm/routes/dp-orders.ts` | 7 | 1000 |
+| `backend/src/scm/routes/driver-leave.ts` | 3 | 129 |
+| `backend/src/scm/routes/drivers.ts` | 3 | 166 |
+| `backend/src/scm/routes/entity-audit-log.ts` | 1 | 51 |
+| `backend/src/scm/routes/fabric-colours.ts` | 1 | 213 |
+| `backend/src/scm/routes/fabric-library.ts` | 2 | 65 |
+| `backend/src/scm/routes/fabric-tier-addon.ts` | 8 | 239 |
+| `backend/src/scm/routes/fabric-tracking.ts` | 10 | 574 |
+| `backend/src/scm/routes/fleet-breakdown-files.ts` | 3 | 82 |
+| `backend/src/scm/routes/fleet-maintenance.ts` | 23 | 1921 |
+| `backend/src/scm/routes/fleet-off-road.ts` | 3 | 118 |
+| `backend/src/scm/routes/fleet-plan-service.ts` | 1 | 75 |
+| `backend/src/scm/routes/fleet-work-order-files.ts` | 3 | 96 |
+| `backend/src/scm/routes/fleet-work-order-photos.ts` | 1 | 14 |
+| `backend/src/scm/routes/flow-doc-files.ts` | 16 | 152 |
+| `backend/src/scm/routes/free-item-campaigns.ts` | 4 | 97 |
 | `backend/src/scm/routes/grn-exports.ts` | 1 | 36 |
-| `backend/src/scm/routes/grns-list-enrichment.ts` | 1 | 123 |
-| `backend/src/scm/routes/grns.ts` | 16 | 3482 |
-| `backend/src/scm/routes/helpers.ts` | 3 | 197 |
-| `backend/src/scm/routes/hr.ts` | 20 | 1611 |
-| `backend/src/scm/routes/inventory-adjustments.ts` | 4 | 509 |
-| `backend/src/scm/routes/inventory-valuation.ts` | 0 | 71 |
-| `backend/src/scm/routes/inventory.ts` | 17 | 1798 |
-| `backend/src/scm/routes/loading-list.ts` | 1 | 186 |
-| `backend/src/scm/routes/localities.ts` | 4 | 273 |
-| `backend/src/scm/routes/logistic-overview.ts` | 2 | 263 |
-| `backend/src/scm/routes/lorries.ts` | 8 | 529 |
-| `backend/src/scm/routes/lorry-capacity.ts` | 3 | 637 |
+| `backend/src/scm/routes/grns-list-enrichment.ts` | 1 | 115 |
+| `backend/src/scm/routes/grns.ts` | 16 | 2467 |
+| `backend/src/scm/routes/helpers.ts` | 3 | 167 |
+| `backend/src/scm/routes/hr.ts` | 20 | 1326 |
+| `backend/src/scm/routes/inventory-adjustments.ts` | 4 | 479 |
+| `backend/src/scm/routes/inventory-valuation.ts` | 0 | 64 |
+| `backend/src/scm/routes/inventory.ts` | 17 | 1380 |
+| `backend/src/scm/routes/loading-list.ts` | 1 | 149 |
+| `backend/src/scm/routes/localities.ts` | 4 | 221 |
+| `backend/src/scm/routes/logistic-overview.ts` | 2 | 234 |
+| `backend/src/scm/routes/lorries.ts` | 9 | 454 |
+| `backend/src/scm/routes/lorry-capacity.ts` | 3 | 534 |
 | `backend/src/scm/routes/lorry-routes.ts` | 3 | 71 |
-| `backend/src/scm/routes/lorry-service-records.ts` | 6 | 327 |
-| `backend/src/scm/routes/maintenance-config.ts` | 5 | 486 |
-| `backend/src/scm/routes/mfg-product-merge.ts` | 4 | 223 |
-| `backend/src/scm/routes/mfg-products.ts` | 14 | 1646 |
-| `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 87 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4484 |
-| `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 328 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 36 | 11702 |
-| `backend/src/scm/routes/mfg-sales-orders/cross-category.ts` | 2 | 80 |
-| `backend/src/scm/routes/mfg-sales-orders/customer-credit.ts` | 1 | 19 |
-| `backend/src/scm/routes/mfg-sales-orders/debtor-search.ts` | 1 | 30 |
-| `backend/src/scm/routes/mfg-sales-orders/history.ts` | 5 | 152 |
-| `backend/src/scm/routes/mfg-sales-orders/mine.ts` | 2 | 226 |
-| `backend/src/scm/routes/mfg-sales-orders/payments-list.ts` | 1 | 35 |
-| `backend/src/scm/routes/mfg-sales-orders/slip.ts` | 1 | 51 |
-| `backend/src/scm/routes/mfg-so-fairs.ts` | 11 | 565 |
-| `backend/src/scm/routes/mfg-so-vp-brand.ts` | 1 | 110 |
-| `backend/src/scm/routes/model-free-gifts.ts` | 3 | 148 |
-| `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 112 |
-| `backend/src/scm/routes/mrp-supplier-lead-times.ts` | 3 | 137 |
-| `backend/src/scm/routes/mrp.ts` | 2 | 1961 |
-| `backend/src/scm/routes/official-docs.ts` | 2 | 137 |
-| `backend/src/scm/routes/other-debtors.ts` | 16 | 997 |
-| `backend/src/scm/routes/outstanding.ts` | 3 | 415 |
-| `backend/src/scm/routes/payment-request-bill.ts` | 0 | 266 |
-| `backend/src/scm/routes/payment-requests.ts` | 17 | 731 |
-| `backend/src/scm/routes/payment-vouchers-describe.ts` | 0 | 172 |
-| `backend/src/scm/routes/payment-vouchers-list.ts` | 0 | 203 |
+| `backend/src/scm/routes/lorry-service-records.ts` | 6 | 290 |
+| `backend/src/scm/routes/maintenance-config.ts` | 5 | 391 |
+| `backend/src/scm/routes/mfg-product-merge.ts` | 4 | 196 |
+| `backend/src/scm/routes/mfg-products.ts` | 15 | 1269 |
+| `backend/src/scm/routes/mfg-purchase-orders-list-enrichment.ts` | 1 | 79 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 3224 |
+| `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 2 | 260 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 36 | 8917 |
+| `backend/src/scm/routes/mfg-sales-orders/cross-category.ts` | 2 | 59 |
+| `backend/src/scm/routes/mfg-sales-orders/customer-credit.ts` | 1 | 13 |
+| `backend/src/scm/routes/mfg-sales-orders/debtor-search.ts` | 1 | 25 |
+| `backend/src/scm/routes/mfg-sales-orders/history.ts` | 5 | 112 |
+| `backend/src/scm/routes/mfg-sales-orders/mine.ts` | 2 | 147 |
+| `backend/src/scm/routes/mfg-sales-orders/payments-list.ts` | 1 | 23 |
+| `backend/src/scm/routes/mfg-sales-orders/slip.ts` | 1 | 45 |
+| `backend/src/scm/routes/mfg-so-fairs.ts` | 11 | 493 |
+| `backend/src/scm/routes/mfg-so-vp-brand.ts` | 1 | 101 |
+| `backend/src/scm/routes/model-free-gifts.ts` | 3 | 104 |
+| `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 84 |
+| `backend/src/scm/routes/mrp-supplier-lead-times.ts` | 3 | 116 |
+| `backend/src/scm/routes/mrp.ts` | 2 | 1469 |
+| `backend/src/scm/routes/official-docs.ts` | 2 | 131 |
+| `backend/src/scm/routes/other-debtors.ts` | 16 | 974 |
+| `backend/src/scm/routes/outstanding.ts` | 3 | 313 |
+| `backend/src/scm/routes/payment-request-bill.ts` | 0 | 274 |
+| `backend/src/scm/routes/payment-requests.ts` | 21 | 773 |
+| `backend/src/scm/routes/payment-vouchers-describe.ts` | 0 | 164 |
+| `backend/src/scm/routes/payment-vouchers-finish.ts` | 0 | 341 |
+| `backend/src/scm/routes/payment-vouchers-list.ts` | 0 | 189 |
 | `backend/src/scm/routes/payment-vouchers-listing.ts` | 0 | 63 |
-| `backend/src/scm/routes/payment-vouchers-remind.ts` | 0 | 206 |
-| `backend/src/scm/routes/payment-vouchers-text.ts` | 0 | 86 |
-| `backend/src/scm/routes/payment-vouchers.ts` | 25 | 1974 |
-| `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 223 |
-| `backend/src/scm/routes/po-amendments.ts` | 7 | 789 |
+| `backend/src/scm/routes/payment-vouchers-remind.ts` | 0 | 199 |
+| `backend/src/scm/routes/payment-vouchers-text.ts` | 0 | 81 |
+| `backend/src/scm/routes/payment-vouchers.ts` | 27 | 1349 |
+| `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 198 |
+| `backend/src/scm/routes/po-amendments.ts` | 7 | 666 |
 | `backend/src/scm/routes/po-gates.ts` | 0 | 122 |
-| `backend/src/scm/routes/po-line-import.ts` | 2 | 277 |
-| `backend/src/scm/routes/po-so-coverage.ts` | 1 | 1169 |
-| `backend/src/scm/routes/pos-cart.ts` | 2 | 157 |
-| `backend/src/scm/routes/pos-pools.ts` | 14 | 403 |
-| `backend/src/scm/routes/pos-sofa-combos.ts` | 0 | 295 |
-| `backend/src/scm/routes/procurement-overview.ts` | 3 | 537 |
-| `backend/src/scm/routes/product-models.ts` | 16 | 1604 |
-| `backend/src/scm/routes/product-requests.ts` | 17 | 829 |
-| `backend/src/scm/routes/products.ts` | 2 | 86 |
-| `backend/src/scm/routes/public-images.ts` | 3 | 55 |
-| `backend/src/scm/routes/purchase-consignment-orders.ts` | 10 | 801 |
-| `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1431 |
-| `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1158 |
+| `backend/src/scm/routes/po-line-import.ts` | 2 | 263 |
+| `backend/src/scm/routes/po-so-coverage.ts` | 1 | 958 |
+| `backend/src/scm/routes/pos-cart.ts` | 2 | 129 |
+| `backend/src/scm/routes/pos-pools.ts` | 14 | 367 |
+| `backend/src/scm/routes/pos-sofa-combos.ts` | 0 | 297 |
+| `backend/src/scm/routes/procurement-overview.ts` | 3 | 494 |
+| `backend/src/scm/routes/product-models.ts` | 16 | 1238 |
+| `backend/src/scm/routes/product-requests.ts` | 17 | 773 |
+| `backend/src/scm/routes/products.ts` | 2 | 63 |
+| `backend/src/scm/routes/public-images.ts` | 3 | 12 |
+| `backend/src/scm/routes/purchase-consignment-orders.ts` | 10 | 688 |
+| `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1159 |
+| `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 925 |
 | `backend/src/scm/routes/purchase-invoice-exports.ts` | 1 | 34 |
-| `backend/src/scm/routes/purchase-invoices-list-enrichment.ts` | 2 | 112 |
-| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2144 |
-| `backend/src/scm/routes/purchase-order-exports.ts` | 2 | 54 |
-| `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 227 |
+| `backend/src/scm/routes/purchase-invoices-list-enrichment.ts` | 2 | 103 |
+| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 1515 |
+| `backend/src/scm/routes/purchase-order-exports.ts` | 2 | 52 |
+| `backend/src/scm/routes/purchase-order-item-photos.ts` | 2 | 209 |
 | `backend/src/scm/routes/purchase-return-exports.ts` | 1 | 36 |
-| `backend/src/scm/routes/purchase-returns.ts` | 14 | 1999 |
-| `backend/src/scm/routes/pv-extract.ts` | 0 | 222 |
-| `backend/src/scm/routes/pv-files.ts` | 0 | 150 |
-| `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
-| `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
-| `backend/src/scm/routes/quotes.ts` | 4 | 321 |
-| `backend/src/scm/routes/receipts.ts` | 5 | 429 |
-| `backend/src/scm/routes/reports.ts` | 7 | 1582 |
-| `backend/src/scm/routes/sales-analysis.ts` | 3 | 673 |
-| `backend/src/scm/routes/sales-invoice-exports.ts` | 1 | 70 |
-| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2097 |
-| `backend/src/scm/routes/sales-order-exports.ts` | 2 | 68 |
-| `backend/src/scm/routes/saved-locations.ts` | 4 | 228 |
-| `backend/src/scm/routes/scan-check-shared.ts` | 0 | 215 |
-| `backend/src/scm/routes/scan-files.ts` | 8 | 95 |
-| `backend/src/scm/routes/scan-gr-check.ts` | 10 | 224 |
-| `backend/src/scm/routes/scan-gr.ts` | 7 | 622 |
-| `backend/src/scm/routes/scan-lorry-invoice.ts` | 1 | 403 |
-| `backend/src/scm/routes/scan-payment.ts` | 1 | 578 |
-| `backend/src/scm/routes/scan-pi-check.ts` | 8 | 185 |
-| `backend/src/scm/routes/scan-pi.ts` | 5 | 332 |
-| `backend/src/scm/routes/scan-so-serialize.ts` | 0 | 30 |
-| `backend/src/scm/routes/scan-so.ts` | 11 | 4829 |
-| `backend/src/scm/routes/sg-postcode.ts` | 1 | 35 |
-| `backend/src/scm/routes/slips.ts` | 6 | 362 |
-| `backend/src/scm/routes/so-amendment-lane-preview.ts` | 1 | 89 |
-| `backend/src/scm/routes/so-amendments.ts` | 13 | 1839 |
-| `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 318 |
-| `backend/src/scm/routes/so-handover.ts` | 4 | 487 |
-| `backend/src/scm/routes/so-mirror.ts` | 1 | 333 |
-| `backend/src/scm/routes/so-money-routes.ts` | 0 | 103 |
-| `backend/src/scm/routes/so-payment-backdate-requests.ts` | 8 | 425 |
-| `backend/src/scm/routes/so-settings.ts` | 2 | 114 |
-| `backend/src/scm/routes/sofa-combos.ts` | 9 | 1177 |
-| `backend/src/scm/routes/sofa-compartment-photos.ts` | 3 | 323 |
-| `backend/src/scm/routes/sofa-quick-picks.ts` | 3 | 224 |
-| `backend/src/scm/routes/special-addons.ts` | 6 | 455 |
-| `backend/src/scm/routes/staff-mirror.ts` | 1 | 243 |
-| `backend/src/scm/routes/staff.ts` | 5 | 513 |
-| `backend/src/scm/routes/state-warehouse-mappings.ts` | 3 | 106 |
-| `backend/src/scm/routes/stock-take-sheet-read.ts` | 0 | 103 |
-| `backend/src/scm/routes/stock-takes.ts` | 14 | 1521 |
-| `backend/src/scm/routes/stock-transfers.ts` | 8 | 822 |
-| `backend/src/scm/routes/supplier-maintenance.ts` | 2 | 257 |
-| `backend/src/scm/routes/suppliers.ts` | 15 | 1571 |
-| `backend/src/scm/routes/threepl-companies.ts` | 5 | 329 |
-| `backend/src/scm/routes/threepl-do-charges.ts` | 8 | 196 |
-| `backend/src/scm/routes/threepl-from-ap.ts` | 0 | 330 |
-| `backend/src/scm/routes/trip-scan-token.ts` | 1 | 61 |
-| `backend/src/scm/routes/trips.ts` | 17 | 1546 |
-| `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 429 |
-| `backend/src/scm/routes/venture-portal-feed.ts` | 11 | 631 |
-| `backend/src/scm/routes/venues.ts` | 4 | 283 |
-| `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 185 |
-| `backend/src/scm/routes/warehouse.ts` | 9 | 739 |
-| `backend/src/scm/routes/write-freeze-status.ts` | 1 | 122 |
+| `backend/src/scm/routes/purchase-returns.ts` | 15 | 1413 |
+| `backend/src/scm/routes/pv-extract.ts` | 0 | 233 |
+| `backend/src/scm/routes/pv-files.ts` | 0 | 180 |
+| `backend/src/scm/routes/pwp-codes.ts` | 5 | 349 |
+| `backend/src/scm/routes/pwp-rules.ts` | 4 | 210 |
+| `backend/src/scm/routes/quotes.ts` | 4 | 250 |
+| `backend/src/scm/routes/receipts.ts` | 5 | 410 |
+| `backend/src/scm/routes/reports.ts` | 7 | 1292 |
+| `backend/src/scm/routes/sales-analysis.ts` | 3 | 597 |
+| `backend/src/scm/routes/sales-invoice-exports.ts` | 1 | 60 |
+| `backend/src/scm/routes/sales-invoices.ts` | 15 | 1647 |
+| `backend/src/scm/routes/sales-order-exports.ts` | 2 | 62 |
+| `backend/src/scm/routes/saved-locations.ts` | 4 | 217 |
+| `backend/src/scm/routes/scan-check-shared.ts` | 0 | 201 |
+| `backend/src/scm/routes/scan-files.ts` | 8 | 94 |
+| `backend/src/scm/routes/scan-gr-check.ts` | 10 | 204 |
+| `backend/src/scm/routes/scan-gr.ts` | 7 | 579 |
+| `backend/src/scm/routes/scan-lorry-invoice.ts` | 1 | 383 |
+| `backend/src/scm/routes/scan-payment.ts` | 3 | 473 |
+| `backend/src/scm/routes/scan-pi-check.ts` | 8 | 161 |
+| `backend/src/scm/routes/scan-pi.ts` | 5 | 290 |
+| `backend/src/scm/routes/scan-so-serialize.ts` | 0 | 19 |
+| `backend/src/scm/routes/scan-so.ts` | 11 | 3621 |
+| `backend/src/scm/routes/sg-postcode.ts` | 1 | 23 |
+| `backend/src/scm/routes/slips.ts` | 6 | 260 |
+| `backend/src/scm/routes/so-amendment-lane-preview.ts` | 1 | 83 |
+| `backend/src/scm/routes/so-amendments.ts` | 13 | 1551 |
+| `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 245 |
+| `backend/src/scm/routes/so-handover.ts` | 4 | 380 |
+| `backend/src/scm/routes/so-mirror.ts` | 1 | 236 |
+| `backend/src/scm/routes/so-money-routes.ts` | 0 | 101 |
+| `backend/src/scm/routes/so-payment-backdate-requests.ts` | 8 | 416 |
+| `backend/src/scm/routes/so-settings.ts` | 2 | 95 |
+| `backend/src/scm/routes/sofa-combo-presets.ts` | 5 | 184 |
+| `backend/src/scm/routes/sofa-combos.ts` | 9 | 1049 |
+| `backend/src/scm/routes/sofa-compartment-photos.ts` | 3 | 235 |
+| `backend/src/scm/routes/sofa-quick-picks.ts` | 3 | 193 |
+| `backend/src/scm/routes/special-addons.ts` | 6 | 393 |
+| `backend/src/scm/routes/staff-mirror.ts` | 1 | 46 |
+| `backend/src/scm/routes/staff.ts` | 5 | 390 |
+| `backend/src/scm/routes/state-warehouse-mappings.ts` | 3 | 97 |
+| `backend/src/scm/routes/stock-take-sheet-read.ts` | 0 | 100 |
+| `backend/src/scm/routes/stock-takes.ts` | 18 | 1583 |
+| `backend/src/scm/routes/stock-transfers.ts` | 8 | 684 |
+| `backend/src/scm/routes/supplier-maintenance.ts` | 2 | 250 |
+| `backend/src/scm/routes/suppliers.ts` | 16 | 1356 |
+| `backend/src/scm/routes/threepl-companies.ts` | 5 | 405 |
+| `backend/src/scm/routes/threepl-do-charges.ts` | 8 | 189 |
+| `backend/src/scm/routes/threepl-from-ap.ts` | 0 | 315 |
+| `backend/src/scm/routes/trip-scan-token.ts` | 1 | 25 |
+| `backend/src/scm/routes/trips.ts` | 17 | 1258 |
+| `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 218 |
+| `backend/src/scm/routes/venture-portal-feed.ts` | 11 | 479 |
+| `backend/src/scm/routes/venues.ts` | 4 | 221 |
+| `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 34 |
+| `backend/src/scm/routes/warehouse.ts` | 9 | 609 |
+| `backend/src/scm/routes/write-freeze-status.ts` | 1 | 87 |
 
 ## 2. Migration trees
 
@@ -369,365 +412,382 @@ scripts, never assumed: each runner declares its own directory, and
 
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
-| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 177 | `179_users_totp_last_step.sql` (179) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 647 | `0352_acc_pv_files.sql` (0352) | YES | no |
+| `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 183 | `183_mail_address_requests.sql` (183) | no | yes |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 724 | `0352_acc_pv_files.sql` (0352) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (4626 files, 1104493 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (5230 files, 1060811 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11702 |
-| `frontend/src/pages/ServiceCases.tsx` | 8853 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 8917 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 8581 |
-| `frontend/src/pages/Projects.tsx` | 7630 |
-| `frontend/src/pages/Team.tsx` | 5675 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5313 |
-| `backend/src/routes/projects.ts` | 5107 |
-| `backend/src/scm/routes/scan-so.ts` | 4829 |
-| `frontend/src/pages/scm-v2/Products.tsx` | 4795 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4484 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4209 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4190 |
-| `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 3826 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3745 |
-| `frontend/src/components/DataTable.tsx` | 3536 |
-| `backend/src/scm/routes/grns.ts` | 3482 |
-| `frontend/src/mobile/MobileServiceCase.tsx` | 3380 |
-| `backend/src/routes/assr.ts` | 3359 |
-| `backend/src/services/projects.ts` | 3147 |
-| `frontend/src/pages/MailCenter/Inbox.tsx` | 2984 |
+| `frontend/src/pages/ServiceCases.tsx` | 7524 |
+| `frontend/src/pages/Projects.tsx` | 7101 |
+| `frontend/src/pages/Team.tsx` | 5313 |
+| `backend/src/routes/projects.ts` | 4545 |
+| `frontend/src/pages/scm-v2/Products.tsx` | 4259 |
+| `frontend/src/mobile/MobilePMS.tsx` | 3826 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 3711 |
+| `backend/src/scm/routes/scan-so.ts` | 3621 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 3347 |
+| `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 3330 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 3224 |
+| `frontend/src/components/DataTable.tsx` | 3017 |
+| `frontend/src/mobile/MobileServiceCase.tsx` | 2971 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 2919 |
+| `frontend/src/pages/MailCenter/Inbox.tsx` | 2864 |
+| `backend/src/routes/assr.ts` | 2794 |
+| `backend/src/services/projects.ts` | 2783 |
+| `backend/src/scm/routes/grns.ts` | 2467 |
 
 ## 4. Frontend desktop routes
 
-199 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+203 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
 |---|---|
 | `*` | (inline) |
-| `/` | `frontend/src/pages/Overview` |
-| `/agents` | `frontend/src/pages/Agents` |
-| `/ai-usage` | `frontend/src/pages/AiUsage` |
-| `/announcements` | `frontend/src/pages/Announcements` |
-| `/assistant` | `frontend/src/pages/Assistant` |
-| `/assr` | `frontend/src/pages/ServiceCases` |
+| `/` | (inline) |
+| `/agents` | (inline) |
+| `/ai-connector` | (inline) |
+| `/ai-usage` | (inline) |
+| `/announcements` | (inline) |
+| `/assistant` | (inline) |
+| `/assr` | (inline) |
 | `/assr/:id` | (inline) |
-| `/autocount-sync` | `frontend/src/pages/AutoCountSync` |
-| `/change-log` | `frontend/src/pages/ChangeLog` |
-| `/fair-report-fill` | `frontend/src/pages/FairReportFill` |
-| `/fleet-health` | `frontend/src/pages/fleet/FleetHealthDashboard` |
-| `/fleet-health/:lorryId` | `frontend/src/pages/LorryRecord` |
-| `/hr/employees` | `frontend/src/pages/HrEmployees` |
-| `/it-support` | `frontend/src/pages/ItSupport` |
-| `/mail-center` | `frontend/src/pages/MailCenter/Inbox` |
-| `/mail-center/:id` | `frontend/src/pages/MailCenter/Thread` |
-| `/my-cases` | `frontend/src/pages/MyCases` |
-| `/my-cases/:id` | `frontend/src/pages/MyCases` |
-| `/notifications` | `frontend/src/pages/Notifications` |
-| `/ocr` | `frontend/src/pages/OcrDashboard` |
-| `/pos-admin` | `frontend/src/pages/PosAdmin` |
-| `/profile` | `frontend/src/pages/Profile` |
-| `/projects` | `frontend/src/pages/Projects` |
-| `/projects/:id` | `frontend/src/pages/Projects` |
-| `/reports/fair-report` | `frontend/src/pages/scm-v2/FairReport` |
+| `/autocount-sync` | (inline) |
+| `/change-log` | (inline) |
+| `/fair-report-fill` | (inline) |
+| `/fleet-health` | (inline) |
+| `/fleet-health/:lorryId` | (inline) |
+| `/hr/employees` | (inline) |
+| `/it-support` | (inline) |
+| `/mail-center` | (inline) |
+| `/mail-center/:id` | (inline) |
+| `/meetings` | (inline) |
+| `/my-cases` | (inline) |
+| `/my-cases/:id` | (inline) |
+| `/notifications` | (inline) |
+| `/ocr` | (inline) |
+| `/pos-admin` | (inline) |
+| `/profile` | (inline) |
+| `/projects` | (inline) |
+| `/projects/:id` | (inline) |
+| `/reports/fair-report` | (inline) |
 | `/roles` | (redirect) |
-| `/sales` | `frontend/src/pages/Sales` |
-| `/schedule-reconcile` | `frontend/src/pages/ScheduleReconcile` |
-| `/scm` | `frontend/src/pages/ScmHub` |
-| `/scm/accounting` | `frontend/src/pages/scm-v2/Accounting` |
-| `/scm/amendments` | `frontend/src/pages/scm-v2/Amendments` |
-| `/scm/amendments/:id` | `frontend/src/pages/scm-v2/AmendmentDetailV2` |
-| `/scm/ap-invoices` | `frontend/src/pages/scm-v2/ApInvoices` |
-| `/scm/ap-invoices/:id` | `frontend/src/pages/scm-v2/ApBillPage` |
-| `/scm/ap-invoices/duplicates` | `frontend/src/pages/scm-v2/DuplicateSupplierBills` |
-| `/scm/ap-invoices/scan` | `frontend/src/pages/scm-v2/PaymentVoucherScan` |
-| `/scm/ar-invoices` | `frontend/src/pages/scm-v2/ArInvoices` |
-| `/scm/ar-invoices/bills/:id` | `frontend/src/pages/scm-v2/money-in/DebtorBillDoc` |
-| `/scm/ar-invoices/deposit/:id` | `frontend/src/pages/scm-v2/money-in/DepositInvoiceDoc` |
-| `/scm/ar-invoices/sales/:id` | `frontend/src/pages/scm-v2/money-in/SalesInvoiceDoc` |
-| `/scm/auto-schedule` | `frontend/src/pages/scm-v2/AutoSchedule` |
-| `/scm/bank-recon` | `frontend/src/pages/scm-v2/BankRecon` |
-| `/scm/cancel-requests` | `frontend/src/pages/scm-v2/CancelRequests` |
-| `/scm/categories` | `frontend/src/pages/scm-v2/Categories` |
-| `/scm/chart-of-accounts` | `frontend/src/pages/scm-v2/ChartOfAccounts` |
-| `/scm/consignment` | `frontend/src/pages/ScmSubgroupHub` |
-| `/scm/consignment-notes` | `frontend/src/pages/scm-v2/ConsignmentNotes` |
-| `/scm/consignment-notes/:id` | `frontend/src/pages/scm-v2/ConsignmentNoteDetail` |
-| `/scm/consignment-notes/from-order` | `frontend/src/pages/scm-v2/ConsignmentNoteFromOrder` |
-| `/scm/consignment-notes/new` | `frontend/src/pages/scm-v2/ConsignmentNoteNew` |
-| `/scm/consignment-orders` | `frontend/src/pages/scm-v2/ConsignmentOrders` |
-| `/scm/consignment-orders/:docNo` | `frontend/src/pages/scm-v2/ConsignmentOrderDetail` |
-| `/scm/consignment-orders/new` | `frontend/src/pages/scm-v2/ConsignmentOrderNew` |
-| `/scm/consignment-returns` | `frontend/src/pages/scm-v2/ConsignmentReturns` |
-| `/scm/consignment-returns/:id` | `frontend/src/pages/scm-v2/ConsignmentReturnDetail` |
-| `/scm/consignment-returns/from-note` | `frontend/src/pages/scm-v2/ConsignmentReturnFromNote` |
-| `/scm/consignment-returns/new` | `frontend/src/pages/scm-v2/ConsignmentReturnNew` |
-| `/scm/credit-notes` | `frontend/src/pages/scm-v2/money-in/MoneyInNotes` |
-| `/scm/credit-notes/:id` | `frontend/src/pages/scm-v2/NotePage` |
-| `/scm/currencies` | `frontend/src/pages/scm-v2/Currencies` |
-| `/scm/daily-bank` | `frontend/src/pages/scm-v2/DailyBank` |
-| `/scm/delivery-maintenance` | `frontend/src/pages/scm-v2/DeliveryMaintenance` |
-| `/scm/delivery-orders` | `frontend/src/pages/scm-v2/MfgDeliveryOrdersListV2` |
-| `/scm/delivery-orders/:id` | `frontend/src/pages/scm-v2/DeliveryOrderDetailV2` |
-| `/scm/delivery-orders/from-so` | `frontend/src/pages/scm-v2/DeliveryOrderFromSo` |
-| `/scm/delivery-orders/new` | `frontend/src/pages/scm-v2/DeliveryOrderNewV2` |
-| `/scm/delivery-planning` | `frontend/src/pages/scm-v2/DeliveryPlanning` |
-| `/scm/delivery-planning-driver` | `frontend/src/pages/scm-v2/DeliveryPlanningDriver` |
-| `/scm/delivery-planning-regions` | `frontend/src/pages/scm-v2/DeliveryPlanningRegions` |
-| `/scm/delivery-rate-cards` | `frontend/src/pages/scm-v2/DeliveryRateCards` |
-| `/scm/delivery-residence-rules` | `frontend/src/pages/scm-v2/DeliveryResidenceRules` |
-| `/scm/delivery-returns` | `frontend/src/pages/scm-v2/DeliveryReturnsListV2` |
-| `/scm/delivery-returns/:id` | `frontend/src/pages/scm-v2/DeliveryReturnDetailV2` |
-| `/scm/delivery-returns/from-do` | `frontend/src/pages/scm-v2/DeliveryReturnFromDo` |
-| `/scm/delivery-returns/new` | `frontend/src/pages/scm-v2/DeliveryReturnNew` |
-| `/scm/delivery-zones` | `frontend/src/pages/scm-v2/DeliveryZones` |
+| `/sales` | (inline) |
+| `/schedule-reconcile` | (inline) |
+| `/scm` | (inline) |
+| `/scm/accounting` | (inline) |
+| `/scm/amendments` | (inline) |
+| `/scm/amendments/:id` | (inline) |
+| `/scm/ap-invoices` | (inline) |
+| `/scm/ap-invoices/:id` | (inline) |
+| `/scm/ap-invoices/duplicates` | (inline) |
+| `/scm/ap-invoices/scan` | (inline) |
+| `/scm/ar-invoices` | (inline) |
+| `/scm/ar-invoices/bills/:id` | (inline) |
+| `/scm/ar-invoices/deposit/:id` | (inline) |
+| `/scm/ar-invoices/sales/:id` | (inline) |
+| `/scm/auto-schedule` | (inline) |
+| `/scm/bank-recon` | (inline) |
+| `/scm/cancel-requests` | (inline) |
+| `/scm/categories` | (inline) |
+| `/scm/chart-of-accounts` | (inline) |
+| `/scm/consignment` | (inline) |
+| `/scm/consignment-notes` | (inline) |
+| `/scm/consignment-notes/:id` | (inline) |
+| `/scm/consignment-notes/from-order` | (inline) |
+| `/scm/consignment-notes/new` | (inline) |
+| `/scm/consignment-orders` | (inline) |
+| `/scm/consignment-orders/:docNo` | (inline) |
+| `/scm/consignment-orders/new` | (inline) |
+| `/scm/consignment-returns` | (inline) |
+| `/scm/consignment-returns/:id` | (inline) |
+| `/scm/consignment-returns/from-note` | (inline) |
+| `/scm/consignment-returns/new` | (inline) |
+| `/scm/credit-notes` | (inline) |
+| `/scm/credit-notes/:id` | (inline) |
+| `/scm/currencies` | (inline) |
+| `/scm/daily-bank` | (inline) |
+| `/scm/daily-bank-cashbook` | (inline) |
+| `/scm/delivery-maintenance` | (inline) |
+| `/scm/delivery-orders` | (inline) |
+| `/scm/delivery-orders/:id` | (inline) |
+| `/scm/delivery-orders/from-so` | (inline) |
+| `/scm/delivery-orders/new` | (inline) |
+| `/scm/delivery-planning` | (inline) |
+| `/scm/delivery-planning-driver` | (inline) |
+| `/scm/delivery-planning-regions` | (inline) |
+| `/scm/delivery-rate-cards` | (inline) |
+| `/scm/delivery-residence-rules` | (inline) |
+| `/scm/delivery-returns` | (inline) |
+| `/scm/delivery-returns/:id` | (inline) |
+| `/scm/delivery-returns/from-do` | (inline) |
+| `/scm/delivery-returns/new` | (inline) |
+| `/scm/delivery-zones` | (inline) |
 | `/scm/deposit-invoices` | (inline) |
-| `/scm/do-load` | `frontend/src/pages/scm-v2/DoLoadScan` |
-| `/scm/dp-orders` | `frontend/src/pages/scm-v2/DpOrders` |
-| `/scm/driver-leave` | `frontend/src/pages/scm-v2/DriverLeave` |
-| `/scm/fabric-tracking` | `frontend/src/pages/scm-v2/FabricTracking` |
-| `/scm/fair-pending` | `frontend/src/pages/scm-v2/FairPending` |
+| `/scm/do-load` | (inline) |
+| `/scm/dp-orders` | (inline) |
+| `/scm/driver-leave` | (inline) |
+| `/scm/fabric-tracking` | (inline) |
+| `/scm/fair-pending` | (inline) |
 | `/scm/finance` | (inline) |
-| `/scm/finance-dashboard` | `frontend/src/pages/scm-v2/FinanceDashboard` |
-| `/scm/finance/deposit-invoices` | `frontend/src/pages/scm-v2/finance/DepositInvoiceSetup` |
-| `/scm/finance/rules` | `frontend/src/pages/scm-v2/finance/FinanceTodoRules` |
-| `/scm/fleet` | `frontend/src/pages/scm-v2/Fleet` |
-| `/scm/fleet-day` | `frontend/src/pages/scm-v2/FleetDay` |
-| `/scm/fleet-run-sheet` | `frontend/src/pages/scm-v2/FleetRunSheet` |
-| `/scm/forecast` | `frontend/src/pages/scm-v2/ForecastPnl` |
-| `/scm/grns` | `frontend/src/pages/scm-v2/GoodsReceivedListV2` |
-| `/scm/grns/:id` | `frontend/src/pages/scm-v2/GoodsReceivedDetailV2` |
-| `/scm/grns/from-po` | `frontend/src/pages/scm-v2/GrnFromPo` |
-| `/scm/grns/new` | `frontend/src/pages/scm-v2/GrnNew` |
-| `/scm/hr/commission` | `frontend/src/pages/scm-v2/HrCommission` |
-| `/scm/hr/settings` | `frontend/src/pages/scm-v2/HrSettings` |
-| `/scm/inventory` | `frontend/src/pages/scm-v2/Inventory` |
-| `/scm/inventory/stock-card/:itemCode` | `frontend/src/pages/scm-v2/StockCard` |
-| `/scm/loading-list` | `frontend/src/pages/scm-v2/LoadingList` |
-| `/scm/logistic-overview` | `frontend/src/pages/scm-v2/LogisticOverview` |
+| `/scm/finance-dashboard` | (inline) |
+| `/scm/finance/deposit-invoices` | (inline) |
+| `/scm/finance/rules` | (inline) |
+| `/scm/fleet` | (inline) |
+| `/scm/fleet-day` | (inline) |
+| `/scm/fleet-run-sheet` | (inline) |
+| `/scm/forecast` | (inline) |
+| `/scm/grns` | (inline) |
+| `/scm/grns/:id` | (inline) |
+| `/scm/grns/from-po` | (inline) |
+| `/scm/grns/new` | (inline) |
+| `/scm/hr/commission` | (inline) |
+| `/scm/hr/settings` | (inline) |
+| `/scm/inventory` | (inline) |
+| `/scm/inventory/stock-card/:itemCode` | (inline) |
+| `/scm/loading-list` | (inline) |
+| `/scm/logistic-overview` | (inline) |
 | `/scm/lorry-capacity` | (redirect) |
 | `/scm/lorry-live-map` | (redirect) |
-| `/scm/maintenance` | `frontend/src/pages/scm-v2/Products` |
-| `/scm/merchant-recon` | `frontend/src/pages/scm-v2/MerchantRecon` |
-| `/scm/mrp` | `frontend/src/pages/scm-v2/Mrp` |
-| `/scm/official-docs` | `frontend/src/pages/scm-v2/OfficialDocs` |
+| `/scm/maintenance` | (inline) |
+| `/scm/merchant-recon` | (inline) |
+| `/scm/mrp` | (inline) |
+| `/scm/official-docs` | (inline) |
 | `/scm/official-receipts` | (inline) |
-| `/scm/opening-balance` | `frontend/src/pages/scm-v2/OpeningBalance` |
-| `/scm/other-debtors` | `frontend/src/pages/scm-v2/OtherDebtors` |
-| `/scm/other-debtors/:id` | `frontend/src/pages/scm-v2/money-in/OtherDebtorDoc` |
-| `/scm/outstanding` | `frontend/src/pages/scm-v2/Outstanding` |
-| `/scm/payment-backdate-requests` | `frontend/src/pages/scm-v2/PaymentBackdateRequests` |
-| `/scm/payment-listing` | `frontend/src/pages/scm-v2/PaymentListing` |
-| `/scm/payment-requests` | `frontend/src/pages/scm-v2/PaymentRequests` |
-| `/scm/payment-vouchers` | `frontend/src/pages/scm-v2/PaymentVouchers` |
-| `/scm/payment-vouchers/:id` | `frontend/src/pages/scm-v2/PaymentVoucherDetail` |
-| `/scm/payment-vouchers/new` | `frontend/src/pages/scm-v2/PaymentVoucherNew` |
-| `/scm/payment-vouchers/scan` | `frontend/src/pages/scm-v2/PaymentVoucherScan` |
-| `/scm/po-amendments` | `frontend/src/pages/scm-v2/PoAmendments` |
-| `/scm/po-amendments/:id` | `frontend/src/pages/scm-v2/PoAmendmentDetailV2` |
-| `/scm/procurement` | `frontend/src/pages/ScmSubgroupHub` |
-| `/scm/procurement-overview` | `frontend/src/pages/scm-v2/ProcurementOverview` |
-| `/scm/product-models` | `frontend/src/pages/scm-v2/ProductModels` |
-| `/scm/product-models/:id` | `frontend/src/pages/scm-v2/ProductModelDetail` |
-| `/scm/product-requests` | `frontend/src/pages/scm-v2/ProductRequests` |
-| `/scm/products` | `frontend/src/pages/scm-v2/Products` |
-| `/scm/purchase-consignment-orders` | `frontend/src/pages/scm-v2/PurchaseConsignmentOrders` |
-| `/scm/purchase-consignment-orders/:id` | `frontend/src/pages/scm-v2/PurchaseConsignmentOrderDetail` |
-| `/scm/purchase-consignment-orders/new` | `frontend/src/pages/scm-v2/PurchaseConsignmentOrderNew` |
-| `/scm/purchase-consignment-receives` | `frontend/src/pages/scm-v2/PurchaseConsignmentReceives` |
-| `/scm/purchase-consignment-receives/:id` | `frontend/src/pages/scm-v2/PurchaseConsignmentReceiveDetail` |
-| `/scm/purchase-consignment-receives/from-pc-order` | `frontend/src/pages/scm-v2/PurchaseConsignmentReceiveFromOrder` |
-| `/scm/purchase-consignment-receives/new` | `frontend/src/pages/scm-v2/PurchaseConsignmentReceiveNew` |
-| `/scm/purchase-consignment-returns` | `frontend/src/pages/scm-v2/PurchaseConsignmentReturns` |
-| `/scm/purchase-consignment-returns/:id` | `frontend/src/pages/scm-v2/PurchaseConsignmentReturnDetail` |
-| `/scm/purchase-consignment-returns/from-receive` | `frontend/src/pages/scm-v2/PurchaseConsignmentReturnFromReceive` |
-| `/scm/purchase-consignment-returns/new` | `frontend/src/pages/scm-v2/PurchaseConsignmentReturnNew` |
-| `/scm/purchase-invoices` | `frontend/src/pages/scm-v2/PurchaseInvoicesListV2` |
-| `/scm/purchase-invoices/:id` | `frontend/src/pages/scm-v2/PurchaseInvoiceDetailV2` |
-| `/scm/purchase-invoices/from-grn` | `frontend/src/pages/scm-v2/PurchaseInvoiceFromGrn` |
-| `/scm/purchase-invoices/new` | `frontend/src/pages/scm-v2/PurchaseInvoiceNew` |
-| `/scm/purchase-orders` | `frontend/src/pages/scm-v2/PurchaseOrdersListV2` |
-| `/scm/purchase-orders/:id` | `frontend/src/pages/scm-v2/PurchaseOrderDetailV2` |
-| `/scm/purchase-orders/from-so` | `frontend/src/pages/scm-v2/PurchaseOrderFromSo` |
-| `/scm/purchase-orders/new` | `frontend/src/pages/scm-v2/PurchaseOrderNew` |
-| `/scm/purchase-returns` | `frontend/src/pages/scm-v2/PurchaseReturnsListV2` |
-| `/scm/purchase-returns/:id` | `frontend/src/pages/scm-v2/PurchaseReturnDetailV2` |
-| `/scm/purchase-returns/new` | `frontend/src/pages/scm-v2/PurchaseReturnNew` |
-| `/scm/receipts` | `frontend/src/pages/scm-v2/Receipts` |
-| `/scm/receipts/debtor/:id` | `frontend/src/pages/scm-v2/money-in/DebtorReceiptDoc` |
-| `/scm/receipts/official/:id` | `frontend/src/pages/scm-v2/money-in/OfficialReceiptDoc` |
-| `/scm/receipts/sundry/:id` | `frontend/src/pages/scm-v2/money-in/SundryReceiptDoc` |
-| `/scm/reports/delivery-order-detail-listing` | `frontend/src/pages/scm-v2/DeliveryOrderDetailListing` |
-| `/scm/reports/delivery-return-detail-listing` | `frontend/src/pages/scm-v2/DeliveryReturnDetailListing` |
-| `/scm/reports/sales-invoice-detail-listing` | `frontend/src/pages/scm-v2/SalesInvoiceDetailListing` |
-| `/scm/reports/sales-order-detail-listing` | `frontend/src/pages/scm-v2/SalesOrderDetailListing` |
-| `/scm/sales-invoices` | `frontend/src/pages/scm-v2/SalesInvoicesListV2` |
-| `/scm/sales-invoices/:id` | `frontend/src/pages/scm-v2/SalesInvoiceDetailV2` |
-| `/scm/sales-invoices/from-do` | `frontend/src/pages/scm-v2/SalesInvoiceFromDo` |
-| `/scm/sales-invoices/new` | `frontend/src/pages/scm-v2/SalesInvoiceNew` |
-| `/scm/sales-order` | `frontend/src/pages/ScmSubgroupHub` |
-| `/scm/sales-orders` | `frontend/src/pages/scm-v2/MfgSalesOrdersListV2` |
-| `/scm/sales-orders/:docNo` | `frontend/src/pages/scm-v2/SalesOrderDetailV2` |
-| `/scm/sales-orders/generate` | `frontend/src/pages/scm-v2/SoFromProducts` |
-| `/scm/sales-orders/maintenance` | `frontend/src/pages/scm-v2/SalesOrderMaintenance` |
-| `/scm/sales-orders/new` | `frontend/src/pages/scm-v2/SalesOrderNew` |
-| `/scm/sales-orders/new/from-products` | `frontend/src/pages/scm-v2/SalesOrderNewFromProducts` |
-| `/scm/sales-orders/new/guided` | `frontend/src/pages/scm-v2/SalesOrderNewGuided` |
-| `/scm/saved-locations` | `frontend/src/pages/scm-v2/SavedLocations` |
-| `/scm/settlement-setup` | `frontend/src/pages/scm-v2/SettlementSetup` |
-| `/scm/stock-adjustments` | `frontend/src/pages/scm-v2/StockAdjustments` |
-| `/scm/stock-adjustments/:id` | `frontend/src/pages/scm-v2/StockAdjustmentDetail` |
-| `/scm/stock-adjustments/:id/edit` | `frontend/src/pages/scm-v2/StockAdjustmentNew` |
-| `/scm/stock-adjustments/new` | `frontend/src/pages/scm-v2/StockAdjustmentNew` |
-| `/scm/stock-takes` | `frontend/src/pages/scm-v2/StockTakesListV2` |
-| `/scm/stock-takes/:id` | `frontend/src/pages/scm-v2/StockTakeDetail` |
-| `/scm/stock-takes/new` | `frontend/src/pages/scm-v2/StockTakeNew` |
-| `/scm/stock-transfers` | `frontend/src/pages/scm-v2/StockTransfersListV2` |
-| `/scm/stock-transfers/:id` | `frontend/src/pages/scm-v2/StockTransferDetail` |
-| `/scm/stock-transfers/new` | `frontend/src/pages/scm-v2/StockTransferNew` |
-| `/scm/supplier-maintenance` | `frontend/src/pages/scm-v2/SupplierMaintenance` |
-| `/scm/supplier-notes` | `frontend/src/pages/scm-v2/CreditNotes` |
-| `/scm/supplier-notes/:id` | `frontend/src/pages/scm-v2/NotePage` |
-| `/scm/suppliers` | `frontend/src/pages/scm-v2/SuppliersV2Route` |
-| `/scm/suppliers/:id` | `frontend/src/pages/scm-v2/SupplierDetail` |
-| `/scm/threepl-companies` | `frontend/src/pages/scm-v2/ThreePLCompanies` |
-| `/scm/transportation` | `frontend/src/pages/ScmSubgroupHub` |
-| `/scm/trips` | `frontend/src/pages/scm-v2/Trips` |
-| `/scm/unbilled-deliveries` | `frontend/src/pages/scm-v2/UnbilledDeliveriesV2` |
-| `/scm/unmatched-payments` | `frontend/src/pages/scm-v2/UnmatchedPayments` |
-| `/scm/warehouse` | `frontend/src/pages/ScmSubgroupHub` |
-| `/scm/warehouses` | `frontend/src/pages/scm-v2/Warehouses` |
-| `/scm/warehouses/racks` | `frontend/src/pages/scm-v2/WarehouseRacks` |
-| `/settings` | `frontend/src/pages/Settings` |
-| `/setup-invoice` | `frontend/src/pages/SetupInvoiceFill` |
-| `/system-health` | `frontend/src/pages/SystemHealth` |
-| `/team` | `frontend/src/pages/Team` |
-| `/venture-portal-feed` | `frontend/src/pages/VenturePortalFeed` |
+| `/scm/opening-balance` | (inline) |
+| `/scm/other-debtors` | (inline) |
+| `/scm/other-debtors/:id` | (inline) |
+| `/scm/outstanding` | (inline) |
+| `/scm/payment-backdate-requests` | (inline) |
+| `/scm/payment-listing` | (inline) |
+| `/scm/payment-requests` | (inline) |
+| `/scm/payment-vouchers` | (inline) |
+| `/scm/payment-vouchers/:id` | (inline) |
+| `/scm/payment-vouchers/new` | (inline) |
+| `/scm/payment-vouchers/scan` | (inline) |
+| `/scm/po-amendments` | (inline) |
+| `/scm/po-amendments/:id` | (inline) |
+| `/scm/procurement` | (inline) |
+| `/scm/procurement-overview` | (inline) |
+| `/scm/product-models` | (inline) |
+| `/scm/product-models/:id` | (inline) |
+| `/scm/product-requests` | (inline) |
+| `/scm/products` | (inline) |
+| `/scm/purchase-consignment-orders` | (inline) |
+| `/scm/purchase-consignment-orders/:id` | (inline) |
+| `/scm/purchase-consignment-orders/new` | (inline) |
+| `/scm/purchase-consignment-receives` | (inline) |
+| `/scm/purchase-consignment-receives/:id` | (inline) |
+| `/scm/purchase-consignment-receives/from-pc-order` | (inline) |
+| `/scm/purchase-consignment-receives/new` | (inline) |
+| `/scm/purchase-consignment-returns` | (inline) |
+| `/scm/purchase-consignment-returns/:id` | (inline) |
+| `/scm/purchase-consignment-returns/from-receive` | (inline) |
+| `/scm/purchase-consignment-returns/new` | (inline) |
+| `/scm/purchase-invoices` | (inline) |
+| `/scm/purchase-invoices/:id` | (inline) |
+| `/scm/purchase-invoices/from-grn` | (inline) |
+| `/scm/purchase-invoices/new` | (inline) |
+| `/scm/purchase-orders` | (inline) |
+| `/scm/purchase-orders/:id` | (inline) |
+| `/scm/purchase-orders/from-so` | (inline) |
+| `/scm/purchase-orders/new` | (inline) |
+| `/scm/purchase-returns` | (inline) |
+| `/scm/purchase-returns/:id` | (inline) |
+| `/scm/purchase-returns/new` | (inline) |
+| `/scm/receipts` | (inline) |
+| `/scm/receipts/debtor/:id` | (inline) |
+| `/scm/receipts/official/:id` | (inline) |
+| `/scm/receipts/sundry/:id` | (inline) |
+| `/scm/reports/delivery-order-detail-listing` | (inline) |
+| `/scm/reports/delivery-return-detail-listing` | (inline) |
+| `/scm/reports/sales-invoice-detail-listing` | (inline) |
+| `/scm/reports/sales-order-detail-listing` | (inline) |
+| `/scm/sales-invoices` | (inline) |
+| `/scm/sales-invoices/:id` | (inline) |
+| `/scm/sales-invoices/from-do` | (inline) |
+| `/scm/sales-invoices/new` | (inline) |
+| `/scm/sales-order` | (inline) |
+| `/scm/sales-orders` | (inline) |
+| `/scm/sales-orders/:docNo` | (inline) |
+| `/scm/sales-orders/generate` | (inline) |
+| `/scm/sales-orders/maintenance` | (inline) |
+| `/scm/sales-orders/new` | (inline) |
+| `/scm/sales-orders/new/from-products` | (inline) |
+| `/scm/sales-orders/new/guided` | (inline) |
+| `/scm/saved-locations` | (inline) |
+| `/scm/settlement-setup` | (inline) |
+| `/scm/stock-adjustments` | (inline) |
+| `/scm/stock-adjustments/:id` | (inline) |
+| `/scm/stock-adjustments/:id/edit` | (inline) |
+| `/scm/stock-adjustments/new` | (inline) |
+| `/scm/stock-take-approvals` | (inline) |
+| `/scm/stock-takes` | (inline) |
+| `/scm/stock-takes/:id` | (inline) |
+| `/scm/stock-takes/new` | (inline) |
+| `/scm/stock-transfers` | (inline) |
+| `/scm/stock-transfers/:id` | (inline) |
+| `/scm/stock-transfers/new` | (inline) |
+| `/scm/supplier-maintenance` | (inline) |
+| `/scm/supplier-notes` | (inline) |
+| `/scm/supplier-notes/:id` | (inline) |
+| `/scm/suppliers` | (inline) |
+| `/scm/suppliers/:id` | (inline) |
+| `/scm/threepl-companies` | (inline) |
+| `/scm/transportation` | (inline) |
+| `/scm/trips` | (inline) |
+| `/scm/unbilled-deliveries` | (inline) |
+| `/scm/unmatched-payments` | (inline) |
+| `/scm/warehouse` | (inline) |
+| `/scm/warehouses` | (inline) |
+| `/scm/warehouses/racks` | (inline) |
+| `/settings` | (inline) |
+| `/setup-invoice` | (inline) |
+| `/system-health` | (inline) |
+| `/team` | (inline) |
+| `/venture-portal-feed` | (inline) |
 
 Page files by directory:
 
 | directory | *.tsx |
 |---|---|
-| `frontend/src/pages` | 49 |
-| `frontend/src/pages/MailCenter` | 6 |
+| `frontend/src/pages` | 55 |
+| `frontend/src/pages/MailCenter` | 10 |
+| `frontend/src/pages/Meetings` | 4 |
 | `frontend/src/pages/announcements` | 5 |
-| `frontend/src/pages/fleet` | 10 |
-| `frontend/src/pages/hr` | 14 |
+| `frontend/src/pages/fleet` | 11 |
+| `frontend/src/pages/hr` | 28 |
 | `frontend/src/pages/overview` | 1 |
 | `frontend/src/pages/pos-admin` | 11 |
-| `frontend/src/pages/projects` | 26 |
+| `frontend/src/pages/project-maintenance` | 2 |
+| `frontend/src/pages/projects` | 28 |
 | `frontend/src/pages/roles` | 2 |
-| `frontend/src/pages/scm-v2` | 279 |
+| `frontend/src/pages/scm-v2` | 301 |
 | `frontend/src/pages/scm-v2/books` | 3 |
-| `frontend/src/pages/scm-v2/carriers` | 2 |
-| `frontend/src/pages/scm-v2/delivery-zones` | 3 |
+| `frontend/src/pages/scm-v2/carriers` | 8 |
+| `frontend/src/pages/scm-v2/delivery-zones` | 4 |
 | `frontend/src/pages/scm-v2/finance` | 8 |
 | `frontend/src/pages/scm-v2/fleet` | 7 |
 | `frontend/src/pages/scm-v2/fleet-day` | 8 |
 | `frontend/src/pages/scm-v2/money-in` | 19 |
 | `frontend/src/pages/scm-v2/products` | 5 |
-| `frontend/src/pages/scm-v2/reports` | 8 |
+| `frontend/src/pages/scm-v2/reports` | 12 |
 | `frontend/src/pages/settings` | 1 |
 | `frontend/src/pages/systemHealth` | 6 |
-| `frontend/src/pages/team` | 16 |
+| `frontend/src/pages/team` | 18 |
 
 ## 5. Mobile screen inventory
 
-86 screen/component modules in `frontend/src/mobile`.
+97 screen/component modules in `frontend/src/mobile`.
 
 | file | lines |
 |---|---|
-| `frontend/src/mobile/MobileAddLine.tsx` | 187 |
-| `frontend/src/mobile/MobileAmendments.tsx` | 257 |
-| `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 171 |
-| `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 150 |
-| `frontend/src/mobile/MobileAnnouncements.tsx` | 1741 |
-| `frontend/src/mobile/MobileApp.tsx` | 1332 |
-| `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 76 |
-| `frontend/src/mobile/MobileAssrSoField.tsx` | 76 |
-| `frontend/src/mobile/MobileAutoCountSync.tsx` | 894 |
-| `frontend/src/mobile/MobileAvatar.tsx` | 148 |
-| `frontend/src/mobile/MobileCalendar.tsx` | 898 |
+| `frontend/src/mobile/MobileAddLine.tsx` | 161 |
+| `frontend/src/mobile/MobileAmendments.tsx` | 245 |
+| `frontend/src/mobile/MobileAnnouncementMedia.tsx` | 142 |
+| `frontend/src/mobile/MobileAnnouncementPopup.tsx` | 134 |
+| `frontend/src/mobile/MobileAnnouncements.tsx` | 1483 |
+| `frontend/src/mobile/MobileApp.tsx` | 995 |
+| `frontend/src/mobile/MobileAssrCategoryChips.tsx` | 56 |
+| `frontend/src/mobile/MobileAssrSoField.tsx` | 64 |
+| `frontend/src/mobile/MobileAutoCountSync.tsx` | 781 |
+| `frontend/src/mobile/MobileAvatar.tsx` | 121 |
+| `frontend/src/mobile/MobileCalendar.tsx` | 766 |
 | `frontend/src/mobile/MobileCaseDocChips.tsx` | 38 |
-| `frontend/src/mobile/MobileChangeLog.tsx` | 237 |
-| `frontend/src/mobile/MobileCollectedOnOrder.tsx` | 37 |
-| `frontend/src/mobile/MobileConvertWizard.tsx` | 1261 |
-| `frontend/src/mobile/MobileCrashBoundary.tsx` | 39 |
-| `frontend/src/mobile/MobileDeliveryFieldsCard.tsx` | 520 |
-| `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2374 |
-| `frontend/src/mobile/MobileDoHeaderEdit.tsx` | 314 |
-| `frontend/src/mobile/MobileEditProjectSheet.tsx` | 167 |
-| `frontend/src/mobile/MobileFabricPicker.tsx` | 137 |
-| `frontend/src/mobile/MobileFactoryTrips.tsx` | 104 |
-| `frontend/src/mobile/MobileFairReport.tsx` | 749 |
-| `frontend/src/mobile/MobileFieldPin.tsx` | 112 |
-| `frontend/src/mobile/MobileGantt.tsx` | 230 |
-| `frontend/src/mobile/MobileGrnLineRack.tsx` | 246 |
-| `frontend/src/mobile/MobileGrnScan.tsx` | 196 |
-| `frontend/src/mobile/MobileGrnZeroCost.tsx` | 247 |
-| `frontend/src/mobile/MobileInbox.tsx` | 261 |
-| `frontend/src/mobile/MobileInvitations.tsx` | 305 |
-| `frontend/src/mobile/MobileItSupport.tsx` | 453 |
-| `frontend/src/mobile/MobileJobStop.tsx` | 248 |
-| `frontend/src/mobile/MobileLinePhotos.tsx` | 143 |
-| `frontend/src/mobile/MobileLinePoRef.tsx` | 87 |
+| `frontend/src/mobile/MobileChangeLog.tsx` | 232 |
+| `frontend/src/mobile/MobileCollectedOnOrder.tsx` | 24 |
+| `frontend/src/mobile/MobileConvertWizard.tsx` | 999 |
+| `frontend/src/mobile/MobileCrashBoundary.tsx` | 38 |
+| `frontend/src/mobile/MobileDeliveryFieldsCard.tsx` | 471 |
+| `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2115 |
+| `frontend/src/mobile/MobileDoHeaderEdit.tsx` | 311 |
+| `frontend/src/mobile/MobileEditProjectSheet.tsx` | 157 |
+| `frontend/src/mobile/MobileExchangePoRow.tsx` | 41 |
+| `frontend/src/mobile/MobileFabricPicker.tsx` | 134 |
+| `frontend/src/mobile/MobileFactoryTrips.tsx` | 152 |
+| `frontend/src/mobile/MobileFairReport.tsx` | 680 |
+| `frontend/src/mobile/MobileFieldPin.tsx` | 109 |
+| `frontend/src/mobile/MobileGantt.tsx` | 207 |
+| `frontend/src/mobile/MobileGrnLineRack.tsx` | 243 |
+| `frontend/src/mobile/MobileGrnScan.tsx` | 189 |
+| `frontend/src/mobile/MobileGrnZeroCost.tsx` | 237 |
+| `frontend/src/mobile/MobileInbox.tsx` | 235 |
+| `frontend/src/mobile/MobileInvitations.tsx` | 303 |
+| `frontend/src/mobile/MobileItSupport.tsx` | 440 |
+| `frontend/src/mobile/MobileItemReady.tsx` | 187 |
+| `frontend/src/mobile/MobileJobStop.tsx` | 235 |
+| `frontend/src/mobile/MobileLeave.tsx` | 163 |
+| `frontend/src/mobile/MobileLinePhotos.tsx` | 94 |
+| `frontend/src/mobile/MobileLinePoRef.tsx` | 77 |
 | `frontend/src/mobile/MobileLineRemark.tsx` | 38 |
-| `frontend/src/mobile/MobileLogin.tsx` | 181 |
-| `frontend/src/mobile/MobileMailAcks.tsx` | 123 |
-| `frontend/src/mobile/MobileMailCenter.tsx` | 1848 |
-| `frontend/src/mobile/MobileMailPersonal.tsx` | 87 |
-| `frontend/src/mobile/MobileMileageCapture.tsx` | 421 |
-| `frontend/src/mobile/MobileModuleDetail.tsx` | 1931 |
-| `frontend/src/mobile/MobileModuleForm.tsx` | 396 |
-| `frontend/src/mobile/MobileModuleList.tsx` | 2101 |
-| `frontend/src/mobile/MobileMyCaseDetail.tsx` | 330 |
+| `frontend/src/mobile/MobileLogin.tsx` | 160 |
+| `frontend/src/mobile/MobileMailAcks.tsx` | 121 |
+| `frontend/src/mobile/MobileMailCenter.tsx` | 1798 |
+| `frontend/src/mobile/MobileMailPersonal.tsx` | 100 |
+| `frontend/src/mobile/MobileMeetings.tsx` | 20 |
+| `frontend/src/mobile/MobileMileageCapture.tsx` | 396 |
+| `frontend/src/mobile/MobileModuleDetail.tsx` | 1627 |
+| `frontend/src/mobile/MobileModuleForm.tsx` | 384 |
+| `frontend/src/mobile/MobileModuleList.tsx` | 1666 |
+| `frontend/src/mobile/MobileMyCaseDetail.tsx` | 302 |
 | `frontend/src/mobile/MobileMyPay.tsx` | 130 |
-| `frontend/src/mobile/MobileNewProject.tsx` | 196 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3745 |
+| `frontend/src/mobile/MobileNewProject.tsx` | 188 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 2919 |
 | `frontend/src/mobile/MobileOrderMoney.tsx` | 84 |
+| `frontend/src/mobile/MobileOvertime.tsx` | 169 |
 | `frontend/src/mobile/MobileOverview.tsx` | 40 |
-| `frontend/src/mobile/MobilePMS.tsx` | 4209 |
-| `frontend/src/mobile/MobilePOD.tsx` | 639 |
-| `frontend/src/mobile/MobilePaymentRequests.tsx` | 557 |
-| `frontend/src/mobile/MobilePmsDefectActions.tsx` | 180 |
-| `frontend/src/mobile/MobilePmsDocCard.tsx` | 754 |
-| `frontend/src/mobile/MobilePmsPlanFileChips.tsx` | 96 |
-| `frontend/src/mobile/MobilePmsPosSales.tsx` | 109 |
+| `frontend/src/mobile/MobilePMS.tsx` | 3826 |
+| `frontend/src/mobile/MobilePOD.tsx` | 486 |
+| `frontend/src/mobile/MobilePaymentRequests.tsx` | 552 |
+| `frontend/src/mobile/MobilePmsDefectActions.tsx` | 188 |
+| `frontend/src/mobile/MobilePmsDocCard.tsx` | 697 |
+| `frontend/src/mobile/MobilePmsForecast.tsx` | 93 |
+| `frontend/src/mobile/MobilePmsPlanFileChips.tsx` | 89 |
+| `frontend/src/mobile/MobilePmsPosSales.tsx` | 100 |
 | `frontend/src/mobile/MobilePmsSalesBills.tsx` | 98 |
-| `frontend/src/mobile/MobilePmsSalesOrders.tsx` | 101 |
-| `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 462 |
-| `frontend/src/mobile/MobilePoAmendments.tsx` | 182 |
-| `frontend/src/mobile/MobileProductRequests.tsx` | 486 |
-| `frontend/src/mobile/MobileProfile.tsx` | 1007 |
-| `frontend/src/mobile/MobileProjectChat.tsx` | 260 |
-| `frontend/src/mobile/MobilePunch.tsx` | 203 |
-| `frontend/src/mobile/MobilePurchaseDocNew.tsx` | 420 |
-| `frontend/src/mobile/MobileRacks.tsx` | 306 |
-| `frontend/src/mobile/MobileRelationshipMap.tsx` | 275 |
+| `frontend/src/mobile/MobilePmsSalesOrders.tsx` | 100 |
+| `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 449 |
+| `frontend/src/mobile/MobilePoAmendments.tsx` | 159 |
+| `frontend/src/mobile/MobileProductRequests.tsx` | 483 |
+| `frontend/src/mobile/MobileProfile.tsx` | 950 |
+| `frontend/src/mobile/MobileProjectChat.tsx` | 311 |
+| `frontend/src/mobile/MobilePunch.tsx` | 250 |
+| `frontend/src/mobile/MobilePunchFix.tsx` | 161 |
+| `frontend/src/mobile/MobilePurchaseDocNew.tsx` | 406 |
+| `frontend/src/mobile/MobileRacks.tsx` | 293 |
+| `frontend/src/mobile/MobileRefundApprovals.tsx` | 65 |
+| `frontend/src/mobile/MobileRelationshipMap.tsx` | 259 |
 | `frontend/src/mobile/MobileReopenControl.tsx` | 103 |
-| `frontend/src/mobile/MobileRoles.tsx` | 652 |
-| `frontend/src/mobile/MobileSODetail.tsx` | 2114 |
-| `frontend/src/mobile/MobileSalesOrders.tsx` | 818 |
-| `frontend/src/mobile/MobileSavedPhotoThumb.tsx` | 82 |
-| `frontend/src/mobile/MobileScan.tsx` | 1467 |
-| `frontend/src/mobile/MobileScanInvoice.tsx` | 154 |
-| `frontend/src/mobile/MobileScanInvoiceLauncher.tsx` | 22 |
-| `frontend/src/mobile/MobileSearch.tsx` | 312 |
-| `frontend/src/mobile/MobileServiceCase.tsx` | 3380 |
-| `frontend/src/mobile/MobileSkuPicker.tsx` | 284 |
-| `frontend/src/mobile/MobileSoFilterSheet.tsx` | 110 |
-| `frontend/src/mobile/MobileStockCard.tsx` | 336 |
-| `frontend/src/mobile/MobileStockTransferNew.tsx` | 294 |
-| `frontend/src/mobile/MobileTitles.tsx` | 422 |
-| `frontend/src/mobile/MobileTrackingBanner.tsx` | 84 |
-| `frontend/src/mobile/MobileTwoFactorCard.tsx` | 268 |
-| `frontend/src/mobile/MobileVenturePortalFeed.tsx` | 483 |
-| `frontend/src/mobile/MobileVirtualList.tsx` | 159 |
+| `frontend/src/mobile/MobileRoles.tsx` | 644 |
+| `frontend/src/mobile/MobileSODetail.tsx` | 1744 |
+| `frontend/src/mobile/MobileSalesOrders.tsx` | 654 |
+| `frontend/src/mobile/MobileSavedPhotoThumb.tsx` | 77 |
+| `frontend/src/mobile/MobileScan.tsx` | 1158 |
+| `frontend/src/mobile/MobileScanInvoice.tsx` | 142 |
+| `frontend/src/mobile/MobileScanInvoiceLauncher.tsx` | 17 |
+| `frontend/src/mobile/MobileSearch.tsx` | 264 |
+| `frontend/src/mobile/MobileServiceCase.tsx` | 2971 |
+| `frontend/src/mobile/MobileSkuPicker.tsx` | 261 |
+| `frontend/src/mobile/MobileSoDoDraftButton.tsx` | 42 |
+| `frontend/src/mobile/MobileSoFilterSheet.tsx` | 109 |
+| `frontend/src/mobile/MobileSoLockBanner.tsx` | 60 |
+| `frontend/src/mobile/MobileSoPayCard.tsx` | 158 |
+| `frontend/src/mobile/MobileStockCard.tsx` | 300 |
+| `frontend/src/mobile/MobileStockTransferNew.tsx` | 273 |
+| `frontend/src/mobile/MobileTitles.tsx` | 408 |
+| `frontend/src/mobile/MobileTrackingBanner.tsx` | 69 |
+| `frontend/src/mobile/MobileTwoFactorCard.tsx` | 239 |
+| `frontend/src/mobile/MobileVenturePortalFeed.tsx` | 453 |
+| `frontend/src/mobile/MobileVirtualList.tsx` | 154 |
 
 ## 6. Destinations served by both surfaces
 
@@ -739,54 +799,55 @@ Rows are derived from `frontend/src/mobile/MobileApp.tsx` and `frontend/src/App.
 | path | label | desktop page | mobile screen |
 |---|---|---|---|
 | `/activity-inbox` | Inbox | (no desktop route) | dedicated: inbox |
-| `/announcements` | Announcements | `frontend/src/pages/Announcements` | dedicated: announcements |
-| `/assr` | Service Case | `frontend/src/pages/ServiceCases` | dedicated: service |
-| `/autocount-sync` | AutoCount Sync | `frontend/src/pages/AutoCountSync` | dedicated: autocount-sync |
-| `/change-log` | Change Log | `frontend/src/pages/ChangeLog` | dedicated: change-log |
-| `/fleet-health` | Fleet Mileage | `frontend/src/pages/fleet/FleetHealthDashboard` | dedicated: mileage-capture |
+| `/announcements` | Announcements | (inline) | dedicated: announcements |
+| `/assr` | Service Case | (inline) | dedicated: service |
+| `/autocount-sync` | AutoCount Sync | (inline) | dedicated: autocount-sync |
+| `/change-log` | Change Log | (inline) | dedicated: change-log |
+| `/fleet-health` | Fleet Mileage | (inline) | dedicated: mileage-capture |
 | `/hr/punch` | Punch In / Out | (no desktop route) | dedicated: punch |
-| `/it-support` | IT Support | `frontend/src/pages/ItSupport` | dedicated: it-support |
-| `/mail-center` | Mail Center | `frontend/src/pages/MailCenter/Inbox` | dedicated: mail |
-| `/projects` | Projects | `frontend/src/pages/Projects` | dedicated: pms |
-| `/reports/fair-report` | Sales Report | `frontend/src/pages/scm-v2/FairReport` | dedicated: fair-report |
+| `/it-support` | IT Support | (inline) | dedicated: it-support |
+| `/mail-center` | Mail Center | (inline) | dedicated: mail |
+| `/meetings` | Meetings | (inline) | dedicated: meetings |
+| `/projects` | Projects | (inline) | dedicated: pms |
+| `/reports/fair-report` | Sales Report | (inline) | dedicated: fair-report |
 | `/roles` | Roles | (redirect) | dedicated: roles |
-| `/scm/accounting` | Chart of Accounts | `frontend/src/pages/scm-v2/Accounting` | generic: MobileModuleList[accounting] |
-| `/scm/amendments` | Sales Order Amendment | `frontend/src/pages/scm-v2/Amendments` | dedicated: amendments |
-| `/scm/consignment-notes` | Consignment Notes | `frontend/src/pages/scm-v2/ConsignmentNotes` | generic: MobileModuleList[consignment-notes] |
-| `/scm/consignment-orders` | Consignment Orders | `frontend/src/pages/scm-v2/ConsignmentOrders` | generic: MobileModuleList[consignment-orders] |
-| `/scm/consignment-returns` | Consignment Returns | `frontend/src/pages/scm-v2/ConsignmentReturns` | generic: MobileModuleList[consignment-returns] |
-| `/scm/delivery-orders` | Delivery Orders | `frontend/src/pages/scm-v2/MfgDeliveryOrdersListV2` | generic: MobileModuleList[delivery-orders-mfg] |
-| `/scm/delivery-planning` | Last Mile Delivery | `frontend/src/pages/scm-v2/DeliveryPlanning` | dedicated: delivery-planning |
-| `/scm/delivery-planning-driver` | Last Mile Delivery (Driver) | `frontend/src/pages/scm-v2/DeliveryPlanningDriver` | dedicated: delivery-planning-driver |
-| `/scm/delivery-planning-regions` | Regions | `frontend/src/pages/scm-v2/DeliveryPlanningRegions` | generic: MobileModuleList[delivery-planning-regions] |
-| `/scm/delivery-returns` | Delivery Returns | `frontend/src/pages/scm-v2/DeliveryReturnsListV2` | generic: MobileModuleList[delivery-returns] |
+| `/scm/accounting` | Chart of Accounts | (inline) | generic: MobileModuleList[accounting] |
+| `/scm/amendments` | Sales Order Amendment | (inline) | dedicated: amendments |
+| `/scm/consignment-notes` | Consignment Notes | (inline) | generic: MobileModuleList[consignment-notes] |
+| `/scm/consignment-orders` | Consignment Orders | (inline) | generic: MobileModuleList[consignment-orders] |
+| `/scm/consignment-returns` | Consignment Returns | (inline) | generic: MobileModuleList[consignment-returns] |
+| `/scm/delivery-orders` | Delivery Orders | (inline) | generic: MobileModuleList[delivery-orders-mfg] |
+| `/scm/delivery-planning` | Last Mile Delivery | (inline) | dedicated: delivery-planning |
+| `/scm/delivery-planning-driver` | Last Mile Delivery (Driver) | (inline) | dedicated: delivery-planning-driver |
+| `/scm/delivery-planning-regions` | Regions | (inline) | generic: MobileModuleList[delivery-planning-regions] |
+| `/scm/delivery-returns` | Delivery Returns | (inline) | generic: MobileModuleList[delivery-returns] |
 | `/scm/drivers` | Drivers | (no desktop route) | generic: MobileModuleList[drivers] |
-| `/scm/fleet` | Fleet | `frontend/src/pages/scm-v2/Fleet` | generic: MobileModuleList[fleet] |
-| `/scm/grns` | Goods Receipt | `frontend/src/pages/scm-v2/GoodsReceivedListV2` | generic: MobileModuleList[grns] |
+| `/scm/fleet` | Fleet | (inline) | generic: MobileModuleList[fleet] |
+| `/scm/grns` | Goods Receipt | (inline) | generic: MobileModuleList[grns] |
 | `/scm/helpers` | Helpers | (no desktop route) | generic: MobileModuleList[helpers] |
-| `/scm/inventory` | Inventory | `frontend/src/pages/scm-v2/Inventory` | generic: MobileModuleList[inventory] |
-| `/scm/logistic-overview` | Logistic Overview | `frontend/src/pages/scm-v2/LogisticOverview` | dedicated: overview |
-| `/scm/mrp` | MRP · Stock Status | `frontend/src/pages/scm-v2/Mrp` | generic: MobileModuleList[mrp] |
-| `/scm/payment-requests` | Payment Requests | `frontend/src/pages/scm-v2/PaymentRequests` | dedicated: payment-requests |
-| `/scm/po-amendments` | PO Amendments | `frontend/src/pages/scm-v2/PoAmendments` | dedicated: po-amendments |
-| `/scm/procurement-overview` | Procurement Overview | `frontend/src/pages/scm-v2/ProcurementOverview` | dedicated: overview |
-| `/scm/product-requests` | Product Requests | `frontend/src/pages/scm-v2/ProductRequests` | dedicated: product-requests |
-| `/scm/products` | Products & Maintenance | `frontend/src/pages/scm-v2/Products` | generic: MobileModuleList[products] |
-| `/scm/purchase-consignment-orders` | Purchase Consignment Orders | `frontend/src/pages/scm-v2/PurchaseConsignmentOrders` | generic: MobileModuleList[purchase-consignment-orders] |
-| `/scm/purchase-consignment-receives` | Purchase Consignment Receives | `frontend/src/pages/scm-v2/PurchaseConsignmentReceives` | generic: MobileModuleList[purchase-consignment-receives] |
-| `/scm/purchase-consignment-returns` | Purchase Consignment Returns | `frontend/src/pages/scm-v2/PurchaseConsignmentReturns` | generic: MobileModuleList[purchase-consignment-returns] |
-| `/scm/purchase-invoices` | Purchase Invoices | `frontend/src/pages/scm-v2/PurchaseInvoicesListV2` | generic: MobileModuleList[purchase-invoices] |
-| `/scm/purchase-orders` | Purchase Orders | `frontend/src/pages/scm-v2/PurchaseOrdersListV2` | generic: MobileModuleList[mfg-purchase-orders] |
-| `/scm/purchase-returns` | Purchase Returns | `frontend/src/pages/scm-v2/PurchaseReturnsListV2` | generic: MobileModuleList[purchase-returns] |
-| `/scm/sales-invoices` | Sales Invoices | `frontend/src/pages/scm-v2/SalesInvoicesListV2` | generic: MobileModuleList[sales-invoices] |
-| `/scm/sales-orders` | Sales Orders | `frontend/src/pages/scm-v2/MfgSalesOrdersListV2` | dedicated: orders-tab |
-| `/scm/sales-orders/maintenance` | SO Maintenance | `frontend/src/pages/scm-v2/SalesOrderMaintenance` | dedicated: so-maintenance |
-| `/scm/stock-takes` | Stock Take | `frontend/src/pages/scm-v2/StockTakesListV2` | generic: MobileModuleList[stock-takes] |
-| `/scm/stock-transfers` | Stock Transfers | `frontend/src/pages/scm-v2/StockTransfersListV2` | generic: MobileModuleList[stock-transfers] |
-| `/scm/suppliers` | Suppliers | `frontend/src/pages/scm-v2/SuppliersV2Route` | generic: MobileModuleList[suppliers] |
-| `/scm/warehouses` | Warehouse | `frontend/src/pages/scm-v2/Warehouses` | generic: MobileModuleList[warehouse] |
-| `/scm/warehouses/racks` | Racks | `frontend/src/pages/scm-v2/WarehouseRacks` | dedicated: racks |
-| `/team?tab=departments2` | Departments | `frontend/src/pages/Team` | resolved at runtime by destinationScreen() |
-| `/team?tab=directory` | Directory | `frontend/src/pages/Team` | resolved at runtime by destinationScreen() |
+| `/scm/inventory` | Inventory | (inline) | generic: MobileModuleList[inventory] |
+| `/scm/logistic-overview` | Logistic Overview | (inline) | dedicated: overview |
+| `/scm/mrp` | MRP · Stock Status | (inline) | generic: MobileModuleList[mrp] |
+| `/scm/payment-requests` | Payment Requests | (inline) | dedicated: payment-requests |
+| `/scm/po-amendments` | PO Amendments | (inline) | dedicated: po-amendments |
+| `/scm/procurement-overview` | Procurement Overview | (inline) | dedicated: overview |
+| `/scm/product-requests` | Product Requests | (inline) | dedicated: product-requests |
+| `/scm/products` | Products & Maintenance | (inline) | generic: MobileModuleList[products] |
+| `/scm/purchase-consignment-orders` | Purchase Consignment Orders | (inline) | generic: MobileModuleList[purchase-consignment-orders] |
+| `/scm/purchase-consignment-receives` | Purchase Consignment Receives | (inline) | generic: MobileModuleList[purchase-consignment-receives] |
+| `/scm/purchase-consignment-returns` | Purchase Consignment Returns | (inline) | generic: MobileModuleList[purchase-consignment-returns] |
+| `/scm/purchase-invoices` | Purchase Invoices | (inline) | generic: MobileModuleList[purchase-invoices] |
+| `/scm/purchase-orders` | Purchase Orders | (inline) | generic: MobileModuleList[mfg-purchase-orders] |
+| `/scm/purchase-returns` | Purchase Returns | (inline) | generic: MobileModuleList[purchase-returns] |
+| `/scm/sales-invoices` | Sales Invoices | (inline) | generic: MobileModuleList[sales-invoices] |
+| `/scm/sales-orders` | Sales Orders | (inline) | dedicated: orders-tab |
+| `/scm/sales-orders/maintenance` | SO Maintenance | (inline) | dedicated: so-maintenance |
+| `/scm/stock-takes` | Stock Take | (inline) | generic: MobileModuleList[stock-takes] |
+| `/scm/stock-transfers` | Stock Transfers | (inline) | generic: MobileModuleList[stock-transfers] |
+| `/scm/suppliers` | Suppliers | (inline) | generic: MobileModuleList[suppliers] |
+| `/scm/warehouses` | Warehouse | (inline) | generic: MobileModuleList[warehouse] |
+| `/scm/warehouses/racks` | Racks | (inline) | dedicated: racks |
+| `/team?tab=departments2` | Departments | (inline) | resolved at runtime by destinationScreen() |
+| `/team?tab=directory` | Directory | (inline) | resolved at runtime by destinationScreen() |
 | `/titles` | Titles | (no desktop route) | dedicated: titles |
-| `/venture-portal-feed` | Venture Portal Feed | `frontend/src/pages/VenturePortalFeed` | dedicated: venture-portal-feed |
+| `/venture-portal-feed` | Venture Portal Feed | (inline) | dedicated: venture-portal-feed |

@@ -10,7 +10,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/", label: "Overview", what: "The home page with the role's summary cards and shortcuts." }],
     users: "Everyone with an ERP login.",
     connects: ["Its cards open the underlying lists in Supply Chain, Finance, Service Cases and Projects."],
-    gate: { kind: "open" },
   },
   {
     id: "sales-orders",
@@ -30,7 +29,6 @@ export const MODULES: ModuleOverview[] = [
       "Payments keyed on the order become receipts and deposit invoices in Finance.",
       "The order's venue and fair link it to the Projects fair it was sold at.",
     ],
-    gate: { kind: "scm", area: "scm.sales.orders", allowSales: true },
   },
   {
     id: "payment-requests",
@@ -41,7 +39,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/scm/payment-requests", label: "Payment Requests", what: "Your own requests and their status; Finance works the same page from Money out." }],
     users: "Staff holding the payment request right (event persons in charge), salespeople following their refund requests, and Finance.",
     connects: ["An approved request is paid by a payment voucher in Finance > Money out.", "A refund request starts from the money panel of a Sales Order."],
-    gate: { kind: "perm", any: ["*", "scm.payment_request.create", "scm.payment_voucher.create"], anyAccess: ["scm.sales.orders"], allowSales: true },
   },
   {
     id: "service-cases",
@@ -61,7 +58,6 @@ export const MODULES: ModuleOverview[] = [
       "Own-team pickup, inspection and delivery legs appear on Delivery Planning for Logistics to schedule.",
       "Items going back to a supplier are coordinated with Procurement.",
     ],
-    gate: { kind: "page", page: "service_cases", allowSales: true },
   },
   {
     id: "projects",
@@ -82,7 +78,6 @@ export const MODULES: ModuleOverview[] = [
       "Setup and dismantle dates appear on Delivery Planning for the crew.",
       "Cash & Carry projects sell through the booth POS instead of Sales Orders.",
     ],
-    gate: { kind: "page", page: "projects" },
   },
   {
     id: "supply-chain",
@@ -93,7 +88,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/scm", label: "Supply Chain", what: "The Supply Chain hub with links to every sub-group." }],
     users: "Office, purchasing, logistics, warehouse and finance staff.",
     connects: ["Documents flow SO to PO to GRN to PI on the buy side, and SO to DO to SI on the sell side, with returns as the reverse branches."],
-    gate: { kind: "scm", area: "scm", allowDirector: true },
   },
   {
     id: "scm-sales-order",
@@ -116,7 +110,6 @@ export const MODULES: ModuleOverview[] = [
       "A Delivery Return names its Delivery Order; Finance answers it with a customer credit note.",
       "Every SO, DO and SI is written back to AutoCount through AutoCount Sync.",
     ],
-    gate: { kind: "scm", area: "scm" },
   },
   {
     id: "consignment",
@@ -138,7 +131,6 @@ export const MODULES: ModuleOverview[] = [
       "An approved Product Request becomes one Purchase Consignment Order or one Purchase Order.",
       "Consignment receives and returns move warehouse stock but are kept out of the month-end stock value.",
     ],
-    gate: { kind: "scm", area: "scm" },
   },
   {
     id: "procurement",
@@ -165,7 +157,6 @@ export const MODULES: ModuleOverview[] = [
       "Purchase Invoices become supplier bills that Finance pays with a payment voucher.",
       "An approved Sales Order amendment on lines raises a PO amendment follow-up.",
     ],
-    gate: { kind: "scm", area: "scm" },
   },
   {
     id: "transportation",
@@ -190,7 +181,6 @@ export const MODULES: ModuleOverview[] = [
       "Delivery Orders carry the crew and travel with the lorry; scanning their QR moves them along.",
       "Fleet Health keeps each lorry's maintenance record.",
     ],
-    gate: { kind: "scm", area: "scm" },
   },
   {
     id: "warehouse",
@@ -213,7 +203,6 @@ export const MODULES: ModuleOverview[] = [
       "Goods Receipts and Delivery Returns move stock in; Delivery Orders and Purchase Returns move it out.",
       "Inventory figures feed MRP and the month-end stock close in Finance.",
     ],
-    gate: { kind: "scm", area: "scm" },
   },
   {
     id: "finance",
@@ -245,7 +234,6 @@ export const MODULES: ModuleOverview[] = [
       "Purchase Invoices become supplier bills, paid by payment vouchers.",
       "Warehouse stock is valued into the month-end stock close.",
     ],
-    gate: { kind: "scm", area: "scm.finance.accounting" },
   },
   {
     id: "hr",
@@ -260,7 +248,6 @@ export const MODULES: ModuleOverview[] = [
     ],
     users: "HR staff, managers who confirm overtime, Finance for commission.",
     connects: ["Commission is worked out from Sales Orders.", "Payroll lines feed the Department P&L in Finance reports."],
-    gate: { kind: "perm", any: ["*", "hr.employees.read", "hr.employees.manage", "hr.attendance.read", "hr.ot.confirm"] },
   },
   {
     id: "mail-center",
@@ -271,7 +258,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/mail-center", label: "Mail Center", what: "The shared inbox." }],
     users: "Staff who answer the shared mailboxes (customer service, sales admin, finance).",
     connects: ["Mailboxes are set up under Team > Mailboxes."],
-    gate: { kind: "perm", any: ["mail_center.read"] },
   },
   {
     id: "announcements",
@@ -282,7 +268,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/announcements", label: "Announcements", what: "Company notices." }],
     users: "Every signed-in user reads; management posts.",
     connects: ["Stands alone."],
-    gate: { kind: "open" },
   },
   {
     id: "team",
@@ -299,7 +284,6 @@ export const MODULES: ModuleOverview[] = [
     ],
     users: "Admins and the owner; Sales Directors see the directory and org chart.",
     connects: ["Roles & Permissions decides every page and button across the ERP, including the AI Connector."],
-    gate: { kind: "page", page: "team", allowSalesDirector: true },
   },
   {
     id: "it",
@@ -314,7 +298,6 @@ export const MODULES: ModuleOverview[] = [
     ],
     users: "IT staff.",
     connects: ["OCR reads bills and order slips used by Finance and Sales."],
-    gate: { kind: "itPages" },
   },
   {
     id: "ai-connector",
@@ -325,7 +308,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/ai-connector", label: "AI Connector", what: "Connection status and the connector address." }],
     users: "Any staff member who uses an AI app; the owner approves.",
     connects: ["Follows Team > Roles & Permissions exactly; it never sees more than you can."],
-    gate: { kind: "open" },
   },
   {
     id: "autocount-sync",
@@ -336,7 +318,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/autocount-sync", label: "AutoCount Sync", what: "Documents waiting, in AutoCount, not accepted or held back." }],
     users: "Admins and accounts staff.",
     connects: ["Every Supply Chain document a switched-on company saves is queued here for AutoCount."],
-    gate: { kind: "perm", any: ["*", "scm.autocount.read", "settings.manage"] },
   },
   {
     id: "venture-portal-feed",
@@ -347,7 +328,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/venture-portal-feed", label: "Venture Portal Feed", what: "What was sent to the portal." }],
     users: "Admins and the owner.",
     connects: ["Reads sales and finance figures from the ERP."],
-    gate: { kind: "perm", any: ["*", "scm.venture_portal.read", "settings.manage"] },
   },
   {
     id: "change-log",
@@ -358,7 +338,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/change-log", label: "Change Log", what: "The list of ERP changes." }],
     users: "Admins and managers.",
     connects: ["Stands alone."],
-    gate: { kind: "perm", any: ["*", "scm.changelog.read", "settings.manage"] },
   },
   {
     id: "agent-console",
@@ -369,7 +348,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/agents", label: "Agent Console", what: "Agent runs and settings." }],
     users: "Super admins only.",
     connects: ["Stands alone."],
-    gate: { kind: "perm", any: ["*"] },
   },
   {
     id: "meetings",
@@ -380,7 +358,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/meetings", label: "Meetings", what: "Your meetings and booking links." }],
     users: "All staff.",
     connects: ["Stands alone."],
-    gate: { kind: "open" },
   },
   {
     id: "it-support",
@@ -391,7 +368,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/it-support", label: "IT Support", what: "Raise and follow IT requests." }],
     users: "All staff.",
     connects: ["Stands alone."],
-    gate: { kind: "open" },
   },
   {
     id: "settings",
@@ -402,7 +378,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/settings", label: "Settings", what: "System settings." }],
     users: "Admins with full Settings access.",
     connects: ["Changes here affect every module."],
-    gate: { kind: "page", page: "settings", minLevel: "full" },
   },
   {
     id: "pos-admin",
@@ -413,7 +388,6 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/pos-admin", label: "POS Admin", what: "POS events, terminals and reports." }],
     users: "POS managers and Finance.",
     connects: ["A Cash & Carry project in Projects sells through the POS instead of Sales Orders; its bills show on the project page."],
-    gate: { kind: "perm", any: ["*", "pos.manage"] },
   },
   {
     id: "fleet-health",
@@ -424,6 +398,5 @@ export const MODULES: ModuleOverview[] = [
     keyPages: [{ path: "/fleet-health", label: "Fleet Health", what: "Lorries and their maintenance records." }],
     users: "Logistic Admin and fleet staff.",
     connects: ["A lorry off the road is skipped when crews are planned in Transportation."],
-    gate: { kind: "perm", any: ["fleet.read"] },
   },
 ];

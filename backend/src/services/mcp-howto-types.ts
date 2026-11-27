@@ -3,6 +3,7 @@ import { hasPermission } from "./permissions";
 import { hasCapability } from "./capabilities";
 import { meetsLevel, type AccessLevel } from "./pageAccess";
 import { scmAreaReadable } from "../scm/middleware/area-guard";
+import ROUTE_GUARDS from "./mcp-route-guards.json";
 
 /**
  * The ERP route guard a page sits behind, written the way frontend/src/App.tsx writes it
@@ -17,7 +18,8 @@ export type HowtoGate =
   | { kind: "deliveryReturns" }
   | { kind: "fairReport" }
   | { kind: "soMaintenance" }
-  | { kind: "itPages" };
+  | { kind: "itPages" }
+  | { kind: "assistant" };
 
 /** One field on the form: `label` is the exact UI label (checked against frontend/src). */
 export type HowtoField = { label: string; required: boolean; format: string; validation: string; example: string };
@@ -39,7 +41,6 @@ export type HowtoGuide = {
   prerequisites: string[];
   who: string;
   permission: string;
-  gate: HowtoGate;
   page: string;
   sidebar: string;
   fields: HowtoField[];
@@ -90,8 +91,31 @@ export function gatePasses(gate: HowtoGate, u: AuthUser): boolean {
       return hasCapability(u, "scm.maintenance.open");
     case "itPages":
       return hasCapability(u, "it.pages.view");
+    case "assistant":
+      return hasCapability(u, "org.assistant.use");
   }
 }
+
+const GUARDS = ROUTE_GUARDS as Record<string, HowtoGate>;
+const routeMatches = (route: string, path: string): boolean => {
+  const r = route.split("/");
+  const p = path.split("/");
+  return r.length === p.length && r.every((s, i) => s.startsWith(":") || s === p[i]);
+};
+
+/**
+ * The route guard of a page, from mcp-route-guards.json (generated from frontend/src/App.tsx by
+ * scripts/gen-route-guards.mjs; CI fails when it is stale). Unknown page = closed.
+ */
+export function gateForPage(page: string): HowtoGate {
+  const path = page.split("?")[0];
+  if (Object.prototype.hasOwnProperty.call(GUARDS, path)) return GUARDS[path];
+  const hit = Object.keys(GUARDS).find((r) => routeMatches(r, path));
+  return hit ? GUARDS[hit] : { kind: "perm", any: ["*"] };
+}
+
+/** May this person open the page? Its App.tsx route guard, evaluated with the ERP's own predicates. */
+export const canOpenPage = (page: string, u: AuthUser): boolean => gatePasses(gateForPage(page), u);
 
 export const NO_PERMISSION_NOTE = "You don't have permission for this in the ERP — ask your supervisor or admin.";
 
@@ -113,7 +137,6 @@ export type ModuleOverview = {
   keyPages: { path: string; label: string; what: string }[];
   users: string;
   connects: string[];
-  gate: HowtoGate;
 };
 
 /** A term staff meet in the UI, for glossary. */

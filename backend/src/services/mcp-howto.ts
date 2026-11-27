@@ -4,7 +4,7 @@ import { MODULES } from "./mcp-howto-modules";
 import { GLOSSARY } from "./mcp-howto-glossary";
 import { ONBOARDING } from "./mcp-howto-onboarding";
 import { ERRORS } from "./mcp-howto-errors";
-import { erpLink, gatePasses, NO_PERMISSION_NOTE, type HowtoGuide } from "./mcp-howto-types";
+import { canOpenPage, erpLink, NO_PERMISSION_NOTE, type HowtoGuide } from "./mcp-howto-types";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 /** What a help tool hands back to routes/mcp.ts callTool: the result plus what goes into mcp_calls. */
@@ -79,8 +79,8 @@ const str = (v: unknown): string => (typeof v === "string" ? v.trim().slice(0, 3
 
 /** One guide as the tool returns it: links built, gate replaced by canDo for this person. */
 export function guideView(g: HowtoGuide, ctx: HowtoCtx) {
-  const canDo = gatePasses(g.gate, ctx.user);
-  const { gate: _gate, steps, ...rest } = g;
+  const canDo = canOpenPage(g.page, ctx.user);
+  const { steps, ...rest } = g;
   return {
     ...rest,
     link: erpLink(ctx.origin, g.page, null),
@@ -89,6 +89,8 @@ export function guideView(g: HowtoGuide, ctx: HowtoCtx) {
     steps: steps.map((s, i) => ({ n: i + 1, ...(s.role ? { role: s.role } : {}), text: s.text, ...(s.page ? { link: erpLink(ctx.origin, s.page, s.highlight) ?? s.page } : {}), ...(s.highlight ? { press: s.highlight } : {}) })),
   };
 }
+
+const moduleOpen = (m: (typeof MODULES)[number], u: AuthUser): boolean => m.keyPages.some((p) => canOpenPage(p.path, u));
 
 const byId = new Map(HOWTO_GUIDES.map((g) => [g.id, g]));
 const titleList = () => HOWTO_GUIDES.map((g) => ({ id: g.id, title: g.title, kind: g.kind }));
@@ -111,15 +113,15 @@ function howTo(ctx: HowtoCtx, args: Record<string, unknown>): HowtoOutcome {
 
 function moduleOverview(ctx: HowtoCtx, args: Record<string, unknown>): HowtoOutcome {
   const asked = str(args.module);
-  if (!asked) return answer({ modules: MODULES.map((m) => ({ id: m.id, name: m.name, sidebar: m.sidebar, purpose: m.purpose.split(/(?<=\.)\s/)[0], canOpen: gatePasses(m.gate, ctx.user) })) }, "module_overview (list)");
+  if (!asked) return answer({ modules: MODULES.map((m) => ({ id: m.id, name: m.name, sidebar: m.sidebar, purpose: m.purpose.split(/(?<=\.)\s/)[0], canOpen: moduleOpen(m, ctx.user) })) }, "module_overview (list)");
   const exact = MODULES.find((m) => m.id === asked || norm(m.name) === norm(asked) || norm(m.sidebar) === norm(asked));
   const hits = exact ? [exact] : rank(MODULES.map((m) => ({ ...m, title: `${m.name} ${m.sidebar}` })), asked).slice(0, 2).map((h) => MODULES.find((m) => m.id === h.item.id) ?? h.item);
   if (!hits.length) return answer({ matched: false, message: "No module by that name. These are the modules:", modules: MODULES.map((m) => ({ id: m.id, name: m.name })) }, redactQuestion(asked), NO_GUIDE_NOTE);
   return answer(
     {
       modules: hits.map((m) => {
-        const canOpen = gatePasses(m.gate, ctx.user);
-        const { gate: _gate, keyPages, ...rest } = m;
+        const canOpen = moduleOpen(m, ctx.user);
+        const { keyPages, ...rest } = m;
         return { ...rest, canOpen, ...(canOpen ? {} : { note: NO_PERMISSION_NOTE }), keyPages: keyPages.map((p) => ({ ...p, link: erpLink(ctx.origin, p.path, null) ?? p.path })) };
       }),
     },
@@ -183,7 +185,7 @@ function onboarding(ctx: HowtoCtx, args: Record<string, unknown>): HowtoOutcome 
         goals: d.goals,
         guides: d.guides.map((id) => {
           const g = byId.get(id);
-          return g ? { id, title: g.title, canDo: gatePasses(g.gate, ctx.user) } : { id };
+          return g ? { id, title: g.title, canDo: canOpenPage(g.page, ctx.user) } : { id };
         }),
         pages: d.pages.map((p) => erpLink(ctx.origin, p, null) ?? p),
       })),

@@ -1,9 +1,5 @@
-import type { HowtoGuide, HowtoGate } from "./mcp-howto-types";
+import type { HowtoGuide } from "./mcp-howto-types";
 
-const SO_GATE: HowtoGate = { kind: "scm", area: "scm.sales.orders", allowSales: true };
-const DO_WRITE_GATE: HowtoGate = { kind: "scm", area: "scm.sales.delivery" };
-const SI_WRITE_GATE: HowtoGate = { kind: "scm", area: "scm.sales.invoices" };
-const PLANNING_GATE: HowtoGate = { kind: "scm", area: "scm.transportation.drivers" };
 
 const SO_SIDEBAR = "Supply Chain > Sales Order > Sales Orders (sales staff: Sales Orders, at the top of the sidebar)";
 const SO_PERMISSION =
@@ -30,7 +26,6 @@ export const SALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Salesperson (desktop or phone), or office staff keying an order on a salesperson's behalf.",
     permission: SO_PERMISSION,
-    gate: SO_GATE,
     page: "/scm/sales-orders/new",
     sidebar: SO_SIDEBAR,
     fields: [
@@ -120,7 +115,6 @@ export const SALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Salesperson or outlet staff of the company the sale belongs to.",
     permission: SO_PERMISSION + " You must also be granted that company.",
-    gate: SO_GATE,
     page: "/scm/sales-orders/new",
     sidebar: SO_SIDEBAR,
     fields: [
@@ -180,7 +174,6 @@ export const SALES_GUIDES: HowtoGuide[] = [
     who: "The order's salesperson or office staff. Amendment approvers: Purchaser (product lines, Processing Date), Logistic (delivery date, address, contact, service lines), Sales Director (price-only changes).",
     permission:
       SO_PERMISSION + " Raising an amendment: scm.amendment.create, or the salesperson on their own order, or a lane approver. Approving: scm.amendment.approve_lines / approve_delivery / approve_price.",
-    gate: SO_GATE,
     page: "/scm/sales-orders",
     sidebar: SO_SIDEBAR,
     fields: [
@@ -245,7 +238,6 @@ export const SALES_GUIDES: HowtoGuide[] = [
     who: "Requester: the salesperson or office staff. Approvers: Sales Director (level 1) and Purchaser (level 2); neither may be the requester.",
     permission:
       "Raising: ordinary edit access to the order (row scope). Approving: scm.so_cancel.approve_l1 (level 1) / scm.so_cancel.approve_l2 (level 2).",
-    gate: SO_GATE,
     page: "/scm/sales-orders",
     sidebar: SO_SIDEBAR + "; approvers: Supply Chain > Procurement > Cancellation Requests, or Supply Chain > Sales Order > Sales Order Amendment",
     fields: [
@@ -301,7 +293,6 @@ export const SALES_GUIDES: HowtoGuide[] = [
     who: "Logistics / dispatch office staff.",
     permission:
       "Transportation area (route guard scm.transportation.drivers; the sidebar entry needs scm.transportation.planning). Transferring to a Delivery Order also needs edit on Delivery Orders (scm.sales.delivery); Sales staff cannot.",
-    gate: PLANNING_GATE,
     page: "/scm/delivery-planning",
     sidebar: "Supply Chain > Transportation > Delivery Planning",
     fields: [
@@ -360,7 +351,6 @@ export const SALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Office (delivery order) staff. Sales staff can only view and print Delivery Orders.",
     permission: "Delivery Orders edit access (scm.sales.delivery). The Sales cohort is refused on every Delivery Order write.",
-    gate: DO_WRITE_GATE,
     page: "/scm/delivery-orders/from-so",
     sidebar: "Supply Chain > Sales Order > Delivery Orders",
     fields: [
@@ -386,7 +376,7 @@ export const SALES_GUIDES: HowtoGuide[] = [
     result: [
       "A Delivery Order number is created; a confirmed one deducts stock and updates the sales order's delivered quantities.",
       "The customer is emailed when a Delivery Order is created confirmed.",
-      "The sales order moves to Delivered automatically once every line is fully delivered.",
+      "The sales order moves to Delivered automatically when its last open line is delivered.",
     ],
     warnings: [
       "Create (not draft) moves stock out immediately and emails the customer.",
@@ -422,7 +412,6 @@ export const SALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Office / accounts staff. Sales staff can view and print invoices of their own orders only.",
     permission: "Sales Invoices edit access (scm.sales.invoices). The Sales cohort cannot create or change invoices.",
-    gate: SI_WRITE_GATE,
     page: "/scm/sales-invoices/from-do",
     sidebar: "Supply Chain > Sales Order > Sales Invoices",
     fields: [
@@ -477,7 +466,6 @@ export const SALES_GUIDES: HowtoGuide[] = [
     prerequisites: ["You can open the document (sales staff: documents of their own orders)."],
     who: "Anyone who can see the document, including sales staff for their own customers.",
     permission: "Read access to the document: Sales Orders (scm.sales.orders), Delivery Orders (scm.sales.delivery) or Sales Invoices (scm.sales.invoices); Sales staff for their own orders.",
-    gate: SO_GATE,
     page: "/scm/sales-orders",
     sidebar: "Supply Chain > Sales Order > Sales Orders / Delivery Orders / Sales Invoices",
     fields: [],
@@ -517,7 +505,6 @@ export const SALES_GUIDES: HowtoGuide[] = [
     prerequisites: ["The customer's full name and phone number."],
     who: "Salesperson or office staff, while creating a sales order.",
     permission: SO_PERMISSION,
-    gate: SO_GATE,
     page: "/scm/sales-orders/new",
     sidebar: SO_SIDEBAR,
     fields: [
@@ -565,7 +552,6 @@ export const SALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Salesperson, Purchaser, Logistics, Office, Driver, Accounts / Finance.",
     permission: "Each step needs that page's access; see the step role and the linked task guides.",
-    gate: SO_GATE,
     page: "/scm/sales-orders",
     sidebar: SO_SIDEBAR,
     fields: [
@@ -581,7 +567,7 @@ export const SALES_GUIDES: HowtoGuide[] = [
       { text: `Supply Chain > Transportation > Delivery Planning: tick the ready orders, "Actions" > "Schedule", set "Trip date", "Driver", "Lorry", then "Apply to". Use "Send Message" to tell the customer the date.`, page: "/scm/delivery-planning", highlight: "Actions", role: "Logistics" },
       { text: `Supply Chain > Sales Order > Delivery Orders > arrow > "New from Sales Order": tick the lines, set "Qty to Deliver", "Continue with", check, then "Create Delivery Order". Stock goes out and the customer is emailed.`, page: "/scm/delivery-orders/from-so", highlight: "Qty to Deliver", role: "Office" },
       { text: `On the Delivery Order page click "Print PDF" and "Print now" for the delivery note that goes on the lorry.`, page: "/scm/delivery-orders", highlight: "Print PDF", role: "Office" },
-      { text: `On the phone run-sheet the driver starts the stop, marks arrived and completes the proof of delivery with a photo; the Delivery Order becomes Delivered and the sales order follows when every line is delivered.`, page: null, highlight: null, role: "Driver" },
+      { text: `On the phone run-sheet the driver starts the stop, marks arrived and completes the proof of delivery with a photo; the Delivery Order becomes Delivered and the sales order follows when the last line is delivered.`, page: null, highlight: null, role: "Driver" },
       { text: `Supply Chain > Sales Order > Sales Invoices > arrow > "New from Delivery Order": tick the lines, set "Qty to Invoice", "Continue with", then "Create Sales Invoice".`, page: "/scm/sales-invoices/from-do", highlight: "Qty to Invoice", role: "Accounts" },
       { text: `Collect the balance: on the sales order click "Collect payment" then "Add Payment" (slip required), or on the invoice click "Record payment". The invoice turns Partially Paid / Paid automatically.`, page: "/scm/sales-invoices", highlight: "Record payment", role: "Finance" },
     ],

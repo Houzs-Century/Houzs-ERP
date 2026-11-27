@@ -1,7 +1,5 @@
 import type { HowtoGuide } from "./mcp-howto-types";
 
-const CASE_GATE = { kind: "page", page: "service_cases", allowSales: true } as const;
-const FINANCE_GATE = { kind: "scm", area: "scm.finance.accounting" } as const;
 
 export const AFTERSALES_GUIDES: HowtoGuide[] = [
   {
@@ -18,7 +16,6 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Service Admin, Logistic Admin, or the Sales rep who sold the order (Sales reps raise cases; they cannot edit them afterwards).",
     permission: `Service Cases page access (page key service_cases) or any Sales staff; the save calls POST /api/assr, which admits anyone holding a service_cases permission, any company grant, or a director.`,
-    gate: CASE_GATE,
     page: "/assr?view=cases",
     sidebar: "Service Cases > Service Cases",
     fields: [
@@ -54,7 +51,7 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
     warnings: [
       "The complaint date is stamped by the server at create and can never be edited.",
       "A second open case for the same item code on the same order is refused (duplicate open case).",
-      "A non-director Sales rep cannot edit the case after creating it; every later change is done by Service Admin.",
+      "A non-director Sales rep cannot edit the case after creating it; Service Admin makes every later change.",
     ],
     undo: `There is no delete. Service Admin can void a case raised by mistake from its Workflow card (Change to Voided, with a reason), or archive it.`,
     approvals: ["None. The case starts immediately; Service Admin reviews it at Pending Review."],
@@ -82,7 +79,6 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Service Admin (stages Review to Pending Item Ready), Logistic Admin (Pending Delivery / Service). A non-director Sales rep only sees the case read-only in My Cases.",
     permission: `Service Cases page access (service_cases); the stage change calls POST /api/assr/:id/transition, which needs service_cases.write.`,
-    gate: CASE_GATE,
     page: "/assr?view=cases",
     sidebar: "Service Cases > Service Cases",
     fields: [
@@ -135,7 +131,6 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
     prerequisites: ["The case exists and is not archived."],
     who: "Service Admin / Logistic Admin on the case page; the Sales rep on My Cases.",
     permission: `Service Cases page access (service_cases) or any Sales staff. Office notes call POST /api/assr/:id/notes (service_cases.write, .create or .manage); a Sales rep's comment calls the sales-comment route, admitted to anyone who can see the case.`,
-    gate: CASE_GATE,
     page: "/assr?view=cases",
     sidebar: "Service Cases > Service Cases (office) or Service Cases > My Cases (Sales)",
     fields: [
@@ -184,7 +179,6 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Operations / warehouse / sales admin with Delivery Returns access. Sales staff are refused on this page.",
     permission: `Supply Chain > Delivery Returns access (scm.sales.returns), not Sales staff; the whole API router is guarded by the same area.`,
-    gate: { kind: "deliveryReturns" },
     page: "/scm/delivery-returns/from-do",
     sidebar: "Supply Chain > Sales Order > Delivery Returns",
     fields: [
@@ -202,7 +196,7 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
       { text: `Click the Continue with N line(s) button at the top right. The New Delivery Return form opens prefilled from the DO; nothing has moved yet.`, page: "/scm/delivery-returns/from-do", highlight: null },
       { text: `Check "Customer Name" and fill "Return Date", "Reason" and "Note" if useful. Check the "Returned Items" lines.`, page: "/scm/delivery-returns/new", highlight: "Customer Name" },
       { text: `Click "Create Delivery Return". The return is saved as RECEIVED, the stock goes back IN, and you land on the return's detail page.`, page: "/scm/delivery-returns/new", highlight: "Create Delivery Return" },
-      { text: `If the goods were already invoiced, the detail page shows an 'Awaiting credit note' card; Finance raises the credit note from there.`, page: "/scm/delivery-returns", highlight: "Create credit note" },
+      { text: `If the goods were invoiced before the return, the detail page shows an 'Awaiting credit note' card; Finance raises the credit note from there.`, page: "/scm/delivery-returns", highlight: "Create credit note" },
     ],
     checkBefore: [
       "The goods are physically back and counted.",
@@ -243,7 +237,6 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Finance / accounts staff.",
     permission: `Finance area (scm.finance.accounting) to open the page; saving needs scm.payment_voucher.create or .write; Save & post and knock-off need scm.payment_voucher.post; cancelling needs scm.payment_voucher.cancel.`,
-    gate: FINANCE_GATE,
     page: "/scm/credit-notes",
     sidebar: "Finance > Money in > Credit / debit notes",
     fields: [
@@ -302,7 +295,6 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Sales rep or sales admin records the payment on the SO; Finance confirms money and raises sundry / other-debtor receipts.",
     permission: `Payment on the SO: Sales Orders access (scm.sales.orders) or Sales staff. Receipts page: Finance area (scm.finance.accounting); Confirm money needs scm.payment_voucher.post or scm.sales_order.write; New receipt needs scm.payment_voucher.create.`,
-    gate: FINANCE_GATE,
     page: "/scm/receipts",
     sidebar: "Finance > Money in > Receipts (and Supply Chain > Sales Order > Sales Orders for the payment)",
     fields: [
@@ -358,7 +350,6 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
     prerequisites: ["You can see the mailbox the thread landed in (your own, granted, department or company level)."],
     who: "Any staff with Mail Center access (customer service, sales admin, purchasing).",
     permission: `Mail Center access (mail_center.read); which mailboxes you see and send from follows your Mail Center access level and grants.`,
-    gate: { kind: "perm", any: ["mail_center.read"] },
     page: "/mail-center",
     sidebar: "Mail Center",
     fields: [
@@ -414,7 +405,6 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Any employee applies; a supervisor with hr.leave.approve approves or rejects.",
     permission: `Applying: any signed-in account linked to an active employee (POST /api/attendance/leave). Approving: hr.leave.approve. The desktop page /hr/employees needs one of hr.employees.read / .manage, hr.attendance.read or hr.ot.confirm, and its Leave tab shows to hr.leave.approve.`,
-    gate: { kind: "perm", any: ["*", "hr.employees.read", "hr.employees.manage", "hr.attendance.read", "hr.ot.confirm"] },
     page: "/hr/employees?tab=leave",
     sidebar: "HR > Employees & Attendance > Leave (desktop); phone menu > Punch In / Out > Leave",
     fields: [
@@ -468,7 +458,6 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Booth cashier / supervisor sells on the till; POS admin (Owner / IT Admin, pos.manage) runs POS Admin.",
     permission: `POS Admin needs pos.manage (or *). The till uses a cashier PIN, not an ERP login; setting up a device needs an ERP account with pos.manage.`,
-    gate: { kind: "perm", any: ["*", "pos.manage"] },
     page: "/pos-admin",
     sidebar: "POS Admin (System section)",
     fields: [
@@ -527,7 +516,6 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
     ],
     who: "Sales rep or Service Admin (intake), Service Admin (stages), Logistic Admin (delivery), warehouse (return), Finance (credit note).",
     permission: `Service Cases page access (service_cases) or Sales staff to open cases; service_cases.write to move stages; scm.sales.returns for returns; scm.finance.accounting plus scm.payment_voucher.create / .post for credit notes.`,
-    gate: CASE_GATE,
     page: "/assr?view=cases",
     sidebar: "Service Cases > Service Cases",
     fields: [
@@ -586,7 +574,6 @@ export const AFTERSALES_GUIDES: HowtoGuide[] = [
     ],
     who: "POS admin (setup and checks), booth supervisor (device), cashier (sale), back office / Finance (takings review).",
     permission: `POS Admin needs pos.manage (or *). Device setup needs an ERP account with pos.manage. Cashiers use their PIN on the till only.`,
-    gate: { kind: "perm", any: ["*", "pos.manage"] },
     page: "/pos-admin",
     sidebar: "POS Admin (System section)",
     fields: [

@@ -77,7 +77,7 @@ export const GLOSSARY: GlossaryTerm[] = [
     term: "delivery return",
     aliases: ["DR", "customer return"],
     keywords: ["delivery return", "退货", "客户退货", "pulangan pelanggan"],
-    definition: "Goods coming back from a customer, the mirror of a Delivery Order. Every line must name a delivered DO line; it cannot return more than was delivered less what was already returned. Creating it puts the stock back at the cost it left at. Finance then raises a customer credit note from it if money is owed back. Cancelling is final.",
+    definition: "Goods coming back from a customer, the mirror of a Delivery Order. Every line must name a delivered DO line; it cannot return more than was delivered less what earlier returns took back. Creating it puts the stock back at the cost it left at. Finance then raises a customer credit note from it if money is owed back. Cancelling is final.",
     seeAlso: ["DO", "credit note", "purchase return"],
     page: "/scm/delivery-returns",
   },

@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import type { AuthUser } from "./auth";
 import { HOWTO_PROMPTS, HOWTO_TOOLS, howtoPromptText, isHowtoTool, matchErrors, NO_GUIDE_NOTE, rank, redactQuestion, runHowtoTool } from "./mcp-howto";
 import { HOWTO_GUIDES } from "./mcp-howto-guides";
-import { erpLink, gatePasses, NO_PERMISSION_NOTE } from "./mcp-howto-types";
+import { canOpenPage, erpLink, gatePasses, gateForPage, NO_PERMISSION_NOTE } from "./mcp-howto-types";
+import { readRepoFile } from "../../scripts/lib/frontend-honesty.mjs";
+import { ROUTE_GUARDS_JSON, routeGuardsJson } from "../../scripts/lib/route-guards.mjs";
 import { MCP_TOOLS } from "../routes/mcp";
 
 function user(perms: string[], pageAccess: Record<string, string> = {}, position = "Storekeeper"): AuthUser {
@@ -56,7 +58,7 @@ describe("how_to ranking", () => {
 
 describe("canDo follows the ERP's own gates", () => {
   it("owner can do everything; a person with no access can do nothing gated", () => {
-    for (const g of HOWTO_GUIDES) expect(gatePasses(g.gate, owner), g.id).toBe(true);
+    for (const g of HOWTO_GUIDES) expect(canOpenPage(g.page, owner), g.id).toBe(true);
     const po = run(nobody, "how_to", { topic: "po-create" }).body.guides as { canDo: boolean; note?: string }[];
     expect(po[0].canDo).toBe(false);
     expect(po[0].note).toBe(NO_PERMISSION_NOTE);
@@ -74,6 +76,20 @@ describe("canDo follows the ERP's own gates", () => {
     expect(gatePasses({ kind: "page", page: "service_cases" }, user([], { service_cases: "partial" }))).toBe(true);
     expect(gatePasses({ kind: "page", page: "settings", minLevel: "full" }, user([], { settings: "partial" }))).toBe(false);
     expect(gatePasses({ kind: "open" }, nobody)).toBe(true);
+  });
+});
+
+describe("route guards come from App.tsx", () => {
+  it("mcp-route-guards.json is current (npm --prefix backend run gen:route-guards)", () => {
+    expect(readRepoFile(ROUTE_GUARDS_JSON)).toBe(routeGuardsJson());
+  });
+
+  it("reads the guards the way App.tsx writes them", () => {
+    expect(gateForPage("/scm/purchase-orders/new")).toEqual({ kind: "scm", area: "scm.procurement.po" });
+    expect(gateForPage("/scm/sales-orders/HC-SO-1")).toEqual({ kind: "scm", area: "scm.sales.orders", allowSales: true });
+    expect(gateForPage("/settings")).toEqual({ kind: "page", page: "settings", minLevel: "full" });
+    expect(gateForPage("/mail-center?x=1")).toEqual({ kind: "perm", any: ["mail_center.read"] });
+    expect(gateForPage("/no/such/page")).toEqual({ kind: "perm", any: ["*"] });
   });
 });
 
