@@ -49,10 +49,10 @@ import { DO_SIZE as S, DO_THEME as T, pt } from './delivery-order-theme';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 import { stripBookText } from '../../../../../shared/src/vendor/scm/lib/book-text';
 import {
-  buildPickSections, fmtM3, formatRacksCompact, loadingOrder, packCategory,
+  buildPickSections, fmtM3, formatRacksCompact, loadingOrder, lorriesFor, packCategory, regionLorryLabel, regionStops,
   type PickRow, type PickSection,
 } from './packing-list-model';
-import type { PackingItem, PackingListRow, PackingStop } from './packing-list-queries';
+import type { PackingItem, PackingListRow, PackingRegionRow, PackingStop } from './packing-list-queries';
 import type { BrandingLogo } from '../../../lib/branding';
 import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
@@ -125,13 +125,11 @@ function crewParts(list: PackingListRow): string[] {
 }
 
 
+type InfoCol = { caption: string; rows: Array<[string, string, boolean]> };
+
 function drawCrewBox(doc: Doc, top: number, list: PackingListRow): number {
-  const PAD_X = 4;
-  const PAD_Y = 3;
-  const colW = CONTENT_W / 3;
-  const LABEL_W = 21;
   const volume = fmtM3(list.m3_milli);
-  const cols: Array<{ caption: string; rows: Array<[string, string, boolean]> }> = [
+  const cols: InfoCol[] = [
     {
       caption: 'Lorry',
       rows: [['Warehouse', list.warehouse_name ?? DASH, false]],
@@ -155,6 +153,14 @@ function drawCrewBox(doc: Doc, top: number, list: PackingListRow): number {
       ],
     },
   ];
+  return drawInfoBox(doc, top, list.lorry_plate ?? DASH, cols);
+}
+
+function drawInfoBox(doc: Doc, top: number, big: string, cols: InfoCol[]): number {
+  const PAD_X = 4;
+  const PAD_Y = 3;
+  const colW = CONTENT_W / 3;
+  const LABEL_W = 21;
 
   const drawCol = (i: number, draw: boolean): number => {
     const x = M + colW * i + PAD_X;
@@ -166,7 +172,7 @@ function drawCrewBox(doc: Doc, top: number, list: PackingListRow): number {
     if (i === 0) {
       const PLATE = 20;
       font(doc, PLATE, 'bold');
-      const plateLines = doc.splitTextToSize(list.lorry_plate ?? DASH, w) as string[];
+      const plateLines = doc.splitTextToSize(big, w) as string[];
       for (const line of plateLines) {
         y += pt(PLATE) * 1.05;
         if (draw) doc.text(line, x, y);
@@ -251,56 +257,111 @@ const lastY = (doc: Doc, fallback: number): number =>
   (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? fallback;
 
 
-const COL = { type: 'TYPE', code: 'ITEM CODE', desc: 'DESCRIPTION', po: 'PO NO', rack: 'RACK', qty: 'QTY', cust: 'CUSTOMER', tick: 'TICK' } as const;
-const A_HEAD = [COL.code, COL.desc, COL.po, COL.rack, COL.qty, COL.cust, COL.tick];
-const A_COLS = {
-  0: { cellWidth: 30, fontStyle: 'bold' as const },
-  1: { cellWidth: 'auto' as const },
-  2: { cellWidth: 31, fontSize: S.min },
-  3: { cellWidth: 16, halign: 'center' as const, fontStyle: 'bold' as const },
-  4: { cellWidth: 11, halign: 'right' as const, fontStyle: 'bold' as const, fontSize: S.body },
-  5: { cellWidth: 21 },
-  6: { cellWidth: 11, halign: 'center' as const },
+const COL = { type: 'TYPE', code: 'ITEM CODE', desc: 'DESCRIPTION', po: 'PO NO', rack: 'RACK', qty: 'QTY', cust: 'CUSTOMER', lorry: 'LORRY', tick: 'TICK' } as const;
+
+type PickLayout = {
+  head: string[];
+  cols: Record<number, Record<string, unknown>>;
+  lorryOf: ((customers: readonly number[]) => string[]) | null;
+  emptyText: string;
 };
 
-const pickBody = (rows: readonly PickRow[]): string[][] => rows.map((r) => [
+const LORRY_LAYOUT: PickLayout = {
+  head: [COL.code, COL.desc, COL.po, COL.rack, COL.qty, COL.cust, COL.tick],
+  cols: {
+    0: { cellWidth: 30, fontStyle: 'bold' as const },
+    1: { cellWidth: 'auto' as const },
+    2: { cellWidth: 31, fontSize: S.min },
+    3: { cellWidth: 16, halign: 'center' as const, fontStyle: 'bold' as const },
+    4: { cellWidth: 11, halign: 'right' as const, fontStyle: 'bold' as const, fontSize: S.body },
+    5: { cellWidth: 21 },
+    6: { cellWidth: 11, halign: 'center' as const },
+  },
+  lorryOf: null,
+  emptyText: 'Nothing to pick: no delivery order on this lorry has goods lines.',
+};
+
+function regionLayout(region: Pick<PackingRegionRow, 'dos'>): PickLayout {
+  return {
+    head: [COL.code, COL.desc, COL.po, COL.rack, COL.qty, COL.cust, COL.lorry, COL.tick],
+    cols: {
+      0: { cellWidth: 28, fontStyle: 'bold' as const },
+      1: { cellWidth: 'auto' as const },
+      2: { cellWidth: 27, fontSize: S.min },
+      3: { cellWidth: 13, halign: 'center' as const, fontStyle: 'bold' as const },
+      4: { cellWidth: 10, halign: 'right' as const, fontStyle: 'bold' as const, fontSize: S.body },
+      5: { cellWidth: 21 },
+      6: { cellWidth: 21, fontSize: S.min },
+      7: { cellWidth: 10, halign: 'center' as const },
+    },
+    lorryOf: (customers) => lorriesFor(customers, region),
+    emptyText: 'Nothing to pick: no delivery order in this region has goods lines.',
+  };
+}
+
+const pickBody = (rows: readonly PickRow[], layout: PickLayout): string[][] => rows.map((r) => [
   r.item_code,
   describe(r.description, r.variant),
   poCell(r.pos),
   rackCell(r.racks),
   qtyText(r.qty),
   r.customers.join(', '),
+  ...(layout.lorryOf ? [layout.lorryOf(r.customers).join('\n') || DASH] : []),
   '',
 ]);
 
-function sectionHeadRow(section: PickSection) {
+function sectionHeadRow(section: PickSection, layout: PickLayout) {
   const piece = section.category === 'BEDFRAME' || section.category === 'SOFA';
   return [
     { content: `${section.category}${piece ? ' · one line per piece' : ''}`, colSpan: 4, styles: { fontStyle: 'bold', fontSize: S.body, halign: 'left' } },
     { content: qtyText(section.units), styles: { fontStyle: 'bold', fontSize: S.body, halign: 'right' } },
-    { content: unitsWord(section.units), colSpan: 2, styles: { fontStyle: 'normal', fontSize: S.min, halign: 'left' } },
+    { content: unitsWord(section.units), colSpan: layout.head.length - 5, styles: { fontStyle: 'normal', fontSize: S.min, halign: 'left' } },
   ];
 }
 const ROW_EST = 6.5;
 const unitsWord = (n: number): string => (n === 1 ? 'unit' : 'units');
 
+function estimatePickRowH(doc: Doc, layout: PickLayout, row: readonly string[]): number {
+  const colOf = (i: number) => layout.cols[i] as Record<string, unknown> | undefined;
+  const widths = layout.head.map((_, i) => colOf(i)?.cellWidth);
+  const fixed = widths.reduce<number>((n, w) => n + (typeof w === 'number' ? w : 0), 0);
+  let lines = 1;
+  row.forEach((cell, i) => {
+    const w = typeof widths[i] === 'number' ? (widths[i] as number) : CONTENT_W - fixed;
+    const size = Number(colOf(i)?.fontSize ?? S.min + 0.5);
+    font(doc, size);
+    lines = Math.max(lines, (doc.splitTextToSize(cell, w - CELL_PAD.left - CELL_PAD.right) as string[]).length);
+  });
+  return lines * pt(S.min + 0.5) * 1.15 + CELL_PAD.top + CELL_PAD.bottom + 0.5;
+}
+
 function drawPickTable(
   doc: Doc,
   autoTable: AutoTable,
   startY: number,
+  layout: PickLayout,
   head: unknown[][],
   body: string[][],
   foot: unknown[][] | null,
 ): number {
-  const labelRow = head.findIndex((r) => r === A_HEAD);
-  if (startY + (head.length + 1) * ROW_EST > TABLE_BOTTOM) { doc.addPage(); startY = CONT_TOP_A; }
+  const labelRow = head.findIndex((r) => r === layout.head);
+  const tickCol = layout.head.length - 1;
+  const firstRowH = body[0] ? estimatePickRowH(doc, layout, body[0]) : ROW_EST;
+  const headH = head.reduce<number>((n, r) => {
+    const only = r.length === 1 ? (r[0] as { content?: unknown }) : null;
+    if (!only || typeof only.content !== 'string') return n + ROW_EST;
+    font(doc, S.min + 0.5, 'bold');
+    const lines = (doc.splitTextToSize(only.content, CONTENT_W - CELL_PAD.left - CELL_PAD.right) as string[]).length;
+    return n + Math.max(ROW_EST, lines * pt(S.min + 0.5) * 1.15 + CELL_PAD.top + CELL_PAD.bottom + 0.5);
+  }, 0);
+  if (startY + headH + firstRowH > TABLE_BOTTOM) { doc.addPage(); startY = CONT_TOP_A; }
   autoTable(doc, {
     ...baseTable({ startY, contTop: CONT_TOP_A }),
     head,
     body,
     ...(foot ? { foot, showFoot: 'lastPage' } : {}),
     footStyles: { fillColor: false, textColor: T.ink, fontStyle: 'bold', fontSize: S.body },
-    columnStyles: A_COLS,
+    columnStyles: layout.cols,
     didDrawCell: (data: {
       section: string; row: { index: number }; column: { index: number };
       cell: { x: number; y: number; width: number; height: number };
@@ -310,32 +371,33 @@ function drawPickTable(
         if (data.row.index === labelRow) rule(doc, M, data.cell.y + data.cell.height, PAGE_W - M, RULE_HEAVY);
       }
       if (data.section === 'foot' && data.column.index === 0) rule(doc, M, data.cell.y, PAGE_W - M, RULE_HEAVY);
-      if (data.section === 'body' && data.column.index === 6) drawTickBox(doc, data.cell);
+      if (data.section === 'body' && data.column.index === tickCol) drawTickBox(doc, data.cell);
     },
   });
   return lastY(doc, startY);
 }
 
-function drawPartA(doc: Doc, autoTable: AutoTable, startY: number, sections: PickSection[]): number {
+function drawPartA(doc: Doc, autoTable: AutoTable, startY: number, sections: PickSection[], layout: PickLayout): number {
   let y = startY;
   if (sections.length === 0) {
     font(doc, S.body);
-    doc.text('Nothing to pick: no delivery order on this lorry has goods lines.', M, baselineOf(y, S.body));
+    doc.text(layout.emptyText, M, baselineOf(y, S.body));
     return y + 8;
   }
   const total = sections.reduce((n, s) => n + s.units, 0);
   const totalFoot = [[
     { content: 'TOTAL TO PICK', colSpan: 4 },
     { content: qtyText(total), styles: { halign: 'right' } },
-    { content: unitsWord(total), colSpan: 2, styles: { fontStyle: 'normal', fontSize: S.min } },
+    { content: unitsWord(total), colSpan: layout.head.length - 5, styles: { fontStyle: 'normal', fontSize: S.min } },
   ]];
   sections.forEach((section, si) => {
     const lastSection = si === sections.length - 1;
     if (section.category !== 'SOFA') {
-      y = drawPickTable(doc, autoTable, y, [sectionHeadRow(section), A_HEAD], pickBody(section.rows), lastSection ? totalFoot : null) + 2;
+      y = drawPickTable(doc, autoTable, y, layout, [sectionHeadRow(section, layout), layout.head], pickBody(section.rows, layout), lastSection ? totalFoot : null) + 2;
       return;
     }
     section.groups.forEach((g, gi) => {
+      const lorry = layout.lorryOf ? layout.lorryOf([g.stop_no]).join(', ') : null;
       const soRow = [{
         content: [
           g.so_doc_no ?? 'No SO',
@@ -343,13 +405,14 @@ function drawPartA(doc: Doc, autoTable: AutoTable, startY: number, sections: Pic
           g.customer_name ?? 'No customer name',
           `${g.pieces} ${g.pieces === 1 ? 'piece' : 'pieces'}`,
           `PO ${g.pos.length > 0 ? g.pos.join(', ') : DASH}`,
-        ].join(' · '),
-        colSpan: 7,
+          lorry ? `Lorry ${lorry}` : null,
+        ].filter(Boolean).join(' · '),
+        colSpan: layout.head.length,
         styles: { fontStyle: 'bold', fontSize: S.min + 0.5, halign: 'left' },
       }];
-      const head = gi === 0 ? [sectionHeadRow(section), A_HEAD, soRow] : [soRow];
+      const head = gi === 0 ? [sectionHeadRow(section, layout), layout.head, soRow] : [soRow];
       const lastGroup = gi === section.groups.length - 1;
-      y = drawPickTable(doc, autoTable, y, head, pickBody(g.rows), lastSection && lastGroup ? totalFoot : null) + (lastGroup ? 2 : 0);
+      y = drawPickTable(doc, autoTable, y, layout, head, pickBody(g.rows, layout), lastSection && lastGroup ? totalFoot : null) + (lastGroup ? 2 : 0);
     });
   });
   return y + 3;
@@ -530,7 +593,7 @@ export async function renderPackingListInto(
 
   y = drawPartHeading(doc, y, 'PART A · PICK BY CATEGORY',
     'Take everything below in one go. Mattress and accessories are counted together; every bedframe and sofa piece has its own line, rack and PO.');
-  y = drawPartA(doc, autoTable, y, buildPickSections(list.stops, (it) => variantText(it, fabric)));
+  y = drawPartA(doc, autoTable, y, buildPickSections(list.stops, (it) => variantText(it, fabric)), LORRY_LAYOUT);
 
   if (y + PART_B_MIN_ROOM > TABLE_BOTTOM) { doc.addPage(); y = CONT_TOP_A; } else { y += 3; }
   y = drawPartHeading(doc, y, 'PART B · LOAD BY CUSTOMER',
@@ -546,7 +609,7 @@ export async function renderPackingListInto(
     doc.setPage(p);
     const pageNo = p - startPage + 1;
     const footRight = `${plate} · ${dateText} · Page : ${pageNo} of ${total}`;
-    if (p > startPage) drawRunningHeader(doc, plate, [dateText, ...crew]);
+    if (p > startPage) drawRunningHeader(doc, `PACKING LIST · Lorry : ${plate}`, [dateText, ...crew]);
     if (p === pageCount) {
       drawSignatureClosing(doc, {
         titles: ['Picked By (Warehouse)', 'Loaded By (Helper)', 'Driver Signature'],
@@ -561,10 +624,9 @@ export async function renderPackingListInto(
   setInk(doc, T.ink);
 }
 
-function drawRunningHeader(doc: Doc, plate: string, rightParts: string[]): void {
+function drawRunningHeader(doc: Doc, left: string, rightParts: string[]): void {
   font(doc, S.body, 'bold');
   setInk(doc, T.ink);
-  const left = `PACKING LIST · Lorry : ${plate}`;
   doc.text(left, M, baselineOf(M, S.body));
   const room = CONTENT_W - doc.getTextWidth(left) - 6;
   font(doc, S.min);
@@ -584,10 +646,10 @@ async function newDoc(): Promise<{ doc: Doc; autoTable: AutoTable }> {
   return { doc: new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: DO_PAGE_FORMAT }), autoTable };
 }
 
-async function runUrlFor(tripId: string): Promise<string | null> {
-  if (typeof window === 'undefined') return null;
+async function runUrlFor(list: Pick<PackingListRow, 'trip_id' | 'source'>): Promise<string | null> {
+  if (typeof window === 'undefined' || list.source !== 'trip') return null;
   const { armPackingScanToken } = await import('./packing-scan-token-arm');
-  return packingRunUrl(window.location.origin, await armPackingScanToken(tripId));
+  return packingRunUrl(window.location.origin, await armPackingScanToken(list.trip_id));
 }
 
 /** One lorry's packing list -> its own file / print job / preview tab. */
@@ -596,7 +658,7 @@ export async function generatePackingListPdf(
   opts: { date: string; action: PdfAction },
 ): Promise<void> {
   const { doc, autoTable } = await newDoc();
-  await renderPackingListInto(doc, autoTable, list, { date: opts.date, runUrl: await runUrlFor(list.trip_id), logo: null });
+  await renderPackingListInto(doc, autoTable, list, { date: opts.date, runUrl: await runUrlFor(list), logo: null });
   deliverPdf(doc, packingListFileName(list, list.trip_date ?? opts.date), opts.action);
 }
 
@@ -610,7 +672,135 @@ export async function generatePackingListsPdf(
   for (let i = 0; i < lists.length; i += 1) {
     if (i > 0) doc.addPage();
     const list = lists[i]!;
-    await renderPackingListInto(doc, autoTable, list, { date: opts.date, runUrl: await runUrlFor(list.trip_id), logo: null });
+    await renderPackingListInto(doc, autoTable, list, { date: opts.date, runUrl: await runUrlFor(list), logo: null });
   }
   deliverPdf(doc, `packing-lists-${opts.date}.pdf`, opts.action);
+}
+
+
+/** "KL-SEL-2026-11-28.pdf". */
+export function packingRegionFileName(region: Pick<PackingRegionRow, 'label' | 'region'>, date: string): string {
+  return `${safeName((region.label || region.region).trim() || 'region')}-${date}.pdf`;
+}
+
+function drawRegionSummary(doc: Doc, top: number, region: PackingRegionRow): number {
+  return drawInfoBox(doc, top, region.label || region.region, [
+    { caption: 'Region', rows: [] },
+    {
+      caption: 'This region',
+      rows: [
+        ['DOs', String(region.do_count), true],
+        ['Customers', String(region.customer_count), true],
+        ['Total', unitsLabel(region.units), true],
+      ],
+    },
+    {
+      caption: 'Lorries',
+      rows: [
+        ['Plates', region.lorry_plates.length > 0 ? region.lorry_plates.join(', ') : 'None yet', true],
+        ['No lorry', `${region.not_arranged} of ${region.do_count} DO`, true],
+      ],
+    },
+  ]);
+}
+
+const KEY_HEAD = ['NO', COL.cust, 'DO NO', 'SO NO', COL.lorry, 'UNITS'];
+const KEY_COLS = {
+  0: { cellWidth: 9, halign: 'center' as const, fontStyle: 'bold' as const },
+  1: { cellWidth: 'auto' as const },
+  2: { cellWidth: 34 },
+  3: { cellWidth: 34 },
+  4: { cellWidth: 26 },
+  5: { cellWidth: 13, halign: 'right' as const, fontStyle: 'bold' as const },
+};
+
+function drawCustomerKey(doc: Doc, autoTable: AutoTable, startY: number, region: PackingRegionRow): number {
+  const title = [{ content: 'CUSTOMERS IN THIS REGION', colSpan: KEY_HEAD.length, styles: { fontStyle: 'bold', fontSize: S.body, halign: 'left' } }];
+  let y = startY;
+  if (y + 3 * ROW_EST > TABLE_BOTTOM) { doc.addPage(); y = CONT_TOP_A; }
+  autoTable(doc, {
+    ...baseTable({ startY: y, contTop: CONT_TOP_A }),
+    head: [title, KEY_HEAD],
+    body: region.dos.map((d, i) => [
+      String(i + 1),
+      d.customer_name ?? 'No customer name',
+      d.do_number ?? DASH,
+      d.so_doc_no ?? DASH,
+      regionLorryLabel(d),
+      qtyText(d.units),
+    ]),
+    columnStyles: KEY_COLS,
+    didDrawCell: (data: { section: string; row: { index: number }; column: { index: number }; cell: { y: number; height: number } }) => {
+      if (data.section !== 'head' || data.column.index !== 0) return;
+      if (data.row.index === 0) rule(doc, M, data.cell.y, PAGE_W - M, RULE_HEAVY);
+      if (data.row.index === 1) rule(doc, M, data.cell.y + data.cell.height, PAGE_W - M, RULE_HEAVY);
+    },
+  });
+  return lastY(doc, y) + 3;
+}
+
+/** Draw ONE region's packing list into `doc`, starting on its current page: Part A with a LORRY
+ *  column, then a customer key so the CUSTOMER numbers mean something without a Part B (a region
+ *  is not one lorry's route, so it has no loading order). */
+export async function renderPackingRegionInto(
+  doc: Doc,
+  autoTable: AutoTable,
+  region: PackingRegionRow,
+  opts: { date: string; logo: BrandingLogo | null },
+): Promise<void> {
+  await ensurePdfCjkFont(doc, [region]);
+  const fabric = await loadCustomerFabricMaps(region.dos.flatMap((d) => d.items));
+  const startPage = doc.getNumberOfPages();
+  const label = region.label || region.region;
+  const day = weekday(opts.date);
+  const dateText = fmtDocDate(opts.date);
+
+  const ruleY = drawLetterhead(doc, {
+    titleLines: ['PACKING LIST'],
+    docNoText: `Region : ${label}`,
+    subLine: `Delivery Date ${dateText}${day ? ` (${day})` : ''}`,
+    qr: null,
+    logo: opts.logo,
+  });
+  let y = drawRegionSummary(doc, ruleY + 4, region) + 5;
+  y = drawPartHeading(doc, y, 'PICK BY CATEGORY',
+    'Every delivery order in this region for the day, lorry or not. The CUSTOMER number is the key at the end; LORRY shows the plate, or Not arranged.');
+  y = drawPartA(doc, autoTable, y, buildPickSections(regionStops(region), (it) => variantText(it, fabric)), regionLayout(region));
+  y = drawCustomerKey(doc, autoTable, y, region);
+
+  if (y > CLOSING_TOP) doc.addPage();
+
+  const pageCount = doc.getNumberOfPages();
+  const total = pageCount - startPage + 1;
+  for (let p = startPage; p <= pageCount; p += 1) {
+    doc.setPage(p);
+    const footRight = `${label} · ${dateText} · Page : ${p - startPage + 1} of ${total}`;
+    if (p > startPage) drawRunningHeader(doc, `PACKING LIST · Region : ${label}`, [dateText, `${region.do_count} DO`]);
+    if (p === pageCount) {
+      drawSignatureClosing(doc, {
+        titles: ['Picked By (Warehouse)', 'Checked By'],
+        fields: ['Name', 'Time'],
+        footLeft: 'By signing, the warehouse confirms every ticked item was picked.',
+        footRight,
+      });
+    } else {
+      drawFooterLine(doc, COMPANY.name, footRight);
+    }
+  }
+  setInk(doc, T.ink);
+}
+
+/** Regions -> one file, each region starting on its own page. */
+export async function generatePackingRegionsPdf(
+  regions: readonly PackingRegionRow[],
+  opts: { date: string; action: PdfAction },
+): Promise<void> {
+  if (regions.length === 0) return;
+  const { doc, autoTable } = await newDoc();
+  for (let i = 0; i < regions.length; i += 1) {
+    if (i > 0) doc.addPage();
+    await renderPackingRegionInto(doc, autoTable, regions[i]!, { date: opts.date, logo: null });
+  }
+  const name = regions.length === 1 ? packingRegionFileName(regions[0]!, opts.date) : `packing-regions-${opts.date}.pdf`;
+  deliverPdf(doc, name, opts.action);
 }
