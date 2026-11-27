@@ -48,10 +48,15 @@ export async function rateLimitRefusal(db: Db, userId: number, now: number): Pro
 
 
 export const ANSWER_CACHE_TTL_MS = 30_000;
+/** The heavy summaries keep an answer a little longer (round 4c, P4): still per person and per arguments. */
+export const HEAVY_CACHE_TTL_MS = 60_000;
+export const HEAVY_TOOLS: ReadonlySet<string> = new Set(["company_report", "outlet_sales", "inventory_summary", "after_sales_sla"]);
+/** How long one tool's answer may be served again to the same person with the same arguments. */
+export const cacheTtlFor = (tool: string): number => (HEAVY_TOOLS.has(tool) ? HEAVY_CACHE_TTL_MS : ANSWER_CACHE_TTL_MS);
 const ANSWER_CACHE_MAX = 300;
 
 export class TtlCache<T> {
-  private readonly m = new Map<string, { at: number; v: T }>();
+  private readonly m = new Map<string, { at: number; v: T; ttl: number }>();
   constructor(
     private readonly ttlMs: number,
     private readonly max: number,
@@ -59,18 +64,19 @@ export class TtlCache<T> {
   get(key: string, now: number): T | undefined {
     const hit = this.m.get(key);
     if (!hit) return undefined;
-    if (now - hit.at >= this.ttlMs) {
+    if (now - hit.at >= hit.ttl) {
       this.m.delete(key);
       return undefined;
     }
     return hit.v;
   }
-  set(key: string, v: T, now: number): void {
+  set(key: string, v: T, now: number, ttlMs: number = this.ttlMs): void {
+    this.m.delete(key);
     if (this.m.size >= this.max) {
       const oldest = this.m.keys().next().value;
       if (oldest !== undefined) this.m.delete(oldest);
     }
-    this.m.set(key, { at: now, v });
+    this.m.set(key, { at: now, v, ttl: Math.min(ttlMs, this.ttlMs) });
   }
   get size(): number {
     return this.m.size;
@@ -86,13 +92,13 @@ export const answerCacheKey = (userId: number, company: string | null, tool: str
   `${userId}|${company ?? ""}|${tool}|${stableArgs(args)}`;
 
 type Cacheable = { result: { isError?: boolean }; status: number };
-const answerCache = new TtlCache<unknown>(ANSWER_CACHE_TTL_MS, ANSWER_CACHE_MAX);
+const answerCache = new TtlCache<unknown>(HEAVY_CACHE_TTL_MS, ANSWER_CACHE_MAX);
 
-/** Run `make` unless the same person asked the same thing within 30 s; only successful answers are kept. */
-export async function cachedAnswer<T extends Cacheable>(key: string, now: number, make: () => Promise<T>): Promise<T & { cached?: true }> {
+/** Run `make` unless the same person asked the same thing within `ttlMs` (30 s, 60 s for the heavy summaries); only successful answers are kept. */
+export async function cachedAnswer<T extends Cacheable>(key: string, now: number, make: () => Promise<T>, ttlMs: number = ANSWER_CACHE_TTL_MS): Promise<T & { cached?: true }> {
   const hit = answerCache.get(key, now) as T | undefined;
   if (hit) return { ...hit, cached: true };
   const v = await make();
-  if (!v.result.isError && v.status < 400) answerCache.set(key, v, now);
+  if (!v.result.isError && v.status < 400) answerCache.set(key, v, now, ttlMs);
   return v;
 }

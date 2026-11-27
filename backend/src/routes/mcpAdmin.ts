@@ -7,7 +7,7 @@ import { usersHoldingPermission } from "../services/permissionHolders";
 import { postPersonalNotice } from "../services/personalNotice";
 import { jsonKeys, leakCheckPaths, SECRET_KEY, SENSITIVE_KEY } from "../services/mcp-access";
 import {
-  actionsEnabled,
+  actionSwitches,
   appLabel,
   createCode,
   getAuthRequest,
@@ -19,6 +19,7 @@ import {
   revokeToken,
   revokeUserTokens,
   setActionsEnabled,
+  setActionSwitch,
   takeAuthRequest,
 } from "../services/mcp-store";
 import { RATE_PER_DAY, RATE_PER_MINUTE } from "../services/mcp-ratelimit";
@@ -202,12 +203,13 @@ app.get("/admin/overview", async (c) => {
       )
       .bind(dayAgo, dayAgo, nowIso)
       .first<Record<string, unknown>>(),
-    actionsEnabled(db),
+    actionSwitches(db),
   ]);
   const pos = (r: Record<string, unknown>) => s(r, "position_name") || "—";
   return c.json({
     connectorUrl: connectorUrl(c),
-    actionsEnabled: actionsOn,
+    actionsEnabled: actionsOn.master,
+    actionSwitches: { mailReply: actionsOn.mail_reply, note: actionsOn.note },
     limits: { perMinute: RATE_PER_MINUTE, perDay: RATE_PER_DAY },
     stats: { connectedPeople: num(stats ?? {}, "people"), callsToday: num(stats ?? {}, "calls_24h"), refusedToday: num(stats ?? {}, "refused_24h"), waiting: requests.results.length },
     requests: requests.results.map((r) => ({ id: s(r, "id"), userId: num(r, "user_id"), name: s(r, "name"), position: pos(r), reason: s(r, "reason"), createdAt: iso(r.created_at) })),
@@ -282,8 +284,15 @@ app.post("/admin/revoke", async (c) => {
 app.post("/admin/actions", async (c) => {
   const denied = denyUnlessAdmin(c);
   if (denied) return denied;
-  const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown; kind?: unknown };
   if (typeof body.enabled !== "boolean") return c.json({ error: "enabled must be true or false" }, 400);
+  if (body.kind === "mail_reply" || body.kind === "note") {
+    await setActionSwitch(c.env.DB, body.kind, body.enabled);
+    const what = body.kind === "mail_reply" ? "Mail Center replies" : "service-case notes";
+    await audit(c, { action: `ai_connector.actions.${body.kind}`, entityType: "ai_connector", entityId: c.get("user").id, summary: `AI action (${what}) turned ${body.enabled ? "on" : "off"}` });
+    return c.json({ ok: true, kind: body.kind, enabled: body.enabled });
+  }
+  if (body.kind !== undefined) return c.json({ error: "kind must be mail_reply or note" }, 400);
   await setActionsEnabled(c.env.DB, body.enabled);
   await audit(c, { action: "ai_connector.actions", entityType: "ai_connector", entityId: c.get("user").id, summary: `AI actions (meetings, email) turned ${body.enabled ? "on" : "off"}` });
   return c.json({ ok: true, actionsEnabled: body.enabled });

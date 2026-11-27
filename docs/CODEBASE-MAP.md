@@ -275,6 +275,14 @@ secret-guarded ingest fed by the standalone `mail-sync/` poller;
 `routes/mail-center.ts` is the authed read/reply/compose surface; the pages are
 `pages/MailCenter/*` and `mobile/MobileMailCenter.tsx`.
 
+**AI Connector (MCP).** Staff connect Claude / ChatGPT with their own login at `/api/mcp`
+(`routes/mcp.ts`, admin `routes/mcpAdmin.ts`, logic `services/mcp-*.ts`). Every read is an
+in-process GET as the person; the only writes are confirm-first actions through
+`services/mcp-inner.ts ACTION_ALLOWLIST` (meeting, email, Mail Center reply, service-case
+note), each behind an admin switch. Tool list, prompts and output schemas per role:
+`services/mcp-round4c.ts`; actions: `services/mcp-write-actions.ts`. Page `pages/AiConnector.tsx`.
+Rules: `docs/modules/ai-connector.md`.
+
 **Meetings.** Meeting rooms shared by every company and ERP. Rooms, meetings and guest
 links live in the Houzs IT Hub; `routes/meetings.ts` relays to it (staff at `/api/meetings`,
 guests at `/api/public/meetings`), `services/meetingsDirectory.ts` sends the staff list hourly.

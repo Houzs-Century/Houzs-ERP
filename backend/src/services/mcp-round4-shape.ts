@@ -262,23 +262,39 @@ export function summariseServiceCases(rows: readonly Obj[], total: number, prevT
 }
 
 
+/** One outlet name however it was typed: trimmed, single-spaced, upper case ("Penang Waterfront ..." and "PENANG WATERFRONT ..." are one outlet). */
+export const outletKey = (venue: unknown): string => str(venue).replace(/\s+/g, " ").toUpperCase() || "(NO SHOWROOM)";
+
+type OutletFold = Map<string, { orders: number; sen: number; spellings: Map<string, number> }>;
+
+/** The Sales Report's SO rows summed per outlet, names merged case-insensitively; each outlet remembers how its name was spelt. */
+export function foldOutlets(body: unknown): OutletFold {
+  const m: OutletFold = new Map();
+  for (const r of arr(obj(body).rows)) {
+    const k = outletKey(r.venue);
+    const g = m.get(k) ?? { orders: 0, sen: 0, spellings: new Map<string, number>() };
+    g.orders += 1;
+    g.sen += num(r.amount_sen);
+    const raw = str(r.venue);
+    if (raw) g.spellings.set(raw, (g.spellings.get(raw) ?? 0) + 1);
+    m.set(k, g);
+  }
+  return m;
+}
+
+/** The Sales Report page for one outlet over a window: filtered to the outlet when it has one spelling (the report filters on the exact name). */
+export function outletLink(origin: string, r: Range, spellings: readonly string[]): string {
+  const q = new URLSearchParams({ stage: "so", from: r.from, to: r.to });
+  if (spellings.length === 1) q.set("venue", spellings[0]);
+  return `${origin}/reports/fair-report?${q.toString()}`;
+}
+
 /** H10: three reads of the Sales Report's SO stage (the window, the previous period, the same days last month) → per outlet. */
-export function summariseOutletPeriod(cur: unknown, prev: unknown, lastMonth: unknown, p: Period, today: string) {
-  const fold = (body: unknown) => {
-    const m = new Map<string, { orders: number; sen: number }>();
-    for (const r of arr(obj(body).rows)) {
-      const k = str(r.venue) || "(no showroom)";
-      const g = m.get(k) ?? { orders: 0, sen: 0 };
-      g.orders += 1;
-      g.sen += num(r.amount_sen);
-      m.set(k, g);
-    }
-    return m;
-  };
-  const c = fold(cur);
-  const pv = prev === null ? null : fold(prev);
-  const lm = lastMonth === null ? null : fold(lastMonth);
-  const total = (m: Map<string, { orders: number; sen: number }> | null) => (m ? [...m.values()].reduce((a, g) => ({ orders: a.orders + g.orders, sen: a.sen + g.sen }), { orders: 0, sen: 0 }) : null);
+export function summariseOutletPeriod(cur: unknown, prev: unknown, lastMonth: unknown, p: Period, today: string, origin: string) {
+  const c = foldOutlets(cur);
+  const pv = prev === null ? null : foldOutlets(prev);
+  const lm = lastMonth === null ? null : foldOutlets(lastMonth);
+  const total = (m: OutletFold | null) => (m ? [...m.values()].reduce((a, g) => ({ orders: a.orders + g.orders, sen: a.sen + g.sen }), { orders: 0, sen: 0 }) : null);
   const tc = total(c)!;
   const tp = total(pv);
   const tl = total(lm);
@@ -286,21 +302,24 @@ export function summariseOutletPeriod(cur: unknown, prev: unknown, lastMonth: un
   const names = [...new Set([...c.keys(), ...(pv?.keys() ?? [])])];
   const outlets = names
     .map((outlet) => {
-      const g = c.get(outlet) ?? { orders: 0, sen: 0 };
+      const g = c.get(outlet) ?? { orders: 0, sen: 0, spellings: new Map<string, number>() };
       const gp = pv?.get(outlet);
       const gl = lm?.get(outlet);
+      const spellings = [...new Set([...g.spellings.keys(), ...(gp?.spellings.keys() ?? [])])];
       return {
         outlet,
         orders: g.orders,
         salesRm: rm(g.sen),
         ...(pv ? { previousRm: rm(gp?.sen ?? 0), changePct: change(g.sen, gp?.sen ?? 0) } : {}),
         ...(lm ? { sameDaysLastMonthRm: rm(gl?.sen ?? 0) } : {}),
+        ...(spellings.length > 1 ? { spelledAs: spellings } : {}),
+        url: outletLink(origin, p, spellings),
       };
     })
     .sort((a, b) => b.salesRm - a.salesRm || a.outlet.localeCompare(b.outlet));
   return {
     ...periodHead(p),
-    note: "Money in RM. Sales = sales orders not draft or cancelled, by SO date, per showroom / outlet (the Sales Report's Sales Order stage), for the company asked (company 2990 = the 2990's book).",
+    note: "Money in RM. Sales = sales orders not draft or cancelled, by SO date, per showroom / outlet (the Sales Report's Sales Order stage), for the company asked (company 2990 = the 2990's book). Outlet names typed in different case are one outlet, shown in upper case; spelledAs lists the spellings merged.",
     totals: {
       orders: tc.orders,
       salesRm: rm(tc.sen),
@@ -310,6 +329,7 @@ export function summariseOutletPeriod(cur: unknown, prev: unknown, lastMonth: un
     },
     outlets: outlets.slice(0, 25),
     ...(outlets.length > 25 ? { moreOutlets: outlets.length - 25 } : {}),
+    url: outletLink(origin, p, []),
   };
 }
 
@@ -440,22 +460,21 @@ export function summariseCompanyReport(parts: {
   cases: unknown | null;
   notAvailable: string[];
   today: string;
+  origin: string;
+  window: Range;
 }) {
   const fold = (body: unknown) => {
-    const m = new Map<string, number>();
-    let orders = 0;
-    for (const r of arr(obj(body).rows)) {
-      const k = str(r.venue) || "(no showroom)";
-      m.set(k, (m.get(k) ?? 0) + num(r.amount_sen));
-      orders += 1;
-    }
-    return { m, orders, sen: [...m.values()].reduce((a, b) => a + b, 0) };
+    const f = foldOutlets(body);
+    const m = new Map([...f.entries()].map(([k, g]) => [k, g.sen]));
+    return { m, f, orders: [...f.values()].reduce((a, g) => a + g.orders, 0), sen: [...m.values()].reduce((a, b) => a + b, 0) };
   };
   const sc = parts.salesCur === null ? null : fold(parts.salesCur);
   const sp = parts.salesPrev === null ? null : fold(parts.salesPrev);
   const agingShort = (body: unknown, party: "supplier" | "customer") => {
     const a = summariseAging(body, parts.today, party);
-    return { totalRm: a.totalRm, aged: a.aged, pastDueRm: a.pastDueRm, dueThisWeekRm: a.dueThisWeekRm, biggest: (party === "supplier" ? (a as Obj).bySupplier : (a as Obj).byCustomer) as unknown[] };
+    const url = `${parts.origin}/scm/accounting?tab=${party === "supplier" ? "ap" : "ar"}`;
+    const biggest = ((party === "supplier" ? (a as Obj).bySupplier : (a as Obj).byCustomer) as Obj[]).map((r) => ({ ...r, url }));
+    return { totalRm: a.totalRm, aged: a.aged, pastDueRm: a.pastDueRm, dueThisWeekRm: a.dueThisWeekRm, biggest, url };
   };
   const cs = obj(parts.cases);
   return {
@@ -469,7 +488,7 @@ export function summariseCompanyReport(parts: {
           orders: sc.orders,
           salesRm: rm(sc.sen),
           ...(sp ? { previousRm: rm(sp.sen), changePct: change(sc.sen, sp.sen) } : {}),
-          byOutlet: [...sc.m.entries()].map(([outlet, sen]) => ({ outlet, salesRm: rm(sen), ...(sp ? { previousRm: rm(sp.m.get(outlet) ?? 0) } : {}) })).sort((a, b) => b.salesRm - a.salesRm).slice(0, 15),
+          byOutlet: [...sc.m.entries()].map(([outlet, sen]) => ({ outlet, salesRm: rm(sen), ...(sp ? { previousRm: rm(sp.m.get(outlet) ?? 0) } : {}), url: outletLink(parts.origin, parts.window, [...(sc.f.get(outlet)?.spellings.keys() ?? [])]) })).sort((a, b) => b.salesRm - a.salesRm).slice(0, 15),
         }
       : null,
     receivables: parts.ar === null ? null : agingShort(parts.ar, "customer"),

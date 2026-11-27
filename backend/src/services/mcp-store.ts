@@ -291,6 +291,36 @@ export async function setActionsEnabled(db: Db, on: boolean): Promise<void> {
     .run();
 }
 
+/** The per-action switches (owner 2026-11-26, round 4b): each new write action has its own, OFF until an admin turns it on. */
+export const ACTION_SWITCH_KEYS = { mail_reply: "mcp_action_mail_reply_enabled", note: "mcp_action_note_enabled" } as const;
+export type SwitchedKind = keyof typeof ACTION_SWITCH_KEYS;
+export type ActionSwitches = { master: boolean } & Record<SwitchedKind, boolean>;
+export const ALL_OFF: ActionSwitches = { master: false, mail_reply: false, note: false };
+
+/** The master switch and every per-action switch in one read. A failed read is all OFF. */
+export async function actionSwitches(db: Db): Promise<ActionSwitches> {
+  const keys = [ACTIONS_KEY, ...Object.values(ACTION_SWITCH_KEYS)];
+  try {
+    const r = await db.prepare(`SELECT key, value FROM app_settings WHERE key IN (${keys.map(() => "?").join(", ")})`).bind(...keys).all<Record<string, unknown>>();
+    const on = new Set(r.results.filter((x) => str(x, "value") === "true").map((x) => str(x, "key")));
+    return { master: on.has(ACTIONS_KEY), mail_reply: on.has(ACTION_SWITCH_KEYS.mail_reply), note: on.has(ACTION_SWITCH_KEYS.note) };
+  } catch (e) {
+    console.warn("[mcp] action switches read failed, treating as off:", e instanceof Error ? e.message : String(e));
+    return ALL_OFF;
+  }
+}
+
+/** Turn one per-action switch on or off (the master switch is setActionsEnabled). */
+export async function setActionSwitch(db: Db, kind: SwitchedKind, on: boolean): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    )
+    .bind(ACTION_SWITCH_KEYS[kind], on ? "true" : "false", new Date().toISOString())
+    .run();
+}
+
 export type PendingAction = { id: string; kind: string; payload: Record<string, unknown>; summary: string };
 
 export async function createPendingAction(

@@ -50,7 +50,6 @@ import { grnPdf, PdfReadError, purchaseOrderPdf, salesInvoicePdf, salesOrderPdf,
 import { docTitle, fetchKind, myToday, parseFetchId, pickFields, PROMPTS, promptText, resolveWindow, searchResults, singleMonth, summariseDelivery, summariseSales, type Window } from "../services/mcp-quick";
 import { classifyPath, moduleCatalog, readablePaths, redactMoney, redactSecrets, type RouteInfo } from "../services/mcp-access";
 import {
-  actionsEnabled,
   claimPendingAction,
   confirmedLastDay,
   consumeCode,
@@ -69,7 +68,11 @@ import {
   resolveAccessToken,
   validRedirectUri,
 } from "../services/mcp-store";
-import { answerCacheKey, cachedAnswer, RATE_LIMITED_NOTE, rateLimitRefusal } from "../services/mcp-ratelimit";
+import { answerCacheKey, cachedAnswer, cacheTtlFor, RATE_LIMITED_NOTE, rateLimitRefusal } from "../services/mcp-ratelimit";
+import { writeAudit } from "../services/audit";
+import { actionSwitches, type ActionSwitches } from "../services/mcp-store";
+import { caseIdFrom, caseIdFromList, isActionKind, kindAllowed, kindOffText, pickThread, proposeMailReply, proposeNote, THREAD_ID_RE, WRITE_TOOLS, writeOutcome, type WriteKind, type WriteProposal } from "../services/mcp-write-actions";
+import { ROLE_PROMPTS, rolePromptText, visibleRolePrompts, visibleTools, withOutputSchemas, withStructured } from "../services/mcp-round4c";
 import { CACHEABLE_TOOLS, isRound3Tool, mcpXlsxDownload, ROUND3_INSTRUCTIONS, ROUND3_TOOLS, runRound3Tool } from "../services/mcp-round3";
 
 type HonoEnv = { Bindings: Env };
@@ -240,7 +243,7 @@ Only when no quick answer fits: list_modules, then list_endpoints for a module, 
 Two companies share the ERP: HOUZS (default) and 2990 (the 2990's POS). Pass company "2990" to sales_summary, delivery_summary, search, fetch or erp_get for 2990 data, if this person may see it.
 Money in the ERP is integer sen (RM x 100) unless a field says RM. Dates are Malaysia time.
 If a call says "not available to your role" or "You don't have permission", tell the person they do not have permission for that data.
-ACTIONS (only booking a meeting and sending an email; never orders, money, stock, approvals or deletes): call propose_meeting or propose_email, show the person the summary it returns word for word, and ask them to confirm. Only call confirm_action after they explicitly say yes in their own reply. If they want changes, propose again. If a tool says AI actions are switched off, tell them their admin has not turned actions on.`;
+ACTIONS (only booking a meeting, sending an email, replying to a Mail Center email and adding a note to a service case; never orders, money, stock, prices, payroll, approvals or deletes): call propose_meeting, propose_email, propose_mail_reply or propose_note, show the person the summary it returns word for word, and ask them to confirm. Only call confirm_action after they explicitly say yes in their own reply. If they want changes, propose again. If a tool says an action is switched off, tell them their admin has not turned it on.`;
 
 const readOnly = { readOnlyHint: true, openWorldHint: false };
 const actionHint = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
@@ -378,10 +381,11 @@ export const MCP_TOOLS = [
     },
     annotations: actionHint,
   },
+  ...WRITE_TOOLS,
   {
     name: "confirm_action",
     title: "Do a confirmed action",
-    description: "Book the meeting or send the email prepared by propose_meeting / propose_email. ONLY after the person has seen the summary and explicitly said yes. Each confirmationId works once, within 10 minutes.",
+    description: "Do the action prepared by a propose_* tool (book the meeting, send the email or the reply, add the note). ONLY after the person has seen the summary and explicitly said yes. Each confirmationId works once, within 10 minutes.",
     inputSchema: { type: "object", properties: { confirmationId: { type: "string" } }, required: ["confirmationId"], additionalProperties: false },
     annotations: actionHint,
   },
@@ -678,7 +682,8 @@ async function serverPdfTool(
 
 async function proposeTool(c: Context<HonoEnv>, id: Identity, token: string, kind: ActionKind, args: Record<string, unknown>, company: string | null): Promise<Outcome> {
   let target = `propose ${kind}`;
-  if (!(await actionsEnabled(c.env.DB))) return { result: text(ACTIONS_OFF, true), status: 403, note: "actions off", target };
+  const sw = await actionSwitches(c.env.DB);
+  if (!kindAllowed(kind, sw)) return { result: text(kindOffText(kind, sw), true), status: 403, note: "actions off", target };
   let p: Proposal;
   if (kind === "meeting") {
     const boot = await readValue(c, token, "/api/meetings/bootstrap", undefined, company);
@@ -711,26 +716,86 @@ async function jsonOrNull(res: Response, what: string): Promise<unknown> {
   }
 }
 
+async function threadIdFor(c: Context<HonoEnv>, token: string, args: Record<string, unknown>, company: string | null): Promise<{ ok: true; id: string } | { ok: false; out: Outcome }> {
+  const target = "propose mail_reply";
+  const given = typeof args.thread_id === "string" ? args.thread_id.trim() : "";
+  if (given) return THREAD_ID_RE.test(given) ? { ok: true, id: given } : { ok: false, out: { result: text("That is not a Mail Center thread id.", true), status: 400, note: "", target } };
+  const q = typeof args.thread_search === "string" ? args.thread_search.trim().slice(0, 100) : "";
+  if (q.length < 2) return { ok: false, out: { result: text("Give thread_id, or thread_search (subject, sender name or email) to find the email.", true), status: 400, note: "", target } };
+  const res = await innerGet(c, token, `/api/mail-center/threads?${new URLSearchParams({ q, page: "1", pageSize: "6" }).toString()}`, company);
+  if (res.status === 401 || res.status === 403) return { ok: false, out: { result: text("Not available to your role: you may not use the Mail Center.", true), status: res.status, note: "no permission", target } };
+  const list = res.ok ? await jsonOrNull(res, "mail threads") : null;
+  if (!res.ok || list === null) return { ok: false, out: { result: text(`Your Mail Center could not be searched (HTTP ${res.status}).`, true), status: 502, note: "threads unreadable", target } };
+  const pick = pickThread(list, q);
+  return pick.ok ? pick : { ok: false, out: { result: text(pick.error, true), status: 409, note: "pick a thread", target } };
+}
+
+async function proposeWriteTool(c: Context<HonoEnv>, id: Identity, token: string, kind: WriteKind, args: Record<string, unknown>, company: string | null): Promise<Outcome> {
+  let target = `propose ${kind}`;
+  const sw = await actionSwitches(c.env.DB);
+  if (!kindAllowed(kind, sw)) return { result: text(kindOffText(kind, sw), true), status: 403, note: "actions off", target };
+  let p: WriteProposal;
+  if (kind === "mail_reply") {
+    const tid = await threadIdFor(c, token, args, company);
+    if (!tid.ok) return tid.out;
+    const [det, snd] = await Promise.all([innerGet(c, token, `/api/mail-center/threads/${encodeURIComponent(tid.id)}`, company), innerGet(c, token, "/api/mail-center/compose/senders", company)]);
+    if (det.status === 401 || det.status === 403) return { result: text("Not available to your role: you may not use the Mail Center.", true), status: det.status, note: "no permission", target };
+    if (det.status === 404) return { result: text("That email is not in your Mail Center mailboxes.", true), status: 404, note: "thread not found", target };
+    const detail = det.ok ? await jsonOrNull(det, "mail thread") : null;
+    if (detail === null) return { result: text(`The email could not be read (HTTP ${det.status}).`, true), status: 502, note: "thread unreadable", target };
+    const senders = snd.ok ? ((await jsonOrNull(snd, "senders")) as { senders?: unknown } | null)?.senders : null;
+    p = proposeMailReply(args, detail, Array.isArray(senders) ? senders.map(String) : []);
+  } else {
+    if (args.record_type !== undefined && args.record_type !== "service_case") return { result: text("Only service cases take notes in the ERP (sales orders, purchase orders and customers have no note feature).", true), status: 400, note: "", target };
+    const ref = caseIdFrom(args.id);
+    if (!ref) return { result: text("Give the service case number or its id from search.", true), status: 400, note: "", target };
+    let caseId: string | null = "id" in ref ? ref.id : null;
+    if ("number" in ref) {
+      const found = await readValue(c, token, "/api/assr", { search: ref.number, per_page: 10 }, company);
+      if (!found.ok) return { result: text(found.status === 401 || found.status === 403 ? "You don't have access to service cases in the ERP." : found.message, true), status: found.status, note: found.note, target };
+      caseId = caseIdFromList(found.value, ref.number);
+      if (!caseId) return { result: text(`No service case numbered ${ref.number} that you may see.`, true), status: 404, note: "case not found", target };
+    }
+    const det = await readValue(c, token, `/api/assr/${caseId}`, undefined, company);
+    if (!det.ok) return { result: text(det.status === 401 || det.status === 403 ? "You don't have access to that service case in the ERP." : det.status === 404 ? "That service case is not in your scope or does not exist." : det.message, true), status: det.status, note: det.note, target };
+    p = proposeNote(args, det.value);
+  }
+  if (!p.ok) return { result: text(p.error, true), status: 400, note: p.error.slice(0, 120), target };
+  const confirmationId = await createPendingAction(c.env.DB, { tokenId: id.tokenId, userId: id.user.id, kind, payload: { company, body: p.payload, id: p.id, entity: p.entity }, summary: p.logLine, ttlMs: PENDING_TTL_MS });
+  target = `propose ${p.logLine}`;
+  return {
+    result: text(JSON.stringify({ confirmationId, expiresInMinutes: PENDING_TTL_MS / 60_000, summary: p.summary, next: "Show this summary to the person and ask them to confirm. Only call confirm_action after they explicitly say yes." })),
+    status: 200,
+    note: "",
+    target,
+  };
+}
+
 const UNKNOWN_CONFIRMATION = "That confirmation is unknown, expired (10 minutes), already used, or belongs to another connection. Propose it again.";
 
 async function confirmTool(c: Context<HonoEnv>, id: Identity, token: string, confirmationId: string): Promise<Outcome> {
   let target = "confirm";
-  if (!confirmationId) return { result: text("Give the confirmationId from propose_meeting or propose_email.", true), status: 400, note: "", target };
-  if (!(await actionsEnabled(c.env.DB))) return { result: text(ACTIONS_OFF, true), status: 403, note: "actions off", target };
+  if (!confirmationId) return { result: text("Give the confirmationId from the propose_* tool.", true), status: 400, note: "", target };
+  const sw: ActionSwitches = await actionSwitches(c.env.DB);
+  if (!sw.master) return { result: text(ACTIONS_OFF, true), status: 403, note: "actions off", target };
   if ((await confirmedLastDay(c.env.DB, id.user.id)) >= MAX_CONFIRMED_PER_DAY) {
     return { result: text(`You have reached the limit of ${MAX_CONFIRMED_PER_DAY} AI actions in 24 hours. Do this one in the ERP.`, true), status: 429, note: "daily limit", target };
   }
   const row = await claimPendingAction(c.env.DB, confirmationId, id.tokenId, id.user.id, "confirmed");
   if (!row) return { result: text(UNKNOWN_CONFIRMATION, true), status: 404, note: "unknown or used", target };
   target = `confirm ${row.summary}`;
-  const route = actionRoute(row.kind);
-  const kind = row.kind === "meeting" || row.kind === "email" ? row.kind : null;
+  const kind = isActionKind(row.kind) ? row.kind : null;
+  if (kind && !kindAllowed(kind, sw)) {
+    await finishPendingAction(c.env.DB, row.id, "failed", "switched off");
+    return { result: text(kindOffText(kind, sw), true), status: 403, note: "actions off", target };
+  }
+  const route = kind ? actionRoute(kind, typeof row.payload.id === "string" ? row.payload.id : null) : null;
   if (!route || !kind) {
     await finishPendingAction(c.env.DB, row.id, "failed", "unknown kind");
     return { result: text("That action cannot be done.", true), status: 400, note: "unknown kind", target };
   }
   const company = typeof row.payload.company === "string" ? row.payload.company : null;
-  armAction(row.id, kind, id.tokenId, Date.now());
+  armAction(row.id, kind, id.tokenId, route.path, Date.now());
   let res: Response;
   try {
     res = await innerCall(c, token, route.path, company, { actionId: row.id, method: route.method, body: row.payload.body });
@@ -738,15 +803,27 @@ async function confirmTool(c: Context<HonoEnv>, id: Identity, token: string, con
     disarmAction(row.id);
   }
   const body: unknown = await jsonOrNull(res, `confirm ${kind}`);
-  const out = actionOutcome(kind, res.status, body);
+  const out = kind === "meeting" || kind === "email" ? actionOutcome(kind, res.status, body) : writeOutcome(kind, res.status, body);
   await finishPendingAction(c.env.DB, row.id, out.ok ? "done" : "failed", out.ok ? `HTTP ${res.status}` : out.text);
+  if (out.ok) {
+    const entity = (row.payload.entity ?? null) as { type?: unknown; id?: unknown } | null;
+    await writeAudit(c.env, {
+      action: `ai_connector.action.${kind}`,
+      entityType: typeof entity?.type === "string" ? entity.type : kind,
+      entityId: typeof entity?.id === "string" ? entity.id : row.id,
+      summary: `Through the AI Connector (confirmed by the person): ${row.summary}`.slice(0, 500),
+      meta: { confirmationId: row.id, clientId: id.clientId, status: res.status },
+      actorId: id.user.id,
+      actorEmail: id.user.email,
+    });
+  }
   return { result: text(out.text, !out.ok), status: res.status, note: out.ok ? "" : out.text.slice(0, 120), target };
 }
 
 async function cancelTool(c: Context<HonoEnv>, id: Identity, confirmationId: string): Promise<Outcome> {
   const row = confirmationId ? await claimPendingAction(c.env.DB, confirmationId, id.tokenId, id.user.id, "cancelled") : null;
   if (!row) return { result: text(UNKNOWN_CONFIRMATION, true), status: 404, note: "unknown or used", target: "cancel" };
-  return { result: text("Cancelled. Nothing was booked or sent."), status: 200, note: "", target: `cancel ${row.summary}` };
+  return { result: text("Cancelled. Nothing was booked, sent or written."), status: 200, note: "", target: `cancel ${row.summary}` };
 }
 
 async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -766,7 +843,7 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
       note = RATE_LIMITED_NOTE;
     } else if (isRound3Tool(name)) {
       const run = () => runRound3Tool({ read: (p, q) => readValue(c, token, p, q, company), origin: originOf(c), userId: id.user.id, bucket: c.env.POD_BUCKET, now: t0 }, name, args);
-      const o = cacheKey ? await cachedAnswer(cacheKey, t0, run) : await run();
+      const o = cacheKey ? await cachedAnswer(cacheKey, t0, run, cacheTtlFor(name)) : await run();
       ({ result, status, note } = o);
       target = tag + o.target + ("cached" in o ? " (cached)" : "");
     } else if (name === "sales_summary" || name === "delivery_summary") {
@@ -791,12 +868,17 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
       const o = await proposeTool(c, id, token, name === "propose_meeting" ? "meeting" : "email", args, company);
       ({ result, status, note } = o);
       target = tag + o.target;
+    } else if (name === "propose_mail_reply" || name === "propose_note") {
+      const o = await proposeWriteTool(c, id, token, name === "propose_mail_reply" ? "mail_reply" : "note", args, company);
+      ({ result, status, note } = o);
+      target = tag + o.target;
     } else if (name === "confirm_action" || name === "cancel_action") {
       const o = name === "confirm_action" ? await confirmTool(c, id, token, String(args.confirmationId ?? "").trim()) : await cancelTool(c, id, String(args.confirmationId ?? "").trim());
       ({ result, status, note } = o);
       target = o.target;
     } else if (name === "whoami") {
-      result = text(JSON.stringify({ name: id.user.name, email: id.user.email, position: id.user.position_name, department: id.user.department_name, actionsAllowed: await actionsEnabled(c.env.DB) }));
+      const sw = await actionSwitches(c.env.DB);
+      result = text(JSON.stringify({ name: id.user.name, email: id.user.email, position: id.user.position_name, department: id.user.department_name, actionsAllowed: sw.master, actions: { meetingsAndEmail: sw.master, mailReplies: kindAllowed("mail_reply", sw), serviceCaseNotes: kindAllowed("note", sw) } }));
     } else if (name === "list_modules") {
       result = text(JSON.stringify({ readOnly: true, modules: moduleCatalog(mcpAppRoutes()), tip: "Call list_endpoints with a prefix, then erp_get. A module you may not open answers 'not available to your role'." }));
     } else if (name === "list_endpoints") {
@@ -824,6 +906,7 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
     result = text(`Failed: ${e instanceof Error ? e.message : String(e)}`, true);
     status = 500;
   }
+  result = withStructured(name, result);
   const done = logCall(c.env.DB, { tokenId: id.tokenId, userId: id.user.id, clientId: id.clientId, tool: name, target, status, ok: !result.isError, note, ms: Date.now() - t0 });
   try {
     c.executionCtx.waitUntil(done);
@@ -844,18 +927,19 @@ async function handleRpc(c: Context<HonoEnv>, id: Identity, token: string, m: Rp
     case "ping":
       return reply({});
     case "tools/list":
-      return reply({ tools: MCP_TOOLS });
+      return reply({ tools: visibleTools(withOutputSchemas(MCP_TOOLS), id.user, await actionSwitches(c.env.DB)) });
     case "tools/call":
       return reply(await callTool(c, id, token, String(m.params?.name ?? ""), (m.params?.arguments as Record<string, unknown> | undefined) ?? {}));
     case "resources/list":
       return reply({ resources: [] });
     case "prompts/list":
-      return reply({ prompts: PROMPTS });
+      return reply({ prompts: [...PROMPTS, ...visibleRolePrompts(id.user, await actionSwitches(c.env.DB))] });
     case "prompts/get": {
       const pname = String(m.params?.name ?? "");
-      const ptext = promptText(pname, (m.params?.arguments as Record<string, unknown> | undefined) ?? {});
+      const pargs = (m.params?.arguments as Record<string, unknown> | undefined) ?? {};
+      const ptext = promptText(pname, pargs) ?? rolePromptText(pname, pargs);
       if (ptext === null) return { jsonrpc: "2.0", id: m.id ?? null, error: { code: -32602, message: `Unknown prompt: ${pname}` } };
-      return reply({ description: PROMPTS.find((x) => x.name === pname)?.description ?? "", messages: [{ role: "user", content: { type: "text", text: ptext } }] });
+      return reply({ description: [...PROMPTS, ...ROLE_PROMPTS].find((x) => x.name === pname)?.description ?? "", messages: [{ role: "user", content: { type: "text", text: ptext } }] });
     }
     default:
       if (m.id === undefined || m.id === null || (m.method ?? "").startsWith("notifications/")) return null;

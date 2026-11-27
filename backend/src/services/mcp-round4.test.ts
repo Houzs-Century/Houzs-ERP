@@ -143,9 +143,20 @@ describe("round-4 summaries", () => {
 
   it("outlet_sales: per outlet vs the previous period and the same days last month", () => {
     const p = resolvePeriod({ period: "month" }, today)!;
-    const s = summariseOutletPeriod({ rows: [{ venue: "PJ", so_date: today, amount_sen: 20000 }, { venue: "KL", so_date: "2026-11-02", amount_sen: 10000 }] }, { rows: [{ venue: "PJ", amount_sen: 10000 }] }, { rows: [{ venue: "PJ", amount_sen: 10000 }] }, p, today);
+    const s = summariseOutletPeriod({ rows: [{ venue: "PJ", so_date: today, amount_sen: 20000 }, { venue: "KL", so_date: "2026-11-02", amount_sen: 10000 }] }, { rows: [{ venue: "PJ", amount_sen: 10000 }] }, { rows: [{ venue: "PJ", amount_sen: 10000 }] }, p, today, "https://erp.test");
     expect(s.totals).toMatchObject({ orders: 2, salesRm: 300, previousRm: 100, changePct: 200, sameDaysLastMonthRm: 100, todayOrders: 1, todayRm: 200 });
     expect(s.outlets[0]).toMatchObject({ outlet: "PJ", salesRm: 200, previousRm: 100, changePct: 100 });
+    expect(s.outlets[0].url).toBe("https://erp.test/reports/fair-report?stage=so&from=2026-11-01&to=2026-11-26&venue=PJ");
+  });
+
+  it("outlet_sales merges outlet names typed in different case and shows the upper-case form", () => {
+    const p = resolvePeriod({ period: "month" }, today)!;
+    const cur = { rows: [{ venue: "PENANG WATERFRONT CONVENTION CENTRE", amount_sen: 10000 }, { venue: "Penang Waterfront Convention Centre", amount_sen: 5000 }, { venue: "  penang  waterfront convention centre ", amount_sen: 1000 }] };
+    const s = summariseOutletPeriod(cur, { rows: [] }, null, p, today, "https://erp.test");
+    expect(s.outlets).toHaveLength(1);
+    expect(s.outlets[0]).toMatchObject({ outlet: "PENANG WATERFRONT CONVENTION CENTRE", orders: 3, salesRm: 160 });
+    expect(s.outlets[0].spelledAs).toHaveLength(3);
+    expect(s.outlets[0].url).not.toContain("venue=");
   });
 
   it("pos_sales: comparison days are cut from one report by day; events active in the window", () => {

@@ -10,6 +10,7 @@ type Person = { userId: number; name: string; position: string };
 type Overview = {
   connectorUrl: string;
   actionsEnabled: boolean;
+  actionSwitches?: { mailReply: boolean; note: boolean };
   limits?: { perMinute: number; perDay: number };
   stats: { connectedPeople: number; callsToday: number; refusedToday: number; waiting: number };
   requests: (Person & { id: string; reason: string; createdAt: string | null })[];
@@ -348,7 +349,7 @@ function AdminView({ ov, reload }: { ov: Overview; reload: () => void }) {
 
       <Section
         title="AI actions"
-        sub="Let a connected AI book a meeting or send an email for the person, only after they confirm the summary in their chat. Never orders, money, stock, approvals or deletes. At most 30 actions per person a day; each one is listed under Recent lookups."
+        sub="Let a connected AI book a meeting, send an email, reply to a Mail Center email or add a service-case note for the person, only after they confirm the summary in their chat. Never orders, money, stock, prices, payroll, approvals or deletes. At most 30 actions per person a day; each one is listed under Recent lookups."
         right={
           <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink">
             <input
@@ -366,6 +367,29 @@ function AdminView({ ov, reload }: { ov: Overview; reload: () => void }) {
         }
       >
         <Empty>{ov.actionsEnabled ? "On: connected AIs may propose meetings and emails; nothing happens until the person confirms." : "Off: connected AIs can only read."}</Empty>
+        <div className="space-y-2 border-t border-border px-4 py-3 sm:px-5">
+          <p className="text-[13px] text-ink-secondary">More actions, each off until you turn it on. They also need the switch above, and the person still needs the ERP permission for the same action.</p>
+          {(
+            [
+              { kind: "mail_reply", label: "Reply to Mail Center emails", on: ov.actionSwitches?.mailReply === true },
+              { kind: "note", label: "Add notes to service cases", on: ov.actionSwitches?.note === true },
+            ] as const
+          ).map((a) => (
+            <label key={a.kind} className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={a.on}
+                disabled={busy !== null}
+                onChange={(e) => {
+                  const enabled = e.target.checked;
+                  void act(`actions-${a.kind}`, () => api.post("/api/mcp-admin/admin/actions", { kind: a.kind, enabled }));
+                }}
+              />
+              {a.label}
+            </label>
+          ))}
+        </div>
       </Section>
 
       {ov.limits && (
