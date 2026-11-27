@@ -19,7 +19,7 @@ const TOKEN = /^[a-f0-9]{64}$/;
 const MAX_FILES = 10;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 /** Meeting files the browser may open in place (R&D 2026-11-27 #3): the hub keeps the uploader's type, so anything else (HTML, SVG) is a download. */
-const PREVIEW_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"]);
+export const PREVIEW_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"]);
 
 const NOT_CONNECTED = "Meetings is not connected on this system yet. Please tell IT.";
 const UNREACHABLE = "Meetings could not be reached. Please try again in a moment.";

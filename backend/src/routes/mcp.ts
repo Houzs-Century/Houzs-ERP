@@ -709,7 +709,7 @@ async function proposeTool(c: Context<HonoEnv>, id: Identity, token: string, kin
     if (res.status === 401 || res.status === 403) return { result: text("Not available to your role: you may not send email from the Mail Center.", true), status: res.status, note: "no permission", target };
     const body = (await jsonOrNull(res, "senders")) as { senders?: unknown } | null;
     if (!res.ok || !body || !Array.isArray(body.senders)) return { result: text(`Your mailboxes could not be read (HTTP ${res.status}). Try again in a moment.`, true), status: 502, note: "senders unreadable", target };
-    p = proposeEmail(args, body.senders.map(String), id.user.email ?? "");
+    p = proposeEmail(args, body.senders.map(String), id.user.email);
   }
   if (!p.ok) return { result: text(p.error, true), status: 400, note: p.error.slice(0, 120), target };
   const confirmationId = await createPendingAction(c.env.DB, { tokenId: id.tokenId, userId: id.user.id, kind, payload: { company, body: p.payload }, summary: p.logLine, ttlMs: PENDING_TTL_MS });
@@ -841,8 +841,8 @@ async function cancelTool(c: Context<HonoEnv>, id: Identity, confirmationId: str
   return { result: text("Cancelled. Nothing was booked, sent or written."), status: 200, note: "", target: `cancel ${row.summary}` };
 }
 
-/** Tool calls already made in this request (a JSON-RPC batch): their log rows are written after the reply, so the count cannot see them. */
-const calledInRequest = new WeakMap<Identity, number>();
+const callsEarlierInThisBatch = new WeakMap<Identity, number>();
+/** JSON-RPC requests in one POST. Calls earlier in a batch are counted against the rate limit too: their log rows are written after the reply. */
 export const MAX_BATCH = 10;
 
 async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
@@ -854,8 +854,8 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
   const company = companyArg(args);
   const tag = company ? `[${company}] ` : "";
   try {
-    const already = calledInRequest.get(id) ?? 0;
-    calledInRequest.set(id, already + 1);
+    const already = callsEarlierInThisBatch.get(id) ?? 0;
+    callsEarlierInThisBatch.set(id, already + 1);
     const overLimit = await rateLimitRefusal(c.env.DB, id.user.id, t0, already);
     const cacheKey = CACHEABLE_TOOLS.has(name) ? answerCacheKey(id.user.id, company, name, args) : "";
     if (overLimit) {
