@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { computeTripMonth, DEFAULT_TRIP_RATES } from "../../scm/shared/hr-trip-pay";
-import { deliveryOrderRows, doRunDate, planningRowOf, projectCrewLorries, projectLegRows, rowHrEdited, tripRowOf, type PlanningDo, type PlanningStop, type ProjectLeg } from "./hr-trip-store";
+import { deliveryOrderRows, doRunDate, planningRowOf, projectCrewLorries, projectLegRows, rowHrEdited, tripPaySisterCompanies, tripRowOf, type PlanningDo, type PlanningStop, type ProjectLeg } from "./hr-trip-store";
 
 const base: PlanningStop = {
   stop_id: "s1",
@@ -270,5 +270,13 @@ describe("delivery orders our lorries ran (Last Mile reaches them through the DO
     const out = computeTripMonth({ rows, rates: DEFAULT_TRIP_RATES, employeeOf: (x) => x.employeeId, missedDaysOf: () => 0, punches: new Map() });
     expect(out.pay.get(11)?.commission.baseSen).toBe(0);
     expect(out.pay.get(11)?.jobAllowanceSen).toBe(1500);
+  });
+});
+
+describe("cross-company Trip Pay (owner 2026-11-27)", () => {
+  test("HOUZS (1) also pays 2990 (2); 2990 and others pull only themselves", () => {
+    expect(tripPaySisterCompanies(1)).toEqual([2]);
+    expect(tripPaySisterCompanies(2)).toEqual([]);
+    expect(tripPaySisterCompanies(99)).toEqual([]);
   });
 });
