@@ -96,6 +96,9 @@ export type SettlementRow = {
   /** Set when the line was confirmed as ANOTHER company's sale swiped on this
       terminal (owner 2026-11-17: 2990's on Houzs's AEON): that company's id. */
   sold_by_company_id?: number | null;
+  /** The card terminal the report names for the line (owner 2026-11-27: 往后上传后都要
+      保存起来). Null for lines uploaded before then, or when the report names none. */
+  terminal_id?: string | null;
 };
 
 /** One credit of a payout, as the BANK shows it. */

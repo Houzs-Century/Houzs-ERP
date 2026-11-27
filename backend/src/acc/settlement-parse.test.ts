@@ -490,8 +490,8 @@ describe('parseStatement — Hong Leong DuitNow QR lines', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.rows).toEqual([
-      { lineNo: 18, txnDate: '2026-11-01', ref: null, grossSen: 10000, feeSen: 0, netSen: 10000, channel: 'QR' },
-      { lineNo: 23, txnDate: '2026-10-31', ref: null, grossSen: 324000, feeSen: 0, netSen: 324000, channel: 'QR' },
+      { lineNo: 18, txnDate: '2026-11-01', ref: null, grossSen: 10000, feeSen: 0, netSen: 10000, channel: 'QR', terminalId: '00033052346' },
+      { lineNo: 23, txnDate: '2026-10-31', ref: null, grossSen: 324000, feeSen: 0, netSen: 324000, channel: 'QR', terminalId: '00033052347' },
     ]);
   });
 
@@ -554,5 +554,65 @@ describe('cardTotalsOf', () => {
   it('a report of nothing but QR lines owes nothing through the clearing account', () => {
     expect(cardTotalsOf(ok([{ grossSen: 10000, netSen: 10000, channel: 'QR' }], 10000)))
       .toEqual({ grossSen: 0, feeSen: 0, netSen: 0, statedNetSen: 0 });
+  });
+});
+
+/* Owner 2026-11-27 (我上传的merchant report 应该是有terminal id 的 → 往后上传后都要保存起来):
+   every bank names the card terminal of each line, either in a column of its own
+   or on a TERMINAL ID line heading the lines it swiped. */
+describe('parseStatement — the card terminal each line names', () => {
+  const terminalsOf = (r: ReturnType<typeof parseStatement>): Array<string | null> =>
+    (r.ok ? r.rows.map((x) => x.terminalId ?? null) : []);
+
+  it('reads a terminal column by any name a bank gives it, line by line', () => {
+    for (const heading of ['TID', 'Terminal No.', 'terminal_id', 'Terminal ID']) {
+      const r = parseStatement(baseCfg(), CSV(
+        `Txn Date,Approval Code,Gross,MDR,${heading}`,
+        "2026-08-01,111111,100.00,1.00,10000001",
+        "2026-08-01,222222,200.00,2.00,'10000002",
+      ));
+      expect(terminalsOf(r), heading).toEqual(['10000001', '10000002']);
+    }
+  });
+
+  it('reads Maybank\'s Terminal No. across its doubled commas', () => {
+    const r = parseStatement(baseCfg({ column_map: { date: 'Tran Date', ref: 'Auth Code', gross: 'Amount', fee: 'Fee' } }), CSV(
+      'Card Number,,Amount,,Tran Date,,Auth Code,,Terminal No.,,Fee,',
+      '400000******0001,,1500.00,,01/08/26,,333333,,10000003,,7.50,',
+    ));
+    expect(terminalsOf(r)).toEqual(['10000003']);
+  });
+
+  it('a TERMINAL ID line heads the lines under it, until the next one', () => {
+    const r = parseStatement(baseCfg(), CSV(
+      'TERMINAL ID :,10000004,,,',
+      'Txn Date,Approval Code,Gross,MDR',
+      '2026-08-01,111111,100.00,1.00',
+      '2026-08-01,222222,200.00,2.00',
+      'TERMINAL ID:,10000005',
+      'Txn Date,Approval Code,Gross,MDR',
+      '2026-08-02,333333,300.00,3.00',
+    ));
+    expect(terminalsOf(r)).toEqual(['10000004', '10000004', '10000005']);
+  });
+
+  it("a line's own terminal column wins over the TERMINAL ID line above it", () => {
+    const r = parseStatement(baseCfg(), CSV(
+      'TERMINAL ID:,10000006',
+      'Txn Date,Approval Code,Gross,MDR,TID',
+      '2026-08-01,111111,100.00,1.00,10000007',
+      '2026-08-01,222222,200.00,2.00,',
+    ));
+    expect(terminalsOf(r)).toEqual(['10000007', '10000006']);
+  });
+
+  it('a report that names no terminal leaves its lines without one', () => {
+    const r = parseStatement(baseCfg(), CSV(
+      'Txn Date,Approval Code,Gross,MDR',
+      '2026-08-01,111111,100.00,1.00',
+    ));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows[0]).not.toHaveProperty('terminalId');
   });
 });

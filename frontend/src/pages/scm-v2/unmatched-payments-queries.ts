@@ -46,6 +46,8 @@ export type UnmatchedPayment = {
   statementUpTo: string | null;
   jeNo?: string | null;
   report?: UnmatchedReport | null;
+  /** The card terminal the report line claiming it names (owner 2026-11-27). */
+  terminalId?: string | null;
 };
 
 export type UnmatchedPayments = { from: string; to: string; rows: UnmatchedPayment[] };
