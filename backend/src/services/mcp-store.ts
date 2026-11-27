@@ -68,17 +68,32 @@ export async function getClient(db: Db, clientId: string): Promise<McpClient | n
   return { clientId: str(r, "client_id"), clientName: str(r, "client_name") || "AI app", redirectUris: uris };
 }
 
-/** A redirect URI a client may register: https anywhere, http only for loopback. */
+/** The only hosts a connector may send the sign-in code back to (R&D 2026-11-27 #1: open registration let any site phish a token). */
+export const REDIRECT_HOSTS: Readonly<Record<string, string>> = { "claude.ai": "Claude", "claude.com": "Claude", "chatgpt.com": "ChatGPT" };
+const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
+
+/** A redirect URI a client may register: https to an allowlisted AI host, or loopback (an app on the person's own computer). */
 export function validRedirectUri(u: string): boolean {
   try {
     const url = new URL(u);
     if (url.hash) return false;
-    if (url.protocol === "https:") return true;
-    if (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) return true;
-    return false;
+    if (LOOPBACK.includes(url.hostname)) return url.protocol === "http:" || url.protocol === "https:";
+    return url.protocol === "https:" && Object.prototype.hasOwnProperty.call(REDIRECT_HOSTS, url.hostname);
   } catch {
     return false;
   }
+}
+
+/** The app name the consent page headlines: from the redirect host, never from the name the client chose for itself. */
+export function consentAppLabel(clientName: string, redirectUri: string): string {
+  try {
+    const url = new URL(redirectUri);
+    if (Object.prototype.hasOwnProperty.call(REDIRECT_HOSTS, url.hostname)) return REDIRECT_HOSTS[url.hostname];
+    if (LOOPBACK.includes(url.hostname)) return `${clientName || "AI app"} (an app on this computer)`;
+  } catch {
+    return "AI app";
+  }
+  return "AI app";
 }
 
 export async function registerClient(db: Db, name: string, redirectUris: string[]): Promise<McpClient> {

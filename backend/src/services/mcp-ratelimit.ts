@@ -33,13 +33,15 @@ export async function recentCallCounts(db: Db, userId: number, now: number): Pro
 }
 
 /**
- * The refusal text when this person is over a limit, else null. If the count
+ * The refusal text when this person is over a limit, else null. `alreadyThisRequest`
+ * counts the calls earlier in the same JSON-RPC batch, whose log rows are not written yet. If the count
  * cannot be read the call goes ahead (logged): a broken counter must not take
  * the connector down; the call log itself is the record.
  */
-export async function rateLimitRefusal(db: Db, userId: number, now: number): Promise<string | null> {
+export async function rateLimitRefusal(db: Db, userId: number, now: number, alreadyThisRequest: number): Promise<string | null> {
   try {
-    return rateDecision(await recentCallCounts(db, userId, now));
+    const n = await recentCallCounts(db, userId, now);
+    return rateDecision({ minute: n.minute + alreadyThisRequest, day: n.day + alreadyThisRequest });
   } catch (e) {
     console.warn("[mcp] rate-limit count failed, call allowed:", e instanceof Error ? e.message : String(e));
     return null;

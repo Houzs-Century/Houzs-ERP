@@ -100,6 +100,21 @@ describe("/api/meetings", () => {
     expect((await appAs({ id: 0, email: "svc@local", permissions: [] }).request("/api/meetings/mine")).status).toBe(403);
   });
 
+  test("a meeting file opens in place only as png, jpeg, gif, webp or pdf; anything else downloads (R&D 2026-11-27 #3)", async () => {
+    const file = (type: string) => () => new Response("<script>x</script>", { headers: { "Content-Type": type, "Content-Disposition": 'inline; filename="a.html"' } });
+    fakeHub(file("text/html; charset=utf-8"));
+    const html = await appAs(AINA).request("/api/meetings/meetings/5/files/9");
+    expect(html.headers.get("Content-Type")).toBe("application/octet-stream");
+    expect(html.headers.get("Content-Disposition")).toBe('attachment; filename="a.html"');
+    expect(html.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    fakeHub(file("image/svg+xml"));
+    expect((await appAs(AINA).request("/api/meetings/meetings/5/files/9")).headers.get("Content-Type")).toBe("application/octet-stream");
+    fakeHub(file("application/pdf"));
+    const pdf = await appAs(AINA).request("/api/meetings/meetings/5/files/9");
+    expect(pdf.headers.get("Content-Type")).toBe("application/pdf");
+    expect(pdf.headers.get("Content-Disposition")).toBe('inline; filename="a.html"');
+  });
+
   test("unread count is { count }", async () => {
     fakeHub(() => json({ unread: 4 }));
     expect(await (await appAs(AINA).request("/api/meetings/unread-count")).json()).toEqual({ count: 4 });

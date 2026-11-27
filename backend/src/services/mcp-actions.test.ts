@@ -46,30 +46,41 @@ describe("propose_meeting", () => {
 });
 
 describe("propose_email", () => {
-  const args = { to: ["buyer@client.test"], cc: ["boss@houzs.test"], subject: "Quotation", body: "Dear Sir,\nPlease find..." };
+  const ME = "me@gmail.test";
+  const args = { to: ["buyer@houzscentury.com"], cc: ["boss@2990shome.com"], subject: "Quotation", body: "Dear Sir,\nPlease find..." };
 
   it("uses the only mailbox, and never puts the body in the log line", () => {
-    const p = proposeEmail(args, ["sales@houzs.test"]);
+    const p = proposeEmail(args, ["sales@houzs.test"], ME);
     expect(p.ok).toBe(true);
     if (!p.ok) return;
-    expect(p.payload).toEqual({ fromAddress: "sales@houzs.test", to: ["buyer@client.test"], cc: ["boss@houzs.test"], subject: "Quotation", text: "Dear Sir,\nPlease find..." });
+    expect(p.payload).toEqual({ fromAddress: "sales@houzs.test", to: ["buyer@houzscentury.com"], cc: ["boss@2990shome.com"], subject: "Quotation", text: "Dear Sir,\nPlease find..." });
     expect(p.summary).toContain("Please find");
     expect(p.logLine).not.toContain("Please find");
     expect(p.logLine).toContain("+1");
   });
 
   it("refuses a mailbox the person may not use and asks when there are several", () => {
-    expect(proposeEmail({ ...args, from_mailbox: "ceo@houzs.test" }, ["sales@houzs.test"])).toMatchObject({ ok: false });
-    expect(proposeEmail(args, ["a@houzs.test", "b@houzs.test"])).toMatchObject({ ok: false });
-    expect(proposeEmail({ ...args, from_mailbox: "B@houzs.test" }, ["a@houzs.test", "b@houzs.test"])).toMatchObject({ ok: true });
-    expect(proposeEmail(args, [])).toMatchObject({ ok: false });
+    expect(proposeEmail({ ...args, from_mailbox: "ceo@houzs.test" }, ["sales@houzs.test"], ME)).toMatchObject({ ok: false });
+    expect(proposeEmail(args, ["a@houzs.test", "b@houzs.test"], ME)).toMatchObject({ ok: false });
+    expect(proposeEmail({ ...args, from_mailbox: "B@houzs.test" }, ["a@houzs.test", "b@houzs.test"], ME)).toMatchObject({ ok: true });
+    expect(proposeEmail(args, [], ME)).toMatchObject({ ok: false });
+  });
+
+  it("emails only company addresses or the person themself (R&D 2026-11-27 #2)", () => {
+    const r = proposeEmail({ ...args, cc: ["attacker@evil.test"] }, ["s@h.test"], ME);
+    expect(r).toMatchObject({ ok: false });
+    if (!r.ok) expect(r.error).toContain("attacker@evil.test");
+    expect(proposeEmail({ ...args, to: ["x@houzscentury.com.evil.test"] }, ["s@h.test"], ME)).toMatchObject({ ok: false });
+    expect(proposeEmail({ ...args, to: ["Me@Gmail.test"] }, ["s@h.test"], ME)).toMatchObject({ ok: true });
+    expect(proposeEmail({ ...args, to: ["other@gmail.test"] }, ["s@h.test"], ME)).toMatchObject({ ok: false });
+    expect(proposeEmail({ ...args, to: ["other@gmail.test"] }, ["s@h.test"], "")).toMatchObject({ ok: false });
   });
 
   it("validates every address, the subject and the body", () => {
-    expect(proposeEmail({ ...args, to: ["not-an-email"] }, ["s@h.test"])).toMatchObject({ ok: false });
-    expect(proposeEmail({ ...args, subject: " " }, ["s@h.test"])).toMatchObject({ ok: false });
-    expect(proposeEmail({ ...args, body: "" }, ["s@h.test"])).toMatchObject({ ok: false });
-    expect(proposeEmail({ ...args, to: Array.from({ length: 21 }, (_, i) => `p${i}@x.test`) }, ["s@h.test"])).toMatchObject({ ok: false });
+    expect(proposeEmail({ ...args, to: ["not-an-email"] }, ["s@h.test"], ME)).toMatchObject({ ok: false });
+    expect(proposeEmail({ ...args, subject: " " }, ["s@h.test"], ME)).toMatchObject({ ok: false });
+    expect(proposeEmail({ ...args, body: "" }, ["s@h.test"], ME)).toMatchObject({ ok: false });
+    expect(proposeEmail({ ...args, to: Array.from({ length: 21 }, (_, i) => `p${i}@x.test`) }, ["s@h.test"], ME)).toMatchObject({ ok: false });
   });
 });
 

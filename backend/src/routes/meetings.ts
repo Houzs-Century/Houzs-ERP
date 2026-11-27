@@ -18,6 +18,8 @@ const LINK_CODE = /^[a-z0-9]{1,8}-[a-f0-9]{6,32}$/;
 const TOKEN = /^[a-f0-9]{64}$/;
 const MAX_FILES = 10;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
+/** Meeting files the browser may open in place (R&D 2026-11-27 #3): the hub keeps the uploader's type, so anything else (HTML, SVG) is a download. */
+const PREVIEW_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"]);
 
 const NOT_CONNECTED = "Meetings is not connected on this system yet. Please tell IT.";
 const UNREACHABLE = "Meetings could not be reached. Please try again in a moment.";
@@ -223,9 +225,12 @@ app.get("/meetings/:id/files/:fid", async (c) => {
   }
   if (res.status === 404) return c.json({ error: "That file could not be found." }, 404);
   if (!res.ok || !res.body) return c.json({ error: UNREACHABLE }, 502);
-  const headers = new Headers({ "Content-Type": res.headers.get("Content-Type") ?? "application/octet-stream", "X-Content-Type-Options": "nosniff" });
-  const disposition = res.headers.get("Content-Disposition");
-  if (disposition) headers.set("Content-Disposition", disposition);
+  const type = (res.headers.get("Content-Type") ?? "").split(";")[0].trim().toLowerCase();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const safe = PREVIEW_TYPES.has(type);
+  const headers = new Headers({ "Content-Type": safe ? type : "application/octet-stream", "X-Content-Type-Options": "nosniff" });
+  if (safe && disposition) headers.set("Content-Disposition", disposition);
+  if (!safe) headers.set("Content-Disposition", `attachment${/;\s*filename.*$/i.exec(disposition)?.[0] ?? ""}`);
   return new Response(res.body, { status: 200, headers });
 });
 

@@ -164,8 +164,15 @@ export function proposeMeeting(args: Obj, boot: MeetingBootstrap, now: number): 
 export const MAX_RECIPIENTS = 20;
 export const MAX_BODY_CHARS = 20_000;
 
+/** Interim fence (R&D 2026-11-27 #2): the AI can confirm its own proposal, so it may email only the company or the person themself. */
+export const COMPANY_MAIL_DOMAINS = ["houzscentury.com", "2990shome.com"];
+export const mayReceive = (addr: string, me: string): boolean => {
+  const a = addr.toLowerCase();
+  return (!!me && a === me.toLowerCase()) || COMPANY_MAIL_DOMAINS.includes(a.slice(a.lastIndexOf("@") + 1));
+};
+
 /** propose_email → the body routes/mail-center.ts POST /compose takes, checked the way Compose checks it. */
-export function proposeEmail(args: Obj, senders: string[]): Proposal {
+export function proposeEmail(args: Obj, senders: string[], me: string): Proposal {
   const to = strList(args.to);
   const cc = strList(args.cc);
   const subject = str(args.subject).slice(0, 300);
@@ -174,6 +181,8 @@ export function proposeEmail(args: Obj, senders: string[]): Proposal {
   if (to.length + cc.length > MAX_RECIPIENTS) return { ok: false, error: `At most ${MAX_RECIPIENTS} recipients.` };
   const bad = [...to, ...cc].find((a) => !EMAIL_RE.test(a));
   if (bad) return { ok: false, error: `Not a valid email address: ${bad}` };
+  const outside = [...to, ...cc].find((a) => !mayReceive(a, me));
+  if (outside) return { ok: false, error: `For now the AI may email only company addresses (@${COMPANY_MAIL_DOMAINS.join(", @")}) or you. ${outside} is outside the company: send that one yourself from the Mail Center.` };
   if (!subject) return { ok: false, error: "The email needs a subject." };
   if (!body) return { ok: false, error: "The email needs a message." };
   if (body.length > MAX_BODY_CHARS) return { ok: false, error: `The message is too long (at most ${MAX_BODY_CHARS} characters).` };
@@ -192,7 +201,7 @@ export function proposeEmail(args: Obj, senders: string[]): Proposal {
   }
   const payload = { fromAddress: from, to, cc, subject, text: body };
   const preview = body.length > 1500 ? `${body.slice(0, 1500)}\n[... ${body.length - 1500} more characters]` : body;
-  const lines = [`Send an email (it leaves the company)`, `From: ${from}`, `To: ${to.join(", ")}`];
+  const lines = [`Send an email`, `From: ${from}`, `To: ${to.join(", ")}`];
   if (cc.length) lines.push(`Cc: ${cc.join(", ")}`);
   lines.push(`Subject: ${subject}`, "", preview);
   const logLine = `email to ${to[0]}${to.length + cc.length > 1 ? ` +${to.length + cc.length - 1}` : ""}: "${subject.slice(0, 80)}"`;
