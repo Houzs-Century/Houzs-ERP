@@ -1,5 +1,5 @@
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch, API_URL, humanApiError } from './authed-fetch';
 import { todayMY } from '../../../../../shared/src/vendor/shared/format';
 import { readAuthToken } from '../../../lib/authToken';
@@ -345,4 +345,23 @@ export function useLorryKmDaily(from: string, to: string) {
     queryKey: ['lorries', 'km-daily', from, to],
     queryFn: () => authedFetch<LorryKmDaily>(`/lorries/km-daily?from=${from}&to=${to}`),
   });
+}
+
+/** GPS km per lorry-day for each whole month (one km-daily read per month, up to today); undefined while loading or on a failure. */
+export function useLorryKmMonths(months: readonly string[]): { byMonth: Record<string, LorryKmDaily | undefined>; loading: boolean; failed: boolean } {
+  const today = todayMY();
+  const shown = months.filter((m) => `${m}-01` <= today);
+  const results = useQueries({
+    queries: shown.map((m) => {
+      const [y, mo] = m.split('-').map(Number) as [number, number];
+      const last = new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10);
+      const to = last < today ? last : today;
+      return { queryKey: ['lorries', 'km-daily', `${m}-01`, to], queryFn: () => authedFetch<LorryKmDaily>(`/lorries/km-daily?from=${m}-01&to=${to}`), staleTime: 10 * 60_000 };
+    }),
+  });
+  return {
+    byMonth: Object.fromEntries(shown.map((m, i) => [m, results[i]?.data])),
+    loading: results.some((r) => r.isLoading),
+    failed: results.some((r) => r.isError),
+  };
 }
