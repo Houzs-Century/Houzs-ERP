@@ -129,6 +129,11 @@ describe("hand-set allowance override (owner 2026-11-27)", () => {
     expect(run([row({ allowanceOverrideSen: 0 })]).rows[0].allowanceSen).toBe(0);
     expect(run([row({ allowanceOverrideSen: null })]).rows[0].allowanceSen).toBe(10000);
   });
+  test("an override on a Delivery order is ignored (it pays by commission, not a flat allowance)", () => {
+    const p = run([row({ jobType: "DELIVERY_ORDER", eventType: null, localTotalSen: 1000000, allowanceOverrideSen: 25000 })]).pay.get(1)!;
+    expect(p.jobAllowanceSen).toBe(0);
+    expect(p.commission.lines).toEqual([{ crew: 2, baseSen: 1000000, rateBps: 50, amountSen: 5000 }]);
+  });
 });
 
 describe("commission", () => {

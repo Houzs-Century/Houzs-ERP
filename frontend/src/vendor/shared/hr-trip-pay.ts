@@ -640,8 +640,10 @@ export function computeTripMonth(input: TripMonthInput): { pay: Map<number, Trip
     }
     if (rowPay[i].sameJob) return;
     /* HR can hand-set a row's job allowance on the edit drawer (owner 2026-11-27);
-       when set, that amount is the allowance instead of the rate card. */
-    const override = row.allowanceOverrideSen;
+       when set, that amount is the allowance instead of the rate card. A Delivery
+       order is paid by commission (local_total_sen), never a flat allowance, so an
+       override on one is ignored. */
+    const override = row.jobType === "DELIVERY_ORDER" ? null : row.allowanceOverrideSen;
     const second = rowPay[i].tripOfDay === 2;
     let unit: number;
     if (override != null) {

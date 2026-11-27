@@ -409,7 +409,7 @@ function RowDrawer({ row, month, first, last, onClose, onSaved }: { row: TripRow
       toast.error("Local Total must be RM 0.00 or more.");
       return;
     }
-    const allowanceOverrideSen = f.allowanceOverride.trim() === "" ? null : senFromRm(f.allowanceOverride);
+    const allowanceOverrideSen = f.jobType === "DELIVERY_ORDER" || f.allowanceOverride.trim() === "" ? null : senFromRm(f.allowanceOverride);
     if (allowanceOverrideSen != null && !(allowanceOverrideSen >= 0)) {
       toast.error("Allowance must be RM 0.00 or more, or left blank.");
       return;
