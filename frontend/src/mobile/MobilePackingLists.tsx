@@ -1,6 +1,7 @@
 /* Phone twin of the Delivery Orders "Packing Lists" tab (owner 2026-11-27):
    pick a day, print every lorry in one PDF, or one lorry on its own. Same
    query and same printer as desktop (usePackingLists / usePackingPrint). */
+import { DateField } from "../vendor/scm/components/DateField";
 import { useState } from "react";
 import { usePackingLists } from "../vendor/scm/lib/packing-list-queries";
 import { usePackingPrint } from "../vendor/scm/components/usePackingPrint";
@@ -40,13 +41,9 @@ export function MobilePackingLists() {
             </button>
           );
         })}
-        <input
-          type="date"
-          aria-label="Delivery date"
-          value={date}
-          onChange={(e) => e.target.value && setDate(e.target.value)}
-          style={{ height: 36, borderRadius: 10, border: "1px solid var(--hz-c-border, #c8cbc6)", padding: "0 8px", fontFamily: "inherit", fontSize: 13, minWidth: 0, flex: "1 1 130px" }}
-        />
+        <div style={{ minWidth: 0, flex: "1 1 130px" }}>
+          <DateField value={date} onChange={(iso) => { if (iso) setDate(iso); }} fullWidth aria-label="Delivery date" />
+        </div>
       </div>
       <button
         type="button"

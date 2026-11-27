@@ -25,6 +25,7 @@
 // rows before it starts.
 // ----------------------------------------------------------------------------
 
+import { DAY_NAMES } from '../../../lib/meetings';
 import { formatPhone } from '@2990s/shared/phone';
 import { COMPANY, deliverPdf, ensurePdfCjkFont, fmtDocDate, safeName, type PdfAction } from './pdf-common';
 import {
@@ -92,7 +93,7 @@ function weekday(iso: string): string | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (!m) return null;
   const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' });
+  return Number.isNaN(d.getTime()) ? null : (DAY_NAMES[d.getUTCDay()] ?? null);
 }
 
 type Fabric = { ext: Map<string, string>; desc: Map<string, string> };
