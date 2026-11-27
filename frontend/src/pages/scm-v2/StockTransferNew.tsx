@@ -166,7 +166,7 @@ function TransferLineRow({
           aria-label={`From rack for ${line.itemCode || 'line'}`}
           style={{ fontSize: 'var(--fs-12)' }}
         >
-          <option value="">Not on a rack</option>
+          <option value="">No rack (optional)</option>
           {racksHolding.map(({ rack, held }) => (
             <option key={rack.id} value={rack.id}>{rack.rack} ({held.toLocaleString('en-MY')} here)</option>
           ))}
@@ -186,7 +186,7 @@ function TransferLineRow({
           aria-label={`To rack for ${line.itemCode || 'line'}`}
           style={{ fontSize: 'var(--fs-12)' }}
         >
-          <option value="">Not on a rack</option>
+          <option value="">No rack (optional)</option>
           {toRacks.map((r) => (
             <option key={r.id} value={r.id}>{r.rack}{r.reserved ? ' (reserved)' : ''}</option>
           ))}
@@ -454,8 +454,8 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
                 <th>Variant bucket *</th>
                 <th style={{ width: 110, textAlign: 'right' }}>Available</th>
                 <th style={{ width: 110, textAlign: 'right' }}>Qty *</th>
-                <th style={{ width: 150 }}>From rack</th>
-                <th style={{ width: 150 }}>To rack</th>
+                <th style={{ width: 150 }}>From rack (optional)</th>
+                <th style={{ width: 150 }}>To rack (optional)</th>
                 <th style={{ width: 200 }}>Remarks</th>
                 <th style={{ width: 40 }} />
               </tr>

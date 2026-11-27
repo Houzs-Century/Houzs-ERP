@@ -115,7 +115,7 @@ function MobileTransferLine({
       </div>
       <div className="st-whrow" style={{ marginTop: 8 }}>
         <div className="st-fld">
-          <span className="st-fl">From rack</span>
+          <span className="st-fl">From rack (optional)</span>
           <select
             className="cal-sel"
             style={{ fontSize: 13 }}
@@ -123,14 +123,14 @@ function MobileTransferLine({
             onChange={(e) => setRacks(line._key, { fromRackId: e.target.value || undefined })}
             disabled={!fromWarehouseId}
           >
-            <option value="">Not on a rack</option>
+            <option value="">No rack (optional)</option>
             {racksHolding.map(({ rack, held }) => (
               <option key={rack.id} value={rack.id}>{rack.rack} ({held} here)</option>
             ))}
           </select>
         </div>
         <div className="st-fld">
-          <span className="st-fl">To rack</span>
+          <span className="st-fl">To rack (optional)</span>
           <select
             className="cal-sel"
             style={{ fontSize: 13 }}
@@ -138,7 +138,7 @@ function MobileTransferLine({
             onChange={(e) => setRacks(line._key, { toRackId: e.target.value || undefined })}
             disabled={toRacks.length === 0}
           >
-            <option value="">Not on a rack</option>
+            <option value="">No rack (optional)</option>
             {toRacks.map((r) => (
               <option key={r.id} value={r.id}>{r.rack}{r.reserved ? " (reserved)" : ""}</option>
             ))}
