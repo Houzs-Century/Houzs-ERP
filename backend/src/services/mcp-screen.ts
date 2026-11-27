@@ -104,19 +104,22 @@ function explainScreen(ctx: HowtoCtx, args: Record<string, unknown>): HowtoOutco
 /** where_is: the pages (and the button on them) that best match "where do I open X". */
 export function whereIs(thing: string): { screen: ScreenPage; action: ScreenAction | null; score: number }[] {
   const q = queryTerms(thing);
+  const guide = rank(HOWTO_GUIDES, thing)[0];
+  const guidePage = guide ? basePath(guide.item.page) : null;
   return SCREENS.map((screen) => {
     const pageScore = scoreItem({ id: screen.path, title: screen.title, keywords: [...screen.keywords, screen.title, ...(screen.sidebar ? [screen.sidebar] : [])] }, q);
     let best: ScreenAction | null = null;
     let bestScore = 0;
     for (const a of screen.actions) {
-      const sc = scoreItem({ id: a.label, title: a.label, keywords: [a.label] }, q);
+      const sc = scoreItem({ id: "", title: a.label, keywords: [a.label] }, q);
       if (sc > bestScore) {
         best = a;
         bestScore = sc;
       }
     }
     const linkable = !screen.path.includes(":");
-    return { screen, action: best, score: (pageScore + bestScore * 0.6) * (linkable ? 1 : 0.5) };
+    const fromGuide = guidePage && basePath(screen.path) === guidePage ? guide.score * 0.5 : 0;
+    return { screen, action: best, score: (pageScore + bestScore * 0.6 + fromGuide) * (linkable ? 1 : 0.5) };
   })
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score);

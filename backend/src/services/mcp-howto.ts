@@ -15,7 +15,7 @@ export type HowtoCtx = { user: AuthUser; origin: string };
 /** The mcp_calls note on a question no guide answers; the admin page lists these. */
 export const NO_GUIDE_NOTE = "no-guide";
 
-const STOP = new Set(["how", "to", "do", "does", "i", "a", "an", "the", "in", "on", "for", "of", "my", "me", "is", "are", "what", "where", "can", "we", "you", "and", "or", "with", "erp", "please", "help", "want", "need", "it", "this", "that", "be", "get", "should", "who", "when", "which", "macam", "mana", "cara", "saya", "nak", "untuk", "dan", "yang"]);
+const STOP = new Set(["how", "to", "do", "does", "i", "a", "an", "the", "in", "on", "for", "of", "my", "me", "is", "are", "what", "where", "can", "we", "you", "and", "or", "with", "erp", "please", "help", "want", "need", "it", "this", "that", "be", "get", "should", "who", "when", "which", "macam", "mana", "cara", "saya", "nak", "untuk", "dan", "yang", "open", "find", "page", "screen", "button", "go", "locate", "located"]);
 
 const norm = (s: string): string => s.normalize("NFKC").toLowerCase();
 
@@ -35,19 +35,21 @@ const wordsOf = (s: string): string[] => norm(s).match(/[a-z0-9]+/g) ?? [];
 /** Simple keyword / title score: whole keyword phrases count most, then shared words. No external calls. */
 export function scoreItem(item: Rankable, q: ReturnType<typeof queryTerms>): number {
   if (!q.words.length && !q.cjk.length) return 0;
-  let score = 0;
   const qWords = new Set(q.words);
   const padded = ` ${(q.text.match(/[a-z0-9㐀-鿿]+/g) ?? []).join(" ")} `;
+  const hits: number[] = [];
   for (const raw of item.keywords) {
     const k = norm(raw);
     if (/[㐀-鿿]/.test(k)) {
-      if (q.text.includes(k)) score += 4 + k.length;
+      if (q.text.includes(k)) hits.push(4 + k.length);
       continue;
     }
     const kw = wordsOf(k);
-    if (kw.length && padded.includes(` ${kw.join(" ")} `)) score += 3 + kw.length * 2;
-    else score += kw.filter((w) => qWords.has(w)).length * 0.75;
+    if (kw.length && padded.includes(` ${kw.join(" ")} `)) hits.push(3 + kw.length * 2);
+    else hits.push(kw.filter((w) => qWords.has(w)).length * 0.75);
   }
+  const best = hits.length ? Math.max(...hits) : 0;
+  let score = best + 0.25 * (hits.reduce((a, b) => a + b, 0) - best);
   const titleWords = new Set(wordsOf(item.title));
   for (const w of qWords) if (titleWords.has(w)) score += 2;
   if (qWords.has(norm(item.id))) score += 50;

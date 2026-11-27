@@ -448,7 +448,7 @@ export const GENERAL_SCREENS: ScreenPage[] = [
     title: "Assistant",
     purpose: "The built-in ERP AI assistant chat. Shown only to staff with the Assistant capability (field crew and Sales do not get it); others are sent back to the home page.",
     sidebar: "Assistant",
-    gate: OPEN,
+    gate: ROUTE,
     keywords: ["assistant", "ai chat", "chatbot", "助手", "人工智能", "pembantu"],
     sections: [],
     tabs: [],
