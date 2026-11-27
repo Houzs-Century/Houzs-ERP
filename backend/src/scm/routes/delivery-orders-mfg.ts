@@ -3376,7 +3376,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   let body: {
     status?: string; signatureData?: string; podKey?: string; podKeys?: unknown;
     podLat?: number; podLng?: number; podAccuracyM?: number; podLocatedAt?: string;
-    confirmShortStock?: boolean; confirmNotReady?: boolean;
+    confirmShortStock?: boolean; confirmNotReady?: boolean; expectFrom?: string;
   }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
   /* NORMALISE FIRST, exactly as the Sales Order handler does
@@ -3434,6 +3434,9 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
+  if (typeof body.expectFrom === 'string' && body.expectFrom.trim().toUpperCase() !== String(prevStatus ?? '').toUpperCase()) {
+    return c.json({ error: 'status_changed', reason: 'This Delivery Order changed status since it was read. Reload and try again.' }, 409);
+  }
 
   if (bypassPod) {
     if (!(DO_STOCK_OUT_STATES as readonly string[]).includes((prevStatus ?? '').toUpperCase()))

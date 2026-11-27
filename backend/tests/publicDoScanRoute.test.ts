@@ -40,6 +40,8 @@ let failing = new Set<string>();
 /** Peak number of status WRITES in flight at once. 1 = strictly sequential. */
 let peakConcurrentWrites = 0;
 let inFlightWrites = 0;
+/** Delivery orders whose status UPDATE answers with a database error. */
+let failStatusWriteIds = new Set<string>();
 
 class FakeQuery {
   private preds: Array<(r: Row) => boolean> = [];
@@ -107,6 +109,10 @@ class FakeQuery {
   }
   maybeSingle() {
     if (this.fails) return Promise.resolve({ data: null, error: { message: 'connection closed' } });
+    if (this.op === 'update' && 'status' in this.patch
+      && this.rows.some((r) => failStatusWriteIds.has(r.id) && this.preds.every((p) => p(r)))) {
+      return Promise.resolve({ data: null, error: { message: 'deadlock detected' } });
+    }
     return this.gate(() => { const h = this.run(); return { data: h[0] ?? null, error: null }; });
   }
   single() {
@@ -175,6 +181,7 @@ function seed(overrides: Row = {}, extra: Row[] = []) {
   failing = new Set();
   peakConcurrentWrites = 0;
   inFlightWrites = 0;
+  failStatusWriteIds = new Set();
 }
 
 const env = {} as never;
@@ -508,6 +515,266 @@ describe('scanning the packing list', () => {
     seedRun({ members: [{ status: 'DISPATCHED' }, { status: 'LOADED' }] });
     const body = await (await get(TRIP_TOKEN)).json() as any;
     expect(body.step.status).toBe('DISPATCHED');
+  });
+});
+
+describe('the packing list QR marks the WHOLE lorry Loaded, and nothing else', () => {
+  /* Owner, 2026-11-27: one scan of the packing list when the lorry is full marks every
+     delivery order on it Loaded (DB DISPATCHED). Never confirms a Draft, never moves
+     anything past Loaded or back, and never touches a cancelled one. */
+  const MIXED = [
+    { status: 'LOADED' }, { status: 'DISPATCHED' }, { status: 'IN_TRANSIT' },
+    { status: 'DELIVERED' }, { status: 'DRAFT' }, { status: 'CANCELLED' }, { status: 'SIGNED' },
+  ];
+  const seedMixed = () => {
+    seedRun({ members: MIXED });
+    // Every confirmed DO already has its stock OUT on file (the confirm wrote it).
+    tables.inventory_movements = tables.delivery_orders
+      .filter((d) => d.status !== 'DRAFT' && d.status !== 'CANCELLED')
+      .map((d) => ({ id: `mv-${d.id}`, source_doc_type: 'DO', source_doc_id: d.id, movement_type: 'OUT', qty: 1 }));
+    tables.delivery_order_crew = tables.delivery_orders.map((d) => ({
+      do_id: d.id, company_id: CO, lorry_plate: 'VJK 8821',
+    }));
+  };
+
+  test('mixed statuses: only Confirmed moves to Loaded; the rest are left alone and named', async () => {
+    seedMixed();
+    const res = await advance(TRIP_TOKEN, 'DISPATCHED');
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.mode).toBe('load_all');
+    expect(body.members.map((m: any) => m.outcome)).toEqual(
+      ['DONE', 'ALREADY_DONE', 'PAST', 'PAST', 'BLOCKED', 'BLOCKED', 'PAST'],
+    );
+    expect(tables.delivery_orders.map((d) => d.status)).toEqual(
+      ['DISPATCHED', 'DISPATCHED', 'IN_TRANSIT', 'DELIVERED', 'DRAFT', 'CANCELLED', 'SIGNED'],
+    );
+    expect(body.headline).toBe('Lorry VJK 8821: 2 of 7 delivery orders loaded');
+    expect(body.members[0].customerName).toBe('Customer 1');
+    expect(body.members[4].message).toContain('Draft');
+    expect(body.members[5].message).toContain('cancelled');
+    // The confirm already took the stock out; loading writes no second movement,
+    // and the Draft got none at all.
+    expect(tables.inventory_movements).toHaveLength(5);
+    expect(tables.inventory_movements.some((m) => m.source_doc_id === 'run-do-5')).toBe(false);
+  });
+
+  test('scanning twice changes nothing the second time', async () => {
+    seedMixed();
+    await advance(TRIP_TOKEN, 'DISPATCHED');
+    const after1 = JSON.stringify(tables.delivery_orders);
+    const again = await (await advance(TRIP_TOKEN, 'DISPATCHED')).json() as any;
+    expect(again.moved).toBe(0);
+    expect(again.members.some((m: any) => m.outcome === 'DONE')).toBe(false);
+    expect(again.headline).toBe('Lorry VJK 8821: 2 of 7 delivery orders loaded');
+    expect(JSON.stringify(tables.delivery_orders)).toBe(after1);
+  });
+
+  test('a drop the office writer refuses is reported "not loaded" and the rest still load', async () => {
+    seedRun({ members: [{}, {}, {}] });
+    failStatusWriteIds = new Set(['run-do-2']);
+    const body = await (await advance(TRIP_TOKEN, 'DISPATCHED')).json() as any;
+    expect(body.outcome).toBe('PARTIAL');
+    expect(body.members.map((m: any) => m.outcome)).toEqual(['DONE', 'FAILED', 'DONE']);
+    expect(body.members[1].message).toMatch(/^Not loaded: /);
+    expect(tables.delivery_orders.map((d) => d.status)).toEqual(['DISPATCHED', 'LOADED', 'DISPATCHED']);
+    expect(body.headline).toContain('2 of 3');
+  });
+
+  test('a drop that moved on after it was read is refused, never dragged back to Loaded', async () => {
+    /* The run reads the status, then each write happens later. If the driver's own DO
+       scan moved this one to In Transit in between, writing DISPATCHED would move it
+       backwards: the office writer's expectFrom check refuses that. */
+    seedRun({ members: [{}] });
+    const row = tables.delivery_orders[0];
+    let reads = 0;
+    let stored = 'IN_TRANSIT';
+    Object.defineProperty(row, 'status', {
+      enumerable: true, configurable: true,
+      get: () => (reads++ === 0 ? 'LOADED' : stored),
+      set: (v: string) => { stored = v; },
+    });
+    const body = await (await advance(TRIP_TOKEN, 'DISPATCHED')).json() as any;
+    expect(body.members[0].outcome).toBe('FAILED');
+    expect(body.members[0].message).toContain('status changed');
+    expect(stored).toBe('IN_TRANSIT');
+  });
+
+  test('the packing list refuses any other step, so it can never walk the lorry on', async () => {
+    seedRun({ members: [{ status: 'DISPATCHED' }, { status: 'DISPATCHED' }] });
+    for (const to of ['IN_TRANSIT', 'DELIVERED', 'LOADED']) {
+      const res = await advance(TRIP_TOKEN, to);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).error).toBe('load_only');
+    }
+    expect(tables.delivery_orders.map((d) => d.status)).toEqual(['DISPATCHED', 'DISPATCHED']);
+  });
+
+  test('the page is told what each drop will do before the press', async () => {
+    seedMixed();
+    const body = await (await get(TRIP_TOKEN)).json() as any;
+    expect(body.mode).toBe('load_all');
+    expect(body.lorryPlate).toBe('VJK 8821');
+    expect(body.step).toMatchObject({ status: 'DISPATCHED', label: 'Mark whole lorry loaded' });
+    expect(body.members.map((m: any) => m.willLoad)).toEqual([true, false, false, false, false, false, false]);
+    expect(body.members[1].note).toContain('Already loaded');
+  });
+
+  test('a lorry already fully loaded offers no button', async () => {
+    seedRun({ members: [{ status: 'DISPATCHED' }, { status: 'IN_TRANSIT' }] });
+    const body = await (await get(TRIP_TOKEN)).json() as any;
+    expect(body.step).toBeNull();
+    expect(body.blockReason).toContain('already loaded');
+  });
+
+  test('a lorry with only a Draft left says how many are loaded and offers no button', async () => {
+    seedRun({ members: [{ status: 'DISPATCHED' }, { status: 'DRAFT' }] });
+    const body = await (await get(TRIP_TOKEN)).json() as any;
+    expect(body.step).toBeNull();
+    expect(body.blockReason).toContain('1 of 2 already loaded');
+    expect(body.members[1].note).toContain('Draft');
+  });
+
+  test('the lorry plate is read in the run\'s company only', async () => {
+    seedRun({ members: [{}] });
+    tables.delivery_order_crew = [
+      { do_id: 'run-do-1', company_id: OTHER_CO, lorry_plate: 'OTHER 1' },
+    ];
+    const body = await (await advance(TRIP_TOKEN, 'DISPATCHED')).json() as any;
+    expect(body.lorryPlate).toBeNull();
+    expect(body.headline).toBe('Packing list TRIP-2608-001: 1 of 1 delivery order loaded');
+  });
+
+  test('a delivery order\'s own QR still moves exactly one step at a time', async () => {
+    seed({ status: 'DISPATCHED' });
+    const res = await advance(TOKEN, 'IN_TRANSIT');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).outcome).toBe('DONE');
+    expect(tables.delivery_orders[0].status).toBe('IN_TRANSIT');
+  });
+});
+
+/* ── THE LORRY-DAY SHEET: a packing list printed per lorry per day, no trip ──
+   Its token (scm.packing_scan_sets) names the DOs PRINTED on it. The scan loads
+   those, through the same code as the trip sheet, and leaves alone any whose
+   lorry changed since printing. */
+const SHEET_TOKEN = 'k7m2n9p4q8';
+const uuidFor = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
+
+function seedLorryDay(opts: {
+  members?: Array<{ status?: string; plate?: string | null; vehicle?: string | null; company_id?: number; on_hold?: boolean }>;
+  sheetCompany?: number;
+  revoked?: boolean;
+} = {}) {
+  seed();
+  const list = opts.members ?? [{}, {}];
+  tables.delivery_orders = [];
+  tables.delivery_order_items = [];
+  tables.delivery_order_crew = [];
+  list.forEach((m, i) => {
+    const id = uuidFor(i + 1);
+    tables.delivery_orders.push({
+      id, do_number: `HC-DO-2611-20${i + 1}`, company_id: m.company_id ?? CO,
+      status: m.status ?? 'LOADED', on_hold: m.on_hold ?? false, vehicle: m.vehicle ?? null,
+      debtor_name: `Customer ${i + 1}`, city: 'Klang', state: 'Selangor',
+      qr_token: null, qr_revoked_at: null, so_doc_no: null,
+    });
+    const plate = m.plate === undefined ? 'VJK 8821' : m.plate;
+    if (plate !== null) tables.delivery_order_crew.push({ do_id: id, company_id: m.company_id ?? CO, lorry_plate: plate });
+    tables.inventory_movements.push({ id: `mv-${id}`, source_doc_type: 'DO', source_doc_id: id, movement_type: 'OUT', qty: 1 });
+  });
+  tables.packing_scan_sets = [{
+    id: 'sheet-1', company_id: opts.sheetCompany ?? CO, lorry_plate: 'VJK 8821', delivery_date: '2026-11-28',
+    do_ids: list.map((_, i) => uuidFor(i + 1)), qr_token: SHEET_TOKEN,
+    qr_revoked_at: opts.revoked ? '2026-11-28T02:00:00Z' : null,
+  }];
+  touched = [];
+  failing = new Set();
+}
+
+describe('the lorry-day packing list QR (no trip behind it)', () => {
+  test('one scan loads every printed Confirmed DO; the rest are left alone and named', async () => {
+    seedLorryDay({ members: [{}, { status: 'DISPATCHED' }, { status: 'DRAFT' }, { status: 'IN_TRANSIT' }, {}] });
+    const res = await advance(SHEET_TOKEN, 'DISPATCHED');
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.kind).toBe('lorry_day');
+    expect(body.members.map((m: any) => m.outcome)).toEqual(['DONE', 'ALREADY_DONE', 'BLOCKED', 'PAST', 'DONE']);
+    expect(tables.delivery_orders.map((d) => d.status)).toEqual(['DISPATCHED', 'DISPATCHED', 'DRAFT', 'IN_TRANSIT', 'DISPATCHED']);
+    expect(body.headline).toBe('Lorry VJK 8821: 3 of 5 delivery orders loaded');
+    expect(body.members[0]).toMatchObject({ stopNo: 1, doNumber: 'HC-DO-2611-201', customerName: 'Customer 1' });
+    expect(tables.inventory_movements).toHaveLength(5);
+  });
+
+  test('a DO moved to another lorry since printing is NOT loaded, and is reported', async () => {
+    seedLorryDay({ members: [{}, { plate: 'WXY 1234' }, { plate: null }, { plate: null, vehicle: 'vjk-8821' }] });
+    const body = await (await advance(SHEET_TOKEN, 'DISPATCHED')).json() as any;
+    expect(body.members.map((m: any) => m.outcome)).toEqual(['DONE', 'MOVED', 'MOVED', 'DONE']);
+    expect(body.members[1].message).toContain('another lorry');
+    expect(body.members[2].message).toContain('Taken off');
+    expect(tables.delivery_orders.map((d) => d.status)).toEqual(['DISPATCHED', 'LOADED', 'LOADED', 'DISPATCHED']);
+    expect(body.outcome).toBe('PARTIAL');
+  });
+
+  test('a DO added to the lorry after printing is not on the sheet, so it is not loaded', async () => {
+    seedLorryDay({ members: [{}] });
+    tables.delivery_orders.push({ id: uuidFor(99), do_number: 'HC-DO-2611-299', company_id: CO, status: 'LOADED', on_hold: false });
+    tables.delivery_order_crew.push({ do_id: uuidFor(99), company_id: CO, lorry_plate: 'VJK 8821' });
+    const body = await (await advance(SHEET_TOKEN, 'DISPATCHED')).json() as any;
+    expect(body.members).toHaveLength(1);
+    expect(tables.delivery_orders.find((d) => d.id === uuidFor(99))!.status).toBe('LOADED');
+  });
+
+  test('scanning twice changes nothing the second time', async () => {
+    seedLorryDay({ members: [{}, {}, { status: 'DRAFT' }] });
+    await advance(SHEET_TOKEN, 'DISPATCHED');
+    const after1 = JSON.stringify(tables.delivery_orders);
+    const again = await (await advance(SHEET_TOKEN, 'DISPATCHED')).json() as any;
+    expect(again.moved).toBe(0);
+    expect(JSON.stringify(tables.delivery_orders)).toBe(after1);
+  });
+
+  test('the sheet\'s company is the whole scope: another company\'s DO on it is never written', async () => {
+    seedLorryDay({ members: [{}, { company_id: OTHER_CO }] });
+    const body = await (await advance(SHEET_TOKEN, 'DISPATCHED')).json() as any;
+    expect(body.members[0].outcome).toBe('DONE');
+    expect(body.members[1].outcome).toBe('MOVED');
+    expect(body.members[1].doNumber).toBeNull();
+    expect(tables.delivery_orders[1].status).toBe('LOADED');
+    expect(JSON.stringify(body)).not.toContain('HC-DO-2611-202');
+  });
+
+  test('a revoked sheet gets the SAME answer an unknown token gets, and writes nothing', async () => {
+    seedLorryDay({ revoked: true });
+    const revoked = await get(SHEET_TOKEN);
+    const unknown = await get('m3n4p5q6r7');
+    expect(revoked.status).toBe(404);
+    expect(await revoked.text()).toBe(await unknown.text());
+    expect((await advance(SHEET_TOKEN, 'DISPATCHED')).status).toBe(404);
+    expect(tables.delivery_orders.every((d) => d.status === 'LOADED')).toBe(true);
+  });
+
+  test('the page is told what each printed DO will do, and only Loaded is accepted', async () => {
+    seedLorryDay({ members: [{}, { plate: 'WXY 1234' }] });
+    const body = await (await get(SHEET_TOKEN)).json() as any;
+    expect(body).toMatchObject({ kind: 'lorry_day', mode: 'load_all', lorryPlate: 'VJK 8821', tripDate: '2026-11-28', tripNo: null });
+    expect(body.members.map((m: any) => m.willLoad)).toEqual([true, false]);
+    expect(body.members[1].note).toContain('another lorry');
+    expect((await advance(SHEET_TOKEN, 'IN_TRANSIT')).status).toBe(400);
+  });
+
+  test('a failed read of the sheet\'s DOs or crew is 503, never an empty sheet', async () => {
+    seedLorryDay();
+    failing.add('delivery_order_crew');
+    expect((await get(SHEET_TOKEN)).status).toBe(503);
+    expect((await advance(SHEET_TOKEN, 'DISPATCHED')).status).toBe(503);
+    expect(tables.delivery_orders.every((d) => d.status === 'LOADED')).toBe(true);
+  });
+
+  test('scanned into the basket, the sheet is refused as a packing list', async () => {
+    seedLorryDay();
+    const body = await (await batchLookup([SHEET_TOKEN])).json() as any;
+    expect(body.lines[0].blockReason).toContain('packing list');
   });
 });
 
