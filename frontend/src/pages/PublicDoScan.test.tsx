@@ -254,7 +254,7 @@ describe("the packing-list sheet: SCAN WHEN FULLY LOADED", () => {
     expect(screen.getByText(/Only confirmed delivery orders are marked Loaded/)).toBeTruthy();
   });
 
-  it("a lorry with nothing left to load offers no button", async () => {
+  it("a lorry whose delivery orders are all already loaded offers no button", async () => {
     serve({ ...RUN, step: null, blockReason: "Everything on this lorry is already loaded. Nothing to do." });
     await mount();
     expect(screen.queryByRole("button")).toBeNull();
