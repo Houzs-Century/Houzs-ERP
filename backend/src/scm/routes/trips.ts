@@ -444,9 +444,10 @@ async function loadPackLines(sb: any, c: CompanyScopeCtx, doIds: readonly string
    Both read ONE day through loadPackingDay. Production (2026-11-27) puts
    customer DOs on a lorry through the Delivery Planning board crew
    (scm.delivery_order_crew, its lorry_plate), not through trips: the day's
-   trips carried only TRANSFER stops. So the day is every DO whose own
-   Delivery Date (customer_delivery_date, the planned date since #6126) is the
-   date, plus every DO that is a stop on a non-cancelled trip dated that day.
+   trips carried only TRANSFER stops. So the day is every open DO whose Sales
+   Order's board Delivery Date (amended ?? customer) is the date, every DO whose
+   own customer_delivery_date is the date, and every DO that is a stop on a
+   non-cancelled trip dated that day.
    A lorry is the trip's lorry, else the crew's plate, else the DO's vehicle.
    Trip lists that carry DOs keep their stop order; every other DO with a plate
    is grouped by plate (packing-day-view.ts, pure).
@@ -532,6 +533,30 @@ async function loadPackingDay(sb: any, c: CompanyScopeCtx, date: string, warehou
   });
   if (datedErr) return { error: datedErr.message };
   keep(dated ?? []);
+
+  // The day a DO actually goes out is its Sales Order's Delivery Date on the
+  // Delivery Planning board (amended, else the customer's). Production DOs cut
+  // before #6126 carry the old SO date on the DO itself, so the board date is
+  // the one that matches the lorry the board crew put them on. Open DOs only:
+  // a DO already delivered on another day of the same order stays on that day.
+  const { data: soDay, error: soDayErr } = await paginateAll<Record<string, unknown>>((lo, hi) =>
+    scopeToAllowedCompanies(
+      sb.from('mfg_sales_orders').select('doc_no')
+        .or(`amended_delivery_date.eq.${date},and(amended_delivery_date.is.null,customer_delivery_date.eq.${date})`)
+        .order('doc_no', { ascending: true }).range(lo, hi),
+      c,
+    ));
+  if (soDayErr) return { error: soDayErr.message };
+  const soDocs = [...new Set((soDay ?? []).map((r) => String(dual<string>(r, 'doc_no'))).filter(Boolean))];
+  const { data: bySo, error: bySoErr } = await chunkIn<Record<string, unknown>>(soDocs, (batch, lo, hi) => {
+    let q = sb.from('delivery_orders').select(DAY_DO_COLS)
+      .in('so_doc_no', batch).neq('status', 'CANCELLED').range(lo, hi);
+    if (warehouseId) q = q.eq('warehouse_id', warehouseId);
+    return scopeToAllowedCompanies(q, c);
+  });
+  if (bySoErr) return { error: bySoErr.message };
+  const arrived = new Set<string>(DO_ARRIVED_STATES);
+  keep(bySo.filter((r) => !arrived.has(String(dual<string | null>(r, 'status') ?? '').toUpperCase())));
 
   const allDoIds = [...doRows.keys()];
   const { data: crewData, error: crewErr } = await chunkIn<Record<string, unknown>>(allDoIds, (batch, lo, hi) =>

@@ -141,7 +141,7 @@ describe('the day loader — DOs by date and by board crew, every read scoped', 
     }
   });
 
-  for (const table of ['trips', 'delivery_orders', 'delivery_order_crew', 'delivery_order_items', 'warehouse_racks', 'mfg_sales_order_items']) {
+  for (const table of ['trips', 'delivery_orders', 'delivery_order_crew', 'delivery_order_items', 'warehouse_racks', 'mfg_sales_order_items', 'mfg_sales_orders']) {
     test(`every ${table} read is scoped`, () => {
       const found = statements(table);
       expect(found.length, `never reads ${table}`).toBeGreaterThan(0);
@@ -159,7 +159,19 @@ describe('the day loader — DOs by date and by board crew, every read scoped', 
   });
 
   test('cancelled DOs and trips are excluded in the statement', () => {
-    for (const w of [...statements('trips'), ...statements('delivery_orders')]) expect(w).toContain("neq('status', 'CANCELLED')");
+    for (const w of [...statements('trips'), ...statements('delivery_orders')]) {
+      expect(w).toContain("neq('status', 'CANCELLED')");
+    }
+  });
+
+  /* Production 2026-11-28: 25 DOs going out that day carried the old SO date in
+     customer_delivery_date; their Sales Orders' board Delivery Date (amended) was
+     the real day. The day therefore also takes the open DOs of SOs dated that day. */
+  test('the day also takes open DOs of Sales Orders whose board Delivery Date is the date', () => {
+    const src = packingHandler();
+    expect(src).toContain('amended_delivery_date.eq.${date},and(amended_delivery_date.is.null,customer_delivery_date.eq.${date})');
+    expect(src).toMatch(/chunkIn<.+?>\(soDocs,[\s\S]{0,200}from\('delivery_orders'\)[\s\S]{0,200}\.in\('so_doc_no', batch\)\.neq\('status', 'CANCELLED'\)/);
+    expect(src).toContain('keep(bySo.filter((r) => !arrived.has(');
   });
 });
 
