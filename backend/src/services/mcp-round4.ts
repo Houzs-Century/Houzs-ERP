@@ -151,7 +151,7 @@ export async function outletSalesPeriod(ctx: R3Ctx, p: Period): Promise<R3Outcom
   const fair = (r: Range) => ctx.read("/api/scm/reports/fair-report", { stage: "so", date_from: r.from, date_to: r.to });
   const [cur, prev, lm] = await Promise.all([fair(p), fair(p.prev), fair(p.lastMonth)]);
   if (!cur.ok) return refused(cur, target, "the Sales Report");
-  return answer(summariseOutletPeriod(cur.value, prev.ok ? prev.value : null, lm.ok ? lm.value : null, p, today), target);
+  return answer(summariseOutletPeriod(cur.value, prev.ok ? prev.value : null, lm.ok ? lm.value : null, p, today, ctx.origin), target);
 }
 
 export const POS_EVENTS_COMPARED = 3;
@@ -234,6 +234,8 @@ async function companyReport(ctx: R3Ctx, args: Obj): Promise<R3Outcome> {
         cases: cases.ok ? cases.value : null,
         notAvailable,
         today,
+        origin: ctx.origin,
+        window: { from: curFrom, to: curTo },
       }),
     },
     target,

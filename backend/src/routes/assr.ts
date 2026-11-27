@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { assrNoteCategory } from "../services/assrNoteCategories";
 import type { Env } from "../types";
 import { assrOpenStageSql } from "../services/assrStages";
 import {
@@ -2373,12 +2374,6 @@ app.patch("/:id/return-dos/:doId{[0-9]+}", requirePermission("service_cases.writ
 app.delete("/:id/return-dos/:doId{[0-9]+}", requirePermission("service_cases.write"), archiveReturnDoRoute);
 app.post("/:id/reopen", requirePermission("service_cases.write"), reopenCaseRoute);
 
-const NOTE_CATEGORIES = new Set(["service", "customer", "supplier", "sales"]);
-function noteCategory(v?: string): "service" | "customer" | "supplier" | "sales" {
-  if (v === "purchasing") return "service";
-  return NOTE_CATEGORIES.has(v ?? "") ? (v as any) : "service";
-}
-
 app.post("/:id/notes", requireAnyPermission(["service_cases.write", "service_cases.create", "service_cases.manage"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -2388,7 +2383,7 @@ app.post("/:id/notes", requireAnyPermission(["service_cases.write", "service_cas
     category?: string;
   }>();
   if (!body.note?.trim()) return c.json({ error: "note is required" }, 400);
-  const category = noteCategory(body.category);
+  const category = assrNoteCategory(body.category);
   await logActivity(c.env, id, "note", null, null, body.note, userId, {
     category,
     source_channel: "app",
@@ -2413,7 +2408,7 @@ app.post("/:id/notes/:noteId/correct", requirePermission("service_cases.write"),
   if (!prior) return c.json({ error: "Referenced entry not found on this case" }, 404);
 
   await logActivity(c.env, id, "note", null, null, body.note, userId, {
-    category: noteCategory(body.category),
+    category: assrNoteCategory(body.category),
     source_channel: "app",
     references_entry_id: noteId,
     is_correction: true,

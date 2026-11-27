@@ -10,6 +10,7 @@ const ME = { allowed: true, isAdmin: true, pendingRequest: null, connectorUrl: "
 const overview = (actionsEnabled: boolean) => ({
   connectorUrl: "https://erp.test/api/mcp",
   actionsEnabled,
+  actionSwitches: { mailReply: replyOn, note: false },
   stats: { connectedPeople: 0, callsToday: 2, refusedToday: 0, waiting: 0 },
   requests: [],
   connected: [],
@@ -19,15 +20,18 @@ const overview = (actionsEnabled: boolean) => ({
 });
 
 let on = false;
+let replyOn = false;
 beforeEach(() => {
   on = false;
+  replyOn = false;
   api.get.mockImplementation(async (path: string) => {
     if (path === "/api/mcp-admin/me") return ME;
     if (path === "/api/mcp-admin/admin/overview") return overview(on);
     throw new Error(`unexpected ${path}`);
   });
-  api.post.mockImplementation(async (path: string, body: { enabled?: boolean }) => {
-    if (path === "/api/mcp-admin/admin/actions") on = body.enabled === true;
+  api.post.mockImplementation(async (path: string, body: { enabled?: boolean; kind?: string }) => {
+    if (path === "/api/mcp-admin/admin/actions" && body.kind === "mail_reply") replyOn = body.enabled === true;
+    else if (path === "/api/mcp-admin/admin/actions") on = body.enabled === true;
     return { ok: true };
   });
 });
@@ -48,5 +52,17 @@ describe("AI Connector admin: AI actions switch", () => {
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/mcp-admin/admin/actions", { enabled: true }));
     await waitFor(() => expect((screen.getByRole("checkbox", { name: "Allow AI actions (meetings, email)" }) as HTMLInputElement).checked).toBe(true));
     expect(screen.getByText(/On: connected AIs may propose/)).toBeTruthy();
+  });
+
+  it("each new action has its own switch, OFF by default", async () => {
+    render(<AiConnector />);
+    const reply = (await screen.findByRole("checkbox", { name: "Reply to Mail Center emails" })) as HTMLInputElement;
+    const note = screen.getByRole("checkbox", { name: "Add notes to service cases" }) as HTMLInputElement;
+    expect(reply.checked).toBe(false);
+    expect(note.checked).toBe(false);
+    fireEvent.click(reply);
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/mcp-admin/admin/actions", { kind: "mail_reply", enabled: true }));
+    await waitFor(() => expect((screen.getByRole("checkbox", { name: "Reply to Mail Center emails" }) as HTMLInputElement).checked).toBe(true));
+    expect((screen.getByRole("checkbox", { name: "Allow AI actions (meetings, email)" }) as HTMLInputElement).checked).toBe(false);
   });
 });

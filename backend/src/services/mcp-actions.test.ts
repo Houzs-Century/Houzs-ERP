@@ -83,12 +83,12 @@ describe("confirmed-action outcome and fence", () => {
 
   it("an armed action expires and is single use", () => {
     const t = Date.now();
-    armAction("mcpx_exp", "email", "tok", t);
+    armAction("mcpx_exp", "email", "tok", "/api/mail-center/compose", t);
     expect(admitMcpWrite({ method: "POST", path: "/api/mail-center/compose", actionId: "mcpx_exp", tokenId: "tok", now: t + ARMED_TTL_MS + 1 })).toBe(false);
-    armAction("mcpx_once", "email", "tok", t);
+    armAction("mcpx_once", "email", "tok", "/api/mail-center/compose", t);
     expect(admitMcpWrite({ method: "POST", path: "/api/mail-center/compose/", actionId: "mcpx_once", tokenId: "tok", now: t })).toBe(true);
     expect(admitMcpWrite({ method: "POST", path: "/api/mail-center/compose", actionId: "mcpx_once", tokenId: "tok", now: t })).toBe(false);
-    armAction("mcpx_put", "email", "tok", t);
+    armAction("mcpx_put", "email", "tok", "/api/mail-center/compose", t);
     expect(admitMcpWrite({ method: "PUT", path: "/api/mail-center/compose", actionId: "mcpx_put", tokenId: "tok", now: t })).toBe(false);
   });
 });

@@ -236,13 +236,22 @@ export function summariseAging(body: unknown, today: string, party: "supplier" |
   };
 }
 
+/** The aging rows (per party, due this week) each with its ERP page: Accounting > AR / AP aging. */
+export function withAgingLinks<T extends Record<string, unknown>>(aging: T, origin: string, tab: "ar" | "ap"): T {
+  const url = `${origin}/scm/accounting?tab=${tab}`;
+  const link = (v: unknown) => (Array.isArray(v) ? v.map((r) => (r && typeof r === "object" ? { ...(r as Obj), url } : r)) : v);
+  const out: Record<string, unknown> = { ...aging, url };
+  for (const k of ["bySupplier", "byCustomer", "dueThisWeek"]) if (k in out) out[k] = link(out[k]);
+  return out as T;
+}
+
 async function payablesSummary(ctx: R3Ctx): Promise<R3Outcome> {
   const today = myToday(new Date(ctx.now));
   const target = `payables:${today}`;
   const r = await ctx.read("/api/scm/accounting/ap-aging", { buckets: "day", basis: "invoice", asOf: today });
   if (!r.ok) return refused(r, target, "the creditor (AP) aging");
   return answer(
-    { note: "Money in RM. The formal creditor aging (Accounting > AP aging): unpaid supplier bills aged by bill date. pastDue / dueThisWeek use each bill's due date (a bill without one is not counted there).", ...summariseAging(r.value, today, "supplier") },
+    { note: "Money in RM. The formal creditor aging (Accounting > AP aging): unpaid supplier bills aged by bill date. pastDue / dueThisWeek use each bill's due date (a bill without one is not counted there).", ...withAgingLinks(summariseAging(r.value, today, "supplier"), ctx.origin, "ap") },
     target,
   );
 }
@@ -272,7 +281,7 @@ async function receivablesSummary(ctx: R3Ctx): Promise<R3Outcome> {
       today,
       note: "Money in RM. deliveredNotInvoiced = goods that left the warehouse and were never invoiced (the Unbilled Deliveries report, from the line ledger). invoicedNotPaid = the formal debtor aging, aged by invoice date; pastDue / dueThisWeek by due date.",
       ...(unbilled.ok ? { deliveredNotInvoiced: summariseUnbilled(unbilled.value) } : {}),
-      ...(ar.ok ? { invoicedNotPaid: summariseAging(ar.value, today, "customer") } : {}),
+      ...(ar.ok ? { invoicedNotPaid: withAgingLinks(summariseAging(ar.value, today, "customer"), ctx.origin, "ar") } : {}),
       ...(notAvailable.length ? { notAvailable } : {}),
     },
     target,
