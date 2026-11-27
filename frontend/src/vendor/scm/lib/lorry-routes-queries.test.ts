@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmtDrive, fmtKm, roadTotalsByLorry, legLabelsByRef, diffPct, dailyTotalsByLorry } from './lorry-routes-queries';
+import { decodePolyline, fmtDrive, fmtKm, roadTotalsByLorry, legLabelsByRef, diffPct, dailyTotalsByLorry } from './lorry-routes-queries';
 import { slotSortKey } from './fleet-day-cards';
 
 describe('road figures', () => {
@@ -48,5 +48,14 @@ describe('Google against what really happened', () => {
     ]);
     expect(t.get('A')).toEqual({ gpsKm: 80.5, driveS: 3600, googleTimedS: 3000, timedStops: 3 });
     expect(t.get('B')?.gpsKm).toBeNull();
+  });
+});
+
+describe('decodePolyline', () => {
+  it("decodes Google's documented example into the run's road points", () => {
+    expect(decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@')).toEqual([
+      { lat: 38.5, lng: -120.2 }, { lat: 40.7, lng: -120.95 }, { lat: 43.252, lng: -126.453 },
+    ]);
+    expect(decodePolyline('')).toEqual([]);
   });
 });

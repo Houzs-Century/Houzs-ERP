@@ -17,6 +17,7 @@ const {
   mintVpSecret,
   readVpConfig,
   resetVpKick,
+  vpUrlAllowed,
   vpKickSweepAgain,
 } = await import('./venture-portal-outbox');
 const { resetFeedFlagCache } = await import('./venture-portal-feed-flag');
@@ -544,13 +545,13 @@ describe('readVpConfig', () => {
   test('answers null until BOTH the url and the secret are set', async () => {
     for (const config of [[], [URL_ROW], [SECRET_ROW]]) {
       const sb = db({ flag: '1', config });
-      expect(await readVpConfig(sb as never)).toBeNull();
+      expect(await readVpConfig(sb as never, null)).toBeNull();
     }
   });
 
   test('reads the url, the secret and the optional date floor', async () => {
     const sb = db({ flag: '1', config: [URL_ROW, SECRET_ROW, { k: 'vp.since', v: '2026-08-01' }] });
-    expect(await readVpConfig(sb as never)).toEqual({
+    expect(await readVpConfig(sb as never, null)).toEqual({
       url: URL_ROW.v,
       secret: SECRET_ROW.v,
       since: '2026-08-01',
@@ -559,7 +560,28 @@ describe('readVpConfig', () => {
 
   test('a missing date floor is null, not an empty string', async () => {
     const sb = db({ flag: '1' });
-    expect((await readVpConfig(sb as never))?.since).toBeNull();
+    expect((await readVpConfig(sb as never, null))?.since).toBeNull();
+  });
+
+  test('staging never reads a prod portal url as configured (HC-SO-2611-088)', () => {
+    expect(vpUrlAllowed(URL_ROW.v, 'staging')).toBe(false);
+    expect(vpUrlAllowed('https://ERP.houzsventure.com/api/erp/v1/sales-orders', 'staging')).toBe(false);
+    expect(vpUrlAllowed('not a url', 'staging')).toBe(false);
+    expect(vpUrlAllowed('https://venture-portal-git-x.vercel.app/api', 'staging')).toBe(true);
+    expect(vpUrlAllowed(URL_ROW.v, 'production')).toBe(true);
+    expect(vpUrlAllowed(URL_ROW.v, null)).toBe(true);
+  });
+
+  test('a staging drain with a copied prod url sends nothing', async () => {
+    const sb = withBuilder(db({ flag: '1' }), [payloadFor('HC-SO-013403')]);
+    currentSb = sb;
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    const r = await drainVenturePortalOutbox({ SENTRY_ENVIRONMENT: 'staging' } as never, 25, fetchImpl);
+
+    expect(r.skipped).toBe('not_configured');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(outbox(sb)[0].status).toBe('pending');
   });
 });
 

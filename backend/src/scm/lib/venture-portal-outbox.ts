@@ -88,6 +88,18 @@ type VpPayload = {
   salesperson?: unknown;
 };
 
+const VP_PROD_HOSTS: readonly string[] = ['venture-portal-chi.vercel.app', 'erp.houzsventure.com'];
+
+/** A staging copy carries prod's vp.url; staging must never write into the live portal (HC-SO-2611-088). */
+export function vpUrlAllowed(url: string, environment: string | null): boolean {
+  if (environment !== 'staging') return true;
+  try {
+    return !VP_PROD_HOSTS.includes(new URL(url).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The receiver URL, the shared secret and the date floor.
  *
@@ -96,6 +108,7 @@ type VpPayload = {
  */
 export async function readVpConfig(
   sb: ScmClient,
+  environment: string | null,
 ): Promise<VpConfig | null> {
   const { data, error } = await sb
     .from('sync_config')
@@ -107,6 +120,7 @@ export async function readVpConfig(
   const url = at('vp.url');
   const secret = at('vp.secret');
   if (!url || !secret) return null;
+  if (!vpUrlAllowed(url, environment)) return null;
   return { url, secret, since: at('vp.since') || null };
 }
 
@@ -172,7 +186,7 @@ export async function drainVenturePortalOutbox(
   const scope = await readFeedScope(sb);
   if (scope === 'off') return { skipped: 'feed_off', ...zero };
 
-  const cfg = await readVpConfig(sb);
+  const cfg = await readVpConfig(sb, env.SENTRY_ENVIRONMENT ?? null);
   if (!cfg) return { skipped: 'not_configured', ...zero };
 
   const { data: liveData, error: liveErr } = await sb
@@ -407,7 +421,7 @@ export async function probeVenturePortal(
   fetchImpl: typeof fetch = fetch,
 ): Promise<{ ok: boolean; status: number; body: string; reason?: string }> {
   const sb = getSupabaseService(env);
-  const cfg = await readVpConfig(sb);
+  const cfg = await readVpConfig(sb, env.SENTRY_ENVIRONMENT ?? null);
   if (!cfg) return { ok: false, status: 0, body: '', reason: 'not_configured' };
   const healthUrl = cfg.url.replace(/\/[^/]*$/, '/health');
   try {
@@ -444,7 +458,7 @@ export async function reconcileVenturePortalOutbox(
   const sb = getSupabaseService(env);
   const scope = await readFeedScope(sb);
   if (scope === 'off') return { skipped: 'feed_off', requeued: 0 };
-  const cfg = await readVpConfig(sb);
+  const cfg = await readVpConfig(sb, env.SENTRY_ENVIRONMENT ?? null);
   if (!cfg) return { skipped: 'not_configured', requeued: 0 };
 
   const { data, error } = await sb.rpc('vp_requeue_undelivered', {

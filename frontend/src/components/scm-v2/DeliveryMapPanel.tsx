@@ -146,7 +146,7 @@ function PanelOverlay({
     const l = map.addListener('maptypeid_changed', () =>
       onMapTypeChange(String(map.getMapTypeId() ?? 'roadmap')));
     return () => l.remove();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one listener per map; the caller passes a new callback every render
   }, [map]);
 
   const fitSig = useMemo(
@@ -161,6 +161,7 @@ function PanelOverlay({
     [viewKey, pins, routes, depot, focus, fitRefs],
   );
   const appliedFitSigRef = useRef<string | null>(null);
+  const roadSig = routes.map((r) => r.roadPath?.length ?? 0).join(',');
 
   useEffect(() => {
     if (!map || typeof google === 'undefined') return;
@@ -285,10 +286,11 @@ function PanelOverlay({
       }
       if (route.depot && route.stops.length > 0) path.push({ lat: route.depot.lat, lng: route.depot.lng });
       if (path.length >= 2) {
+        const onRoads = (route.roadPath?.length ?? 0) >= 2;
         const line = new google.maps.Polyline({
-          path,
+          path: onRoads ? route.roadPath! : path,
           map,
-          geodesic: true,
+          geodesic: !onRoads,
           strokeColor: route.color,
           strokeOpacity: dimmed ? 0.2 : 0.9,
           strokeWeight: dimmed ? 2 : 4,
@@ -417,15 +419,15 @@ function PanelOverlay({
       for (const o of objectsRef.current) o.setMap(null);
       objectsRef.current = [];
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, fitSig, selectedRef, zoomBucket, emphasisRouteId, statusByRef, vehicles]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- routes and pins redraw through fitSig and roadSig; the arrays are new every render
+  }, [map, fitSig, roadSig, selectedRef, zoomBucket, emphasisRouteId, statusByRef, vehicles]);
 
   useEffect(() => {
     if (!map || !selectedRef) return;
     const inRoutes = routes.flatMap((r) => r.stops).find((s) => s.ref === selectedRef);
     const pin = inRoutes ?? pins.find((p) => p.ref === selectedRef);
     if (pin) map.panTo({ lat: pin.lat, lng: pin.lng });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pan only when the selection changes, not when stops reload
   }, [map, selectedRef]);
 
   return null;

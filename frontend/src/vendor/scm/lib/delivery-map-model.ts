@@ -69,6 +69,7 @@ export type MapRoute = {
   delivered?: number | null;
   total?: number | null;
   roadLabel?: string | null;
+  roadPath?: MapLatLng[] | null;
 };
 
 /** Trip focus (owner rule: click a trip card / polyline → dim the others, zoom

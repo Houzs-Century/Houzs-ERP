@@ -93,7 +93,7 @@ export async function pushVenturePortalAttendance(
   const scope = await readFeedScope(sb);
   if (scope === 'off') return { skipped: 'feed_off', companies: [] };
 
-  const cfg = await readVpConfig(sb);
+  const cfg = await readVpConfig(sb, env.SENTRY_ENVIRONMENT ?? null);
   if (!cfg) return { skipped: 'not_configured', companies: [] };
 
   const url = vpAttendanceUrl(cfg.url);
