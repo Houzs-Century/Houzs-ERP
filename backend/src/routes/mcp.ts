@@ -74,8 +74,9 @@ import { actionSwitches, type ActionSwitches } from "../services/mcp-store";
 import { caseIdFrom, caseIdFromList, isActionKind, kindAllowed, kindOffText, pickThread, proposeMailReply, proposeNote, THREAD_ID_RE, WRITE_TOOLS, writeOutcome, type WriteKind, type WriteProposal } from "../services/mcp-write-actions";
 import { ROLE_PROMPTS, rolePromptText, visibleRolePrompts, visibleTools, withOutputSchemas, withStructured } from "../services/mcp-round4c";
 import { CACHEABLE_TOOLS, isRound3Tool, mcpXlsxDownload, ROUND3_INSTRUCTIONS, ROUND3_TOOLS, runRound3Tool } from "../services/mcp-round3";
-import { HOWTO_INSTRUCTIONS, HOWTO_PROMPTS, HOWTO_TOOLS, howtoPromptText, isHowtoTool, runHowtoTool } from "../services/mcp-howto";
+import { HOWTO_INSTRUCTIONS, HOWTO_PROMPTS, HOWTO_TOOLS, howtoPromptText, isHowtoTool, redactQuestion, runHowtoTool } from "../services/mcp-howto";
 import { isScreenTool, runScreenTool, SCREEN_INSTRUCTIONS, SCREEN_PROMPTS, SCREEN_TOOLS, screenPromptText } from "../services/mcp-screen";
+import { annotatedHtml, annotatedSvg, resolveShot, SHOW_ME_TOOL, showMeText } from "../services/mcp-show-me";
 
 type HonoEnv = { Bindings: Env };
 const app = new Hono<HonoEnv>();
@@ -230,6 +231,7 @@ export type McpIdentity = { tokenId: string; clientId: string; user: AuthUser };
 type Identity = McpIdentity;
 type RpcReq = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
+type ImageItem = { type: "image"; data: string; mimeType: string };
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
 
 export const MCP_INSTRUCTIONS = `You are connected to Houzs ERP (Houzs Century furniture retail + the 2990's POS: sales orders, projects / exhibitions, service cases (ASSR), purchasing, delivery, warehouse, accounting, HR, fleet) as the signed-in staff member.
@@ -403,6 +405,7 @@ export const MCP_TOOLS = [
   ...ROUND3_TOOLS,
   ...HOWTO_TOOLS,
   ...SCREEN_TOOLS,
+  SHOW_ME_TOOL,
 ];
 
 /** Who an in-process read runs for: the Worker env, its execution context and the public origin links are built on. */
@@ -846,12 +849,41 @@ async function cancelTool(c: Context<HonoEnv>, id: Identity, confirmationId: str
   return { result: text("Cancelled. Nothing was booked, sent or written."), status: 200, note: "", target: `cancel ${row.summary}` };
 }
 
-async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+const toBase64 = (bytes: Uint8Array): string => {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+};
+
+async function showMeTool(c: Context<HonoEnv>, id: Identity, args: Record<string, unknown>): Promise<Outcome & { image: ImageItem | null }> {
+  const s = (k: string) => (typeof args[k] === "string" ? (args[k] as string).trim().slice(0, 300) : undefined);
+  const hit = resolveShot({ path: s("path"), guide_id: s("guide_id"), label: s("label"), step: typeof args.step === "number" ? args.step : undefined });
+  const asked = [s("guide_id"), s("path"), s("label")].filter(Boolean).join(" ");
+  if (!hit) {
+    return { result: text(JSON.stringify({ matched: false, message: "No screenshot for that yet. Use the page link from how_to / where_is instead; it highlights the button on the real page." })), status: 200, note: "no-guide", target: redactQuestion(asked || "show_me"), image: null };
+  }
+  const origin = originOf(c);
+  const res = await fetch(`${origin}/help-shots/${hit.shot.file}`);
+  if (!res.ok) return { result: text(JSON.stringify(showMeText(hit, origin, null))), status: 200, note: `shot fetch ${res.status}`, target: `show_me ${hit.page}`, image: null };
+  const b64 = toBase64(new Uint8Array(await res.arrayBuffer()));
+  const caption = `Press "${hit.label}" (test data, real layout)`;
+  const key = randomToken(32);
+  const expiresAt = new Date(Date.now() + EXPORT_TTL_MS).toISOString();
+  await c.env.POD_BUCKET.put(`${EXPORT_PREFIX}${key}.html`, annotatedHtml(annotatedSvg(hit, b64, caption), caption), {
+    httpMetadata: { contentType: "text/html; charset=utf-8" },
+    customMetadata: { expiresAt, userId: String(id.user.id), doc: `show_me:${hit.page}` },
+  });
+  const link = `${origin}/api/mcp/export/${key}`;
+  return { result: text(JSON.stringify(showMeText(hit, origin, link))), status: 200, note: "", target: `show_me ${hit.page} ${hit.label}`.slice(0, 200), image: { type: "image", data: b64, mimeType: "image/webp" } };
+}
+
+async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult | { content: (ToolResult["content"][number] | ImageItem)[]; isError?: boolean }> {
   const t0 = Date.now();
   let status = 200;
   let note = "";
   let target = "";
   let result: ToolResult;
+  let image: ImageItem | null = null;
   const company = companyArg(args);
   const tag = company ? `[${company}] ` : "";
   try {
@@ -863,6 +895,10 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
       note = RATE_LIMITED_NOTE;
     } else if (isHowtoTool(name)) {
       ({ result, status, note, target } = runHowtoTool({ user: id.user, origin: originOf(c) }, name, args));
+    } else if (name === "show_me") {
+      const o = await showMeTool(c, id, args);
+      ({ result, status, note, target } = o);
+      image = o.image;
     } else if (isScreenTool(name)) {
       ({ result, status, note, target } = runScreenTool({ user: id.user, origin: originOf(c) }, name, args));
     } else if (isRound3Tool(name)) {
@@ -937,7 +973,7 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
   } catch {
     await done;
   }
-  return result;
+  return image && !result.isError ? { ...result, content: [...result.content, image] } : result;
 }
 
 async function handleRpc(c: Context<HonoEnv>, id: Identity, token: string, m: RpcReq): Promise<unknown> {

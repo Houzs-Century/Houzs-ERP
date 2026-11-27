@@ -142,7 +142,7 @@ describe("AI Connector quick answers", () => {
   });
 
   it("the tool list: quick answers first, reads read-only, only the action tools write, the instructions point at them", () => {
-    expect(MCP_TOOLS.map((t) => t.name)).toEqual(["sales_summary", "delivery_summary", "search", "fetch", "whoami", "list_modules", "list_endpoints", "erp_get", "document_flow", "get_pdf", "propose_meeting", "propose_email", "propose_mail_reply", "propose_note", "confirm_action", "cancel_action", ...ROUND3_TOOLS.map((t) => t.name), ...HOWTO_TOOLS.map((t) => t.name), ...SCREEN_TOOLS.map((t) => t.name)]);
+    expect(MCP_TOOLS.map((t) => t.name)).toEqual(["sales_summary", "delivery_summary", "search", "fetch", "whoami", "list_modules", "list_endpoints", "erp_get", "document_flow", "get_pdf", "propose_meeting", "propose_email", "propose_mail_reply", "propose_note", "confirm_action", "cancel_action", ...ROUND3_TOOLS.map((t) => t.name), ...HOWTO_TOOLS.map((t) => t.name), ...SCREEN_TOOLS.map((t) => t.name), "show_me"]);
     const writers = ["propose_meeting", "propose_email", "propose_mail_reply", "propose_note", "confirm_action", "cancel_action"];
     for (const t of MCP_TOOLS) expect(t.annotations.readOnlyHint).toBe(!writers.includes(t.name));
     for (const t of MCP_TOOLS.filter((x) => x.name.startsWith("propose_"))) {

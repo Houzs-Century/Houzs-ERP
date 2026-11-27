@@ -4,6 +4,7 @@ import { NO_GUIDE_NOTE, queryTerms, rank, redactQuestion, scoreItem, type HowtoC
 import { canOpenPage, erpLink, gatePasses, NO_PERMISSION_NOTE } from "./mcp-howto-types";
 import { SCREENS } from "./mcp-screen-map";
 import type { ScreenAction, ScreenPage } from "./mcp-screen-types";
+import { hasShot } from "./mcp-help-shots";
 
 const norm = (s: string): string => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError: true } : {}) });
@@ -142,6 +143,7 @@ function whereIsTool(ctx: HowtoCtx, args: Record<string, unknown>): HowtoOutcome
           sidebar: screen.sidebar ?? "Not in the sidebar; see purpose for how to reach it",
           purpose: screen.purpose.split(/(?<=\.)\s/)[0],
           ...(action ? { press: action.label } : {}),
+          ...(action && hasShot(screen.path, action.label) ? { showMe: { path: screen.path, label: action.label } } : {}),
           link: erpLink(ctx.origin, screen.path, action ? action.label : null) ?? screen.path,
           canOpen,
           ...(canOpen ? {} : { note: NO_PERMISSION_NOTE }),
@@ -186,7 +188,7 @@ export function runScreenTool(ctx: HowtoCtx, name: string, args: Record<string, 
 }
 
 /** The screen part of the server instructions. */
-export const SCREEN_INSTRUCTIONS = `SCREENSHOTS: when the person sends a screenshot or photo of the ERP, read the address bar (URL) and the visible labels (page title, tabs, button texts) and call explain_screen {path, visible_text}; then explain the page and the buttons they ask about in their language. "Where do I open / find X" -> where_is {thing}. Give the link: it opens the page and highlights the button.`;
+export const SCREEN_INSTRUCTIONS = `SCREENSHOTS: when the person sends a screenshot or photo of the ERP, read the address bar (URL) and the visible labels (page title, tabs, button texts) and call explain_screen {path, visible_text}; then explain the page and the buttons they ask about in their language. "Where do I open / find X" -> where_is {thing}. Give the link: it opens the page and highlights the button. To SHOW where to click, call show_me {path, label} (or {guide_id, step}); it returns a screenshot with a red box (test data, real layout) and a 15-minute link to the annotated picture.`;
 
 /** Ready-made prompts for the screen tools. */
 export const SCREEN_PROMPTS = [
