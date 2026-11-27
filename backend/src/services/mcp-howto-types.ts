@@ -59,8 +59,7 @@ export type HowtoGuide = {
 
 const pageLevel = (u: AuthUser, key: string): AccessLevel => {
   if (u.permissions_set.has("*")) return "full";
-  const v = u.page_access?.[key];
-  return v ?? "none";
+  return Object.prototype.hasOwnProperty.call(u.page_access, key) ? u.page_access[key] : "none";
 };
 
 /** Does this person pass the page's ERP guard? Mirrors the route guard; the API re-checks every write anyway. */

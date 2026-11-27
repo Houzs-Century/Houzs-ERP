@@ -4,3 +4,7 @@ export declare function labelInFrontend(label: string): boolean;
 export declare function frontendRoutes(): string[];
 export declare function routeExists(page: string): boolean;
 export declare function quotedLabels(text: string): string[];
+export declare function backendCorpus(): string;
+export declare function readRepoFile(rel: string): string | null;
+export declare function writeRepoFile(rel: string, content: string): void;
+export declare const WRITE_MODE: boolean;

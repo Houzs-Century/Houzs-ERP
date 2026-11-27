@@ -65,3 +65,32 @@ export function routeExists(page) {
 export function quotedLabels(text) {
   return [...text.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
 }
+
+let backendCache = null;
+
+/** All non-test backend/src TypeScript except the help data itself (mcp-howto*, mcp-screen*). */
+export function backendCorpus() {
+  if (backendCache) return backendCache;
+  const dir = path.resolve(here, "../../src");
+  const files = walk(dir, []).filter((f) => f.endsWith(".ts") && !/[\/]mcp-(howto|screen)/.test(f));
+  backendCache = files.map((f) => fs.readFileSync(f, "utf8")).join("\n");
+  return backendCache;
+}
+
+const REPO = path.resolve(here, "../../..");
+
+/** Read a repo file (relative to the repo root), or null when it does not exist. */
+export function readRepoFile(rel) {
+  const p = path.join(REPO, rel);
+  return fs.existsSync(p) ? fs.readFileSync(p, "utf8").replace(/\r\n/g, "\n") : null;
+}
+
+/** Write a repo file (relative to the repo root), creating its folder. */
+export function writeRepoFile(rel, content) {
+  const p = path.join(REPO, rel);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, content);
+}
+
+/** True when the caller asked to regenerate files (HOWTO_WRITE=1). */
+export const WRITE_MODE = process.env.HOWTO_WRITE === "1";

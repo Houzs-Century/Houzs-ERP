@@ -1,25 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { labelInFrontend, quotedLabels, routeExists } from "../../scripts/lib/frontend-honesty.mjs";
-import fs from "node:fs";
-import path from "node:path";
+import { backendCorpus, labelInFrontend, quotedLabels, routeExists } from "../../scripts/lib/frontend-honesty.mjs";
 import { HOWTO_GUIDES } from "./mcp-howto-guides";
 import { MODULES } from "./mcp-howto-modules";
 import { GLOSSARY } from "./mcp-howto-glossary";
 import { ONBOARDING } from "./mcp-howto-onboarding";
 import { ERRORS } from "./mcp-howto-errors";
-
-function backendCorpus(): string {
-  const out: string[] = [];
-  const walk = (d: string) => {
-    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-      const p = path.join(d, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (/\.ts$/.test(e.name) && !/\.test\.ts$/.test(e.name) && !e.name.startsWith("mcp-howto")) out.push(fs.readFileSync(p, "utf8"));
-    }
-  };
-  walk(path.resolve(__dirname, ".."));
-  return out.join("\n");
-}
 
 const ids = new Set(HOWTO_GUIDES.map((g) => g.id));
 
