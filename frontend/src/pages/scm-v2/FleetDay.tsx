@@ -11,7 +11,7 @@
 // here is a labelled placeholder). The page keeps the scm.transportation.last_mile
 // gate (applied on the route) and the real Google-Maps panel.
 // ----------------------------------------------------------------------------
-import { fmtDrive, fmtKm, legLabelsByRef, useRoadDay } from '../../vendor/scm/lib/lorry-routes-queries';
+import { decodePolyline, fmtDrive, fmtKm, legLabelsByRef, useRoadDay } from '../../vendor/scm/lib/lorry-routes-queries';
 import { useCallback, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Printer, Truck, Map as MapIcon, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -270,7 +270,11 @@ export function FleetDay() {
   })();
   const legByRef = useMemo(() => legLabelsByRef(roadDay.data?.values() ?? []), [roadDay.data]);
   const mapNoByRef = lorryRoutes.noByRef;
-  const panelRoutes = lorryRoutes.routes.map((r) => ({ ...r, roadLabel: roadLabelOf(r.title) }));
+  const panelRoutes = lorryRoutes.routes.map((r) => {
+    const id = runByPlate.get(platekey(r.title))?.lorryId;
+    const poly = id ? roadDay.data?.get(id)?.polyline : null;
+    return { ...r, roadLabel: roadLabelOf(r.title), roadPath: poly ? decodePolyline(poly) : null };
+  });
   const mapUnlocated = useMemo(() => {
     const seen = new Set<string>();
     const out: Array<{ ref: string; label?: string; reason: string }> = [];
