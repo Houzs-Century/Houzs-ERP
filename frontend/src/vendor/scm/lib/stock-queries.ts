@@ -244,6 +244,8 @@ export type StockTransferRow = {
   cancelled_at: string | null;
   created_at: string;
   created_by: string | null;
+  racks_applied_at?: string | null;
+  racks_reversed_at?: string | null;
   line_count?: number;
   from_warehouse?: StockTransferWarehouse | null;
   to_warehouse?: StockTransferWarehouse | null;
@@ -258,6 +260,8 @@ export type StockTransferLine = {
   qty: number;
   notes: string | null;
   created_at: string;
+  from_rack_id?: string | null;
+  to_rack_id?: string | null;
 };
 
 export type StockTransferDetail = {
@@ -313,6 +317,10 @@ export type StockTransferItemInput = {
   variantKey?: string;
   qty: number;
   notes?: string;
+  /** Optional rack of the From warehouse the goods come off. Owner 2026-11-27. */
+  fromRackId?: string;
+  /** Optional rack of the To warehouse the goods go onto. Owner 2026-11-27. */
+  toRackId?: string;
 };
 
 export type CreateStockTransferInput = {

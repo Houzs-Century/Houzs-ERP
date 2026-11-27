@@ -23,12 +23,15 @@ Warehouse-to-warehouse stock movement — `scm.stock_transfers` + `scm.stock_tra
 - A failed apply auto-cancels the header (422 `transfer_movements_failed`) — a transfer that did not complete must never be left looking posted.
 - Cancel reverses movements rather than deleting them, and is idempotent both by the status-flip gate and by skipping any bucket whose signed net is already zero.
 - Both warehouse ids must be proved to belong to the active company before anything is written, on both create and cancel — the FIFO consumer keys on `(warehouse_id, item_code, variant_key)` with no company argument, so an unproven cross-company warehouse id would consume the other company's lots at their cost.
+- A line may name a From rack and a To rack, both optional, never auto-picked. When any line names one, the post goes through `fn_stock_transfer_apply_racked`, which runs `fn_stock_transfer_apply` and the rack off/on in the same transaction: a short or wrong-warehouse rack rolls back the stock move too. A transfer with no rack calls `fn_stock_transfer_apply` exactly as before.
+- Cancel puts racked goods back with `fn_stock_transfer_racks_undo` (all lines in one transaction, once only via `racks_reversed_at`). The stock reversal itself is still app-side, not in that transaction.
 - The printed sheet must never state a money figure — only quantity (labelled TOTAL QTY) — the cost side of a transfer lives only in the movement rows, not on the document.
 
 ## Gotchas
 
 - Don't reset a create form's fields and reuse the same route for "start the next one" — mint a fresh mount (and therefore a fresh idempotency key), or the next transfer can replay or collide with the previous one's key.
 - An item/qty edit on a POSTED transfer reverses + re-applies ALL of that transfer's lines, not just the one(s) that changed — the availability check and reversal both operate bucket-wide (per item+variant), not per line-id, because `reverseMovements` nets by bucket. A single-line "surgical" edit is not how this works under the hood.
+- A transfer with `racks_applied_at` set refuses item edits (409 `racked_transfer_items_locked`); only Notes. Cancel and post a new one.
 - The warehouse pair is still not editable, ever — only Notes and the line list (SKU/variant/qty/notes). Changing warehouses needs Cancel + a new transfer.
 - The printed sheet renders the server's saved rows, not the create/detail page's in-memory draft — a draft's dropped fields (like `variant_key`) are exactly what a warehouse hand-off sheet needs to say, so printing must read from the saved record.
 - Stock Adjustment's "New" flow uses the same remount pattern but currently sends no idempotency key at all — don't assume it has the same replay protection as Stock Transfer.
@@ -38,6 +41,7 @@ Warehouse-to-warehouse stock movement — `scm.stock_transfers` + `scm.stock_tra
 - `backend/src/scm/routes/stock-transfers.ts` — API surface.
 - `backend/src/scm/lib/stock-transfer-atomic.ts` — `buildTransferPayload`.
 - `backend/src/db/migrations-pg/0192_scm_stock_transfer_atomic.sql` — `fn_stock_transfer_apply`.
+- `backend/src/db/migrations-pg/*_scm_stock_transfer_racks.sql`, `backend/src/scm/lib/stock-transfer-racks.ts` — optional racks.
 - `frontend/src/pages/scm-v2/StockTransfersListV2.tsx`, `StockTransferNew.tsx`, `StockTransferDetail.tsx` — desktop surfaces.
 - `frontend/src/mobile/MobileStockTransferNew.tsx` — mobile create.
 - `frontend/src/vendor/scm/lib/stock-transfer-pdf.ts` — printed document.

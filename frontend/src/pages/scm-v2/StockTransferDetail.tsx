@@ -28,6 +28,7 @@ import { AddLineButton } from '../../vendor/scm/components/AddLineButton';
 import { useAddLineHotkey } from '../../vendor/scm/lib/useAddLineHotkey';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { STOCK_TRANSFER_AUDIT_LABELS } from './entity-audit-labels';
+import { useRacks } from '../../vendor/scm/lib/warehouse-queries';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
@@ -232,6 +233,8 @@ export const StockTransferDetail = () => {
       variantKey:  l.variant_key ?? '',
       qty:         l.qty,
       notes:       l.notes ?? '',
+      fromRackId:  l.from_rack_id ?? undefined,
+      toRackId:    l.to_rack_id ?? undefined,
     }));
     setLines(hydrated);
     setOriginalLines(Object.fromEntries(hydrated.map((l) => [l._key, {
@@ -244,7 +247,12 @@ export const StockTransferDetail = () => {
 
   const status: StockTransferStatus | undefined = detail.data?.transfer.status;
   const isPosted = status === 'POSTED';
-  const itemsEditable = editing && isPosted;
+  const racksMoved = Boolean(detail.data?.transfer.racks_applied_at);
+  const itemsEditable = editing && isPosted && !racksMoved;
+  const showRacks = !itemsEditable && lines.some((l) => l.fromRackId || l.toRackId);
+  const racksQ = useRacks();
+  const rackLabel = (rid: string | undefined) =>
+    rid ? (racksQ.data?.racks ?? []).find((r) => r.id === rid)?.rack ?? '(removed rack)' : null;
 
   useEffect(() => {
     if (detail.data && searchParams.get('edit') === '1') setEditing(true);
@@ -467,6 +475,11 @@ export const StockTransferDetail = () => {
               This transfer is {status} — only Notes can be changed here. SKU/qty edits need a POSTED transfer.
             </p>
           )}
+          {editing && isPosted && racksMoved && (
+            <p className={styles.muted} style={{ marginBottom: 8 }}>
+              This transfer moved goods between racks, so only Notes can be changed here. To change its items, cancel it and post a new one.
+            </p>
+          )}
           <table className={`${styles.table} ${styles.tableOwnWidths}`}>
             <thead>
               <tr>
@@ -475,13 +488,15 @@ export const StockTransferDetail = () => {
                 {itemsEditable && <th style={{ width: '20%' }}>Variant / bucket</th>}
                 {itemsEditable && <th style={{ width: 90, textAlign: 'right' }}>Available</th>}
                 <th style={{ width: 110, textAlign: 'right' }}>Qty</th>
+                {showRacks && <th style={{ width: 120 }}>From rack</th>}
+                {showRacks && <th style={{ width: 120 }}>To rack</th>}
                 <th>Description 2</th>
                 {itemsEditable && <th style={{ width: 40 }} />}
               </tr>
             </thead>
             <tbody>
               {lines.length === 0 && (
-                <tr><td colSpan={itemsEditable ? 7 : 4} className={styles.emptyRow}>No lines.</td></tr>
+                <tr><td colSpan={itemsEditable ? 7 : showRacks ? 6 : 4} className={styles.emptyRow}>No lines.</td></tr>
               )}
               {itemsEditable
                 ? lines.map((ln) => (
@@ -504,6 +519,8 @@ export const StockTransferDetail = () => {
                       <td className={styles.tableRight} style={{ fontFamily: 'var(--font-mono)' }}>
                         {fmtQty(ln.qty)}
                       </td>
+                      {showRacks && <td>{rackLabel(ln.fromRackId) ?? <span className={styles.muted}>—</span>}</td>}
+                      {showRacks && <td>{rackLabel(ln.toRackId) ?? <span className={styles.muted}>—</span>}</td>}
                       <td>
                         {ln.notes?.trim()
                           ? <span>{ln.notes}</span>

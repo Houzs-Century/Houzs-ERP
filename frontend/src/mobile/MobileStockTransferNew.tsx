@@ -13,6 +13,8 @@ import { useIdempotencyKey } from "../lib/idempotency";
 import { MobileSkuPicker, type PickedSku } from "./MobileSkuPicker";
 import { DateField } from "../vendor/scm/components/DateField";
 import { variantKeyLabel } from "../vendor/scm/lib/variant-key-label";
+import { useRacks, type Rack } from "../vendor/scm/lib/warehouse-queries";
+import { heldOnRack, rackMovesSummary } from "../vendor/scm/lib/stock-transfer-racks";
 
 /* ------------------------------------------------------------------ *
  * Mobile New Stock Transfer — From -> To (must differ) + date + notes,
@@ -22,7 +24,12 @@ import { variantKeyLabel } from "../vendor/scm/lib/variant-key-label";
  * useCreateStockTransfer + useInventoryBuckets; no backend change.
  * ------------------------------------------------------------------ */
 
-type LineDraft = { _key: string; itemCode: string; productName: string; variantKey?: string; qty: number; notes?: string };
+type LineDraft = {
+  _key: string; itemCode: string; productName: string; variantKey?: string; qty: number; notes?: string;
+  fromRackId?: string; toRackId?: string;
+};
+
+const byRackLabel = (a: Rack, b: Rack) => a.rack.localeCompare(b.rack, "en", { numeric: true });
 
 const humanizeVariantKey = (k: string): string => variantKeyLabel(k, "(unclassified)");
 
@@ -32,10 +39,13 @@ const UNPICKED = "__UNPICKED__";
 // its SKU's real variant buckets (with on-hand qty) at the From warehouse — the
 // operator moves the exact bucket, keeping stock + MRP accurate (owner 2026-07-20).
 function MobileTransferLine({
-  line, fromWarehouseId, setVariant, setQty, setNotes, removeLine,
+  line, fromWarehouseId, setVariant, setQty, setNotes, removeLine, fromRacks, toRacks, setRacks,
 }: {
   line: LineDraft;
   fromWarehouseId: string;
+  fromRacks: Rack[];
+  toRacks: Rack[];
+  setRacks: (key: string, patch: Pick<LineDraft, "fromRackId" | "toRackId">) => void;
   setVariant: (key: string, variantKey: string | undefined) => void;
   setQty: (key: string, qty: number) => void;
   setNotes: (key: string, notes: string) => void;
@@ -51,6 +61,10 @@ function MobileTransferLine({
     ? undefined
     : variantBuckets.find((v) => v.variantKey === line.variantKey)?.qty;
   const over = avail != null && line.qty > avail;
+  const racksHolding = fromRacks
+    .map((r) => ({ rack: r, held: heldOnRack(r, line.itemCode) }))
+    .filter((x) => x.held > 0);
+  const fromHeld = line.fromRackId ? racksHolding.find((x) => x.rack.id === line.fromRackId)?.held ?? 0 : null;
 
   return (
     <div className="st-line">
@@ -99,6 +113,41 @@ function MobileTransferLine({
             : `avail ${avail}`}
         </span>
       </div>
+      <div className="st-whrow" style={{ marginTop: 8 }}>
+        <div className="st-fld">
+          <span className="st-fl">From rack</span>
+          <select
+            className="cal-sel"
+            style={{ fontSize: 13 }}
+            value={line.fromRackId ?? ""}
+            onChange={(e) => setRacks(line._key, { fromRackId: e.target.value || undefined })}
+            disabled={!fromWarehouseId}
+          >
+            <option value="">Not on a rack</option>
+            {racksHolding.map(({ rack, held }) => (
+              <option key={rack.id} value={rack.id}>{rack.rack} ({held} here)</option>
+            ))}
+          </select>
+        </div>
+        <div className="st-fld">
+          <span className="st-fl">To rack</span>
+          <select
+            className="cal-sel"
+            style={{ fontSize: 13 }}
+            value={line.toRackId ?? ""}
+            onChange={(e) => setRacks(line._key, { toRackId: e.target.value || undefined })}
+            disabled={toRacks.length === 0}
+          >
+            <option value="">Not on a rack</option>
+            {toRacks.map((r) => (
+              <option key={r.id} value={r.id}>{r.rack}{r.reserved ? " (reserved)" : ""}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {fromHeld != null && line.qty > fromHeld && (
+        <div className="st-warn" style={{ marginTop: 4 }}>Rack holds only {fromHeld}</div>
+      )}
       <input
         className="cal-sel"
         style={{ marginTop: 8, fontSize: 13 }}
@@ -139,6 +188,26 @@ function MobileStockTransferForm({
   const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<LineDraft[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const fromRacksQ = useRacks({ warehouseId: fromWarehouseId || undefined });
+  const toRacksQ = useRacks({ warehouseId: toWarehouseId || undefined });
+  const fromRacks = useMemo(
+    () => (fromWarehouseId ? (fromRacksQ.data?.racks ?? []).filter((r) => r.warehouse_id === fromWarehouseId).sort(byRackLabel) : []),
+    [fromRacksQ.data, fromWarehouseId],
+  );
+  const toRacks = useMemo(
+    () => (toWarehouseId ? (toRacksQ.data?.racks ?? []).filter((r) => r.warehouse_id === toWarehouseId).sort(byRackLabel) : []),
+    [toRacksQ.data, toWarehouseId],
+  );
+  const pickFromWarehouse = (id: string) => {
+    setFromWarehouseId(id);
+    setLines((prev) => prev.map((l) => ({ ...l, fromRackId: undefined })));
+  };
+  const pickToWarehouse = (id: string) => {
+    setToWarehouseId(id);
+    setLines((prev) => prev.map((l) => ({ ...l, toRackId: undefined })));
+  };
+  const setRacks = (key: string, patch: Pick<LineDraft, "fromRackId" | "toRackId">) =>
+    setLines((prev) => prev.map((l) => (l._key === key ? { ...l, ...patch } : l)));
 
 
   const whList = warehouses.data ?? [];
@@ -170,14 +239,18 @@ function MobileStockTransferForm({
         toWarehouseId,
         transferDate,
         notes: notes.trim() || undefined,
-        items: validLines.map((l) => ({ itemCode: l.itemCode, productName: l.productName, variantKey: l.variantKey, qty: l.qty, notes: l.notes?.trim() || undefined })),
+        items: validLines.map((l) => ({ itemCode: l.itemCode, productName: l.productName, variantKey: l.variantKey, qty: l.qty, notes: l.notes?.trim() || undefined, fromRackId: l.fromRackId, toRackId: l.toRackId })),
       },
       {
         onSuccess: (r) => {
+          const label = (rid: string) => [...fromRacks, ...toRacks].find((x) => x.id === rid)?.rack ?? "rack";
+          const rackMoves = rackMovesSummary(validLines, label);
           void (async () => {
             const another = await confirm({
               title: `Stock transfer ${r.transferNo} created`,
-              body: "The stock has moved. Start another transfer?",
+              body: rackMoves.length === 0
+                ? "The stock has moved. Start another transfer?"
+                : `The stock and the racks moved together: ${rackMoves.join("; ")}. Start another transfer?`,
               confirmLabel: "New stock transfer",
               cancelLabel: "Done",
             });
@@ -208,7 +281,7 @@ function MobileStockTransferForm({
         <div className="st-whrow">
           <div className="st-fld">
             <span className="st-fl">From</span>
-            <select className="cal-sel" value={fromWarehouseId} onChange={(e) => setFromWarehouseId(e.target.value)}>
+            <select className="cal-sel" value={fromWarehouseId} onChange={(e) => pickFromWarehouse(e.target.value)}>
               <option value="">Select…</option>
               {whList.map((w) => <option key={w.id} value={w.id}>{w.code}</option>)}
             </select>
@@ -216,7 +289,7 @@ function MobileStockTransferForm({
           <div className="st-arrow">→</div>
           <div className="st-fld">
             <span className="st-fl">To</span>
-            <select className="cal-sel" value={toWarehouseId} onChange={(e) => setToWarehouseId(e.target.value)}>
+            <select className="cal-sel" value={toWarehouseId} onChange={(e) => pickToWarehouse(e.target.value)}>
               <option value="">Select…</option>
               {whList.map((w) => <option key={w.id} value={w.id}>{w.code}</option>)}
             </select>
@@ -245,6 +318,9 @@ function MobileStockTransferForm({
             setQty={setQty}
             setNotes={setLineNotes}
             removeLine={removeLine}
+            fromRacks={fromRacks}
+            toRacks={toRacks}
+            setRacks={setRacks}
           />
         ))}
 

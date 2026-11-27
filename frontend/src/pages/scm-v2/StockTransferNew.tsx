@@ -23,6 +23,8 @@ import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDial
 import { FreshMount } from '../../lib/freshMount';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { useRacks, type Rack } from '../../vendor/scm/lib/warehouse-queries';
+import { heldOnRack, rackMovesSummary } from '../../vendor/scm/lib/stock-transfer-racks';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -42,14 +44,18 @@ const humanizeVariantKey = (k: string): string => variantKeyLabel(k, '(unclassif
 
 const UNPICKED = '__UNPICKED__';
 
+const byRackLabel = (a: Rack, b: Rack) => a.rack.localeCompare(b.rack, 'en', { numeric: true });
+
 // One transfer line. Owns its OWN inventory-bucket query so each line offers only
 // its SKU's real variant buckets (with on-hand qty) at the From warehouse — the
 // operator moves the exact bucket, keeping stock + MRP accurate (owner 2026-07-20).
 function TransferLineRow({
-  line, fromWarehouseId, skus, onPickCode, setLine, removeLine, canRemove,
+  line, fromWarehouseId, skus, onPickCode, setLine, removeLine, canRemove, fromRacks, toRacks,
 }: {
   line: LineDraft;
   fromWarehouseId: string;
+  fromRacks: Rack[];
+  toRacks: Rack[];
   skus: Array<{ id: string | number; code: string; name: string }>;
   onPickCode: (key: string, code: string) => void;
   setLine: (key: string, patch: Partial<LineDraft>) => void;
@@ -72,6 +78,11 @@ function TransferLineRow({
     : variantBuckets.find((v) => v.variantKey === line.variantKey)?.qty;
   const isOverdrawn = avail != null && line.qty > avail;
   const ready = Boolean(line.itemCode && fromWarehouseId);
+  const racksHolding = fromRacks
+    .map((r) => ({ rack: r, held: heldOnRack(r, line.itemCode) }))
+    .filter((x) => x.held > 0);
+  const fromHeld = line.fromRackId ? racksHolding.find((x) => x.rack.id === line.fromRackId)?.held ?? 0 : null;
+  const rackShort = fromHeld != null && line.qty > fromHeld;
 
   return (
     <tr>
@@ -147,6 +158,41 @@ function TransferLineRow({
         />
       </td>
       <td>
+        <select
+          value={line.fromRackId ?? ''}
+          onChange={(e) => setLine(line._key, { fromRackId: e.target.value || undefined })}
+          className={styles.fieldInput}
+          disabled={!ready}
+          aria-label={`From rack for ${line.itemCode || 'line'}`}
+          style={{ fontSize: 'var(--fs-12)' }}
+        >
+          <option value="">Not on a rack</option>
+          {racksHolding.map(({ rack, held }) => (
+            <option key={rack.id} value={rack.id}>{rack.rack} ({held.toLocaleString('en-MY')} here)</option>
+          ))}
+        </select>
+        {rackShort && (
+          <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>
+            Rack holds only {fromHeld}
+          </div>
+        )}
+      </td>
+      <td>
+        <select
+          value={line.toRackId ?? ''}
+          onChange={(e) => setLine(line._key, { toRackId: e.target.value || undefined })}
+          className={styles.fieldInput}
+          disabled={toRacks.length === 0}
+          aria-label={`To rack for ${line.itemCode || 'line'}`}
+          style={{ fontSize: 'var(--fs-12)' }}
+        >
+          <option value="">Not on a rack</option>
+          {toRacks.map((r) => (
+            <option key={r.id} value={r.id}>{r.rack}{r.reserved ? ' (reserved)' : ''}</option>
+          ))}
+        </select>
+      </td>
+      <td>
         <input
           type="text"
           value={line.notes ?? ''}
@@ -194,6 +240,26 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
 
   const warehouses = useWarehouses();
   const allSkus    = useMfgProducts();
+  const fromRacksQ = useRacks({ warehouseId: fromWarehouseId || undefined });
+  const toRacksQ   = useRacks({ warehouseId: toWarehouseId || undefined });
+  const fromRacks = useMemo(
+    () => (fromWarehouseId ? (fromRacksQ.data?.racks ?? []).filter((r) => r.warehouse_id === fromWarehouseId).sort(byRackLabel) : []),
+    [fromRacksQ.data, fromWarehouseId],
+  );
+  const toRacks = useMemo(
+    () => (toWarehouseId ? (toRacksQ.data?.racks ?? []).filter((r) => r.warehouse_id === toWarehouseId).sort(byRackLabel) : []),
+    [toRacksQ.data, toWarehouseId],
+  );
+  const [postedRackMoves, setPostedRackMoves] = useState<string[]>([]);
+
+  const pickFromWarehouse = (id: string) => {
+    setFromWarehouseId(id);
+    setLines((cur) => cur.map((l) => ({ ...l, fromRackId: undefined })));
+  };
+  const pickToWarehouse = (id: string) => {
+    setToWarehouseId(id);
+    setLines((cur) => cur.map((l) => ({ ...l, toRackId: undefined })));
+  };
 
   const skuByCode = useMemo(
     () => new Map((allSkus.data ?? []).map((p) => [p.code, p])),
@@ -210,6 +276,7 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
       itemCode: code,
       productName: sku?.name ?? '',
       variantKey: undefined,
+      fromRackId: undefined,
     });
   };
 
@@ -258,7 +325,12 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
         })),
       },
       {
-        onSuccess: (res) => { setCreated(res); setResultOpen(true); },
+        onSuccess: (res) => {
+          const label = (id: string) => [...fromRacks, ...toRacks].find((r) => r.id === id)?.rack ?? 'rack';
+          setPostedRackMoves(rackMovesSummary(validLines, label));
+          setCreated(res);
+          setResultOpen(true);
+        },
         onError:   (err) => notify({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' }),
       },
     );
@@ -305,7 +377,7 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
               <span className={styles.fieldLabel}>From Warehouse *</span>
               <select
                 value={fromWarehouseId}
-                onChange={(e) => setFromWarehouseId(e.target.value)}
+                onChange={(e) => pickFromWarehouse(e.target.value)}
                 className={styles.fieldSelect}
               >
                 <option value="">— Pick source —</option>
@@ -322,7 +394,7 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
               </span>
               <select
                 value={toWarehouseId}
-                onChange={(e) => setToWarehouseId(e.target.value)}
+                onChange={(e) => pickToWarehouse(e.target.value)}
                 className={styles.fieldSelect}
               >
                 <option value="">— Pick destination —</option>
@@ -382,6 +454,8 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
                 <th>Variant bucket *</th>
                 <th style={{ width: 110, textAlign: 'right' }}>Available</th>
                 <th style={{ width: 110, textAlign: 'right' }}>Qty *</th>
+                <th style={{ width: 150 }}>From rack</th>
+                <th style={{ width: 150 }}>To rack</th>
                 <th style={{ width: 200 }}>Remarks</th>
                 <th style={{ width: 40 }} />
               </tr>
@@ -397,6 +471,8 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
                   setLine={setLine}
                   removeLine={removeLine}
                   canRemove={lines.length > 1}
+                  fromRacks={fromRacks}
+                  toRacks={toRacks}
                 />
               ))}
             </tbody>
@@ -432,7 +508,9 @@ const StockTransferForm = ({ onStartNew }: { onStartNew: () => void }) => {
       {created && resultOpen && (
         <ActionResultDialog
           title={`Stock transfer ${created.transferNo} posted`}
-          body="The stock has moved. Open the transfer, or start the next one."
+          body={postedRackMoves.length === 0
+            ? 'The stock has moved. Open the transfer, or start the next one.'
+            : `The stock and the racks moved together: ${postedRackMoves.join('; ')}. Open the transfer, or start the next one.`}
           primaryLabel="Open transfer"
           onPrimary={() => navigate(`/scm/stock-transfers/${created.id}`)}
           secondaryLabel="New stock transfer"
