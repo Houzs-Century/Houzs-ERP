@@ -282,7 +282,7 @@ in-process GET as the person; the only writes are confirm-first actions through
 note), each behind an admin switch. Tool list, prompts and output schemas per role:
 `services/mcp-round4c.ts`; actions: `services/mcp-write-actions.ts`. Morning brief / urgent alert
 emails (cron `*/15` and `*/30`, built as the person): `services/mcp-proactive*.ts`, unsubscribe
-`routes/mcpBrief.ts`. Help tools (how_to, module_overview, glossary, explain_error, onboarding): `services/mcp-howto*.ts`, index `docs/modules/how-to-guides.md`. Page `pages/AiConnector.tsx` (+ `AiConnectorBrief.tsx`).
+`routes/mcpBrief.ts`. Help tools (how_to, module_overview, glossary, explain_error, onboarding): `services/mcp-howto*.ts`; screen map + explain_screen / where_is: `services/mcp-screen*.ts`; `?highlight=` helper `components/HighlightFromUrl.tsx`, index `docs/modules/how-to-guides.md`. Page `pages/AiConnector.tsx` (+ `AiConnectorBrief.tsx`).
 Rules: `docs/modules/ai-connector.md`.
 
 **Meetings.** Meeting rooms shared by every company and ERP. Rooms, meetings and guest
