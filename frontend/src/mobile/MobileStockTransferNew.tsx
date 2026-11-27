@@ -115,7 +115,7 @@ function MobileTransferLine({
       </div>
       <div className="st-whrow" style={{ marginTop: 8 }}>
         <div className="st-fld">
-          <span className="st-fl">From rack (optional)</span>
+          <span className="st-fl">From rack</span>
           <select
             className="cal-sel"
             style={{ fontSize: 13 }}
@@ -130,7 +130,7 @@ function MobileTransferLine({
           </select>
         </div>
         <div className="st-fld">
-          <span className="st-fl">To rack (optional)</span>
+          <span className="st-fl">To rack</span>
           <select
             className="cal-sel"
             style={{ fontSize: 13 }}
