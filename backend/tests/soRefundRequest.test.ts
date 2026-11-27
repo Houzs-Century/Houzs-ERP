@@ -54,9 +54,9 @@ const OPS = { id: 32, name: 'Nancy', perms: ['scm.access', 'scm.payment_request.
 const FINANCE = { id: 9, name: 'Chew', perms: PV_KEYS };
 const OWNER = { id: 1, name: 'Owner', perms: ['*'] };
 /* Purchasers: they sign a cancellation's second level, so they approve refunds. */
-const APPROVER = { id: 41, name: 'Purchaser A', perms: ['scm.access', 'scm.so_cancel.approve_l2'] };
-const APPROVER_B = { id: 42, name: 'Purchaser B', perms: ['scm.access', 'scm.so_cancel.approve_l2'] };
-const LEVEL_ONE = { id: 43, name: 'Sales Director', perms: ['scm.access', 'scm.so_cancel.approve_l1'] };
+const APPROVER = { id: 41, name: 'Purchaser A', perms: ['scm.access', 'scm.so_cancel.approve_l2'] }; // gitleaks:allow — a permission key's name, not a credential
+const APPROVER_B = { id: 42, name: 'Purchaser B', perms: ['scm.access', 'scm.so_cancel.approve_l2'] }; // gitleaks:allow — a permission key's name, not a credential
+const LEVEL_ONE = { id: 43, name: 'Sales Director', perms: ['scm.access', 'scm.so_cancel.approve_l1'] }; // gitleaks:allow — a permission key's name, not a credential
 
 const CHART: Row[] = [
   { company_id: CO, account_code: '300-0000', account_name: 'ACCOUNT RECEIVEABLE', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: false },
