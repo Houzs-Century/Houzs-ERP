@@ -138,9 +138,6 @@
       "@typescript-eslint/no-unnecessary-condition": 1,
       "no-restricted-syntax": 1
     },
-    "src/components/scm-v2/DeliveryMapPanel.tsx": {
-      "houzs/no-prose-comments": 3
-    },
     "src/components/scm-v2/DetailListingShell.test.tsx": {
       "houzs/no-imperative-timers": 3
     },
