@@ -51,7 +51,7 @@ export function RefundApprovals({ onlyWhenWaiting }: { onlyWhenWaiting: boolean 
 
   const columns = useMemo<GridColumn<PaymentRequest>[]>(() => [
     {
-      key: 'order', label: 'Sales Order', width: 170, sortable: true,
+      key: 'so_doc_no', label: 'SO No.', width: 170, sortable: true,
       accessor: (r) => (r.refund_source_doc_no
         ? <Link to={`/scm/sales-orders/${encodeURIComponent(r.refund_source_doc_no)}`} style={{ fontWeight: 700 }}>{r.refund_source_doc_no}</Link>
         : '—'),
@@ -60,19 +60,19 @@ export function RefundApprovals({ onlyWhenWaiting }: { onlyWhenWaiting: boolean 
       sortFn: (a, b) => String(a.refund_source_doc_no ?? '').localeCompare(String(b.refund_source_doc_no ?? '')),
     },
     {
-      key: 'request', label: 'Request', width: 150, sortable: true,
+      key: 'request_no', label: 'Request', width: 150, sortable: true,
       accessor: (r) => r.request_no, searchValue: (r) => r.request_no,
       sortFn: (a, b) => a.request_no.localeCompare(b.request_no),
     },
     {
-      key: 'customer', label: 'Refund to', width: 180, sortable: true,
+      key: 'customer', label: 'Customer', width: 180, sortable: true,
       accessor: (r) => r.payee_name, searchValue: (r) => r.payee_name,
       sortFn: (a, b) => a.payee_name.localeCompare(b.payee_name),
     },
     {
       key: 'amount', label: 'Amount', width: 120, sortable: true,
       accessor: (r) => <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtSen(r.amount_sen)}</span>,
-      exportValue: (r) => r.amount_sen / 100,
+      exportValue: (r) => r.amount_sen / 100, exportFormat: 'money',
       sortFn: (a, b) => a.amount_sen - b.amount_sen,
     },
     {
