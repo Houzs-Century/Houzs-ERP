@@ -1,21 +1,4 @@
-// do-line-worked-out-sources — the Source PO(s) and Rack(s) a delivery-order line
-// is WORKED OUT to come from, for a batch of DOs. One rule, read by the DO detail
-// (GET /delivery-orders-mfg/:id) and the packing list (GET /trips/packing*).
-//
-// Per line, in order:
-//   PO   = the stock-ledger trace of this DO's OUT for the line's bucket
-//          (source-po-trace.ts), else — when the trace found neither a PO nor an
-//          adjustment — the PO bound to the line's SO line (latest live one).
-//   Rack = the operator's picked rack, else the rack this DO stocked the goods out
-//          of, else the racks the line's source PO(s) were received onto in its
-//          ship-from warehouse (do-line-racks.ts).
-// A line's dispatch stamp (delivery_order_items.shipped_from) is NOT read here:
-// each reader lets a fitting stamp win and marks everything else worked out.
-//
-// Query count does not grow with the number of DOs: every read is one statement
-// per id chunk (see do-line-worked-out-sources.test.ts for the measured count).
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-explicit-any -- the scm service client and its untyped rows, as in delivery-orders-mfg.ts */
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { traceDoShipmentSources } from './source-po-trace';
 import { resolveExpectedBatchBySoItem } from './dropship-batch';
@@ -26,7 +9,6 @@ export type WorkedOutDo = {
   id: string;
   do_number: string | null;
   warehouse_id: string | null;
-  /** The company whose default warehouse a line falls back to. */
   company_id: number | undefined;
 };
 
@@ -43,7 +25,6 @@ export type WorkedOutLineInput = {
 export type WorkedOutSource = { source_pos: string[]; source_adj: boolean; racks: string[] };
 
 export type WorkedOutSources = {
-  /** line id -> ship-from warehouse (SO line, else DO header, else company default). */
   lineWh: Map<string, string | null>;
   byLine: Map<string, WorkedOutSource>;
 };
@@ -53,6 +34,24 @@ export type WorkedOutSources = {
  * `select('source_doc_no, item_code, rack_label')` on `warehouse_rack_movements`;
  * every other read is keyed on ids the caller already read under its company
  * predicate (the DOs, their lines, and what those lines point at).
+ */
+/**
+ * do-line-worked-out-sources — the Source PO(s) and Rack(s) a delivery-order line
+ * is WORKED OUT to come from, for a batch of DOs. One rule, read by the DO detail
+ * (GET /delivery-orders-mfg/:id) and the packing list (GET /trips/packing*).
+ *
+ * Per line, in order:
+ *   PO   = the stock-ledger trace of this DO's OUT for the line's bucket
+ *          (source-po-trace.ts), else — when the trace found neither a PO nor an
+ *          adjustment — the PO bound to the line's SO line (latest live one).
+ *   Rack = the operator's picked rack, else the rack this DO stocked the goods out
+ *          of, else the racks the line's source PO(s) were received onto in its
+ *          ship-from warehouse (do-line-racks.ts).
+ * A line's dispatch stamp (delivery_order_items.shipped_from) is NOT read here:
+ * each reader lets a fitting stamp win and marks everything else worked out.
+ *
+ * Query count does not grow with the number of DOs: every read is one statement
+ * per id chunk (see do-line-worked-out-sources.test.ts for the measured count).
  */
 export async function resolveWorkedOutSources(
   sb: any,

@@ -48,7 +48,6 @@ export type PackItemRow = {
   description2: string | null;
   so_item_id: string | null;
   committed_po_batch_no: string | null;
-  /** What do-line-worked-out-sources.ts works out for the line (null = not resolved). */
   worked: { pos: string[]; racks: string[] } | null;
 };
 
@@ -70,7 +69,6 @@ export type PackingItem = {
   rack_locked: boolean;
   po: string | null;
   po_locked: boolean;
-  /** A printed PO or rack was not locked at dispatch: the sheet marks it with a star. */
   worked_out: boolean;
   item_group: string | null;
   variants: Record<string, unknown> | null;
@@ -170,7 +168,6 @@ function packPo(it: PackItemRow): { po: string | null; po_locked: boolean } {
   return { po: worked.length > 0 ? worked.join(', ') : null, po_locked: false };
 }
 
-/** PO + rack of one line, and whether either printed value is unlocked (the DO PDF's "*"). */
 function packSources(it: PackItemRow, rackById: Map<string, string>) {
   const rack = packRack(it, rackById);
   const po = packPo(it);

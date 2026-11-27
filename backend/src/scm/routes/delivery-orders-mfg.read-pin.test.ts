@@ -200,7 +200,6 @@ function fakeSb(tables: Record<string, Row[]>, writes: Write[], opts: FakeOpts =
 
 let current = fakeSb(world(), []);
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => current }));
-// The salesperson row-scope reads D1; this harness is the SCM fake only, and no pinned case is a salesperson's.
 vi.mock('../lib/salesScope', async (orig) => ({ ...(await orig<typeof import('../lib/salesScope')>()), salesDocOutOfScope: async () => false }));
 
 const CALLER = {
@@ -337,10 +336,6 @@ describe('POST / (create DO) — pinned', () => {
   });
 });
 
-/* The per-line Source PO / Rack the DO detail works out (stamp, ledger trace,
-   the SO line's bound PO, the GRN rack, the rack the DO left from). Pinned so
-   the shared resolver (do-line-worked-out-sources.ts) answers exactly what the
-   inline code did before it was lifted out. */
 describe('GET /:id — pinned source PO and rack', () => {
   const vk = (group: string) => computeVariantKey(group, {});
   const sourcesWorld = (t: Record<string, Row[]>) => {
@@ -388,7 +383,6 @@ describe('GET /:id — pinned source PO and rack', () => {
     }));
     expect(items).toMatchSnapshot();
     expect(stable(r.body)).toMatchSnapshot();
-    // Snapshots sort object keys; the wire order is pinned on its own.
     expect((r.body as { items: Row[] }).items.map((it) => Object.keys(it).join(','))).toMatchSnapshot();
   });
 });
