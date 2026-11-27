@@ -8,3 +8,4 @@ export declare function backendCorpus(): string;
 export declare function readRepoFile(rel: string): string | null;
 export declare function writeRepoFile(rel: string, content: string): void;
 export declare const WRITE_MODE: boolean;
+export declare function repoFileSize(rel: string): number;

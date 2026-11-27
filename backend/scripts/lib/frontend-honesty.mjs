@@ -94,3 +94,9 @@ export function writeRepoFile(rel, content) {
 
 /** True when the caller asked to regenerate files (HOWTO_WRITE=1). */
 export const WRITE_MODE = process.env.HOWTO_WRITE === "1";
+
+/** Size in bytes of a repo file (relative to the repo root), or -1 when missing. */
+export function repoFileSize(rel) {
+  const p = path.join(REPO, rel);
+  return fs.existsSync(p) ? fs.statSync(p).size : -1;
+}
