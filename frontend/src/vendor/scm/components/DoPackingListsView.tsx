@@ -8,7 +8,9 @@
    usePackingLists the Last Mile Delivery section uses, printed by the same
    usePackingPrint, so the two places can never print different sheets.
 
-   The date is URL state (`date`), like every other filter on this page.
+   The date is URL state (`date`), like every other filter on this page; so are
+   the By lorry / By region switch (`view=region`) and, in By region, the
+   "only DOs not on a lorry yet" tick (`unassigned=1`).
    ---------------------------------------------------------------------------- */
 
 import { useSearchParams } from 'react-router-dom';
@@ -17,9 +19,10 @@ import { Button } from '../../../components/Button';
 import { Badge } from '../../../components/Badge';
 import { DataTable, type Column } from '../../../components/DataTable';
 import { DateField } from './DateField';
-import { usePackingLists, type PackingListRow } from '../lib/packing-list-queries';
+import { usePackingLists, usePackingRegions, type PackingListRow } from '../lib/packing-list-queries';
 import { fmtM3, rollupDeliveryStatus, rollupLabel, shiftIsoDate } from '../lib/packing-list-model';
 import { usePackingPrint } from './usePackingPrint';
+import { DoPackingRegionsTable } from './DoPackingRegionsTable';
 import { fmtDate, todayMY } from '../../../../../shared/src/vendor/shared/format';
 
 const TONE_FOR: Record<string, 'neutral' | 'warning' | 'success'> = {
@@ -34,9 +37,22 @@ export function DoPackingListsView() {
   const today = todayMY();
   const rawDate = params.get('date');
   const date = isIsoDate(rawDate) ? rawDate : today;
+  const byRegion = params.get('view') === 'region';
+  const unassignedOnly = byRegion && params.get('unassigned') === '1';
   const query = usePackingLists({ date, warehouseId: null });
   const lists = query.data?.lists ?? [];
+  const regionQuery = usePackingRegions({ date, unassignedOnly, enabled: byRegion });
+  const regions = regionQuery.data?.regions ?? [];
+  const regionDos = regions.reduce((n, r) => n + r.do_count, 0);
   const print = usePackingPrint(date);
+
+  const setParam = (key: string, value: string | null) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    if (key === 'view' && !value) next.delete('unassigned');
+    setParams(next, { replace: true });
+  };
 
   const setDate = (iso: string | null) => {
     const next = new URLSearchParams(params);
@@ -92,6 +108,11 @@ export function DoPackingListsView() {
   ];
 
   const n = lists.length;
+  const nr = regions.length;
+  const kinds: Array<{ region: boolean; label: string; badge: string | null }> = [
+    { region: false, label: 'By lorry', badge: query.data ? String(n) : null },
+    { region: true, label: 'By region', badge: regionQuery.data ? `${regionDos} DO` : null },
+  ];
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -115,20 +136,72 @@ export function DoPackingListsView() {
           </Button>
         ))}
         <span className="hidden flex-1 sm:block" />
-        <Button
-          variant="primary"
-          icon={<Printer size={14} />}
-          disabled={print.busy || n === 0}
-          onClick={() => print.all(lists, 'print')}
-          className="w-full sm:w-auto"
-        >
-          {print.busy ? 'Preparing…' : `Print all ${n} ${n === 1 ? 'lorry' : 'lorries'}`}
-        </Button>
+        {byRegion ? (
+          <Button
+            variant="primary"
+            icon={<Printer size={14} />}
+            disabled={print.busy || nr === 0}
+            onClick={() => print.regions(regions, 'print')}
+            className="w-full sm:w-auto"
+          >
+            {print.busy ? 'Preparing…' : `Print all ${nr} ${nr === 1 ? 'region' : 'regions'}`}
+          </Button>
+        ) : (
+          <Button
+            variant="primary"
+            icon={<Printer size={14} />}
+            disabled={print.busy || n === 0}
+            onClick={() => print.all(lists, 'print')}
+            className="w-full sm:w-auto"
+          >
+            {print.busy ? 'Preparing…' : `Print all ${n} ${n === 1 ? 'lorry' : 'lorries'}`}
+          </Button>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div role="group" aria-label="Kind of packing list" className="inline-flex rounded-md border border-border bg-surface p-0.5">
+          {kinds.map((k) => (
+            <button
+              key={k.label}
+              type="button"
+              aria-pressed={byRegion === k.region}
+              onClick={() => setParam('view', k.region ? 'region' : null)}
+              className={`inline-flex items-center gap-1.5 rounded px-3 py-1 text-[12px] font-semibold ${byRegion === k.region ? 'bg-primary text-white' : 'text-ink-muted hover:text-ink'}`}
+            >
+              {k.label}
+              {k.badge && <span className={`rounded-full px-1.5 text-[11px] tabular-nums ${byRegion === k.region ? 'bg-white/20' : 'bg-surface-2'}`}>{k.badge}</span>}
+            </button>
+          ))}
+        </div>
+        {byRegion && (
+          <label className="inline-flex cursor-pointer items-center gap-2 text-[12px] text-ink">
+            <input
+              type="checkbox"
+              checked={unassignedOnly}
+              onChange={(e) => setParam('unassigned', e.target.checked ? '1' : null)}
+              className="h-4 w-4"
+            />
+            Only DOs not on a lorry yet
+          </label>
+        )}
       </div>
       <p className="text-[12px] text-ink-muted">
-        {fmtDate(date)} · one packing list per lorry. Part A picks by category; Part B loads the last customer first.
+        {byRegion
+          ? `${fmtDate(date)} · one packing list per region (the Delivery Planning regions), lorry or not. Picks by category; each line shows its lorry.`
+          : `${fmtDate(date)} · one packing list per lorry. Part A picks by category; Part B loads the last customer first.`}
       </p>
       {print.error && <p role="alert" className="text-[12px] text-err">{print.error}</p>}
+      {byRegion ? (
+        <DoPackingRegionsTable
+          date={date}
+          regions={regionQuery.data ? regions : null}
+          loading={regionQuery.isLoading}
+          error={regionQuery.error ? `Could not load the delivery orders by region for this day. ${regionQuery.error instanceof Error ? regionQuery.error.message : ''}` : null}
+          unassignedOnly={unassignedOnly}
+          busy={print.busy}
+          onPrint={print.regions}
+        />
+      ) : (
       <DataTable<PackingListRow>
         tableId="do-packing-lists"
         exportName={`packing-lists-${date}`}
@@ -136,9 +209,10 @@ export function DoPackingListsView() {
         rows={query.error ? null : query.data ? lists : null}
         loading={query.isLoading}
         error={query.error ? `Could not load the packing lists for this day. ${query.error instanceof Error ? query.error.message : ''}` : null}
-        emptyLabel="No lorry has delivery orders on this day yet. A packing list appears here for every lorry once Delivery Time Arrangement has put delivery orders on it."
+        emptyLabel="No lorry has delivery orders on this day yet. A packing list appears here for every lorry once Delivery Planning puts a lorry on its delivery orders. By region lists every delivery order of the day, lorry or not."
         getRowKey={(l) => l.trip_id}
       />
+      )}
     </div>
   );
 }

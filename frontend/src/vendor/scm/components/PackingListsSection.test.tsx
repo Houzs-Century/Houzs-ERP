@@ -25,6 +25,7 @@ afterEach(() => {
 
 const row = (over: Partial<PackingListRow>): PackingListRow => ({
   trip_id: 'trip-1',
+  source: 'trip',
   trip_no: 'TRIP-2608-001',
   trip_date: '2026-08-26',
   trip_status: 'PLANNED',
@@ -86,10 +87,17 @@ describe('PackingListsSection', () => {
     expect(within(body).getAllByText('—').length).toBeGreaterThanOrEqual(2);
   });
 
-  it('reports what it looked for when the day has no trips, and claims nothing about the business', () => {
+  it('reports what it looked for when the day has no lorries, and claims nothing about the business', () => {
     state.data = { date: '2026-08-26', lists: [] };
     render(<PackingListsSection date="2026-08-26" warehouseId={null} />);
-    expect(screen.getByText(/This day has no trips\./)).toBeTruthy();
+    expect(screen.getByText(/No lorry has delivery orders on this day yet\./)).toBeTruthy();
+  });
+
+  it('a lorry from the board crew (no trip) is listed but offers no scan QR', () => {
+    state.data = { date: '2026-08-26', lists: [row({}), row({ trip_id: 'crew:BNM 5520', trip_no: null, lorry_plate: 'BNM 5520', source: 'crew' })] };
+    render(<PackingListsSection date="2026-08-26" warehouseId={null} />);
+    expect(screen.getByText('BNM 5520')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'QR' })).toHaveLength(1);
   });
 
   it('surfaces a failed read as a failure rather than as an empty day', () => {

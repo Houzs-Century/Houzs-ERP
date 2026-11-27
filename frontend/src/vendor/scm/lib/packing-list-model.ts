@@ -26,7 +26,7 @@
       (docs/bugs/0530), and here it would silently bucket a row nowhere.
    ---------------------------------------------------------------------------- */
 
-import type { PackingStop } from './packing-list-queries';
+import type { PackingRegionDo, PackingRegionRow, PackingStop } from './packing-list-queries';
 import { shortRackLabel } from './rack-label';
 
 
@@ -312,4 +312,59 @@ export function shiftIsoDate(iso: string, days: number): string {
   const [y, m, d] = iso.split('-').map(Number);
   const t = new Date(Date.UTC(y, m - 1, d) + days * 86_400_000);
   return t.toISOString().slice(0, 10);
+}
+
+
+/* ── BY REGION (owner 2026-11-27) ─────────────────────────────────────────────
+   A region sheet is Part A only, over every DO delivering in the region that
+   day. It reuses buildPickSections by numbering the region's DOs 1..N in the
+   order the backend sorts them (by lorry, then customer); the number is the
+   customer key printed on the sheet, and each number carries a lorry label. */
+
+export const NOT_ARRANGED = 'Not arranged';
+
+export function regionLorryLabel(d: Pick<PackingRegionDo, 'lorry_plate'>): string {
+  return d.lorry_plate ?? NOT_ARRANGED;
+}
+
+export function regionStops(region: Pick<PackingRegionRow, 'dos'>): PackingStop[] {
+  return region.dos.map((d, i) => ({
+    stop_no: i + 1,
+    stop_type: null,
+    customer_name: d.customer_name,
+    address: d.address,
+    do_id: d.do_id,
+    do_number: d.do_number,
+    do_status: d.do_status,
+    do_missing: false,
+    so_doc_no: d.so_doc_no,
+    phone: d.phone,
+    time_range: d.time_range,
+    units: d.units,
+    items: d.items,
+  }));
+}
+
+/** Customer numbers -> the distinct lorry labels, arranged plates first. */
+export function lorriesFor(customers: readonly number[], region: Pick<PackingRegionRow, 'dos'>): string[] {
+  const labels = new Set<string>();
+  for (const n of customers) {
+    const d = region.dos[n - 1] as PackingRegionDo | undefined;
+    if (d) labels.add(regionLorryLabel(d));
+  }
+  return [...labels].sort((a, b) => Number(a === NOT_ARRANGED) - Number(b === NOT_ARRANGED) || byCode(a, b));
+}
+
+/** "VJK 8821, WXY 1234, 3 not arranged" for the region table. */
+export function regionLorrySummary(region: Pick<PackingRegionRow, 'lorry_plates' | 'not_arranged'>): string {
+  const parts = [...region.lorry_plates];
+  if (region.not_arranged > 0) parts.push(`${region.not_arranged} not arranged`);
+  return parts.join(', ') || '—';
+}
+
+/** Units per pick category for one region, every category present (0 when none). */
+export function regionCategoryUnits(region: Pick<PackingRegionRow, 'dos'>): Record<PackCategory, number> {
+  const out = Object.fromEntries(PACK_CATEGORY_ORDER.map((c) => [c, 0])) as Record<PackCategory, number>;
+  for (const d of region.dos) for (const it of d.items) out[packCategory(it.item_group)] += it.qty;
+  return out;
 }

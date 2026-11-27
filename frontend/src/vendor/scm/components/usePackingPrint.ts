@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import type { PackingListRow } from '../lib/packing-list-queries';
+import type { PackingListRow, PackingRegionRow } from '../lib/packing-list-queries';
 import type { PdfAction } from '../lib/pdf-common';
 
 export function usePackingPrint(date: string) {
@@ -32,5 +32,12 @@ export function usePackingPrint(date: string) {
     });
   }, [date, run]);
 
-  return { busy, error, one, all };
+  const regions = useCallback((rows: readonly PackingRegionRow[], action: PdfAction) => {
+    void run(async () => {
+      const { generatePackingRegionsPdf } = await import('../lib/packing-list-pdf');
+      await generatePackingRegionsPdf(rows, { date, action });
+    });
+  }, [date, run]);
+
+  return { busy, error, one, all, regions };
 }

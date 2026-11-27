@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import type { PackingListRow, PackingListsResponse } from '../lib/packing-list-queries';
+import type { PackingListRow, PackingListsResponse, PackingRegionRow, PackingRegionsResponse } from '../lib/packing-list-queries';
 
 const state: { data: PackingListsResponse | undefined; isLoading: boolean; error: unknown; lastDate: string | null } = {
   data: undefined, isLoading: false, error: null, lastDate: null,
@@ -10,11 +10,22 @@ const state: { data: PackingListsResponse | undefined; isLoading: boolean; error
 vi.mock('../lib/packing-list-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/packing-list-queries')>()),
   usePackingLists: (opts: { date: string | null }) => { state.lastDate = opts.date; return state; },
+  usePackingRegions: (opts: { unassignedOnly: boolean; enabled: boolean }) => {
+    regionState.lastUnassigned = opts.unassignedOnly;
+    regionState.lastEnabled = opts.enabled;
+    return regionState;
+  },
 }));
+
+const regionState: {
+  data: PackingRegionsResponse | undefined; isLoading: boolean; error: unknown;
+  lastUnassigned: boolean | null; lastEnabled: boolean | null;
+} = { data: undefined, isLoading: false, error: null, lastUnassigned: null, lastEnabled: null };
 
 const printAll = vi.fn(async () => {});
 const printOne = vi.fn(async () => {});
-vi.mock('../lib/packing-list-pdf', () => ({ generatePackingListsPdf: printAll, generatePackingListPdf: printOne }));
+const printRegions = vi.fn(async () => {});
+vi.mock('../lib/packing-list-pdf', () => ({ generatePackingListsPdf: printAll, generatePackingListPdf: printOne, generatePackingRegionsPdf: printRegions }));
 
 const { DoPackingListsView } = await import('./DoPackingListsView');
 const { MobilePackingLists } = await import('../../../mobile/MobilePackingLists');
@@ -22,11 +33,27 @@ const { MobilePackingLists } = await import('../../../mobile/MobilePackingLists'
 afterEach(() => {
   cleanup();
   state.data = undefined; state.error = null; state.lastDate = null;
-  printAll.mockClear(); printOne.mockClear();
+  printAll.mockClear(); printOne.mockClear(); printRegions.mockClear();
+  regionState.data = undefined; regionState.error = null; regionState.lastUnassigned = null; regionState.lastEnabled = null;
+});
+
+const regionRow = (over: Partial<PackingRegionRow>): PackingRegionRow => ({
+  region: 'KL', label: 'KL/SEL', do_count: 9, customer_count: 9, units: 35,
+  lorry_plates: ['VJK 8821', 'WXY 1234'], not_arranged: 3,
+  dos: [{
+    do_id: 'd1', do_number: 'DO-1', do_status: 'DRAFT', so_doc_no: 'SO-1', debtor_code: 'C1', customer_name: 'A', address: null, phone: null,
+    time_range: null, m3_milli: null, lorry_plate: 'VJK 8821', driver_name: null, driver_phone: null, helper_1_name: null, helper_2_name: null,
+    trip_no: null, trip_stop_no: null, state: 'Selangor', country: null, units: 3,
+    items: [
+      { line_no: 1, item_code: 'M', description: null, qty: 2, rack: null, rack_locked: false, po: null, po_locked: false, item_group: 'mattress', variants: null, description2: null, so_line_no: 1 },
+      { line_no: 2, item_code: 'S', description: null, qty: 1, rack: null, rack_locked: false, po: null, po_locked: false, item_group: 'sofa', variants: null, description2: null, so_line_no: 2 },
+    ],
+  }],
+  ...over,
 });
 
 const row = (over: Partial<PackingListRow>): PackingListRow => ({
-  trip_id: 't1', trip_no: 'TRIP-1', trip_date: '2026-11-28', trip_status: 'PLANNED',
+  trip_id: 't1', trip_no: 'TRIP-1', trip_date: '2026-11-28', trip_status: 'PLANNED', source: 'trip',
   lorry_plate: 'VJK 8821', driver_name: 'Ah Meng', driver_phone: null,
   helper_1_name: 'Raju', helper_2_name: 'Kumar', warehouse_name: 'HQ',
   stop_count: 6, do_count: 6, units: 27, m3_milli: 11620, stops: [], ...over,
@@ -69,7 +96,60 @@ describe('Delivery Orders — Packing Lists tab', () => {
   });
 });
 
+describe('Packing Lists tab — By region', () => {
+  it('the toggle writes view=region into the URL and the region query only runs then', () => {
+    state.data = { date: '2026-11-28', lists: [row({})] };
+    render(<MemoryRouter initialEntries={['/x?tab=packing&date=2026-11-28']}><DoPackingListsView /><Where /></MemoryRouter>);
+    expect(regionState.lastEnabled).toBe(false);
+    expect(screen.queryByLabelText('Only DOs not on a lorry yet')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /By region/ }));
+    expect(screen.getByTestId('where').textContent).toMatch(/view=region/);
+    expect(regionState.lastEnabled).toBe(true);
+    expect(screen.getByLabelText('Only DOs not on a lorry yet')).toBeTruthy();
+  });
+
+  it('one row per region with its lorries and category counts; Print all sends every region', async () => {
+    const regions = [regionRow({}), regionRow({ region: 'SOUTHERN', label: 'Southern', lorry_plates: [], not_arranged: 1 })];
+    regionState.data = { date: '2026-11-28', unassigned_only: false, regions };
+    render(<MemoryRouter initialEntries={['/x?tab=packing&date=2026-11-28&view=region']}><DoPackingListsView /></MemoryRouter>);
+    expect(screen.getByText('KL/SEL')).toBeTruthy();
+    expect(screen.getByText('VJK 8821, WXY 1234, 3 not arranged')).toBeTruthy();
+    expect(screen.getByText('1 not arranged')).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: /Sofa pcs/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Print all 2 regions/ }));
+    await waitFor(() => expect(printRegions).toHaveBeenCalledWith(regions, { date: '2026-11-28', action: 'print' }));
+    const open = screen.getAllByRole('button', { name: 'Open' })[1] as HTMLButtonElement;
+    await waitFor(() => expect(open.disabled).toBe(false));
+    fireEvent.click(open);
+    await waitFor(() => expect(printRegions).toHaveBeenCalledWith([regions[1]], { date: '2026-11-28', action: 'preview' }));
+  });
+
+  it('the not-on-a-lorry tick is URL state and narrows the query; back to By lorry clears it', () => {
+    regionState.data = { date: '2026-11-28', unassigned_only: false, regions: [] };
+    render(<MemoryRouter initialEntries={['/x?tab=packing&date=2026-11-28&view=region']}><DoPackingListsView /><Where /></MemoryRouter>);
+    expect(screen.getByText('No delivery orders are due for delivery on this day.')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Only DOs not on a lorry yet'));
+    expect(screen.getByTestId('where').textContent).toMatch(/unassigned=1/);
+    expect(regionState.lastUnassigned).toBe(true);
+    expect(screen.getByText('Every delivery order on this day is already on a lorry.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /By lorry/ }));
+    expect(screen.getByTestId('where').textContent).not.toMatch(/view=|unassigned=/);
+  });
+});
+
 describe('phone — Packing lists card on Delivery Orders', () => {
+  it('By region lists the regions and prints them all into one preview', async () => {
+    const regions = [regionRow({})];
+    regionState.data = { date: '2026-11-28', unassigned_only: false, regions };
+    state.data = { date: '2026-11-28', lists: [] };
+    render(<MobilePackingLists />);
+    fireEvent.click(screen.getByRole('button', { name: 'By region' }));
+    expect(screen.getByText('KL/SEL')).toBeTruthy();
+    expect(screen.getByText('9 DO · 9 customers · 35 units')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Print all 1 region$/ }));
+    await waitFor(() => expect(printRegions).toHaveBeenCalledWith(regions, expect.objectContaining({ action: 'preview' })));
+  });
+
   it('prints every lorry into one PDF preview', async () => {
     const lists = [row({}), row({ trip_id: 't2', lorry_plate: 'WXY 1234', stop_count: 1, units: 1 })];
     state.data = { date: '2026-11-28', lists };

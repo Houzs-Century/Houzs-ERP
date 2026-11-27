@@ -49,6 +49,7 @@ export type PackingListRow = {
   units: number;
   m3_milli: number | null;
   stops: PackingStop[];
+  source: 'trip' | 'crew';
 };
 
 export type PackingListsResponse = {
@@ -71,6 +72,65 @@ export function usePackingLists(opts: { date: string | null; warehouseId?: strin
     queryKey: ['packing-lists', date ?? '', warehouseId ?? ''],
     queryFn: () => authedFetch<PackingListsResponse>(packingListsPath(date as string, warehouseId ?? null)),
     enabled: !!date,
+    staleTime: 30_000,
+  });
+}
+
+export type PackingRegionDo = {
+  do_id: string;
+  do_number: string | null;
+  do_status: string | null;
+  so_doc_no: string | null;
+  customer_name: string | null;
+  address: string | null;
+  phone: string | null;
+  time_range: string | null;
+  debtor_code: string | null;
+  m3_milli: number | null;
+  lorry_plate: string | null;
+  driver_name: string | null;
+  driver_phone: string | null;
+  helper_1_name: string | null;
+  helper_2_name: string | null;
+  trip_no: string | null;
+  trip_stop_no: number | null;
+  state: string | null;
+  country: string | null;
+  units: number;
+  items: PackingItem[];
+};
+
+export type PackingRegionRow = {
+  region: string;
+  label: string;
+  do_count: number;
+  customer_count: number;
+  units: number;
+  lorry_plates: string[];
+  not_arranged: number;
+  dos: PackingRegionDo[];
+};
+
+export type PackingRegionsResponse = {
+  date: string;
+  unassigned_only: boolean;
+  regions: PackingRegionRow[];
+};
+
+export function packingRegionsPath(date: string, unassignedOnly: boolean): string {
+  const p = new URLSearchParams();
+  p.set('date', date);
+  p.set('unassignedOnly', unassignedOnly ? '1' : '0');
+  return `/trips/packing-regions?${p.toString()}`;
+}
+
+/** One day's DOs by Delivery Planning region, lorry or not. */
+export function usePackingRegions(opts: { date: string | null; unassignedOnly: boolean; enabled: boolean }) {
+  const { date, unassignedOnly, enabled } = opts;
+  return useQuery({
+    queryKey: ['packing-regions', date ?? '', unassignedOnly],
+    queryFn: () => authedFetch<PackingRegionsResponse>(packingRegionsPath(date as string, unassignedOnly)),
+    enabled: enabled && !!date,
     staleTime: 30_000,
   });
 }
