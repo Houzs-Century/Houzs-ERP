@@ -70,9 +70,7 @@ export const SCAN_CAPTION = 'SCAN WHEN FULLY LOADED';
 
 const qtyText = (n: number): string => String(n);
 const unitsLabel = (n: number): string => `${qtyText(n)} ${n === 1 ? 'unit' : 'units'}`;
-const SHORT_TYPE: Record<string, string> = {
-  MATTRESS: 'MATTRESS', BEDFRAME: 'BEDFRAME', ACCESSORIES: 'ACCESSORY', SOFA: 'SOFA', OTHER: 'OTHER',
-};
+const shortType = (category: string): string => (category === 'ACCESSORIES' ? 'ACCESSORY' : category);
 
 /**
  * Where the QR points: the PUBLIC scan page for this run, /d/<token>, which
@@ -90,12 +88,11 @@ export function packingListFileName(list: Pick<PackingListRow, 'lorry_plate' | '
   return `${safeName(plate)}-${date}.pdf`;
 }
 
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 function weekday(iso: string): string | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
   if (!m) return null;
   const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-  return Number.isNaN(d.getTime()) ? null : WEEKDAYS[d.getUTCDay()]!;
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' });
 }
 
 type Fabric = { ext: Map<string, string>; desc: Map<string, string> };
@@ -107,9 +104,12 @@ function variantText(item: PackingItem, fabric: Fabric): string {
   return d2 && d2 !== (item.description ?? '').trim() ? d2 : '';
 }
 
+const NAME_MAX = 34;
 function describe(description: string | null, variant: string): string {
-  const text = [description, variant].map((s) => (s ?? '').trim()).filter(Boolean).join('\n');
-  return stripBookText(text) || DASH;
+  const name = stripBookText((description ?? '').replace(/\s+/g, ' ').trim());
+  const short = name.length > NAME_MAX ? `${name.slice(0, NAME_MAX - 3).trimEnd()}...` : name;
+  const text = [short, stripBookText(variant.trim())].filter(Boolean).join('\n');
+  return text || DASH;
 }
 
 const poCell = (pos: readonly string[]): string => (pos.length > 0 ? pos.join('\n') : DASH);
@@ -213,7 +213,7 @@ function drawPartHeading(doc: Doc, y: number, title: string, note: string): numb
 }
 
 
-const CELL_PAD = { top: 1.5, right: 1.6, bottom: 1.5, left: 1.6 };
+const CELL_PAD = { top: 1, right: 1.4, bottom: 1, left: 1.4 };
 
 function baseTable(opts: { startY: number; contTop: number }) {
   return {
@@ -250,7 +250,8 @@ const lastY = (doc: Doc, fallback: number): number =>
   (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? fallback;
 
 
-const A_HEAD = ['ITEM CODE', 'DESCRIPTION', 'PO NO', 'RACK', 'QTY', 'CUSTOMER', 'TICK'];
+const COL = { type: 'TYPE', code: 'ITEM CODE', desc: 'DESCRIPTION', po: 'PO NO', rack: 'RACK', qty: 'QTY', cust: 'CUSTOMER', tick: 'TICK' } as const;
+const A_HEAD = [COL.code, COL.desc, COL.po, COL.rack, COL.qty, COL.cust, COL.tick];
 const A_COLS = {
   0: { cellWidth: 30, fontStyle: 'bold' as const },
   1: { cellWidth: 'auto' as const },
@@ -279,6 +280,7 @@ function sectionHeadRow(section: PickSection) {
     { content: unitsWord(section.units), colSpan: 2, styles: { fontStyle: 'normal', fontSize: S.min, halign: 'left' } },
   ];
 }
+const ROW_EST = 6.5;
 const unitsWord = (n: number): string => (n === 1 ? 'unit' : 'units');
 
 function drawPickTable(
@@ -290,6 +292,7 @@ function drawPickTable(
   foot: unknown[][] | null,
 ): number {
   const labelRow = head.findIndex((r) => r === A_HEAD);
+  if (startY + (head.length + 1) * ROW_EST > TABLE_BOTTOM) { doc.addPage(); startY = CONT_TOP_A; }
   autoTable(doc, {
     ...baseTable({ startY, contTop: CONT_TOP_A }),
     head,
@@ -352,7 +355,7 @@ function drawPartA(doc: Doc, autoTable: AutoTable, startY: number, sections: Pic
 }
 
 
-const B_HEAD = ['TYPE', 'ITEM CODE', 'DESCRIPTION', 'PO NO', 'RACK', 'QTY', 'TICK'];
+const B_HEAD = [COL.type, COL.code, COL.desc, COL.po, COL.rack, COL.qty, COL.tick];
 const B_COLS = {
   0: { cellWidth: 24, fontSize: S.min },
   1: { cellWidth: 30, fontStyle: 'bold' as const },
@@ -362,10 +365,11 @@ const B_COLS = {
   5: { cellWidth: 11, halign: 'right' as const, fontStyle: 'bold' as const, fontSize: S.body },
   6: { cellWidth: 11, halign: 'center' as const },
 };
+const PART_B_MIN_ROOM = 40;
 const B_DESC_W = CONTENT_W - 24 - 30 - 31 - 16 - 11 - 11;
 
 function drawStopHeader(doc: Doc, top: number, stop: PackingStop, draw: boolean): number {
-  const NUM_BOX = 12;
+  const NUM_BOX = 9;
   const RIGHT_W = 52;
   const midX = M + NUM_BOX + 4;
   const midW = CONTENT_W - NUM_BOX - 4 - RIGHT_W - 4;
@@ -376,9 +380,9 @@ function drawStopHeader(doc: Doc, top: number, stop: PackingStop, draw: boolean)
     doc.setDrawColor(T.line[0], T.line[1], T.line[2]);
     doc.setLineWidth(RULE_HEAVY * 0.8);
     doc.rect(M, top + 2, NUM_BOX, NUM_BOX, 'S');
-    font(doc, 16, 'bold');
+    font(doc, 13, 'bold');
     setInk(doc, T.ink);
-    doc.text(String(stop.stop_no), M + NUM_BOX / 2, top + 2 + NUM_BOX / 2 + pt(16) * 0.35, { align: 'center' });
+    doc.text(String(stop.stop_no), M + NUM_BOX / 2, top + 2 + NUM_BOX / 2 + pt(13) * 0.35, { align: 'center' });
   }
 
   let y = top + 2;
@@ -389,17 +393,13 @@ function drawStopHeader(doc: Doc, top: number, stop: PackingStop, draw: boolean)
     if (draw) doc.text(line, midX, y);
   }
   font(doc, S.min + 0.5);
-  const addrLines = doc.splitTextToSize(stop.address ?? 'No address on this stop', midW) as string[];
-  for (const line of addrLines) {
-    y += pt(S.min + 0.5) * 1.3;
-    if (draw) doc.text(line, midX, y);
-  }
-  const contact = [
+  const detail = [
+    stop.address ?? 'No address on this stop',
     stop.phone ? `Tel ${formatPhone(stop.phone)}` : 'Tel —',
     stop.time_range ? `Time ${stop.time_range}` : null,
   ].filter(Boolean).join('  ·  ');
-  const contactLines = doc.splitTextToSize(contact, midW) as string[];
-  for (const line of contactLines) {
+  const detailLines = doc.splitTextToSize(detail, midW) as string[];
+  for (const line of detailLines) {
     y += pt(S.min + 0.5) * 1.3;
     if (draw) doc.text(line, midX, y);
   }
@@ -409,8 +409,7 @@ function drawStopHeader(doc: Doc, top: number, stop: PackingStop, draw: boolean)
     ? [['DO not visible', 'bold']]
     : [
         [`DO ${stop.do_number ?? DASH}`, 'bold'],
-        [`SO ${stop.so_doc_no ?? DASH}`, 'normal'],
-        [unitsLabel(stop.units), 'bold'],
+        [`SO ${stop.so_doc_no ?? DASH}  ·  ${unitsLabel(stop.units)}`, 'normal'],
       ];
   for (const [text, style] of rightRows) {
     font(doc, S.min + 0.5, style);
@@ -420,12 +419,12 @@ function drawStopHeader(doc: Doc, top: number, stop: PackingStop, draw: boolean)
       if (draw) doc.text(line, rightX, ry, { align: 'right' });
     }
   }
-  return Math.max(y, ry, top + 2 + NUM_BOX) + 2.5;
+  return Math.max(y, ry, top + 2 + NUM_BOX) + 1.5;
 }
 
 function stopRows(stop: PackingStop, fabric: Fabric): string[][] {
   return stop.items.map((it) => [
-    SHORT_TYPE[packCategory(it.item_group)] ?? 'OTHER',
+    shortType(packCategory(it.item_group)),
     it.item_code,
     describe(it.description, variantText(it, fabric)),
     poCell(splitPos(it.po)),
@@ -447,6 +446,7 @@ function estimateRowH(doc: Doc, row: string[]): number {
 
 function drawPartB(doc: Doc, autoTable: AutoTable, startY: number, stops: readonly PackingStop[], fabric: Fabric): number {
   let y = startY;
+  let first = true;
   for (const { stop } of loadingOrder(stops)) {
     const rows = stop.do_missing ? [] : stopRows(stop, fabric);
     const headerH = drawStopHeader(doc, 0, stop, false);
@@ -472,6 +472,7 @@ function drawPartB(doc: Doc, autoTable: AutoTable, startY: number, stops: readon
     autoTable(doc, {
       ...baseTable({ startY: y, contTop: CONT_TOP_B }),
       head: [B_HEAD],
+      showHead: first ? 'firstPage' : 'never',
       body: rows,
       columnStyles: B_COLS,
       didDrawPage: () => {
@@ -492,7 +493,8 @@ function drawPartB(doc: Doc, autoTable: AutoTable, startY: number, stops: readon
         if (data.section === 'body' && data.column.index === 6) drawTickBox(doc, data.cell);
       },
     });
-    y = lastY(doc, y) + 5;
+    y = lastY(doc, y) + 3;
+    first = false;
   }
   return y;
 }
@@ -529,8 +531,8 @@ export async function renderPackingListInto(
     'Take everything below in one go. Mattress and accessories are counted together; every bedframe and sofa piece has its own line, rack and PO.');
   y = drawPartA(doc, autoTable, y, buildPickSections(list.stops, (it) => variantText(it, fabric)));
 
-  doc.addPage();
-  y = drawPartHeading(doc, CONT_TOP_A, 'PART B · LOAD BY CUSTOMER',
+  if (y + PART_B_MIN_ROOM > TABLE_BOTTOM) { doc.addPage(); y = CONT_TOP_A; } else { y += 3; }
+  y = drawPartHeading(doc, y, 'PART B · LOAD BY CUSTOMER',
     `Load from the top. The last customer goes in first, deepest into the lorry; customer 1 goes in last, at the door.`);
   y = drawPartB(doc, autoTable, y, list.stops, fabric);
 

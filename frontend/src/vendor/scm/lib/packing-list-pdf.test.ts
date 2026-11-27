@@ -184,18 +184,26 @@ describe('Part B — load by customer', () => {
     const idx = ['PHOON JIA YEONG', 'JOAN YIING', 'LIAW TECK CHAI'].map((n) => after.findIndex((s) => s.text === n));
     expect(idx.every((i) => i >= 0)).toBe(true);
     expect([...idx].sort((a, b) => a - b)).toEqual(idx);
-    const numbers = after.filter((s) => /^\d+$/.test(s.text) && s.size === 16).map((s) => s.text);
+    const numbers = after.filter((s) => /^\d+$/.test(s.text) && s.size === 13).map((s) => s.text);
     expect(numbers).toEqual(['3', '2', '1']);
   });
 
   test('each block names DO, SO, units, phone and time slot; lines keep the SO order they arrive in', async () => {
     const { spans } = await render(SMALL);
     const after = spans.slice(firstIdx(spans, 'PART B'));
-    for (const t of ['DO HC-DO-2611-101', 'SO HC-SO-2610-201', '2 units']) expect(has(after, t), t).toBe(true);
+    expect(has(after, 'DO HC-DO-2611-101')).toBe(true);
+    expect(has(after, 'SO HC-SO-2610-201  ·  2 units')).toBe(true);
     expect(after.some((s) => s.text.includes('Time 9am - 11am'))).toBe(true);
     const liaw = after.findIndex((s) => s.text === 'LIAW TECK CHAI');
     const block = after.slice(liaw);
     expect(block.findIndex((s) => s.text === 'BF-Q-OAK')).toBeLessThan(block.findIndex((s) => s.text === 'AKM-MAT-Q10'));
+  });
+
+  test('compact: Part B follows Part A on the same page when there is room (owner: 23 pages is too many)', async () => {
+    const { spans } = await render(SMALL);
+    const a = spans.find((x) => x.text.startsWith('PART A'));
+    const b = spans.find((x) => x.text.startsWith('PART B'));
+    expect(b?.page).toBe(a?.page);
   });
 
   test('three signatures and the footer with plate, date and page count', async () => {
@@ -291,7 +299,7 @@ describe('the stress lorry — nothing overlaps, clips or runs off the page', ()
   test('a customer block never starts at the foot of a page without its first line', async () => {
     const { spans } = await render(stressList());
     const after = spans.slice(firstIdx(spans, 'PART B'));
-    const numbers = after.filter((s) => /^\d+$/.test(s.text) && s.size === 16);
+    const numbers = after.filter((s) => /^\d+$/.test(s.text) && s.size === 13);
     expect(numbers.map((s) => s.text)).toEqual(['14', '13', '12', '11', '10', '9', '8', '7', '6', '5', '4', '3', '2', '1']);
     for (const n of numbers) {
       const k = after.indexOf(n);
