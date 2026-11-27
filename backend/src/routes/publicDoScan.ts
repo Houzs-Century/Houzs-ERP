@@ -26,9 +26,10 @@
 // resolver reports rather than on anything in the request:
 //
 //   kind 'do'    one delivery order      one rung, one document
-//   kind 'trip'  one packing list        the SAME rung, applied to every
-//                                        delivery order on the run, in stop_no
-//                                        order, ONE AT A TIME
+//   kind 'trip'  one packing list        "SCAN WHEN FULLY LOADED": every
+//                                        delivery order on the run to Loaded
+//                                        (DISPATCHED) and no other rung, in
+//                                        stop_no order, ONE AT A TIME (2026-11-27)
 //
 // SEQUENTIALLY, NEVER IN PARALLEL, and this is bought experience rather than
 // caution. Hookka wrote the reason down after paying for it (its delivery page,
@@ -116,6 +117,13 @@ import {
   type DoScanStep,
 } from '../scm/shared/do-scan-ladder';
 import { patchDeliveryOrderStatusHandler } from '../scm/routes/delivery-orders-mfg';
+import {
+  LORRY_LOAD_DONE,
+  LORRY_LOAD_TARGET,
+  decideLorryLoad,
+  dominantPlate,
+  lorryLoadHeadline,
+} from '../scm/lib/lorry-load-scan';
 
 export const publicDoScan = new Hono<{ Bindings: Env }>();
 
@@ -176,37 +184,52 @@ async function buildSummary(sb: any, r: ResolvedDoScan): Promise<PublicDoSummary
   };
 }
 
+// -- THE PACKING LIST: "SCAN WHEN FULLY LOADED" ---------------------------------
+// Owner, 2026-11-27: "QR code scan了就是全部loaded了". The packing-list scan has ONE
+// meaning: every delivery order on the sheet becomes Loaded (DB DISPATCHED). It never
+// confirms a Draft (that takes stock out and is the office's call), never moves
+// anything past Loaded and never moves anything back. scm/lib/lorry-load-scan.ts
+// decides each drop; the write is the office writer's, the same as "Mark Loaded".
+// Drops are written one at a time with `expectFrom`, so a drop that moved on since
+// the read is refused rather than dragged back, and a second scan writes nothing.
+// The lorry plate (headline only) is the crew plate most drops carry; a failed read
+// of it falls back to the packing-list number, never to a refusal.
 type PublicTripMember = {
   stopNo: number;
   doNumber: string | null;
+  customerName: string | null;
   status: string | null;
-  step: { status: string; label: string; note: string } | null;
-  blockReason: string | null;
+  willLoad: boolean;
+  note: string;
 };
 
 type PublicTripSummary = {
   kind: 'trip';
+  mode: 'load_all';
   tripNo: string;
   tripDate: string | null;
+  lorryPlate: string | null;
   status: string;
   step: { status: string; label: string; note: string } | null;
   blockReason: string | null;
   members: PublicTripMember[];
 };
 
-const FOREIGN_MEMBER_REASON =
-  'This drop is on another company\'s books, so this sheet cannot move it. Call the office.';
+const LOAD_ALL_LABEL = 'Mark whole lorry loaded';
+const LOAD_ALL_NOTE =
+  'Press this once everything on this packing list is on the lorry. Every confirmed delivery order on it is marked Loaded. Stock is not touched: it left when each delivery order was confirmed.';
 
-function nextRunStep(members: PublicTripMember[]): PublicTripMember['step'] | null {
-  let best: PublicTripMember['step'] | null = null;
-  let bestIdx = Number.POSITIVE_INFINITY;
-  for (const m of members) {
-    if (!m.step) continue;
-    const idx = doScanRungIndex(m.status);
-    if (idx >= 0 && idx < bestIdx) { bestIdx = idx; best = m.step; }
-    else if (best === null) best = m.step;
-  }
-  return best;
+type ScanDb = ReturnType<typeof getSupabaseService>;
+
+async function lorryPlateFor(sb: ScanDb, companyId: number, members: TripScanMember[]): Promise<string | null> {
+  const ids = members.filter((m) => !m.foreign).map((m) => m.doId);
+  if (ids.length === 0) return null;
+  const { data, error } = await scopeToCompanyId(
+    sb.from('delivery_order_crew').select('do_id, lorry_plate').in('do_id', ids),
+    companyId,
+  );
+  if (error) return null;
+  return dominantPlate((data as Array<{ lorry_plate: string | null }>).map((r) => r.lorry_plate));
 }
 
 async function buildTripSummary(
@@ -214,39 +237,40 @@ async function buildTripSummary(
   trip: ResolvedTripScan,
   loaded: TripScanMember[],
 ): Promise<PublicTripSummary> {
-  const members: PublicTripMember[] = loaded.map((m) => {
-    if (m.foreign) {
-      return { stopNo: m.stopNo, doNumber: null, status: null, step: null, blockReason: FOREIGN_MEMBER_REASON };
-    }
-    const step = doScanStep(m.status, m.onHold);
-    return {
-      stopNo: m.stopNo,
-      doNumber: m.doNumber,
-      status: String(m.status ?? ''),
-      step: step ? { status: step.status, label: step.label, note: step.note } : null,
-      blockReason: doScanBlockReason(m.status, m.onHold),
-    };
-  });
-  const step = nextRunStep(members);
+  const decided = loaded.map((m) => ({ m, d: decideLorryLoad(m.status, m.onHold, m.foreign) }));
+  const members: PublicTripMember[] = decided.map(({ m, d }) => ({
+    stopNo: m.stopNo,
+    doNumber: m.doNumber,
+    customerName: m.customerName,
+    status: m.foreign ? null : String(m.status ?? ''),
+    willLoad: d.action === 'write',
+    note: d.action === 'write' ? 'Will be marked Loaded.' : d.message,
+  }));
+  const anyToLoad = members.some((m) => m.willLoad);
+  const allLoaded = decided.length > 0
+    && decided.every(({ d }) => d.action === 'skip' && d.outcome !== 'BLOCKED');
+  const alreadyLoaded = decided.filter(({ d }) => d.action === 'skip' && d.outcome === 'ALREADY_DONE').length;
   return {
     kind: 'trip',
+    mode: 'load_all',
     tripNo: trip.tripNo,
     tripDate: trip.tripDate,
+    lorryPlate: await lorryPlateFor(sb, trip.companyId, loaded),
     status: String(trip.status ?? ''),
-    step,
-    blockReason: step
+    step: anyToLoad ? { status: LORRY_LOAD_TARGET, label: LOAD_ALL_LABEL, note: LOAD_ALL_NOTE } : null,
+    blockReason: anyToLoad
       ? null
       : members.length === 0
         ? 'There is nothing on this packing list yet. Call the office.'
-        : 'Nothing on this run is waiting for a scan right now.',
+        : allLoaded
+          ? 'Everything on this lorry is already loaded. Nothing to do.'
+          : `Nothing left that this scan can load: ${alreadyLoaded} of ${members.length} already loaded. See each line below, and call the office about the rest.`,
     members,
   };
 }
 
 const OFF_RUNG_SINGLE =
   'This delivery order has moved on since this page was opened. Reload the page to see its next step.';
-const OFF_RUNG_RUN =
-  'This drop is at a different step from the rest of the run. Scan its own delivery order to move it.';
 const OFF_RUNG_BATCH =
   'This delivery order is at a different step from the one you pressed, so it was not moved.';
 
@@ -296,7 +320,7 @@ async function advanceOneDocument(
     };
   }
 
-  const written = await advanceThroughOfficeWriter(c, sb, resolved, step.status);
+  const written = await advanceThroughOfficeWriter(c, sb, resolved, step.status, null);
   if (!written.ok) {
     console.warn('[public-do-scan] advance refused', {
       status: written.status, code: written.code, doNumber: resolved.doNumber,
@@ -565,9 +589,15 @@ publicDoScan.post('/:token/advance', async (c) => {
   if (found.status === 'unknown') return unknownToken(c);
 
   if (found.kind === 'trip') {
+    if (wanted !== LORRY_LOAD_TARGET) {
+      return c.json({
+        error: 'load_only',
+        message: 'This packing list only records that the lorry is fully loaded. Reload the page.',
+      }, 400);
+    }
     const loaded = await loadTripScanMembers(sb, found.row);
     if (loaded.status === 'read_failed') return readFailed(c);
-    return c.json(await advanceWholeRun(c, sb, found.row, loaded.members, wanted));
+    return c.json(await loadWholeLorry(c, sb, found.row, loaded.members));
   }
 
   const resolved = found.row;
@@ -584,6 +614,7 @@ async function advanceThroughOfficeWriter(
   sb: unknown,
   resolved: ResolvedDoScan,
   to: string,
+  expectFrom: string | null,
 ): Promise<{ ok: true } | { ok: false; status: number; code: string }> {
   const vars = new Map<string, unknown>([
     ['supabase', sb],
@@ -598,7 +629,7 @@ async function advanceThroughOfficeWriter(
     env: c.env,
     req: {
       param: (k: string) => (k === 'id' ? resolved.id : undefined),
-      json: async () => ({ status: to }),
+      json: async () => (expectFrom === null ? { status: to } : { status: to, expectFrom }),
     },
     get: (k: string) => vars.get(k),
     set: (k: string, v: unknown) => { vars.set(k, v); },
@@ -625,62 +656,82 @@ async function advanceThroughOfficeWriter(
 type MemberOutcome = {
   stopNo: number;
   doNumber: string | null;
-  outcome: 'DONE' | 'ALREADY_DONE' | 'BLOCKED' | 'FAILED';
+  customerName: string | null;
+  outcome: 'DONE' | 'ALREADY_DONE' | 'PAST' | 'BLOCKED' | 'FAILED';
   from: string | null;
   to?: string;
+  status: string | null;
   message: string;
 };
 
-async function advanceWholeRun(
+const WRITER_REFUSED: Record<string, string> = {
+  status_changed: 'its status changed while this scan was running. Scan again.',
+};
+
+async function loadWholeLorry(
   c: Context<{ Bindings: Env }>,
-  sb: unknown,
+  sb: ScanDb,
   trip: ResolvedTripScan,
   members: TripScanMember[],
-  wanted: string,
 ): Promise<{
-  kind: 'trip'; tripNo: string; outcome: 'DONE' | 'PARTIAL' | 'NOTHING';
-  to: string; message: string; members: MemberOutcome[];
+  kind: 'trip'; mode: 'load_all'; tripNo: string; lorryPlate: string | null;
+  outcome: 'DONE' | 'PARTIAL' | 'NOTHING'; to: string; headline: string; message: string;
+  total: number; loaded: number; moved: number; members: MemberOutcome[];
 }> {
   const results: MemberOutcome[] = [];
 
   for (const m of members) {
-    if (m.foreign) {
+    const base = { stopNo: m.stopNo, doNumber: m.doNumber, customerName: m.customerName };
+    const d = decideLorryLoad(m.status, m.onHold, m.foreign);
+    if (d.action === 'skip') {
+      const seen = m.foreign ? null : d.from;
+      results.push({ ...base, outcome: d.outcome, from: seen, status: seen, message: d.message });
+      continue;
+    }
+    const written = await advanceThroughOfficeWriter(
+      c, sb, { ...memberAsDo(m), companyId: trip.companyId }, LORRY_LOAD_TARGET, d.from,
+    );
+    if (!written.ok) {
+      console.warn('[public-do-scan] lorry load refused', {
+        tripNo: trip.tripNo, stopNo: m.stopNo, status: written.status, code: written.code,
+      });
       results.push({
-        stopNo: m.stopNo, doNumber: null, outcome: 'BLOCKED', from: null,
-        message: FOREIGN_MEMBER_REASON,
+        ...base, outcome: 'FAILED', from: d.from, status: d.from,
+        message: `Not loaded: ${WRITER_REFUSED[written.code] ?? 'the office system would not record it. Call the office and quote this delivery order number.'}`,
       });
       continue;
     }
-    const decided = await advanceOneDocument(
-      c, sb, { ...memberAsDo(m), companyId: trip.companyId }, wanted, OFF_RUNG_RUN,
-    );
-    if (decided.outcome === 'FAILED') {
-      console.warn('[public-do-scan] run member refused', {
-        tripNo: trip.tripNo, stopNo: m.stopNo, code: decided.code,
-      });
-    }
     results.push({
-      stopNo: m.stopNo,
-      doNumber: m.doNumber,
-      outcome: decided.outcome,
-      from: decided.from,
-      ...(decided.to ? { to: decided.to } : {}),
-      message: decided.outcome === 'FAILED'
-        ? 'The office system would not record this drop. Call the office and quote this delivery order number.'
-        : decided.message,
+      ...base, outcome: 'DONE', from: d.from, to: LORRY_LOAD_TARGET, status: LORRY_LOAD_TARGET,
+      message: LORRY_LOAD_DONE,
     });
   }
 
   const moved = results.filter((r) => r.outcome === 'DONE').length;
+  const loaded = moved + results.filter((r) => r.outcome === 'ALREADY_DONE').length;
+  const past = results.filter((r) => r.outcome === 'PAST').length;
   const stuck = results.filter((r) => r.outcome === 'BLOCKED' || r.outcome === 'FAILED').length;
   const outcome = stuck > 0 ? 'PARTIAL' as const : moved > 0 ? 'DONE' as const : 'NOTHING' as const;
-  const message =
-    outcome === 'DONE'
-      ? `All ${moved} ${moved === 1 ? 'drop' : 'drops'} recorded.`
-      : outcome === 'PARTIAL'
-        ? `${moved} recorded, ${stuck} not moved — check the list below and call the office about those.`
-        : 'Nothing on this run needed this step.';
-  return { kind: 'trip', tripNo: trip.tripNo, outcome, to: wanted, message, members: results };
+  const lorryPlate = await lorryPlateFor(sb, trip.companyId, members);
+  const message = [
+    past > 0 ? `${past} already further along and left as ${past === 1 ? 'it is' : 'they are'}.` : '',
+    stuck > 0 ? `${stuck} not loaded: see the list below and call the office about ${stuck === 1 ? 'it' : 'them'}.` : '',
+    moved === 0 && stuck === 0 && loaded > 0 ? 'Nothing changed: it was all loaded already.' : '',
+  ].filter(Boolean).join(' ');
+  return {
+    kind: 'trip',
+    mode: 'load_all',
+    tripNo: trip.tripNo,
+    lorryPlate,
+    outcome,
+    to: LORRY_LOAD_TARGET,
+    headline: lorryLoadHeadline(lorryPlate, trip.tripNo, loaded, results.length),
+    message,
+    total: results.length,
+    loaded,
+    moved,
+    members: results,
+  };
 }
 
 function memberAsDo(m: TripScanMember): ResolvedDoScan {

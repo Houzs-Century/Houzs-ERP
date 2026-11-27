@@ -34,6 +34,11 @@
 // recomputes the next rung from the row's own status and refuses anything else.
 // A second press of the same button is answered "already done" rather than
 // quietly taking the NEXT rung.
+//
+// THE PACKING LIST IS DIFFERENT (owner, 2026-11-27): its QR says "SCAN WHEN FULLY
+// LOADED" and does exactly that. One press marks every confirmed delivery order on
+// the lorry Loaded and nothing else; the server decides each drop and the page lists
+// what happened to every one under a "Lorry X: n of m loaded" headline.
 // ----------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Loader2, PackageCheck, PauseCircle, XCircle } from "lucide-react";
@@ -49,15 +54,18 @@ import {
 type Member = {
   stopNo: number;
   doNumber: string | null;
+  customerName: string | null;
   status: string | null;
-  step: { status: string; label: string; note: string } | null;
-  blockReason: string | null;
+  willLoad: boolean;
+  note: string;
 };
 
 type TripSummary = {
   kind: "trip";
+  mode: "load_all";
   tripNo: string;
   tripDate: string | null;
+  lorryPlate: string | null;
   status: string;
   step: { status: string; label: string; note: string } | null;
   blockReason: string | null;
@@ -67,18 +75,26 @@ type TripSummary = {
 type MemberOutcome = {
   stopNo: number;
   doNumber: string | null;
-  outcome: "DONE" | "ALREADY_DONE" | "BLOCKED" | "FAILED";
+  customerName: string | null;
+  outcome: "DONE" | "ALREADY_DONE" | "PAST" | "BLOCKED" | "FAILED";
   from: string | null;
   to?: string;
+  status: string | null;
   message: string;
 };
 
 type RunResult = {
   kind: "trip";
+  mode: "load_all";
   tripNo: string;
+  lorryPlate: string | null;
   outcome: "DONE" | "PARTIAL" | "NOTHING";
   to: string;
+  headline: string;
   message: string;
+  total: number;
+  loaded: number;
+  moved: number;
   members: MemberOutcome[];
 };
 
@@ -197,16 +213,19 @@ export function PublicDoScan() {
 
   const step = done ? null : data.step;
   const isRun = data.kind === "trip";
+  const run = isRun ? (data as TripSummary) : null;
 
   return (
-    <Frame>
-      {isRun ? (
+    <Frame title={isRun ? "Scan packing list" : "Scan delivery order"}>
+      {run ? (
         <div className="rounded-md border border-line bg-surface px-4 py-3 text-sm">
-          <div className="font-mono text-base font-semibold">{(data as TripSummary).tripNo}</div>
+          <div className="text-base font-semibold">
+            {run.lorryPlate ? `Lorry ${run.lorryPlate}` : `Packing list ${run.tripNo}`}
+          </div>
           <div className="text-ink-secondary">
-            {(data as TripSummary).tripDate ?? "—"} ·{" "}
-            {(data as TripSummary).members.length} drop
-            {(data as TripSummary).members.length === 1 ? "" : "s"} on this run
+            {run.lorryPlate ? `${run.tripNo} · ` : ""}
+            {run.tripDate ?? "—"} · {run.members.length} delivery order
+            {run.members.length === 1 ? "" : "s"}
           </div>
         </div>
       ) : (
@@ -227,15 +246,17 @@ export function PublicDoScan() {
         <>
           <Notice
             tone={(done as RunResult).outcome === "PARTIAL" ? "warn" : "ok"}
-            title={(done as RunResult).tripNo}
+            title={(done as RunResult).headline}
           >
-            {(done as RunResult).message}
+            {(done as RunResult).message || "Done."}
           </Notice>
           <RunList
             rows={(done as RunResult).members.map((m) => ({
               stopNo: m.stopNo,
               doNumber: m.doNumber,
-              tone: m.outcome === "DONE" || m.outcome === "ALREADY_DONE" ? "ok" : "warn",
+              customerName: m.customerName,
+              status: m.status,
+              tone: outcomeTone(m.outcome),
               text: m.message,
             }))}
           />
@@ -257,7 +278,7 @@ export function PublicDoScan() {
       )}
 
       {!done && data.blockReason && (
-        <Notice tone={data.status === "CANCELLED" ? "warn" : "hold"} title={isRun ? (data as TripSummary).tripNo : (data as Summary).doNumber}>
+        <Notice tone={data.status === "CANCELLED" ? "warn" : "hold"} title={run ? (run.lorryPlate ? `Lorry ${run.lorryPlate}` : run.tripNo) : (data as Summary).doNumber}>
           {data.blockReason}
         </Notice>
       )}
@@ -275,20 +296,22 @@ export function PublicDoScan() {
           <p className="text-xs text-ink-secondary">{step.note}</p>
           {isRun && (
             <p className="text-xs text-ink-secondary">
-              This records the step for every drop on this run that is ready for it. Anything already done, on
-              hold, or on another company&apos;s books is left alone and listed back to you.
+              Only confirmed delivery orders are marked Loaded. Drafts, cancelled or held ones, ones on another
+              company&apos;s books, and ones already in transit or delivered are left alone and listed back to you.
             </p>
           )}
         </>
       )}
 
-      {isRun && !done && (
+      {run && !done && (
         <RunList
-          rows={(data as TripSummary).members.map((m) => ({
+          rows={run.members.map((m) => ({
             stopNo: m.stopNo,
             doNumber: m.doNumber,
-            tone: m.blockReason ? "warn" : "ok",
-            text: m.blockReason ?? `${statusLabel("do", m.status)} — ${m.step ? m.step.label : "no step"}`,
+            customerName: m.customerName,
+            status: m.status,
+            tone: m.willLoad ? "ok" : "muted",
+            text: m.note,
           }))}
         />
       )}
@@ -308,10 +331,31 @@ export function PublicDoScan() {
   );
 }
 
+type RowTone = "ok" | "warn" | "muted";
+
+function outcomeTone(o: MemberOutcome["outcome"]): RowTone {
+  if (o === "DONE" || o === "ALREADY_DONE") return "ok";
+  if (o === "PAST") return "muted";
+  return "warn";
+}
+
+const ROW_TONE: Record<RowTone, string> = {
+  ok: "text-emerald-800 dark:text-emerald-300",
+  muted: "text-ink-secondary",
+  warn: "text-amber-800 dark:text-amber-300",
+};
+
 function RunList({
   rows,
 }: {
-  rows: Array<{ stopNo: number; doNumber: string | null; tone: "ok" | "warn"; text: string }>;
+  rows: Array<{
+    stopNo: number;
+    doNumber: string | null;
+    customerName: string | null;
+    status: string | null;
+    tone: RowTone;
+    text: string;
+  }>;
 }) {
   if (rows.length === 0) {
     return (
@@ -325,9 +369,13 @@ function RunList({
       {rows.map((r) => (
         <li key={`${r.stopNo}-${r.doNumber ?? "x"}`} className="flex items-start gap-3 px-4 py-3">
           <span className="mt-0.5 shrink-0 font-mono text-xs text-ink-secondary">#{r.stopNo}</span>
-          <div className="min-w-0">
-            <div className="font-mono font-semibold">{r.doNumber ?? "Not on this run's account"}</div>
-            <div className={r.tone === "ok" ? "text-ink-secondary" : "text-amber-800 dark:text-amber-300"}>{r.text}</div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-2">
+              <span className="font-mono font-semibold">{r.doNumber ?? "Not on this run's account"}</span>
+              {r.status && <span className="text-xs text-ink-secondary">{statusLabel("do", r.status)}</span>}
+            </div>
+            {r.customerName && <div className="break-words">{r.customerName}</div>}
+            <div className={ROW_TONE[r.tone]}>{r.text}</div>
           </div>
         </li>
       ))}
@@ -335,12 +383,12 @@ function RunList({
   );
 }
 
-function Frame({ children }: { children: React.ReactNode }) {
+function Frame({ title = "Scan delivery order", children }: { title?: string; children: React.ReactNode }) {
   return (
     <div className="mx-auto w-full max-w-md space-y-4 p-4">
       <div>
         <div className="text-xs uppercase tracking-wide text-ink-muted">Delivery</div>
-        <h1 className="text-lg font-semibold">Scan delivery order</h1>
+        <h1 className="text-lg font-semibold">{title}</h1>
       </div>
       {children}
     </div>

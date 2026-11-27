@@ -181,60 +181,84 @@ describe("what it refuses to say", () => {
 
 const RUN = {
   kind: "trip",
+  mode: "load_all",
   tripNo: "TRIP-2608-001",
   tripDate: "2026-08-26",
+  lorryPlate: "VJK 8821",
   status: "PLANNED",
-  step: { status: "DISPATCHED", label: "Confirm Loaded", note: "Press this once every item is on the lorry." },
+  step: { status: "DISPATCHED", label: "Mark whole lorry loaded", note: "Press this once everything on this packing list is on the lorry." },
   blockReason: null,
   members: [
-    { stopNo: 1, doNumber: "HC-DO-2608-101", status: "LOADED", step: { status: "DISPATCHED", label: "Confirm Loaded", note: "n" }, blockReason: null },
-    { stopNo: 2, doNumber: null, status: null, step: null, blockReason: "This drop is on another company's books, so this sheet cannot move it. Call the office." },
+    { stopNo: 1, doNumber: "HC-DO-2608-101", customerName: "Customer One", status: "LOADED", willLoad: true, note: "Will be marked Loaded." },
+    { stopNo: 2, doNumber: null, customerName: null, status: null, willLoad: false, note: "This drop is on another company's books, so this sheet cannot move it. Call the office." },
+    { stopNo: 3, doNumber: "HC-DO-2608-103", customerName: "Customer Three", status: "DRAFT", willLoad: false, note: "Not confirmed yet (Draft), so it was not loaded. The office must confirm it first." },
   ],
 };
 
-describe("the packing-list sheet", () => {
-  it("reads as a run: trip number, drop count, and one button for all of it", async () => {
+describe("the packing-list sheet: SCAN WHEN FULLY LOADED", () => {
+  it("reads as one lorry, with one button that loads all of it", async () => {
     serve(RUN);
     await mount();
-    expect(screen.getByText("TRIP-2608-001")).toBeTruthy();
-    expect(screen.getByText(/2 drops on this run/)).toBeTruthy();
+    expect(screen.getByText("Scan packing list")).toBeTruthy();
+    expect(screen.getByText("Lorry VJK 8821")).toBeTruthy();
+    expect(screen.getByText(/3 delivery orders/)).toBeTruthy();
     expect(screen.getAllByRole("button")).toHaveLength(1);
-    expect(screen.getByRole("button").textContent).toContain("Confirm Loaded");
+    expect(screen.getByRole("button").textContent).toContain("Mark whole lorry loaded");
   });
 
-  it("shows the foreign drop BEFORE the press, by stop number and with no document number", async () => {
+  it("shows every drop BEFORE the press: number, customer, status and what will happen", async () => {
     serve(RUN);
     await mount();
-    expect(screen.getByText("#2")).toBeTruthy();
+    expect(screen.getByText("Customer One")).toBeTruthy();
+    expect(screen.getByText("Will be marked Loaded.")).toBeTruthy();
+    expect(screen.getByText("Confirmed")).toBeTruthy();
+    expect(screen.getByText(/Not confirmed yet \(Draft\)/)).toBeTruthy();
     expect(screen.getByText("Not on this run's account")).toBeTruthy();
-    expect(screen.getAllByText(/another company's books/).length).toBeGreaterThan(0);
     expect(document.body.textContent).not.toContain("HC-DO-2608-102");
   });
 
-  it("lists what happened to EVERY drop after the press", async () => {
+  it("POSTs the Loaded step only", async () => {
+    serve(RUN);
+    await mount();
+    await act(async () => { fireEvent.click(screen.getByRole("button")); });
+    const post = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "POST")!;
+    expect(JSON.parse(String((post[1] as RequestInit).body))).toEqual({ to: "DISPATCHED" });
+  });
+
+  it("after the press: the headline, and what happened to EVERY drop", async () => {
     serve(RUN, {
-      kind: "trip", tripNo: "TRIP-2608-001", outcome: "PARTIAL", to: "DISPATCHED",
-      message: "1 recorded, 1 not moved — check the list below and call the office about those.",
+      kind: "trip", mode: "load_all", tripNo: "TRIP-2608-001", lorryPlate: "VJK 8821", outcome: "PARTIAL",
+      to: "DISPATCHED", headline: "Lorry VJK 8821: 1 of 3 delivery orders loaded",
+      message: "2 not loaded: see the list below and call the office about them.",
+      total: 3, loaded: 1, moved: 1,
       members: [
-        { stopNo: 1, doNumber: "HC-DO-2608-101", outcome: "DONE", from: "LOADED", to: "DISPATCHED", message: "Recorded as loaded onto the lorry." },
-        { stopNo: 2, doNumber: null, outcome: "BLOCKED", from: null, message: "This drop is on another company's books, so this sheet cannot move it. Call the office." },
+        { stopNo: 1, doNumber: "HC-DO-2608-101", customerName: "Customer One", outcome: "DONE", from: "LOADED", to: "DISPATCHED", status: "DISPATCHED", message: "Marked as loaded." },
+        { stopNo: 2, doNumber: null, customerName: null, outcome: "BLOCKED", from: null, status: null, message: "This drop is on another company's books, so this sheet cannot move it. Call the office." },
+        { stopNo: 3, doNumber: "HC-DO-2608-103", customerName: "Customer Three", outcome: "BLOCKED", from: "DRAFT", status: "DRAFT", message: "Not confirmed yet (Draft), so it was not loaded. The office must confirm it first." },
       ],
     });
     await mount();
     await act(async () => { fireEvent.click(screen.getByRole("button")); });
     await waitFor(() => expect(screen.queryByRole("button")).toBeNull());
-    expect(screen.getByText(/1 recorded, 1 not moved/)).toBeTruthy();
-    expect(screen.getByText(/Recorded as loaded onto the lorry/)).toBeTruthy();
+    expect(screen.getByText("Lorry VJK 8821: 1 of 3 delivery orders loaded")).toBeTruthy();
+    expect(screen.getByText(/2 not loaded/)).toBeTruthy();
+    expect(screen.getByText("Marked as loaded.")).toBeTruthy();
+    expect(screen.getByText("Loaded")).toBeTruthy();
     expect(screen.getAllByText(/another company's books/).length).toBeGreaterThan(0);
-    expect(screen.getByText("#1")).toBeTruthy();
-    expect(screen.getByText("#2")).toBeTruthy();
+    for (const n of ["#1", "#2", "#3"]) expect(screen.getByText(n)).toBeTruthy();
   });
 
-  it("says the button moves the whole run, and what it will leave alone", async () => {
+  it("says what the button leaves alone", async () => {
     serve(RUN);
     await mount();
-    expect(screen.getByText(/every drop on this run that is ready for it/)).toBeTruthy();
-    expect(screen.getByText(/already done, on hold, or on another company/)).toBeTruthy();
+    expect(screen.getByText(/Only confirmed delivery orders are marked Loaded/)).toBeTruthy();
+  });
+
+  it("a lorry with nothing left to load offers no button", async () => {
+    serve({ ...RUN, step: null, blockReason: "Everything on this lorry is already loaded. Nothing to do." });
+    await mount();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByText(/already loaded/)).toBeTruthy();
   });
 
   it("an empty run says so instead of offering a button", async () => {

@@ -227,6 +227,7 @@ export type TripScanMember = {
   stopNo: number;
   doId: string;
   doNumber: string | null;
+  customerName: string | null;
   status: string | null;
   onHold: boolean | null;
   foreign: boolean;
@@ -416,12 +417,12 @@ export async function loadTripScanMembers(
 
   const { data: doData, error: doErr } = await sb
     .from('delivery_orders')
-    .select('id, company_id, do_number, status, on_hold')
+    .select('id, company_id, do_number, debtor_name, status, on_hold')
     .in('id', stops.map((r) => r.do_id as string));
   if (doErr) return { status: 'read_failed' };
   const byId = new Map<string, {
     id: string; company_id: number | string | null; do_number: string | null;
-    status: string | null; on_hold: boolean | null;
+    debtor_name: string | null; status: string | null; on_hold: boolean | null;
   }>();
   for (const r of (doData ?? []) as any[]) byId.set(String(r.id), r);
 
@@ -433,7 +434,7 @@ export async function loadTripScanMembers(
     seen.add(doId);
     const row = byId.get(doId);
     if (!row) {
-      members.push({ stopNo: Number(s.stop_no ?? 0), doId, doNumber: null, status: null, onHold: null, foreign: true });
+      members.push({ stopNo: Number(s.stop_no ?? 0), doId, doNumber: null, customerName: null, status: null, onHold: null, foreign: true });
       continue;
     }
     const foreign = Number(row.company_id) !== trip.companyId;
@@ -441,6 +442,7 @@ export async function loadTripScanMembers(
       stopNo: Number(s.stop_no ?? 0),
       doId,
       doNumber: foreign ? null : (row.do_number ?? null),
+      customerName: foreign ? null : (row.debtor_name ?? null),
       status: foreign ? null : (row.status ?? null),
       onHold: foreign ? null : (row.on_hold ?? null),
       foreign,
