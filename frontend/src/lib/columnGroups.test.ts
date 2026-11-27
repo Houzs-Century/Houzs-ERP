@@ -55,6 +55,7 @@ describe("column grouping", () => {
   it("puts the obvious columns where a person would put them", () => {
     const cases: Array<[string, string, string]> = [
       ["total_cost_sen", "Total Cost", COLUMN_GROUPS.costs],
+      ["terminal", "Terminal", COLUMN_GROUPS.amounts],
       ["margin_pct_basis", "Margin %", COLUMN_GROUPS.costs],
       ["cogs", "COGS (RM)", COLUMN_GROUPS.costs],
       ["unit_cost", "Unit Cost", COLUMN_GROUPS.costs],

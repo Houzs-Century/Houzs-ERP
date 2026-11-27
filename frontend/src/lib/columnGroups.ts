@@ -46,7 +46,7 @@ const RULES: Rule[] = [
   },
   {
     group: COLUMN_GROUPS.amounts,
-    any: /\b(net|gross|fee|merchant|acquirer|statement|method|symbol|inclusive|others?|amount|total|subtotal|tax|discount|disc|paid|balance|deposit|refund|refunded|credit|debit|price|rate|currency|curr|value|revenue|sales|income|outstanding|owed|payment|billed|invoice|invoiced|rental|rent|due|overdue|aging|age|bucket|finances|account|merchandise|mattress|sofa|bedframe|accessories|specials|salary|basic|ot pay|absence|advance|penalty|statutory|epf|socso|eis|pcb|ot x|allowances?|backpay|charges|cash|deductions?)\b|_sen\b|\(rm\)/,
+    any: /\b(net|gross|fee|merchant|acquirer|terminal|statement|method|symbol|inclusive|others?|amount|total|subtotal|tax|discount|disc|paid|balance|deposit|refund|refunded|credit|debit|price|rate|currency|curr|value|revenue|sales|income|outstanding|owed|payment|billed|invoice|invoiced|rental|rent|due|overdue|aging|age|bucket|finances|account|merchandise|mattress|sofa|bedframe|accessories|specials|salary|basic|ot pay|absence|advance|penalty|statutory|epf|socso|eis|pcb|ot x|allowances?|backpay|charges|cash|deductions?)\b|_sen\b|\(rm\)/,
   },
   {
     group: COLUMN_GROUPS.logistics,
