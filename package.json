@@ -34,6 +34,7 @@
     "check:new-markdown": "node scripts/check-new-markdown.mjs",
     "agent-check": "node scripts/agent-check.mjs",
     "verify:probe": "node scripts/verify-probe.mjs",
+    "capture:help-shots": "node scripts/capture-help-shots.mjs",
     "verify:tla": "node scripts/run-tla.mjs formal/ac-outbox-claim/AcOutboxClaim.cfg"
   }
 }

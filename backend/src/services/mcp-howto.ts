@@ -5,6 +5,7 @@ import { GLOSSARY } from "./mcp-howto-glossary";
 import { ONBOARDING } from "./mcp-howto-onboarding";
 import { ERRORS } from "./mcp-howto-errors";
 import { canOpenPage, erpLink, NO_PERMISSION_NOTE, type HowtoGuide } from "./mcp-howto-types";
+import { hasShot } from "./mcp-help-shots";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 /** What a help tool hands back to routes/mcp.ts callTool: the result plus what goes into mcp_calls. */
@@ -88,7 +89,7 @@ export function guideView(g: HowtoGuide, ctx: HowtoCtx) {
     link: erpLink(ctx.origin, g.page, null),
     canDo,
     ...(canDo ? {} : { note: NO_PERMISSION_NOTE }),
-    steps: steps.map((s, i) => ({ n: i + 1, ...(s.role ? { role: s.role } : {}), text: s.text, ...(s.page ? { link: erpLink(ctx.origin, s.page, s.highlight) ?? s.page } : {}), ...(s.highlight ? { press: s.highlight } : {}) })),
+    steps: steps.map((s, i) => ({ n: i + 1, ...(s.role ? { role: s.role } : {}), text: s.text, ...(s.page ? { link: erpLink(ctx.origin, s.page, s.highlight) ?? s.page } : {}), ...(s.highlight ? { press: s.highlight } : {}), ...(s.page && hasShot(s.page, s.highlight) ? { showMe: { guide_id: g.id, step: i + 1 } } : {}) })),
   };
 }
 
@@ -261,7 +262,7 @@ export function runHowtoTool(ctx: HowtoCtx, name: string, args: Record<string, u
 }
 
 /** The help part of the server instructions. */
-export const HOWTO_INSTRUCTIONS = `HELP (no ERP data, always available): "how do I / where do I / steps to ..." -> how_to {question}; give the steps in the person's language, keep the quoted button names in English as the screen shows them, and give each step's link (it highlights the button). If canDo is false say: you don't have permission for this in the ERP — ask your supervisor or admin. "What is module X" -> module_overview; "what does X mean" -> glossary; an error message -> explain_error {text}; a new staff member -> onboarding {role}.`;
+export const HOWTO_INSTRUCTIONS = `HELP (no ERP data, always available): "how do I / where do I / steps to ..." -> how_to {question}; give the steps in the person's language, keep the quoted button names in English as the screen shows them, and give each step's link (it highlights the button); a step with showMe has a screenshot: call show_me {guide_id, step} when the person wants to see where to click. If canDo is false say: you don't have permission for this in the ERP — ask your supervisor or admin. "What is module X" -> module_overview; "what does X mean" -> glossary; an error message -> explain_error {text}; a new staff member -> onboarding {role}.`;
 
 /** Ready-made prompts for the help tools. */
 export const HOWTO_PROMPTS = [
