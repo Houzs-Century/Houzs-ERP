@@ -186,7 +186,7 @@ function PetrolPerKm({ rows, months, loading, failed }: { rows: PetrolKmRow[]; m
   const high = rows.reduce((t, r) => t + months.filter((m) => r.cells[m]!.high).length, 0);
   return (
     <section aria-label="Petrol per GPS km">
-      <h3 className={s.notCountedTitle}>{`Petrol per GPS km · flag above RM ${PETROL_RM_PER_KM_LIMIT.toFixed(2)} per km${high > 0 ? ` · ${plural(high, 'lorry-month')} flagged` : ''}`}</h3>
+      <h3 className={s.notCountedTitle}>{`Petrol per GPS km · flag above RM ${fmtMoney(Math.round(PETROL_RM_PER_KM_LIMIT * 100))} per km${high > 0 ? ` · ${plural(high, 'lorry-month')} flagged` : ''}`}</h3>
       {failed && <ReportMessage>GPS km could not be read. Refresh to try again.</ReportMessage>}
       {loading && <ReportMessage>Reading GPS km...</ReportMessage>}
       <table className={s.detailTable}>
@@ -199,7 +199,7 @@ function PetrolPerKm({ rows, months, loading, failed }: { rows: PetrolKmRow[]; m
               <td>{r.plate}</td>
               {months.map((m) => {
                 const c = r.cells[m]!;
-                const rate = c.rmPerKm == null ? 'no GPS km' : `RM ${c.rmPerKm.toFixed(2)}/km`;
+                const rate = c.rmPerKm == null ? 'no GPS km' : `RM ${fmtMoney(Math.round(c.rmPerKm * 100))}/km`;
                 const sub = c.km == null ? `RM ${fmtMoney(c.petrolSen)}` : `RM ${fmtMoney(c.petrolSen)} / ${Math.round(c.km).toLocaleString('en-US')} km · GPS ${c.gpsDays} of ${c.days} days`;
                 return (
                   <td key={m} className={c.high ? `${s.num} ${s.perKmHigh}` : s.num}>
