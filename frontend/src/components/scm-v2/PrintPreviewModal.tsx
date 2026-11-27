@@ -95,9 +95,9 @@ type PrintAction = () => void | Promise<void>;
 
 function ClosesOnLeave({ onLeave }: { onLeave: () => void }) {
   const { pathname } = useLocation();
-  const first = useRef(true);
+  const openedOn = useRef(pathname);
   useEffect(() => {
-    if (first.current) { first.current = false; return; }
+    if (pathname === openedOn.current) return;
     onLeave();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the page changing is the trigger
   }, [pathname]);
