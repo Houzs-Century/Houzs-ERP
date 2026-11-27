@@ -10,6 +10,7 @@ import { asDate } from "./hr-attendance-view";
 import { ASSR_LEG_BY_STOP, assrBoardLocation } from "../../scm/lib/assr-board-scope";
 import { doRunDate, isOwnLorryDoRun } from "../../scm/lib/own-lorry-do-run";
 import { regionOfDo } from "../../scm/lib/logistics-cost";
+import { normalizePlate } from "../../scm/lib/plate-normalize";
 import { getDb } from "../../db/client";
 import { hr_attendance, hr_employees, hr_payslips, hr_public_holidays, hr_trip_missed_days, hr_trip_rate_versions, hr_trip_rows, hr_working_hours } from "../../db/schema";
 import {
@@ -485,19 +486,33 @@ export type ProjectLeg = {
 
 /** A project's Setup and Dismantle, scheduled in the Projects module, as trip
  *  rows: one per lorry of the phase's crew (the legacy single driver when no
- *  crew was stored). Crew are names, matched to employees by name. A phase
- *  Delivery Planning already carries as a stop (`planned`, keyed
- *  "<project id>|<job type>|<date>") is left to that stop. Pure. */
-export function projectLegRows(p: ProjectLeg, first: string, last: string, planned: ReadonlySet<string>, byName: (name: string) => number | null): SourceRow[] {
+ *  crew was stored). Crew are names, matched to employees by name. A lorry a
+ *  Delivery Planning stop already carries (`plannedLorry`, keyed
+ *  "<project>|<job>|<date>|<plate>") is left to that stop, so a DP order for one
+ *  lorry of a multi-lorry phase does not drop the others; a plate-less leg, or a
+ *  plate-less DP stop (`plannedPhase`, keyed "<project>|<job>|<date>"), matches
+ *  the whole phase. Pure. */
+export function projectLegRows(
+  p: ProjectLeg,
+  first: string,
+  last: string,
+  plannedPhase: ReadonlySet<string>,
+  plannedLorry: ReadonlySet<string>,
+  byName: (name: string) => number | null,
+): SourceRow[] {
   const out: SourceRow[] = [];
   for (const jobType of ["SETUP", "DISMANTLE"] as const) {
     const at = jobType === "SETUP" ? p.setup_start_at : p.dismantle_start_at;
     const date = String(at ?? "").slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < first || date > last || planned.has(`${p.id}|${jobType}|${date}`)) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < first || date > last) continue;
+    const key = `${p.id}|${jobType}|${date}`;
     let lorries = projectCrewLorries(jobType === "SETUP" ? p.setup_crew : p.dismantle_crew);
     const legacyDriver = (jobType === "SETUP" ? p.setup_driver_name : p.dismantle_driver_name)?.trim();
     if (!lorries.length && legacyDriver) lorries = [{ plate: "", drivers: [legacyDriver], helpers: [] }];
     lorries.forEach((l, i) => {
+      const plate = normalizePlate(l.plate);
+      const carried = plate ? plannedLorry.has(`${key}|${plate}`) || plannedLorry.has(`${key}|`) : plannedPhase.has(key);
+      if (carried) return;
       const seat = (name: string | undefined): Seat => ({ name: name ?? "", employeeId: name ? byName(name) : null });
       const [d1, d2, h1, h2] = [seat(l.drivers[0]), seat(l.drivers[1]), seat(l.helpers[0]), seat(l.helpers[1])];
       const ref = `project:${p.id}:${jobType}:${i + 1}`;
@@ -645,7 +660,9 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
     return { name: c?.name ?? "", employeeId: c?.user_id != null ? (employeeOfUser.get(c.user_id) ?? null) : null };
   };
   const stopRows = stops.filter((s) => s.do_status !== "CANCELLED").map((s) => planningRowOf(s, who));
-  const planned = new Set(stopRows.filter((r) => isFairJob(r.job_type) && r.venue_key).map((r) => `${r.venue_key.slice(1)}|${r.job_type}|${r.trip_date}`));
+  const plannedStops = stopRows.filter((r) => isFairJob(r.job_type) && r.venue_key);
+  const plannedPhase = new Set(plannedStops.map((r) => `${r.venue_key.slice(1)}|${r.job_type}|${r.trip_date}`));
+  const plannedLorry = new Set(plannedStops.map((r) => `${r.venue_key.slice(1)}|${r.job_type}|${r.trip_date}|${normalizePlate(r.lorry_plate)}`));
   const byName = nameIndex(people);
   const stopDoIds = new Set(stops.map((s) => s.do_id).filter((x): x is string => !!x));
   const doSeat = (id: string | null, typed: string | null): Seat => {
@@ -653,7 +670,7 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
     const name = typed?.trim() ?? "";
     return seat.name || !name ? seat : { name, employeeId: byName(name) };
   };
-  return [...stopRows, ...deliveryOrderRows(dos, first, last, stopDoIds, doSeat), ...projects.flatMap((p) => projectLegRows(p, first, last, planned, byName))];
+  return [...stopRows, ...deliveryOrderRows(dos, first, last, stopDoIds, doSeat), ...projects.flatMap((p) => projectLegRows(p, first, last, plannedPhase, plannedLorry, byName))];
 }
 
 /** The days of [first, last] whose Delivery Planning / delivery order / Projects source changed after `since`. */

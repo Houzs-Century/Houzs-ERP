@@ -121,7 +121,7 @@ describe("project Setup / Dismantle from the Projects module", () => {
   const byName = (n: string) => ({ AMIR: 1, WAN: 2, ALI: 3 })[n.toUpperCase()] ?? null;
 
   test("one row per lorry of the phase, inside the trip month, crew matched by name", () => {
-    const rows = projectLegRows(project, "2026-10-23", "2026-11-22", new Set(), byName);
+    const rows = projectLegRows(project, "2026-10-23", "2026-11-22", new Set(), new Set(), byName);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
       source_ref: "project:42:SETUP:1",
@@ -139,10 +139,17 @@ describe("project Setup / Dismantle from the Projects module", () => {
     expect(rows[1]).toMatchObject({ lorry_plate: "VQE 9058", driver_1_employee_id: 3, trip_ref: "project:42:SETUP:2" });
   });
 
-  test("a phase Delivery Planning already carries is left to its stop; no crew falls back to the legacy driver", () => {
-    expect(projectLegRows(project, "2026-10-23", "2026-11-22", new Set(["42|SETUP|2026-11-05"]), byName)).toEqual([]);
-    const legacy = projectLegRows({ ...project, setup_crew: null, setup_driver_name: "Amir" }, "2026-10-23", "2026-11-22", new Set(), byName);
-    expect(legacy).toMatchObject([{ driver_1_name: "Amir", lorry_plate: "" }]);
+  test("a Delivery Planning stop carries only its own lorry, not the whole multi-lorry phase (HC-0125)", () => {
+    const vqeStays = projectLegRows(project, "2026-10-23", "2026-11-22", new Set(), new Set(["42|SETUP|2026-11-05|VPC9058"]), byName);
+    expect(vqeStays).toMatchObject([{ source_ref: "project:42:SETUP:2", lorry_plate: "VQE 9058", driver_1_name: "Ali" }]);
+    expect(projectLegRows(project, "2026-10-23", "2026-11-22", new Set(), new Set(["42|SETUP|2026-11-05|VPC9058", "42|SETUP|2026-11-05|VQE9058"]), byName)).toEqual([]);
+    expect(projectLegRows(project, "2026-10-23", "2026-11-22", new Set(), new Set(["42|SETUP|2026-11-05|"]), byName)).toEqual([]);
+  });
+
+  test("a plate-less leg (legacy single driver) falls back to the whole-phase key", () => {
+    const base = { ...project, setup_crew: null, setup_driver_name: "Amir" };
+    expect(projectLegRows(base, "2026-10-23", "2026-11-22", new Set(), new Set(), byName)).toMatchObject([{ driver_1_name: "Amir", lorry_plate: "" }]);
+    expect(projectLegRows(base, "2026-10-23", "2026-11-22", new Set(["42|SETUP|2026-11-05"]), new Set(), byName)).toEqual([]);
   });
 
   test("the flattened crew shape is one lorry; bad JSON is none", () => {
