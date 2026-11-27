@@ -78,7 +78,7 @@ import { scopeToCompany, scopeToAllowedCompanies, activeCompanyId, stampCompany,
   requireActiveCompanyId, scopeToCompanyId, scopeToCompanyIdOrOpen, NOT_THIS_COMPANY, scopeToGrantedCompanies } from '../lib/companyScope';
 import { stampSoRefsCamel } from '../lib/so-ref-lookup';
 import type { getSupabaseService } from '../../db/supabase';
-import { SO_CONVERT_HEADER, soHeaderToDoSource, missingSourceFields } from '../lib/so-to-do-fields';
+import { SO_CONVERT_HEADER, soHeaderToDoSource, missingSourceFields, soPlannedDeliveryDate } from '../lib/so-to-do-fields';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { freezeShipCost } from '../lib/fulfillment-costing';
@@ -2406,6 +2406,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
   const phoneRaw = head.phone as string | null;
   const emPhoneRaw = head.emergency_contact_phone as string | null;
   const today = todayMyt();
+  const plannedDate = soPlannedDeliveryDate(head);
 
   const srcCode = doCompanyId != null ? companyCodeMap(c).get(Number(doCompanyId)) : undefined;
   const srcPrefix = srcCode != null ? docPrefixForCode(srcCode) : undefined;
@@ -2419,10 +2420,11 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     so_doc_no: firstSoDocNo,
     debtor_code: (head.debtor_code as string | null) ?? null,
     debtor_name: (head.debtor_name as string | null) ?? null,
-    // Owner 2026-09-11 (0807 supersedes 0804): DO dates default to SO's.
-    do_date: (head.customer_delivery_date as string | null) ?? today,
-    expected_delivery_at: (head.customer_delivery_date as string | null) ?? today,
-    customer_delivery_date: (head.customer_delivery_date as string | null) ?? today,
+    // Owner 2026-11-27: the DO is issued TODAY; it is delivered on the date set
+    // on Delivery Planning (amended), else the SO customer's date.
+    do_date: today,
+    expected_delivery_at: plannedDate ?? today,
+    customer_delivery_date: plannedDate ?? today,
     address1: (head.address1 as string | null) ?? null,
     address2: doAddress2,
     city: (head.city as string | null) ?? null,
@@ -2484,7 +2486,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
       line_cost_sen: lineCost,
       line_margin_sen: lineTotal - lineCost,
       variants,
-      line_delivery_date: (head.customer_delivery_date as string | null) ?? null,
+      line_delivery_date: plannedDate,
       gap_inches: line.gapInches ?? null,
       divan_height_inches: line.divanHeightInches ?? null,
       divan_price_sen: line.divanPriceSen ?? 0,

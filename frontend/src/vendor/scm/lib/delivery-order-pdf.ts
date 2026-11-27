@@ -193,13 +193,9 @@ function drawDoHeader(
   doc.text(docNoText, rightEdge, docNoBaseline, { align: 'right' });
   rightW = Math.max(rightW, doc.getTextWidth(docNoText));
 
-  const issuedBaseline = docNoBaseline + pt(S.meta) + 2;
-  const issued = `Issued ${fmtDocDate(header.do_date)}`;
-  font(doc, S.meta);
-  doc.text(issued, rightEdge, issuedBaseline, { align: 'right' });
-  rightW = Math.max(rightW, doc.getTextWidth(issued));
-
-  let rightBottom = issuedBaseline + 1.2;
+  /* Owner 2026-11-27: the issue date (the day the DO was opened) is kept on
+     the record but never printed; the customer only sees the Delivery Date. */
+  let rightBottom = docNoBaseline + 1.2;
 
   /* THE SCAN QR. It points at the PUBLIC page now (2026-08-26): the driver has
      no account, so the link must open without one — the owner's call,
@@ -433,7 +429,6 @@ function drawInfoPanel(doc: Doc, top: number, header: DoHeader): number {
     ...(header.salesperson && header.salesperson.trim()
       ? [{ label: 'Salesperson', value: header.salesperson.trim() }]
       : []),
-    { label: 'Issued Date', value: fmtDocDate(header.do_date) },
     {
       label: 'Delivery Date',
       value: header.expected_delivery_at ? fmtDocDate(header.expected_delivery_at) : null,
@@ -537,7 +532,7 @@ function drawFooterOnly(doc: Doc, header: DoHeader, pageOf: { page: number; tota
   const footBaseline = baselineOf(FOOTER_RULE_Y + 3, S.footer);
   font(doc, S.footer);
   setInk(doc, T.ink);
-  doc.text(`${COMPANY.portalLabel} · ${fmtDocDate(header.do_date)}`, M, footBaseline);
+  doc.text(COMPANY.portalLabel, M, footBaseline);
   doc.text(`${header.do_number} · Page : ${pageOf.page} of ${pageOf.total}`, PAGE_W - M, footBaseline, { align: 'right' });
 }
 
