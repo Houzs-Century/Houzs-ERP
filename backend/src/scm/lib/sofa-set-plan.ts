@@ -225,6 +225,18 @@ export function planSofaSets(
   }
   for (const [key, set] of orderedSets) {
     if (planned.has(key)) continue;
+    const mods = modulesOf(set);
+    const fits = candidates().map((b) => fitOf(b, mods));
+    if (fits.some((f) => f.stockOnly && f.covered > 0)) continue;
+    const own = fits
+      .filter((f) => f.full && raisedForSet(f.batch, set))
+      .sort((a, b) => byDateAsc(a.eta, b.eta) || a.batch.localeCompare(b.batch)).at(0);
+    if (!own) continue;
+    planSet(set, own);
+    planned.add(key);
+  }
+  for (const [key, set] of orderedSets) {
+    if (planned.has(key)) continue;
     planSet(set, chooseBatch(set));
   }
   return planByLine;

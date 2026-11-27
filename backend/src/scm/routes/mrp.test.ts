@@ -1640,6 +1640,17 @@ describe('company 2: a sofa set is planned whole — one batch (= one PO) or not
     expect(sets.get('SO-B-rhf')!.shortageQty).toBe(1);
   });
 
+  test('2990-0071: a PO raised for a set stays with it — an earlier set with no PO does not take it', async () => {
+    const sets = await run({
+      mfg_sales_order_items: [...SET('SO-A', '2026-12-07'), ...SET('SO-B', '2027-01-01')],
+      purchase_order_items: [po('PO-B', LHF, 1, '2026-12-25', 'SO-B-lhf'), po('PO-B', RHF, 1, '2026-12-25', 'SO-B-rhf')],
+    });
+    expect(sets.get('SO-B-lhf')!.poNumber).toBe('PO-B');
+    expect(sets.get('SO-B-rhf')!.shortageQty).toBe(0);
+    expect(sets.get('SO-A-lhf')!.poNumber).toBeNull();
+    expect(sets.get('SO-A-rhf')!.shortageQty).toBe(1);
+  });
+
   test('a set the allocator already LOCKED keeps its batch, even against an earlier delivery', async () => {
     const sets = await run({
       mfg_sales_order_items: [
