@@ -247,19 +247,16 @@ export const WarehouseRacks = () => {
         <div className="flex flex-wrap items-center gap-3">
           <span className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-surface py-1.5 pl-3 pr-2">
             <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">WH</span>
-            <span className="relative inline-flex items-center">
-              <select
-                className="appearance-none border-none bg-transparent pr-5 text-[13px] font-semibold text-ink outline-none"
-                value={warehouseId}
-                onChange={(e) => selectWarehouse(e.target.value)}
-                aria-label="Warehouse"
-              >
-                {(warehouses.data ?? []).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code}</option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-0 text-ink-muted" size={12} strokeWidth={2} />
-            </span>
+            <select
+              className="appearance-none border-none bg-transparent text-[13px] font-semibold text-ink outline-none"
+              value={warehouseId}
+              onChange={(e) => selectWarehouse(e.target.value)}
+              aria-label="Warehouse"
+            >
+              {(warehouses.data ?? []).map((w) => (
+                <option key={w.id} value={w.id}>{w.code}</option>
+              ))}
+            </select>
           </span>
         </div>
         )}
