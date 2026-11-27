@@ -26,7 +26,7 @@ const row = (over: Partial<UnmatchedPayment>): UnmatchedPayment => ({
   state: 'CARD_TO_CONFIRM', bankAccountCode: null, statementUpTo: null, ...over,
 });
 const ROWS: UnmatchedPayment[] = [
-  row({ customer_so_no: 'TEST-REF-01' }),
+  row({ customer_so_no: 'TEST-REF-01', terminalId: '10000012' }),
   row({ paymentId: 'p2', docNo: '2990-SO-2609-031', customerName: 'Chong Hui Wen', kind: 'transfer', channel: 'Bank Transfer', amountSen: 143_300, reference: '260920CE0DB5C26', ref: 'TEST-REF-02', customer_so_no: 'TEST-REF-OLD', ageDays: 10, state: 'TRANSFER_NOT_MATCHED', bankAccountCode: '310-0020', statementUpTo: '2026-09-28', jeNo: 'JE-2609-0031' }),
   row({ paymentId: 'p3', docNo: '2990-SO-2608-069', customerName: 'Poon How kei', kind: 'transfer', channel: 'TNG', amountSen: 150_000, reference: '602788', ageDays: 1, state: 'TRANSFER_NO_STATEMENT', bankAccountCode: '310-0020', statementUpTo: '2026-09-28', jeNo: 'JE-2609-0099' }),
   row({ paymentId: 'p4', docNo: '2990-SO-2609-050', channel: null, amountSen: 50_000, ageDays: 3, state: 'CARD_NOT_REPORTED', collectedByName: null }),
@@ -45,7 +45,7 @@ const line = (over: Partial<SettlementRow>): SettlementRow => ({
 });
 const GUESS = { source: 'SOPAY' as const, id: 'g1', docNo: '2990-SO-2611-021', paidOn: '2026-11-04', amountSen: 164_000, approvalCode: '080405', customerName: 'Alice Ong' };
 const DETAIL_ROWS: SettlementRow[] = [
-  line({ suggested: [GUESS], candidates: [GUESS] }),
+  line({ suggested: [GUESS], candidates: [GUESS], terminal_id: '10000013' }),
   line({ id: 2, line_no: 20, ref: '999001', gross_sen: 50_000, bucket: 'UNMATCHED' }),
   line({ id: 3, line_no: 21, confirmed_at: '2026-11-02T00:00:00Z' }),
 ];
@@ -228,6 +228,19 @@ describe('Payments', () => {
     expect(nextTo('2990-SO-2609-050')).toBe('—');
   });
 
+  /* Owner 2026-11-27 (这里我要显示terminal id): the card terminal the report line claiming
+     the payment names, right after its reference; no line claims it, a dash. */
+  test('shows the terminal the report line claiming a card names, right after its reference', () => {
+    draw();
+    const afterReference = (doc: string, reference: string): string | undefined => {
+      const cells = [...rowOf(doc).querySelectorAll('td')].map((td) => td.textContent.trim());
+      return cells[cells.indexOf(reference) + 1];
+    };
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent.trim())).toContain('Terminal');
+    expect(afterReference('2990-SO-2609-045', 'R18656')).toBe('10000012');
+    expect(afterReference('2990-SO-2609-050', 'R18656')).toBe('—');
+  });
+
   /* Owner 2026-11-09: sales person 应该不太对，应该是collected by 的人. */
   test('names who collected the payment; the order\'s salesperson waits under Columns', () => {
     draw();
@@ -253,6 +266,17 @@ describe('Merchant report lines', () => {
     expect(none.getByText('no sale in the ERP')).toBeTruthy();
     expect(none.getByText('Merchant reports').getAttribute('href')).toBe('/scm/merchant-recon?acq=MBB&batch=7&tab=no-sale');
     expect(screen.getByText(/^2 lines not reconciled/)).toBeTruthy();
+  });
+
+  /* Owner 2026-11-27 (往后上传后都要保存起来): each line's terminal, after its reference. */
+  test('each line shows the terminal its report names, right after its reference', () => {
+    draw('/scm/unmatched-payments?list=reports');
+    const afterReference = (reference: string): string | undefined => {
+      const cells = [...rowOf(reference).querySelectorAll('td')].map((td) => td.textContent.trim());
+      return cells[cells.indexOf(reference) + 1];
+    };
+    expect(afterReference('075427')).toBe('10000013');
+    expect(afterReference('999001')).toBe('—');
   });
 
   test('"No sale in the ERP" narrows to the card money nobody keyed', () => {

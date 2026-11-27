@@ -1,4 +1,5 @@
 
+import { StrictMode } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { act, cleanup, render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -30,6 +31,23 @@ describe("print preview and the page it was opened on", () => {
     renderOpen(onClose);
     expect(onClose).not.toHaveBeenCalled();
     act(() => { go("/scm/delivery-orders/HC-DO-1?tab=items"); });
+    expect(onClose).not.toHaveBeenCalled();
+    act(() => { go("/scm/sales-orders"); });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test("stays open under StrictMode, which runs effects twice in local dev", () => {
+    const onClose = vi.fn();
+    render(
+      <StrictMode>
+        <QueryClientProvider client={new QueryClient()}>
+          <MemoryRouter initialEntries={["/scm/warehouses/racks"]}>
+            <Nav />
+            <PrintPreviewModal open onClose={onClose} docTitle="Rack Labels" docNo="SR-PJ" rows={[]} onPrint={() => undefined} />
+          </MemoryRouter>
+        </QueryClientProvider>
+      </StrictMode>,
+    );
     expect(onClose).not.toHaveBeenCalled();
     act(() => { go("/scm/sales-orders"); });
     expect(onClose).toHaveBeenCalledTimes(1);
