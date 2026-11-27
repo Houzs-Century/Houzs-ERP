@@ -407,6 +407,7 @@ export type TripRow = {
   jobType: TripJobType;
   eventType: TripEventType | null;
   localTotalSen: number;
+  allowanceOverrideSen: number | null;
   state: string;
   postcode: string;
   lorryPlate: string;
@@ -489,6 +490,7 @@ export function parseTripReport(text: string): { rows: TripRow[]; skipped: { lin
       jobType,
       eventType: isFairJob(jobType) && /\bSOLO\b|ROADSHOW/i.test(docNo) ? "ROADSHOW" : null,
       localTotalSen: amount ?? 0,
+      allowanceOverrideSen: null,
       state: c[5] ?? "",
       postcode: "",
       lorryPlate: c[6] ?? "",
@@ -637,12 +639,23 @@ export function computeTripMonth(input: TripMonthInput): { pay: Map<number, Trip
       if (row.jobType === "DELIVERY_ORDER") a.base[crew] += row.localTotalSen;
     }
     if (rowPay[i].sameJob) return;
-    const rate = jobAllowanceFor(rates, row.jobType, row.eventType);
-    if (!rate) return;
+    /* HR can hand-set a row's job allowance on the edit drawer (owner 2026-11-27);
+       when set, that amount is the allowance instead of the rate card. */
+    const override = row.allowanceOverrideSen;
     const second = rowPay[i].tripOfDay === 2;
-    const unit = second ? (rate.secondTripSen ?? rate.perTripSen) : rate.perTripSen;
+    let unit: number;
+    if (override != null) {
+      unit = override;
+    } else {
+      const rate = jobAllowanceFor(rates, row.jobType, row.eventType);
+      if (!rate) return;
+      unit = second ? (rate.secondTripSen ?? rate.perTripSen) : rate.perTripSen;
+    }
     if (unit <= 0) return;
-    const key = `JOB_${row.jobType}${isFairJob(row.jobType) ? `_${row.eventType ?? "EXHIBITION"}_${second ? 2 : 1}` : ""}`;
+    const key =
+      override != null
+        ? `JOB_${row.jobType}_SET_${unit}`
+        : `JOB_${row.jobType}${isFairJob(row.jobType) ? `_${row.eventType ?? "EXHIBITION"}_${second ? 2 : 1}` : ""}`;
     for (const id of driverIds) {
       add(acc(id), key, jobName(row, rowPay[i].tripOfDay), "JOB", { date: row.tripDate, docNo: row.docNo, job: jobName(row, rowPay[i].tripOfDay), state, amountSen: unit });
       rowPay[i].allowanceSen += unit;
