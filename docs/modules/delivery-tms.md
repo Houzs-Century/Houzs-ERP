@@ -134,7 +134,7 @@ Packing lists and the run QR
 - Print all for a day: Last Mile Delivery section, Delivery Orders `?tab=packing&date=` (`view=region`, `unassigned=1`), and the phone Delivery Orders card (By lorry / By region).
 - Status rollup: LOADED = Confirmed, DISPATCHED = Loaded, IN_TRANSIT = In Transit, SIGNED/DELIVERED/INVOICED = Delivered; no readable DO -> dash, never "0/0". Rack prints per DO line, not per piece.
 - QR encodes `/d/<token>` (10-char base32; legacy 64-hex still resolves), minted lazily by `GET /api/scm/trips/:id/scan-token`, opened by `frontend/src/pages/PublicDoScan.tsx`.
-- `POST /api/public/do-scan/:token/advance` on a trip token: stop order, strictly sequential, one refusal never aborts the rest, per-drop outcome `DONE | ALREADY_DONE | BLOCKED | FAILED` under `DONE | PARTIAL | NOTHING`, a re-scan never advances past the current rung.
+- `POST /api/public/do-scan/:token/advance` on a packing-list token (trip, or lorry-day `scm.packing_scan_sets` minted by `GET /trips/lorry-day-scan-token`, every DO id the company's) accepts only `to: DISPATCHED`: LOADED -> DISPATCHED via the office writer with `expectFrom`; DISPATCHED = already; past it = `PAST`; Draft / Cancelled / held / foreign = `BLOCKED`; lorry-day DO whose crew plate (else `vehicle`) is not the printed plate = `MOVED`; refused = `FAILED`. Sequential, a re-scan writes nothing (`scm/lib/lorry-load-scan.ts`, `lorry-day-scan.ts`). A DO's own QR keeps the one-step ladder.
 - A drop on another company's books is `BLOCKED` and named by stop number only; all writes are scoped to the trip's company.
 
 Desktop / mobile parity
@@ -154,7 +154,7 @@ Board UI
 ## Gotchas
 
 - Do not re-add `/scm/drivers`; `Drivers.tsx` is kept on disk only — the fleet lives in `/scm/fleet` / Coverage & Fleet.
-- "No packing-list table" does not mean "no identity": a trip-sourced list's trip row carries the scan token (this once skipped the public scan). A crew list has no trip, so it prints no QR.
+- "No packing-list table" does not mean "no identity": a trip-sourced list's trip row carries the scan token (this once skipped the public scan). A crew list has no trip; its QR is a lorry-day token (`armLorryDayScanToken`) holding the printed DO ids.
 - Do not "fix" the SO-without-DO schedule by inventing a stop key; the orphan trip it leaves still counts in `/lorry-capacity`.
 - A stop for the same document added by hand to a second trip is removed by the next board schedule — by design.
 - No Trips UI calls cancel / remove-stop yet; when adding one, invalidate `['delivery-planning']`. Trip cancel does not clear a Service Case's date; a cancelled trip's `dp_no` still shows on the board.

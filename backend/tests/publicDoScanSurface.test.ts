@@ -163,16 +163,20 @@ describe('the tenant boundary, statement by statement', () => {
   test('every query in the public route is scoped, bar the named token resolve', () => {
     const code = codeOf(ROUTE);
     const froms = code.match(/\bsb\s*\n?\s*\.from\(|\bsb\.from\(/g) ?? [];
-    /* One `.from(` in this file: the line count. Every other query — the token
-       resolve, the run's stops and its member delivery orders — lives in the
-       token library, which this test checks separately below. */
-    expect(froms.length, 'a new query appeared in the public route — scope it').toBe(1);
-    expect(code).toContain('scopeToCompanyId(');
-    expect(code).toContain("sb.from('delivery_order_items')");
-    /* And it is INSIDE the scoping wrapper, not merely near it — the exact
+    /* Two `.from(` in this file: the line count and the lorry plate for the
+       packing-list headline. Every other query — the token resolve, the run's
+       stops and its member delivery orders — lives in the token library, which
+       this test checks separately below. */
+    expect(froms.length, 'a new query appeared in the public route — scope it').toBe(2);
+    /* Each is INSIDE a scoping wrapper, not merely near it — the exact
        distinction check-company-scope.mjs cannot make (bug 0542). */
-    const scoped = code.slice(code.indexOf('scopeToCompanyId('), code.indexOf('companyId,\n  );'));
-    expect(scoped).toContain("sb.from('delivery_order_items')");
+    for (const table of ['delivery_order_items', 'delivery_order_crew']) {
+      const at = code.indexOf(`sb.from('${table}')`);
+      expect(at, table).toBeGreaterThan(0);
+      const wrapper = code.lastIndexOf('scopeToCompanyId(', at);
+      expect(wrapper, `${table} is not inside scopeToCompanyId`).toBeGreaterThan(0);
+      expect(code.slice(wrapper, at), `${table} is not inside scopeToCompanyId`).not.toContain(';');
+    }
   });
 
   test('the token library has exactly one unscoped query, and it is the resolve', () => {
@@ -311,7 +315,9 @@ describe('a run cannot move another company\'s goods', () => {
 
   test('the run write takes the TRIP\'s company, never the member\'s', () => {
     const code = codeOf(ROUTE);
-    expect(code).toContain('{ ...memberAsDo(m), companyId: trip.companyId }');
+    expect(code).toContain('{ ...memberAsDo(m), companyId: sheet.companyId }');
+    expect(code).toContain('companyId: trip.companyId,');
+    expect(code).toContain('companyId: set.companyId,');
     /* memberAsDo must not smuggle a company through — it hands over a zero that
        the caller replaces, so a forgotten override cannot silently widen. */
     expect(code).toContain('companyId: 0,');
@@ -324,8 +330,8 @@ describe('a run cannot move another company\'s goods', () => {
 
 describe('the run is applied sequentially', () => {
   test('a for-await loop, and no Promise.all over the members', () => {
-    const run = codeOf(ROUTE).slice(codeOf(ROUTE).indexOf('async function advanceWholeRun'));
-    expect(run).toMatch(/for \(const m of members\) \{/);
+    const run = codeOf(ROUTE).slice(codeOf(ROUTE).indexOf('async function loadWholeLorry'));
+    expect(run).toMatch(/for \(const m of sheet\.members\) \{/);
     expect(run, 'the run must not be fired in parallel').not.toContain('Promise.all');
     expect(run).not.toContain('members.map(async');
   });
