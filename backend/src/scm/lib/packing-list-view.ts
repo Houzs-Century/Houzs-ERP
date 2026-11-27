@@ -106,6 +106,7 @@ export type PackingList = {
   units: number;
   m3_milli: number | null;
   stops: PackingStop[];
+  source: 'trip' | 'crew';
 };
 
 const num = (v: unknown): number => {
@@ -173,18 +174,14 @@ function compareSoOrder(a: PackingItem, b: PackingItem): number {
   return a.line_no - b.line_no;
 }
 
-export function assemblePackingLists(input: AssembleInput): PackingList[] {
+export type PackedLines = { itemsByDo: Map<string, PackingItem[]>; soDocByDo: Map<string, string> };
+
+/** DO lines -> printable items per DO, service lines dropped, SO line order. Shared by the lorry and region views. */
+export function packItemsByDo(input: Pick<AssembleInput, 'items' | 'racks' | 'soItems'>): PackedLines {
   const rackById = labelMap(input.racks);
-  const lorryById = labelMap(input.lorries);
-  const driverById = crewMap(input.drivers);
-  const helperById = crewMap(input.helpers);
-  const warehouseById = labelMap(input.warehouses);
   const soItemById = new Map<string, PackSoItemRow>();
   for (const r of input.soItems) if (r.id) soItemById.set(String(r.id), r);
   const soDocByDo = new Map<string, string>();
-
-  const doById = new Map<string, PackDoRow>();
-  for (const d of input.deliveryOrders) if (d.id) doById.set(String(d.id), d);
 
   const itemsByDo = new Map<string, PackingItem[]>();
   for (const it of input.items) {
@@ -210,6 +207,18 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
     itemsByDo.set(key, arr);
   }
   for (const arr of itemsByDo.values()) arr.sort(compareSoOrder);
+  return { itemsByDo, soDocByDo };
+}
+
+export function assemblePackingLists(input: AssembleInput): PackingList[] {
+  const lorryById = labelMap(input.lorries);
+  const driverById = crewMap(input.drivers);
+  const helperById = crewMap(input.helpers);
+  const warehouseById = labelMap(input.warehouses);
+  const { itemsByDo, soDocByDo } = packItemsByDo(input);
+
+  const doById = new Map<string, PackDoRow>();
+  for (const d of input.deliveryOrders) if (d.id) doById.set(String(d.id), d);
 
   const stopsByTrip = new Map<string, PackStopRow[]>();
   for (const s of input.stops) {
@@ -274,6 +283,7 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
       units,
       m3_milli: m3Known ? m3 : null,
       stops,
+      source: 'trip' as const,
     };
   });
 }

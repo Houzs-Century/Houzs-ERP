@@ -759,7 +759,10 @@ export function MfgDeliveryOrdersListV2() {
   const setPageTab = (t: "orders" | "packing") => {
     const next = new URLSearchParams(params);
     if (t === "packing") next.set("tab", "packing");
-    else { next.delete("tab"); next.delete("date"); }
+    else {
+      next.delete("tab"); next.delete("date"); next.delete("unassigned");
+      if (next.get("view") === "lorry" || next.get("view") === "region") next.delete("view");
+    }
     setParams(next, { replace: true });
   };
   const pageTabs = (

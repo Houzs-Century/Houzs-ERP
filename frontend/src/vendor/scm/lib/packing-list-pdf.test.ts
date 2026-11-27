@@ -65,7 +65,7 @@ const stop = (n: number, name: string, items: PackingItem[], extra: Partial<Pack
 });
 
 const list = (stops: PackingStop[], extra: Partial<PackingListRow> = {}): PackingListRow => ({
-  trip_id: 'trip-1', trip_no: 'TRIP-2611-014', trip_date: '2026-11-28', trip_status: 'PLANNED',
+  trip_id: 'trip-1', trip_no: 'TRIP-2611-014', trip_date: '2026-11-28', trip_status: 'PLANNED', source: 'trip',
   lorry_plate: 'VJK 8821', driver_name: 'Ah Meng', driver_phone: '+60123884410',
   helper_1_name: 'Raju', helper_2_name: 'Kumar', warehouse_name: 'Balakong HQ',
   stop_count: stops.length, do_count: stops.length,

@@ -87,9 +87,11 @@ export function PackingListsSection(props: { date: string; warehouseId: string |
           <Button variant="ghost" icon={<Printer size={13} />} disabled={print.busy} onClick={() => print.one(l, 'print')}>
             Print
           </Button>
-          <Button variant="ghost" icon={<QrCode size={13} />} onClick={() => toggleQr(l.trip_id)}>
-            QR
-          </Button>
+          {l.source === 'trip' && (
+            <Button variant="ghost" icon={<QrCode size={13} />} onClick={() => toggleQr(l.trip_id)}>
+              QR
+            </Button>
+          )}
         </>
       ),
     },
@@ -123,7 +125,7 @@ export function PackingListsSection(props: { date: string; warehouseId: string |
         rows={query.error ? null : query.data ? lists : null}
         loading={query.isLoading}
         error={query.error ? `Could not load the packing lists for this day. ${query.error instanceof Error ? query.error.message : ''}` : null}
-        emptyLabel="This day has no trips. A packing list is a trip, so one appears here for every lorry once Delivery Time Arrangement has sequenced the day."
+        emptyLabel="No lorry has delivery orders on this day yet. A packing list appears for every lorry once Delivery Planning puts a lorry on its delivery orders."
         getRowKey={(list) => list.trip_id}
         expandable={{
           render: () => <QrNote origin={origin} />,

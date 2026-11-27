@@ -35,16 +35,20 @@ const routeSource = Object.values(sources)[0] ?? '';
 const stripComments = (s: string): string =>
   s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-/** The `/packing` handler only — asserting over the whole file would let the
- *  eleven other handlers' predicates stand in for this one's. */
-const packingHandler = (): string => {
-  const marker = "trips.get('/packing'";
+const sliceFrom = (marker: string, end: RegExp): string => {
   const start = routeSource.indexOf(marker);
-  expect(start, 'GET /trips/packing is not registered').toBeGreaterThan(-1);
+  expect(start, `${marker} is not in trips.ts`).toBeGreaterThan(-1);
   const rest = routeSource.slice(start + 1);
-  const next = rest.search(/\ntrips\.(get|post|patch|put|delete)\(/);
+  const next = rest.search(end);
   return stripComments(next === -1 ? rest : rest.slice(0, next));
 };
+
+/** The two loaders both packing handlers read through — asserting over the
+ *  whole file would let the other handlers' predicates stand in for these. */
+const packingHandler = (): string =>
+  sliceFrom('async function loadPackingDay(', /\r?\n\}\r?\n/)
+  + sliceFrom('async function loadPackLines(', /\r?\n\}\r?\n/);
+const handlerSource = (path: string): string => sliceFrom(`trips.get('${path}',`, /\r?\n\}\);\r?\n/);
 
 /* scm.do_status, verbatim (docs/bugs/0530). Any status-shaped literal this
    handler sends must be a member: comparing the enum against a label it does
@@ -114,6 +118,48 @@ describe('every read carries the company predicate — the predicate IS the boun
     // And the one it actually sends is real.
     expect(body).toContain("neq('status', 'CANCELLED')");
     expect(TRIP_STATUS).toContain('CANCELLED');
+  });
+});
+
+describe('the day loader — DOs by date and by board crew, every read scoped', () => {
+  const statements = (table: string): string[] => {
+    const src = packingHandler();
+    const out: string[] = [];
+    let at = src.indexOf(`from('${table}')`);
+    while (at > -1) {
+      out.push(src.slice(Math.max(0, at - 260), at + 400));
+      at = src.indexOf(`from('${table}')`, at + 1);
+    }
+    return out;
+  };
+
+  test('both routes are registered BEFORE /:id and read through the one loader', () => {
+    for (const path of ['/packing', '/packing-regions']) {
+      expect(routeSource.indexOf(`trips.get('${path}',`), path).toBeGreaterThan(-1);
+      expect(routeSource.indexOf(`trips.get('${path}',`), path).toBeLessThan(routeSource.indexOf("trips.get('/:id'"));
+      expect(handlerSource(path), path).toContain('loadPackingDay(');
+    }
+  });
+
+  for (const table of ['trips', 'delivery_orders', 'delivery_order_crew', 'delivery_order_items', 'warehouse_racks', 'mfg_sales_order_items']) {
+    test(`every ${table} read is scoped`, () => {
+      const found = statements(table);
+      expect(found.length, `never reads ${table}`).toBeGreaterThan(0);
+      for (const w of found) expect(w).toContain('scopeToAllowedCompanies');
+    });
+  }
+
+  test('the crew is read by the ids of DOs already read under the predicate, chunked', () => {
+    expect(packingHandler()).toMatch(/chunkIn<.+?>\(allDoIds,[\s\S]{0,160}from\('delivery_order_crew'\)[\s\S]{0,260}\.in\('do_id', batch\)/);
+  });
+
+  test('the day is the DO\'s own Delivery Date, plus the stops on that day\'s trips', () => {
+    expect(packingHandler()).toContain(".eq('customer_delivery_date', date)");
+    expect(packingHandler()).toContain(".eq('trip_date', date)");
+  });
+
+  test('cancelled DOs and trips are excluded in the statement', () => {
+    for (const w of [...statements('trips'), ...statements('delivery_orders')]) expect(w).toContain("neq('status', 'CANCELLED')");
   });
 });
 
