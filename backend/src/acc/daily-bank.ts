@@ -40,7 +40,9 @@
 // 要扣; 照这样改) — what the voucher posts, its bank charge included. One approved
 // before the start, or on the start day but dated before it, is inside the start; one
 // Finance ticked as already in the starting balance (owner 2026-11-25: 要，加勾选) is
-// listed on its day under `notDeducted` and never taken off. Pending
+// listed on its day under `notDeducted` and never taken off. A voucher whose lines
+// pay into another cash-book account (an internal transfer) adds them to it on the
+// same day, by the same rules (owner 2026-11-27: hong leong 不会增加？). Pending
 // counts only the vouchers paying out of those accounts. Card money not yet in a
 // bank sits under none of them (owner, on its rows: 这个可以不要出现吗): the board
 // still lists it once, as on its way, never counted. The rest wait in `notStarted`. Without one (cashbook null) the board is the
@@ -162,8 +164,15 @@ export type CashbookPayout = PendingVoucherRow & {
 /** An approved voucher Finance ticked as already in its bank's starting balance
     (owner 2026-11-25: 要，加勾选): who ticked it and when. */
 export type CashbookSkip = { pv_id: string; ticked_by: string | null; ticked_at: string | null };
+/** An approved voucher whose lines pay INTO a cash-book account (Dr that account): an
+    internal transfer from another of the company's banks, or cash topped up from one
+    (owner 2026-11-27: internal transfer maybank 转钱给 hong leong, hong leong 不会增加).
+    `line_sen` is what its lines put into `to_account_code`, in the voucher's currency. */
+export type CashbookTransferIn = CashbookPayout & { to_account_code: string; line_sen: number };
 /** What the route read for the accounts that have a start. */
-export type DailyBankCashbook = { starts: CashbookStart[]; receipts: CashbookReceipt[]; payouts: CashbookPayout[]; skips: CashbookSkip[] };
+export type DailyBankCashbook = {
+  starts: CashbookStart[]; receipts: CashbookReceipt[]; payouts: CashbookPayout[]; transfersIn: CashbookTransferIn[]; skips: CashbookSkip[];
+};
 
 const myrSen = (v: PendingVoucherRow): number => {
   const raw = Number(v.exchange_rate ?? 1);
@@ -190,6 +199,8 @@ export const voucherPayoutSen = (v: CashbookPayout): number => {
   return myrSen(v) + (Number.isFinite(charge) && charge > 0 ? Math.round(charge) : 0);
 };
 
+const transferInSen = (t: CashbookTransferIn): number => myrSen({ ...t, total_sen: t.line_sen });
+
 const mytDay = (at: string | null | undefined): string | null => {
   const t = at ? Date.parse(at) : Number.NaN;
   return Number.isFinite(t) ? mytDateOf(t) : null;
@@ -208,7 +219,8 @@ export const insideStart = (v: CashbookPayout, start: CashbookStart): boolean =>
 };
 
 function cashbookFigures(
-  date: string, start: CashbookStart, receipts: CashbookReceipt[], payouts: CashbookPayout[], skips: Map<string, CashbookSkip>,
+  date: string, start: CashbookStart, receipts: CashbookReceipt[], payouts: CashbookPayout[],
+  transfersIn: CashbookTransferIn[], skips: Map<string, CashbookSkip>, nameOf: (code: string) => string,
 ): { opening: number; inSen: number; outSen: number; received: DailyBankMovement[]; paid: DailyBankMovement[]; notDeducted: DailyBankNotDeducted[] } {
   let opening = Number(start.balance_sen);
   let inSen = 0;
@@ -249,6 +261,21 @@ function cashbookFigures(
       note, amountSen: amount, method: null,
     });
   }
+  /* Owner 2026-11-27 (hong leong 不会增加？): a transfer arrives the day it comes off the
+     bank that paid it, without that bank's charge; one inside this start, or ticked as
+     already in a starting balance, is counted already. */
+  for (const t of transfersIn) {
+    const day = payoutDay(t);
+    if (skips.has(t.id) || insideStart(t, start) || day > date) continue;
+    const amount = transferInSen(t);
+    if (day < date) { opening += amount; continue; }
+    inSen += amount;
+    received.push({
+      jeNo: '', sourceType: 'PV', sourceDocNo: t.id, docNo: t.pv_number,
+      party: `INTERNAL TRANSFER FROM ${t.credit_account_code} ${nameOf(t.credit_account_code)}`.trim(),
+      note: pendingDescription(t), amountSen: amount, method: null,
+    });
+  }
   return { opening, inSen, outSen, received, paid, notDeducted };
 }
 
@@ -270,6 +297,8 @@ export function computeDailyBank(
     byAccount.set(l.account_code, arr);
   }
   const startOf = new Map((cashbook?.starts ?? []).map((s) => [s.account_code, s]));
+  const accountNames = new Map(moneyAccounts.map((a) => [a.account_code, a.account_name]));
+  const nameOf = (code: string): string => accountNames.get(code) ?? '';
   const skipOf = new Map((cashbook?.skips ?? []).map((s) => [s.pv_id, s]));
   const onBoard = (a: MoneyAccount): boolean => {
     if (!cashbook) return true;
@@ -315,7 +344,8 @@ export function computeDailyBank(
     if (cashbook && start) {
       const f = cashbookFigures(date, start,
         cashbook.receipts.filter((r) => r.account_code === a.account_code),
-        cashbook.payouts.filter((v) => v.credit_account_code === a.account_code), skipOf);
+        cashbook.payouts.filter((v) => v.credit_account_code === a.account_code),
+        cashbook.transfersIn.filter((t) => t.to_account_code === a.account_code), skipOf, nameOf);
       opening = f.opening;
       inSen = f.inSen;
       outSen = f.outSen;
@@ -385,7 +415,7 @@ export function computeDailyBank(
     book: cashbook ? 'cashbook' : 'ledger',
     notStarted,
     note: cashbook
-      ? 'The cash book: each bank from its starting balance, plus the receipts typed for it, less the approved vouchers paying out of it on the day each was approved (bank charge included), except one ticked as already in the starting balance. Pending = checked vouchers awaiting approval, on the bank they pay from. Card money swiped but not yet remitted is listed once as on its way, never under a bank and never counted as movable.'
+      ? 'The cash book: each bank from its starting balance, plus the receipts typed for it and the approved transfers into it from another of the company\'s accounts, less the approved vouchers paying out of it on the day each was approved (bank charge included), except one ticked as already in the starting balance. Pending = checked vouchers awaiting approval, on the bank they pay from. Card money swiped but not yet remitted is listed once as on its way, never under a bank and never counted as movable.'
       : 'Computed live from the ledger (posted, non-reversed). Pending = checked vouchers awaiting approval, on the account they pay from; an approved one posts on its own date. Transit money is swiped but not yet remitted - shown under the bank its acquirer pays into, never counted as movable.',
   };
 }
