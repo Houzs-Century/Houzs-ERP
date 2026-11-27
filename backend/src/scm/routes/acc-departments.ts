@@ -23,6 +23,9 @@
 //   GET /departments/lines?view=&keys=…      the lines behind one figure of a department's
 //                                            own P&L, G&A or Setup & dismantle's fair transport
 //   PUT /departments/rate                    { dept: 'ga' | 'operation' | 'merchandise', pct }
+//   PUT /departments/rebates                 { rules } — the company's supplier rebate rules, the
+//                                            selling department's estimate in Performance
+//                                            (scm/lib/supplier-rebates.ts; owner 2026-11-27: 「做设定框」)
 //
 // Logistics' own report by DO is the Logistics cost report's (GET /logistics/pnl), which the
 // units read. Every read is a financial statement: the statements' right
@@ -63,6 +66,11 @@ import {
   type ChargeAccounts, type ChargeRates, type DeptBasis, type MonthCharges, type Payees,
 } from '../lib/department-charges';
 import { buildLogisticsUnit, buildOperationUnit, buildSetupDismantleUnit, type UnitKind, type UnitView } from '../lib/department-units';
+import {
+  parseSupplierRebates, readSupplierRebateRules, rebateFigures, rebateKey, rebateMonths, rebateWorking,
+  type RebateFigure, type RebateMonth, type SupplierRebateRule,
+} from '../lib/supplier-rebates';
+import { loadRebateInputs } from '../lib/supplier-rebates-load';
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- PostgREST client, untyped throughout the acc layer */
 type Row = Record<string, any>;
@@ -110,6 +118,7 @@ async function loadSetup(sb: any, companyId: number): Promise<
   {
     ok: true; chart: DeptAccount[]; gaShareBp: number; operationIncomeBp: number; plan: DepartmentPlan;
     logisticsBp: number; setupDismantleBp: number; chargeAccounts: ChargeAccounts; service: ReadonlySet<string>;
+    supplierRebates: SupplierRebateRule[];
   } | Failed
 > {
   const [chartRes, setRes, lgRes, groupRes] = await Promise.all([
@@ -122,7 +131,7 @@ async function loadSetup(sb: any, companyId: number): Promise<
   if (setRes.error) return { ok: false, what: 'Department P&L settings', reason: setRes.error.message };
   if (lgRes.error) return { ok: false, what: 'Logistics cost settings', reason: lgRes.error.message };
   if (groupRes.error) return { ok: false, what: 'item groups', reason: groupRes.error.message };
-  const set = setRes.data as { ga_share_bp?: number | null; operation_income_bp?: number | null; plan?: unknown; charges?: unknown } | null;
+  const set = setRes.data as { ga_share_bp?: number | null; operation_income_bp?: number | null; plan?: unknown; charges?: unknown; supplier_rebates?: unknown } | null;
   const lg = lgRes.data as { do_income_bp?: number | null; fair_income_bp?: number | null } | null;
   return {
     ok: true,
@@ -134,6 +143,7 @@ async function loadSetup(sb: any, companyId: number): Promise<
     setupDismantleBp: lg?.fair_income_bp == null ? DEFAULT_FAIR_INCOME_BP : Number(lg.fair_income_bp),
     chargeAccounts: parseChargeAccounts(set?.charges),
     service: serviceAccountsOf((groupRes.data ?? []) as Row[]),
+    supplierRebates: parseSupplierRebates(set?.supplier_rebates),
   };
 }
 type Setup = Extract<Awaited<ReturnType<typeof loadSetup>>, { ok: true }>;
@@ -344,9 +354,25 @@ const setupDismantleUnitOf = (setup: Setup, r: Range, charges: readonly MonthCha
   });
 };
 
+/** Each supplier rebate rule of the company, read and estimated month by month
+    (owner 2026-11-27: only for the selling department in Performance). */
+type RebateRead = { rule: SupplierRebateRule; months: RebateMonth[] };
+async function rebatesOf(sb: any, companyId: number, setup: Setup, r: Range): Promise<{ ok: true; reads: RebateRead[] } | Failed> {
+  const reads: RebateRead[] = [];
+  for (const rule of setup.supplierRebates) {
+    const got = await loadRebateInputs(sb, companyId, rule, r.from, r.to);
+    if (!got.ok) return { ok: false, what: `${rule.label} rebates`, reason: got.reason };
+    reads.push({ rule, months: rebateMonths(rule, r.months, got.inputs.lines, got.inputs.notes) });
+  }
+  return { ok: true, reads };
+}
+const wantsRebates = (setup: Setup, dept: Department, basis: DeptBasis): boolean =>
+  basis === 'performance' && dept === setup.plan.selling && setup.supplierRebates.length > 0;
+
 function deptViewOf(input: {
   dept: Department; basis: DeptBasis; setup: Setup; r: Range; split: readonly DeptMonthSplit[]; perf: readonly PerformanceMonth[] | null;
   charges: readonly MonthCharges[]; layout: Readonly<Record<string, readonly LayoutItem[]>>; companyId: number;
+  rebates: readonly RebateRead[] | null;
 }) {
   const { dept, basis, setup } = input;
   const selling = dept === setup.plan.selling;
@@ -354,6 +380,7 @@ function deptViewOf(input: {
     dept, basis, months: input.r.months, split: input.split, layout: input.layout, companyId: input.companyId,
     orders: selling && basis === 'performance' && input.perf ? deptOrders(dept, input.perf, setup) : null,
     charges: selling ? deptChargesOf(setup, basis, input.charges) : null,
+    rebates: wantsRebates(setup, dept, basis) && input.rebates ? input.rebates.flatMap((x): RebateFigure[] => rebateFigures(x.rule, x.months)) : null,
   });
 }
 
@@ -406,14 +433,16 @@ export const departmentsAllHandler = async (c: any): Promise<Response> => {
   const depts = setup.plan.departments;
   const has = (v: ViewKind) => depts.some((d) => viewOf(d) === v);
   const sd = hasSetupDismantle(setup);
-  const [split, perf, lg] = await Promise.all([
+  const [split, perf, lg, reb] = await Promise.all([
     splitMonths(sb, companyId, ids, setup, r),
     basis === 'performance' ? performanceOf(sb, companyId, ids, r) : Promise.resolve(null),
     has('operation') || has('logistics') || sd ? loadLogisticsPnl(c, companyId, r.from, r.to) : Promise.resolve(null),
+    wantsRebates(setup, setup.plan.selling, basis) ? rebatesOf(sb, companyId, setup, r) : Promise.resolve(null),
   ]);
   if (!split.ok) return fail(c, split.what, split.reason);
   if (perf && !perf.ok) return fail(c, 'Performance P&L', perf.reason);
   if (lg && !lg.ok) return lg.res;
+  if (reb && !reb.ok) return fail(c, reb.what, reb.reason);
   const perfMonths = perf?.ok ? perf.months : null;
   const charges = chargesFor(setup, basis, r.months, split.split, perfMonths);
   const [ga, op] = await Promise.all([
@@ -430,7 +459,9 @@ export const departmentsAllHandler = async (c: any): Promise<Response> => {
     else if (v === 'operation' && op?.ok) summary[d] = summaryOfUnit(operationUnitOf(setup, r, charges, op.p));
     else if (v === 'logistics' && lg?.ok) summary[d] = summaryOfUnit(logisticsUnitOf(setup, r, charges, lg));
     else if (v === 'dept') {
-      summary[d] = summaryOfDept(deptViewOf({ dept: d, basis, setup, r, split: split.split, perf: perfMonths, charges, layout: laid.layout.blocks, companyId }));
+      summary[d] = summaryOfDept(deptViewOf({
+        dept: d, basis, setup, r, split: split.split, perf: perfMonths, charges, layout: laid.layout.blocks, companyId, rebates: reb?.ok ? reb.reads : null,
+      }));
     }
   }
   if (sd && lg?.ok) summary.setupDismantle = summaryOfUnit(setupDismantleUnitOf(setup, r, charges, split.split, lg));
@@ -491,18 +522,23 @@ export const departmentViewHandler = async (c: any): Promise<Response> => {
   if (!dept) return c.json({ error: 'bad_department', message: `${d || '(none)'} is not one of this company's departments.` }, 400);
 
   const selling = dept === setup.plan.selling;
-  const [split, perf] = await Promise.all([
+  const [split, perf, reb] = await Promise.all([
     splitMonths(sb, companyId, ids, setup, r),
     selling && b.basis === 'performance' ? performanceOf(sb, companyId, ids, r) : Promise.resolve(null),
+    wantsRebates(setup, dept, b.basis) ? rebatesOf(sb, companyId, setup, r) : Promise.resolve(null),
   ]);
   if (!split.ok) return fail(c, split.what, split.reason);
   if (perf && !perf.ok) return fail(c, 'Performance P&L', perf.reason);
+  if (reb && !reb.ok) return fail(c, reb.what, reb.reason);
   const perfMonths = perf?.ok ? perf.months : null;
   const charges = selling ? chargesFor(setup, b.basis, r.months, split.split, perfMonths) : [];
-  const view = deptViewOf({ dept, basis: b.basis, setup, r, split: split.split, perf: perfMonths, charges, layout: laid.layout.blocks, companyId });
+  const view = deptViewOf({
+    dept, basis: b.basis, setup, r, split: split.split, perf: perfMonths, charges, layout: laid.layout.blocks, companyId, rebates: reb?.ok ? reb.reads : null,
+  });
   return c.json({
     from: r.from, to: r.to, label: DEPARTMENT_LABEL[dept], rates: ratesOf(setup), ...view,
     merchandiseAccounts: selling ? setup.chargeAccounts.merchandise : [],
+    rebateRules: selling ? setup.supplierRebates : null,
   });
 };
 
@@ -678,8 +714,26 @@ export const departmentLinesHandler = async (c: any): Promise<Response> => {
   }
   const dc = selling && block === 'expenses' ? deptChargesOf(setup, b.basis, []) : null;
   const merch = dc?.merchandise ? [...dc.merchandise.codes].sort() : [];
-  const asked = keys.filter((k) => !dc?.moved.has(k) && !merch.includes(k));
+  const asked = keys.filter((k) => !dc?.moved.has(k) && !merch.includes(k) && !k.startsWith('rebate:'));
   const rateLines: DeptEntry[] = [];
+  if (onOrders && block === 'otherIncome' && wantsRebates(setup, dept, b.basis) && keys.some((k) => k.startsWith('rebate:'))) {
+    const reb = await rebatesOf(sb, companyId, setup, r);
+    if (!reb.ok) return fail(c, reb.what, reb.reason);
+    for (const { rule, months } of reb.reads) {
+      for (const kind of ['sponsor', 'sales'] as const) {
+        const key = rebateKey(rule.supplierCode, kind);
+        if (!keys.includes(key)) continue;
+        for (const m of months) {
+          const sen = kind === 'sponsor' ? m.sponsorSen : m.salesSen;
+          if (sen === 0) continue;
+          rateLines.push({
+            id: `${key}:${m.month}`, month: m.month, day: null, accountCode: rule.supplierCode, accountName: `${rule.label} ${kind} rebate (estimate)`,
+            ref: null, text: rebateWorking(rule, m, kind), dept, team: null, sen, source: 'rate',
+          });
+        }
+      }
+    }
+  }
   if (merch.length > 0 && keys.includes(merch[0]!)) {
     const perf = await performanceOf(sb, companyId, allowedIds(c), r);
     if (!perf.ok) return fail(c, 'Performance P&L', perf.reason);
@@ -795,4 +849,32 @@ export const saveDepartmentRateHandler = async (c: any): Promise<Response> => {
   );
   if (error) return c.json({ error: 'save_failed', message: 'The rate could not be saved — try again.', reason: error.message }, 500);
   return c.json({ ok: true, dept, bp });
+};
+
+/** The company's supplier rebate rules, replaced whole (owner 2026-11-27: 「做设定框」 —
+    Finance types the supplier's terms once; they live in the settings, never in the code).
+    Finance's money right, like the rates; each rule's supplier is one of the company's. */
+export const saveSupplierRebatesHandler = async (c: any): Promise<Response> => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) return c.json({ error: NO_RIGHT }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const read = readSupplierRebateRules(body?.rules);
+  if (!read.ok) return c.json({ error: 'bad_rules', message: read.message }, 400);
+  const sb = c.get('supabase');
+  const codes = read.rules.map((r) => r.supplierCode);
+  if (codes.length > 0) {
+    const found = await sb.from('suppliers').select('code').eq('company_id', co.companyId).in('code', codes);
+    if (found.error) return c.json({ error: 'save_failed', message: 'The rules could not be checked — try again.', reason: found.error.message }, 500);
+    const known = new Set(((found.data ?? []) as Row[]).map((x) => String(x.code ?? '').trim().toUpperCase()));
+    const missing = codes.filter((k) => !known.has(k));
+    if (missing.length > 0) return c.json({ error: 'unknown_supplier', message: `${missing.join(', ')} is not a supplier of this company.` }, 400);
+  }
+  const { error } = await sb.from('acc_department_settings').upsert(
+    { company_id: co.companyId, supplier_rebates: read.rules.length > 0 ? read.rules : null, updated_at: new Date().toISOString(), updated_by: actorOf(c) },
+    { onConflict: 'company_id' },
+  );
+  if (error) return c.json({ error: 'save_failed', message: 'The rules could not be saved — try again.', reason: error.message }, 500);
+  return c.json({ ok: true, rules: read.rules });
 };

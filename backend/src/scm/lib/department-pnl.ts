@@ -46,6 +46,7 @@ import { layOutBlock, type LaidLine, type LaidNode, type LayoutItem } from '../.
 import type { ChargeRates, DeptBasis, MonthCharges } from './department-charges';
 import { fmtMoneySen } from '../shared/format';
 import type { UnitRow, UnitView } from './department-units';
+import type { RebateFigure } from './supplier-rebates';
 import {
   GA_TEAMS, GA_TEAM_LABEL, MANPOWER_ROWS, OP_REGION_CODES, OP_ROWS, accountHome, lineHome, resolveDept,
   type DepartmentPlan, type DeptAccount, type DeptKey, type GaTeam, type LineHome, type ManpowerRow, type Nature, type OpRegion, type OpRow,
@@ -578,12 +579,14 @@ const figureNode = (id: string, label: string, cells: Record<string, number>): L
     cost of sales are the product groups' from the orders and the commission account reads
     its bills. With charges, the fair transport leaves (Setup & dismantle carries it), in
     Performance merchandise stands where the terminal charges stood, and what it pays the
-    other departments is a block of its own. */
+    other departments is a block of its own. The supplier rebates estimated from purchases
+    (lib/supplier-rebates.ts) are added under other income. */
 export function buildDeptView(input: {
   dept: DeptKey; basis: DeptBasis; months: readonly string[]; split: readonly DeptMonthSplit[];
   layout: Readonly<Record<string, readonly LayoutItem[]>>; companyId: number;
   orders: DeptOrders | null;
   charges: DeptCharges | null;
+  rebates: readonly RebateFigure[] | null;
 }): DeptView {
   const tree = {} as Record<PnlBlock, LaidNode[]>;
   const perBlock = {} as Record<PnlBlock, Record<string, number>>;
@@ -639,6 +642,12 @@ export function buildDeptView(input: {
         code, name: x.name, ...(x.label ? { label: x.label } : {}), cells, amountSen: Object.values(cells).reduce((a, b) => a + b, 0),
       }));
     tree[block] = layOutBlock([...(input.layout[block] ?? [])] as LayoutItem[], lines, input.companyId, null);
+    if (block === 'otherIncome') {
+      for (const f of input.rebates ?? []) {
+        tree[block].push(figureNode(f.id, f.label, f.cells));
+        for (const [m, v] of Object.entries(f.cells)) total[m] = (total[m] ?? 0) + v;
+      }
+    }
     perBlock[block] = total;
   }
   const charges: LaidNode[] = [];
