@@ -94,7 +94,7 @@ describe("brief email: briefEmail", () => {
   it("shows counts, the first lines with ERP links, what is hidden, and the unsubscribe link", () => {
     const m = briefEmail({ ...base, brief: BRIEF, gaps: null });
     expect(m.items).toBe(9);
-    expect(m.subject).toBe("Your ERP brief, Fri 27 Nov: 9 to look at");
+    expect(m.subject).toBe("Your ERP brief, 2026/11/27: 9 to look at");
     expect(m.html).toContain("Good morning, Lee");
     expect(m.html).toContain("Purchase order amendments to approve: <strong>2</strong>");
     expect(m.html).toContain(`href="${origin}/scm/sales-orders/SO-1"`);

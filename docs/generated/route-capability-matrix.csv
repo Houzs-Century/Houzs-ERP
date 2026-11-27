@@ -427,8 +427,13 @@ POST,/api/mcp-admin/admin/revoke,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,
 GET,/api/mcp-admin/consent/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
 POST,/api/mcp-admin/consent/:id,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
 GET,/api/mcp-admin/me,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+GET,/api/mcp-admin/me/brief,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,NO,INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+PUT,/api/mcp-admin/me/brief,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+POST,/api/mcp-admin/me/brief/test,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
 POST,/api/mcp-admin/me/request,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
 POST,/api/mcp-admin/me/revoke,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpAdmin.ts
+GET,/api/mcp/brief/unsubscribe/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/mcpBrief.ts
+POST,/api/mcp/brief/unsubscribe/:token,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcpBrief.ts
 GET,/api/mcp/export/:key,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/mcp.ts
 GET,/api/mcp/oauth/authorize,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,NO,INHERITED_ONLY,backend/src/routes/mcp.ts
 POST,/api/mcp/oauth/register,NO_STATIC_AUTH_GATE,NO_GLOBAL_COMPANY_CONTEXT,,,,,YES,MUTATION_INHERITED_ONLY,backend/src/routes/mcp.ts

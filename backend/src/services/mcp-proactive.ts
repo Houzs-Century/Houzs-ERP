@@ -1,6 +1,7 @@
 import { addDays, poDueDate } from "./mcp-brief";
 import { rm } from "./mcp-quick";
 import { daysBetween } from "./mcp-quick2";
+import { fmtDate, fmtDateTime, fmtSen } from "../scm/shared/format";
 
 type Obj = Record<string, unknown>;
 const obj = (v: unknown): Obj => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {});
@@ -108,6 +109,7 @@ export function escapeHtml(s: string): string {
 
 const safeUrl = (u: string, origin: string): string | null => (u.startsWith(origin + "/") ? u : null);
 
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const LABEL_KEYS = ["doc", "so", "po", "case", "item", "supplier", "customer", "employee", "title"];
 
 /** One brief / gap row as one line: the document (linked) and its other plain facts. */
@@ -117,7 +119,7 @@ export function rowLine(row: Obj, origin: string): string {
   const url = safeUrl(str(row.url), origin);
   const facts = Object.entries(row)
     .filter(([k, v]) => k !== labelKey && k !== "url" && k !== "overdue" && v !== null && v !== "" && (typeof v === "string" || typeof v === "number"))
-    .map(([k, v]) => (typeof v === "number" && /rm$/i.test(k) ? `RM ${v.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : String(v)))
+    .map(([k, v]) => (typeof v === "number" && /rm$/i.test(k) ? fmtSen(Math.round(v * 100)) : typeof v === "string" && ISO_DAY.test(v) ? fmtDate(v) : String(v)))
     .map(escapeHtml);
   const head = label ? (url ? `<a href="${escapeHtml(url)}" style="color:#1d4ed8;text-decoration:none;font-weight:600">${escapeHtml(label)}</a>` : `<strong>${escapeHtml(label)}</strong>`) : "";
   const late = row.overdue === true ? ' <span style="color:#b91c1c;font-weight:600">overdue</span>' : "";
@@ -127,7 +129,7 @@ export function rowLine(row: Obj, origin: string): string {
 type Section = { title: string; count: number; overdue?: number; valueRm?: number; note?: string; top: Obj[]; link?: string; url?: string };
 
 function sectionHtml(s: Section, origin: string): string {
-  const extra = [s.overdue ? `${s.overdue} overdue` : "", s.valueRm ? `RM ${s.valueRm.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ""].filter(Boolean).join(", ");
+  const extra = [s.overdue ? `${s.overdue} overdue` : "", s.valueRm ? fmtSen(Math.round(s.valueRm * 100)) : ""].filter(Boolean).join(", ");
   const more = s.count > s.top.length ? `<div style="color:#6b7280;font-size:12px;margin-top:4px">and ${s.count - s.top.length} more${safeUrl(str(s.url), origin) ? ` &middot; <a href="${escapeHtml(str(s.url))}" style="color:#1d4ed8">open the list</a>` : ""}</div>` : "";
   const lines = s.top.map((r) => `<li style="margin:2px 0">${rowLine(r, origin)}</li>`).join("");
   return `<tr><td style="padding:12px 0;border-top:1px solid #e5e7eb">
@@ -147,7 +149,7 @@ ${p.body}
 </table></td></tr></table></body></html>`;
 }
 
-const prettyDay = (day: string): string => new Date(`${day}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+const prettyDay = (day: string): string => fmtDate(day);
 
 export type BriefEmailInput = { name: string; today: string; brief: unknown; gaps: unknown | null; origin: string; unsubscribeUrl: string; settingsUrl: string };
 
@@ -196,7 +198,7 @@ export function soAlerts(rows: readonly Obj[], today: string, origin: string, t:
       key: `so_overdue:${str(o.doc_no)}:${date}`,
       kind: "so_overdue" as const,
       label: str(o.doc_no),
-      detail: `${str(o.debtor_name)}, delivery date ${date} (${daysBetween(date, today) ?? 0} day(s) late), RM ${valueRm.toFixed(2)}`,
+      detail: `${str(o.debtor_name)}, delivery date ${fmtDate(date)} (${daysBetween(date, today) ?? 0} day(s) late), ${fmtSen(Math.round(valueRm * 100))}`,
       url: `${origin}/scm/sales-orders/${enc(str(o.doc_no))}`,
     }));
 }
@@ -212,7 +214,7 @@ export function poAlerts(rows: readonly Obj[], today: string, origin: string, t:
       key: `po_overdue:${str(p.id)}:${date}`,
       kind: "po_overdue" as const,
       label: str(p.po_number),
-      detail: `${str(obj(p.supplier).name) || "(no supplier)"}, supplier date ${date}, RM ${valueRm.toFixed(2)}`,
+      detail: `${str(obj(p.supplier).name) || "(no supplier)"}, supplier date ${fmtDate(date)}, ${fmtSen(Math.round(valueRm * 100))}`,
       url: `${origin}/scm/purchase-orders/${enc(str(p.id))}`,
     }));
 }
@@ -227,7 +229,7 @@ export function slaAlerts(drill: unknown, nowMs: number, origin: string, t: Aler
       key: `sla:${str(c.id)}:${str(c.deadline_at).slice(0, 16)}`,
       kind: "sla" as const,
       label: str(c.assr_no) || `#${str(c.id)}`,
-      detail: `${str(c.customer_name)}, ${str(c.stage)}${str(c.priority) ? `, ${str(c.priority)}` : ""}, deadline ${str(c.deadline_at).slice(0, 16).replace("T", " ")}`,
+      detail: `${str(c.customer_name)}, ${str(c.stage)}${str(c.priority) ? `, ${str(c.priority)}` : ""}, deadline ${fmtDateTime(str(c.deadline_at))}`,
       url: `${origin}/assr?focus=${enc(str(c.id))}`,
     }));
 }
