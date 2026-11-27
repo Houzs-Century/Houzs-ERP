@@ -82,6 +82,11 @@ describe('every read carries the company predicate — the predicate IS the boun
   test('delivery_orders (docs/bugs/0496)', () => expect(scopedFrom('delivery_orders')).toBe(true));
   test('delivery_order_items', () => expect(scopedFrom('delivery_order_items')).toBe(true));
   test('warehouse_racks (docs/bugs/0497)', () => expect(scopedFrom('warehouse_racks')).toBe(true));
+  test('mfg_sales_order_items (SO line order)', () => expect(scopedFrom('mfg_sales_order_items')).toBe(true));
+
+  test('helpers are looked up by the ids on the scoped trips, never as a whole table', () => {
+    expect(packingHandler()).toMatch(/from\('helpers'\)\.select\('id, name, contact'\)\.in\('id', helperIds\)/);
+  });
 
   test('trip_stops is scoped through its trips, which is the only scope it has', () => {
     const body = packingHandler();
@@ -92,7 +97,7 @@ describe('every read carries the company predicate — the predicate IS the boun
 
   test('every id list is chunked — an unbounded in.(...) is what production refused', () => {
     const body = packingHandler();
-    for (const table of ['trip_stops', 'delivery_orders', 'delivery_order_items', 'warehouse_racks']) {
+    for (const table of ['trip_stops', 'delivery_orders', 'delivery_order_items', 'warehouse_racks', 'mfg_sales_order_items']) {
       const idx = body.indexOf(`from('${table}')`);
       expect(body.slice(Math.max(0, idx - 300), idx), table).toContain('chunkIn');
     }
@@ -116,8 +121,17 @@ describe('every read carries the company predicate — the predicate IS the boun
 
 const TRIP = {
   id: 't1', trip_no: 'TRIP-2608-001', trip_date: '2026-08-26', status: 'PLANNED',
-  lorry_id: 'l1', driver_id: 'd1', warehouse_id: 'w1',
+  lorry_id: 'l1', driver_id: 'd1', helper_1_id: 'h1', helper_2_id: null as string | null, warehouse_id: 'w1',
 };
+
+const doRow = (id: string, do_number: string, status: string, m3_total_milli: number | null) =>
+  ({ id, do_number, status, m3_total_milli, so_doc_no: null as string | null, phone: null as string | null, time_range: null as string | null });
+
+const line = (delivery_order_id: string, line_no: number, item_code: string, qty: number, rack_id: string | null) => ({
+  delivery_order_id, line_no, item_code, description: null as string | null, qty, rack_id,
+  shipped_from: null as unknown, item_group: null as string | null, variants: null as Record<string, unknown> | null,
+  description2: null as string | null, so_item_id: null as string | null, committed_po_batch_no: null as string | null,
+});
 
 const base = () => ({
   trips: [TRIP],
@@ -127,19 +141,21 @@ const base = () => ({
     { id: 's2', trip_id: 't1', stop_no: 2, stop_type: 'DELIVERY', do_id: 'do2', customer_name: 'Bravo', address: 'B' },
   ],
   deliveryOrders: [
-    { id: 'do1', do_number: 'DO-1', status: 'LOADED', m3_total_milli: 1000 },
-    { id: 'do2', do_number: 'DO-2', status: 'DISPATCHED', m3_total_milli: 2000 },
-    { id: 'do3', do_number: 'DO-3', status: 'DISPATCHED', m3_total_milli: null },
+    doRow('do1', 'DO-1', 'LOADED', 1000),
+    doRow('do2', 'DO-2', 'DISPATCHED', 2000),
+    doRow('do3', 'DO-3', 'DISPATCHED', null),
   ],
   items: [
-    { delivery_order_id: 'do1', line_no: 2, item_code: 'B', description: null, qty: 1, rack_id: 'r1' },
-    { delivery_order_id: 'do1', line_no: 1, item_code: 'A', description: null, qty: 2, rack_id: null },
-    { delivery_order_id: 'do2', line_no: 1, item_code: 'C', description: null, qty: 4, rack_id: 'r2' },
-    { delivery_order_id: 'do3', line_no: 1, item_code: 'D', description: null, qty: 3, rack_id: null },
+    line('do1', 2, 'B', 1, 'r1'),
+    line('do1', 1, 'A', 2, null),
+    line('do2', 1, 'C', 4, 'r2'),
+    line('do3', 1, 'D', 3, null),
   ],
   racks: [{ id: 'r1', label: 'Rack 3' }, { id: 'r2', label: 'Rack 20' }],
+  soItems: [] as Array<{ id: string; doc_no: string | null; line_no: number | null }>,
   lorries: [{ id: 'l1', label: 'WXY 1234' }],
-  drivers: [{ id: 'd1', label: 'Ah Meng' }],
+  drivers: [{ id: 'd1', name: 'Ah Meng', phone: '+60123884410' }],
+  helpers: [{ id: 'h1', name: 'Raju', phone: null }, { id: 'h2', name: 'Kumar', phone: null }],
   warehouses: [{ id: 'w1', label: 'Main Depot' }],
 });
 
@@ -154,6 +170,9 @@ describe('assemblePackingLists', () => {
     const [list] = assemblePackingLists(base());
     expect(list.lorry_plate).toBe('WXY 1234');
     expect(list.driver_name).toBe('Ah Meng');
+    expect(list.driver_phone).toBe('+60123884410');
+    expect(list.helper_1_name).toBe('Raju');
+    expect(list.helper_2_name).toBeNull();
     expect(list.warehouse_name).toBe('Main Depot');
     expect(list.stop_count).toBe(3);
     expect(list.do_count).toBe(3);
@@ -171,9 +190,9 @@ describe('assemblePackingLists', () => {
   test('a shipped line prints the rack(s) locked at dispatch before any pick (owner 2026-11-10)', () => {
     const input = base();
     const stamp = { v: 1, item_code: 'B', pos: [], racks: [{ rack_id: 'r9', label: 'Rack L8.2', qty: 1 }, { rack_id: 'r8', label: 'Rack L9.1', qty: 1 }] };
-    (input.items[0] as Record<string, unknown>).shipped_from = stamp;
-    (input.items[1] as Record<string, unknown>).shipped_from = { ...stamp, item_code: 'OTHER' };
-    const [list] = assemblePackingLists(input as Parameters<typeof assemblePackingLists>[0]);
+    input.items[0].shipped_from = stamp;
+    input.items[1].shipped_from = { ...stamp, item_code: 'OTHER' };
+    const [list] = assemblePackingLists(input);
     const [a, b] = list.stops[0].items;
     expect(b).toMatchObject({ rack: 'Rack L8.2, Rack L9.1', rack_locked: true });
     expect(a).toMatchObject({ rack: null, rack_locked: false }); // a stamp for another item is ignored
@@ -220,6 +239,65 @@ describe('assemblePackingLists', () => {
     const a = assemblePackingLists(input)[0].stops.map((s) => s.customer_name);
     const b = assemblePackingLists(input)[0].stops.map((s) => s.customer_name);
     expect(a).toEqual(b);
+  });
+
+  test('PO: the stamped PO(s) first, else the committed PO batch, else null (never a guess)', () => {
+    const input = base();
+    input.items[0].shipped_from = { v: 1, item_code: 'B', pos: [{ po: 'PO-9', qty: 1 }, { po: 'PO-9', qty: 1 }, { po: 'PO-7', qty: 1 }], racks: [] };
+    input.items[0].committed_po_batch_no = 'PO-IGNORED';
+    input.items[1].committed_po_batch_no = 'PO-3';
+    const [list] = assemblePackingLists(input);
+    const [a, b] = list.stops[0].items;
+    expect(b).toMatchObject({ po: 'PO-9, PO-7', po_locked: true });
+    expect(a).toMatchObject({ po: 'PO-3', po_locked: false });
+    expect(list.stops[1].items[0].po).toBeNull();
+  });
+
+  test('a customer\'s lines follow the SALES ORDER line order, then the DO line_no', () => {
+    const input = base();
+    input.items = [
+      { ...line('do1', 1, 'FIRST-ON-DO', 1, null), so_item_id: 'si-3' },
+      { ...line('do1', 2, 'SECOND-ON-DO', 1, null), so_item_id: 'si-1' },
+      { ...line('do1', 3, 'NO-SO-LINE', 1, null) },
+      { ...line('do1', 4, 'THIRD-ON-DO', 1, null), so_item_id: 'si-2' },
+    ];
+    input.soItems = [
+      { id: 'si-1', doc_no: 'SO-1', line_no: 1 },
+      { id: 'si-2', doc_no: 'SO-1', line_no: 2 },
+      { id: 'si-3', doc_no: 'SO-1', line_no: 3 },
+    ];
+    const [list] = assemblePackingLists(input);
+    expect(list.stops[0].items.map((i) => i.item_code)).toEqual(['SECOND-ON-DO', 'THIRD-ON-DO', 'FIRST-ON-DO', 'NO-SO-LINE']);
+    expect(list.stops[0].items.map((i) => i.so_line_no)).toEqual([1, 2, 3, null]);
+    // The DO header names no SO, so the SO line's doc_no stands in.
+    expect(list.stops[0].so_doc_no).toBe('SO-1');
+  });
+
+  test('an SO line from another company (filtered by the predicate) leaves no order behind', () => {
+    const input = base();
+    input.items = [{ ...line('do1', 2, 'X', 1, null), so_item_id: 'foreign' }, line('do1', 1, 'Y', 1, null)];
+    input.soItems = [];
+    const [list] = assemblePackingLists(input);
+    expect(list.stops[0].items.map((i) => i.item_code)).toEqual(['Y', 'X']);
+    expect(list.stops[0].so_doc_no).toBeNull();
+  });
+
+  test('carries the stop details Part B prints: phone, time slot, SO no, variants', () => {
+    const input = base();
+    input.deliveryOrders[0] = { ...input.deliveryOrders[0], so_doc_no: 'HC-SO-1', phone: '+60167571285', time_range: ' 9am - 11am ' };
+    input.items[0] = { ...input.items[0], item_group: 'bedframe', variants: { size: 'Q' }, description2: 'Queen' };
+    const [list] = assemblePackingLists(input);
+    expect(list.stops[0]).toMatchObject({ so_doc_no: 'HC-SO-1', phone: '+60167571285', time_range: '9am - 11am' });
+    expect(list.stops[0].items[1]).toMatchObject({ item_group: 'bedframe', variants: { size: 'Q' }, description2: 'Queen' });
+  });
+
+  test('service lines are neither picked, loaded nor counted', () => {
+    const input = base();
+    input.items.push({ ...line('do1', 9, 'SVC-DELIVERY', 1, null), item_group: 'service' });
+    input.items.push({ ...line('do1', 10, 'SVC-LIFT-CARRY-F3', 1, null) });
+    const [list] = assemblePackingLists(input);
+    expect(list.stops[0].items.map((i) => i.item_code)).toEqual(['A', 'B']);
+    expect(list.units).toBe(10);
   });
 
   test('a trip with no stops is a list with nothing on it, not a crash', () => {

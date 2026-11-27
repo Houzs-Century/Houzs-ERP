@@ -31,6 +31,8 @@ import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
+import { TabStrip } from "../../components/TabStrip";
+import { DoPackingListsView } from "../../vendor/scm/components/DoPackingListsView";
 import { DataTable, type Column, type ColumnLayoutPreset } from "../../components/DataTable";
 import { fetchDoExportRows } from "../../vendor/scm/lib/so-list-export";
 import { compareDoPrintOrder, type DoPrintHeader } from "../../vendor/scm/lib/delivery-date-group";
@@ -751,6 +753,22 @@ export function MfgDeliveryOrdersListV2() {
   const canFinance = canViewScmCosting(user);
   const canWriteDo = canOperateDeliveryOrders(user, can, pageAccess);
 
+  /* ?tab=packing — the Packing Lists view (owner 2026-11-27): one sheet per
+     lorry for a date. The order list is not fetched while it is open. */
+  const pageTab: "orders" | "packing" = params.get("tab") === "packing" ? "packing" : "orders";
+  const setPageTab = (t: "orders" | "packing") => {
+    const next = new URLSearchParams(params);
+    if (t === "packing") next.set("tab", "packing");
+    else { next.delete("tab"); next.delete("date"); }
+    setParams(next, { replace: true });
+  };
+  const pageTabs = (
+    <TabStrip
+      value={pageTab}
+      onChange={setPageTab}
+      options={[{ value: "orders", label: "Delivery orders" }, { value: "packing", label: "Packing Lists" }]}
+    />
+  );
   const status = (params.get("status") ?? "all") as StatusTab;
   const view = (params.get("view") ?? "table") as "table" | "cards";
   const search = params.get("q") ?? "";
@@ -779,7 +797,7 @@ export function MfgDeliveryOrdersListV2() {
   const apiStatus = status === "all" ? undefined : status;
 
   const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = useMfgDeliveryOrdersPaged({
-    enabled: true,
+    enabled: pageTab === "orders",
     page,
     pageSize,
     status: apiStatus,
@@ -1453,6 +1471,7 @@ export function MfgDeliveryOrdersListV2() {
           </div>
         </div>
       </div>
+      <div className="md:hidden">{pageTabs}</div>
 
       <div className="-mx-4 hidden pb-3 sm:-mx-6 md:block">
         <div className="px-4 sm:px-6">
@@ -1493,6 +1512,8 @@ export function MfgDeliveryOrdersListV2() {
             ]}
           />
 
+          {pageTabs}
+          {pageTab === "orders" && <>
           <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
             {/* Every tile describes the rows ON SCREEN and says so while a
                 column funnel narrows them (owner 2026-08-13). The count tiles
@@ -1550,8 +1571,11 @@ export function MfgDeliveryOrdersListV2() {
             <div className="flex-1" />
             <ViewToggle value={view} onChange={setView} />
           </div>
+          </>}
         </div>
       </div>
+
+      {pageTab === "packing" ? <DoPackingListsView /> : <>
 
       <div className="sticky top-0 z-10 -mx-4 mb-3 bg-bg/95 px-4 py-2 backdrop-blur-sm md:hidden">
         <input
@@ -1747,6 +1771,7 @@ export function MfgDeliveryOrdersListV2() {
           </>
         )}
       </div>
+      </>}
       </div>
 
       <DetailDrawer

@@ -8,7 +8,13 @@ export type PackingItem = {
   description: string | null;
   qty: number;
   rack: string | null;
-  rack_locked?: boolean;
+  rack_locked: boolean;
+  po: string | null;
+  po_locked: boolean;
+  item_group: string | null;
+  variants: Record<string, unknown> | null;
+  description2: string | null;
+  so_line_no: number | null;
 };
 
 export type PackingStop = {
@@ -20,6 +26,9 @@ export type PackingStop = {
   do_number: string | null;
   do_status: string | null;
   do_missing: boolean;
+  so_doc_no: string | null;
+  phone: string | null;
+  time_range: string | null;
   units: number;
   items: PackingItem[];
 };
@@ -31,6 +40,9 @@ export type PackingListRow = {
   trip_status: string | null;
   lorry_plate: string | null;
   driver_name: string | null;
+  driver_phone: string | null;
+  helper_1_name: string | null;
+  helper_2_name: string | null;
   warehouse_name: string | null;
   stop_count: number;
   do_count: number;

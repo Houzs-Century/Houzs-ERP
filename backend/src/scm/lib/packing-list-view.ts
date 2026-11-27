@@ -1,6 +1,7 @@
 
 // @ts-expect-error - plain .mjs, the one stamp rule shared with the DO detail and scripts/stamp-do-shipped-from.mjs
-import { stampRackLabel } from '../../../scripts/lib/do-shipped-from.mjs';
+import { stampRackLabel, stampFitsLine } from '../../../scripts/lib/do-shipped-from.mjs';
+import { isServiceLine } from '../shared/service-sku';
 
 export type PackTripRow = {
   id: string;
@@ -9,6 +10,8 @@ export type PackTripRow = {
   status: string | null;
   lorry_id: string | null;
   driver_id: string | null;
+  helper_1_id: string | null;
+  helper_2_id: string | null;
   warehouse_id: string | null;
 };
 
@@ -27,6 +30,9 @@ export type PackDoRow = {
   do_number: string | null;
   status: string | null;
   m3_total_milli: number | null;
+  so_doc_no: string | null;
+  phone: string | null;
+  time_range: string | null;
 };
 
 export type PackItemRow = {
@@ -37,7 +43,18 @@ export type PackItemRow = {
   qty: number | null;
   rack_id: string | null;
   shipped_from: unknown;
+  item_group: string | null;
+  variants: Record<string, unknown> | null;
+  description2: string | null;
+  so_item_id: string | null;
+  committed_po_batch_no: string | null;
 };
+
+/** The sales-order line a DO line was cut from: its position on the SO. */
+export type PackSoItemRow = { id: string; doc_no: string | null; line_no: number | null };
+
+/** A crew master row: name plus the phone the crew box prints. */
+export type PackCrewRow = { id: string; name: string | null; phone: string | null };
 
 /** id -> printable label, for the two masters that only lend a name. */
 export type PackLabelRow = { id: string; label: string | null };
@@ -49,6 +66,12 @@ export type PackingItem = {
   qty: number;
   rack: string | null;
   rack_locked: boolean;
+  po: string | null;
+  po_locked: boolean;
+  item_group: string | null;
+  variants: Record<string, unknown> | null;
+  description2: string | null;
+  so_line_no: number | null;
 };
 
 export type PackingStop = {
@@ -60,6 +83,9 @@ export type PackingStop = {
   do_number: string | null;
   do_status: string | null;
   do_missing: boolean;
+  so_doc_no: string | null;
+  phone: string | null;
+  time_range: string | null;
   units: number;
   items: PackingItem[];
 };
@@ -71,6 +97,9 @@ export type PackingList = {
   trip_status: string | null;
   lorry_plate: string | null;
   driver_name: string | null;
+  driver_phone: string | null;
+  helper_1_name: string | null;
+  helper_2_name: string | null;
   warehouse_name: string | null;
   stop_count: number;
   do_count: number;
@@ -99,8 +128,10 @@ export type AssembleInput = {
   deliveryOrders: readonly PackDoRow[];
   items: readonly PackItemRow[];
   racks: readonly PackLabelRow[];
+  soItems: readonly PackSoItemRow[];
   lorries: readonly PackLabelRow[];
-  drivers: readonly PackLabelRow[];
+  drivers: readonly PackCrewRow[];
+  helpers: readonly PackCrewRow[];
   warehouses: readonly PackLabelRow[];
 };
 
@@ -110,11 +141,47 @@ function packRack(it: PackItemRow, rackById: Map<string, string>): { rack: strin
   return { rack: it.rack_id ? rackById.get(String(it.rack_id)) ?? null : null, rack_locked: false };
 }
 
+/* PO (owner 2026-11-27): the stamp's POs when the line was locked at dispatch (the same stamp the
+   rack comes from), else the PO batch the line was committed to. Neither = null,
+   and the sheet prints a dash: a guessed PO sends the picker to the wrong lot. */
+function packPo(it: PackItemRow): { po: string | null; po_locked: boolean } {
+  const stamp = it.shipped_from as { pos?: Array<{ po?: unknown }> } | null;
+  if (stampFitsLine(stamp, it.item_code ?? null)) {
+    const pos = [...new Set((stamp?.pos ?? [])
+      .map((p) => (typeof p.po === 'string' ? p.po.trim() : ''))
+      .filter(Boolean))];
+    if (pos.length > 0) return { po: pos.join(', '), po_locked: true };
+  }
+  const committed = (it.committed_po_batch_no ?? '').trim();
+  return { po: committed || null, po_locked: false };
+}
+
+const crewMap = (rows: readonly PackCrewRow[]): Map<string, { name: string; phone: string | null }> => {
+  const m = new Map<string, { name: string; phone: string | null }>();
+  for (const r of rows) {
+    const name = (r.name ?? '').trim();
+    if (r.id && name) m.set(String(r.id), { name, phone: (r.phone ?? '').trim() || null });
+  }
+  return m;
+};
+
+/* Line order per owner 2026-11-27: the SALES ORDER's line order, then the DO's own line_no for lines with no SO line behind them. */
+function compareSoOrder(a: PackingItem, b: PackingItem): number {
+  const sa = a.so_line_no ?? Number.POSITIVE_INFINITY;
+  const sb = b.so_line_no ?? Number.POSITIVE_INFINITY;
+  if (sa !== sb) return sa < sb ? -1 : 1;
+  return a.line_no - b.line_no;
+}
+
 export function assemblePackingLists(input: AssembleInput): PackingList[] {
   const rackById = labelMap(input.racks);
   const lorryById = labelMap(input.lorries);
-  const driverById = labelMap(input.drivers);
+  const driverById = crewMap(input.drivers);
+  const helperById = crewMap(input.helpers);
   const warehouseById = labelMap(input.warehouses);
+  const soItemById = new Map<string, PackSoItemRow>();
+  for (const r of input.soItems) if (r.id) soItemById.set(String(r.id), r);
+  const soDocByDo = new Map<string, string>();
 
   const doById = new Map<string, PackDoRow>();
   for (const d of input.deliveryOrders) if (d.id) doById.set(String(d.id), d);
@@ -123,6 +190,10 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
   for (const it of input.items) {
     const key = String(it.delivery_order_id ?? '');
     if (!key) continue;
+    if (isServiceLine({ itemGroup: it.item_group, itemCode: it.item_code })) continue;
+    const soItem = it.so_item_id ? soItemById.get(String(it.so_item_id)) ?? null : null;
+    if (soItem?.doc_no && !soDocByDo.has(key)) soDocByDo.set(key, soItem.doc_no);
+    const soLine = soItem?.line_no != null && Number.isFinite(Number(soItem.line_no)) ? Number(soItem.line_no) : null;
     const arr = itemsByDo.get(key) ?? [];
     arr.push({
       line_no: num(it.line_no) || arr.length + 1,
@@ -130,10 +201,15 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
       description: it.description ?? null,
       qty: num(it.qty),
       ...packRack(it, rackById),
+      ...packPo(it),
+      item_group: it.item_group ?? null,
+      variants: it.variants && typeof it.variants === 'object' && !Array.isArray(it.variants) ? it.variants : null,
+      description2: it.description2 ?? null,
+      so_line_no: soLine,
     });
     itemsByDo.set(key, arr);
   }
-  for (const arr of itemsByDo.values()) arr.sort((a, b) => a.line_no - b.line_no);
+  for (const arr of itemsByDo.values()) arr.sort(compareSoOrder);
 
   const stopsByTrip = new Map<string, PackStopRow[]>();
   for (const s of input.stops) {
@@ -174,6 +250,9 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
         do_number: row?.do_number ?? null,
         do_status: row?.status ?? null,
         do_missing: !!doId && !row,
+        so_doc_no: (row?.so_doc_no ?? '').trim() || (doId ? soDocByDo.get(doId) ?? null : null),
+        phone: (row?.phone ?? '').trim() || null,
+        time_range: (row?.time_range ?? '').trim() || null,
         units: stopUnits,
         items,
       };
@@ -185,7 +264,10 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
       trip_date: t.trip_date ?? null,
       trip_status: t.status ?? null,
       lorry_plate: t.lorry_id ? lorryById.get(String(t.lorry_id)) ?? null : null,
-      driver_name: t.driver_id ? driverById.get(String(t.driver_id)) ?? null : null,
+      driver_name: t.driver_id ? driverById.get(String(t.driver_id))?.name ?? null : null,
+      driver_phone: t.driver_id ? driverById.get(String(t.driver_id))?.phone ?? null : null,
+      helper_1_name: t.helper_1_id ? helperById.get(String(t.helper_1_id))?.name ?? null : null,
+      helper_2_name: t.helper_2_id ? helperById.get(String(t.helper_2_id))?.name ?? null : null,
       warehouse_name: t.warehouse_id ? warehouseById.get(String(t.warehouse_id)) ?? null : null,
       stop_count: stops.length,
       do_count: seenDo.size,

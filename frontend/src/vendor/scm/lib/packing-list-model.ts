@@ -9,10 +9,9 @@
       deepest into the lorry, so the first drop is the one standing at the tail
       door. `loadingOrder` is the only place that reversal happens.
 
-      IT IS NUMBERED BY LOADING ORDER ONLY. The sheet prints 1, 2, 3 — the order
-      you put things in — and does NOT also print the stop number beside it. The
-      owner looked at the two-number form and rejected it:「LOAD FIRST ① STOP 3
-      · … 这个地方太复杂了」. One number per line.
+      THE SHEET PRINTS THE REAL STOP NUMBER, reversed: 6, 5, 4, 3, 2, 1 (owner
+      2026-11-27). Still one number per customer — the two-number form ("LOAD
+      FIRST 1 STOP 3") stays rejected.
 
    2. THE STATUS CHIP ROLLS UP THE MEMBER DELIVERY ORDERS. The words are the
       owner's ladder — Confirmed / Loaded / In Transit / Delivered — over the
@@ -151,3 +150,166 @@ export function fmtM3(m3Milli: number | null | undefined): string | null {
   return `${(m3Milli / 1000).toFixed(2)} m³`;
 }
 
+
+
+/* ── PART A: PICK BY CATEGORY (owner 2026-11-27) ──────────────────────────────
+   One pick sheet for the whole lorry, by product category, in this order:
+   MATTRESS, BEDFRAME, ACCESSORIES, SOFA, then anything else as OTHER.
+
+   · MATTRESS / ACCESSORIES (and OTHER): identical item code + variant collapse
+     into one row with the total qty, every rack, every PO, and the customers
+     (stop numbers) listed highest first.
+   · BEDFRAME / SOFA: one row per DO line, each with its own PO and rack, never
+     merged — two bedframes of one code can come off two racks from two POs.
+   · SOFA rows are grouped by sales order so two customers' sets never mix;
+     groups run highest stop first.
+
+   EVERY list of rows is sorted the same way — item code, then variant text,
+   then customer (highest first), then rack — so the sheet reads identically
+   every time it is printed (owner: 「确保sorting功能有要不然每次很乱」). */
+
+export type PackCategory = 'MATTRESS' | 'BEDFRAME' | 'ACCESSORIES' | 'SOFA' | 'OTHER';
+export const PACK_CATEGORY_ORDER: readonly PackCategory[] = ['MATTRESS', 'BEDFRAME', 'ACCESSORIES', 'SOFA', 'OTHER'];
+const PIECE_CATEGORIES: ReadonlySet<PackCategory> = new Set<PackCategory>(['BEDFRAME', 'SOFA']);
+
+/** `item_group` -> pick category, case-insensitive. Unknown or empty = OTHER. */
+export function packCategory(itemGroup: string | null | undefined): PackCategory {
+  const g = (itemGroup ?? '').trim().toLowerCase();
+  if (g === 'mattress' || g === 'mattresses') return 'MATTRESS';
+  if (g === 'bedframe' || g === 'bedframes' || g === 'bed frame') return 'BEDFRAME';
+  if (g === 'accessory' || g === 'accessories') return 'ACCESSORIES';
+  if (g === 'sofa' || g === 'sofas') return 'SOFA';
+  return 'OTHER';
+}
+
+export type PickRow = {
+  item_code: string;
+  description: string | null;
+  variant: string;
+  pos: string[];
+  racks: string[];
+  qty: number;
+  customers: number[];
+};
+
+export type SofaGroup = {
+  so_doc_no: string | null;
+  stop_no: number;
+  customer_name: string | null;
+  pieces: number;
+  pos: string[];
+  rows: PickRow[];
+};
+
+export type PickSection = {
+  category: PackCategory;
+  units: number;
+  rows: PickRow[];
+  groups: SofaGroup[];
+};
+
+const uniq = (xs: readonly string[]): string[] => [...new Set(xs.map((x) => x.trim()).filter(Boolean))];
+const splitList = (v: string | null | undefined): string[] => (v ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+const byCode = (a: string, b: string): number => a.localeCompare(b, 'en', { numeric: true, sensitivity: 'base' });
+
+/** The one sort every pick list uses. Pure, total: ties fall through to rack. */
+export function comparePickRows(a: PickRow, b: PickRow): number {
+  return byCode(a.item_code, b.item_code)
+    || byCode(a.variant, b.variant)
+    || (b.customers[0] ?? 0) - (a.customers[0] ?? 0)
+    || byCode(formatRacksCompact(a.racks), formatRacksCompact(b.racks));
+}
+
+/** Sorted copy; never mutates the caller's rows. */
+export function sortPickRows(rows: readonly PickRow[]): PickRow[] {
+  return [...rows].sort(comparePickRows);
+}
+
+type FlatLine = { stop: PackingStop; item: PackingStop['items'][number]; variant: string };
+
+/**
+ * One trip's lines -> the Part A sections, in category order, empty categories
+ * dropped. `variantOf` composes the printed variant text (the PDF passes the
+ * DO's own composition, so the two documents describe a line the same way).
+ */
+export function buildPickSections(
+  stops: readonly PackingStop[],
+  variantOf: (item: PackingStop['items'][number]) => string,
+): PickSection[] {
+  const seenDo = new Set<string>();
+  const flat: FlatLine[] = [];
+  for (const stop of stops) {
+    if (stop.do_missing) continue;
+    if (stop.do_id) { if (seenDo.has(stop.do_id)) continue; seenDo.add(stop.do_id); }
+    for (const item of stop.items) flat.push({ stop, item, variant: variantOf(item).trim() });
+  }
+
+  const pieceRow = (l: FlatLine): PickRow => ({
+    item_code: l.item.item_code,
+    description: l.item.description,
+    variant: l.variant,
+    pos: splitList(l.item.po),
+    racks: splitList(l.item.rack),
+    qty: l.item.qty,
+    customers: [l.stop.stop_no],
+  });
+
+  const out: PickSection[] = [];
+  for (const category of PACK_CATEGORY_ORDER) {
+    const lines = flat.filter((l) => packCategory(l.item.item_group) === category);
+    if (lines.length === 0) continue;
+    const units = lines.reduce((n, l) => n + l.item.qty, 0);
+
+    if (category === 'SOFA') {
+      const byGroup = new Map<string, FlatLine[]>();
+      for (const l of lines) {
+        const key = `${l.stop.so_doc_no ?? ''}\u0000${l.stop.stop_no}`;
+        const arr = byGroup.get(key) ?? [];
+        arr.push(l);
+        byGroup.set(key, arr);
+      }
+      const groups: SofaGroup[] = [...byGroup.values()].map((ls) => {
+        const rows = sortPickRows(ls.map(pieceRow));
+        return {
+          so_doc_no: ls[0].stop.so_doc_no,
+          stop_no: ls[0].stop.stop_no,
+          customer_name: ls[0].stop.customer_name,
+          pieces: ls.reduce((n, l) => n + l.item.qty, 0),
+          pos: uniq(rows.flatMap((r) => r.pos)).sort(byCode),
+          rows,
+        };
+      });
+      groups.sort((a, b) => b.stop_no - a.stop_no || byCode(a.so_doc_no ?? '', b.so_doc_no ?? ''));
+      out.push({ category, units, rows: [], groups });
+      continue;
+    }
+
+    if (PIECE_CATEGORIES.has(category)) {
+      out.push({ category, units, rows: sortPickRows(lines.map(pieceRow)), groups: [] });
+      continue;
+    }
+
+    const agg = new Map<string, PickRow>();
+    for (const l of lines) {
+      const key = `${l.item.item_code}\u0000${l.variant}`;
+      const row = agg.get(key) ?? { ...pieceRow(l), qty: 0, pos: [], racks: [], customers: [] };
+      row.qty += l.item.qty;
+      row.pos = uniq([...row.pos, ...splitList(l.item.po)]).sort(byCode);
+      row.racks = uniq([...row.racks, ...splitList(l.item.rack)]).sort(compareRackLabels);
+      row.customers = [...new Set([...row.customers, l.stop.stop_no])].sort((a, b) => b - a);
+      if (l.item.description && (!row.description || byCode(l.item.description, row.description) < 0)) {
+        row.description = l.item.description;
+      }
+      agg.set(key, row);
+    }
+    out.push({ category, units, rows: sortPickRows([...agg.values()]), groups: [] });
+  }
+  return out;
+}
+
+/** yyyy-mm-dd shifted by whole days, in calendar terms (no timezone drift). */
+export function shiftIsoDate(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d) + days * 86_400_000);
+  return t.toISOString().slice(0, 10);
+}
