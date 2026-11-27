@@ -36,6 +36,7 @@ import {
 } from '../../vendor/scm/lib/department-queries';
 import { DeptLinesPanel, DrillPanel } from './DepartmentPnlLines';
 import { RatePanel, UnitReport, opDrillRow, opLedger, regionNameOf } from './DepartmentPnlUnits';
+import { SupplierRebatesBox } from './DepartmentRebates';
 import { FinanceGrid, fmtMoney, gridMuted, type GridColumn, type GridRow } from './reports/FinanceGrid';
 import { FinanceDateRange } from './reports/FinanceDateRange';
 import {
@@ -404,6 +405,7 @@ function DeptView({ p, mode, showPct, period }: { p: DepartmentView; mode: Mode;
   const title = `Department P&L · ${p.label} · ${words.name}`;
   const sheet = () => gridSheet({ title, subtitle: `${period} · RM`, period, nameLabel: 'Account', columns, rows, showPct });
   const pays = p.charges.length > 0;
+  const estimatesRebates = p.tree.otherIncome.some((n) => n.id.startsWith('rebate:'));
   return (
     <>
       <ReportHeaderActions><ReportExports sheet={sheet} fileBase={`department-pnl-${p.dept}-${p.basis}-${p.from.slice(0, 7)}-${p.to.slice(0, 7)}`} /></ReportHeaderActions>
@@ -416,6 +418,7 @@ function DeptView({ p, mode, showPct, period }: { p: DepartmentView; mode: Mode;
           )}
         </div>
       )}
+      {p.basis === 'performance' && p.rebateRules != null && <SupplierRebatesBox rules={p.rebateRules} />}
       <FinanceGrid layoutKey={`department-pnl-dept|${mode}|${showPct ? 1 : 0}`} nameColumn={{ label: 'Account', width: 380 }} columns={columns} rows={rows} showPct={showPct}
         title={title} subtitle={`${period} · RM`} ariaLabel={`Department P&L, ${p.label}`} drillKey={`${p.dept}|${p.basis}|${p.from}|${p.to}|${mode}`}
         foot={fromOrders ? <span>
@@ -423,7 +426,8 @@ function DeptView({ p, mode, showPct, period }: { p: DepartmentView; mode: Mode;
           not, each line&rsquo;s own cost{p.orders ? ` — ${p.orders.counted.toLocaleString('en-US')} orders, ${p.orders.notDelivered.toLocaleString('en-US')} not yet delivered` : ''}.
           Expenses: what the {p.label} department booked, by journal date, its commission at the month&rsquo;s commission bills and merchandise at its rate
           in place of the terminal charges. Paid to other departments: each a rate of the sales excluding service. Every % is of the column&rsquo;s sales.
-          Click a figure for the lines behind it.
+          {estimatesRebates ? ' Other income adds each supplier rebate estimated from the month\u2019s bills from that supplier; the supplier\u2019s own credit note is booked in Actual, not here.' : ''}
+          {' '}Click a figure for the lines behind it.
         </span> : <span>
           The books by journal date, month by month: sales and cost of sales as booked, less what the {p.label} department booked{pays ? ' and what it pays the other departments, each a rate of its sales excluding service' : ''}.
           Every % is of the column&rsquo;s sales. Click a figure for the lines behind it.

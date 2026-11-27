@@ -327,7 +327,7 @@ describe('one department: its column of the P&L, month by month (the Exhibition 
     ],
   } as unknown as Record<string, LayoutItem[]>;
   const v = buildDeptView({
-    dept: 'exhibition', basis: 'actual', months: ['2026-09', '2026-10'], split: [split('2026-09', 1), split('2026-10', 2)], layout, companyId: 1, orders: null, charges: null,
+    dept: 'exhibition', basis: 'actual', months: ['2026-09', '2026-10'], split: [split('2026-09', 1), split('2026-10', 2)], layout, companyId: 1, orders: null, charges: null, rebates: null,
   });
 
   test('sales less cost of sales less its expenses, each month', () => {
@@ -383,7 +383,7 @@ describe('the Exhibition on its orders (owner 2026-11-25): the Performance P&L\'
   const months = [month('2026-09', 1, { billSen: 15_000, releaseSen: 0 }), month('2026-10', 2, { billSen: 18_000, releaseSen: 9_000 })];
   const v = buildDeptView({
     dept: 'exhibition', basis: 'performance', months: ['2026-09', '2026-10'], split: [split('2026-09', 1, 0), split('2026-10', 2, 9_000)], layout, companyId: 1,
-    orders: { months, commission: { code: '900-C003', name: 'COMMISSION ( EVENT )', label } }, charges: null,
+    orders: { months, commission: { code: '900-C003', name: 'COMMISSION ( EVENT )', label } }, charges: null, rebates: null,
   });
 
   test("sales and cost of sales are the orders' product groups, never the books'; a group with nothing is left out", () => {
@@ -413,7 +413,7 @@ describe('the Exhibition on its orders (owner 2026-11-25): the Performance P&L\'
   test('a commission account that counts in another department is left as booked', () => {
     const w = buildDeptView({
       dept: 'exhibition', basis: 'performance', months: ['2026-10'], split: [split('2026-10', 2, 9_000)], layout, companyId: 1,
-      orders: { months: [month('2026-10', 2, null)], commission: null }, charges: null,
+      orders: { months: [month('2026-10', 2, null)], commission: null }, charges: null, rebates: null,
     });
     expect(w.perMonth[0]!.expensesSen).toBe(40_000 + 9_000);
   });
@@ -454,7 +454,7 @@ describe('the selling department pays the others (owner 2026-11-25: G&A 5%, Oper
     merchandise: basis === 'performance' ? { codes: new Set(['900-T009']) } : null,
   });
   const view = (basis: 'actual' | 'performance') => buildDeptView({
-    dept: 'exhibition', basis, months: ['2026-09'], split, layout, companyId: 1, orders: null, charges: chargesFor(basis),
+    dept: 'exhibition', basis, months: ['2026-09'], split, layout, companyId: 1, orders: null, charges: chargesFor(basis), rebates: null,
   });
 
   test("the base is the selling department's sales less the service group's", () => {
@@ -484,7 +484,7 @@ describe('the selling department pays the others (owner 2026-11-25: G&A 5%, Oper
     const only = chargesOf({ months: ['2026-09'], base, rates, payees: { ga: true, operation: false, logistics: false, setupDismantle: false }, basis: 'actual' });
     const v = buildDeptView({
       dept: 'exhibition', basis: 'actual', months: ['2026-09'], split, layout, companyId: 1, orders: null,
-      charges: { months: only, rates, moved: new Set(), merchandise: null },
+      charges: { months: only, rates, moved: new Set(), merchandise: null }, rebates: null,
     });
     expect(v.charges.map((n) => n.id)).toEqual(['charge:ga']);
     expect(v.perMonth[0]).toMatchObject({ expensesSen: 5_200, chargesSen: 4_800 });
@@ -498,7 +498,7 @@ describe('the selling department pays the others (owner 2026-11-25: G&A 5%, Oper
 describe('All: each department\'s own P&L in a few figures, side by side (owner 2026-11-25)', () => {
   test('a department\'s own P&L: its months added up, taxation with its expenses', () => {
     const v = buildDeptView({
-      dept: 'showroom', basis: 'actual', months: ['2026-09'], companyId: 1, orders: null, charges: null, layout: {},
+      dept: 'showroom', basis: 'actual', months: ['2026-09'], companyId: 1, orders: null, charges: null, rebates: null, layout: {},
       split: [{
         month: '2026-09',
         blocks: {

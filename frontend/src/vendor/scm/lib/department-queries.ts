@@ -114,6 +114,19 @@ export type DepartmentView = {
   tree: Record<DeptBlock, DeptNode[]>;
   charges: DeptNode[];
   merchandiseAccounts: string[];
+  /** The selling department's supplier rebate rules (owner 2026-11-27); null on any other
+      department; absent for the minute a newer screen reads an older server. */
+  rebateRules?: SupplierRebateRule[] | null;
+};
+
+/** A supplier rebate tier: from this month's base (in sen), this rate (in basis points). */
+export type RebateTier = { fromSen: number; bp: number };
+/** A supplier's rebate terms as Finance typed them on the Department P&L (server:
+    backend/src/scm/lib/supplier-rebates.ts) — the sponsor rebate on purchases less the named
+    products and accessories, the sales rebate by tier on purchases less the display sets. */
+export type SupplierRebateRule = {
+  supplierCode: string; label: string; sponsorBp: number; namedWords: string[]; accessoryWords: string[];
+  salesTiers: RebateTier[]; displayDiscountBp: number;
 };
 
 /** Operation, Logistics or Setup & dismantle: what it is paid less its real cost, month by month. */
@@ -217,6 +230,17 @@ export function useSaveDepartmentRate() {
     mutationFn: (body: { dept: RateKey; pct: number }) => authedFetch<{ ok: true }>('/acc-events/departments/rate', { method: 'PUT', body: JSON.stringify(body) }),
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: KEY }); },
     onError: writeFailedAs('Rate not saved'),
+  });
+}
+
+/** The company's supplier rebate rules, replaced whole (owner 2026-11-27: 「做设定框」). */
+export function useSaveSupplierRebates() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rules: SupplierRebateRule[]) =>
+      authedFetch<{ ok: true; rules: SupplierRebateRule[] }>('/acc-events/departments/rebates', { method: 'PUT', body: JSON.stringify({ rules }) }),
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: KEY }); },
+    onError: writeFailedAs('Supplier rebates not saved'),
   });
 }
 
