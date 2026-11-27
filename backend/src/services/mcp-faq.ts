@@ -293,7 +293,8 @@ async function receivablesSummary(ctx: R3Ctx): Promise<R3Outcome> {
 export const SO_OPEN_TABS = Object.keys(SO_TAB_STATUSES).filter((t) => t !== "ON_HOLD" && SO_TAB_STATUSES[t].every((st) => !(SO_TERMINAL_STATES as readonly string[]).includes(st)));
 const DO_DONE = new Set<string>([...DO_ARRIVED_STATES, "CANCELLED"]);
 
-async function openSalesOrders(ctx: R3Ctx, horizon: string): Promise<{ ok: true; rows: Obj[]; truncated: boolean } | { ok: false; r: R3Read & { ok: false } }> {
+/** Open SOs (the open list tabs, not held) up to `horizon` by customer delivery date; also used by the urgent alerts. */
+export async function openSalesOrders(ctx: R3Ctx, horizon: string): Promise<{ ok: true; rows: Obj[]; truncated: boolean } | { ok: false; r: R3Read & { ok: false } }> {
   const past = (last: Obj) => {
     const d = str(last.customer_delivery_date).slice(0, 10);
     return !d || d > horizon;

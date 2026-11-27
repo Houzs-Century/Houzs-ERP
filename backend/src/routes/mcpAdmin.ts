@@ -23,6 +23,8 @@ import {
   takeAuthRequest,
 } from "../services/mcp-store";
 import { RATE_PER_DAY, RATE_PER_MINUTE } from "../services/mcp-ratelimit";
+import { ALERT_THRESHOLDS, BRIEF_SETTINGS, DEFAULT_PREFS, parseBriefPrefs } from "../services/mcp-proactive";
+import { cronOrigin, getSubscription, recentTestBrief, saveSubscription, sendBriefFor, type Subscription } from "../services/mcp-proactive-run";
 import { isMcpAdmin, mcpAppRoutes, publicOrigin, readEndpoint } from "./mcp";
 
 type HonoEnv = { Bindings: Env };
@@ -50,7 +52,7 @@ app.get("/me", async (c) => {
     .prepare(
       `SELECT t.id, t.created_at, t.last_used_at, cl.client_name
          FROM mcp_tokens t LEFT JOIN mcp_oauth_clients cl ON cl.client_id = t.client_id
-        WHERE t.user_id = ? AND t.revoked_at IS NULL AND t.refresh_expires_at > ? AND t.client_id <> 'mcpc_leak_check'
+        WHERE t.user_id = ? AND t.revoked_at IS NULL AND t.refresh_expires_at > ? AND t.client_id NOT IN ('mcpc_leak_check', 'mcpc_brief')
         ORDER BY t.created_at DESC`,
     )
     .bind(u.id, new Date().toISOString())
@@ -100,6 +102,56 @@ app.post("/me/revoke", async (c) => {
   if (typeof body.tokenId !== "string") return c.json({ error: "tokenId required" }, 400);
   const n = await revokeToken(c.env.DB, body.tokenId, c.get("user").id);
   return c.json({ ok: true, revoked: n });
+});
+
+const briefView = (sub: Subscription | null, admin: boolean, email: string, allowed: boolean) => ({
+  allowed,
+  email,
+  prefs: sub ? sub.prefs : DEFAULT_PREFS,
+  lastBriefDay: sub?.lastBriefDay ?? null,
+  schedule: { brief: "Checked every 15 minutes; sent at or after your time (Malaysia time), at most once a day. Monday adds the data-gaps list.", alerts: "Checked every 30 minutes; each item is emailed at most once." },
+  ...(admin ? { thresholds: { ...ALERT_THRESHOLDS }, briefSettings: { ...BRIEF_SETTINGS } } : {}),
+});
+
+app.get("/me/brief", async (c) => {
+  const u = c.get("user");
+  const admin = isMcpAdmin(u);
+  const allowed = await hasMcpAccess(c.env.DB, u.id, admin);
+  return c.json(briefView(await getSubscription(c.env.DB, u.id), admin, u.email, allowed));
+});
+
+app.put("/me/brief", async (c) => {
+  const u = c.get("user");
+  const db = c.env.DB;
+  const admin = isMcpAdmin(u);
+  const allowed = await hasMcpAccess(db, u.id, admin);
+  const current = await getSubscription(db, u.id);
+  const parsed = parseBriefPrefs(await c.req.json().catch(() => ({})), current?.prefs ?? DEFAULT_PREFS);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const turningOn = (parsed.prefs.briefEnabled && !current?.prefs.briefEnabled) || (parsed.prefs.alertsEnabled && !current?.prefs.alertsEnabled);
+  if (turningOn && !allowed) return c.json({ error: "Ask for AI Connector access first: the brief is built with the connector, as you." }, 403);
+  if (turningOn && !u.email.includes("@")) return c.json({ error: "Your ERP account has no email address." }, 400);
+  const saved = await saveSubscription(db, u.id, parsed.prefs);
+  await audit(c, { action: "ai_connector.brief", entityType: "ai_connector", entityId: u.id, summary: `Brief email ${saved.prefs.briefEnabled ? `on (${saved.prefs.time} MYT, ${saved.prefs.days})` : "off"}, alerts ${saved.prefs.alertsEnabled ? "on" : "off"}` });
+  return c.json(briefView(saved, admin, u.email, allowed));
+});
+
+app.post("/me/brief/test", async (c) => {
+  const u = c.get("user");
+  const db = c.env.DB;
+  if (!(await hasMcpAccess(db, u.id, isMcpAdmin(u)))) return c.json({ error: "Ask for AI Connector access first." }, 403);
+  const now = Date.now();
+  if (await recentTestBrief(db, u.id, now)) return c.json({ error: `A test brief was sent in the last ${BRIEF_SETTINGS.testCooldownMinutes} minutes. Check your inbox.` }, 429);
+  const sub = (await getSubscription(db, u.id)) ?? (await saveSubscription(db, u.id, DEFAULT_PREFS));
+  let ctx: unknown;
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    ctx = undefined;
+  }
+  const r = await sendBriefFor({ env: c.env, ctx, origin: cronOrigin(c.env) }, sub, now, true);
+  if (r.status !== "sent") return c.json({ error: `Not sent: ${r.note || r.status}` }, r.status === "skipped" ? 409 : 502);
+  return c.json({ ok: true, sentTo: u.email, items: r.items });
 });
 
 
@@ -170,7 +222,7 @@ app.get("/admin/overview", async (c) => {
            FROM mcp_tokens t JOIN users u ON u.id = t.user_id
            LEFT JOIN mcp_oauth_clients cl ON cl.client_id = t.client_id
            LEFT JOIN positions p ON p.id = u.position_id
-          WHERE t.revoked_at IS NULL AND t.refresh_expires_at > ? AND t.client_id <> 'mcpc_leak_check'
+          WHERE t.revoked_at IS NULL AND t.refresh_expires_at > ? AND t.client_id NOT IN ('mcpc_leak_check', 'mcpc_brief')
           ORDER BY t.last_used_at DESC NULLS LAST, t.created_at DESC`,
       )
       .bind(nowIso)
@@ -199,7 +251,7 @@ app.get("/admin/overview", async (c) => {
       .prepare(
         `SELECT (SELECT COUNT(*) FROM mcp_calls WHERE created_at > ?) AS calls_24h,
                 (SELECT COUNT(*) FROM mcp_calls WHERE created_at > ? AND ok = 0) AS refused_24h,
-                (SELECT COUNT(DISTINCT user_id) FROM mcp_tokens WHERE revoked_at IS NULL AND refresh_expires_at > ? AND client_id <> 'mcpc_leak_check') AS people`,
+                (SELECT COUNT(DISTINCT user_id) FROM mcp_tokens WHERE revoked_at IS NULL AND refresh_expires_at > ? AND client_id NOT IN ('mcpc_leak_check', 'mcpc_brief')) AS people`,
       )
       .bind(dayAgo, dayAgo, nowIso)
       .first<Record<string, unknown>>(),

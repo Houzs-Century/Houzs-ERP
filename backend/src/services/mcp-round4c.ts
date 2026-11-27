@@ -135,6 +135,7 @@ export const OUTPUT_KEYS: Record<string, Record<string, string>> = {
   after_sales_sla: { pastDeadline: "Cases past deadline", pastDeadlineByStage: "Per stage", pastDeadlineByPriority: "Per priority", mostOverdue: "Most overdue first", stuckInStage: "More than 3 days in a stage" },
   service_cases: { period: "The period asked", cases: "Cases reported", previousPeriodCases: "Previous period", byCategory: "Per category", byOutlet: "Per outlet", byStage: "Per stage", recent: "Latest cases with what each is about" },
   company_report: { period: "The period", profitAndLoss: "From the books (finance only)", salesOrders: "Sales orders, by outlet", receivables: "Debtor aging", payables: "Creditor aging", afterSales: "Service cases", notAvailable: "Sections the role may not read" },
+  data_gaps: { today: "Today", gaps: "Each kind of missing data with its count and first items", clean: "Checks with nothing missing", notAvailable: "Checks the role may not read" },
 };
 
 /** The outputSchema for a quick answer, or null for a tool that has none. Loose on purpose: no required keys, extra keys allowed. */

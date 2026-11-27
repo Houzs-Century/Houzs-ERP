@@ -18,6 +18,7 @@ import { myToday } from "./mcp-quick";
 import { summariseAfterSales, summariseAttendance } from "./mcp-quick2";
 import { PERIOD_TOOL_SCHEMA, ROUND4_INSTRUCTIONS, ROUND4_TOOL_NAMES, ROUND4_TOOLS, runRound4Tool } from "./mcp-round4";
 import { randomToken } from "./mcp-store";
+import { DATA_GAPS_INSTRUCTIONS, DATA_GAPS_TOOL, dataGaps } from "./mcp-data-gaps";
 import { buildXlsx, flattenRow, pickColumns } from "./mcp-xlsx";
 
 type Obj = Record<string, unknown>;
@@ -121,17 +122,19 @@ export const ROUND3_TOOLS = [
   },
   ...FAQ_TOOLS,
   ...ROUND4_TOOLS,
+  DATA_GAPS_TOOL,
 ];
 
 const NAMES = new Set(ROUND3_TOOLS.map((t) => t.name));
 export const isRound3Tool = (name: string): boolean => NAMES.has(name);
 /** The read-only summaries the route may answer from the 30-second cache (services/mcp-ratelimit.ts). */
-export const CACHEABLE_TOOLS = new Set(["sales_summary", "delivery_summary", "outlet_sales", "pos_sales", "after_sales_summary", "attendance_today", "daily_brief", ...FAQ_TOOL_NAMES, ...ROUND4_TOOL_NAMES]);
+export const CACHEABLE_TOOLS = new Set(["sales_summary", "delivery_summary", "outlet_sales", "pos_sales", "after_sales_summary", "attendance_today", "daily_brief", "data_gaps", ...FAQ_TOOL_NAMES, ...ROUND4_TOOL_NAMES]);
 
 export const ROUND3_INSTRUCTIONS = `- Sales by showroom / outlet for a period (today, this week, month to date, last month...): outlet_sales {period}. Booth POS sales: pos_sales {period}. Open service cases by status and age: after_sales_summary. Who is on leave or absent today (HR only): attendance_today.
 - "What do I need to look at today?": daily_brief. A list as an Excel file: export_excel {list, search, status, from, to, fields}; give the person the download link.
 ${FAQ_INSTRUCTIONS}
-${ROUND4_INSTRUCTIONS}`;
+${ROUND4_INSTRUCTIONS}
+${DATA_GAPS_INSTRUCTIONS}`;
 
 
 const ASSR_PAGE = 200;
@@ -312,6 +315,8 @@ export async function runRound3Tool(ctx: R3Ctx, name: string, args: Obj): Promis
       return dailyBrief(ctx);
     case "export_excel":
       return exportExcel(ctx, args);
+    case "data_gaps":
+      return dataGaps(ctx);
     default:
       return runFaqTool(ctx, name, args) ?? runRound4Tool(ctx, name, args) ?? { result: text(`Unknown tool: ${name}`, true), status: 400, note: "", target: "" };
   }

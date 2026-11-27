@@ -191,7 +191,7 @@ describe("daily brief", () => {
 
 describe("round-3 tools through a fake ERP", () => {
   it("are registered with schemas", () => {
-    expect(ROUND3_TOOLS.map((t) => t.name)).toEqual(["outlet_sales", "pos_sales", "after_sales_summary", "attendance_today", "daily_brief", "export_excel", "po_overdue", "supplier_lateness", "payables_summary", "so_overdue", "deliveries_due", "receivables_summary", "stock_check", "inventory_summary", "uninvoiced_deliveries", "po_awaiting_receipt", "customer_overview", "after_sales_sla", "service_cases", "company_report"]);
+    expect(ROUND3_TOOLS.map((t) => t.name)).toEqual(["outlet_sales", "pos_sales", "after_sales_summary", "attendance_today", "daily_brief", "export_excel", "po_overdue", "supplier_lateness", "payables_summary", "so_overdue", "deliveries_due", "receivables_summary", "stock_check", "inventory_summary", "uninvoiced_deliveries", "po_awaiting_receipt", "customer_overview", "after_sales_sla", "service_cases", "company_report", "data_gaps"]);
     expect(isRound3Tool("daily_brief")).toBe(true);
     expect(isRound3Tool("erp_get")).toBe(false);
   });

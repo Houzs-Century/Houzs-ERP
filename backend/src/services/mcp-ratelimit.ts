@@ -50,7 +50,7 @@ export async function rateLimitRefusal(db: Db, userId: number, now: number): Pro
 export const ANSWER_CACHE_TTL_MS = 30_000;
 /** The heavy summaries keep an answer a little longer (round 4c, P4): still per person and per arguments. */
 export const HEAVY_CACHE_TTL_MS = 60_000;
-export const HEAVY_TOOLS: ReadonlySet<string> = new Set(["company_report", "outlet_sales", "inventory_summary", "after_sales_sla"]);
+export const HEAVY_TOOLS: ReadonlySet<string> = new Set(["company_report", "outlet_sales", "inventory_summary", "after_sales_sla", "data_gaps"]);
 /** How long one tool's answer may be served again to the same person with the same arguments. */
 export const cacheTtlFor = (tool: string): number => (HEAVY_TOOLS.has(tool) ? HEAVY_CACHE_TTL_MS : ANSWER_CACHE_TTL_MS);
 const ANSWER_CACHE_MAX = 300;
