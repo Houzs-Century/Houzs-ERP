@@ -5,6 +5,8 @@
        SUBMITTED; answered by an AP invoice since cancelled; answered (no AP
        invoice) by a voucher since cancelled, or by nothing at all;
      • a live answer, a returned or withdrawn request, another company's: not counted;
+     • a refund request still waiting for its one approval (owner 2026-11-27)
+       is not Finance's yet; once approved it counts;
      • only Finance is counted for — anyone else reads 0 and nothing is read.
    The count rides PostgREST inner embeds (ap_invoices!inner / payment_vouchers
    !inner), which the shared fake does not speak — so this file carries a small
@@ -15,7 +17,7 @@ import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { SCM_SYSTEM_STAFF_ID } from '../src/scm/middleware/auth';
 import { paymentRequests } from '../src/scm/routes/payment-requests';
-import { requestStage } from '../src/scm/lib/payment-request';
+import { awaitsRefundApproval, requestStage } from '../src/scm/lib/payment-request';
 
 type Row = Record<string, unknown>;
 const CO = 1;
@@ -29,6 +31,8 @@ const REQUESTS: Row[] = [
   { id: 'r-none', company_id: 1, status: 'VOUCHERED', pv_id: null, ap_invoice_id: null },
   { id: 'r-back', company_id: 1, status: 'REJECTED', pv_id: null, ap_invoice_id: null },
   { id: 'r-off', company_id: 1, status: 'WITHDRAWN', pv_id: null, ap_invoice_id: null },
+  { id: 'r-refund-wait', company_id: 1, status: 'SUBMITTED', pv_id: null, ap_invoice_id: null, refund_source_doc_no: 'HC-SO-1', refund_approved_at: null },
+  { id: 'r-refund-ok', company_id: 1, status: 'SUBMITTED', pv_id: null, ap_invoice_id: null, refund_source_doc_no: 'HC-SO-2', refund_approved_at: '2026-11-27T03:00:00Z' },
   { id: 'r-other-co', company_id: 2, status: 'SUBMITTED', pv_id: null, ap_invoice_id: null },
 ];
 const VOUCHERS: Record<string, string> = { 'pv-1': 'DRAFT', 'pv-2': 'CANCELLED' };
@@ -54,6 +58,11 @@ function fakeSb(reads: string[]) {
         },
         eq(col: string, val: unknown) { filters.push((r) => statusOf(r, col) === val); return q; },
         is(col: string, val: null) { filters.push((r) => (r[col] ?? null) === val); return q; },
+        not(col: string, op: string, val: null) {
+          expect(op).toBe('is');
+          filters.push((r) => (r[col] ?? null) !== val);
+          return q;
+        },
         then(resolve: (v: { count: number; error: null }) => unknown) {
           let rows = REQUESTS.slice();
           /* An inner embed keeps only the rows whose embedded row exists. */
@@ -90,15 +99,16 @@ describe('payment requests waiting for Finance', () => {
   test('counts what the page calls 「Waiting for Finance」 — and nothing else', async () => {
     const reads: string[] = [];
     const r = await as(['scm.payment_voucher.create'], reads)();
-    expect(r).toEqual({ status: 200, body: { count: 4 } });
+    expect(r).toEqual({ status: 200, body: { count: 5 } });
     /* The same answer the page reads off each request's stage. */
     const waiting = REQUESTS.filter((q) => q.company_id === CO).filter((q) => {
       const inv = q.ap_invoice_id ? { id: String(q.ap_invoice_id), status: INVOICES[String(q.ap_invoice_id)] } : null;
       const pv = q.pv_id ? { id: String(q.pv_id), status: VOUCHERS[String(q.pv_id)] } : null;
       const stage = requestStage(String(q.status), pv as never, false, inv as never);
+      if (awaitsRefundApproval(q, stage)) return false;
       return stage === 'SUBMITTED' || stage === 'VOUCHER_CANCELLED';
     });
-    expect(waiting.map((q) => q.id)).toEqual(['r-sub', 'r-pv-gone', 'r-api-gone', 'r-none']);
+    expect(waiting.map((q) => q.id)).toEqual(['r-sub', 'r-pv-gone', 'r-api-gone', 'r-none', 'r-refund-ok']);
   });
 
   test('anyone but Finance reads 0, and nothing is read', async () => {

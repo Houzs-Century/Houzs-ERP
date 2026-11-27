@@ -62,7 +62,7 @@ export function moneySummary(m: OrderMoney): string {
 
 /** A refund request as the panel lists it: its number, amount and answer. */
 export function refundRequestText(r: MoneyRefundRequest): string {
-  const answer = r.state === 'WAITING' ? 'waiting for Finance'
+  const answer = r.state === 'WAITING' ? (r.approvedBy ? `approved by ${r.approvedBy}, waiting for Finance` : 'waiting for approval')
     : r.state === 'ANSWERED' ? `answered by ${r.pvNumber ?? 'a refund voucher'}`
       : r.state === 'RETURNED' ? `rejected${r.financeNote ? `: ${r.financeNote}` : ''}`
         : 'withdrawn';

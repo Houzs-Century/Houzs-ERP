@@ -13,6 +13,7 @@ import { DESK, judgeLaneHandover, judgeLaneMove } from '../lib/amendment-lane-ha
 import { countCancelRequestsAwaitingSigner } from '../lib/cancel-pending-count';
 import { approveKeysFor } from '../shared/document-cancel';
 import { CANCEL_REQUESTS_TABLE } from './document-cancel-routes';
+import { REFUND_APPROVE_KEY, refundApprovalsWaitingFor } from '../lib/payment-request';
 import { hasHouzsPerm, holdsHouzsPermLiterally, canViewAllSales, canWriteScmConfig } from '../lib/houzs-perms';
 import { resolveSalesScopeIds, soOwnedInScope, readSoOwnership, resolveCallerStaffId, resolveUserIdByStaffId } from '../lib/salesScope';
 import {
@@ -342,7 +343,9 @@ soAmendments.get('/pending-count', async (c) => {
      cancel bill - 需要在 SO amendment 出现」), so the badge over it counts them
      as well — a number that stops at the amendments under-states the desk. */
   const cancelKeys = approveKeysFor('SO').filter((k) => holdsHouzsPermLiterally(c, k));
-  if (lanes.length === 0 && !legacy && cancelKeys.length === 0) return c.json({ count: 0 });
+  /* Refund requests too (owner 2026-11-27): the cancel level-2 desk approves them. */
+  const refundApprover = holdsHouzsPermLiterally(c, REFUND_APPROVE_KEY);
+  if (lanes.length === 0 && !legacy && cancelKeys.length === 0 && !refundApprover) return c.json({ count: 0 });
 
   const sb = c.get('supabase');
   let amendments = 0;
@@ -384,7 +387,8 @@ soAmendments.get('/pending-count', async (c) => {
       console.error('[so-amendment] pending-count cancel read threw:', (e as Error).message);
     }
   }
-  return c.json({ count: amendments + cancellations, amendments, cancellations });
+  const refunds = refundApprover ? await refundApprovalsWaitingFor(c, c.get('houzsUser')?.id ?? null) : 0;
+  return c.json({ count: amendments + cancellations + refunds, amendments, cancellations, refunds });
 });
 
 soAmendments.get('/command-diag', async (c) => {

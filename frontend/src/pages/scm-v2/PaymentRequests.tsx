@@ -29,7 +29,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import {
-  STAGE, answerText, awaitsFinance, billMatchText, hasInstalments, isRefundRequest, mayAskBalance,
+  STAGE, answerText, awaitsFinance, billMatchText, hasInstalments, isRefundRequest, mayAskBalance, refundApprovalText,
   stageLabel, usePaymentRequest, usePaymentRequests, useWithdrawPaymentRequest,
   type PaymentRequest,
 } from '../../vendor/scm/lib/payment-request-queries';
@@ -215,6 +215,9 @@ function RequesterRequests({ listQ }: { listQ: RequestListQuery }) {
             <Meta label="Requested by" value={`${detail.requested_by_name ?? '—'} · ${fmtDateOrDash(detail.created_at)}`} />
             {isRefundRequest(detail) && (
               <Meta label="Refund on" value={<Link to={`/scm/sales-orders/${encodeURIComponent(detail.refund_source_doc_no ?? '')}`} style={{ ...num, color: 'var(--c-orange)' }}>{detail.refund_source_doc_no}</Link>} />
+            )}
+            {isRefundRequest(detail) && (
+              <Meta label="Approval" value={refundApprovalText(detail, fmtDateOrDash) ?? (detail.stage === 'AWAITING_APPROVAL' ? 'Waiting — a cancellation level-2 approver signs it' : '—')} />
             )}
             <Meta label={isRefundRequest(detail) ? 'Refund to' : 'Pay to'} value={detail.payee_name} />
             <Meta label="Amount" value={<b>{fmtSen(detail.amount_sen)}</b>} />

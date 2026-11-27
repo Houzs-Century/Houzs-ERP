@@ -23,6 +23,7 @@ import {
   useCancelRequestActions,
 } from "../vendor/scm/lib/use-cancel-request-actions";
 import { useRefreshApprovalBadges } from "../hooks/useAmendmentApprovals";
+import { MobileRefundApprovals } from "./MobileRefundApprovals";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { customerRefOf } from "../../../shared/src/lib/customer-ref";
 import { formatDate } from "../lib/utils";
@@ -205,6 +206,7 @@ export function MobileAmendments({
       </header>
 
       <div className="hz-scroll" style={{ flex: 1, overflowY: "auto", padding: 14, paddingBottom: 40 }}>
+        <MobileRefundApprovals onOpen={onOpen} onChanged={refreshBadges} />
         {isLoading && (
           <div style={{ textAlign: "center", color: "var(--mut2)", fontSize: 12, padding: "26px 0" }}>Loading…</div>
         )}

@@ -7,6 +7,8 @@
 //     migrated one never — with the reason;
 //   • create composes the ONE Dr AR line itself, stamps the source and the
 //     customer, refuses an amount past the headroom (draft vouchers count);
+//   • a Sales Order's refund answers its approved refund request (owner
+//     2026-11-27) or is not made; a Sales Invoice's needs none;
 //   • CHECK mints {co}{letter}RF — cash {co}CRF;
 //   • POST writes Dr AR (party CUSTOMER) / Cr the money account, and the
 //     customer-credit row only when the document carries a debtor code;
@@ -49,6 +51,8 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
       acc_account_roles: [],
       acc_bank_letters: [{ company_id: CO, account_code: '310-0010', letter: 'M' }],
       acc_numbering: [],
+      acc_payment_requests: [],
+      acc_payment_request_files: [],
       acc_supplier_advances: [],
       acc_vendor_memory: [],
       companies: [{ id: CO, code: '2990' }],
@@ -89,10 +93,20 @@ function harness(tables: Record<string, Row[]> = {}, perms: readonly string[] = 
 }
 
 const json = (body: unknown) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const create = (app: Hono, body: unknown) => app.request('/payment-vouchers', json(body), {});
+
+/* The order's refund request, raised and approved (owner 2026-11-27) — what a Sales Order's refund voucher answers. */
+const approvedRequest = (sb: ReturnType<typeof harness>['sb'], id: string, amountSen: number): void => {
+  sb.tables.acc_payment_requests.push({
+    id, company_id: CO, request_no: `2990-PRQ-${yymm}-${id}`, requested_by: 31, requested_by_name: 'Sales A', payee_name: 'Ah Meng',
+    amount_sen: amountSen, purpose: 'Customer cancelled', status: 'SUBMITTED', pv_id: null, ap_invoice_id: null, parent_request_id: null,
+    refund_source_type: 'SO', refund_source_doc_no: SO, refund_approved_by: 41, refund_approved_by_name: 'Purchaser A', refund_approved_at: '2026-07-05T01:00:00Z',
+  });
+};
 
 const REFUND = {
   purpose: 'CUSTOMER_REFUND', payeeName: 'typed by hand', creditAccountCode: '310-0010', voucherDate: '2026-07-05',
-  refundSourceType: 'SO', refundSourceDocNo: SO, refundAmountSen: 30000,
+  refundSourceType: 'SO', refundSourceDocNo: SO, refundAmountSen: 30000, paymentRequestId: 'prq-1',
   /* Lines on the wire are IGNORED for a refund — the system composes the one line. */
   lines: [{ description: 'smuggled', debitAccountCode: '900-0000', amountSen: 1 }],
 };
@@ -149,8 +163,10 @@ describe('refund-source — 认单为主', () => {
 describe('create — the one line is the system\'s', () => {
   test('stamps the source and the customer, composes Dr AR for the amount, ignores the wire\'s lines', async () => {
     const { app, sb } = harness();
-    const res = await app.request('/payment-vouchers', json(REFUND));
+    approvedRequest(sb, 'prq-1', 30000);
+    const res = await create(app, REFUND);
     expect(res.status).toBe(201);
+    expect(sb.tables.acc_payment_requests[0]).toMatchObject({ status: 'VOUCHERED', pv_id: sb.tables.payment_vouchers[0]!.id });
     const pv = sb.tables.payment_vouchers[0]!;
     expect(pv).toMatchObject({
       purpose: 'CUSTOMER_REFUND', payee_name: 'Ah Meng', refund_source_type: 'SO', refund_source_doc_no: SO,
@@ -163,8 +179,10 @@ describe('create — the one line is the system\'s', () => {
 
   test('past the headroom is refused with the three figures — a draft already on the order counts', async () => {
     const { app, sb } = harness();
-    expect((await app.request('/payment-vouchers', json(REFUND))).status).toBe(201);
-    const res = await app.request('/payment-vouchers', json({ ...REFUND, refundAmountSen: 60000 }));
+    approvedRequest(sb, 'prq-1', 30000);
+    expect((await create(app, REFUND)).status).toBe(201);
+    approvedRequest(sb, 'prq-2', 60000);
+    const res = await create(app, { ...REFUND, refundAmountSen: 60000, paymentRequestId: 'prq-2' });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: 'refund_exceeds_booked', bookedSen: 80000, refundedSen: 30000, refundableSen: 50000 });
     expect(sb.tables.payment_vouchers).toHaveLength(1);
@@ -182,6 +200,25 @@ describe('create — the one line is the system\'s', () => {
     expect((await app.request('/payment-vouchers', json({ ...REFUND, refundAmountSen: 0 }))).status).toBe(400);
     expect((await app.request('/payment-vouchers', json({ ...REFUND, creditAccountCode: '900-0000' }))).status).toBe(400);
     expect(sb.tables.payment_vouchers).toHaveLength(0);
+  });
+});
+
+describe('a Sales Order\'s refund answers its request (owner 2026-11-27)', () => {
+  test('with none named it is refused before anything is written; a cancelled Sales Invoice needs none', async () => {
+    const { app, sb } = harness();
+    const bare = await create(app, { ...REFUND, paymentRequestId: undefined });
+    expect(bare.status).toBe(409);
+    expect(((await bare.json()) as { error: string }).error).toBe('refund_needs_request');
+    expect(sb.tables.payment_vouchers).toHaveLength(0);
+
+    const si = harness({
+      sales_invoices: [{ id: 'si-1', invoice_number: 'HC-SI-2607-001', company_id: CO, status: 'CANCELLED', debtor_name: 'Ali', debtor_code: 'D001', migrated_no_stock: false }],
+      sales_invoice_payments: [{ id: 'sp1', sales_invoice_id: 'si-1', paid_at: '2026-07-01', method: 'transfer', merchant_provider: null, amount_sen: 80000, company_id: CO }],
+      journal_entries: [{ ...BOOKED_JE, id: 'je-si', source_type: 'SIPAY', source_doc_no: 'sp1' }],
+    });
+    const res = await create(si.app, { ...REFUND, refundSourceType: 'SI', refundSourceDocNo: 'HC-SI-2607-001', paymentRequestId: undefined });
+    expect(res.status).toBe(201);
+    expect(si.sb.tables.payment_vouchers[0]).toMatchObject({ refund_source_type: 'SI', refund_source_doc_no: 'HC-SI-2607-001', total_sen: 30000 });
   });
 });
 

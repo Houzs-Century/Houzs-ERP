@@ -16,7 +16,7 @@ import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { runOneAiRead, type AiReadStage } from './ai-read-job';
 
 export type RequestStage =
-  | 'SUBMITTED' | 'PROCESSING' | 'BOOKED' | 'PARTLY_PAID' | 'PAID' | 'BANK_CONFIRMED'
+  | 'AWAITING_APPROVAL' | 'SUBMITTED' | 'PROCESSING' | 'BOOKED' | 'PARTLY_PAID' | 'PAID' | 'BANK_CONFIRMED'
   | 'RETURNED' | 'WITHDRAWN' | 'VOUCHER_CANCELLED';
 
 export type PaymentRequest = {
@@ -69,6 +69,9 @@ export type PaymentRequest = {
       Customer Refund voucher on it, never edited. Null on any other request. */
   refund_source_type?: 'SO' | null;
   refund_source_doc_no?: string | null;
+  /** A refund request's one approval (owner 2026-11-27): who signed it and when; null until then. */
+  refund_approved_by_name?: string | null;
+  refund_approved_at?: string | null;
 };
 
 /** A refund raised from a Sales Order's money panel. */
@@ -145,6 +148,7 @@ export type StageTagTone = 'calm' | 'warn' | 'info' | 'late';
     colour it reads in, and the tone of its tag on Finance's list — one home
     for all three. */
 export const STAGE: Record<RequestStage, { label: string; tone: string; tag: StageTagTone }> = {
+  AWAITING_APPROVAL: { label: 'Waiting approval', tone: 'var(--c-orange)', tag: 'warn' },
   SUBMITTED: { label: 'Submitted', tone: 'var(--fg-muted)', tag: 'info' },
   PROCESSING: { label: 'Finance processing', tone: 'var(--c-orange)', tag: 'warn' },
   BOOKED: { label: 'Booked, not paid yet', tone: 'var(--c-orange)', tag: 'warn' },
@@ -287,6 +291,7 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
      returned, the order's money panel reads it back. */
   void qc.invalidateQueries({ queryKey: ['so-money'] });
   void qc.invalidateQueries({ queryKey: ['finance-todo'] });
+  void qc.invalidateQueries({ queryKey: ['refund-approvals'] });
 };
 
 export const useCreatePaymentRequest = () => {
@@ -340,6 +345,38 @@ export const useReturnPaymentRequest = () => {
     onError: writeFailedAs('Request not returned'),
   });
 };
+
+/* ── A refund request's one approval (owner 2026-11-27: 只要一级，但这一级的权限和
+   cancel 的第二级一样) ─────────────────────────────────────────────────────────
+   Whoever holds the key that signs a Sales Order cancellation's second level
+   approves it — or rejects it — before Finance may answer it; never the person
+   who raised it. The server decides who may (mayApprove) and refuses anyone
+   else; these only read and send. */
+
+/** The approver's list: `open` — waiting for the approval, oldest first; `all` — every refund request, newest first. */
+export type RefundApprovals = { requests: PaymentRequest[]; mayApprove: boolean; me?: number | null };
+
+export const useRefundApprovals = (scope: 'open' | 'all') => useQuery({
+  queryKey: ['refund-approvals', scope],
+  queryFn: () => authedFetch<RefundApprovals>(`/payment-requests/refund-approvals${scope === 'all' ? '?scope=all' : ''}`),
+});
+
+export const useApproveRefundRequest = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch<{ ok: true; already?: boolean }>(`/payment-requests/${id}/approve-refund`, { method: 'POST' }),
+    onSuccess: () => invalidate(qc),
+    onError: writeFailedAs('Refund not approved'),
+  });
+};
+
+/** Approve and Reject are offered on a refund request still waiting for its approval — never to the person who raised it. */
+export const viewerMayApproveRefund = (r: Pick<PaymentRequest, 'stage' | 'requested_by'>, me: number | null, mayApprove: boolean): boolean =>
+  mayApprove && r.stage === 'AWAITING_APPROVAL' && me != null && Number(r.requested_by) !== me;
+
+/** Where a refund request's approval stands, in one line: "Approved by X · 27/11/2026", or null before it is approved. */
+export const refundApprovalText = (r: Pick<PaymentRequest, 'refund_approved_by_name' | 'refund_approved_at'>, fmtDate: (iso: string) => string): string | null =>
+  (r.refund_approved_at ? `Approved by ${r.refund_approved_by_name?.trim() || 'someone'} · ${fmtDate(r.refund_approved_at)}` : null);
 
 export const usePaymentRequestFiles = (id: string | null) => useQuery({
   queryKey: ['payment-request-files', id],

@@ -42,6 +42,7 @@ import { IMPORTED_METHOD, conversionsFrom } from './so-money';
 import { heldSen, refundRequestsOn } from './refund-request';
 import { CONVERT_SOURCE } from '../../acc/payments';
 import { fmtSen } from '../shared/format';
+import { refundOverRequestsRefusal } from './payment-request';
 
 export type RefundSourceType = 'SO' | 'SI';
 
@@ -274,6 +275,10 @@ export async function refundCreateGuard(
       }, 409),
     };
   }
+  if (s.type === 'SO') {
+    const gate = await soRefundRequestGate(sb, co.companyId, s.docNo, body, excludePvId, amount);
+    if (gate) return { ok: false, resp: c.json(gate.body, gate.status) };
+  }
   const roles = await resolveRoles(sb, co.companyId);
   return {
     ok: true,
@@ -288,6 +293,34 @@ export async function refundCreateGuard(
       payee_name: s.customer.name ?? String(body.payeeName ?? '').trim(),
     },
   };
+}
+
+/**
+ * A Sales Order's refund answers its approved refund request (owner
+ * 2026-11-27): a NEW voucher must name the request(s) it answers — the
+ * request's own guard then wants the approval and caps the amount; an EDITED
+ * one stays within what the requests it answers asked for. A Sales Invoice's
+ * refund has no request and is not asked. The refusal to send, or null.
+ */
+export async function soRefundRequestGate(
+  sb: any, companyId: number, docNo: string, body: Record<string, unknown>, excludePvId: string | null, amountSen: number,
+): Promise<{ status: 409 | 500; body: Record<string, unknown> } | null> {
+  const needsRequest = {
+    error: 'refund_needs_request',
+    message: `A refund on ${docNo} starts from the order: raise it with the order's Refund button, and once it is approved, answer that request here.`,
+  };
+  if (excludePvId == null) {
+    const named = [body.paymentRequestId, ...(Array.isArray(body.paymentRequestIds) ? body.paymentRequestIds : [])]
+      .some((v) => typeof v === 'string' && v.trim() !== '');
+    return named ? null : { status: 409, body: needsRequest };
+  }
+  const { data, error } = await sb.from('acc_payment_requests').select('request_no, amount_sen, refund_source_doc_no')
+    .eq('company_id', companyId).eq('pv_id', excludePvId).eq('refund_source_doc_no', docNo);
+  if (error) return { status: 500, body: { error: 'load_failed', reason: error.message } };
+  const answered = (data ?? []) as Array<Record<string, unknown>>;
+  if (answered.length === 0) return { status: 409, body: needsRequest };
+  const over = refundOverRequestsRefusal(answered, { kind: 'PV', body: { refundAmountSen: amountSen } });
+  return over ? { status: 409, body: over } : null;
 }
 
 /** The refund's own control (roles.AR) — what the typing-time control lock

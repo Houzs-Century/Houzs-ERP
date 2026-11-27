@@ -139,9 +139,10 @@ describe('OrderMoneyPanel', () => {
         money: money({
           requestedSen: 20_000, remainingSen: 50_000,
           refundRequests: [
-            { id: 'r1', requestNo: '2990-PRQ-2610-001', amountSen: 20_000, state: 'WAITING', reason: 'x', financeNote: null, requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null },
+            { id: 'r1', requestNo: '2990-PRQ-2610-001', amountSen: 20_000, state: 'WAITING', reason: 'x', financeNote: null, requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null, approvedBy: null, approvedOn: null },
             { id: 'r2', requestNo: '2990-PRQ-2610-002', amountSen: 10_000, state: 'RETURNED', reason: 'y', financeNote: 'Convert it instead', requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null },
             { id: 'r3', requestNo: '2990-PRQ-2610-003', amountSen: 5_000, state: 'WITHDRAWN', reason: 'z', financeNote: null, requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null },
+            { id: 'r4', requestNo: '2990-PRQ-2610-004', amountSen: 3_000, state: 'WAITING', reason: 'w', financeNote: null, requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null, approvedBy: 'Purchaser A', approvedOn: '2026-10-15' },
           ],
         }),
         others: [],
@@ -149,8 +150,9 @@ describe('OrderMoneyPanel', () => {
       isError: false,
     });
     render(wrap(<OrderMoneyPanel docNo={OLD} />));
-    const waiting = screen.getByText('2990-PRQ-2610-001 · RM 200.00 (waiting for Finance)');
+    const waiting = screen.getByText('2990-PRQ-2610-001 · RM 200.00 (waiting for approval)');
     expect(waiting.getAttribute('href')).toBe('/scm/payment-requests?open=r1');
+    expect(screen.getByText('2990-PRQ-2610-004 · RM 30.00 (approved by Purchaser A, waiting for Finance)')).toBeTruthy();
     expect(screen.getByText('2990-PRQ-2610-002 · RM 100.00 (rejected: Convert it instead)')).toBeTruthy();
     expect(screen.queryByText(/2990-PRQ-2610-003/)).toBeNull();
     expect(screen.getByText('Paid RM 700.00 · Refund requested RM 200.00 · Remaining RM 500.00')).toBeTruthy();

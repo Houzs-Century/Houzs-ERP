@@ -34,6 +34,9 @@ const cancelPo = vi.fn(async (_v: unknown) => ({}));
 const confirm = vi.fn(async (_o: unknown) => true);
 const notify = vi.fn(async (_o: unknown) => undefined);
 
+/* The refund approvals (owner 2026-11-27) are their own section with their own tests (RefundApprovals.test.tsx). */
+vi.mock('./RefundApprovals', () => ({ RefundApprovals: () => null }));
+vi.mock('../../mobile/MobileRefundApprovals', () => ({ MobileRefundApprovals: () => null }));
 vi.mock('../../vendor/scm/lib/document-cancel-queries', async (orig) => ({
   ...(await orig<typeof import('../../vendor/scm/lib/document-cancel-queries')>()),
   useCancelRequests: () => ({ data: { requests: ROWS }, isLoading: false, isError: false, error: null }),

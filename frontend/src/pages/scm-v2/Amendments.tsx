@@ -54,6 +54,7 @@ import {
 import { useRefreshApprovalBadges } from '../../hooks/useAmendmentApprovals';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { PageHeader } from '../../components/Layout';
+import { RefundApprovals } from './RefundApprovals';
 import { FilterPills } from '../../components/FilterPills';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
@@ -277,6 +278,8 @@ export const Amendments = () => {
             {error instanceof Error ? error.message : 'Something went wrong.'}
           </div>
         )}
+
+        <RefundApprovals onlyWhenWaiting />
 
         {/* Status strip — the SO page's OWN FilterPills component (owner
             2026-07-26, red box on the SO ALL·73 strip: "amendment要和sales
