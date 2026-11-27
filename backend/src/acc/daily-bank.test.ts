@@ -341,10 +341,10 @@ describe('computeDailyBank — the cash book', () => {
       note: 'TRANSFER FROM MBB TO HLBB', amountSen: 15_000_000, method: null,
     }]);
     expect(hlbb).toMatchObject({ openingSen: 9_677_612 + 1_000_000, inSen: 15_000_000, outSen: 0, closingSen: 9_677_612 + 1_000_000 + 15_000_000 });
-    /* Between the company's own banks only the bank charge leaves. */
-    expect(board.totalClosingSen).toBe(77_408_649 + 9_677_612 - 100);
-    /* The original board reads the ledger and never these. */
-    expect(computeDailyBank(DAY, BANKS, ACQ, LEDGER, [], null).blocks.find((b) => b.accountCode === '310-0020')!.receipts).toEqual([]);
+    const onlyTheChargeLeaves = 77_408_649 + 9_677_612 - 100;
+    expect(board.totalClosingSen).toBe(onlyTheChargeLeaves);
+    const ledgerBoard = computeDailyBank(DAY, BANKS, ACQ, LEDGER, [], null);
+    expect(ledgerBoard.blocks.find((b) => b.accountCode === '310-0020')!.receipts).toEqual([]);
   });
 
   it('a transfer in a foreign currency arrives in MYR the way posting converts it', () => {
