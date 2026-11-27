@@ -14,6 +14,12 @@ export type RoutePoint = {
 /** Where the lorry is now (Fleet Health's lorry page) — a dark marker on top. */
 export type RouteVehicle = { lat: number; lng: number; label: string };
 
+/** True when every point is the same spot, so fitBounds has no area to fit and the map needs a fixed street zoom. */
+export function isOnePlace(points: ReadonlyArray<{ lat: number; lng: number }>): boolean {
+  const first = points.at(0);
+  return first === undefined || points.every((p) => p.lat === first.lat && p.lng === first.lng);
+}
+
 function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: number; lng: number } | null; stops: RoutePoint[]; vehicle: RouteVehicle | null; track: Array<{ lat: number; lng: number }>; drops: RoutePoint[] }) {
   const map = useMap();
   const objectsRef = useRef<Array<{ setMap: (m: google.maps.Map | null) => void }>>([]);
@@ -110,7 +116,8 @@ function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: n
       }));
     }
 
-    if (vehicleRef.current) bounds.extend({ lat: vehicleRef.current.lat, lng: vehicleRef.current.lng });
+    const vehicleNow = vehicleRef.current;
+    if (vehicleNow) bounds.extend({ lat: vehicleNow.lat, lng: vehicleNow.lng });
 
     if (path.length >= 2) {
       const line = new google.maps.Polyline({
@@ -126,7 +133,7 @@ function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: n
 
     if (!bounds.isEmpty()) {
       map.fitBounds(bounds, 48);
-      if (path.length <= 1) map.setZoom(14);
+      if (isOnePlace([...path, ...drops, ...track, ...(vehicleNow ? [vehicleNow] : [])])) map.setZoom(14);
     }
 
     return () => {
