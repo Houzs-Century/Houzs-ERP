@@ -614,9 +614,14 @@ const UploadSummary = ({ batchIds, refusals, leftOut, onOpen, onDone }: {
 /* A DuitNow QR line's Reference cell (owner 2026-11-09: 0000PP 是 qr direct 去
    bank 的，不算卡机的): Hong Leong prints a placeholder there, so the line says
    what it is instead. */
-const RefCell = ({ row }: { row: SettlementRow }) => (isQrLine(row)
-  ? <span className={styles.codeChip}>{QR_REF_WORDS}</span>
-  : row.ref ? <b>{row.ref}</b> : <span className={grid.sub}>—</span>);
+const RefCell = ({ row }: { row: SettlementRow }) => (
+  <>
+    {isQrLine(row)
+      ? <span className={styles.codeChip}>{QR_REF_WORDS}</span>
+      : row.ref ? <b>{row.ref}</b> : <span className={grid.sub}>—</span>}
+    {row.terminal_id && <div className={grid.sub}>Terminal {row.terminal_id}</div>}
+  </>
+);
 
 const qrMoneyWords = (sen: number): string => `QR ${fmt(sen)} · straight to the bank`;
 
@@ -869,6 +874,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
       { key: 'line', label: 'Line', getValue: (r) => r.line_no },
       { key: 'date', label: 'Date', getValue: (r) => r.txn_date },
       { key: 'ref', label: 'Reference', getValue: (r) => r.ref ?? '' },
+      { key: 'terminal', label: 'Terminal', getValue: (r) => r.terminal_id ?? '' },
       { key: 'gross', label: 'Gross', getValue: (r) => (r.gross_sen / 100).toFixed(2) },
       { key: 'fee', label: 'Fee', getValue: (r) => (r.fee_sen / 100).toFixed(2) },
       { key: 'net', label: 'Net', getValue: (r) => (r.net_sen / 100).toFixed(2) },
@@ -1239,6 +1245,7 @@ const SettlementLine = ({ row, others = [] }: {
         <span className={styles.codeChip}>Line {row.line_no}</span>
         <span>{row.txn_date}</span>
         {qr ? <span className={styles.codeChip}>{QR_REF_WORDS}</span> : row.ref && <span>ref <b>{row.ref}</b></span>}
+        {row.terminal_id && <span>terminal <b>{row.terminal_id}</b></span>}
         <span style={{ flex: 1 }} />
         <span><b>{fmt(row.gross_sen)}</b> gross</span>
         {qr

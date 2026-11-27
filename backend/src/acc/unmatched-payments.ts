@@ -105,6 +105,9 @@ export type UnmatchedPayment = {
   statementUpTo: string | null;
   jeNo: string | null;
   report: UnmatchedReport | null;
+  /** The card terminal the report line claiming this payment names (owner 2026-11-27:
+      这里我要显示terminal id); null when no line claims it or the line names none. */
+  terminalId: string | null;
 };
 
 type DocRef = { ref: string | null; customer_so_no: string | null };
@@ -129,7 +132,7 @@ export type PaymentFact = {
 
 /** What the two reconciliations have said, keyed `${source}:${id}` where a payment is meant. */
 export type MatchFacts = {
-  merchantClaims: Map<string, { confirmed: boolean; batchId?: number | null }>;
+  merchantClaims: Map<string, { confirmed: boolean; batchId?: number | null; terminalId?: string | null }>;
   reports?: Map<number, Omit<UnmatchedReport, 'batchId'>>;
   activeMerchants: Set<string>;
   entries: Map<string, { jeNo: string; accountCode: string | null }>;
@@ -173,6 +176,7 @@ export function classifyUnmatched(payments: readonly PaymentFact[], facts: Match
       ageDays: dayGap(p.paidOn, today),
       jeNo: null,
       report: null,
+      terminalId: null,
     };
     const claim = facts.merchantClaims.get(key);
     if (claim?.confirmed) continue;
@@ -183,7 +187,10 @@ export function classifyUnmatched(payments: readonly PaymentFact[], facts: Match
       const state: UnmatchedState = claim ? 'CARD_TO_CONFIRM'
         : tag !== null && !keyedAs(tag, [...facts.activeMerchants]) ? 'CARD_NO_MERCHANT'
         : 'CARD_NOT_REPORTED';
-      out.push({ ...base, kind: 'card', channel: tag, state, bankAccountCode: null, statementUpTo: null, report: claim ? report : null });
+      out.push({
+        ...base, kind: 'card', channel: tag, state, bankAccountCode: null, statementUpTo: null,
+        report: claim ? report : null, terminalId: claim?.terminalId ?? null,
+      });
       continue;
     }
     if (p.method !== 'transfer') continue;
@@ -290,13 +297,14 @@ async function readMerchantFacts(sb: any, companyId: number, paymentIds: string[
   if (links.error) return { ok: false, reason: `settlement links: ${links.error.message}` };
   const rowIds = [...new Set(links.data.map((l) => Number(l.settlement_row_id)).filter((n) => Number.isInteger(n)))];
   const lines = await chunkIn<Record<string, any>, number>(rowIds, (batch, lo, hi) => sb.from('acc_settlement_rows')
-    .select('id, batch_id, confirmed_at, posted_je_no')
+    .select('id, batch_id, confirmed_at, posted_je_no, terminal_id')
     .eq('company_id', companyId).in('id', batch).order('id').range(lo, hi));
   if (lines.error) return { ok: false, reason: `settlement lines: ${lines.error.message}` };
   const confirmedLine = new Set(lines.data
     .filter((r) => r.confirmed_at != null || r.posted_je_no != null)
     .map((r) => Number(r.id)));
   const batchOfLine = new Map(lines.data.map((r) => [Number(r.id), Number(r.batch_id)]));
+  const terminalOfLine = new Map(lines.data.map((r) => [Number(r.id), r.terminal_id == null ? null : String(r.terminal_id)]));
 
   const batchIds = [...new Set([...batchOfLine.values()].filter((n) => Number.isInteger(n)))];
   const [batchRows, reportLines] = await Promise.all([
@@ -330,6 +338,7 @@ async function readMerchantFacts(sb: any, companyId: number, paymentIds: string[
     merchantClaims.set(key, {
       confirmed: confirmed || (had?.confirmed ?? false),
       batchId: batchId === undefined || !Number.isInteger(batchId) ? null : batchId,
+      terminalId: terminalOfLine.get(Number(l.settlement_row_id)) ?? had?.terminalId ?? null,
     });
   }
   return { ok: true, merchantClaims, activeMerchants, reports };

@@ -1487,3 +1487,30 @@ describe('the merchant fee account is chosen, not assumed', () => {
     expect(String(((await res.json()) as Row).message)).toMatch(/not in this company/);
   });
 });
+
+/* Owner 2026-11-27 (我上传的merchant report 应该是有terminal id 的 → 往后上传后都要
+   保存起来): each line keeps the card terminal its report names. */
+describe('the card terminal each report line names is kept', () => {
+  test('the upload stores each line\'s terminal and opening the report hands it back', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const res = await upload(app, {
+      acquirerCode: 'MBB', fileName: 'with-terminals.csv', content: [
+        'TERMINAL ID:,10000009',
+        'Txn Date,Approval Code,Gross,MDR,TID',
+        '01/08/2026,A1,1000.00,15.00,10000008',
+        '01/08/2026,ZZ9,777.00,11.00,',
+      ].join('\n'),
+    });
+    expect(res.status).toBe(200);
+    expect(sb.tables.acc_settlement_rows.map((r) => [r.ref, r.terminal_id])).toEqual([['A1', '10000008'], ['ZZ9', '10000009']]);
+    const { batchId } = await res.json() as { batchId: number };
+    const detail = await (await app.request(`/settlement/batches/${batchId}`)).json() as { rows: Array<{ ref: string; terminal_id: string | null }> };
+    expect(detail.rows.map((r) => [r.ref, r.terminal_id])).toEqual([['A1', '10000008'], ['ZZ9', '10000009']]);
+  });
+
+  test('a report that names no terminal stores none', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    expect((await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).status).toBe(200);
+    expect(sb.tables.acc_settlement_rows.map((r) => r.terminal_id)).toEqual([null, null]);
+  });
+});
