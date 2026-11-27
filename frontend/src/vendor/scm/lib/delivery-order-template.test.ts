@@ -197,14 +197,22 @@ afterEach(() => {
 });
 
 describe('Delivery Order — Theme C template', () => {
+  /* Owner 2026-11-27: the issue date is kept on the record, never printed. */
+  test('the printed DO carries no issue date', async () => {
+    const { spans } = await renderDo([itemAt(1)]);
+    const text = spans.map((s) => s.text).join(' ');
+    expect(text).not.toMatch(/Issued/);
+    expect(text).not.toContain('2026/08/06');
+  });
+
   test('the letterhead columns never overlap, however long the address', async () => {
     setBrandingCache({ ...BRANDING_2990 }, '2990');
     const { spans } = await renderDo([itemAt(1)]);
 
     const meta = spans.filter(
-      (s) => ['DELIVERY', 'ORDER', `No. : ${HEADER.do_number}`, 'Issued 2026/08/06'].includes(s.text) && s.y < 50,
+      (s) => ['DELIVERY', 'ORDER', `No. : ${HEADER.do_number}`].includes(s.text) && s.y < 50,
     );
-    expect(meta.length).toBeGreaterThanOrEqual(4);
+    expect(meta.length).toBeGreaterThanOrEqual(3);
     const metaLeft = Math.min(...meta.map((s) => s.left));
 
     const company = spans.filter(

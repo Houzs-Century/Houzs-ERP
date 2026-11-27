@@ -4,8 +4,15 @@ export const SO_CONVERT_HEADER =
   'doc_no, company_id, debtor_code, debtor_name, agent, salesperson_id, ' +
   'address1, address2, address3, address4, city, customer_state, postcode, phone, ' +
   'email, customer_type, building_type, branding, venue, venue_id, ref, sales_location, ' +
-  'customer_country, customer_delivery_date, customer_so_no, ' +
+  'customer_country, customer_delivery_date, amended_delivery_date, customer_so_no, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, currency';
+
+/** The date the goods actually go out: the one set on Delivery Planning
+ *  (amended_delivery_date) when there is one, else the customer's date on the SO. */
+export function soPlannedDeliveryDate(head: Record<string, unknown>): string | null {
+  const v = str(head.amended_delivery_date) ?? str(head.customer_delivery_date);
+  return v == null ? null : v.slice(0, 10);
+}
 
 function str(v: unknown): string | null {
   if (v == null) return null;
@@ -79,7 +86,7 @@ export function soHeaderToDoSource(head: Record<string, unknown>): SoConversionS
     branding: str(head.branding),
     venue: str(head.venue),
     venueId: str(head.venue_id),
-    customerDeliveryDate: str(head.customer_delivery_date),
+    customerDeliveryDate: soPlannedDeliveryDate(head),
     emergencyContactName: str(head.emergency_contact_name),
     emergencyContactPhone: str(head.emergency_contact_phone),
     emergencyContactRelationship: str(head.emergency_contact_relationship),

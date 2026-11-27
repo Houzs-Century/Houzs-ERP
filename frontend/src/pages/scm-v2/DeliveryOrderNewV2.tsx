@@ -679,11 +679,8 @@ export function DeliveryOrderNewV2() {
        the operator's own field: blank posts as null and the server falls back
        to the customer date, exactly as /from-sos does. */
     setCustomerDelDate((so.customerDeliveryDate ?? "").slice(0, 10));
-    /* Owner 2026-09-11: the DO date on this form also defaults to the SO's
-       delivery date (not today), so the whole form opens carrying one date
-       across DO date + header customer delivery date + every line. A blank
-       DO with no SO source keeps today, seeded by the useState initial. */
-    if (so.customerDeliveryDate) setDoDate(String(so.customerDeliveryDate).slice(0, 10));
+    /* Owner 2026-11-27: the DO date stays TODAY (the useState initial); the
+       delivery date is the planned one (/so-source sends amended ?? customer). */
     setFlash(`Prefilled from ${soDocNo}`);
   }, [soSource.data, soDocNo, editId]);
 
