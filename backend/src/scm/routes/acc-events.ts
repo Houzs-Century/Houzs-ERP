@@ -48,7 +48,7 @@ import {
 } from './acc-logistics-pnl';
 import {
   departmentLinesHandler, departmentUnitHandler, departmentViewHandler, departmentsAllHandler, departmentsGaHandler, departmentsOperationHandler, departmentsPlanHandler,
-  saveDepartmentRateHandler,
+  saveDepartmentRateHandler, saveSupplierRebatesHandler,
 } from './acc-departments';
 
 export const accEvents = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -152,6 +152,7 @@ accEvents.get('/departments/unit', departmentUnitHandler);
 accEvents.get('/departments/operation', departmentsOperationHandler);
 accEvents.get('/departments/lines', departmentLinesHandler);
 accEvents.put('/departments/rate', saveDepartmentRateHandler);
+accEvents.put('/departments/rebates', saveSupplierRebatesHandler);
 
 export const retagPvLineHandler = async (c: any): Promise<Response> => {
   if (!hasHouzsPerm(c, 'scm.payment_voucher.write') && !hasHouzsPerm(c, 'scm.payment_voucher.post')) return c.json(NO_PERM, 403);

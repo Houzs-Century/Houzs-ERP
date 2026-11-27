@@ -25,7 +25,7 @@ import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
   departmentLinesHandler, departmentUnitHandler, departmentViewHandler, departmentsAllHandler, departmentsGaHandler, departmentsOperationHandler, departmentsPlanHandler,
-  saveDepartmentRateHandler,
+  saveDepartmentRateHandler, saveSupplierRebatesHandler,
 } from '../src/scm/routes/acc-departments';
 import { logisticsPnlHandler } from '../src/scm/routes/acc-logistics-pnl';
 
@@ -126,12 +126,14 @@ function harness(sb: ReturnType<typeof world>, perms: string[] = ['scm.payment_v
   app.get('/departments/lines', departmentLinesHandler as never);
   app.get('/logistics/pnl', logisticsPnlHandler as never);
   app.put('/departments/rate', saveDepartmentRateHandler as never);
+  app.put('/departments/rebates', saveSupplierRebatesHandler as never);
   const get = async (path: string) => { const r = await app.request(path); return { status: r.status, body: await r.json() as any }; };
-  const put = async (body: unknown) => {
-    const r = await app.request('/departments/rate', { method: 'PUT', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
+  const putAt = async (path: string, body: unknown) => {
+    const r = await app.request(path, { method: 'PUT', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } });
     return { status: r.status, body: await r.json() as any };
   };
-  return { get, put };
+  const put = (body: unknown) => putAt('/departments/rate', body);
+  return { get, put, putAt };
 }
 const SEP = '?from=2026-09-01&to=2026-09-30';
 
@@ -551,5 +553,131 @@ describe("Finance's rates", () => {
     const h = harness(world());
     expect((await h.get('/departments/ga?from=2026-09-30&to=2026-09-01')).status).toBe(400);
     expect((await h.get('/departments/operation?from=2024-01-01&to=2026-09-30')).status).toBe(400);
+  });
+});
+
+describe('a supplier\'s rebates, estimated in the Exhibition\'s Performance P&L (owner 2026-11-27: 「做设定框」)', () => {
+  /* A made-up supplier and its made-up terms: a sponsor rebate of 12% leaving out ALPHA and
+     accessories, a sales rebate of 2% / 4% / 6% from RM 80,000 / 160,000 / 240,000 on the
+     purchases less the display sets, a 40% display discount. */
+  const RULE = {
+    supplierCode: '400-R001', label: 'REBATE CO', sponsorBp: 1200, namedWords: ['ALPHA'], accessoryWords: ['PILLOW'],
+    salesTiers: [{ fromSen: 8_000_000, bp: 200 }, { fromSen: 16_000_000, bp: 400 }, { fromSen: 24_000_000, bp: 600 }], displayDiscountBp: 4000,
+  };
+  const pi = (id: string, invoice_date: string, status: string, over: Row = {}): Row => ({
+    id, company_id: CO, supplier_id: 'sup-r', invoice_number: `PI-${id}`, invoice_date, status, ...over,
+  });
+  const pii = (id: string, purchase_invoice_id: string, item_code: string, material_name: string, line_total_sen: number, over: Row = {}): Row => ({
+    id, company_id: CO, purchase_invoice_id, item_code, material_name, description: null, line_total_sen, ...over,
+  });
+  const scn = (id: string, status: string, reason: string, total_sen: number): Row => ({
+    id, company_id: CO, kind: 'SCN', status, supplier_id: 'sup-r', note_number: `SCN-${id}`, note_date: '2026-09-25', total_sen, reason,
+  });
+  const rebates = (rules: unknown) => world({
+    acc_department_settings: [{ company_id: CO, ga_share_bp: 800, operation_income_bp: 700, plan: HOUZS_PLAN, supplier_rebates: rules }],
+    suppliers: [
+      { id: 'sup-r', company_id: CO, code: '400-R001', name: 'REBATE CO' },
+      { id: 'sup-elsewhere', company_id: 2, code: '400-R009', name: 'ANOTHER COMPANY\'S' },
+    ],
+    purchase_invoices: [
+      pi('p1', '2026-09-05', 'POSTED'),
+      pi('p2', '2026-09-20', 'CANCELLED'),
+      pi('p3', '2026-09-21', 'DRAFT'),
+      pi('p4', '2026-10-02', 'PAID'),
+      pi('px', '2026-09-05', 'POSTED', { company_id: 2, supplier_id: 'sup-elsewhere' }),
+    ],
+    purchase_invoice_items: [
+      pii('i1', 'p1', 'RC-MAT-K', 'RC MATTRESS K', 30_000_000),
+      pii('i2', 'p1', 'RC-ALPHA-Q', 'RC ALPHA MATTRESS Q', 5_000_000),
+      pii('i3', 'p1', 'RC-PIL', 'RC COOL CUSHION', 2_000_000),
+      pii('i4', 'p2', 'RC-MAT-K', 'RC MATTRESS K', 9_000_000),
+      pii('i5', 'p3', 'RC-MAT-K', 'RC MATTRESS K', 8_000_000),
+      pii('i6', 'p4', 'RC-MAT-K', 'RC MATTRESS K', 6_000_000),
+      pii('ix', 'px', 'RC-MAT-K', 'RC MATTRESS K', 7_000_000, { company_id: 2 }),
+    ],
+    mfg_products: [
+      { company_id: CO, code: 'RC-MAT-K', category: 'MATTRESS' },
+      { company_id: CO, code: 'RC-ALPHA-Q', category: 'MATTRESS' },
+      { company_id: CO, code: 'RC-PIL', category: 'ACCESSORY' },
+    ],
+    ap_invoices: [{ id: 'a1', company_id: CO, supplier_id: 'sup-r', invoice_number: 'API-1', invoice_date: '2026-09-12', status: 'PAID' }],
+    ap_invoice_lines: [
+      { id: 'al1', company_id: CO, invoice_id: 'a1', description: 'RC SOFT PILLOW', amount_sen: 1_000_000 },
+      { id: 'al2', company_id: CO, invoice_id: 'a1', description: 'RC MATTRESS SS', amount_sen: 4_000_000 },
+    ],
+    acc_credit_notes: [
+      scn('n1', 'POSTED', 'DISPLAY DISCOUNT - SEP', 1_000_000),
+      scn('n2', 'DRAFT', 'DISPLAY DISCOUNT - SEP', 500_000),
+      scn('n3', 'POSTED', 'SALES REBATE - SEP', 3_000_000),
+    ],
+  });
+  /* September: bills RM 420,000 (the posted invoice's RM 370,000, the AP invoice's RM 50,000; the
+     cancelled, the draft, October's and another company's left out); ALPHA RM 50,000 and
+     accessories RM 30,000 (the product's category, the AP line's PILLOW) off the sponsor's
+     base = RM 340,000 → 12% = RM 40,800; the posted display note RM 10,000 ÷ 40% = display
+     sets RM 25,000 off the sales base = RM 395,000, past RM 240,000 → 6% = RM 23,700. */
+  const SPONSOR = 4_080_000;
+  const SALES = 2_370_000;
+  const figure = (tree: any, id: string) => nodes(tree.otherIncome).find((n: any) => n.id === id);
+
+  test('Performance: the two estimates under the Exhibition\'s other income, and the rules it keeps; Actual and a company without rules have none', async () => {
+    const h = harness(rebates([RULE]));
+    const perf = await h.get(`/departments/dept?d=exhibition&dbasis=performance${SEP_AND}`);
+    expect(perf.status).toBe(200);
+    expect(figure(perf.body.tree, 'rebate:400-R001:sponsor')).toMatchObject({ cells: { '2026-09': SPONSOR }, label: expect.stringContaining('REBATE CO sponsor rebate (estimate)') });
+    expect(figure(perf.body.tree, 'rebate:400-R001:sales')).toMatchObject({ cells: { '2026-09': SALES } });
+    expect(perf.body.rebateRules).toEqual([RULE]);
+    const none = await harness(world()).get(`/departments/dept?d=exhibition&dbasis=performance${SEP_AND}`);
+    expect(none.body.rebateRules).toEqual([]);
+    expect(perf.body.perMonth[0].otherIncomeSen - none.body.perMonth[0].otherIncomeSen).toBe(SPONSOR + SALES);
+    expect(perf.body.perMonth[0].netSen - none.body.perMonth[0].netSen).toBe(SPONSOR + SALES);
+    expect(figure(none.body.tree, 'rebate:400-R001:sponsor')).toBeUndefined();
+    const actual = await h.get(`/departments/dept?d=exhibition&dbasis=actual${SEP_AND}`);
+    expect(figure(actual.body.tree, 'rebate:400-R001:sponsor')).toBeUndefined();
+    expect(figure(actual.body.tree, 'rebate:400-R001:sales')).toBeUndefined();
+  });
+
+  test('All: the Exhibition\'s column carries them; the other departments do not', async () => {
+    const withRules = await harness(rebates([RULE])).get(`/departments/all?dbasis=performance${SEP_AND}`);
+    const without = await harness(world()).get(`/departments/all?dbasis=performance${SEP_AND}`);
+    expect(withRules.status).toBe(200);
+    expect(withRules.body.summary.exhibition.otherIncomeSen - without.body.summary.exhibition.otherIncomeSen).toBe(SPONSOR + SALES);
+    expect(withRules.body.summary.ga).toEqual(without.body.summary.ga);
+    expect(withRules.body.total.profitSen - without.body.total.profitSen).toBe(SPONSOR + SALES);
+  });
+
+  test('a figure opened: its working, month by month, adding up to it', async () => {
+    const h = harness(rebates([RULE]));
+    const r = await h.get(`/departments/lines?view=dept&dbasis=performance&block=otherIncome&d=exhibition${SEP_AND}&keys=rebate:400-R001:sponsor,rebate:400-R001:sales`);
+    expect(r.status).toBe(200);
+    expect(r.body.totalSen).toBe(SPONSOR + SALES);
+    expect(r.body.lines.map((l: any) => [l.id, l.accountCode, l.accountName, l.source, l.sen])).toEqual([
+      ['rebate:400-R001:sales:2026-09', '400-R001', 'REBATE CO sales rebate (estimate)', 'rate', SALES],
+      ['rebate:400-R001:sponsor:2026-09', '400-R001', 'REBATE CO sponsor rebate (estimate)', 'rate', SPONSOR],
+    ]);
+    const sponsor = r.body.lines.find((l: any) => l.id === 'rebate:400-R001:sponsor:2026-09');
+    expect(sponsor.text).toBe("12% of RM 340,000.00: the month's REBATE CO bills RM 420,000.00, less ALPHA RM 50,000.00 and accessories RM 30,000.00");
+    const one = await h.get(`/departments/lines?view=dept&dbasis=performance&block=otherIncome&d=exhibition${SEP_AND}&keys=rebate:400-R001:sales`);
+    expect(one.body.totalSen).toBe(SALES);
+  });
+
+  test('PUT /departments/rebates: Finance\'s right; checked; a supplier must be the company\'s; the list saved whole and read back', async () => {
+    const sb = rebates(null);
+    expect((await harness(sb, ['scm.access']).putAt('/departments/rebates', { rules: [RULE] })).status).toBe(403);
+    const h = harness(sb);
+    const bad = await h.putAt('/departments/rebates', { rules: [{ ...RULE, sponsorBp: 0, salesTiers: [] }] });
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toBe('400-R001 earns nothing — give a sponsor rebate rate or a sales rebate tier.');
+    const elsewhere = await h.putAt('/departments/rebates', { rules: [{ ...RULE, supplierCode: '400-R009' }] });
+    expect(elsewhere.status).toBe(400);
+    expect(elsewhere.body.error).toBe('unknown_supplier');
+    const ok = await h.putAt('/departments/rebates', { rules: [{ ...RULE, supplierCode: '400-r001' }] });
+    expect(ok.status).toBe(200);
+    expect(sb.tables.acc_department_settings[0]!.supplier_rebates).toEqual([RULE]);
+    const read = await h.get(`/departments/dept?d=exhibition&dbasis=performance${SEP_AND}`);
+    expect(read.body.rebateRules).toEqual([RULE]);
+    expect(figure(read.body.tree, 'rebate:400-R001:sponsor').cells).toEqual({ '2026-09': SPONSOR });
+    expect((await h.putAt('/departments/rebates', { rules: [] })).status).toBe(200);
+    expect(sb.tables.acc_department_settings[0]!.supplier_rebates).toBeNull();
   });
 });

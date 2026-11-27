@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../types";
 import { audit } from "../services/audit";
+import { NO_GUIDE_NOTE } from "../services/mcp-howto";
 import { getUserById } from "../services/auth";
 import { usersHoldingPermission } from "../services/permissionHolders";
 import { postPersonalNotice } from "../services/personalNotice";
@@ -208,7 +209,7 @@ app.get("/admin/overview", async (c) => {
   const db = c.env.DB;
   const nowIso = new Date().toISOString();
   const dayAgo = new Date(Date.now() - 24 * 3600_000).toISOString();
-  const [requests, connected, allowed, calls, staff, stats, actionsOn] = await Promise.all([
+  const [requests, connected, allowed, calls, staff, stats, actionsOn, noGuide] = await Promise.all([
     db
       .prepare(
         `SELECT r.id, r.user_id, r.reason, r.created_at, u.name, u.email, p.name AS position_name
@@ -256,6 +257,13 @@ app.get("/admin/overview", async (c) => {
       .bind(dayAgo, dayAgo, nowIso)
       .first<Record<string, unknown>>(),
     actionSwitches(db),
+    db
+      .prepare(
+        `SELECT tool, target, COUNT(*) AS n, MAX(created_at) AS last_at FROM mcp_calls
+          WHERE note = ? GROUP BY tool, target ORDER BY n DESC, last_at DESC LIMIT 50`,
+      )
+      .bind(NO_GUIDE_NOTE)
+      .all<Record<string, unknown>>(),
   ]);
   const pos = (r: Record<string, unknown>) => s(r, "position_name") || "—";
   return c.json({
@@ -269,6 +277,7 @@ app.get("/admin/overview", async (c) => {
     allowed: allowed.results.map((r) => ({ userId: num(r, "user_id"), name: s(r, "name"), position: pos(r), approvedAt: iso(r.approved_at) })),
     calls: calls.results.map((r) => ({ id: s(r, "id"), userId: num(r, "user_id"), name: s(r, "name"), app: appLabel(s(r, "client_name")), tool: s(r, "tool"), target: s(r, "target"), status: num(r, "status"), ok: num(r, "ok") === 1, note: s(r, "note"), ms: num(r, "ms"), at: iso(r.created_at) })),
     staff: staff.results.map((r) => ({ userId: num(r, "id"), name: s(r, "name"), position: pos(r) })),
+    noGuide: noGuide.results.map((r) => ({ tool: s(r, "tool"), question: s(r, "target"), times: num(r, "n"), lastAt: iso(r.last_at) })),
   });
 });
 

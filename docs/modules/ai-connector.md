@@ -39,6 +39,12 @@ Staff ask Claude / ChatGPT / any remote-MCP app about the ERP with their OWN log
 
 - `data_gaps` (round 4d, `services/mcp-data-gaps.ts`): four reads as the person: AP aging `unappliedSen` (supplier payments / advances / credit notes not knocked off a bill), the open SO tabs (no `customer_delivery_date`, 5 pages a tab), the SKU Master `/api/scm/mfg-products?anchorState=1` (no supplier cost = `costAnchorState` empty; no price = sell price, Price 1 and Price 2 all empty; no category; SERVICE items left out), `/api/scm/mfg-sales-orders/customers` (no phone). A section the person may not read is a `notAvailable` line.
 
+## Help tools (no ERP data; `services/mcp-howto.ts`)
+- `how_to {question?, topic?}`: ranks the guides (`mcp-howto-guides-*.ts`, index `docs/modules/how-to-guides.md`) by keyword / title (English + Chinese + Malay keywords; simple scoring, no AI call) and returns the top 1-3 full SOPs (purpose, prerequisites, who, fields, click-by-click steps whose links carry `?highlight=<button>`, checks, result, warnings, undo, approvals, deadlines, common mistakes, worked example, related, next step, contact). `canDo` = the page's own route guard evaluated with the ERP's predicates (`mcp-howto-types.ts gatePasses`: `scmAreaReadable`, `page_access`, flat permissions, capabilities); false adds the "ask your supervisor or admin" note. No match = the list of titles.
+- `module_overview {module?}`, `glossary {term?}`, `explain_error {text}` (each entry's `match` is the backend's own message text), `onboarding {role}` (first week for outlet-sales, 2990s, purchasing, warehouse, finance, after-sales, admin). Prompts: `how_do_i`, `explain_module`, `what_does_it_mean`, `explain_this_error`, `my_first_week`.
+- Gap log: a help question nothing matches is logged in `mcp_calls` with note `no-guide` and the question with emails and long numbers removed (80 chars); System > AI Connector "Questions with no guide yet" lists them grouped, without names.
+- Honesty: `mcp-howto-honesty.test.ts` fails when a guide's page is not a route in `frontend/src/App.tsx`, a quoted label / highlight / field label is not in `frontend/src`, or an error `match` is not in `backend/src`. A UI rename means fixing the guide in the same PR. Guides are English; Claude translates.
+
 ## Brief and alert emails (round 4d)
 - Opt-in on System > AI Connector "Email me" (`pages/AiConnectorBrief.tsx`; `GET/PUT /api/mcp-admin/me/brief`, `POST /me/brief/test`). Only people with connector access (`hasMcpAccess`) can switch on; time = a quarter hour in MYT (default 08:00), weekdays or every day. Stored in `mcp_brief_subscriptions` (migration `20261127T0400_mcp_brief_alerts.sql`).
 - Runs AS the person (`services/mcp-proactive-run.ts asPerson`): a short-lived token for client `mcpc_brief` (the leak check's pattern), checked by `mcpIdentity`, every read through `readAs` (the connector's in-process GET + credential and money strip), revoked when the run ends. No service account. `mcpc_brief` tokens are hidden from "My connected apps" and the connected count.
@@ -73,6 +79,11 @@ Staff ask Claude / ChatGPT / any remote-MCP app about the ERP with their OWN log
 | D4 | What data is missing / incomplete? | `data_gaps` (also in the Monday brief email) | AP aging unapplied, open SO tabs, SKU Master cost markers, SO customers |
 | W1 | Reply to this email for me | `propose_mail_reply` then `confirm_action` | thread + senders; sends via `POST /api/mail-center/threads/:id/reply` |
 | W2 | Add a note to service case X | `propose_note` then `confirm_action` | `/api/assr/:id`; writes via `POST /api/assr/:id/notes` |
+| H1 | How do I open a service case / create a PO / receive goods? (开PO, terima barang) | `how_to {question}` | none (guide data + the person's permissions) |
+| H2 | What is the Procurement module for? | `module_overview {module}` | none |
+| H3 | What does GRN / unapplied payment / 2990's mean? | `glossary {term}` | none |
+| H4 | What does this error mean? | `explain_error {text}` | none |
+| H7 | I am new in purchasing, what do I learn first? | `onboarding {role}` | none |
 | R1 | My morning report / finance / purchasing / outlet / after-sales / HR review | prompts `owner_morning_report` ... `hr_today` | the tools each prompt names |
 Money in every answer follows the endpoint's own gate and `redactMoney`; nothing is shown that the person's ERP login does not show.
 - One token check per lookup: the door (`app.post("/")`) verifies the token and `rememberVerified` keeps that identity for 15 s per isolate; `middleware/auth.ts` reuses it for that tool call's inner GETs (`recallVerified`) instead of resolving the token again. A new request is always checked at the door.
