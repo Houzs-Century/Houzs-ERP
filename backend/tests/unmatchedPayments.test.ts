@@ -145,6 +145,17 @@ describe('classifyUnmatched', () => {
     expect(only).toMatchObject({ state: 'CARD_NOT_REPORTED', report: null });
   });
 
+  /* Owner 2026-11-27 (这里我要显示terminal id): the card terminal comes off the report line
+     claiming the payment; a payment no line claims has none to show. */
+  test('a payment a report line claims names the terminal that line names', () => {
+    const rows = classifyUnmatched([fact({ id: 'claimed' }), fact({ id: 'waiting' })], facts({
+      merchantClaims: new Map([['SOPAY:claimed', { confirmed: false, batchId: 2, terminalId: '10000011' }]]),
+    }), '2026-09-30');
+    const byId = Object.fromEntries(rows.map((r) => [r.paymentId, r]));
+    expect(byId['claimed']).toMatchObject({ state: 'CARD_TO_CONFIRM', terminalId: '10000011' });
+    expect(byId['waiting']).toMatchObject({ state: 'CARD_NOT_REPORTED', terminalId: null });
+  });
+
   test('cash and zero rows are not listed; the oldest comes first, aged to today', () => {
     const rows = classifyUnmatched([
       fact({ id: 'cash', method: 'cash' }),
@@ -224,7 +235,7 @@ function harness(perms: readonly string[] = [GL_PERM]) {
     ],
     acc_settlement_rows: [
       { id: 1, batch_id: 1, company_id: CO, confirmed_at: '2026-09-30T08:41:00Z', posted_je_no: 'JE-S1', bucket: 'MATCHED' },
-      { id: 2, batch_id: 2, company_id: CO, confirmed_at: null, posted_je_no: null, bucket: 'MATCHED' },
+      { id: 2, batch_id: 2, company_id: CO, confirmed_at: null, posted_je_no: null, bucket: 'MATCHED', terminal_id: '10000010' },
       { id: 3, batch_id: 3, company_id: CO, confirmed_at: '2026-09-30T08:41:00Z', posted_je_no: 'JE-S3', bucket: 'MATCHED' },
       /* Report 3 still has a line to decide — and one set aside, which is no work. */
       { id: 4, batch_id: 3, company_id: CO, confirmed_at: null, posted_je_no: null, bucket: 'NEEDS_CONFIRM' },
@@ -342,6 +353,14 @@ describe('GET /unmatched-payments', () => {
     /* Its only entry was reversed: nothing live for a bank to claim. */
     expect(byId['p-tr-reversed']).toMatchObject({ state: 'TRANSFER_NOT_BOOKED' });
     expect(byId['si-pay-1']).toMatchObject({ source: 'SIPAY', docNo: 'SI-2609-001', customerName: 'Acme', state: 'TRANSFER_NOT_BOOKED' });
+  });
+
+  test('a payment a report line claims carries the terminal that line names', async () => {
+    const { app } = harness();
+    const body = await (await app.request('/unmatched-payments?from=2026-09-01&to=2026-09-30')).json() as any;
+    const byId = Object.fromEntries((body.rows as any[]).map((r) => [r.paymentId, r]));
+    expect(byId['p-card-confirm']).toMatchObject({ state: 'CARD_TO_CONFIRM', terminalId: '10000010' });
+    expect(byId['p-card-waiting']).toMatchObject({ state: 'CARD_NOT_REPORTED', terminalId: null });
   });
 
   /* Owner 2026-11-09 (sales person 应该不太对，应该是collected by 的人): the person who took

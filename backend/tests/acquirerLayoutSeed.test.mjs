@@ -96,3 +96,32 @@ describe('the layouts migration 0338 actually seeds', () => {
     expect(r.statedNetSen, 'the statement-level net was read').not.toBeNull();
   });
 });
+
+/* Owner 2026-11-27 (往后上传后都要保存起来): the terminal every sample names, from
+   where that bank prints it — a column, or the TERMINAL ID line heading its lines. */
+describe('the card terminal each seeded layout reads off its sample', () => {
+  const terminals = (code, file, extra = {}) => {
+    const r = parseStatement(cfg(code, extra), fixture(file));
+    expect(r.ok, r.ok ? '' : r.reason).toBe(true);
+    return r.rows.map((x) => x.terminalId ?? null);
+  };
+
+  it('HLB: each block takes the TERMINAL ID line above it', () => {
+    expect(terminals('HLB', 'HLB-Aug.csv', { statementMonth: '2026-08' }))
+      .toEqual(['00099999976', '00099999976', '00099999981', '00099999982']);
+  });
+
+  it('AEON: the one TERMINAL ID line in the report heading', () => {
+    expect(terminals('AEON', 'AEON-Aug.csv')).toEqual(['10000000']);
+  });
+
+  it('Maybank: the Terminal No. column of the card and the instalment reports', () => {
+    expect(terminals('MBB', 'MBB-credit-Aug.csv')).toEqual(['38210103']);
+    expect(terminals('MBB', 'MBB-instalment-Aug.csv')).toEqual(['58223641']);
+  });
+
+  it('GHL: the terminal_id column; PBB: the TID column', () => {
+    expect(terminals('GHL', 'GHL-Aug.csv')).toEqual(['66043062', '66043062']);
+    expect(terminals('PBB', 'PBB-2990HOME-Jun.csv')).toEqual(['99999999', '99999999', '99999999', '99999999']);
+  });
+});

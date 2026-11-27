@@ -88,6 +88,8 @@ type StoredRow = {
   not_this?: unknown;
   /** 'QR' for a DuitNow QR line (owner 2026-11-09), else null — card. */
   channel?: string | null;
+  /** The card terminal the report names for the line (owner 2026-11-27); null before then. */
+  terminal_id?: string | null;
 };
 
 const onlinePoolFor = (
@@ -634,6 +636,7 @@ export const settlementUpload = guard(async (c) => {
       bucket: d.bucket,
       match_reason: d.matchReason,
       notes: d.clue,
+      terminal_id: d.row.terminalId ?? null,
       ...(d.row.channel === 'QR' ? { channel: 'QR' } : {}),
     })),
   ).select('id, line_no');
@@ -821,7 +824,7 @@ export const settlementBatchDetail = guard(async (c) => {
       .eq('id', batchId).eq('company_id', co.companyId).maybeSingle(),
     loadBatchReceipts(sb, co.companyId, batchId),
     sb.from('acc_settlement_rows')
-      .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id, not_this, channel, sold_by_company_id')
+      .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes, matched_with_row_id, not_this, channel, sold_by_company_id, terminal_id')
       .eq('batch_id', batchId).eq('company_id', co.companyId).order('line_no'),
   ]);
   const { data: batch, error: bErr } = batchRes;
