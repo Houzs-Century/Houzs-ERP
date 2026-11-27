@@ -190,6 +190,7 @@ export type PickRow = {
   racks: string[];
   qty: number;
   customers: number[];
+  worked_out: boolean;
 };
 
 export type SofaGroup = {
@@ -198,6 +199,7 @@ export type SofaGroup = {
   customer_name: string | null;
   pieces: number;
   pos: string[];
+  worked_out: boolean;
   rows: PickRow[];
 };
 
@@ -252,6 +254,7 @@ export function buildPickSections(
     racks: splitList(l.item.rack),
     qty: l.item.qty,
     customers: [l.stop.stop_no],
+    worked_out: l.item.worked_out,
   });
 
   const out: PickSection[] = [];
@@ -276,6 +279,7 @@ export function buildPickSections(
           customer_name: ls[0].stop.customer_name,
           pieces: ls.reduce((n, l) => n + l.item.qty, 0),
           pos: uniq(rows.flatMap((r) => r.pos)).sort(byCode),
+          worked_out: rows.some((r) => r.worked_out && r.pos.length > 0),
           rows,
         };
       });
@@ -292,11 +296,12 @@ export function buildPickSections(
     const agg = new Map<string, PickRow>();
     for (const l of lines) {
       const key = `${l.item.item_code}\u0000${l.variant}`;
-      const row = agg.get(key) ?? { ...pieceRow(l), qty: 0, pos: [], racks: [], customers: [] };
+      const row = agg.get(key) ?? { ...pieceRow(l), qty: 0, pos: [], racks: [], customers: [], worked_out: false };
       row.qty += l.item.qty;
       row.pos = uniq([...row.pos, ...splitList(l.item.po)]).sort(byCode);
       row.racks = uniq([...row.racks, ...splitList(l.item.rack)]).sort(compareRackLabels);
       row.customers = [...new Set([...row.customers, l.stop.stop_no])].sort((a, b) => b - a);
+      row.worked_out = row.worked_out || l.item.worked_out;
       if (l.item.description && (!row.description || byCode(l.item.description, row.description) < 0)) {
         row.description = l.item.description;
       }

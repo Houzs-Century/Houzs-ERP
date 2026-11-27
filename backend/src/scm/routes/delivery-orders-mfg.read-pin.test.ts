@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import type { User } from '@supabase/supabase-js';
 
 import type { Env, Variables } from '../env';
+import { computeVariantKey } from '../shared';
 
 type Row = Record<string, unknown>;
 type Write = { table: string; op: string; payload?: unknown; match?: string };
@@ -199,6 +200,8 @@ function fakeSb(tables: Record<string, Row[]>, writes: Write[], opts: FakeOpts =
 
 let current = fakeSb(world(), []);
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => current }));
+// The salesperson row-scope reads D1; this harness is the SCM fake only, and no pinned case is a salesperson's.
+vi.mock('../lib/salesScope', async (orig) => ({ ...(await orig<typeof import('../lib/salesScope')>()), salesDocOutOfScope: async () => false }));
 
 const CALLER = {
   id: '7', email: 'ops@houzs.test', app_metadata: {},
@@ -207,9 +210,11 @@ const CALLER = {
 
 const { deliveryOrdersMfg, soDeliverableRemaining } = await import('./delivery-orders-mfg');
 
-async function call(method: 'GET' | 'POST', path: string, body?: unknown) {
+async function call(method: 'GET' | 'POST', path: string, body?: unknown, extra: (t: Record<string, Row[]>) => void = () => {}) {
   const writes: Write[] = [];
-  current = fakeSb(world(), writes);
+  const t = world();
+  extra(t);
+  current = fakeSb(t, writes);
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
   app.use('*', async (c, next) => {
     c.set('user', CALLER);
@@ -329,5 +334,61 @@ describe('POST / (create DO) — pinned', () => {
   it.each(cases)('%s', async (_name, body) => {
     const r = await call('POST', '/', body);
     expect(stable({ status: r.status, body: r.body, writes: r.writes })).toMatchSnapshot();
+  });
+});
+
+/* The per-line Source PO / Rack the DO detail works out (stamp, ledger trace,
+   the SO line's bound PO, the GRN rack, the rack the DO left from). Pinned so
+   the shared resolver (do-line-worked-out-sources.ts) answers exactly what the
+   inline code did before it was lifted out. */
+describe('GET /:id — pinned source PO and rack', () => {
+  const vk = (group: string) => computeVariantKey(group, {});
+  const sourcesWorld = (t: Record<string, Row[]>) => {
+    t.delivery_orders!.push({ id: 'do-7', do_number: 'DO-2611-007', company_id: 1, so_doc_no: 'SO-B', status: 'LOADED', warehouse_id: 'wh-1', salesperson_id: null });
+    const line = (id: string, n: number, code: string, group: string, so: string | null, extra: Row = {}): Row => ({
+      id, delivery_order_id: 'do-7', line_no: n, so_item_id: so, item_code: code, item_group: group, variants: {}, qty: 1,
+      rack_id: null, shipped_from: null, company_id: 1, created_at: '2026-11-01T00:00:00+00:00', ...extra,
+    });
+    t.delivery_order_items!.push(
+      line('d7-1', 1, 'MAT-1', 'MATTRESS', 'b2'),
+      line('d7-2', 2, 'PIL-1', 'ACCESSORY', 'b1', { qty: 2 }),
+      line('d7-3', 3, 'SOFA-1', 'SOFA', null, { shipped_from: { v: 1, at: '2026-11-02T00:00:00Z', src: 'ship', item_code: 'SOFA-1', qty: 1, pos: [{ po: 'PO-STAMP', qty: 1 }], adj_qty: 0, racks: [{ rack_id: 'r-s', label: 'L16.1', qty: 1 }] } }),
+      line('d7-4', 4, 'SVC-1', 'SERVICE', null),
+      line('d7-5', 5, 'NONE-1', 'ACCESSORY', null),
+      line('d7-6', 6, 'BOLSTER-1', 'ACCESSORY', null, { rack_id: 'r-pick' }),
+    );
+    t.inventory_movements = [
+      { source_doc_type: 'DO', movement_type: 'OUT', source_doc_id: 'do-7', item_code: 'MAT-1', variant_key: vk('MATTRESS'), batch_no: 'PO-LEDGER', company_id: 1 },
+    ];
+    t.inventory_lot_consumptions = [];
+    t.purchase_order_items = [
+      { id: 'poi-b1', so_item_id: 'b1', purchase_order_id: 'po-bound', item_code: 'PIL-1', received_qty: 2, created_at: '2026-10-05T00:00:00Z' },
+    ];
+    t.purchase_orders = [
+      { id: 'po-bound', po_number: 'PO-BOUND', status: 'RECEIVED', expected_at: '2026-10-20' },
+      { id: 'po-ledger', po_number: 'PO-LEDGER', status: 'RECEIVED', expected_at: '2026-10-10' },
+    ];
+    t.warehouse_racks = [
+      { id: 'r-grn', rack: 'L3.2', warehouse_id: 'wh-1', company_id: 1 },
+      { id: 'r-pick', rack: 'L7.4', warehouse_id: 'wh-1', company_id: 1 },
+    ];
+    t.warehouse_rack_items = [{ id: 'wri-1', rack_id: 'r-grn', item_code: 'PIL-1', source_grn_id: 'grn-1' }];
+    t.grn_items = [{ id: 'gi-1', grn_id: 'grn-1', item_code: 'PIL-1', rack_id: 'r-grn', purchase_order_item_id: 'poi-b1' }];
+    t.grns = [{ id: 'grn-1', purchase_order_id: 'po-bound' }];
+    t.warehouse_rack_movements = [
+      { id: 'wrm-1', source_doc_no: 'DO-2611-007', movement_type: 'STOCK_OUT', item_code: 'MAT-1', rack_label: 'L9.1', company_id: 1 },
+    ];
+  };
+
+  it('answers the same lines', async () => {
+    const r = await call('GET', '/do-7', undefined, sourcesWorld);
+    expect(r.status).toBe(200);
+    const items = (r.body as { items: Row[] }).items.map((it) => ({
+      id: it.id, warehouse_id: it.warehouse_id, source_pos: it.source_pos, source_adj: it.source_adj, racks: it.racks, source_state: it.source_state,
+    }));
+    expect(items).toMatchSnapshot();
+    expect(stable(r.body)).toMatchSnapshot();
+    // Snapshots sort object keys; the wire order is pinned on its own.
+    expect((r.body as { items: Row[] }).items.map((it) => Object.keys(it).join(','))).toMatchSnapshot();
   });
 });

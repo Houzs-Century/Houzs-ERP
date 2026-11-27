@@ -48,6 +48,8 @@ export type PackItemRow = {
   description2: string | null;
   so_item_id: string | null;
   committed_po_batch_no: string | null;
+  /** What do-line-worked-out-sources.ts works out for the line (null = not resolved). */
+  worked: { pos: string[]; racks: string[] } | null;
 };
 
 /** The sales-order line a DO line was cut from: its position on the SO. */
@@ -68,6 +70,8 @@ export type PackingItem = {
   rack_locked: boolean;
   po: string | null;
   po_locked: boolean;
+  /** A printed PO or rack was not locked at dispatch: the sheet marks it with a star. */
+  worked_out: boolean;
   item_group: string | null;
   variants: Record<string, unknown> | null;
   description2: string | null;
@@ -136,15 +140,22 @@ export type AssembleInput = {
   warehouses: readonly PackLabelRow[];
 };
 
+/* Rack (owner 2026-11-28): the rack(s) locked at dispatch, else the operator's pick, else the
+   rack(s) worked out the way the DO detail works them out (the rack this DO left, else the GRN
+   rack of the line's source PO). */
 function packRack(it: PackItemRow, rackById: Map<string, string>): { rack: string | null; rack_locked: boolean } {
   const locked: string | null = stampRackLabel(it.shipped_from, it.item_code ?? null);
   if (locked) return { rack: locked, rack_locked: true };
-  return { rack: it.rack_id ? rackById.get(String(it.rack_id)) ?? null : null, rack_locked: false };
+  const picked = it.rack_id ? rackById.get(String(it.rack_id)) ?? null : null;
+  if (picked) return { rack: picked, rack_locked: false };
+  const worked = [...new Set(it.worked?.racks ?? [])];
+  return { rack: worked.length > 0 ? worked.join(', ') : null, rack_locked: false };
 }
 
-/* PO (owner 2026-11-27): the stamp's POs when the line was locked at dispatch (the same stamp the
-   rack comes from), else the PO batch the line was committed to. Neither = null,
-   and the sheet prints a dash: a guessed PO sends the picker to the wrong lot. */
+/* PO (owner 2026-11-27, 2026-11-28): the stamp's POs when the line was locked at dispatch (the
+   same stamp the rack comes from), else the PO batch the line was committed to, else the PO(s)
+   worked out from the stock ledger / the SO line's bound PO, exactly as the DO detail shows them.
+   None = null and the sheet prints a dash. */
 function packPo(it: PackItemRow): { po: string | null; po_locked: boolean } {
   const stamp = it.shipped_from as { pos?: Array<{ po?: unknown }> } | null;
   if (stampFitsLine(stamp, it.item_code ?? null)) {
@@ -154,7 +165,17 @@ function packPo(it: PackItemRow): { po: string | null; po_locked: boolean } {
     if (pos.length > 0) return { po: pos.join(', '), po_locked: true };
   }
   const committed = (it.committed_po_batch_no ?? '').trim();
-  return { po: committed || null, po_locked: false };
+  if (committed) return { po: committed, po_locked: false };
+  const worked = [...new Set(it.worked?.pos ?? [])];
+  return { po: worked.length > 0 ? worked.join(', ') : null, po_locked: false };
+}
+
+/** PO + rack of one line, and whether either printed value is unlocked (the DO PDF's "*"). */
+function packSources(it: PackItemRow, rackById: Map<string, string>) {
+  const rack = packRack(it, rackById);
+  const po = packPo(it);
+  const worked_out = (!!rack.rack && !rack.rack_locked) || (!!po.po && !po.po_locked);
+  return { ...rack, ...po, worked_out };
 }
 
 const crewMap = (rows: readonly PackCrewRow[]): Map<string, { name: string; phone: string | null }> => {
@@ -197,8 +218,7 @@ export function packItemsByDo(input: Pick<AssembleInput, 'items' | 'racks' | 'so
       item_code: (it.item_code ?? '').trim() || '—',
       description: it.description ?? null,
       qty: num(it.qty),
-      ...packRack(it, rackById),
-      ...packPo(it),
+      ...packSources(it, rackById),
       item_group: it.item_group ?? null,
       variants: it.variants && typeof it.variants === 'object' && !Array.isArray(it.variants) ? it.variants : null,
       description2: it.description2 ?? null,

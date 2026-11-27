@@ -3,6 +3,7 @@
    a REQUIRED argument on the default-warehouse fallback — which is the whole
    point of that signature; see inventory-movements.ts defaultWarehouseId. */
 import { defaultWarehouseId } from './inventory-movements';
+import { UUID_CHUNK } from './paginate-all';
 
 export async function resolveDoLineWarehouses(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- unchanged from delivery-orders-mfg.ts: the PostgREST-shaped client has no honest type until schema.pg.ts covers the SCM tables.
@@ -11,14 +12,26 @@ export async function resolveDoLineWarehouses(
   headerWarehouseId: string | null,
   companyId: number | undefined,
 ): Promise<Map<string, string | null>> {
+  return resolveDoLineWarehousesForDos(sb, items, () => ({ warehouseId: headerWarehouseId, companyId }));
+}
+
+/** The same rule over lines of MANY delivery orders: each line's SO-line
+ *  warehouse, else its own DO's header warehouse, else that DO company's
+ *  default. One chunked SO-line read, one default read per company. */
+export async function resolveDoLineWarehousesForDos<T extends { id: string; so_item_id?: string | null }>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see resolveDoLineWarehouses
+  sb: any,
+  items: readonly T[],
+  headerOf: (item: T) => { warehouseId: string | null; companyId: number | undefined },
+): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
   const soItemIds = [...new Set(items
     .map((it) => it.so_item_id ?? null)
     .filter((x): x is string => !!x))];
   const soWh = new Map<string, string | null>();
-  if (soItemIds.length > 0) {
+  for (let i = 0; i < soItemIds.length; i += UUID_CHUNK) {
     const { data: soRows, error } = await sb.from('mfg_sales_order_items')
-      .select('id, warehouse_id').in('id', soItemIds);
+      .select('id, warehouse_id').in('id', soItemIds.slice(i, i + UUID_CHUNK));
     if (error) {
       // eslint-disable-next-line no-console
       console.error('[do-warehouse] SO-line warehouse read failed; every line falls back to the DO header:', error.message);
@@ -27,8 +40,17 @@ export async function resolveDoLineWarehouses(
       soWh.set(r.id, r.warehouse_id ?? null);
     }
   }
-  const fallback = headerWarehouseId ?? (await defaultWarehouseId(sb, companyId));
+  const defaults = new Map<number | undefined, Promise<string | null>>();
+  const defaultOf = (companyId: number | undefined): Promise<string | null> => {
+    const hit = defaults.get(companyId);
+    if (hit) return hit;
+    const p = defaultWarehouseId(sb, companyId);
+    defaults.set(companyId, p);
+    return p;
+  };
   for (const it of items) {
+    const head = headerOf(it);
+    const fallback = head.warehouseId ?? (await defaultOf(head.companyId));
     const fromSo = it.so_item_id ? (soWh.get(it.so_item_id) ?? null) : null;
     out.set(it.id, fromSo ?? fallback);
   }

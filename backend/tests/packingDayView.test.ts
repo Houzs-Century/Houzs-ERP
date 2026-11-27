@@ -33,6 +33,7 @@ const crew = (doId: string, plate: string | null, over: Partial<DayCrewRow> = {}
 const line = (doId: string, code: string, qty: number, group: string | null = 'Mattress') => ({
   delivery_order_id: doId, line_no: 1, item_code: code, description: code, qty, rack_id: null,
   shipped_from: null, item_group: group, variants: null, description2: null, so_item_id: null, committed_po_batch_no: null,
+  worked: null,
 });
 
 const day = (dos: DayDoRow[], crews: DayCrewRow[], tripStops: Parameters<typeof assemblePackingDay>[0]['tripStops'] = []) =>

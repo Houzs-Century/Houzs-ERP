@@ -11,6 +11,7 @@ export type PackingItem = {
   rack_locked: boolean;
   po: string | null;
   po_locked: boolean;
+  worked_out: boolean;
   item_group: string | null;
   variants: Record<string, unknown> | null;
   description2: string | null;

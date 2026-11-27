@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
 import type { PackingItem, PackingListRow, PackingStop } from './packing-list-queries';
+import { WORKED_OUT_NOTE } from './delivery-order-pdf';
 
 vi.mock('./authed-fetch', () => ({ authedFetch: async () => { throw new Error('offline in tests'); } }));
 
@@ -53,7 +54,7 @@ afterEach(() => {
 
 const item = (code: string, group: string, qty: number, extra: Partial<PackingItem> = {}): PackingItem => ({
   line_no: 1, item_code: code, description: `${code} description`, qty,
-  rack: 'Rack 3', rack_locked: true, po: 'HC-PO-2611-004', po_locked: true,
+  rack: 'Rack 3', rack_locked: true, po: 'HC-PO-2611-004', po_locked: true, worked_out: false,
   item_group: group, variants: null, description2: null, so_line_no: null, ...extra,
 });
 
@@ -361,3 +362,57 @@ test.skipIf(!process.env.PL_SAMPLE_OUT)('writes a sample PDF', async () => {
   writeFileSync(process.env.PL_SAMPLE_OUT as string, Buffer.from(doc.output('arraybuffer')));
 }, 60_000);
 
+
+/* Lines with no dispatch stamp yet print the PO / Rack worked out from stock records with
+   the DO PDF's " *" and its footnote (owner 2026-11-28, VPC9058). */
+const WORKED = list([
+  stop(1, 'LIAW TECK CHAI', [
+    item('AKM-MAT-Q10', 'mattress', 1, { rack: 'L3.2', po: 'HC-PO-2610-050', rack_locked: false, po_locked: false, worked_out: true, so_line_no: 1 }),
+    item('XAM-1S-LHF', 'sofa', 1, { rack: 'L16.1', po: 'HC-PO-2609-229', so_line_no: 2 }),
+  ]),
+  stop(2, 'JOAN YIING', [
+    item('AKM-MAT-Q10', 'mattress', 1, { rack: 'L3.2', po: 'HC-PO-2610-050', so_line_no: 1 }),
+    item('PIL-STD', 'accessories', 2, { rack: null, po: null, rack_locked: false, po_locked: false, worked_out: false }),
+  ]),
+  stop(3, 'PHOON JIA YEONG', [
+    item('BOLSTER-K', 'accessories', 1, { rack: 'L10.1, L10.2', po: 'HC-PO-2610-061, HC-PO-2610-077', rack_locked: false, po_locked: false, worked_out: true }),
+  ]),
+], { lorry_plate: 'VPC9058' });
+
+describe('worked-out PO / Rack', () => {
+  test('a worked-out value is starred once in the aggregated Part A row and once on its own Part B line; a locked one and a dash are not', async () => {
+    const { spans } = await render(WORKED);
+    const starred = spans.filter((s) => s.text.endsWith(' *')).map((s) => s.text);
+    expect(starred.filter((t) => t === 'HC-PO-2610-050 *')).toHaveLength(2);
+    expect(starred.filter((t) => t === 'L3.2 *')).toHaveLength(2);
+    expect(starred.some((t) => t.includes('HC-PO-2609-229') || t.includes('L16.1'))).toBe(false);
+    expect(spans.some((s) => s.text === '— *')).toBe(false);
+    expect(spans.filter((s) => s.text === WORKED_OUT_NOTE)).toHaveLength(1);
+  });
+
+  test('a sheet with nothing worked out prints no footnote', async () => {
+    const { spans } = await render(SMALL);
+    expect(spans.some((s) => s.text === WORKED_OUT_NOTE)).toBe(false);
+    expect(spans.some((s) => s.text.endsWith(' *'))).toBe(false);
+  });
+});
+
+test.skipIf(!process.env.PL_PO_RACK_SAMPLE_OUT)('writes the worked-out PO / Rack sample PDF', async () => {
+  setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
+  const [{ jsPDF }, { default: autoTable }, { renderPackingListInto, renderPackingRegionInto }] = await Promise.all([
+    import('jspdf'), import('jspdf-autotable'), import('./packing-list-pdf'),
+  ]);
+  const doc = new jsPDF({ unit: 'mm', format: 'letter' });
+  await renderPackingListInto(doc, autoTable, WORKED, { date: '2026-11-28', runUrl: null, logo: null });
+  doc.addPage();
+  await renderPackingRegionInto(doc, autoTable, {
+    region: 'KL_SEL', label: 'KL/SEL', do_count: 2, customer_count: 2, units: 5, lorry_plates: ['VPC9058'], not_arranged: 0,
+    dos: WORKED.stops.map((s) => ({
+      do_id: s.do_id!, do_number: s.do_number, do_status: s.do_status, so_doc_no: s.so_doc_no, debtor_code: null,
+      customer_name: s.customer_name, address: s.address, phone: s.phone, time_range: s.time_range, m3_milli: null,
+      lorry_plate: 'VPC9058', driver_name: 'Ah Meng', driver_phone: null, helper_1_name: null, helper_2_name: null,
+      trip_no: null, trip_stop_no: null, state: 'Selangor', country: 'Malaysia', units: s.units, items: s.items,
+    })),
+  }, { date: '2026-11-28', logo: null });
+  writeFileSync(process.env.PL_PO_RACK_SAMPLE_OUT as string, Buffer.from(doc.output('arraybuffer')));
+}, 60_000);

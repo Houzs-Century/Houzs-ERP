@@ -130,7 +130,7 @@ Packing lists and the run QR
 - Every read scoped to allowed companies (`trip_stops` through its trips, crew by scoped DO ids); ids chunked. Crew-scoped callers see their trips' DOs and DOs whose crew names them.
 - Sheet = DO letterhead/frame (`drawLetterhead` etc. in `delivery-order-pdf.ts`), Letter, black only; file `<plate>-<yyyy-mm-dd>.pdf`; copy is English.
 - Part A pick by category (`buildPickSections`): MATTRESS, BEDFRAME, ACCESSORIES, SOFA, OTHER; mattress/accessories aggregate code+variant, bedframe/sofa one row per line, sofa grouped by SO; every list sorted code, variant, customer desc, rack. Service lines never appear.
-- Part B load by customer: last stop first, printing the real stop number; lines in SO line order. PO = stamped PO, else `committed_po_batch_no`, else a dash.
+- Part B load by customer: last stop first, printing the real stop number; lines in SO line order. PO = stamped PO, else `committed_po_batch_no`, else the PO the DO detail works out; Rack = stamped rack, else the picked rack, else the worked-out rack (one rule: `scm/lib/do-line-worked-out-sources.ts`, batched per day). An unlocked value prints `*` with the DO PDF's footnote; nothing known prints a dash.
 - Print all for a day: Last Mile Delivery section, Delivery Orders `?tab=packing&date=` (`view=region`, `unassigned=1`), and the phone Delivery Orders card (By lorry / By region).
 - Status rollup: LOADED = Confirmed, DISPATCHED = Loaded, IN_TRANSIT = In Transit, SIGNED/DELIVERED/INVOICED = Delivered; no readable DO -> dash, never "0/0". Rack prints per DO line, not per piece.
 - QR encodes `/d/<token>` (10-char base32; legacy 64-hex still resolves), minted lazily by `GET /api/scm/trips/:id/scan-token`, opened by `frontend/src/pages/PublicDoScan.tsx`.

@@ -113,13 +113,27 @@ export function shippedFromRacks(rows: ReadonlyArray<{ item_code: string | null;
   return new Map([...out].map(([k, v]) => [k, [...v].sort()]));
 }
 
-/** The racks a DO stocked its goods out of (load / dispatch), read back by its own
- *  number from a company-scoped `warehouse_rack_movements` select. Best-effort like
- *  the receipt walk: no number or a failed read answers null. */
-export async function loadShippedFromRacks(scopedSelect: any, doNumber: string | null): Promise<Map<string, string[]> | null> {
-  if (!doNumber) return null;
-  const r = await scopedSelect.eq('source_doc_no', doNumber).eq('movement_type', 'STOCK_OUT');
-  return r.error ? null : shippedFromRacks((r.data ?? []) as Array<{ item_code: string | null; rack_label: string | null }>);
+/** DO number -> the racks that DO stocked its goods out of (load / dispatch), for many DOs in
+ *  one chunked read of `warehouse_rack_movements`. `scopedSelect` builds the caller's
+ *  company-scoped `select('source_doc_no, item_code, rack_label')`. Best-effort like the
+ *  receipt walk: a failed read answers null and every line falls back to the receipt walk. */
+export async function loadShippedFromRacksByDo(
+  scopedSelect: () => any,
+  doNumbers: ReadonlyArray<string | null>,
+): Promise<Map<string, Map<string, string[]>> | null> {
+  const nos = [...new Set(doNumbers.filter((n): n is string => !!n))];
+  const out = new Map<string, Map<string, string[]>>();
+  if (nos.length === 0) return out;
+  const { data, error, truncated } = await chunkIn<{ source_doc_no: string | null; item_code: string | null; rack_label: string | null }>(
+    nos, (part, from, to) => pgrestIn(scopedSelect(), 'source_doc_no', part).eq('movement_type', 'STOCK_OUT').order('id').range(from, to));
+  if (error || truncated) return null;
+  const byDo = new Map<string, Array<{ item_code: string | null; rack_label: string | null }>>();
+  for (const r of data) {
+    if (!r.source_doc_no) continue;
+    (byDo.get(r.source_doc_no) ?? byDo.set(r.source_doc_no, []).get(r.source_doc_no)!).push(r);
+  }
+  for (const [no, rows] of byDo) out.set(no, shippedFromRacks(rows));
+  return out;
 }
 
 export function racksForDoLine(

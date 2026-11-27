@@ -44,6 +44,7 @@ import {
   font,
   rule,
   setInk,
+  WORKED_OUT_NOTE,
 } from './delivery-order-pdf';
 import { DO_SIZE as S, DO_THEME as T, pt } from './delivery-order-theme';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
@@ -113,8 +114,11 @@ function describe(description: string | null, variant: string): string {
   return text || DASH;
 }
 
-const poCell = (pos: readonly string[]): string => (pos.length > 0 ? pos.join('\n') : DASH);
-const rackCell = (racks: readonly string[]): string => formatRacksCompact(racks) || DASH;
+/* A worked-out value (no dispatch stamp yet) carries " *", the DO PDF's mark, and the sheet
+   prints WORKED_OUT_NOTE once. A dash is never starred. */
+const star = (cell: string, worked: boolean): string => (worked && cell !== DASH ? `${cell} *` : cell);
+const poCell = (pos: readonly string[], worked: boolean): string => star(pos.length > 0 ? pos.join('\n') : DASH, worked);
+const rackCell = (racks: readonly string[], worked: boolean): string => star(formatRacksCompact(racks) || DASH, worked);
 const splitRacks = (v: string | null): string[] => (v ?? '').split(',').map((x) => x.trim()).filter(Boolean);
 const splitPos = splitRacks;
 
@@ -287,8 +291,8 @@ function regionLayout(region: Pick<PackingRegionRow, 'dos'>): PickLayout {
     cols: {
       0: { cellWidth: 28, fontStyle: 'bold' as const },
       1: { cellWidth: 'auto' as const },
-      2: { cellWidth: 27, fontSize: S.min },
-      3: { cellWidth: 13, halign: 'center' as const, fontStyle: 'bold' as const },
+      2: { cellWidth: 30, fontSize: S.min },
+      3: { cellWidth: 15, halign: 'center' as const, fontStyle: 'bold' as const },
       4: { cellWidth: 10, halign: 'right' as const, fontStyle: 'bold' as const, fontSize: S.body },
       5: { cellWidth: 21 },
       6: { cellWidth: 21, fontSize: S.min },
@@ -302,8 +306,8 @@ function regionLayout(region: Pick<PackingRegionRow, 'dos'>): PickLayout {
 const pickBody = (rows: readonly PickRow[], layout: PickLayout): string[][] => rows.map((r) => [
   r.item_code,
   describe(r.description, r.variant),
-  poCell(r.pos),
-  rackCell(r.racks),
+  poCell(r.pos, r.worked_out),
+  rackCell(r.racks, r.worked_out),
   qtyText(r.qty),
   r.customers.join(', '),
   ...(layout.lorryOf ? [layout.lorryOf(r.customers).join('\n') || DASH] : []),
@@ -404,7 +408,7 @@ function drawPartA(doc: Doc, autoTable: AutoTable, startY: number, sections: Pic
           `Customer ${g.stop_no}`,
           g.customer_name ?? 'No customer name',
           `${g.pieces} ${g.pieces === 1 ? 'piece' : 'pieces'}`,
-          `PO ${g.pos.length > 0 ? g.pos.join(', ') : DASH}`,
+          `PO ${star(g.pos.length > 0 ? g.pos.join(', ') : DASH, g.worked_out)}`,
           lorry ? `Lorry ${lorry}` : null,
         ].filter(Boolean).join(' · '),
         colSpan: layout.head.length,
@@ -491,8 +495,8 @@ function stopRows(stop: PackingStop, fabric: Fabric): string[][] {
     shortType(packCategory(it.item_group)),
     it.item_code,
     describe(it.description, variantText(it, fabric)),
-    poCell(splitPos(it.po)),
-    rackCell(splitRacks(it.rack)),
+    poCell(splitPos(it.po), it.worked_out),
+    rackCell(splitRacks(it.rack), it.worked_out),
     qtyText(it.qty),
     '',
   ]);
@@ -564,6 +568,18 @@ function drawPartB(doc: Doc, autoTable: AutoTable, startY: number, stops: readon
 }
 
 
+/** WORKED_OUT_NOTE under the sheet's last table when any PO / Rack cell on it carries " *"
+ *  (the same footnote the DO PDF prints). */
+function drawWorkedOutNote(doc: Doc, startY: number, items: readonly PackingItem[]): number {
+  if (!items.some((it) => it.worked_out)) return startY;
+  let y = startY;
+  if (y + 7 > TABLE_BOTTOM) { doc.addPage(); y = CONT_TOP_A; }
+  font(doc, S.body);
+  setInk(doc, T.ink);
+  doc.text(WORKED_OUT_NOTE, M, baselineOf(y + 1, S.body));
+  return y + 7;
+}
+
 /** Draw ONE trip's packing list into `doc`, starting on its current page. A
  *  whole day's print calls this once per lorry, each on a fresh page. */
 export async function renderPackingListInto(
@@ -599,6 +615,7 @@ export async function renderPackingListInto(
   y = drawPartHeading(doc, y, 'PART B · LOAD BY CUSTOMER',
     `Load from the top. The last customer goes in first, deepest into the lorry; customer 1 goes in last, at the door.`);
   y = drawPartB(doc, autoTable, y, list.stops, fabric);
+  y = drawWorkedOutNote(doc, y, list.stops.filter((s) => !s.do_missing).flatMap((s) => s.items));
 
   if (y > CLOSING_TOP) doc.addPage();
 
@@ -767,6 +784,7 @@ export async function renderPackingRegionInto(
     'Every delivery order in this region for the day, lorry or not. The CUSTOMER number is the key at the end; LORRY shows the plate, or Not arranged.');
   y = drawPartA(doc, autoTable, y, buildPickSections(regionStops(region), (it) => variantText(it, fabric)), regionLayout(region));
   y = drawCustomerKey(doc, autoTable, y, region);
+  y = drawWorkedOutNote(doc, y, region.dos.flatMap((d) => d.items));
 
   if (y > CLOSING_TOP) doc.addPage();
 

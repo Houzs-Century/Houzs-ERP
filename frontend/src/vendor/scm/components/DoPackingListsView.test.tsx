@@ -45,8 +45,8 @@ const regionRow = (over: Partial<PackingRegionRow>): PackingRegionRow => ({
     time_range: null, m3_milli: null, lorry_plate: 'VJK 8821', driver_name: null, driver_phone: null, helper_1_name: null, helper_2_name: null,
     trip_no: null, trip_stop_no: null, state: 'Selangor', country: null, units: 3,
     items: [
-      { line_no: 1, item_code: 'M', description: null, qty: 2, rack: null, rack_locked: false, po: null, po_locked: false, item_group: 'mattress', variants: null, description2: null, so_line_no: 1 },
-      { line_no: 2, item_code: 'S', description: null, qty: 1, rack: null, rack_locked: false, po: null, po_locked: false, item_group: 'sofa', variants: null, description2: null, so_line_no: 2 },
+      { line_no: 1, item_code: 'M', description: null, qty: 2, rack: null, rack_locked: false, po: null, po_locked: false, worked_out: false, item_group: 'mattress', variants: null, description2: null, so_line_no: 1 },
+      { line_no: 2, item_code: 'S', description: null, qty: 1, rack: null, rack_locked: false, po: null, po_locked: false, worked_out: false, item_group: 'sofa', variants: null, description2: null, so_line_no: 2 },
     ],
   }],
   ...over,
