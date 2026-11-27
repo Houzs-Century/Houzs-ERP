@@ -93,6 +93,7 @@ const rowOut = (r: RowRecord) => ({
   jobType: jobTypeOfRow(r),
   eventType: r.event_type,
   localTotalSen: Number(r.local_total_sen),
+  allowanceOverrideSen: r.allowance_override_sen == null ? null : Number(r.allowance_override_sen),
   state: r.state,
   postcode: r.postcode,
   lorryPlate: r.lorry_plate,
@@ -236,6 +237,7 @@ type RowInput = {
   jobType: TripJobType;
   eventType: TripEventType | null;
   localTotalSen: number;
+  allowanceOverrideSen: number | null;
   state: string;
   postcode: string;
   lorryPlate: string;
@@ -250,6 +252,13 @@ function parseRow(b: Record<string, unknown>): RowInput | string {
   const eventType = isFairJob(jobType) && TRIP_EVENT_TYPES.includes(b.eventType as TripEventType) ? (b.eventType as TripEventType) : null;
   const sen = Number(b.localTotalSen ?? 0);
   if (!Number.isInteger(sen) || sen < 0) return "Local Total must be RM 0.00 or more.";
+  const ov = b.allowanceOverrideSen;
+  let allowanceOverrideSen: number | null = null;
+  if (ov != null && ov !== "") {
+    const n = Number(ov);
+    if (!Number.isInteger(n) || n < 0) return "Allowance must be RM 0.00 or more, or left blank.";
+    allowanceOverrideSen = n;
+  }
   const names = { driver_1_name: str(b.driver1, 80), driver_2_name: str(b.driver2, 80), helper_1_name: str(b.helper1, 80), helper_2_name: str(b.helper2, 80) };
   if (!names.driver_1_name && !names.driver_2_name) return "Name the driver.";
   return {
@@ -260,6 +269,7 @@ function parseRow(b: Record<string, unknown>): RowInput | string {
     jobType,
     eventType,
     localTotalSen: sen,
+    allowanceOverrideSen,
     state: str(b.state, 60),
     postcode: str(b.postcode, 10),
     lorryPlate: str(b.lorryPlate, 30),
@@ -290,6 +300,7 @@ hrTripPay.post("/trip-pay/rows", async (c) => {
       job_type: r.jobType,
       event_type: r.eventType,
       local_total_sen: r.localTotalSen,
+      allowance_override_sen: r.allowanceOverrideSen,
       state: r.state,
       postcode: r.postcode,
       lorry_plate: r.lorryPlate,
@@ -327,6 +338,7 @@ hrTripPay.patch("/trip-pay/rows/:id", async (c) => {
       job_type: r.jobType,
       event_type: r.eventType,
       local_total_sen: r.localTotalSen,
+      allowance_override_sen: r.allowanceOverrideSen,
       state: r.state,
       postcode: r.postcode,
       lorry_plate: r.lorryPlate,

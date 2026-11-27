@@ -1275,6 +1275,7 @@ export const hr_trip_rows = pgTable(
     ref_no: text("ref_no").notNull().default(""),
     kind: text("kind").notNull(),
     local_total_sen: bigint("local_total_sen", { mode: "number" }).notNull().default(0),
+    allowance_override_sen: bigint("allowance_override_sen", { mode: "number" }),
     state: text("state").notNull().default(""),
     lorry_plate: text("lorry_plate").notNull().default(""),
     driver_1_name: text("driver_1_name").notNull().default(""),

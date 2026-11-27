@@ -26,6 +26,7 @@ const row = (o: Partial<TripRow>): TripRow => ({
   jobType: "SETUP",
   eventType: "EXHIBITION",
   localTotalSen: 0,
+  allowanceOverrideSen: null,
   state: "Selangor",
   postcode: "",
   lorryPlate: "VPC 9058",
@@ -111,6 +112,27 @@ describe("transfer item, once per driver per day", () => {
       row({ jobType: "TRANSFER", eventType: null, tripDate: "2026-11-04", venueKey: "P3" }),
     ]);
     expect(r.rows.map((x) => x.allowanceSen)).toEqual([1500, 1500, 1500]);
+  });
+});
+
+describe("hand-set allowance override (owner 2026-11-27)", () => {
+  test("a filled override is the row's job allowance, not the rate card", () => {
+    const r = run([row({ allowanceOverrideSen: 25000 })]);
+    expect(r.rows[0].allowanceSen).toBe(25000);
+    expect(r.pay.get(1)!.jobAllowanceSen).toBe(25000);
+  });
+  test("override pays even for a job type with no rate-card allowance", () => {
+    const r = run([row({ jobType: "LORRY_SERVICE", eventType: null, allowanceOverrideSen: 8000 })]);
+    expect(r.rows[0].allowanceSen).toBe(8000);
+  });
+  test("override of 0 pays nothing; null falls back to the rate card", () => {
+    expect(run([row({ allowanceOverrideSen: 0 })]).rows[0].allowanceSen).toBe(0);
+    expect(run([row({ allowanceOverrideSen: null })]).rows[0].allowanceSen).toBe(10000);
+  });
+  test("an override on a Delivery order is ignored (it pays by commission, not a flat allowance)", () => {
+    const p = run([row({ jobType: "DELIVERY_ORDER", eventType: null, localTotalSen: 1000000, allowanceOverrideSen: 25000 })]).pay.get(1)!;
+    expect(p.jobAllowanceSen).toBe(0);
+    expect(p.commission.lines).toEqual([{ crew: 2, baseSen: 1000000, rateBps: 50, amountSen: 5000 }]);
   });
 });
 

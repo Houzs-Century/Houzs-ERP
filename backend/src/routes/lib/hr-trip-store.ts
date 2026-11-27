@@ -84,6 +84,7 @@ export function tripRowOf(r: RowRecord): TripRow {
     jobType: jobTypeOfRow(r),
     eventType: TRIP_EVENT_TYPES.includes(r.event_type as TripEventType) ? (r.event_type as TripEventType) : null,
     localTotalSen: Number(r.local_total_sen),
+    allowanceOverrideSen: r.allowance_override_sen == null ? null : Number(r.allowance_override_sen),
     state: r.state,
     postcode: r.postcode,
     lorryPlate: r.lorry_plate,

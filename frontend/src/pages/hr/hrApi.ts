@@ -363,6 +363,7 @@ export type TripRowOut = {
   jobType: TripJobType;
   eventType: TripEventType | null;
   localTotalSen: number;
+  allowanceOverrideSen?: number | null;
   state: string;
   postcode: string;
   lorryPlate: string;

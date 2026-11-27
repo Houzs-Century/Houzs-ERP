@@ -392,6 +392,7 @@ function RowDrawer({ row, month, first, last, onClose, onSaved }: { row: TripRow
     jobType: (row?.jobType ?? "DELIVERY_ORDER") as TripJobType,
     eventType: (row?.eventType ?? "") as TripEventType | "",
     localTotal: row ? rmFromSen(row.localTotalSen) : "",
+    allowanceOverride: row?.allowanceOverrideSen != null ? rmFromSen(row.allowanceOverrideSen) : "",
     state: row?.state ?? "",
     postcode: row?.postcode ?? "",
     lorryPlate: row?.lorryPlate ?? "",
@@ -408,9 +409,14 @@ function RowDrawer({ row, month, first, last, onClose, onSaved }: { row: TripRow
       toast.error("Local Total must be RM 0.00 or more.");
       return;
     }
+    const allowanceOverrideSen = f.jobType === "DELIVERY_ORDER" || f.allowanceOverride.trim() === "" ? null : senFromRm(f.allowanceOverride);
+    if (allowanceOverrideSen != null && !(allowanceOverrideSen >= 0)) {
+      toast.error("Allowance must be RM 0.00 or more, or left blank.");
+      return;
+    }
     setBusy(true);
     try {
-      const body = { ...f, eventType: isFairJob(f.jobType) && f.eventType ? f.eventType : null, localTotalSen };
+      const body = { ...f, eventType: isFairJob(f.jobType) && f.eventType ? f.eventType : null, localTotalSen, allowanceOverrideSen };
       if (row) await api.patch(`${HR}/trip-pay/rows/${row.id}`, body);
       else await api.post(`${HR}/trip-pay/rows`, body);
       toast.success(row ? "Row updated" : "Row added");
@@ -476,6 +482,11 @@ function RowDrawer({ row, month, first, last, onClose, onSaved }: { row: TripRow
         <Field label="Local Total (RM)" hint="A Delivery order's counts toward the driver's commission.">
           <input className={inputCls} value={f.localTotal} onChange={(e) => set("localTotal", e.target.value)} inputMode="decimal" />
         </Field>
+        {f.jobType !== "DELIVERY_ORDER" && (
+          <Field label="Allowance (RM)" hint="Blank = the rate card. Fill to hand-set this row's allowance (e.g. a night fair).">
+            <input className={inputCls} value={f.allowanceOverride} onChange={(e) => set("allowanceOverride", e.target.value)} inputMode="decimal" placeholder="Rate card" />
+          </Field>
+        )}
         <Field label="State" hint="Decides the outstation allowance.">
           <input className={inputCls} value={f.state} onChange={(e) => set("state", e.target.value)} placeholder="Johor" />
         </Field>

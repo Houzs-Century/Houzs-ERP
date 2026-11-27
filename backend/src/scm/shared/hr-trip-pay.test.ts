@@ -154,6 +154,7 @@ describe("computeTripPay", () => {
       jobType: "DELIVERY_ORDER",
       eventType: null,
       localTotalSen: sen,
+      allowanceOverrideSen: null,
       state: "Selangor",
       postcode: "",
       lorryPlate: "",
