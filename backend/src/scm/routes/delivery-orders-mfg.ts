@@ -64,7 +64,6 @@ import { eager } from '../lib/concurrency';
 import { buildDoListRows } from '../lib/do-list-rows';
 import { attachDoLines } from '../lib/do-list-lines';
 import {
-  resolveDoLineSources,
   resolveDoLineSourcePosImpl,
   resolveDoSourcePosForDosImpl,
   soLineShippedSourcePosImpl,
@@ -114,7 +113,7 @@ import { recordSoAudit, type FieldChange } from '../lib/so-audit';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange } from '../lib/entity-audit';
 import { markIdempotencyNoWrite } from '../../middleware/idempotency';
-import { resolveDoLineRacks, racksForDoLine, loadShippedFromRacks } from '../lib/do-line-racks';
+import { resolveWorkedOutSources } from '../lib/do-line-worked-out-sources';
 import { queueDoShippedFromStamp, markDoShippedFromReturned, withShippedFromStamp, DO_RACK_OUT_REASON } from '../lib/do-shipped-from-stamp'; import { rackShipState, retireDoRackCycle, DO_RACK_IN_REASON } from '../lib/do-rack-cycle';
 import { withSoRefDocNos } from '../lib/so-ref-search';
 import { stockTxFor, type StockTx } from '../lib/stock-post-tx'; import { doShipCoreFailure, doShipFailureResponse, keepCreatedDoAsDraft, type DoShipFlip, type DoShipTail } from '../lib/do-ship-atomic';
@@ -1764,29 +1763,26 @@ deliveryOrdersMfg.get('/:id', async (c) => {
   };
   const rawItems = i.data as unknown as Array<{ id: string; so_item_id?: string | null } & Record<string, unknown>>;
   const headerWh = (h.data as { warehouse_id?: string | null }).warehouse_id ?? null;
-  const [lineWh, downstreamMap, sourcePosByBucket] = await Promise.all([
-    resolveDoLineWarehouses(sb, rawItems, headerWh, activeCompanyId(c)),
+  const [{ lineWh, byLine: sourcesByLine }, downstreamMap] = await Promise.all([
+    resolveWorkedOutSources(sb, [{
+      id,
+      do_number: (h.data as { do_number?: string | null }).do_number ?? null,
+      warehouse_id: headerWh,
+      company_id: activeCompanyId(c),
+    }], rawItems.map((it) => ({
+      id: it.id,
+      delivery_order_id: id,
+      item_code: (it.item_code as string | null) ?? null,
+      item_group: (it.item_group as string | null) ?? null,
+      variants: (it.variants as VariantAttrs | null) ?? null,
+      so_item_id: (it.so_item_id as string | null) ?? null,
+      rack_id: (it.rack_id as string | null) ?? null,
+    })), () => scopeToCompany(sb.from('warehouse_rack_movements').select('source_doc_no, item_code, rack_label'), c)),
     doLineDownstream(sb, rawItems.map((it) => it.id)),
-    resolveDoLineSources(sb, id),
   ]);
   const whLabels = await doWarehouseLabels(sb, c, [...lineWh.values(), headerWh]);
   (deliveryOrder as Record<string, unknown>).warehouse_code = headerWh ? (whLabels.get(headerWh)?.label ?? null) : null;
   (deliveryOrder as Record<string, unknown>).warehouse_name = headerWh ? (whLabels.get(headerWh)?.name ?? null) : null;
-  const [doRacks, shippedFrom] = await Promise.all([resolveDoLineRacks(sb, rawItems, lineWh), loadShippedFromRacks(scopeToCompany(sb.from('warehouse_rack_movements').select('item_code, rack_label'), c), (h.data as { do_number?: string | null }).do_number ?? null)]);
-  const unresolvedSoIds = rawItems
-    .filter((it) => {
-      const vk = computeVariantKey(
-        (it.item_group as string | null) ?? null,
-        (it.variants as VariantAttrs | null) ?? null,
-      );
-      const trace = sourcePosByBucket.get(`${(it.item_code as string) ?? ''}::${vk}`);
-      return !trace || (trace.pos.length === 0 && trace.adjQty <= 0);
-    })
-    .map((it) => (it.so_item_id as string | null) ?? null)
-    .filter((x): x is string => Boolean(x));
-  const boundPoBySoItem = unresolvedSoIds.length > 0
-    ? await resolveExpectedBatchBySoItem(sb, unresolvedSoIds, { onMultiPo: 'latest' })
-    : new Map<string, { poNumber: string }>();
   /* Per-line Assigned SO (owner 2026-07-31): a DO is HARD-linked to its Sales
      Order — never an MRP guess — so the drill-down shows each line's intrinsic SO
      doc_no + that SO's effective delivery date (amended ?? customer), resolved
@@ -1813,31 +1809,15 @@ deliveryOrdersMfg.get('/:id', async (c) => {
   }
   const items = rawItems.map((it) => {
     const wid = lineWh.get(it.id) ?? null;
-    const variantKey = computeVariantKey(
-      (it.item_group as string | null) ?? null,
-      (it.variants as VariantAttrs | null) ?? null,
-    );
-    const bucketKey = `${(it.item_code as string) ?? ''}::${variantKey}`;
-    const trace = sourcePosByBucket.get(bucketKey) ?? { pos: [], adjQty: 0 };
-    const ledgerPos = trace.pos;
-    const boundPo = ledgerPos.length === 0 && trace.adjQty <= 0 && it.so_item_id
-      ? (boundPoBySoItem.get(it.so_item_id as string)?.poNumber ?? null)
-      : null;
-    const sourcePos = ledgerPos.length > 0 ? [...ledgerPos] : (boundPo ? [boundPo] : []);
-    const racks = racksForDoLine(doRacks, {
-      warehouseId: wid,
-      itemCode: (it.item_code as string | null) ?? null,
-      rackId: (it.rack_id as string | null) ?? null,
-      sourcePos,
-    }, shippedFrom);
+    const src = sourcesByLine.get(it.id) ?? { source_pos: [], source_adj: false, racks: [] };
     return {
       ...it,
       warehouse_id: wid,
       warehouse_code: wid ? (whLabels.get(wid)?.label ?? null) : null,
       downstream: downstreamMap.get(it.id) ?? [],
-      source_pos: sourcePos,
-      source_adj: trace.adjQty > 0,
-      racks,
+      source_pos: src.source_pos,
+      source_adj: src.source_adj,
+      racks: src.racks,
       so_doc_no: it.so_item_id ? (soDocBySoItem.get(it.so_item_id as string) ?? null) : null,
       so_delivery_date: it.so_item_id
         ? (soDeliveryByDoc.get(soDocBySoItem.get(it.so_item_id as string) ?? '') ?? null)

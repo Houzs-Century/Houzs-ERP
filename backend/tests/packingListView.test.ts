@@ -189,6 +189,7 @@ const line = (delivery_order_id: string, line_no: number, item_code: string, qty
   delivery_order_id, line_no, item_code, description: null as string | null, qty, rack_id,
   shipped_from: null as unknown, item_group: null as string | null, variants: null as Record<string, unknown> | null,
   description2: null as string | null, so_item_id: null as string | null, committed_po_batch_no: null as string | null,
+  worked: null as { pos: string[]; racks: string[] } | null,
 });
 
 const base = () => ({
@@ -309,6 +310,29 @@ describe('assemblePackingLists', () => {
     expect(b).toMatchObject({ po: 'PO-9, PO-7', po_locked: true });
     expect(a).toMatchObject({ po: 'PO-3', po_locked: false });
     expect(list.stops[1].items[0].po).toBeNull();
+  });
+
+  test('no stamp: committed PO, else the worked-out PO; the pick, else the worked-out rack; marked worked_out', () => {
+    const input = base();
+    input.items[0].worked = { pos: ['PO-W'], racks: ['L1.1'] }; // B: picked Rack 3
+    input.items[1].worked = { pos: ['PO-W2', 'PO-W2'], racks: ['L2.1', 'L2.2'] }; // A: nothing picked
+    input.items[2].worked = { pos: ['PO-W3'], racks: [] };
+    input.items[2].committed_po_batch_no = 'PO-COMMITTED';
+    input.items[3].worked = { pos: [], racks: [] };
+    const [list] = assemblePackingLists(input);
+    const [a, b] = list.stops[0].items;
+    expect(b).toMatchObject({ po: 'PO-W', rack: 'Rack 3', worked_out: true });
+    expect(a).toMatchObject({ po: 'PO-W2', rack: 'L2.1, L2.2', po_locked: false, rack_locked: false, worked_out: true });
+    expect(list.stops[1].items[0]).toMatchObject({ po: 'PO-COMMITTED', rack: 'Rack 20', worked_out: true });
+    expect(list.stops[2].items[0]).toMatchObject({ po: null, rack: null, worked_out: false });
+  });
+
+  test('a stamped line ignores the worked-out answer and is not marked', () => {
+    const input = base();
+    input.items[0].shipped_from = { v: 1, item_code: 'B', pos: [{ po: 'PO-S', qty: 1 }], racks: [{ rack_id: 'r9', label: 'L16.1', qty: 1 }] };
+    input.items[0].worked = { pos: ['PO-W'], racks: ['L1.1'] };
+    const [list] = assemblePackingLists(input);
+    expect(list.stops[0].items[1]).toMatchObject({ po: 'PO-S', po_locked: true, rack: 'L16.1', rack_locked: true, worked_out: false });
   });
 
   test('a customer\'s lines follow the SALES ORDER line order, then the DO line_no', () => {

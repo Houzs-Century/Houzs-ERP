@@ -10,6 +10,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
 import type { PackingItem, PackingRegionDo, PackingRegionRow } from './packing-list-queries';
 import { lorriesFor, regionCategoryUnits, regionLorrySummary, regionStops } from './packing-list-model';
+import { WORKED_OUT_NOTE } from './delivery-order-pdf';
 
 vi.mock('./authed-fetch', () => ({ authedFetch: async () => { throw new Error('offline in tests'); } }));
 
@@ -68,7 +69,7 @@ afterEach(() => {
 
 const item = (code: string, group: string, qty: number, extra: Partial<PackingItem> = {}): PackingItem => ({
   line_no: 1, item_code: code, description: `${code} description`, qty,
-  rack: 'Rack 3', rack_locked: true, po: 'HC-PO-2611-004', po_locked: true,
+  rack: 'Rack 3', rack_locked: true, po: 'HC-PO-2611-004', po_locked: true, worked_out: false,
   item_group: group, variants: null, description2: null, so_line_no: null, ...extra,
 });
 
@@ -273,3 +274,19 @@ test.skipIf(!process.env.PL_REGION_SAMPLE_OUT)('writes a sample region PDF', asy
   await renderPackingRegionInto(doc, autoTable, stressRegion(), { date: '2026-11-28', logo: null });
   writeFileSync(process.env.PL_REGION_SAMPLE_OUT as string, Buffer.from(doc.output('arraybuffer')));
 }, 60_000);
+
+describe('worked-out PO / Rack on a region sheet', () => {
+  test('a worked-out value is starred and the DO PDF footnote is printed once', async () => {
+    const r = region([
+      regionDo(1, 'VPC9058', [item('AKM-MAT-Q10', 'mattress', 1, { rack: 'L3.2', po: 'HC-PO-2610-050', rack_locked: false, po_locked: false, worked_out: true })]),
+      regionDo(2, null, [item('XAM-1S-LHF', 'sofa', 1, { rack: 'L16.1', po: 'HC-PO-2609-229' })]),
+    ]);
+    const { spans } = await render(r);
+    expect(spans.some((s) => s.text === 'HC-PO-2610-050 *')).toBe(true);
+    expect(spans.some((s) => s.text === 'L3.2 *')).toBe(true);
+    expect(spans.some((s) => s.text.includes('HC-PO-2609-229 *'))).toBe(false);
+    expect(spans.filter((s) => s.text === WORKED_OUT_NOTE)).toHaveLength(1);
+    const plain = await render(region([regionDo(2, null, [item('XAM-1S-LHF', 'sofa', 1)])]));
+    expect(plain.spans.some((s) => s.text === WORKED_OUT_NOTE)).toBe(false);
+  });
+});

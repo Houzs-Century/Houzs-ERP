@@ -18,7 +18,7 @@ import type { PackingItem, PackingStop } from './packing-list-queries';
 
 const item = (code: string, group: string | null, qty: number, extra: Partial<PackingItem> = {}): PackingItem => ({
   line_no: 1, item_code: code, description: `${code} description`, qty,
-  rack: null, rack_locked: false, po: null, po_locked: false,
+  rack: null, rack_locked: false, po: null, po_locked: false, worked_out: false,
   item_group: group, variants: null, description2: null, so_line_no: null,
   ...extra,
 });
@@ -52,7 +52,7 @@ describe('packCategory', () => {
 
 describe('comparePickRows — the one sort', () => {
   const row = (item_code: string, variant: string, customer: number, rack: string): PickRow => ({
-    item_code, description: null, variant, pos: [], racks: [rack], qty: 1, customers: [customer],
+    item_code, description: null, variant, pos: [], racks: [rack], qty: 1, customers: [customer], worked_out: false,
   });
 
   test('item code, then variant, then customer highest first, then rack', () => {

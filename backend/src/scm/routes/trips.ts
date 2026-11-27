@@ -34,6 +34,8 @@ import { validatePing, shouldAcceptPing, latestPerDriver, PING_ACCEPTED_STATUSES
 import { dateOrNull } from '../lib/date-coerce';
 import { fillDpRowsPostcode, fillPostcodeFields, localitiesForPostcodes, postcodesToLookUp } from '../lib/postcode-from-address';
 import { DO_ARRIVED_STATES } from '../shared/do-shipped-states';
+import { resolveWorkedOutSources, type WorkedOutDo } from '../lib/do-line-worked-out-sources';
+import type { VariantAttrs } from '../shared';
 
 export const trips = new Hono<{ Bindings: Env; Variables: Variables }>();
 trips.use('*', supabaseAuth);
@@ -379,17 +381,31 @@ type PackLines = { items: PackItemRow[]; racks: PackLabelRow[]; soItems: PackSoI
    straight off a request body, so resolving it by id alone lets one company's paperwork name the
    other company's bay (docs/bugs/0497). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm service client, as everywhere in this file
-async function loadPackLines(sb: any, c: CompanyScopeCtx, doIds: readonly string[]): Promise<PackLines | { error: string }> {
+async function loadPackLines(sb: any, c: CompanyScopeCtx, dos: readonly WorkedOutDo[]): Promise<PackLines | { error: string }> {
+  const doIds = dos.map((d) => d.id);
   if (doIds.length === 0) return { items: [], racks: [], soItems: [] };
   const { data: itemData, error: itemErr } = await chunkIn<Record<string, unknown>>(doIds, (batch, lo, hi) =>
     scopeToAllowedCompanies(
       sb.from('delivery_order_items')
-        .select('delivery_order_id, line_no, item_code, description, description2, item_group, variants, qty, rack_id, shipped_from, so_item_id, committed_po_batch_no')
+        .select('id, delivery_order_id, line_no, item_code, description, description2, item_group, variants, qty, rack_id, shipped_from, so_item_id, committed_po_batch_no')
         .in('delivery_order_id', batch).range(lo, hi),
       c,
     ));
   if (itemErr) return { error: itemErr.message };
-  const items: PackItemRow[] = ((itemData ?? []) as Array<Record<string, unknown>>).map((it) => ({
+  const rows = (itemData ?? []) as Array<Record<string, unknown>>;
+  /* PO and Rack of a line with no dispatch stamp yet: worked out by the DO detail's own rule,
+     batched over the whole day (owner 2026-11-28, VPC9058: every mattress and accessory line
+     printed a dash while the DO showed its PO). */
+  const worked = await resolveWorkedOutSources(sb, dos, rows.map((it) => ({
+    id: String(dual<string>(it, 'id')),
+    delivery_order_id: String(dual<string>(it, 'delivery_order_id')),
+    item_code: dual<string | null>(it, 'item_code'),
+    item_group: dual<string | null>(it, 'item_group'),
+    variants: (dual<VariantAttrs | null>(it, 'variants') ?? null),
+    so_item_id: dual<string | null>(it, 'so_item_id'),
+    rack_id: dual<string | null>(it, 'rack_id'),
+  })), () => scopeToAllowedCompanies(sb.from('warehouse_rack_movements').select('source_doc_no, item_code, rack_label'), c));
+  const items: PackItemRow[] = rows.map((it) => ({
     delivery_order_id: String(dual<string>(it, 'delivery_order_id')),
     line_no: toNumericOrNull(dual(it, 'line_no')),
     item_code: dual<string | null>(it, 'item_code'),
@@ -402,6 +418,10 @@ async function loadPackLines(sb: any, c: CompanyScopeCtx, doIds: readonly string
     description2: dual<string | null>(it, 'description2'),
     so_item_id: dual<string | null>(it, 'so_item_id'),
     committed_po_batch_no: dual<string | null>(it, 'committed_po_batch_no'),
+    worked: (() => {
+      const w = worked.byLine.get(String(dual<string>(it, 'id')));
+      return w ? { pos: w.source_pos, racks: w.racks } : null;
+    })(),
   }));
 
   const rackIds = [...new Set(items.map((i) => i.rack_id).filter((v): v is string => !!v))];
@@ -463,7 +483,7 @@ async function loadPackLines(sb: any, c: CompanyScopeCtx, doIds: readonly string
 
    MUST stay registered BEFORE '/:id', which would otherwise swallow it.
    ─────────────────────────────────────────────────────────────────────────*/
-const DAY_DO_COLS = 'id, do_number, status, so_doc_no, debtor_code, debtor_name, address1, address2, city, postcode, state, customer_state, customer_country, phone, time_range, m3_total_milli, vehicle, driver_name, warehouse_id';
+const DAY_DO_COLS = 'id, company_id, do_number, status, so_doc_no, debtor_code, debtor_name, address1, address2, city, postcode, state, customer_state, customer_country, phone, time_range, m3_total_milli, vehicle, driver_name, warehouse_id';
 
 type PackingDay = {
   tripLists: PackingList[];
@@ -471,7 +491,7 @@ type PackingDay = {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm service client, as everywhere in this file
-async function loadPackingDay(sb: any, c: CompanyScopeCtx, date: string, warehouseId: string | null): Promise<PackingDay | { error: string }> {
+export async function loadPackingDay(sb: any, c: CompanyScopeCtx, date: string, warehouseId: string | null): Promise<PackingDay | { error: string }> {
   const { data: tripData, error: tripErr } = await paginateAll<Record<string, unknown>>((lo, hi) => {
     let q = sb.from('trips')
       .select('id, trip_no, trip_date, status, lorry_id, driver_id, helper_1_id, helper_2_id, warehouse_id')
@@ -619,7 +639,15 @@ async function loadPackingDay(sb: any, c: CompanyScopeCtx, date: string, warehou
     helper_2_name: dual<string | null>(cr, 'helper_2_name'),
   }));
 
-  const lines = await loadPackLines(sb, c, packDos.map((d) => d.id));
+  const lines = await loadPackLines(sb, c, dos.map((d) => {
+    const companyId = toNumericOrNull(dual(d, 'company_id'));
+    return {
+      id: String(dual<string>(d, 'id')),
+      do_number: dual<string | null>(d, 'do_number'),
+      warehouse_id: dual<string | null>(d, 'warehouse_id'),
+      company_id: companyId ?? undefined,
+    };
+  }));
   if ('error' in lines) return { error: lines.error };
 
   /* company-scope: crew masters, by id off trips scoped above (the same lookup /trips/day
