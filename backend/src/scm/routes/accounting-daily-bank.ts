@@ -4,8 +4,8 @@ import { requireActiveCompanyId } from '../lib/companyScope';
 import { mytDayWindow, todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
 import {
-  computeDailyBank, payoutDay, type CashbookPayout, type CashbookReceipt, type CashbookSkip, type CashbookStart, type DailyBankCashbook,
-  type PendingVoucherRow,
+  computeDailyBank, payoutDay, type CashbookPayout, type CashbookReceipt, type CashbookSkip, type CashbookStart, type CashbookTransferIn,
+  type DailyBankCashbook, type PendingVoucherRow,
 } from '../../acc/daily-bank';
 import { canWriteCashbook } from './accounting-daily-bank-cashbook';
 import { describeVouchers } from './payment-vouchers-describe';
@@ -96,13 +96,18 @@ export async function loadDailyBankBoard(
      never its bill number (owner 2026-11-09) — the pending ones and, on the cash
      book, the day's payouts, in one read. The To do's sum needs no words. */
   const paidToday = (cashbook?.payouts ?? []).filter((v) => payoutDay(v) === date);
-  if (opts.withNames && pending.length + paidToday.length > 0) {
+  const paidIds = new Set(paidToday.map((v) => v.id));
+  const inToday = (cashbook?.transfersIn ?? []).filter((v) => payoutDay(v) === date && !paidIds.has(v.id));
+  if (opts.withNames && pending.length + paidToday.length + inToday.length > 0) {
     const described = await describeVouchers(sb, { get: (k: string) => (k === 'companyId' ? co.companyId : undefined) },
-      [...pending, ...paidToday].map((v) => ({ ...v, id: String(v.id) })));
+      [...pending, ...paidToday, ...inToday].map((v) => ({ ...v, id: String(v.id) })));
     if (!described.ok) return { ok: false, reason: described.reason };
     const wordsOf = (id: unknown): string | null => described.byId.get(String(id))?.description_text ?? null;
     pending = pending.map((v) => ({ ...v, description_text: wordsOf(v.id) }));
-    if (cashbook) cashbook.payouts = cashbook.payouts.map((v) => (payoutDay(v) === date ? { ...v, description_text: wordsOf(v.id) } : v));
+    if (cashbook) {
+      cashbook.payouts = cashbook.payouts.map((v) => (payoutDay(v) === date ? { ...v, description_text: wordsOf(v.id) } : v));
+      cashbook.transfersIn = cashbook.transfersIn.map((v) => (payoutDay(v) === date ? { ...v, description_text: wordsOf(v.id) } : v));
+    }
   }
 
   const ledgerMoney = cashbook ? [] : money;
@@ -196,13 +201,13 @@ export async function loadCashbook(
     .map((s) => ({ account_code: String(s.account_code), start_date: String(s.start_date).slice(0, 10), balance_sen: Number(s.balance_sen) }))
     .filter((s) => isMoney.has(s.account_code));
   const live = starts.filter((s) => s.start_date <= date);
-  if (live.length === 0) return { ok: true, cashbook: { starts, receipts: [], payouts: [], skips: [] } };
+  if (live.length === 0) return { ok: true, cashbook: { starts, receipts: [], payouts: [], transfersIn: [], skips: [] } };
   const codes = live.map((s) => s.account_code);
   const since = live.reduce((first, s) => (s.start_date < first ? s.start_date : first), date);
   const days = mytDayWindow(since, date);
   if (!days?.startUtc || !days.endUtc) return { ok: false, reason: `not a day: ${since} to ${date}` };
   const PV_COLS = 'id, pv_number, payee_name, notes, purpose, credit_account_code, voucher_date, total_sen, exchange_rate, bank_charge_sen, approved_at, posted_at';
-  const [rq, pq, uq, kq] = await Promise.all([
+  const [rq, pq, uq, kq, lq] = await Promise.all([
     paginateAll<Record<string, unknown>>((from, to) => sb.from('acc_daily_bank_receipts')
       .select('id, account_code, receipt_date, amount_sen, note, created_by')
       .eq('company_id', companyId).in('account_code', codes).is('deleted_at', null)
@@ -228,28 +233,57 @@ export async function loadCashbook(
       .eq('company_id', companyId).is('unticked_at', null)
       .order('ticked_at').order('id')
       .range(from, to)),
+    /* The voucher lines paying INTO these accounts — internal transfers (owner
+       2026-11-27: maybank 转钱给 hong leong, hong leong 不会增加？); their vouchers below. */
+    paginateAll<Record<string, unknown>>((from, to) => sb.from('payment_voucher_lines')
+      .select('id, pv_id, debit_account_code, amount_sen')
+      .eq('company_id', companyId).in('debit_account_code', codes)
+      .order('pv_id').order('id')
+      .range(from, to)),
   ]);
   if (rq.error) return { ok: false, reason: rq.error.message };
   if (pq.error) return { ok: false, reason: pq.error.message };
   if (uq.error) return { ok: false, reason: uq.error.message };
   if (kq.error) return { ok: false, reason: kq.error.message };
-  if (rq.truncated || pq.truncated || uq.truncated || kq.truncated) return { ok: false, reason: 'the cash book is too long to read in one go' };
+  if (lq.error) return { ok: false, reason: lq.error.message };
+  if (rq.truncated || pq.truncated || uq.truncated || kq.truncated || lq.truncated) return { ok: false, reason: 'the cash book is too long to read in one go' };
   const receipts: CashbookReceipt[] = (rq.data ?? []).map((r) => ({
     id: String(r.id), account_code: String(r.account_code), receipt_date: String(r.receipt_date).slice(0, 10),
     amount_sen: Number(r.amount_sen), note: String(r.note ?? ''), created_by: (r.created_by as string | null) ?? null,
   }));
-  const payouts = ([...(pq.data ?? []), ...(uq.data ?? [])].map((v) => ({
+  const asVoucher = (v: Record<string, unknown>): CashbookPayout => ({
     ...v, id: String(v.id), pv_number: String(v.pv_number), credit_account_code: String(v.credit_account_code),
     voucher_date: String(v.voucher_date).slice(0, 10),
     approved_at: (v.approved_at as string | null) ?? null, posted_at: (v.posted_at as string | null) ?? null,
-  })) as unknown as CashbookPayout[])
-    .filter((v) => payoutDay(v) >= since && payoutDay(v) <= date)
-    .sort((a, b) => payoutDay(a).localeCompare(payoutDay(b)) || a.pv_number.localeCompare(b.pv_number) || a.id.localeCompare(b.id));
+  }) as unknown as CashbookPayout;
+  const inWindow = (v: CashbookPayout): boolean => payoutDay(v) >= since && payoutDay(v) <= date;
+  const byDay = (a: CashbookPayout, b: CashbookPayout): number =>
+    payoutDay(a).localeCompare(payoutDay(b)) || a.pv_number.localeCompare(b.pv_number) || a.id.localeCompare(b.id);
+  const payouts = [...(pq.data ?? []), ...(uq.data ?? [])].map(asVoucher).filter(inWindow).sort(byDay);
+
+  const intoOf = new Map<string, Map<string, number>>();
+  for (const l of lq.data ?? []) {
+    const per = intoOf.get(String(l.pv_id)) ?? new Map<string, number>();
+    const to = String(l.debit_account_code);
+    per.set(to, (per.get(to) ?? 0) + Number(l.amount_sen));
+    intoOf.set(String(l.pv_id), per);
+  }
+  const ids = [...intoOf.keys()];
+  const transferVouchers: CashbookPayout[] = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await sb.from('payment_vouchers').select(PV_COLS)
+      .eq('company_id', companyId).eq('status', 'POSTED').in('id', ids.slice(i, i + 100));
+    if (error) return { ok: false, reason: error.message };
+    transferVouchers.push(...(data as Array<Record<string, unknown>>).map(asVoucher));
+  }
+  const transfersIn: CashbookTransferIn[] = transferVouchers.filter(inWindow).sort(byDay)
+    .flatMap((v) => [...(intoOf.get(v.id) ?? new Map<string, number>())].map(([to, sen]) => ({ ...v, to_account_code: to, line_sen: sen })));
+
   const paying = new Set(payouts.map((v) => v.id));
   const skips: CashbookSkip[] = (kq.data ?? [])
     .map((k) => ({ pv_id: String(k.pv_id), ticked_by: (k.ticked_by as string | null) ?? null, ticked_at: (k.ticked_at as string | null) ?? null }))
     .filter((k) => paying.has(k.pv_id));
-  return { ok: true, cashbook: { starts, receipts, payouts, skips } };
+  return { ok: true, cashbook: { starts, receipts, payouts, transfersIn, skips } };
 }
 
 /** GET /daily-bank (the original board) and GET /daily-bank/cashbook/board (the

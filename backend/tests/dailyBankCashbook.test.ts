@@ -121,7 +121,7 @@ function harness(perms: string[] = [WRITE]) {
 type Block = {
   accountCode: string; start: { date: string; balanceSen: number } | null;
   openingSen: number; inSen: number; outSen: number; closingSen: number; pendingSen: number; availableSen: number;
-  receipts: Array<{ sourceType: string; note: string; amountSen: number; typedBy?: string | null }>;
+  receipts: Array<{ sourceType: string; docNo?: string; party?: string | null; note: string; amountSen: number; typedBy?: string | null }>;
   payouts: Array<{ docNo: string; party: string | null; note: string; amountSen: number }>;
   notDeducted?: Array<{ pvId: string; pvNumber: string; party: string | null; amountSen: number; tickedBy: string | null; tickedAt: string | null }>;
 };
@@ -225,6 +225,51 @@ describe('Daily Bank cash book — the board', () => {
     const startDay = blockOf(await board(h, '2026-11-24'), '310-0010');
     expect(startDay.payouts.map((m) => m.docNo)).toEqual(['HPV-101']);
     expect(startDay.closingSen).toBe(1_000_000 - 40_100);
+  });
+
+  /* Owner 2026-11-27: internal transfer maybank 转钱给 hong leong, hong leong 不会增加？ */
+  test('an internal transfer comes off the bank that paid it and arrives in the bank it paid into, on the day it was approved', async () => {
+    const h = harness();
+    h.t.accounts!.push({ company_id: CO, account_code: '310-0050', account_name: 'CASH AT BANK - CIMB', account_type: 'ASSET', acc_money: true, is_active: true });
+    await h.send('PUT', '/accounting/daily-bank/starts/310-0010', { startDate: '2026-11-24', balanceSen: 1_000_000 });
+    await h.send('PUT', '/accounting/daily-bank/starts/310-0020', { startDate: '2026-11-24', balanceSen: 500_000 });
+    const transfer = (id: string, no: string, from: string, over: Row = {}) => pv({
+      id, pv_number: no, payee_name: 'INTERNAL TRANSFER TO 310-0020 CASH AT BANK - HLBB', notes: `TRANSFER FROM ${from}`,
+      credit_account_code: from, voucher_date: '2026-11-24', total_sen: 150_000, approved_at: `${TODAY}T02:05:00Z`, ...over,
+    });
+    h.t.payment_vouchers!.push(
+      transfer('tr-may', 'HPV-201', '310-0010'),
+      /* From a bank that is not on the cash book: it arrives all the same. */
+      transfer('tr-cimb', 'HPV-202', '310-0050', { total_sen: 42_500 }),
+      /* Not approved yet: neither out nor in. */
+      transfer('tr-draft', 'HPV-203', '310-0010', { status: 'DRAFT', approved_at: null, total_sen: 9_999 }),
+    );
+    h.t.payment_voucher_lines = [
+      { id: 'l1', company_id: CO, pv_id: 'tr-may', line_no: 1, description: 'Internal transfer', debit_account_code: '310-0020', amount_sen: 150_000 },
+      { id: 'l2', company_id: CO, pv_id: 'tr-cimb', line_no: 1, description: 'Internal transfer', debit_account_code: '310-0020', amount_sen: 42_500 },
+      { id: 'l3', company_id: CO, pv_id: 'tr-draft', line_no: 1, description: 'Internal transfer', debit_account_code: '310-0020', amount_sen: 9_999 },
+      /* Another company's line into the same code, and a line into an expense: never money arriving here. */
+      { id: 'l4', company_id: OTHER, pv_id: 'pv-6', line_no: 1, description: 'x', debit_account_code: '310-0020', amount_sen: 12_345 },
+      { id: 'l5', company_id: CO, pv_id: 'pv-2', line_no: 1, description: 'Truck rental', debit_account_code: '900-X001', amount_sen: 25_000 },
+    ];
+
+    const before = await original(h);
+    const b = await board(h);
+    const may = blockOf(b, '310-0010');
+    const hlbb = blockOf(b, '310-0020');
+    expect(may.payouts.map((m) => [m.docNo, m.amountSen])).toEqual([['HPV-102', 25_000], ['HPV-201', 150_000]]);
+    expect(hlbb.receipts.map((m) => [m.sourceType, m.docNo, m.party, m.note, m.amountSen])).toEqual([
+      ['PV', 'HPV-201', 'INTERNAL TRANSFER FROM 310-0010 CASH AT BANK - MAYBANK', 'TRANSFER FROM 310-0010', 150_000],
+      ['PV', 'HPV-202', 'INTERNAL TRANSFER FROM 310-0050 CASH AT BANK - CIMB', 'TRANSFER FROM 310-0050', 42_500],
+    ]);
+    expect(hlbb).toMatchObject({ openingSen: 500_000, inSen: 192_500, closingSen: 692_500 });
+    /* Checked, still waiting: pending on the bank that pays, nothing on the one it pays into. */
+    expect(hlbb.pendingSen).toBe(0);
+    /* The day before it was approved: not there yet; the day after: in the balance brought forward. */
+    expect(blockOf(await board(h, '2026-11-24'), '310-0020').receipts).toEqual([]);
+    expect(blockOf(await board(h, '2026-11-26'), '310-0020').openingSen).toBe(692_500);
+    /* The original board has not moved by a sen. */
+    expect(await original(h)).toEqual(before);
   });
 
   test('a deleted receipt stops counting; an edited one counts as edited', async () => {
