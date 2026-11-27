@@ -399,28 +399,42 @@ export const MCP_TOOLS = [
   ...ROUND3_TOOLS,
 ];
 
-async function innerCall(c: Context<HonoEnv>, token: string, pathWithQuery: string, company: string | null, write: { actionId: string; method: string; body: unknown } | null): Promise<Response> {
-  if (!appRef) throw new Error("MCP app not initialised");
+/** Who an in-process read runs for: the Worker env, its execution context and the public origin links are built on. */
+export type InnerCaller = { env: Env; ctx: unknown; origin: string };
+function callerOf(c: Context<HonoEnv>): InnerCaller {
   let ctx: unknown;
   try {
     ctx = c.executionCtx;
   } catch {
     ctx = undefined;
   }
+  return { env: c.env, ctx, origin: originOf(c) };
+}
+
+async function innerCall(c: Context<HonoEnv>, token: string, pathWithQuery: string, company: string | null, write: { actionId: string; method: string; body: unknown } | null): Promise<Response> {
+  return innerCallAs(callerOf(c), token, pathWithQuery, company, write);
+}
+async function innerCallAs(k: InnerCaller, token: string, pathWithQuery: string, company: string | null, write: { actionId: string; method: string; body: unknown } | null): Promise<Response> {
+  if (!appRef) throw new Error("MCP app not initialised");
   const headers: Record<string, string> = { authorization: `Bearer ${token}`, [MCP_INNER_HEADER]: mcpInnerSecret(), accept: "application/json" };
   if (company) headers["X-Company-Id"] = company;
-  if (!write) return appRef.fetch(new Request(originOf(c) + pathWithQuery, { method: "GET", headers }), c.env, ctx);
+  if (!write) return appRef.fetch(new Request(k.origin + pathWithQuery, { method: "GET", headers }), k.env, k.ctx);
   headers[MCP_ACTION_HEADER] = write.actionId;
   headers["content-type"] = "application/json";
-  return appRef.fetch(new Request(originOf(c) + pathWithQuery, { method: write.method, headers, body: JSON.stringify(write.body) }), c.env, ctx);
+  return appRef.fetch(new Request(k.origin + pathWithQuery, { method: write.method, headers, body: JSON.stringify(write.body) }), k.env, k.ctx);
 }
 const innerGet = (c: Context<HonoEnv>, token: string, pathWithQuery: string, company: string | null) => innerCall(c, token, pathWithQuery, company, null);
 
-type ReadValue =
+export type ReadValue =
   | { ok: true; status: number; value: unknown; removed: string[]; target: string }
   | { ok: false; status: number; message: string; note: string; target: string };
 
-async function readValue(c: Context<HonoEnv>, token: string, rawPath: string, query: Record<string, unknown> | undefined, company: string | null): Promise<ReadValue> {
+function readValue(c: Context<HonoEnv>, token: string, rawPath: string, query: Record<string, unknown> | undefined, company: string | null): Promise<ReadValue> {
+  return readAs(callerOf(c), token, rawPath, query, company);
+}
+
+/** One read as the token's person: the same in-process GET, credential strip and money strip every tool uses. Shared with the scheduled brief (services/mcp-proactive-run.ts). */
+export async function readAs(k: InnerCaller, token: string, rawPath: string, query: Record<string, unknown> | undefined, company: string | null): Promise<ReadValue> {
   const d = classifyPath(rawPath);
   if (!d.ok) return { ok: false, status: 400, message: d.reason, note: "blocked path", target: rawPath };
   const qs = new URLSearchParams();
@@ -429,7 +443,7 @@ async function readValue(c: Context<HonoEnv>, token: string, rawPath: string, qu
     qs.set(k, String(v));
   }
   const target = d.path + (qs.toString() ? `?${qs.toString()}` : "");
-  const res = await innerGet(c, token, target, company);
+  const res = await innerCallAs(k, token, target, company, null);
   const ctype = res.headers.get("content-type") ?? "";
   if (res.status === 401 || res.status === 403) {
     return { ok: false, status: res.status, message: "Not available to your role: you do not have permission for this in the ERP.", note: "no permission", target };
@@ -449,7 +463,7 @@ async function readValue(c: Context<HonoEnv>, token: string, rawPath: string, qu
     return { ok: false, status: res.status, message: `The ERP answered: ${msg}`, note: msg.slice(0, 120), target };
   }
   const { value: noSecrets, removed } = redactSecrets(body);
-  const who = recallVerified<McpIdentity>(token, Date.now())?.user ?? (await mcpIdentity(c.env, token))?.user ?? null;
+  const who = recallVerified<McpIdentity>(token, Date.now())?.user ?? (await mcpIdentity(k.env, token))?.user ?? null;
   const sight = { finance: !!who && isFinanceViewer(who), productCost: !!who && isProductCostViewer(who) };
   const money = redactMoney(noSecrets, sight);
   for (const k of money.removed) removed.add(k);

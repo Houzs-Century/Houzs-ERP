@@ -39,6 +39,8 @@ import pushDevices from "./routes/push";
 import itSupport from "./routes/itSupport";
 import mcpRoutes, { mcpWellKnown, setMcpApp } from "./routes/mcp";
 import mcpAdminRoutes from "./routes/mcpAdmin";
+import { mcpBriefPublic } from "./routes/mcpBrief";
+import { runAlerts, runBriefs } from "./services/mcp-proactive-run";
 import meetings, { publicMeetings } from "./routes/meetings";
 import { MEETINGS_DIRECTORY_JOB, pushMeetingsDirectory } from "./services/meetingsDirectory";
 import { sendAiUsageToHub } from "./services/aiUsageHub";
@@ -271,6 +273,7 @@ app.get("/health", (c) => {
 });
 
 app.route("/api/auth", authRoutes);
+app.route("/api/mcp/brief", mcpBriefPublic);
 app.route("/api/mcp", mcpRoutes);
 app.route("/.well-known", mcpWellKnown);
 
@@ -683,7 +686,17 @@ export default {
         track("procurement-overview", () => refreshProcurementOverviewSnapshots(env, todayMyt()))
           .catch((e) => console.error("[cron procurement-overview]", e))
       );
+      ctx.waitUntil(
+        track("mcp-brief", () => runBriefs(env, ctx, event.scheduledTime))
+          .then((r) => { if (r.due) console.log(`[cron mcp-brief] ${JSON.stringify(r)}`); })
+          .catch((e) => console.error("[cron mcp-brief]", e))
+      );
     } else if (event.cron === "*/30 * * * *") {
+      ctx.waitUntil(
+        track("mcp-alerts", () => runAlerts(env, ctx, event.scheduledTime))
+          .then((r) => { if (r.sent || r.failed) console.log(`[cron mcp-alerts] ${JSON.stringify(r)}`); })
+          .catch((e) => console.error("[cron mcp-alerts]", e))
+      );
       ctx.waitUntil(
         track("hr-auto-clockout", () => runAutoClockOut(env))
           .then((r) => {

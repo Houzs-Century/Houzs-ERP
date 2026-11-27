@@ -24,6 +24,8 @@ export type EmailPurpose =
   | "purchase_order"
   | "client_error_digest"
   | "meeting"
+  | "ai_brief"
+  | "ai_alert"
   | "generic";
 
 export interface SendOptions {
@@ -70,6 +72,8 @@ const PURPOSE_TOGGLE_KEYS: Record<EmailPurpose, string> = {
   purchase_order: "email.purchase_order",
   client_error_digest: "email.client_error_digest",
   meeting: "email.meeting",
+  ai_brief: "email.ai_brief",
+  ai_alert: "email.ai_alert",
   generic: "email.enabled",
 };
 

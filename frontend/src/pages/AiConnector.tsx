@@ -3,6 +3,7 @@ import { Bot, Copy, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
 import { Button } from "../components/Button";
 import { cn } from "../lib/utils";
+import { BriefEmails } from "./AiConnectorBrief";
 
 type MyApp = { tokenId: string; app: string; connectedAt: string | null; lastUsedAt: string | null };
 type Me = { allowed: boolean; isAdmin: boolean; pendingRequest: { id: string; createdAt: string | null } | null; connectorUrl: string; apps: MyApp[] };
@@ -512,6 +513,8 @@ export function AiConnector() {
           </div>
         </Section>
       )}
+
+      {me && <BriefEmails key={tick} />}
 
       {me?.isAdmin && ov && <AdminView ov={ov} reload={reload} />}
 
