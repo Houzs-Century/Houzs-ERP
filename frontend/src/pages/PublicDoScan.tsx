@@ -51,6 +51,10 @@ import {
   requestIdFromResponse,
 } from "../lib/requestCorrelation";
 
+/** A packing list: a trip, or a sheet printed per lorry per delivery day. */
+type SheetKind = "trip" | "lorry_day";
+const isSheet = (kind: string | undefined): kind is SheetKind => kind === "trip" || kind === "lorry_day";
+
 type Member = {
   stopNo: number;
   doNumber: string | null;
@@ -61,9 +65,9 @@ type Member = {
 };
 
 type TripSummary = {
-  kind: "trip";
+  kind: SheetKind;
   mode: "load_all";
-  tripNo: string;
+  tripNo: string | null;
   tripDate: string | null;
   lorryPlate: string | null;
   status: string;
@@ -76,7 +80,7 @@ type MemberOutcome = {
   stopNo: number;
   doNumber: string | null;
   customerName: string | null;
-  outcome: "DONE" | "ALREADY_DONE" | "PAST" | "BLOCKED" | "FAILED";
+  outcome: "DONE" | "ALREADY_DONE" | "PAST" | "BLOCKED" | "MOVED" | "FAILED";
   from: string | null;
   to?: string;
   status: string | null;
@@ -84,9 +88,9 @@ type MemberOutcome = {
 };
 
 type RunResult = {
-  kind: "trip";
+  kind: SheetKind;
   mode: "load_all";
-  tripNo: string;
+  tripNo: string | null;
   lorryPlate: string | null;
   outcome: "DONE" | "PARTIAL" | "NOTHING";
   to: string;
@@ -212,7 +216,7 @@ export function PublicDoScan() {
   }
 
   const step = done ? null : data.step;
-  const isRun = data.kind === "trip";
+  const isRun = isSheet(data.kind);
   const run = isRun ? (data as TripSummary) : null;
 
   return (
@@ -220,10 +224,10 @@ export function PublicDoScan() {
       {run ? (
         <div className="rounded-md border border-line bg-surface px-4 py-3 text-sm">
           <div className="text-base font-semibold">
-            {run.lorryPlate ? `Lorry ${run.lorryPlate}` : `Packing list ${run.tripNo}`}
+            {run.lorryPlate ? `Lorry ${run.lorryPlate}` : `Packing list ${run.tripNo ?? ""}`}
           </div>
           <div className="text-ink-secondary">
-            {run.lorryPlate ? `${run.tripNo} · ` : ""}
+            {run.lorryPlate && run.tripNo ? `${run.tripNo} · ` : ""}
             {run.tripDate ?? "—"} · {run.members.length} delivery order
             {run.members.length === 1 ? "" : "s"}
           </div>
@@ -242,7 +246,7 @@ export function PublicDoScan() {
         </div>
       )}
 
-      {done && done.kind === "trip" && (
+      {done && isSheet(done.kind) && (
         <>
           <Notice
             tone={(done as RunResult).outcome === "PARTIAL" ? "warn" : "ok"}
@@ -263,7 +267,7 @@ export function PublicDoScan() {
         </>
       )}
 
-      {done && done.kind !== "trip" && (
+      {done && !isSheet(done.kind) && (
         <Notice
           tone={
             (done as AdvanceResult).outcome === "DONE" ||
@@ -278,7 +282,7 @@ export function PublicDoScan() {
       )}
 
       {!done && data.blockReason && (
-        <Notice tone={data.status === "CANCELLED" ? "warn" : "hold"} title={run ? (run.lorryPlate ? `Lorry ${run.lorryPlate}` : run.tripNo) : (data as Summary).doNumber}>
+        <Notice tone={data.status === "CANCELLED" ? "warn" : "hold"} title={run ? (run.lorryPlate ? `Lorry ${run.lorryPlate}` : run.tripNo ?? "Packing list") : (data as Summary).doNumber}>
           {data.blockReason}
         </Notice>
       )}

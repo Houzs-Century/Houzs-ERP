@@ -268,3 +268,40 @@ describe("the packing-list sheet: SCAN WHEN FULLY LOADED", () => {
     expect(screen.getAllByText(/nothing on this packing list yet/).length).toBeGreaterThan(0);
   });
 });
+
+describe("the lorry-day packing list (no trip behind it)", () => {
+  const SHEET = {
+    ...RUN, kind: "lorry_day", tripNo: null, tripDate: "2026-11-28",
+    members: [
+      { stopNo: 1, doNumber: "HC-DO-2611-201", customerName: "Customer One", status: "LOADED", willLoad: true, note: "Will be marked Loaded." },
+      { stopNo: 2, doNumber: "HC-DO-2611-202", customerName: "Customer Two", status: "LOADED", willLoad: false, note: "Moved to another lorry since this sheet was printed, so it was not touched. Check with the office." },
+    ],
+  };
+
+  it("reads as the lorry and its day, with the moved DO named before the press", async () => {
+    serve(SHEET);
+    await mount();
+    expect(screen.getByText("Lorry VJK 8821")).toBeTruthy();
+    expect(screen.getByText(/2026-11-28 · 2 delivery orders/)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("null");
+    expect(screen.getByText(/Moved to another lorry/)).toBeTruthy();
+    expect(screen.getByRole("button").textContent).toContain("Mark whole lorry loaded");
+  });
+
+  it("after the press shows the headline and the moved DO as not loaded", async () => {
+    serve(SHEET, {
+      kind: "lorry_day", mode: "load_all", tripNo: null, lorryPlate: "VJK 8821", outcome: "PARTIAL", to: "DISPATCHED",
+      headline: "Lorry VJK 8821: 1 of 2 delivery orders loaded", message: "1 not loaded: see the list below and call the office about it.",
+      total: 2, loaded: 1, moved: 1,
+      members: [
+        { stopNo: 1, doNumber: "HC-DO-2611-201", customerName: "Customer One", outcome: "DONE", from: "LOADED", to: "DISPATCHED", status: "DISPATCHED", message: "Marked as loaded." },
+        { stopNo: 2, doNumber: "HC-DO-2611-202", customerName: "Customer Two", outcome: "MOVED", from: "LOADED", status: "LOADED", message: "Moved to another lorry since this sheet was printed, so it was not touched. Check with the office." },
+      ],
+    });
+    await mount();
+    await act(async () => { fireEvent.click(screen.getByRole("button")); });
+    await waitFor(() => expect(screen.queryByRole("button")).toBeNull());
+    expect(screen.getByText("Lorry VJK 8821: 1 of 2 delivery orders loaded")).toBeTruthy();
+    expect(screen.getByText(/Moved to another lorry/)).toBeTruthy();
+  });
+});

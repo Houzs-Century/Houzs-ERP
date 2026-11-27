@@ -14,8 +14,8 @@ describe('decideLorryLoad', () => {
   });
 
   test('only a Confirmed (LOADED) delivery order is written', () => {
-    expect(decideLorryLoad('LOADED', false, false)).toEqual({ action: 'write', from: 'LOADED' });
-    expect(decideLorryLoad('loaded', null, false)).toEqual({ action: 'write', from: 'LOADED' });
+    expect(decideLorryLoad('LOADED', false, false, null)).toEqual({ action: 'write', from: 'LOADED' });
+    expect(decideLorryLoad('loaded', null, false, null)).toEqual({ action: 'write', from: 'LOADED' });
   });
 
   test.each([
@@ -29,22 +29,28 @@ describe('decideLorryLoad', () => {
     ['SOMETHING_ELSE', 'BLOCKED'],
     [null, 'BLOCKED'],
   ])('%s is left alone as %s', (status, outcome) => {
-    const d = decideLorryLoad(status, false, false);
+    const d = decideLorryLoad(status, false, false, null);
     expect(d.action).toBe('skip');
     expect((d as { outcome: string }).outcome).toBe(outcome);
     expect((d as { message: string }).message).not.toBe('');
   });
 
   test('a held Confirmed DO is not loaded; a held DO already loaded still reads as loaded', () => {
-    const held = decideLorryLoad('LOADED', true, false);
+    const held = decideLorryLoad('LOADED', true, false, null);
     expect(held).toMatchObject({ action: 'skip', outcome: 'BLOCKED' });
     expect((held as { message: string }).message).toContain('on hold');
-    expect(decideLorryLoad('DISPATCHED', true, false)).toMatchObject({ outcome: 'ALREADY_DONE' });
+    expect(decideLorryLoad('DISPATCHED', true, false, null)).toMatchObject({ outcome: 'ALREADY_DONE' });
   });
 
   test('another company\'s DO is never written, whatever its status', () => {
     for (const s of ['LOADED', 'DISPATCHED', 'DRAFT']) {
-      expect(decideLorryLoad(s, false, true)).toMatchObject({ action: 'skip', outcome: 'BLOCKED' });
+      expect(decideLorryLoad(s, false, true, null)).toMatchObject({ action: 'skip', outcome: 'BLOCKED' });
+    }
+  });
+
+  test('a DO moved off the printed lorry is never written, whatever its status', () => {
+    for (const s of ['LOADED', 'DISPATCHED', 'DRAFT']) {
+      expect(decideLorryLoad(s, false, false, 'moved')).toEqual({ action: 'skip', outcome: 'MOVED', from: s, message: 'moved' });
     }
   });
 });

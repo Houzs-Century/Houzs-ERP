@@ -10,6 +10,7 @@
 //                                   runs the short-stock / readiness preflight, which
 //                                   is the office's decision, not a lorry scan's
 //   CANCELLED, on hold, another company's, anything unexpected -> left alone
+//   no longer on the lorry the sheet was printed for -> left alone (MOVED)
 // (SIGNED and INVOICED are off the ladder, rung -1, but count as delivered: PAST.)
 //
 // The target is DERIVED from the ladder (the rung after LOADED), not typed again, so
@@ -24,7 +25,7 @@ export const LORRY_LOAD_TARGET: DoScanStep['status'] = (() => {
 
 export type LorryLoadDecision =
   | { action: 'write'; from: string }
-  | { action: 'skip'; outcome: 'ALREADY_DONE' | 'PAST' | 'BLOCKED'; from: string; message: string };
+  | { action: 'skip'; outcome: 'ALREADY_DONE' | 'PAST' | 'BLOCKED' | 'MOVED'; from: string; message: string };
 
 export const LORRY_LOAD_FOREIGN_REASON =
   'This drop is on another company\'s books, so this sheet cannot move it. Call the office.';
@@ -34,14 +35,17 @@ export const LORRY_LOAD_ALREADY = 'Already loaded. Nothing changed.';
 export const LORRY_LOAD_PAST = 'Already past Loaded, so it was left as it is.';
 export const LORRY_LOAD_DONE = 'Marked as loaded.';
 
-/** PURE. `onHold` and `foreign` are required: each one decides whether a write happens. */
+/** PURE. Every parameter is required: each one decides whether a write happens.
+ *  `movedReason` is set when the DO is no longer on the lorry the sheet was printed for. */
 export function decideLorryLoad(
   status: string | null,
   onHold: boolean | null,
   foreign: boolean,
+  movedReason: string | null,
 ): LorryLoadDecision {
   const from = String(status ?? '').trim().toUpperCase();
   if (foreign) return { action: 'skip', outcome: 'BLOCKED', from, message: LORRY_LOAD_FOREIGN_REASON };
+  if (movedReason) return { action: 'skip', outcome: 'MOVED', from, message: movedReason };
   if (from === 'CANCELLED') {
     return { action: 'skip', outcome: 'BLOCKED', from, message: doScanBlockReason(from, false) ?? '' };
   }

@@ -133,6 +133,7 @@ Packing lists and the run QR
 - Status rollup: LOADED = Confirmed, DISPATCHED = Loaded, IN_TRANSIT = In Transit, SIGNED/DELIVERED/INVOICED = Delivered; no readable DO -> dash, never "0/0". Rack prints per DO line, not per piece.
 - QR encodes `/d/<token>` (10-char base32; legacy 64-hex still resolves), minted lazily by `GET /api/scm/trips/:id/scan-token`, opened by `frontend/src/pages/PublicDoScan.tsx`.
 - `POST /api/public/do-scan/:token/advance` on a trip token accepts only `to: DISPATCHED` (`load_only` 400 otherwise): LOADED -> DISPATCHED through the office status writer with `expectFrom`; DISPATCHED = already loaded; IN_TRANSIT / SIGNED / DELIVERED / INVOICED = left alone (`PAST`); DRAFT, CANCELLED, on hold, foreign = left alone (`BLOCKED`); writer refusal = `FAILED`. Stop order, strictly sequential, one refusal never aborts the rest; a re-scan writes nothing. Decision: `scm/lib/lorry-load-scan.ts`. A DO's own QR keeps the one-step ladder.
+- Lorry-day packing list (no trip): `GET /api/scm/trips/lorry-day-scan-token?plate=&date=&doIds=` (frontend `armLorryDayScanToken`) stores the printed DO ids in `scm.packing_scan_sets` (every id must be the company's; same set = same token). Its scan loads only those DOs, by the same rules; a DO whose crew plate (else `vehicle`) is no longer the printed plate is left alone (`MOVED`). Revoke = `qr_revoked_at`.
 - A drop on another company's books is `BLOCKED` and named by stop number only; all writes are scoped to the trip's company.
 
 Desktop / mobile parity

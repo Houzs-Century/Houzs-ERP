@@ -80,6 +80,8 @@
  * being squeezed into 14mm.
  */
 
+import type { ResolvedLorryDayScan } from './lorry-day-scan';
+
 /** The two shapes a live token may have: 10-char base32, or the legacy 64 hex. */
 export const DO_SCAN_TOKEN_RE = /^(?:[0-9a-hjkmnp-tv-z]{10}|[0-9a-f]{64})$/i;
 
@@ -334,6 +336,7 @@ export async function getOrCreateScanToken(
 export type ResolvedScanResult =
   | { status: 'ok'; kind: 'do'; row: ResolvedDoScan }
   | { status: 'ok'; kind: 'trip'; row: ResolvedTripScan }
+  | { status: 'ok'; kind: 'lorry_day'; row: ResolvedLorryDayScan }
   | { status: 'unknown' }
   | { status: 'read_failed' };
 
@@ -350,7 +353,7 @@ export async function resolveScanToken(sb: any, token: string): Promise<Resolved
     .eq('qr_token', token)
     .maybeSingle();
   if (error) return { status: 'read_failed' };
-  if (!data) return { status: 'unknown' };
+  if (!data) return resolveLorryDayToken(sb, token);
   const row = data as {
     id?: string; company_id?: number | string | null; trip_no?: string | null;
     trip_date?: string | null; status?: string | null; qr_revoked_at?: string | null;
@@ -368,6 +371,36 @@ export async function resolveScanToken(sb: any, token: string): Promise<Resolved
       tripNo: row.trip_no,
       tripDate: row.trip_date ?? null,
       status: row.status ?? null,
+    },
+  };
+}
+
+async function resolveLorryDayToken(sb: Parameters<typeof resolveScanToken>[0], token: string): Promise<ResolvedScanResult> {
+  const { data, error } = await sb
+    .from('packing_scan_sets')
+    .select('id, company_id, lorry_plate, delivery_date, do_ids, qr_revoked_at')
+    .eq('qr_token', token)
+    .maybeSingle();
+  if (error) return { status: 'read_failed' };
+  if (!data) return { status: 'unknown' };
+  const row = data as {
+    id?: string; company_id?: number | string | null; lorry_plate?: string | null;
+    delivery_date?: string | null; do_ids?: unknown; qr_revoked_at?: string | null;
+  };
+  if (row.qr_revoked_at) return { status: 'unknown' };
+  const companyId = Number(row.company_id);
+  if (!Number.isInteger(companyId) || companyId <= 0) return { status: 'unknown' };
+  const doIds = Array.isArray(row.do_ids) ? row.do_ids.filter((x): x is string => typeof x === 'string') : [];
+  if (!row.id || !row.lorry_plate || !row.delivery_date || doIds.length === 0) return { status: 'unknown' };
+  return {
+    status: 'ok',
+    kind: 'lorry_day',
+    row: {
+      id: row.id,
+      companyId,
+      lorryPlate: row.lorry_plate,
+      deliveryDate: String(row.delivery_date).slice(0, 10),
+      doIds,
     },
   };
 }

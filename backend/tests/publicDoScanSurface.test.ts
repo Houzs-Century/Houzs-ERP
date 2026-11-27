@@ -315,7 +315,9 @@ describe('a run cannot move another company\'s goods', () => {
 
   test('the run write takes the TRIP\'s company, never the member\'s', () => {
     const code = codeOf(ROUTE);
-    expect(code).toContain('{ ...memberAsDo(m), companyId: trip.companyId }');
+    expect(code).toContain('{ ...memberAsDo(m), companyId: sheet.companyId }');
+    expect(code).toContain('companyId: trip.companyId,');
+    expect(code).toContain('companyId: set.companyId,');
     /* memberAsDo must not smuggle a company through — it hands over a zero that
        the caller replaces, so a forgotten override cannot silently widen. */
     expect(code).toContain('companyId: 0,');
@@ -329,7 +331,7 @@ describe('a run cannot move another company\'s goods', () => {
 describe('the run is applied sequentially', () => {
   test('a for-await loop, and no Promise.all over the members', () => {
     const run = codeOf(ROUTE).slice(codeOf(ROUTE).indexOf('async function loadWholeLorry'));
-    expect(run).toMatch(/for \(const m of members\) \{/);
+    expect(run).toMatch(/for \(const m of sheet\.members\) \{/);
     expect(run, 'the run must not be fired in parallel').not.toContain('Promise.all');
     expect(run).not.toContain('members.map(async');
   });

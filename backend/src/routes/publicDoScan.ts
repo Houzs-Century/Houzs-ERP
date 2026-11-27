@@ -109,6 +109,11 @@ import {
   type TripScanMember,
 } from '../scm/lib/do-scan-token';
 import {
+  loadLorryDayMembers,
+  type LorryDayMember,
+  type ResolvedLorryDayScan,
+} from '../scm/lib/lorry-day-scan';
+import {
   doScanStep,
   doScanBlockReason,
   doScanConfirmation,
@@ -192,8 +197,12 @@ async function buildSummary(sb: any, r: ResolvedDoScan): Promise<PublicDoSummary
 // decides each drop; the write is the office writer's, the same as "Mark Loaded".
 // Drops are written one at a time with `expectFrom`, so a drop that moved on since
 // the read is refused rather than dragged back, and a second scan writes nothing.
-// The lorry plate (headline only) is the crew plate most drops carry; a failed read
-// of it falls back to the packing-list number, never to a refusal.
+// Two kinds of sheet carry this QR: a trip (scm.trips, its stops) and a lorry-day
+// sheet (scm.packing_scan_sets, the DO ids printed on it, mig 20261128T0100). Both
+// become one ScanSheet and run through the same code. On a trip the lorry plate
+// (headline only) is the crew plate most drops carry, and a failed read of it falls
+// back to the packing-list number; on a lorry-day sheet it is the printed plate, and
+// a DO whose crew plate changed since printing is left alone (MOVED).
 type PublicTripMember = {
   stopNo: number;
   doNumber: string | null;
@@ -203,10 +212,20 @@ type PublicTripMember = {
   note: string;
 };
 
+type ScanSheet = {
+  kind: 'trip' | 'lorry_day';
+  companyId: number;
+  tripNo: string | null;
+  sheetDate: string | null;
+  sheetStatus: string;
+  lorryPlate: string | null;
+  members: LorryDayMember[];
+};
+
 type PublicTripSummary = {
-  kind: 'trip';
+  kind: 'trip' | 'lorry_day';
   mode: 'load_all';
-  tripNo: string;
+  tripNo: string | null;
   tripDate: string | null;
   lorryPlate: string | null;
   status: string;
@@ -232,12 +251,47 @@ async function lorryPlateFor(sb: ScanDb, companyId: number, members: TripScanMem
   return dominantPlate((data as Array<{ lorry_plate: string | null }>).map((r) => r.lorry_plate));
 }
 
-async function buildTripSummary(
-  sb: any,
-  trip: ResolvedTripScan,
-  loaded: TripScanMember[],
-): Promise<PublicTripSummary> {
-  const decided = loaded.map((m) => ({ m, d: decideLorryLoad(m.status, m.onHold, m.foreign) }));
+async function tripSheet(sb: ScanDb, trip: ResolvedTripScan, members: TripScanMember[]): Promise<ScanSheet> {
+  return {
+    kind: 'trip',
+    companyId: trip.companyId,
+    tripNo: trip.tripNo,
+    sheetDate: trip.tripDate,
+    sheetStatus: String(trip.status ?? ''),
+    lorryPlate: await lorryPlateFor(sb, trip.companyId, members),
+    members: members.map((m) => ({ ...m, movedReason: null })),
+  };
+}
+
+function lorryDaySheet(set: ResolvedLorryDayScan, members: LorryDayMember[]): ScanSheet {
+  return {
+    kind: 'lorry_day',
+    companyId: set.companyId,
+    tripNo: null,
+    sheetDate: set.deliveryDate,
+    sheetStatus: '',
+    lorryPlate: set.lorryPlate,
+    members,
+  };
+}
+
+type SheetToken =
+  | { kind: 'trip'; row: ResolvedTripScan }
+  | { kind: 'lorry_day'; row: ResolvedLorryDayScan };
+
+async function loadSheet(sb: ScanDb, found: SheetToken): Promise<ScanSheet | null> {
+  if (found.kind === 'trip') {
+    const loaded = await loadTripScanMembers(sb, found.row);
+    return loaded.status === 'ok' ? tripSheet(sb, found.row, loaded.members) : null;
+  }
+  const loaded = await loadLorryDayMembers(sb, found.row);
+  return loaded.status === 'ok' ? lorryDaySheet(found.row, loaded.members) : null;
+}
+
+const decideMember = (m: LorryDayMember) => decideLorryLoad(m.status, m.onHold, m.foreign, m.movedReason);
+
+function buildTripSummary(sheet: ScanSheet): PublicTripSummary {
+  const decided = sheet.members.map((m) => ({ m, d: decideMember(m) }));
   const members: PublicTripMember[] = decided.map(({ m, d }) => ({
     stopNo: m.stopNo,
     doNumber: m.doNumber,
@@ -248,15 +302,15 @@ async function buildTripSummary(
   }));
   const anyToLoad = members.some((m) => m.willLoad);
   const allLoaded = decided.length > 0
-    && decided.every(({ d }) => d.action === 'skip' && d.outcome !== 'BLOCKED');
+    && decided.every(({ d }) => d.action === 'skip' && d.outcome !== 'BLOCKED' && d.outcome !== 'MOVED');
   const alreadyLoaded = decided.filter(({ d }) => d.action === 'skip' && d.outcome === 'ALREADY_DONE').length;
   return {
-    kind: 'trip',
+    kind: sheet.kind,
     mode: 'load_all',
-    tripNo: trip.tripNo,
-    tripDate: trip.tripDate,
-    lorryPlate: await lorryPlateFor(sb, trip.companyId, loaded),
-    status: String(trip.status ?? ''),
+    tripNo: sheet.tripNo,
+    tripDate: sheet.sheetDate,
+    lorryPlate: sheet.lorryPlate,
+    status: sheet.sheetStatus,
     step: anyToLoad ? { status: LORRY_LOAD_TARGET, label: LOAD_ALL_LABEL, note: LOAD_ALL_NOTE } : null,
     blockReason: anyToLoad
       ? null
@@ -268,6 +322,9 @@ async function buildTripSummary(
     members,
   };
 }
+
+const sheetLabel = (found: SheetToken) =>
+  found.kind === 'trip' ? found.row.tripNo : `Lorry ${found.row.lorryPlate} ${found.row.deliveryDate}`;
 
 const OFF_RUNG_SINGLE =
   'This delivery order has moved on since this page was opened. Reload the page to see its next step.';
@@ -431,9 +488,9 @@ publicDoScan.post('/batch/lookup', async (c) => {
       });
       continue;
     }
-    if (found.kind === 'trip') {
+    if (found.kind !== 'do') {
       lines.push({
-        token, doNumber: found.row.tripNo, status: String(found.row.status ?? ''),
+        token, doNumber: sheetLabel(found), status: null,
         step: null, blockReason: TRIP_IN_BATCH_REASON, outcome: 'BLOCKED',
       });
       continue;
@@ -506,9 +563,9 @@ publicDoScan.post('/batch/advance', async (c) => {
       });
       continue;
     }
-    if (found.kind === 'trip') {
+    if (found.kind !== 'do') {
       lines.push({
-        token, doNumber: found.row.tripNo, status: String(found.row.status ?? ''),
+        token, doNumber: sheetLabel(found), status: null,
         step: null, blockReason: null, outcome: 'BLOCKED', message: TRIP_IN_BATCH_REASON,
       });
       continue;
@@ -556,10 +613,10 @@ publicDoScan.get('/:token', async (c) => {
   const found = await resolveScanToken(sb, token);
   if (found.status === 'read_failed') return readFailed(c);
   if (found.status === 'unknown') return unknownToken(c);
-  if (found.kind === 'trip') {
-    const loaded = await loadTripScanMembers(sb, found.row);
-    if (loaded.status === 'read_failed') return readFailed(c);
-    return c.json(await buildTripSummary(sb, found.row, loaded.members));
+  if (found.kind !== 'do') {
+    const sheet = await loadSheet(sb, found);
+    if (!sheet) return readFailed(c);
+    return c.json(buildTripSummary(sheet));
   }
   return c.json({ kind: 'do', ...(await buildSummary(sb, found.row)) });
 });
@@ -588,16 +645,16 @@ publicDoScan.post('/:token/advance', async (c) => {
   if (found.status === 'read_failed') return readFailed(c);
   if (found.status === 'unknown') return unknownToken(c);
 
-  if (found.kind === 'trip') {
+  if (found.kind !== 'do') {
     if (wanted !== LORRY_LOAD_TARGET) {
       return c.json({
         error: 'load_only',
         message: 'This packing list only records that the lorry is fully loaded. Reload the page.',
       }, 400);
     }
-    const loaded = await loadTripScanMembers(sb, found.row);
-    if (loaded.status === 'read_failed') return readFailed(c);
-    return c.json(await loadWholeLorry(c, sb, found.row, loaded.members));
+    const sheet = await loadSheet(sb, found);
+    if (!sheet) return readFailed(c);
+    return c.json(await loadWholeLorry(c, sb, sheet));
   }
 
   const resolved = found.row;
@@ -657,7 +714,7 @@ type MemberOutcome = {
   stopNo: number;
   doNumber: string | null;
   customerName: string | null;
-  outcome: 'DONE' | 'ALREADY_DONE' | 'PAST' | 'BLOCKED' | 'FAILED';
+  outcome: 'DONE' | 'ALREADY_DONE' | 'PAST' | 'BLOCKED' | 'MOVED' | 'FAILED';
   from: string | null;
   to?: string;
   status: string | null;
@@ -671,29 +728,28 @@ const WRITER_REFUSED: Record<string, string> = {
 async function loadWholeLorry(
   c: Context<{ Bindings: Env }>,
   sb: ScanDb,
-  trip: ResolvedTripScan,
-  members: TripScanMember[],
+  sheet: ScanSheet,
 ): Promise<{
-  kind: 'trip'; mode: 'load_all'; tripNo: string; lorryPlate: string | null;
+  kind: 'trip' | 'lorry_day'; mode: 'load_all'; tripNo: string | null; lorryPlate: string | null;
   outcome: 'DONE' | 'PARTIAL' | 'NOTHING'; to: string; headline: string; message: string;
   total: number; loaded: number; moved: number; members: MemberOutcome[];
 }> {
   const results: MemberOutcome[] = [];
 
-  for (const m of members) {
+  for (const m of sheet.members) {
     const base = { stopNo: m.stopNo, doNumber: m.doNumber, customerName: m.customerName };
-    const d = decideLorryLoad(m.status, m.onHold, m.foreign);
+    const d = decideMember(m);
     if (d.action === 'skip') {
       const seen = m.foreign ? null : d.from;
       results.push({ ...base, outcome: d.outcome, from: seen, status: seen, message: d.message });
       continue;
     }
     const written = await advanceThroughOfficeWriter(
-      c, sb, { ...memberAsDo(m), companyId: trip.companyId }, LORRY_LOAD_TARGET, d.from,
+      c, sb, { ...memberAsDo(m), companyId: sheet.companyId }, LORRY_LOAD_TARGET, d.from,
     );
     if (!written.ok) {
       console.warn('[public-do-scan] lorry load refused', {
-        tripNo: trip.tripNo, stopNo: m.stopNo, status: written.status, code: written.code,
+        tripNo: sheet.tripNo, lorryPlate: sheet.lorryPlate, stopNo: m.stopNo, status: written.status, code: written.code,
       });
       results.push({
         ...base, outcome: 'FAILED', from: d.from, status: d.from,
@@ -710,22 +766,22 @@ async function loadWholeLorry(
   const moved = results.filter((r) => r.outcome === 'DONE').length;
   const loaded = moved + results.filter((r) => r.outcome === 'ALREADY_DONE').length;
   const past = results.filter((r) => r.outcome === 'PAST').length;
-  const stuck = results.filter((r) => r.outcome === 'BLOCKED' || r.outcome === 'FAILED').length;
+  const stuck = results.filter((r) => r.outcome === 'BLOCKED' || r.outcome === 'MOVED' || r.outcome === 'FAILED').length;
   const outcome = stuck > 0 ? 'PARTIAL' as const : moved > 0 ? 'DONE' as const : 'NOTHING' as const;
-  const lorryPlate = await lorryPlateFor(sb, trip.companyId, members);
+  const lorryPlate = sheet.lorryPlate;
   const message = [
     past > 0 ? `${past} already further along and left as ${past === 1 ? 'it is' : 'they are'}.` : '',
     stuck > 0 ? `${stuck} not loaded: see the list below and call the office about ${stuck === 1 ? 'it' : 'them'}.` : '',
     moved === 0 && stuck === 0 && loaded > 0 ? 'Nothing changed: it was all loaded already.' : '',
   ].filter(Boolean).join(' ');
   return {
-    kind: 'trip',
+    kind: sheet.kind,
     mode: 'load_all',
-    tripNo: trip.tripNo,
+    tripNo: sheet.tripNo,
     lorryPlate,
     outcome,
     to: LORRY_LOAD_TARGET,
-    headline: lorryLoadHeadline(lorryPlate, trip.tripNo, loaded, results.length),
+    headline: lorryLoadHeadline(lorryPlate, sheet.tripNo ?? '', loaded, results.length),
     message,
     total: results.length,
     loaded,
