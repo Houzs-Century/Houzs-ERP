@@ -45,7 +45,7 @@ import { resolveRoles } from '../../acc/rules';
 import { loadLineMonth, loadLiveMonthLock } from '../../acc/bank';
 import { lockedRefusal } from '../../acc/bank-lock';
 import { bankFollowsMerchant, type BankFollows } from './accounting-bank';
-import { unmarkSoldBy } from '../../acc/settlement-sold-by';
+import { chargeSharesOf, unmarkSoldBy } from '../../acc/settlement-sold-by';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -830,13 +830,18 @@ export const settlementBatchDetail = guard(async (c) => {
   const { data: batch, error: bErr } = batchRes;
   if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
   if (!batch) return c.json({ error: 'not_found' }, 404);
-  const b = batch as { acquirer_code: string; period_from: string; period_to: string };
+  const b = batch as { acquirer_code: string; period_from: string; period_to: string; adjustment_sen: number | null };
 
   if (!paid.ok) return c.json({ error: 'load_failed', reason: paid.reason }, 500);
 
   const { data: rowsRaw, error: rErr } = rowsRes;
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
   const stored = (rowsRaw ?? []) as StoredRow[];
+  /* Each line carries its share of the statement charge (owner 2026-11-28: 把它加去每一笔的
+     费用里面，根据那时候说的算法去算 — AEON's subvention fee, by gross, as 2990's lines
+     are already charged it), so a line's fee reads what the acquirer took for it. The
+     books keep the statement's one SETTLEADJ entry; this is how the lines read. */
+  const shares = chargeSharesOf(Number(b.adjustment_sen ?? 0), stored.map((r) => ({ id: Number(r.id), grossSen: Number(r.gross_sen) })));
 
   const linksP = chunkIn<Record<string, any>, number>(stored.map((r) => Number(r.id)), (batch, f, t) => sb
     .from('acc_settlement_matches').select('settlement_row_id, payment_source, payment_id, doc_no, amount_sen')
@@ -931,6 +936,7 @@ export const settlementBatchDetail = guard(async (c) => {
     return {
       ...r,
       txn_date: String(r.txn_date).slice(0, 10),
+      charge_share_sen: shares.get(Number(r.id)) ?? 0,
       matched_with: group
         ? {
           leadRowId: leadOf(r),
@@ -1671,10 +1677,20 @@ export const settlementExport = guard(async (c) => {
   const batchId = Number(c.req.param('id'));
   if (!Number.isInteger(batchId)) return c.json({ error: 'bad_id' }, 400);
   const sb = c.get('supabase');
-  const { data, error } = await sb.from('acc_settlement_rows')
-    .select('line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, posted_je_no, notes')
-    .eq('batch_id', batchId).eq('company_id', co.companyId).order('line_no');
+  const [rowsRes, batchRes] = await Promise.all([
+    sb.from('acc_settlement_rows')
+      .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, posted_je_no, notes')
+      .eq('batch_id', batchId).eq('company_id', co.companyId).order('line_no'),
+    sb.from('acc_settlement_batches').select('adjustment_sen').eq('id', batchId).eq('company_id', co.companyId).maybeSingle(),
+  ]);
+  const { data, error } = rowsRes;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (batchRes.error) return c.json({ error: 'load_failed', reason: batchRes.error.message }, 500);
+  const lines = (data ?? []) as Array<Record<string, any>>;
+  const shares = chargeSharesOf(
+    Number((batchRes.data as { adjustment_sen: number | null } | null)?.adjustment_sen ?? 0),
+    lines.map((r) => ({ id: Number(r.id), grossSen: Number(r.gross_sen) })),
+  );
 
   const money = (sen: unknown) => (Number(sen ?? 0) / 100).toFixed(2);
   const cell = (v: unknown) => {
@@ -1682,9 +1698,9 @@ export const settlementExport = guard(async (c) => {
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const header = 'Line,Date,Reference,Gross,Fee,Net,Bucket,Matched by,Journal,Note';
-  const body = ((data ?? []) as Array<Record<string, any>>).map((r) => [
+  const body = lines.map((r) => [
     r.line_no, String(r.txn_date).slice(0, 10), r.ref ?? '',
-    money(r.gross_sen), money(r.fee_sen), money(r.net_sen),
+    money(r.gross_sen), money(Number(r.fee_sen) + (shares.get(Number(r.id)) ?? 0)), money(Number(r.net_sen) - (shares.get(Number(r.id)) ?? 0)),
     r.bucket, r.match_reason ?? '', r.posted_je_no ?? '', r.notes ?? '',
   ].map(cell).join(',')).join('\n');
 

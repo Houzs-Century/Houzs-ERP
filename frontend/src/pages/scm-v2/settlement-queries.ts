@@ -99,6 +99,9 @@ export type SettlementRow = {
   /** The card terminal the report names for the line (owner 2026-11-27: 往后上传后都要
       保存起来). Null for lines uploaded before then, or when the report names none. */
   terminal_id?: string | null;
+  /** The line's share of its report's statement charge (AEON's subvention fee), by
+      gross (owner 2026-11-28: 把它加去每一笔的费用里面). 0 when the report has none. */
+  charge_share_sen?: number;
 };
 
 /** One credit of a payout, as the BANK shows it. */

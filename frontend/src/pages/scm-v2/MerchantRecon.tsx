@@ -37,6 +37,7 @@ import {
   type Watchlist, type Payout,
 } from './settlement-queries';
 import { bankFollowsText } from './bank-follows';
+import { lineFeeSen, lineNetSen } from './settlement-line-money';
 import { SoldByButtons, SoldByTag, soldByNoteOf } from './SoldByOtherCompany';
 import { DataTable, type Column } from '../../components/DataTable';
 import { HeaderExportMenu } from '../../components/DataTableExportItems';
@@ -54,7 +55,7 @@ import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 import { PageHeader } from '../../components/Layout';
-import { AcquirerCards, ReportHead, ReportStrip, ReportTabs, TAB_EMPTY, acquirerCards, lineTab, type ReportTab } from './MerchantReportsTop';
+import { AcquirerCards, ReportHead, ReportStrip, ReportTabs, TAB_EMPTY, acquirerCards, chargeLabel, lineTab, type ReportTab } from './MerchantReportsTop';
 import top from './MerchantReports.module.css';
 import { useFinanceTodo } from './finance/finance-todo-queries';
 import { fmtDate } from '../../../../shared/src/vendor/shared/format';
@@ -625,6 +626,13 @@ const RefCell = ({ row }: { row: SettlementRow }) => (
 
 const qrMoneyWords = (sen: number): string => `QR ${fmt(sen)} · straight to the bank`;
 
+const FeeCell = ({ row, chargeWord }: { row: SettlementRow; chargeWord: string }) => (
+  <td className={grid.num}>
+    {fmt(lineFeeSen(row))}
+    {(row.charge_share_sen ?? 0) !== 0 && <div className={grid.sub}>incl. {fmt(Math.abs(row.charge_share_sen ?? 0))} {chargeWord.toLowerCase()}</div>}
+  </td>
+);
+
 const LinesTable = ({ batches, onOpen, openOnly, onExport }: {
   batches: SettlementBatch[]; onOpen: (id: number) => void; openOnly?: boolean;
   onExport?: (how: 'excel' | 'pdf') => void;
@@ -732,8 +740,8 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
             </td>
             <td><RefCell row={r} /></td>
             <td className={grid.num}>{fmt(r.gross_sen)}</td>
-            <td className={grid.num}>{fmt(r.fee_sen)}</td>
-            <td className={grid.num}>{fmt(r.net_sen)}</td>
+            <FeeCell row={r} chargeWord={chargeLabel(batch)} />
+            <td className={grid.num}>{fmt(lineNetSen(r))}</td>
 
             <td className={grid.seam}>
               {r.sold_by_company_id != null
@@ -876,8 +884,8 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
       { key: 'ref', label: 'Reference', getValue: (r) => r.ref ?? '' },
       { key: 'terminal', label: 'Terminal', getValue: (r) => r.terminal_id ?? '' },
       { key: 'gross', label: 'Gross', getValue: (r) => (r.gross_sen / 100).toFixed(2) },
-      { key: 'fee', label: 'Fee', getValue: (r) => (r.fee_sen / 100).toFixed(2) },
-      { key: 'net', label: 'Net', getValue: (r) => (r.net_sen / 100).toFixed(2) },
+      { key: 'fee', label: 'Fee', getValue: (r) => (lineFeeSen(r) / 100).toFixed(2) },
+      { key: 'net', label: 'Net', getValue: (r) => (lineNetSen(r) / 100).toFixed(2) },
       { key: 'bucket', label: 'Bucket', getValue: (r) => BUCKET_LABEL[r.bucket] },
       { key: 'je', label: 'Journal', getValue: (r) => r.posted_je_no ?? '' },
       { key: 'note', label: 'Note', getValue: (r) => r.clue ?? r.notes ?? '' },
@@ -922,9 +930,10 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
 
       {batch && batch.adjustment_sen !== 0 && (
         <div style={panel(batch.adjustment_je_no ? 'good' : 'danger')}>
-          <b>Merchant charge on no transaction: {fmt(Math.abs(batch.adjustment_sen))}</b>
+          <b>{chargeLabel(batch)} on the statement: {fmt(Math.abs(batch.adjustment_sen))}</b>
           <div style={softText}>
             Lines come to {fmt(batch.net_sen)}; {batch.acquirer_code} says it is paying {fmt(batch.stated_net_sen ?? 0)}.
+            {' '}Each line&rsquo;s Fee carries its share, by its gross.
             {batch.adjustment_je_no ? ` Booked as ${batch.adjustment_je_no}.` : ' Confirm the report and it books.'}
           </div>
         </div>
@@ -979,8 +988,8 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
                 <td>{r.txn_date}<div className={grid.sub}>line {r.line_no}</div></td>
                 <td><RefCell row={r} /></td>
                 <td className={grid.num}>{fmt(r.gross_sen)}</td>
-                <td className={grid.num}>{fmt(r.fee_sen)}</td>
-                <td className={grid.num}>{fmt(r.net_sen)}</td>
+                <FeeCell row={r} chargeWord={batch ? chargeLabel(batch) : 'Statement charge'} />
+                <td className={grid.num}>{fmt(lineNetSen(r))}</td>
                 <td className={grid.seam}>
                   {r.sold_by_company_id != null && (
                     <div>
@@ -1033,7 +1042,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
         </div>
       )}
       {needChoice.map((r) => (
-        <SettlementLine key={r.id} row={r}
+        <SettlementLine key={r.id} row={r} chargeWord={batch ? chargeLabel(batch) : 'Statement charge'}
           others={openRows.filter((o) => o.id !== r.id && o.linked.length === 0)} />
       ))}
     </section>
@@ -1160,9 +1169,10 @@ const FindTheSale = ({ rowId, grossSen, picked, shown, onToggle, qr = false }: {
   );
 };
 
-const SettlementLine = ({ row, others = [] }: {
+const SettlementLine = ({ row, others = [], chargeWord }: {
   row: SettlementRow;
   others?: SettlementRow[];
+  chargeWord: string;
 }) => {
   const confirm = useConfirmSettlementRow();
   const confirmGroup = useConfirmSettlementGroup();
@@ -1250,7 +1260,7 @@ const SettlementLine = ({ row, others = [] }: {
         <span><b>{fmt(row.gross_sen)}</b> gross</span>
         {qr
           ? <span style={softText}>no fee · straight to the bank with its sale</span>
-          : <span style={softText}>− {fmt(row.fee_sen)} fee = {fmt(row.net_sen)} net</span>}
+          : <span style={softText}>− {fmt(lineFeeSen(row))} fee{(row.charge_share_sen ?? 0) !== 0 ? ` (incl. ${fmt(Math.abs(row.charge_share_sen ?? 0))} ${chargeWord.toLowerCase()})` : ''} = {fmt(lineNetSen(row))} net</span>}
       </div>
 
       {row.clue && row.linked.length === 0 && <div style={softText}>{row.clue}</div>}

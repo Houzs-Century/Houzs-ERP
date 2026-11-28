@@ -637,6 +637,42 @@ describe('the card terminal of each line', () => {
   }));
 });
 
+/* Owner 2026-11-28: Pine Labs 手续费对的，你帮我更改，把它加去每一笔的费用里面 — AEON's
+   subvention fee, printed once at the bottom of a report, is in each line's fee by
+   its share (the server's charge_share_sen, by gross); the line's net is after it. */
+describe('a line\'s fee carries its share of the statement charge', () => {
+  const withShares = (run: () => void) => {
+    const aeon = { acquirer_code: 'AEON', adjustment_sen: 8400, stated_net_sen: 166700 };
+    reportRows = [{ ...ROW, charge_share_sen: 4200 }, { ...MATCHED_ROW, charge_share_sen: 4200 }, SUGGESTED_ROW];
+    setBatchList([{ ...BATCH, ...aeon }]);
+    openedBatch = aeon;
+    try { run(); } finally { reportRows = REPORT_ROWS; setBatchList([BATCH]); openedBatch = {}; }
+  };
+  const cellsOf = (row: HTMLElement) => [...row.querySelectorAll('td')].map((td) => td.textContent);
+
+  test('the list shows the fee with the share in it, named under it, and the net after it; a line with no share as printed', () => withShares(() => {
+    draw();
+    const shared = screen.getByText('969745').closest('tr') as HTMLElement;
+    expect(cellsOf(shared)).toContain('RM 57.00incl. RM 42.00 subvention fee');
+    expect(cellsOf(shared)).toContain('RM 943.00');
+    const plain = screen.getByText('TYPO9').closest('tr') as HTMLElement;
+    expect(cellsOf(plain)).toContain('RM 9.00');
+    expect(cellsOf(plain)).toContain('RM 591.00');
+  }));
+
+  test('inside the report: the matched table, the card to choose and the statement panel say the same', () => withShares(() => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    expect(screen.getByText(/Subvention fee on the statement: RM 84\.00/)).toBeTruthy();
+    expect(screen.getByText(/Each line.s Fee carries its share, by its gross\./)).toBeTruthy();
+    const matched = screen.getByText('969745').closest('tr') as HTMLElement;
+    expect(cellsOf(matched)).toContain('RM 57.00incl. RM 42.00 subvention fee');
+    openTab('To choose');
+    const card = screen.getByLabelText('Select SO-2608-001').closest('section') as HTMLElement;
+    expect(within(card).getByText('− RM 57.00 fee (incl. RM 42.00 subvention fee) = RM 943.00 net')).toBeTruthy();
+  }));
+});
+
 /* 这个是什么? (owner, 2026-08-20) — asked of 27 identical cards sitting under a
    button that would have cleared all 27 at once, each repeating the same
    paragraph about "Set aside". A card is a DECISION; a line already matched by
