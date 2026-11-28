@@ -1,11 +1,3 @@
-/* Mobile Defect List — the phone mirror of the desktop Projects > Defect List.
- *
- * Pins the three things the surface must not drift on against the desktop:
- *   - it groups the cross-project feed by project,
- *   - a FRESH defect offers the reviewer's current buttons (Done Clean /
- *     Exchange / Service), the live vocabulary — NOT the retired Done/Replace,
- *   - acting posts the picked status to the shared append-only action route.
- */
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -18,7 +10,6 @@ const { get, post, fetchBlobUrl, notify } = vi.hoisted(() => ({
   notify: vi.fn(),
 }));
 
-// Keep the real buildQuery so the open-only/all toggle produces a real URL.
 vi.mock("../api/client", async (orig) => {
   const actual = await orig<typeof import("../api/client")>();
   return { ...actual, api: { get, post, fetchBlobUrl } };
@@ -26,7 +17,6 @@ vi.mock("../api/client", async (orig) => {
 vi.mock("../auth/AuthContext", () => ({ useAuth: () => ({ user: adminUser }) }));
 vi.mock("../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => notify }));
 
-// `*` admin → reviewer AND purchaser for every row's state (defectReviewer.ts).
 const adminUser = { permissions: ["*"], position_name: "Super Admin", role_name: "Super Admin" };
 
 import { MobilePmsDefectList } from "./MobilePmsDefectList";
@@ -35,7 +25,7 @@ const freshRow = {
   attachment_id: 1,
   r2_key: "k1",
   file_name: "defect.pdf",
-  content_type: null, // non-image → no blob fetch, renders an "Open file" tile
+  content_type: null,
   caption: "Model: AKEMI Elevation\nReason: Dented corner",
   uploaded_at: null,
   uploader_name: "Ali",
@@ -90,7 +80,6 @@ describe("mobile Defect List", () => {
     await screen.findByText("Penang Fair");
     expect(screen.getByRole("button", { name: "Done Clean" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Service" })).toBeDefined();
-    // Both the reviewer's Exchange and no retired "Replace" button.
     expect(screen.getByRole("button", { name: "Exchange" })).toBeDefined();
     expect(screen.queryByRole("button", { name: "Replace" })).toBeNull();
   });

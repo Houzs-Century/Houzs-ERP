@@ -151,9 +151,6 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/scm/po-amendments") return { t: "po-amendments" };
   if (path === "/assr") return { t: "service" };
   if (path === "/projects") {
-    // The cross-project Defect List is a `?view=defects` sub-page of Projects
-    // on desktop; on mobile it is its own screen. Every other projects view
-    // (list/calendar/finances) is the PMS project list.
     const view = new URLSearchParams((to.split("?")[1] || "")).get("view");
     return view === "defects" ? { t: "pms-defects" } : { t: "pms" };
   }
@@ -329,10 +326,6 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
   ]},
   { group: "Projects · PMS", items: [
     { to: "/projects", label: "Projects" },
-    /* Cross-project Defect List — open defect photos across every project.
-       Gated by its live desktop NAV_TABS entry (/projects?view=defects,
-       pageAccess "projects.list"), the same gate the desktop row carries, so
-       the mobile row shows for exactly the project-list cohort. */
     { to: "/projects?view=defects", label: "Defect List" },
   ]},
   { group: "After-sales", items: [

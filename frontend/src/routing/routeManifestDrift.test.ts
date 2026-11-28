@@ -206,22 +206,10 @@ describe("mobile route drift gate", () => {
     // (Driver)", beside Last Mile Delivery in the Logistics group.
     // 44 since 2026-10-22: /hr/punch, Punch In / Out (HC-0125), the Attendance
     // group's one row: the employee's own clock.
-    // 45 since 2026-11-26: /projects?view=defects, Defect List — the
-    // cross-project open-defect photos, beside Projects in Projects - PMS
-    // (gated projects.list, like the desktop view).
     expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(45);
-    // 6 since 2026-09-10: /roles, the rebuilt Roles & Permissions screen, reached
-    // from a Profile row (gated via the Team hub tab).
-    // 7 since 2026-09-17: /titles, the phone Titles editor (position_policy),
-    // the last desktop-only Roles & Permissions surface to reach the phone.
-    // 8 since 2026-10-13: /it-support, report a problem to IT from the phone;
-    // the row shows only where IT Support is connected, as on desktop.
-    // 9 since 2026-11-23: /meetings, the shared meeting rooms (dropped with IT Support where unconnected).
     expect(PROFILE_ORG_ITEMS).toHaveLength(9);
     expect(allMobile).toHaveLength(54);
     expect(new Set(allMobile.map((item) => item.to)).size).toBe(54);
-    // Still 52 distinct PATHS: /projects?view=defects shares the /projects path
-    // with the Projects row, so the deduped-by-path count does not grow.
     expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(52);
   });
 

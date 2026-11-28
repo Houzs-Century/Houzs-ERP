@@ -19,20 +19,6 @@ import {
 } from "../pages/projects/defectReviewer";
 import "./mobile.css";
 
-/* ------------------------------------------------------------------ *
- * Mobile Projects › Defect List — the phone mirror of the desktop
- * DefectListView (pages/projects/DefectListView.tsx). Same cross-project
- * feed (GET /api/projects/defect-list, gated projects.list), the same
- * "Belum settle / Semua" open-vs-all toggle, the same client-side search +
- * date-range filter, the same project grouping, and the SAME append-only
- * action route (POST /checklist/attachments/:id/actions) behind the one
- * shared reviewer/purchaser gate (defectReviewer.ts) — so the two surfaces
- * can never drift on who may act or what a status is called.
- *
- * Presentation uses the .hz-m mobile design classes (.hdr .scroll .card
- * .chip .tinybtn .rbadge .fld-i), matching the rest of the mobile PMS.
- * ------------------------------------------------------------------ */
-
 interface DefectRow {
   attachment_id: number;
   r2_key: string;
@@ -77,15 +63,11 @@ interface ProjectGroup {
   rows: DefectRow[];
 }
 
-/** Normalize a stored date ("2026-12-18", "2026/12/18", or an ISO timestamp)
- *  to "YYYY-MM-DD" so it compares lexicographically with <input type="date">. */
 function dateKey(value: string | null): string {
   if (!value) return "";
   return value.slice(0, 10).replace(/\//g, "-");
 }
 
-/** Group the flat feed by project, preserving the server's ordering (most
- *  recent event first, newest photo first within it). */
 function groupByProject(rows: DefectRow[]): ProjectGroup[] {
   const order: number[] = [];
   const by = new Map<number, ProjectGroup>();
@@ -112,8 +94,6 @@ function groupByProject(rows: DefectRow[]): ProjectGroup[] {
   return order.map((id) => by.get(id)!);
 }
 
-// A lazily-fetched thumbnail (same auth'd blob fetch the full viewer uses).
-// Revoked on unmount; a non-image or a failed fetch leaves a hatched box.
 function DefectThumb({
   r2Key,
   contentType,
@@ -177,9 +157,6 @@ function DefectThumb({
   );
 }
 
-// Outline-button colour for a defect action tone — the mobile mirror of the
-// desktop defectListBtn (done = teal/green, escalate = clay-red, progress =
-// amber). The list shows idle buttons; the editor replaces them once picked.
 function toneBorderFg(tone: DefectActionTone): { border: string; fg: string } {
   switch (tone) {
     case "done":
@@ -191,8 +168,6 @@ function toneBorderFg(tone: DefectActionTone): { border: string; fg: string } {
   }
 }
 
-// Badge tint for a stored status, keyed on the shared defectStage: resolved
-// green, escalated clay-red, fresh / in-progress amber. Mirrors defectListBadge.
 function badgeTint(status: string | null): { bg: string; fg: string } {
   const stage = defectStage(status);
   if (stage === "resolved") return { bg: "var(--hz-c-synced-bg)", fg: "var(--hz-c-synced)" };
@@ -206,7 +181,6 @@ export function MobilePmsDefectList({
   onOpenProject,
 }: {
   onBack?: () => void;
-  /** Tapping a project header opens that project's mobile PMS detail. */
   onOpenProject?: (id: number) => void;
 }) {
   const { user } = useAuth();
@@ -216,7 +190,6 @@ export function MobilePmsDefectList({
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [lightbox, setLightbox] = useState<number | null>(null);
-  // One action editor open at a time, keyed by attachment id.
   const [draft, setDraft] = useState<{ attId: number; status: string } | null>(null);
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
@@ -235,9 +208,6 @@ export function MobilePmsDefectList({
   const allRows = useMemo(() => q.data?.rows ?? [], [q.data]);
   const hasFilter = search.trim() !== "" || dateFrom !== "" || dateTo !== "";
 
-  // Filter client-side on the already-fetched feed: fast, and no extra request
-  // while the service team types. Search spans the event fields a user would
-  // recognise; the date range keeps events whose run overlaps the window.
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase();
     return allRows.filter((r) => {
@@ -277,9 +247,6 @@ export function MobilePmsDefectList({
       setRemark("");
       await q.refetch();
     } catch (e) {
-      // The buttons here are gated on a client-side regex with no backend
-      // capability behind them, so a server refusal is a REACHABLE state —
-      // tell the operator rather than let a failed "Done" look saved.
       await notify({
         title: "Not saved",
         body: e instanceof Error ? e.message : "Please try again.",
@@ -314,7 +281,6 @@ export function MobilePmsDefectList({
           </button>
         </div>
 
-        {/* Open-only vs. all toggle — mirrors the desktop "Belum settle / Semua". */}
         <div className="chips" style={{ marginTop: 11 }}>
           <button onClick={() => setShowAll(false)} className={!showAll ? "chip on" : "chip"}>Belum settle</button>
           <button onClick={() => setShowAll(true)} className={showAll ? "chip on" : "chip"}>Semua</button>
@@ -324,8 +290,6 @@ export function MobilePmsDefectList({
           </span>
         </div>
 
-        {/* Search + date range — find an event, or narrow to a window. All
-            client-side over the fetched feed. */}
         <div className="hdr-row" style={{ marginTop: 10 }}>
           <div className="searchbar">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#9aa093" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
@@ -449,11 +413,6 @@ export function MobilePmsDefectList({
                         </div>
                       )}
 
-                      {/* Action buttons — same gate, labels and route as the
-                          project detail card and the desktop Defect List. Fresh →
-                          reviewer (Done Clean / Exchange / Service); escalated →
-                          purchaser (In Progress / Done). Each opens the remark
-                          editor before it saves. */}
                       {((stage === "fresh" && canReview) || (stage === "purchaser" && canPurchase)) && !editing && (
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
                           {(stage === "fresh" ? REVIEWER_DEFECT_ACTIONS : PURCHASER_DEFECT_ACTIONS).map((a) => {
