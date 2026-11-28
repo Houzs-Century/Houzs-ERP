@@ -23,6 +23,10 @@ vi.mock('../vendor/scm/lib/inventory-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../vendor/scm/lib/inventory-queries')>()),
   useWarehouses: () => ({ data: [{ id: 'w1', code: 'WH-A' }, { id: 'w2', code: 'WH-B' }], isLoading: false }),
 }));
+vi.mock('../vendor/scm/lib/warehouse-queries', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../vendor/scm/lib/warehouse-queries')>()),
+  useRacks: () => ({ data: { racks: [], warehouses: [], summary: { total: 0, occupied: 0, empty: 0, reserved: 0, occupancyRate: 0 } } }),
+}));
 vi.mock('./MobileSkuPicker', () => ({
   MobileSkuPicker: ({ onPick }: { onPick: (s: { itemCode: string; itemGroup: string; name: string; unitPriceSen: number; category: string }) => void }) => (
     <button type="button" onClick={() => onPick({ itemCode: 'CH-1', itemGroup: 'accessory', name: 'Chair', unitPriceSen: 0, category: 'ACCESSORY' })}>pick CH-1</button>

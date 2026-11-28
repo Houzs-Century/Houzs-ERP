@@ -229,3 +229,17 @@ describe('PATCH stock-transfers/:id — adding / removing lines', () => {
     expect(lines('st-1')).toHaveLength(1);
   });
 });
+
+describe('PATCH stock-transfers/:id — a transfer that moved racks', () => {
+  it('refuses an items edit and leaves the lines alone, but still saves notes', async () => {
+    sb = makeSb();
+    transfer('st-1').racks_applied_at = '2026-11-27T00:00:00Z';
+    const res = await patch('st-1', { items: [{ itemCode: 'SKU-1', variantKey: '', qty: 1 }] });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'racked_transfer_items_locked' });
+    expect(lines('st-1')[0]!.qty).toBe(2);
+    const notes = await patch('st-1', { notes: 'Racks moved' });
+    expect(notes.status).toBe(200);
+    expect(transfer('st-1').notes).toBe('Racks moved');
+  });
+});

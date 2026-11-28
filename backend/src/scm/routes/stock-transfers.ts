@@ -5,7 +5,9 @@ import { stockTransferDeliveryPodHandler, stockTransferDeliveryPhotoHandler } fr
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { reverseMovements } from '../lib/inventory-movements';
-import { buildTransferPayload } from '../lib/stock-transfer-atomic';
+import { buildTransferPayload, payloadMovesRacks } from '../lib/stock-transfer-atomic';
+import { readLineRacks, checkTransferRacks, type LineRacks } from '../lib/stock-transfer-racks';
+import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { activeCompanyId, companyDocPrefix, requireActiveCompanyId,
   NOT_THIS_COMPANY, type CompanyScopeCtx } from '../lib/companyScope';
@@ -21,9 +23,9 @@ stockTransfers.use('*', supabaseAuth);
 
 const HEADER =
   'id, transfer_no, status, from_warehouse_id, to_warehouse_id, transfer_date, ' +
-  'notes, posted_at, cancelled_at, created_at, created_by';
+  'notes, posted_at, cancelled_at, created_at, created_by, racks_applied_at, racks_reversed_at';
 const LINE =
-  'id, stock_transfer_id, item_code, product_name, variant_key, qty, notes, created_at';
+  'id, stock_transfer_id, item_code, product_name, variant_key, qty, notes, created_at, from_rack_id, to_rack_id';
 
 const VALID_STATUS = new Set(['POSTED', 'CANCELLED']);
 
@@ -142,6 +144,18 @@ async function claimTransferReversal(
   return won ? { ok: true } : busy;
 }
 
+async function undoTransferRacks(db: ReturnType<typeof scmDb>, companyId: number, id: string, userId: string | null): Promise<string | null> {
+  try {
+    const { error } = await db.unscoped(
+      'an RPC, which this wrapper deliberately does not cover: fn_stock_transfer_racks_undo takes p_company_id explicitly and scopes inside the transaction',
+    ).rpc('fn_stock_transfer_racks_undo', { p_transfer_id: id, p_company_id: companyId, p_performed_by: userId });
+    /* eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- an RPC failing at the edge surfaces an error object without a message */
+    return error ? `racks not put back: ${error.message ?? 'rack undo failed'}` : null;
+  } catch (e) {
+    return `racks not put back: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
 type TransferMovementRow = { movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number };
 
 /** Some (warehouse, item, variant, batch) bucket of the transfer's own IN/OUT rows does not net to zero. */
@@ -172,18 +186,21 @@ stockTransfers.patch('/:id', async (c) => {
 
   const { data: beforeRow, error: beforeErr } = await db
     .from('stock_transfers', companyIdScope(co.companyId))
-    .select('transfer_no, notes, status, from_warehouse_id, to_warehouse_id, company_id')
+    .select('transfer_no, notes, status, from_warehouse_id, to_warehouse_id, company_id, racks_applied_at')
     .eq('id', id)
     .maybeSingle();
   if (beforeErr) return c.json({ error: 'load_failed', reason: beforeErr.message }, 500);
   if (!beforeRow) return c.json(NOT_THIS_COMPANY, 404);
   const before = beforeRow as {
     transfer_no: string; notes: string | null; status: string;
-    from_warehouse_id: string; to_warehouse_id: string; company_id: number | null;
+    from_warehouse_id: string; to_warehouse_id: string; company_id: number | null; racks_applied_at: string | null;
   };
 
   if (itemsInput && before.status !== 'POSTED') {
     return c.json({ error: 'not_posted', message: `Cannot edit items on a ${before.status} transfer.` }, 409);
+  }
+  if (itemsInput && before.racks_applied_at) {
+    return c.json({ error: 'racked_transfer_items_locked', message: 'This transfer moved goods between racks. Cancel it and create a new one to change its items.' }, 409);
   }
 
   let newLineRows: Array<{ item_code: string; product_name: string | null; variant_key: string; qty: number; notes: string | null }> = [];
@@ -354,10 +371,10 @@ export async function writeTransferMovements(
     .from('stock_transfer_lines', CENTRALISED(
       'header.id was minted by the company-scoped insert in the caller moments ago, so these lines are that document\'s by construction',
     ))
-    .select('item_code, product_name, variant_key, qty')
+    .select('item_code, product_name, variant_key, qty, from_rack_id, to_rack_id')
     .eq('stock_transfer_id', header.id);
   if (linesErr) return [unreadableMovementError(`the lines of transfer ${header.transfer_no}`, linesErr)];
-  const lineList = (lines as Array<{ item_code: string; product_name: string | null; variant_key: string | null; qty: number }>) ?? [];
+  const lineList = (lines as Array<{ item_code: string; product_name: string | null; variant_key: string | null; qty: number; from_rack_id: string | null; to_rack_id: string | null }>) ?? [];
 
   const batchByBucket = new Map<string, string | null>();
   try {
@@ -390,7 +407,7 @@ export async function writeTransferMovements(
     try {
       const { error: rpcErr } = await db.unscoped(
         'an RPC, which this wrapper deliberately does not cover: fn_stock_transfer_apply takes p_company_id explicitly and scopes inside the transaction',
-      ).rpc('fn_stock_transfer_apply', {
+      ).rpc(payloadMovesRacks(payload) ? 'fn_stock_transfer_apply_racked' : 'fn_stock_transfer_apply', {
         p_from_warehouse_id: header.from_warehouse_id,
         p_to_warehouse_id:   header.to_warehouse_id,
         p_source_doc_id:     header.id,
@@ -459,6 +476,22 @@ stockTransfers.post('/', async (c) => {
   if (whErr) return c.json({ error: 'warehouse_check_failed', reason: whErr.message }, 500);
   if ((ownWhs ?? []).length !== wanted.length) return c.json(NOT_THIS_COMPANY, 404);
 
+  let lineRacks: LineRacks[];
+  try { lineRacks = items.map((it) => readLineRacks(it)); }
+  catch (e) {
+    markIdempotencyNoWrite(c);
+    return c.json({ error: 'invalid_rack', message: e instanceof Error ? e.message : String(e) }, 400);
+  }
+  const rackRefusal = await checkTransferRacks(db, c, fromWarehouseId, toWarehouseId, items.map((it, i) => ({
+    item_code: String(it.itemCode ?? ''),
+    qty: Math.max(0, Math.floor(Number(it.qty ?? 0))),
+    ...lineRacks[i]!,
+  })));
+  if (rackRefusal) {
+    markIdempotencyNoWrite(c);
+    return c.json(rackRefusal.body, rackRefusal.status);
+  }
+
   const headerInsert: Record<string, unknown> = {
     status:             'POSTED',
     posted_at:          new Date().toISOString(),
@@ -488,10 +521,11 @@ stockTransfers.post('/', async (c) => {
   }
   const header = headerData as unknown as { id: string; transfer_no: string; from_warehouse_id: string; to_warehouse_id: string };
 
-  const lineRows = items.map((it) => {
+  const lineRows = items.map((it, i) => {
     const qty = Math.max(0, Math.floor(Number(it.qty ?? 0)));
     if (qty <= 0) throw new Error('qty must be > 0');
     if (!it.itemCode) throw new Error('itemCode required per line');
+    const racks = lineRacks[i]!;
     return {
       stock_transfer_id: header.id,
       item_code: String(it.itemCode),
@@ -499,6 +533,8 @@ stockTransfers.post('/', async (c) => {
       variant_key: (it.variantKey as string | undefined) ?? '',
       qty,
       notes: (it.notes as string | undefined) ?? null,
+      ...(racks.fromRackId ? { from_rack_id: racks.fromRackId } : {}),
+      ...(racks.toRackId ? { to_rack_id: racks.toRackId } : {}),
     };
   });
   const { error: lErr } = await db
@@ -611,7 +647,8 @@ stockTransfers.patch('/:id/cancel', async (c) => {
     const again = await reverseMovements(db.unscoped(
       'library hand-off: reverseMovements resolves the rows to reverse from this document id, which the company-scoped read above already proved is ours',
     ), 'STOCK_TRANSFER', id, user.id);
-    const stillShort = !again.ok || again.failed > 0;
+    const rackErrAgain = await undoTransferRacks(db, co.companyId, id, user.id);
+    const stillShort = !again.ok || again.failed > 0 || rackErrAgain != null;
     if (again.reversed > 0 || stillShort) {
       await recordEntityAudit(db.unscoped(
         'library hand-off: the audit writer takes the raw client and is told the company explicitly as companyId',
@@ -619,7 +656,7 @@ stockTransfers.patch('/:id/cancel', async (c) => {
         entityType: 'STOCK_TRANSFER', entityId: id, entityDocNo: beforeTransfer?.transfer_no ?? null,
         action: 'CANCEL', actor: c.get('houzsUser'), companyId: beforeTransfer?.company_id ?? null, statusSnapshot: 'CANCELLED',
         note: stillShort
-          ? `Stock reversal retried, still INCOMPLETE — ${again.failed} failed: ${again.reason ?? 'partial reversal'}`
+          ? `Stock reversal retried, still INCOMPLETE — ${again.failed} failed: ${rackErrAgain ?? again.reason ?? 'partial reversal'}`
           : `Stock reversal finished on retry — ${again.reversed} movement(s) reversed`,
         fieldChanges: compactChanges([fieldChange('movementsReversed', null, again.reversed), fieldChange('movementsFailed', null, again.failed)]),
       });
@@ -628,14 +665,15 @@ stockTransfers.patch('/:id/cancel', async (c) => {
       transfer: { id, status: 'CANCELLED' },
       resumed: true,
       reversal: { reversed: again.reversed, skipped: again.skipped, failed: again.failed },
-      reversalErrors: stillShort ? [again.reason ?? 'partial reversal'] : undefined,
+      reversalErrors: stillShort ? [rackErrAgain ?? again.reason ?? 'partial reversal'] : undefined,
     });
   }
 
   const rev = await reverseMovements(db.unscoped(
     'library hand-off: reverseMovements resolves the rows to reverse from this document id, which the company-scoped flip directly above already proved is ours',
   ), 'STOCK_TRANSFER', id, user?.id ?? null);
-  const revIncomplete = !rev.ok || rev.failed > 0;
+  const rackErr = await undoTransferRacks(db, co.companyId, id, user.id);
+  const revIncomplete = !rev.ok || rev.failed > 0 || rackErr != null;
 
   await recordEntityAudit(db.unscoped(
     'library hand-off: the audit writer takes the raw client and is told the company explicitly as companyId',
@@ -648,7 +686,7 @@ stockTransfers.patch('/:id/cancel', async (c) => {
     companyId: beforeTransfer?.company_id ?? null,
     statusSnapshot: 'CANCELLED',
     note: revIncomplete
-      ? `Stock reversal INCOMPLETE — ${rev.failed} failed: ${rev.reason ?? 'partial reversal'}`
+      ? `Stock reversal INCOMPLETE — ${rev.failed} failed: ${rackErr ?? rev.reason ?? 'partial reversal'}`
       : undefined,
     fieldChanges: compactChanges([
       ...statusChange(beforeTransfer?.status, 'CANCELLED'),
@@ -668,7 +706,7 @@ stockTransfers.patch('/:id/cancel', async (c) => {
   return c.json({
     transfer: data,
     reversal: { reversed: rev.reversed, skipped: rev.skipped, failed: rev.failed },
-    reversalErrors: revIncomplete ? [rev.reason ?? 'partial reversal'] : undefined,
+    reversalErrors: revIncomplete ? [rackErr ?? rev.reason ?? 'partial reversal'] : undefined,
   });
 });
 
