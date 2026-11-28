@@ -24,14 +24,16 @@ describe('classifyPosition answers with the enforcing code', () => {
     expect(classifyPosition('Calendar Viewer', null).cohort).toBe('restricted');
   });
 
-  it('Outsource Transporter is restricted like Driver / Helper, and is NOT fleet (unlinked → would fail closed)', () => {
+  it('Outsource Transporter is restricted like Driver / Helper, and IS fleet (unlinked → fails closed)', () => {
     const k = classifyPosition('Outsource Transporter', 'Operation Department');
     expect(k.cohort).toBe('restricted');
     const policy = resolvePositionPolicy({ position_name: 'Outsource Transporter', department_name: 'Operation Department' });
     const driver = resolvePositionPolicy({ position_name: 'Driver', department_name: 'Operation Department' });
     expect(policy.pageAccess).toEqual(driver.pageAccess);
     expect(policy.scmConfigured).toBe(true);
-    expect(isFleetPosition('Outsource Transporter')).toBe(false);
+    // Owner 2026-11-28: now a fleet position by name, so an UNLINKED one fails
+    // closed in resolveDeliveryScope rather than seeing the whole board.
+    expect(isFleetPosition('Outsource Transporter')).toBe(true);
   });
 
   it('agrees with resolvePositionPolicy for the live position names', () => {

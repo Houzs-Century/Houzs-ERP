@@ -246,13 +246,15 @@ const RESTRICTED_ROWS: ReadonlyMap<string, readonly PolicyRow[]> = new Map(
     // ("Warehouse Crew JB", …) so a new region can't reopen the hole.
     ["Warehouse Crew KL", STOREKEEPER_ROWS],
     // Owner 2026-09-16 (Roles & Permissions review, part A): the outsourced
-    // delivery contractors. 13 active accounts on the Driver ROLE, but the
-    // position name was unclassified, so they fell into the default-FULL cohort
-    // and saw every page a manager sees (the role's keys stopped the API, not
-    // the menus). Same whitelist as Driver / Helper. NOT a fleet position:
-    // none of them has a scm.drivers row linked by user_id, and a fleet
-    // position with no link fails CLOSED to an empty board (deliveryScope.ts)
-    // — link them first, then move the name into FLEET_POSITIONS.
+    // delivery contractors. Accounts on the Driver ROLE, but the position name
+    // was unclassified, so they fell into the default-FULL cohort and saw every
+    // page a manager sees (the role's keys stopped the API, not the menus). Same
+    // whitelist as Driver / Helper. Now a FLEET position too (owner 2026-11-28):
+    // the sync_user_to_tms trigger links an Outsource Transporter account to an
+    // scm.drivers row (in_house=false) by user_id, so a linked one is scoped to
+    // its own run sheet and an UNLINKED one fails CLOSED to an empty board rather
+    // than seeing the whole fleet (deliveryScope.ts). See FLEET_POSITIONS + the
+    // position_policy is_fleet override migration.
     ["Outsource Transporter", DRIVER_HELPER_ROWS],
     ["Calendar Viewer", CALENDAR_VIEWER_ROWS],
   ].map(([name, rows]) => [normalisePosition(name as string), rows as readonly PolicyRow[]]),
@@ -422,13 +424,20 @@ export function positionGrantsWildcard(
   return name ? GOD_POSITIONS.has(name) : false;
 }
 
+// Outsource Transporter joined 2026-11-28 (owner): a 3PL driver who uploads POD
+// gets an Outsource Transporter account, which the sync_user_to_tms trigger links
+// to an scm.drivers row (in_house=false). As a fleet position a linked one is
+// scoped to its own stops, and an UNLINKED one fails CLOSED to an empty board
+// rather than seeing the whole fleet's jobs. Its position_policy row's is_fleet is
+// set true by a dedicated migration so the ROW agrees with this name list.
 const FLEET_POSITIONS: ReadonlySet<string> = new Set(
-  ["Driver", "Helper"].map(normalisePosition),
+  ["Driver", "Helper", "Outsource Transporter"].map(normalisePosition),
 );
 
-/** True for a fleet position (Driver / Helper) — the population resolveDelivery
- *  Scope narrows to their OWN assignments and, when unlinked, fails CLOSED to an
- *  empty board rather than exposing the whole fleet. Unknown/empty → false. */
+/** True for a fleet position (Driver / Helper / Outsource Transporter) — the
+ *  population resolveDeliveryScope narrows to their OWN assignments and, when
+ *  unlinked, fails CLOSED to an empty board rather than exposing the whole fleet.
+ *  Unknown/empty → false. */
 export function isFleetPosition(
   positionName: string | null | undefined,
   row?: PositionPolicyRow | null,
