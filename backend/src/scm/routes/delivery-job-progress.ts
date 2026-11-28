@@ -7,6 +7,7 @@ import { appendDoPodPhotos } from '../lib/do-pod-photos';
 import { houzsUserIdOf, mytClock } from '../lib/crew-stop-complete';
 import { ASSR_LEG_BY_STOP, podPhotoResponse } from './delivery-pod-context';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
+import { lorryPlatesByIds } from '../lib/lorry-plate-lookup';
 import { ASSR_BOARD_LEGS } from '../lib/assr-board-scope';
 import { saveAttachment, logActivity, patchAssrCase, transitionStage } from '../../services/assr';
 import { setChecklistStatus, getUserPhasesOnProject } from '../../services/projects';
@@ -50,9 +51,10 @@ async function alreadyCompleted(c: Ctx, cur: Record<string, unknown> | null) {
   }, 409);
 }
 
-const tripCrew = (t: Record<string, unknown> | null | undefined): CrewAssignment => ({
+const tripCrew = (t: Record<string, unknown> | null | undefined, lorryPlate: string | null = null): CrewAssignment => ({
   driverIds: [(t?.driver_id as string | null) ?? null],
   helperIds: [(t?.helper_1_id as string | null) ?? null, (t?.helper_2_id as string | null) ?? null],
+  lorryPlate,
 });
 
 export async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, leg: string): Promise<
@@ -71,9 +73,12 @@ export async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, 
     const tripId = (row.trip_id as string | null) ?? null;
     if (scope.mode !== 'all') {
       if (!tripId) return notYours;
-      const { data: trip, error: tErr } = await sb.from('trips').select('driver_id, helper_1_id, helper_2_id').eq('id', tripId).maybeSingle();
+      const { data: trip, error: tErr } = await sb.from('trips').select('driver_id, helper_1_id, helper_2_id, lorry_id').eq('id', tripId).maybeSingle();
       if (tErr) return { ok: false, status: 500, error: 'load_failed', reason: tErr.message };
-      if (!scopeMatchesAssignment(scope, tripCrew(trip as Record<string, unknown> | null))) return notYours;
+      const trPlate = (trip as { lorry_id?: string | null } | null)?.lorry_id
+        ? (await lorryPlatesByIds(sb, [(trip as { lorry_id?: string | null }).lorry_id])).get(String((trip as { lorry_id?: string | null }).lorry_id)) ?? null
+        : null;
+      if (!scopeMatchesAssignment(scope, tripCrew(trip as Record<string, unknown> | null, trPlate))) return notYours;
     }
     return { ok: true, row, tripId, companyId: (row.company_id as number | null) ?? null };
   }
@@ -112,9 +117,11 @@ export async function loadJob(c: Ctx, sourceType: SourceType, sourceId: string, 
     .filter((s) => ASSR_LEG_BY_STOP[s.stop_type] === leg).map((s) => s.trip_id).filter(Boolean))] as string[];
   if (scope.mode !== 'all') {
     if (!tripIds.length) return notYours;
-    const { data: trips, error: tErr } = await sb.from('trips').select('driver_id, helper_1_id, helper_2_id').in('id', tripIds);
+    const { data: trips, error: tErr } = await sb.from('trips').select('driver_id, helper_1_id, helper_2_id, lorry_id').in('id', tripIds);
     if (tErr) return { ok: false, status: 500, error: 'load_failed', reason: tErr.message };
-    if (!((trips ?? []) as Array<Record<string, unknown>>).some((t) => scopeMatchesAssignment(scope, tripCrew(t)))) return notYours;
+    const platesByTrip = await lorryPlatesByIds(sb, ((trips ?? []) as Array<{ lorry_id?: string | null }>).map((t) => t.lorry_id ?? null));
+    if (!((trips ?? []) as Array<Record<string, unknown>>).some((t) => scopeMatchesAssignment(scope,
+      tripCrew(t, t.lorry_id ? platesByTrip.get(String(t.lorry_id)) ?? null : null)))) return notYours;
   }
   return { ok: true, row, tripId: tripIds[0] ?? null, companyId: (row.company_id as number | null) ?? null };
 }

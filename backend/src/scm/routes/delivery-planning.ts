@@ -99,6 +99,7 @@ import { mintDpNoForLorry } from '../lib/dp-no-mint';
 import { staleLegProgressReset } from '../lib/stale-leg-progress';
 import { scheduleDpDate, writeNonSoFields, writeAssrLegStatus } from '../lib/delivery-planning-nonso-edit';
 import { resolveDeliveryScope, scopeMatchesAssignment, type DeliveryScope, type CrewAssignment } from '../lib/deliveryScope';
+import { lorryPlatesByIds } from '../lib/lorry-plate-lookup';
 import { fetchDoCrewAssignment, doPodContextHandler, ownServiceAndProjectRowKeys } from './delivery-pod-context';
 import { deriveArrangementStage } from '../lib/arrangement-stage';
 import { MAP_COLS as ZONE_MAP_COLS, toPrefixMap, type MapRow as ZoneMapRow } from './delivery-zones';
@@ -195,7 +196,7 @@ async function applyDeliveryRowScope<T extends { row_type: string; so_doc_no: st
   maps: {
     doByDoc: Map<string, Array<{ id: string; doNumber: string; status: string }>>;
     doDriverById: Map<string, string | null>;
-    crewIdsByDo: Map<string, { driverIds: string[]; helperIds: string[] }>;
+    crewIdsByDo: Map<string, { driverIds: string[]; helperIds: string[]; lorryPlate: string | null }>;
     dpTripIdByKey: Map<string, string | null>;
   },
 ): Promise<T[]> {
@@ -205,14 +206,18 @@ async function applyDeliveryRowScope<T extends { row_type: string; so_doc_no: st
   const tripIds = [...new Set([...maps.dpTripIdByKey.values()].filter((x): x is string => !!x))];
   if (tripIds.length > 0) {
     const { data: tripRows } = await chunkIn<Record<string, unknown>>(tripIds, (batch, from, to) => sb.from('trips')
-      .select('id, driver_id, helper_1_id, helper_2_id')
+      .select('id, driver_id, helper_1_id, helper_2_id, lorry_id')
       .in('id', batch).order('id').range(from, to));
+    // trips.lorry_id → plate, so a lorry account matches its DP (trip) rows by plate (owner 2026-11-28).
+    const tripPlates = await lorryPlatesByIds(sb, tripRows.map((t) => (t.lorryId ?? t.lorry_id) as string | null));
     for (const t of tripRows) {
       const id = String(t.id ?? '');
       if (!id) continue;
+      const lid = (t.lorryId ?? t.lorry_id) as string | null;
       tripCrewById.set(id, {
         driverIds: [(t.driverId ?? t.driver_id) as string | null],
         helperIds: [(t.helper1Id ?? t.helper_1_id) as string | null, (t.helper2Id ?? t.helper_2_id) as string | null],
+        lorryPlate: lid ? tripPlates.get(String(lid)) ?? null : null,
       });
     }
   }
@@ -223,10 +228,11 @@ async function applyDeliveryRowScope<T extends { row_type: string; so_doc_no: st
       const dos = maps.doByDoc.get(row.so_doc_no) ?? [];
       if (dos.length === 0) return EMPTY;
       const latestDoId = dos[dos.length - 1]!.id;
-      const crew = maps.crewIdsByDo.get(latestDoId) ?? { driverIds: [], helperIds: [] };
+      const crew = maps.crewIdsByDo.get(latestDoId) ?? { driverIds: [], helperIds: [], lorryPlate: null };
       return {
         driverIds: [...crew.driverIds, maps.doDriverById.get(latestDoId) ?? null],
         helperIds: crew.helperIds,
+        lorryPlate: crew.lorryPlate,
       };
     }
     if (row.row_type === 'dp') {
@@ -772,27 +778,29 @@ deliveryPlanning.get('/geo', async (c) => {
       latestDoByDoc.set(dn, { id: d.id, driverId: d.driverId ?? d.driver_id ?? null });
       scopeDoIds.push(d.id);
     }
-    const crewByDoId = new Map<string, { driverIds: Array<string | null>; helperIds: Array<string | null> }>();
+    const crewByDoId = new Map<string, { driverIds: Array<string | null>; helperIds: Array<string | null>; lorryPlate: string | null }>();
     if (scopeDoIds.length > 0) {
       const { data: crewRows } = await chunkIn<Record<string, unknown>>(scopeDoIds, (batch, from, to) =>
         sb.from('delivery_order_crew')
-          .select('do_id, driver_1_id, driver_2_id, helper_1_id, helper_2_id')
+          .select('do_id, driver_1_id, driver_2_id, helper_1_id, helper_2_id, lorry_plate')
           .in('do_id', batch).order('do_id').range(from, to),
       );
       for (const cr of crewRows) {
         crewByDoId.set(String(cr.do_id ?? cr.doId ?? ''), {
           driverIds: [(cr.driver1Id ?? cr.driver_1_id) as string | null, (cr.driver2Id ?? cr.driver_2_id) as string | null],
           helperIds: [(cr.helper1Id ?? cr.helper_1_id) as string | null, (cr.helper2Id ?? cr.helper_2_id) as string | null],
+          lorryPlate: (cr.lorryPlate ?? cr.lorry_plate ?? null) as string | null,
         });
       }
     }
     docNos = docNos.filter((dn) => {
       const latest = latestDoByDoc.get(dn);
       if (!latest) return false;
-      const crew = crewByDoId.get(latest.id) ?? { driverIds: [], helperIds: [] };
+      const crew = crewByDoId.get(latest.id) ?? { driverIds: [], helperIds: [], lorryPlate: null };
       return scopeMatchesAssignment(scope, {
         driverIds: [...crew.driverIds, latest.driverId],
         helperIds: crew.helperIds,
+        lorryPlate: crew.lorryPlate,
       });
     });
   }

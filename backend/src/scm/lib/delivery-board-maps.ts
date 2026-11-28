@@ -49,7 +49,7 @@ export type SoBoardMaps = ItemMaps & DoMaps & {
   dpNoByDoc: Map<string, string>;
   tripByDoc: Map<string, BoardTrip>;
   crewByDo: Map<string, CrewOut>;
-  crewIdsByDo: Map<string, { driverIds: string[]; helperIds: string[] }>;
+  crewIdsByDo: Map<string, { driverIds: string[]; helperIds: string[]; lorryPlate: string | null }>;
   poLockedDocs: Set<string>;
   poNosByDoc: Map<string, string[]>;
   acExpiryByDoc: Map<string, string>;
@@ -197,11 +197,12 @@ export function stopTripIds(stopRows: BoardStopRow[]): string[] {
 
 export function foldCrew(crewRows: BoardCrewRow[]) {
   const crewByDo = new Map<string, CrewOut>();
-  const crewIdsByDo = new Map<string, { driverIds: string[]; helperIds: string[] }>();
+  const crewIdsByDo = new Map<string, { driverIds: string[]; helperIds: string[]; lorryPlate: string | null }>();
   for (const cr of crewRows) {
     crewIdsByDo.set(cr.do_id, {
       driverIds: [cr.driver1Id ?? cr.driver_1_id, cr.driver2Id ?? cr.driver_2_id].filter((x): x is string => !!x),
       helperIds: [cr.helper1Id ?? cr.helper_1_id, cr.helper2Id ?? cr.helper_2_id].filter((x): x is string => !!x),
+      lorryPlate: cr.lorry_plate ?? null,
     });
     crewByDo.set(cr.do_id, {
       driver: [cr.driver_1_name, cr.driver_2_name].filter(Boolean).join(' / ') || null,

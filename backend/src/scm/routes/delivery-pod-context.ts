@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { scopeToAllowedCompanies } from '../lib/companyScope';
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
+import { lorryPlatesByIds } from '../lib/lorry-plate-lookup';
 import { ASSR_LEG_BY_STOP } from '../lib/assr-board-scope';
 import { getUserPhasesOnProject } from '../../services/projects';
 
@@ -14,7 +15,7 @@ export async function fetchDoCrewAssignment(
 ): Promise<CrewAssignment> {
   const [doRes, crewRes] = await Promise.all([
     sb.from('delivery_orders').select('driver_id').eq('id', doId).maybeSingle(),
-    sb.from('delivery_order_crew').select('driver_1_id, driver_2_id, helper_1_id, helper_2_id').eq('do_id', doId).maybeSingle(),
+    sb.from('delivery_order_crew').select('driver_1_id, driver_2_id, helper_1_id, helper_2_id, lorry_plate').eq('do_id', doId).maybeSingle(),
   ]);
   const d = (doRes?.data ?? {}) as Record<string, unknown>;
   const cr = (crewRes?.data ?? {}) as Record<string, unknown>;
@@ -28,6 +29,9 @@ export async function fetchDoCrewAssignment(
       (cr.helper1Id ?? cr.helper_1_id) as string | null,
       (cr.helper2Id ?? cr.helper_2_id) as string | null,
     ],
+    // The DO's lorry plate (delivery_order_crew mirrors the trip's plate), for
+    // the lorry-plate scope arm (owner 2026-11-28): a lorry account PODs every stop on its plate.
+    lorryPlate: (cr.lorryPlate ?? cr.lorry_plate ?? null) as string | null,
   };
 }
 
@@ -72,7 +76,7 @@ export async function ownServiceAndProjectRowKeys(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   env: Env,
-  scope: { driverIds: ReadonlySet<string>; helperIds: ReadonlySet<string> },
+  scope: { driverIds: ReadonlySet<string>; helperIds: ReadonlySet<string>; lorryPlates?: ReadonlySet<string> },
   userId: number,
   userName: string | null,
   rows: Array<{ row_type: string; so_doc_no: string; assr_id?: number | null; job_kind?: string | null; dp_job_type?: string | null }>,
@@ -85,12 +89,18 @@ export async function ownServiceAndProjectRowKeys(
     if (error) throw new Error(error.message);
     const tripIds = [...new Set(((stops ?? []) as Array<{ trip_id: string | null }>).map((s) => s.trip_id).filter(Boolean))];
     const { data: trips, error: tErr } = tripIds.length
-      ? await sb.from('trips').select('id, driver_id, helper_1_id, helper_2_id').in('id', tripIds)
+      ? await sb.from('trips').select('id, driver_id, helper_1_id, helper_2_id, lorry_id').in('id', tripIds)
       : { data: [], error: null };
     if (tErr) throw new Error(tErr.message);
+    // A lorry account sees its own ASSR legs by PLATE too, trip.lorry_id → plate (owner 2026-11-28).
+    const selfScope = { mode: 'self' as const, driverIds: scope.driverIds, helperIds: scope.helperIds, lorryPlates: scope.lorryPlates ?? new Set<string>() };
+    const plateByTrip = selfScope.lorryPlates.size
+      ? await lorryPlatesByIds(sb, ((trips ?? []) as Array<{ lorry_id?: string | null }>).map((t) => t.lorry_id ?? null))
+      : new Map<string, string>();
     const mine = new Set(((trips ?? []) as Array<Record<string, string | null>>)
-      .filter((t) => scopeMatchesAssignment({ mode: 'self', ...scope }, {
+      .filter((t) => scopeMatchesAssignment(selfScope, {
         driverIds: [t.driver_id ?? null], helperIds: [t.helper_1_id ?? null, t.helper_2_id ?? null],
+        lorryPlate: t.lorry_id ? plateByTrip.get(String(t.lorry_id)) ?? null : null,
       })).map((t) => t.id));
     const ownLegs = new Set(((stops ?? []) as Array<{ assr_case_id: number; stop_type: string; trip_id: string | null }>)
       .filter((s) => s.trip_id && mine.has(s.trip_id))

@@ -28,6 +28,7 @@ const driverScope: DeliveryScope = {
   mode: 'self',
   driverIds: new Set(['drv-1']),
   helperIds: new Set(['hlp-1']),
+  lorryPlates: new Set(),
 };
 
 describe('filterDpOrdersByScope', () => {
@@ -54,7 +55,7 @@ describe('filterDpOrdersByScope', () => {
   });
 
   test('a self scope with no matching crew keeps nothing', () => {
-    const stranger: DeliveryScope = { mode: 'self', driverIds: new Set(['drv-x']), helperIds: new Set(['hlp-x']) };
+    const stranger: DeliveryScope = { mode: 'self', driverIds: new Set(['drv-x']), helperIds: new Set(['hlp-x']), lorryPlates: new Set() };
     const out = filterDpOrdersByScope(stranger, rows, tripCrew);
     expect(out).toEqual([]);
   });

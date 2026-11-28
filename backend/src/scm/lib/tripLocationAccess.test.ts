@@ -46,11 +46,20 @@ describe('trip location ping — area guard', () => {
 
 describe('trip location ping — pingCallerAllowed', () => {
   const crew = { driverIds: ['d1'], helperIds: ['h1', null] };
-  const self = (d: string[], h: string[]): DeliveryScope => ({ mode: 'self', driverIds: new Set(d), helperIds: new Set(h) });
+  const self = (d: string[], h: string[], plates: string[] = []): DeliveryScope =>
+    ({ mode: 'self', driverIds: new Set(d), helperIds: new Set(h), lorryPlates: new Set(plates) });
 
   it('a bypassed driver or helper crewed on the trip is accepted', () => {
     expect(pingCallerAllowed(self(['d1'], []), crew, true)).toBe(true);
     expect(pingCallerAllowed(self([], ['h1']), crew, true)).toBe(true);
+  });
+
+  it('a bypassed LORRY account on its plate pings its trip (driver is someone else)', () => {
+    // Owner 2026-11-28, one phone per lorry: Driver = a person, so the lorry login
+    // is never the driver id — only the plate arm lets it ping its own trip's GPS.
+    const lorryStop = { driverIds: ['someone-else'], helperIds: [], lorryPlate: 'MCF 3084' };
+    expect(pingCallerAllowed(self([], [], ['MCF3084']), lorryStop, true)).toBe(true);
+    expect(pingCallerAllowed(self([], [], ['W1591T']), lorryStop, true)).toBe(false);
   });
 
   it('a bypassed caller on someone else\'s trip is refused', () => {

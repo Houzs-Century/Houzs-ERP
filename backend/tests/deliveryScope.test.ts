@@ -12,7 +12,9 @@ import {
 type Row = Record<string, unknown>;
 
 /** Minimal fake of the two lookups resolveDeliveryScope performs:
- *  sb.from('drivers'|'helpers').select('id').eq('user_id', n) → {data,error}. */
+ *  sb.from('drivers').select('id, vehicle, name').eq('user_id', n) and the same
+ *  for 'helpers' → {data,error}. Driver rows may carry `vehicle` / `name`, which
+ *  feed the login's own lorry-plate(s). */
 function fakeSb(opts: { drivers?: Row[]; helpers?: Row[]; error?: boolean }) {
   const q = (rows: Row[]) => ({
     select() { return this; },
@@ -153,12 +155,98 @@ describe('resolveDeliveryScope — Outsource Transporter (3PL POD driver, owner 
   });
 });
 
+describe('resolveDeliveryScope — LORRY-PLATE arm (owner 2026-11-28, one phone per lorry)', () => {
+  // The lorry account is named after its PLATE and linked to its own scm.drivers
+  // row; production stores the name spaced ("MCF 3084") and scm.lorries.plate
+  // canonical ("MCF3084"), so canonicalisation (normalizePlate) must bridge them.
+  const outsourceCaller = (id: number) => ({
+    id, position_name: 'Outsource Transporter', department_name: 'Operation',
+  });
+
+  test('a lorry account derives its plate from the account NAME when vehicle is unset', async () => {
+    const scope = await resolveDeliveryScope(
+      fakeSb({ drivers: [{ id: 'drv-mcf', user_id: 50, vehicle: null, name: 'MCF 3084' }] }),
+      outsourceCaller(50),
+    );
+    expect(scope.mode).toBe('self');
+    if (scope.mode === 'self') {
+      expect([...scope.lorryPlates]).toEqual(['MCF3084']); // canonicalised
+      // Matches a stop on its plate even though the assigned DRIVER is a different person.
+      expect(scopeMatchesAssignment(scope, { driverIds: ['someone-else'], helperIds: [], lorryPlate: 'mcf 3084' })).toBe(true);
+      expect(scopeMatchesAssignment(scope, { driverIds: ['someone-else'], helperIds: [], lorryPlate: 'MCF3084' })).toBe(true);
+      // Does NOT match another lorry's stop, nor a stop with no lorry plate.
+      expect(scopeMatchesAssignment(scope, { driverIds: ['someone-else'], helperIds: [], lorryPlate: 'W 1591 T' })).toBe(false);
+      expect(scopeMatchesAssignment(scope, { driverIds: ['someone-else'], helperIds: [], lorryPlate: null })).toBe(false);
+      expect(scopeMatchesAssignment(scope, { driverIds: ['someone-else'], helperIds: [], lorryPlate: '' })).toBe(false);
+      expect(scopeMatchesAssignment(scope, { driverIds: ['someone-else'], helperIds: [] })).toBe(false);
+    }
+  });
+
+  test('vehicle overrides name as the plate key when set', async () => {
+    const scope = await resolveDeliveryScope(
+      fakeSb({ drivers: [{ id: 'drv-x', user_id: 51, vehicle: 'W 1591 T', name: 'Some Account' }] }),
+      outsourceCaller(51),
+    );
+    if (scope.mode === 'self') {
+      expect([...scope.lorryPlates]).toEqual(['W1591T']);
+      expect(scopeMatchesAssignment(scope, { driverIds: [], helperIds: [], lorryPlate: 'W1591T' })).toBe(true);
+    }
+  });
+
+  test('the driver-id arm still matches alongside the plate arm', async () => {
+    const scope = await resolveDeliveryScope(
+      fakeSb({ drivers: [{ id: 'drv-mcf', user_id: 52, vehicle: null, name: 'MCF 3084' }] }),
+      outsourceCaller(52),
+    );
+    if (scope.mode === 'self') {
+      // Matched by its own driver id (the linked DRV-017 case), no plate on the stop.
+      expect(scopeMatchesAssignment(scope, { driverIds: ['drv-mcf'], helperIds: [] })).toBe(true);
+    }
+  });
+
+  test('an in-house person driver gets a plate key that matches NO delivery plate', async () => {
+    // normalizePlate("ABD KHALID BIN TA ARIF") is a non-plate string; it must not
+    // widen a person driver by accident. Driver-id scoping is unchanged.
+    const scope = await resolveDeliveryScope(
+      fakeSb({ drivers: [{ id: 'drv-person', user_id: 53, vehicle: null, name: 'ABD KHALID BIN TA ARIF' }] }),
+      { id: 53, position_name: 'Driver', department_name: 'Operation' },
+    );
+    if (scope.mode === 'self') {
+      expect(scopeMatchesAssignment(scope, { driverIds: ['other'], helperIds: [], lorryPlate: 'MCF3084' })).toBe(false);
+      expect(scopeMatchesAssignment(scope, { driverIds: ['drv-person'], helperIds: [] })).toBe(true);
+    }
+  });
+
+  test('an UNLINKED fleet login has NO plates and matches nothing (still fail-closed)', async () => {
+    const scope = await resolveDeliveryScope(fakeSb({ drivers: [], helpers: [] }), outsourceCaller(99));
+    expect(scope.mode).toBe('self');
+    if (scope.mode === 'self') {
+      expect(scope.lorryPlates.size).toBe(0);
+      expect(scopeMatchesAssignment(scope, { driverIds: ['x'], helperIds: [], lorryPlate: 'MCF3084' })).toBe(false);
+    }
+  });
+});
+
 describe('scopeMatchesAssignment', () => {
   const selfScope: DeliveryScope = {
     mode: 'self',
     driverIds: new Set(['drv-1']),
     helperIds: new Set(['hlp-1', 'hlp-2']),
+    lorryPlates: new Set(),
   };
+
+  test('lorry-plate arm: a plate in scope matches a job on that plate (canonicalised)', () => {
+    const plateScope: DeliveryScope = {
+      mode: 'self', driverIds: new Set(), helperIds: new Set(), lorryPlates: new Set(['MCF3084']),
+    };
+    expect(scopeMatchesAssignment(plateScope, { driverIds: [], helperIds: [], lorryPlate: 'MCF 3084' })).toBe(true);
+    expect(scopeMatchesAssignment(plateScope, { driverIds: [], helperIds: [], lorryPlate: 'W1591T' })).toBe(false);
+    expect(scopeMatchesAssignment(plateScope, { driverIds: [], helperIds: [], lorryPlate: null })).toBe(false);
+  });
+
+  test('a job plate never matches a scope with no plates (person driver)', () => {
+    expect(scopeMatchesAssignment(selfScope, { driverIds: ['x'], helperIds: [], lorryPlate: 'MCF3084' })).toBe(false);
+  });
 
   test('an `all` scope matches every job, including unassigned', () => {
     expect(scopeMatchesAssignment({ mode: 'all' }, { driverIds: [], helperIds: [] })).toBe(true);
