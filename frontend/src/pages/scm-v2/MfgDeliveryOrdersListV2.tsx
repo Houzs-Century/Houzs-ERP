@@ -13,6 +13,7 @@ import {
   ChevronDown,
   Truck,
   Wrench,
+  PackageCheck,
   LayoutGrid,
   Table as TableIcon,
   X as XIcon,
@@ -1512,6 +1513,7 @@ export function MfgDeliveryOrdersListV2() {
             secondaryActions={[
               { label: "Sales Orders", icon: Wrench, onClick: goSoList },
               { label: "Delivery Planning", icon: Truck, onClick: goPlanning },
+              ...(pageTab === "orders" ? [{ label: "Packing Lists", icon: PackageCheck, onClick: () => setPageTab("packing") }] : []),
             ]}
           />
 
