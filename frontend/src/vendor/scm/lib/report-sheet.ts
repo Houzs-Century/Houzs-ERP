@@ -12,7 +12,7 @@
 // ----------------------------------------------------------------------------
 
 import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
-import { flattenLaid, fmtPct, linesVisible, pctOf, type LaidNode } from './report-layout';
+import { flattenLaid, fmtPct, linesVisible, nameWithoutCode, pctOf, type LaidNode } from './report-layout';
 import type { FlatLine, MonthColumn, MonthlyLine } from './report-monthly';
 import { AUTOCOUNT_LINE_ID, AUTOCOUNT_LINE_LABEL, balanceParts, withAutoCountLine, type RpReport } from './rp-report-queries';
 import { performanceNotes, performanceSummaryLines, type PerformanceReport } from './performance-report-queries';
@@ -48,25 +48,30 @@ export type SheetTable = {
 /** The screen's totals-below rule on a file (owner 2026-11-05: Excel and PDF the same
     way): a group below the top level whose rows follow it is open — its figures move to
     a "Total <name>" row after them and its title prints bare; a folded group (no rows
-    after it) keeps its figures. */
+    after it) keeps its figures; a group whose one row prints its figures gets no Total row. */
 export function rowsWithTotalsBelow(rows: SheetRow[]): SheetRow[] {
   const out: SheetRow[] = [];
-  const stack: SheetRow[] = [];
-  const close = (g: SheetRow) =>
+  const stack: Array<{ group: SheetRow; under: SheetRow[] }> = [];
+  const close = ({ group: g, under }: { group: SheetRow; under: SheetRow[] }) => {
+    if (under.length === 1 && sameCells(g.cells, under[0]!.cells)) return;
     out.push({ kind: 'total', depth: g.depth, label: g.totalLabel ?? `Total ${g.label}`, cells: g.cells, ...(g.spans ? { spans: g.spans } : {}) });
+  };
   rows.forEach((r, i) => {
-    while (stack.length > 0 && stack[stack.length - 1]!.depth >= r.depth) close(stack.pop()!);
+    while (stack.length > 0 && stack[stack.length - 1]!.group.depth >= r.depth) close(stack.pop()!);
+    stack[stack.length - 1]?.under.push(r);
     const group = r.depth > 0 && (r.kind === 'category' || r.kind === 'unassigned') && (rows[i + 1]?.depth ?? -1) > r.depth;
     if (group) {
       const bare: SheetRow = { ...r, cells: [] };
       delete bare.spans;
       out.push(bare);
-      stack.push(r);
+      stack.push({ group: r, under: [] });
     } else out.push(r);
   });
   while (stack.length > 0) close(stack.pop()!);
   return out;
 }
+
+const sameCells = (a: SheetValue[], b: SheetValue[]): boolean => a.length === b.length && a.every((v, i) => v === b[i]);
 export const sheetWithTotalsBelow = <S extends { tables: SheetTable[] }>(sheet: S): S =>
   ({ ...sheet, tables: sheet.tables.map((t) => ({ ...t, rows: rowsWithTotalsBelow(t.rows) })) });
 export type ReportSheet = {
@@ -100,6 +105,7 @@ export type CashFlowSheetOptions = {
   level?: number | 'all';
   open?: Record<string, boolean>;
   pct?: boolean;
+  codes: boolean;
 };
 
 /** The Cash Flow's rows as the screen draws them: each top category as a
@@ -107,7 +113,7 @@ export type CashFlowSheetOptions = {
     subtotal as a bold line; Cash surplus / (deficit) — its % of the receipts —
     Balance b/f and c/f last. A zero in an account column prints as a dash, as
     on the screen; the Total prints. */
-export function cashFlowTable(r: RpReport, opts: CashFlowSheetOptions = {}): SheetTable {
+export function cashFlowTable(r: RpReport, opts: CashFlowSheetOptions): SheetTable {
   const codes = opts.columns ?? [];
   const level = opts.level ?? 'all';
   const open = opts.open ?? {};
@@ -134,7 +140,7 @@ export function cashFlowTable(r: RpReport, opts: CashFlowSheetOptions = {}): She
         if (id === AUTOCOUNT_LINE_ID) rows.push({ kind: 'memo', depth, label: AUTOCOUNT_LINE_LABEL, cells: cellsOf(undefined, r.autoCount?.sen ?? 0, null) });
         continue;
       }
-      rows.push({ kind: node.kind === 'account' ? 'row' : node.kind === 'unassigned' ? 'unassigned' : 'category', depth, label: node.label, ...(node.totalLabel ? { totalLabel: node.totalLabel } : {}), cells: cellsOf(node.cells, node.amountSen, node.pct) });
+      rows.push({ kind: node.kind === 'account' ? 'row' : node.kind === 'unassigned' ? 'unassigned' : 'category', depth, label: opts.codes ? node.label : nameWithoutCode(node.label, node.code), ...(node.totalLabel ? { totalLabel: node.totalLabel } : {}), cells: cellsOf(node.cells, node.amountSen, node.pct) });
     }
     rows.push({ kind: 'total', depth: 0, label: n.totalLabel ?? `Total ${n.label}`, cells: cellsOf(n.cells, n.amountSen, n.pct) });
   }
@@ -151,12 +157,12 @@ export function cashFlowTable(r: RpReport, opts: CashFlowSheetOptions = {}): She
 }
 
 
-export type PerformanceSheetOptions = { level?: number | 'all'; open?: Record<string, boolean> };
+export type PerformanceSheetOptions = { level?: number | 'all'; open?: Record<string, boolean>; codes: boolean };
 
 /** The two tables the screen draws: the groups (sales, cost, gross profit,
     GP %) with their total, then the summary from gross profit to net on the
     report's tree, folded to the level; the notes ride along. */
-export function performanceTables(r: PerformanceReport, opts: PerformanceSheetOptions = {}): { tables: SheetTable[]; notes: string[] } {
+export function performanceTables(r: PerformanceReport, opts: PerformanceSheetOptions): { tables: SheetTable[]; notes: string[] } {
   const groups: SheetTable = {
     columns: [AMOUNT_COLUMN('Sales'), AMOUNT_COLUMN('Cost of sales'), AMOUNT_COLUMN('Gross profit'), PCT_COLUMN('GP %')],
     rows: [
@@ -167,7 +173,7 @@ export function performanceTables(r: PerformanceReport, opts: PerformanceSheetOp
   const all = performanceSummaryLines(r);
   const summary: SheetTable = {
     columns: [AMOUNT_COLUMN(), PCT_COLUMN('% of sales')],
-    rows: linesVisible(all, opts.level ?? 'all', opts.open ?? {}).map((l): SheetRow => ({ kind: l.kind, depth: l.depth, label: l.label, cells: [l.amountSen, l.pct] })),
+    rows: linesVisible(all, opts.level ?? 'all', opts.open ?? {}).map((l): SheetRow => ({ kind: l.kind, depth: l.depth, label: opts.codes ? l.label : nameWithoutCode(l.label, l.code), cells: [l.amountSen, l.pct] })),
   };
   return { tables: [groups, summary], notes: performanceNotes(r) };
 }
@@ -222,7 +228,8 @@ export function statementColumnsTable(
       kind: l.kind, depth: l.depth, label: l.label, ...(l.totalLabel ? { totalLabel: l.totalLabel } : {}),
       cells: l.kind === 'block' ? [] : columns.flatMap((c): SheetValue[] => {
         const cell = l.cells[c.key];
-        if (!cell) return c.pct ? [null, null] : [null];
+        /* Blank, as the screen leaves a cell with nothing (owner 2026-11-27). */
+        if (!cell) return c.pct ? ['', ''] : [''];
         return c.pct ? [cell.amountSen, cell.pct] : [cell.amountSen];
       }),
       ...(spans ? { spans } : {}),

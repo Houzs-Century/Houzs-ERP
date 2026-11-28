@@ -144,7 +144,7 @@ function RulesEditor({ rules, onClose }: { rules: readonly SupplierRebateRule[];
               ))}
               <button type="button" className={s.btn} onClick={() => patch(i, { tiers: [...d.tiers, { fromRm: '', pct: '' }] })}>Add tier</button>
             </div>
-            <label style={field}>Display discount %
+            <label style={field}>Display discount % (also read off the display-set lines of the month&rsquo;s POs)
               <input className={s.input} type="number" min={0} max={100} step={0.01} aria-label={`Supplier ${n} display discount %`} value={d.displayPct} onChange={(e) => patch(i, { displayPct: e.target.value })} style={{ width: 70 }} />
             </label>
             <button type="button" className={s.btn} onClick={() => setDrafts((ds) => (ds.length > 1 ? ds.filter((_, k) => k !== i) : [blankDraft()]))}>Remove supplier</button>
@@ -168,7 +168,7 @@ export function SupplierRebatesBox({ rules }: { rules: readonly SupplierRebateRu
     <div className={s.rates} aria-label="Supplier rebates">
       <span className={s.rate}>
         <span>
-          <span style={strong}>Supplier rebates</span> — estimated under other income from the month&rsquo;s bills from the supplier:{' '}
+          <span style={strong}>Supplier rebates</span> — estimated under other income from the month&rsquo;s bills and POs from the supplier:{' '}
           {rules.length === 0 ? 'none set.' : rules.map(ruleSummary).join('; ')}
         </span>
       </span>

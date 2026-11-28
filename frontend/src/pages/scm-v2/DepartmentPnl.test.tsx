@@ -86,7 +86,7 @@ describe('All departments', () => {
       expect(within(table).getAllByText(sub).length).toBeGreaterThan(0);
     }
     expect(rowText(table, 'Income')).toBe('Income4,300,000.00317,500.00141,000.0042,000.00336,000.005,136,500.00');
-    expect(rowText(table, 'Paid to other departments')).toBe('Paid to other departments672,000.00126,000.00---798,000.00');
+    expect(rowText(table, 'Paid to other departments')).toBe('Paid to other departments672,000.00126,000.00798,000.00');
     expect(rowText(table, 'PROFIT / (LOSS)')).toBe('PROFIT / (LOSS)4,000.00(7,131.90)6,000.009,000.0082,885.8494,753.94');
     expect(within(table).queryByText('Other income')).toBeNull();
     expect(screen.getByText('Exhibition profit')).toBeTruthy();
@@ -309,7 +309,7 @@ describe('A figure opens the lines behind it', () => {
   test("Exhibition: a figure reads the department's lines on the page's basis", async () => {
     draw('&dv=exhibition');
     const table = await screen.findByRole('table', { name: 'Department P&L, Exhibition' });
-    fireEvent.click(within(rowOf(table, '900-R032 · RENTAL - EXHIBITION')).getByRole('button', { name: '990,000.00' }));
+    fireEvent.click(within(rowOf(table, 'RENTAL - EXHIBITION')).getByRole('button', { name: '990,000.00' }));
     await screen.findByRole('region', { name: 'Lines of 900-R032 · RENTAL - EXHIBITION' });
     expect(linesAsked().at(-1)).toEqual({ view: 'dept', dbasis: 'performance', from: '2026-09-01', to: '2026-10-31', block: 'expenses', d: 'exhibition', keys: '900-R032' });
     const label = '900-C003 COMMISSION ( EVENT ) — the commission bills for Sep 2026, Oct 2026, in place of the monthly release';

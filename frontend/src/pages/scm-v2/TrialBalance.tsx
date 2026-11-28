@@ -135,6 +135,7 @@ export const TrialBalanceTab = () => {
           level="all"
           tree={tree}
           showPct={false}
+          showCodes
           finalId="net:total"
           accountCell
           onOpenRow={(l) => { if (l.code) setOpened({ code: l.code, name: l.label.slice(l.code.length + 3) }); }}

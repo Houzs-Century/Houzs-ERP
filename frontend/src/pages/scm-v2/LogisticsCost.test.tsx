@@ -168,7 +168,7 @@ describe('By region & trip', () => {
     const table = await screen.findByRole('table', { name: 'Delivery cost by region and trip' });
     expect(rowText(table, 'VNB9058')).toContain('1 trip · 1 DO');
     expect(rowText(table, 'MSJ TRANSPORT SERVICE')).toContain('15,970.00');
-    expect(rowText(table, '3PL bill lines on no DO yet')).toMatch(/----380\.00$/);
+    expect(rowText(table, '3PL bill lines on no DO yet')).toMatch(/1 line380\.00$/);
     expect(rowText(table, 'Total delivery cost')).toContain('38,058.91');
     expect(rowText(table, 'Logistics P&L · TOTAL EXPENSE (from the books)')).toContain('38,058.91');
     expect(rowText(table, 'Difference')).toMatch(/0\.00$/);
@@ -190,7 +190,10 @@ describe('Spend by lorry', () => {
   /* Owner 2026-11-28: 「它应该是一个月份，然后有多少 lorry 就在里面，一个月一个月从左到右，
      最新的月份最靠左」 — a block per month, newest first, a column per lorry in each;
      the costs run down, every lorry with its Instalment (HP) line; repairs and
-     insurance as actual and spread. */
+     insurance as actual and spread. An empty cell is blank (#6137). */
+  const cells = (table: HTMLElement, label: string) =>
+    [...within(table).getAllByText(label)[0]!.closest('tr')!.querySelectorAll('td')].slice(1).map((td) => td.textContent);
+
   test('a month block with a column per lorry, then Not tied and Total; the costs down; the spread total is the P&L in-house total', async () => {
     draw('?lv=lorries');
     const table = await screen.findByRole('table', { name: 'Spend by lorry' });
@@ -198,18 +201,18 @@ describe('Spend by lorry', () => {
     const cols = ['VNB9058', 'VPC9058', 'VQE9058', 'VRH9058', 'Not tied', 'Total'];
     expect(heads.filter((h) => cols.includes(h))).toEqual(cols);
     expect(heads.some((h) => /^[A-Z][a-z]{2} \d{4}$/.test(h))).toBe(true);
-    expect(rowText(table, 'Petrol, toll & parking')).toBe('Petrol, toll & parking500.001,000.00---1,500.00');
-    expect(rowText(table, 'Repairs & maintenance (actual)')).toBe('Repairs & maintenance (actual)300.00-600.00--900.00');
-    expect(rowText(table, 'Repairs & maintenance (spread)')).toBe('Repairs & maintenance (spread)300.00-100.00--400.00');
-    expect(rowText(table, 'Instalment (HP)')).toBe('Instalment (HP)2,521.00----2,521.00');
-    expect(rowText(table, 'Insurance & road tax (actual)')).toBe(`Insurance & road tax (actual)${'-'.repeat(6)}`);
-    expect(rowText(table, 'Insurance & road tax (spread)')).toBe(`Insurance & road tax (spread)${'-'.repeat(6)}`);
-    expect(rowText(table, 'Manpower')).toBe('Manpower----16,287.9116,287.91');
+    expect(cells(table, 'Petrol, toll & parking')).toEqual(['500.00', '1,000.00', '', '', '', '1,500.00']);
+    expect(cells(table, 'Repairs & maintenance (actual)')).toEqual(['300.00', '', '600.00', '', '', '900.00']);
+    expect(cells(table, 'Repairs & maintenance (spread)')).toEqual(['300.00', '', '100.00', '', '', '400.00']);
+    expect(cells(table, 'Instalment (HP)')).toEqual(['2,521.00', '', '', '', '', '2,521.00']);
+    expect(cells(table, 'Insurance & road tax (actual)')).toEqual(['', '', '', '', '', '']);
+    expect(cells(table, 'Insurance & road tax (spread)')).toEqual(['', '', '', '', '', '']);
+    expect(cells(table, 'Manpower')).toEqual(['', '', '', '', '16,287.91', '16,287.91']);
     expect(within(table).queryByText('Other lorry cost')).toBeNull();
-    expect(rowText(table, 'Total spend (actual)')).toBe('Total spend (actual)3,321.001,000.00600.00-16,287.9121,208.91');
-    expect(rowText(table, 'Total spend (spread)')).toBe('Total spend (spread)3,321.001,000.00100.00-16,287.9120,708.91');
-    expect(rowText(table, 'P&L Total In-house Expenses')).toBe('P&L Total In-house Expenses-----20,708.91');
-    expect(rowText(table, 'Difference (spread less the P&L)')).toBe('Difference (spread less the P&L)-----0.00');
+    expect(cells(table, 'Total spend (actual)')).toEqual(['3,321.00', '1,000.00', '600.00', '', '16,287.91', '21,208.91']);
+    expect(cells(table, 'Total spend (spread)')).toEqual(['3,321.00', '1,000.00', '100.00', '', '16,287.91', '20,708.91']);
+    expect(cells(table, 'P&L Total In-house Expenses')).toEqual(['', '', '', '', '', '20,708.91']);
+    expect(cells(table, 'Difference (spread less the P&L)')).toEqual(['', '', '', '', '', '0.00']);
     expect(screen.getByRole('group', { name: 'Spend by lorry totals' }).textContent).toContain('Actual21,209');
     expect(screen.queryByRole('switch', { name: /% of DO/ })).toBeNull();
   });
@@ -245,12 +248,12 @@ describe('Spend by lorry', () => {
     const heads = within(table).getAllByRole('columnheader').map((h) => h.textContent);
     expect(heads.filter((h) => /^([A-Z][a-z]{2} \d{4}|Total · \d+ months)$/.test(h))).toEqual(['Nov 2026', 'Oct 2026', 'Sep 2026', 'Total · 3 months']);
     expect(heads.filter((h) => h === 'VNB9058')).toHaveLength(4);
-    const hp = '2,521.00----2,521.00';
-    expect(rowText(table, 'Instalment (HP)')).toBe(`Instalment (HP)${hp}${hp}${hp}7,563.00----7,563.00`);
-    expect(rowText(table, 'Repairs & maintenance (actual)')).toBe('Repairs & maintenance (actual)300.00----300.00300.00----300.00300.00-600.00--900.00900.00-600.00--1,500.00');
-    expect(rowText(table, 'Repairs & maintenance (spread)')).toBe('Repairs & maintenance (spread)300.00-100.00--400.00300.00-100.00--400.00300.00-100.00--400.00900.00-300.00--1,200.00');
-    expect(rowText(table, 'P&L Total In-house Expenses')).toBe(`P&L Total In-house Expenses${'-----20,708.91'.repeat(3)}-----62,126.73`);
-    expect(rowText(table, 'Difference (spread less the P&L)')).toBe(`Difference (spread less the P&L)${'-----0.00'.repeat(4)}`);
+    const block = (vnb: string, vqe: string, total: string) => [vnb, '', vqe, '', '', total];
+    expect(cells(table, 'Instalment (HP)')).toEqual([...block('2,521.00', '', '2,521.00'), ...block('2,521.00', '', '2,521.00'), ...block('2,521.00', '', '2,521.00'), ...block('7,563.00', '', '7,563.00')]);
+    expect(cells(table, 'Repairs & maintenance (actual)')).toEqual([...block('300.00', '', '300.00'), ...block('300.00', '', '300.00'), ...block('300.00', '600.00', '900.00'), ...block('900.00', '600.00', '1,500.00')]);
+    expect(cells(table, 'Repairs & maintenance (spread)')).toEqual([...block('300.00', '100.00', '400.00'), ...block('300.00', '100.00', '400.00'), ...block('300.00', '100.00', '400.00'), ...block('900.00', '300.00', '1,200.00')]);
+    expect(cells(table, 'P&L Total In-house Expenses')).toEqual([...block('', '', '20,708.91'), ...block('', '', '20,708.91'), ...block('', '', '20,708.91'), ...block('', '', '62,126.73')]);
+    expect(cells(table, 'Difference (spread less the P&L)')).toEqual([...block('', '', '0.00'), ...block('', '', '0.00'), ...block('', '', '0.00'), ...block('', '', '0.00')]);
     expect(screen.queryByRole('switch', { name: /Split each month by region/ })).toBeNull();
   });
 });

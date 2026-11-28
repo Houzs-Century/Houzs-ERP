@@ -90,13 +90,13 @@ const LINES = [
   { id: 'net:net', label: 'NET PROFIT', kind: 'net' as const, depth: 0, cells: { total: { amountSen: 71_500, pct: 71.5 } } },
 ];
 
-function Table({ showPct = true, onCategoryFigure = vi.fn() }: { showPct?: boolean; onCategoryFigure?: (codes: string[], col: StatementColumn) => void }) {
+function Table({ showPct = true, showCodes = true, onCategoryFigure = vi.fn() }: { showPct?: boolean; showCodes?: boolean; onCategoryFigure?: (codes: string[], col: StatementColumn) => void }) {
   const tree = useReportTree('all');
   return (
     <MemoryRouter initialEntries={['/scm/accounting?tab=pnl']}>
       <StatementTable
         widthsKey="month" head="Account" columns={COLS} lines={LINES} shown={linesVisible(LINES, 'all', tree.open)}
-        level="all" tree={tree} showPct={showPct} finalId="net:net" onCategoryFigure={onCategoryFigure}
+        level="all" tree={tree} showPct={showPct} showCodes={showCodes} finalId="net:net" onCategoryFigure={onCategoryFigure}
         note="A note." drillKey="k" ariaLabel="P&L"
       />
     </MemoryRouter>
@@ -118,15 +118,25 @@ describe('the statement table', () => {
     expect(screen.getAllByRole('columnheader').slice(4).map((h) => h.textContent)).toEqual(['Account', 'Total2 months', 'Oct 2026', 'Sep 2026']);
   });
 
-  test('rows: the code before the name, % beside every figure, a dash where a month has nothing, brackets for a credit', () => {
+  test('rows: the code before the name, % beside every figure, a blank where a month has nothing, brackets for a credit', () => {
     render(<Table />);
     const refund = screen.getByText('REFUND').closest('tr')!;
     expect(within(refund).getByText('900-A014')).toBeTruthy();
     expect(refund.textContent).toContain('(15.00)');
     expect(refund.textContent).toContain('-1.5%');
-    expect([...refund.querySelectorAll('td')].at(-1)!.textContent).toBe('--');
+    /* Owner 2026-11-27: the "- -" made the by-month P&L busy. */
+    expect([...refund.querySelectorAll('td')].at(-1)!.textContent).toBe('');
     expect(screen.getByText('NET PROFIT').closest('tr')!.className).toMatch(/rowFinal/);
     expect(screen.getByText('Total expenses').closest('tr')!.className).toMatch(/rowSubtotal/);
+  });
+
+  test('codes off (the Codes switch, owner 2026-11-27): an account prints its name alone and still opens its lines', () => {
+    render(<Table showCodes={false} />);
+    const refund = screen.getByText('REFUND').closest('tr')!;
+    expect(within(refund).queryByText('900-A014')).toBeNull();
+    expect(refund.querySelector('th')!.textContent).toBe('REFUND');
+    fireEvent.click(screen.getByRole('button', { name: 'Lines of 900-A001 · ADVERT' }));
+    expect(ledger.calls.at(-1)).toMatchObject({ accounts: ['900-A001'] });
   });
 
   test('an account’s name opens its lines for the whole span, a figure that column’s; again closes; several may be open', () => {
@@ -210,8 +220,8 @@ describe('the statement table', () => {
   /* Owner 2026-11-10 (the Cash Flow's Settlement / Deposit view: 这个顺便可以做好看一点吗? → 做, on the
      mock): every other month on a faint band, a firm rule between months and a faint dashed one
      between Settlement | Deposit, the month's name underlined across its two columns, a petrol mark
-     before Settlement and a gold one before Deposit, no dash where a share is nil (Total keeps its
-     dash), and a block title as a shaded band rather than a row of empty cells. */
+     before Settlement and a gold one before Deposit, no dash where a share is nil (nor in Total since
+     2026-11-27), and a block title as a shaded band rather than a row of empty cells. */
   test('the Settlement / Deposit look: month bands, rules, marks, empty shares, title bands', () => {
     const oct = { key: '2026-10', label: 'Oct 2026' };
     const sep = { key: '2026-09', label: 'Sep 2026' };
@@ -241,7 +251,7 @@ describe('the statement table', () => {
     expect(dep.map((td) => /band/.test(td.className))).toEqual([false, true, true, false, false]);
     expect(dep.map((td) => (/partRule/.test(td.className) ? 'part' : /groupRule/.test(td.className) ? 'month' : ''))).toEqual(['', 'part', 'month', 'part', '']);
     const adv = tds('Supplier advances');
-    expect(adv.map((td) => [td.textContent, td.getAttribute('colspan')])).toEqual([['--', null], ['3.00', '2'], ['', '2']]);
+    expect(adv.map((td) => [td.textContent, td.getAttribute('colspan')])).toEqual([['', null], ['3.00', '2'], ['', '2']]);
     expect(/band/.test(adv[1]!.className)).toBe(true);
     const block = screen.getByText('CASH IN').closest('tr')!;
     expect(block.className).toMatch(/rowBlock/);
@@ -253,7 +263,7 @@ function Grid({ columns, lines }: { columns: StatementColumn[]; lines: Statement
   const tree = useReportTree('all');
   return (
     <MemoryRouter>
-      <StatementTable widthsKey="cf-split" head="Account" columns={columns} lines={lines} shown={lines} level="all" tree={tree} showPct drillKey="k" ariaLabel="Cash flow" />
+      <StatementTable widthsKey="cf-split" head="Account" columns={columns} lines={lines} shown={lines} level="all" tree={tree} showPct showCodes drillKey="k" ariaLabel="Cash flow" />
     </MemoryRouter>
   );
 }

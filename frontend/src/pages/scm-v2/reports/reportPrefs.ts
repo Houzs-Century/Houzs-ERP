@@ -19,6 +19,24 @@ export function writeRailPinned(on: boolean): void {
   } catch { }
 }
 
+const CODES_KEY = 'fin-statement-codes';
+
+/** Whether the statements print account codes before the names: off until this browser
+ *  turns them on (owner 2026-11-27: 代码可以收起来，但要能有个按钮点开). */
+export function readShowCodes(): boolean {
+  try {
+    return window.localStorage.getItem(CODES_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function writeShowCodes(on: boolean): void {
+  try {
+    window.localStorage.setItem(CODES_KEY, on ? '1' : '0');
+  } catch { }
+}
+
 /** The last range picked on a report in this browser tab, or null. */
 export function readSavedRange(): ReportRange | null {
   try {

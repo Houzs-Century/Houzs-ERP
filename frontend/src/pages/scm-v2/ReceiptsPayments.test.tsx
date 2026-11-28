@@ -131,6 +131,7 @@ const pick = (code: string) => {
 type Sheet = { title: string; tables: Array<{ columns: Array<{ label: string }>; rows: Array<{ label: string }> }> };
 
 beforeEach(() => {
+  window.localStorage.removeItem('fin-statement-codes');
   columnPaths.length = 0;
   xlsx.mockClear();
   pdf.mockClear();
@@ -168,11 +169,12 @@ describe('the Cash Flow tab', () => {
     const purchases = screen.getByText('Purchases').closest('tr')!;
     expect(purchases.getAttribute('data-kind')).toBe('category');
     expect(purchases.textContent).not.toContain('400.00');
-    const purchasesTotal = screen.getByText('Total Purchases').closest('tr')!;
-    expect(purchasesTotal.textContent).toContain('400.00');
-    expect(purchasesTotal.textContent).toContain('52.6%');
+    /* Its one line prints the same figures, so no Total line repeats them (owner 2026-11-27). */
+    expect(screen.queryByText('Total Purchases')).toBeNull();
     const sofa = screen.getByText('PURCHASE OF SOFA').closest('tr')!;
-    expect(within(sofa).getByText('601-0003')).toBeTruthy();
+    expect(sofa.textContent).toContain('400.00');
+    expect(sofa.textContent).toContain('52.6%');
+    expect(within(sofa).queryByText('601-0003')).toBeNull();
     expect(sofa.getAttribute('data-depth')).toBe('2');
     expect(screen.getByText('Supplier advances (预付)').closest('tr')!.textContent).toContain('39.5%');
     expect(screen.getByText('Total payments').closest('tr')!.textContent).toContain('60.5%');
@@ -186,7 +188,8 @@ describe('the Cash Flow tab', () => {
     expect(sofa.textContent).toContain('310-0010 · 1 entry');
     expect(within(sofa).getByText('FOSHAN CHAIRS')).toBeTruthy();
     expect(within(sofa).getByText(/Payment voucher PV-3/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /^Total Purchases · Total/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Purchases' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Purchases · Total/ }));
     expect(screen.getByRole('region', { name: 'Entries of Purchases' }).textContent).toContain('Total · 1 entry');
     fireEvent.click(within(screen.getByRole('group', { name: 'Show debtor and creditor names' })).getByRole('button', { name: 'By debtor / creditor' }));
     expect(lastRead.value.endsWith('|true')).toBe(true);
