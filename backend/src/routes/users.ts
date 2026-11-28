@@ -147,6 +147,20 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
            OR ${users.email} ILIKE ${"%" + search + "%"})`
     );
   }
+  // External / outsourced logins (e.g. the "Outsource Transporter" position a 3PL
+  // driver needs to log in and upload POD) are NOT staff and must not appear in
+  // the member directory (owner 2026-11-28, 「不要出现在 team member」). Hidden by
+  // default; an admin surfaces them with ?includeExternal=1 (to reset a password
+  // or disable the account). Keyed on the position NAME/SLUG carrying "outsource"
+  // — the same convention the sync_user_to_tms trigger and frontend
+  // externalPosition.ts use. Position NULL → the LEFT JOIN yields NULL → kept.
+  const includeExternal = c.req.query("includeExternal") === "1";
+  if (!includeExternal) {
+    conds.push(
+      sql`NOT (lower(coalesce(${positions.slug}, '')) LIKE '%outsource%'
+            OR lower(coalesce(${positions.name}, '')) LIKE '%outsource%')`,
+    );
+  }
 
   const built = db
     .select({

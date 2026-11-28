@@ -2,7 +2,7 @@
    Delivery Planning region for the date, every DO delivering there whether or
    not a lorry is arranged. Prints Part A only (packing-list-pdf.ts). */
 
-import { Eye, Printer } from 'lucide-react';
+import { Download, Eye, Printer } from 'lucide-react';
 import { Button } from '../../../components/Button';
 import { DataTable, type Column } from '../../../components/DataTable';
 import { packingScanTimesFor, type PackingRegionRow, type PackingScanStatus } from '../lib/packing-list-queries';
@@ -15,7 +15,6 @@ type Props = {
   regions: PackingRegionRow[] | null;
   loading: boolean;
   error: string | null;
-  unassignedOnly: boolean;
   scanSheets: readonly PackingScanStatus[] | undefined;
   busy: boolean;
   onPrint: (rows: readonly PackingRegionRow[], action: PdfAction) => void;
@@ -23,7 +22,7 @@ type Props = {
 
 const count = (n: number) => <span className="tabular-nums">{n}</span>;
 
-export function DoPackingRegionsTable({ date, regions, loading, error, unassignedOnly, scanSheets, busy, onPrint }: Props) {
+export function DoPackingRegionsTable({ date, regions, loading, error, scanSheets, busy, onPrint }: Props) {
   const times = (r: PackingRegionRow) => packingScanTimesFor(scanSheets, 'region', r.region);
   const units = (r: PackingRegionRow) => regionCategoryUnits(r);
   const columns: Column<PackingRegionRow>[] = [
@@ -51,11 +50,12 @@ export function DoPackingRegionsTable({ date, regions, loading, error, unassigne
       getValue: (r) => fmtScanTime(times(r)?.loaded_at ?? null, date),
     },
     {
-      key: 'actions', label: '', align: 'right', width: '170px',
+      key: 'actions', label: '', align: 'right', width: '270px',
       render: (r) => (
         <span className="inline-flex gap-1">
           <Button variant="ghost" icon={<Eye size={13} />} disabled={busy} onClick={() => onPrint([r], 'preview')}>Open</Button>
           <Button variant="ghost" icon={<Printer size={13} />} disabled={busy} onClick={() => onPrint([r], 'print')}>Print</Button>
+          <Button variant="ghost" icon={<Download size={13} />} disabled={busy} onClick={() => onPrint([r], 'save')}>Download</Button>
         </span>
       ),
     },
@@ -69,9 +69,7 @@ export function DoPackingRegionsTable({ date, regions, loading, error, unassigne
       rows={error ? null : regions}
       loading={loading}
       error={error}
-      emptyLabel={unassignedOnly
-        ? 'Every delivery order on this day is already on a lorry.'
-        : 'No delivery orders are due for delivery on this day.'}
+      emptyLabel="No delivery orders are due for delivery on this day."
       getRowKey={(r) => r.region}
     />
   );

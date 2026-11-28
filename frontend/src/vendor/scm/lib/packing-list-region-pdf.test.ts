@@ -172,10 +172,11 @@ describe('the region sheet', () => {
     expect(spans.some((s) => s.text.includes('SCAN'))).toBe(false);
   });
 
-  test('summary box: region, DOs, customers, units, plates and how many are not arranged', async () => {
+  test('summary box: region, DOs, customers, units and plates; no lorry-or-not count', async () => {
     const { spans } = await render(realisticRegion());
     const box = spans.filter((s) => s.page === 1).map((s) => s.text).join(' ');
-    for (const t of ['Region : KL/SEL', '9 DO · ', '36 units', '3 of 9 DO']) expect(box.includes(t), t).toBe(true);
+    for (const t of ['Region : KL/SEL', '9 DO · ', '36 units']) expect(box.includes(t), t).toBe(true);
+    expect(box.includes('NO LORRY YET') || box.includes('3 of 9 DO')).toBe(false);
     expect(box).toMatch(/VJK 8821, ?\s*WXY 1234/);
   });
 
@@ -185,6 +186,7 @@ describe('the region sheet', () => {
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(has(spans, 'LORRY')).toBe(true);
+    expect(has(spans, 'CUST')).toBe(false);
     expect(has(spans, 'Not arranged')).toBe(true);
     expect(spans.some((s) => s.text.includes('PART B') || s.text.includes('LOAD BY CUSTOMER'))).toBe(false);
     const so = spans.findIndex((s) => s.text.includes('Customer 3 · PHOON JIA YEONG'));
@@ -235,6 +237,16 @@ describe('the long region — nothing overlaps, clips or runs off the page', () 
     }
   }, 60_000);
 
+  test('a one-row sofa group that ends the pick list keeps its heading with its row and the total', async () => {
+    const { spans } = await render(realisticRegion());
+    const heads = spans.filter((s) => /^HC-SO-\S+ · Customer /.test(s.text));
+    expect(heads.length).toBeGreaterThan(0);
+    for (const h of heads) {
+      const row = spans.slice(spans.indexOf(h) + 1).find((s) => /^XAM-/.test(s.text));
+      expect(row?.page, h.text).toBe(h.page);
+    }
+  });
+
   test('no heading is orphaned: every section, sofa group and the key starts on the page of its first row', async () => {
     const { spans } = await render(stressRegion());
     const heads = spans.filter((s) =>
@@ -242,7 +254,7 @@ describe('the long region — nothing overlaps, clips or runs off the page', () 
     expect(heads.length).toBeGreaterThan(5);
     for (const h of heads) {
       const k = spans.indexOf(h);
-      const firstRow = spans.slice(k + 1).find((s) => /-XL-|^HC-DO-2611-1\d\d$/.test(s.text));
+      const firstRow = spans.slice(k + 1).find((s) => /-XL-|^HC-DO-2611-1\d\d$/.test(s.text) || s.text.startsWith(LONG_DESC.slice(0, 12)));
       expect(firstRow?.page, h.text).toBe(h.page);
     }
   }, 60_000);

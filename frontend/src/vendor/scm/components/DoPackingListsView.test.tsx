@@ -111,7 +111,7 @@ describe('Packing Lists tab — By region', () => {
     fireEvent.click(screen.getByRole('button', { name: /By region/ }));
     expect(screen.getByTestId('where').textContent).toMatch(/view=region/);
     expect(regionState.lastEnabled).toBe(true);
-    expect(screen.getByLabelText('Only DOs not on a lorry yet')).toBeTruthy();
+    expect(screen.queryByLabelText('Only DOs not on a lorry yet')).toBeNull();
   });
 
   it('one row per region with its lorries and category counts; Print all sends every region', async () => {
@@ -130,16 +130,13 @@ describe('Packing Lists tab — By region', () => {
     await waitFor(() => expect(printRegions).toHaveBeenCalledWith([regions[1]], { date: '2026-11-28', action: 'preview' }));
   });
 
-  it('the not-on-a-lorry tick is URL state and narrows the query; back to By lorry clears it', () => {
-    regionState.data = { date: '2026-11-28', unassigned_only: false, regions: [] };
-    render(<MemoryRouter initialEntries={['/x?tab=packing&date=2026-11-28&view=region']}><DoPackingListsView /><Where /></MemoryRouter>);
-    expect(screen.getByText('No delivery orders are due for delivery on this day.')).toBeTruthy();
-    fireEvent.click(screen.getByLabelText('Only DOs not on a lorry yet'));
-    expect(screen.getByTestId('where').textContent).toMatch(/unassigned=1/);
-    expect(regionState.lastUnassigned).toBe(true);
-    expect(screen.getByText('Every delivery order on this day is already on a lorry.')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /By lorry/ }));
-    expect(screen.getByTestId('where').textContent).not.toMatch(/view=|unassigned=/);
+  it('By region always lists every DO, lorry or not; Download all saves every region', async () => {
+    const regions = [regionRow({})];
+    regionState.data = { date: '2026-11-28', unassigned_only: false, regions };
+    render(<MemoryRouter initialEntries={['/x?tab=packing&date=2026-11-28&view=region&unassigned=1']}><DoPackingListsView /></MemoryRouter>);
+    expect(regionState.lastUnassigned).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: /Download all 1 region/ }));
+    await waitFor(() => expect(printRegions).toHaveBeenCalledWith(regions, { date: '2026-11-28', action: 'save' }));
   });
 });
 

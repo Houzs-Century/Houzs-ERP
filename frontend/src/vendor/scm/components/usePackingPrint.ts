@@ -12,7 +12,7 @@ export function usePackingPrint(date: string) {
     try {
       await work();
     } catch (err) {
-      setError(`The packing list could not be printed. ${err instanceof Error ? err.message : ''}`.trim());
+      setError(`The packing list could not be made. ${err instanceof Error ? err.message : ''}`.trim());
     } finally {
       setBusy(false);
     }
