@@ -16,6 +16,7 @@ vi.mock("../../hooks/useToast", () => ({ useToast: () => ({ success: vi.fn(), er
 vi.mock("../../hooks/useBranding", () => ({ useBranding: () => ({ email: "hello@houzscentury.com" }) }));
 
 import { TeamInviteModal } from "./TeamInviteModal";
+import { EXTERNAL_POSITION_MESSAGE } from "../../lib/externalPosition";
 import type { Role } from "../../types";
 
 const roles = [
@@ -94,14 +95,14 @@ describe("TeamInviteModal — Role", () => {
 });
 
 describe("TeamInviteModal — outsourced Title nudge", () => {
-  test("warns when an outsource Title is picked, not for an internal one", () => {
+  test("shows the note when an outsource Title is picked, not for an internal one", () => {
     mount(false, POSITIONS);
-    expect(screen.queryByText(/belongs in Fleet/i)).toBeNull();
+    expect(screen.queryByText(EXTERNAL_POSITION_MESSAGE)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Outsource Transporter" }));
-    expect(screen.getByText(/belongs in Fleet/i)).toBeTruthy();
+    expect(screen.getByText(EXTERNAL_POSITION_MESSAGE)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Storekeeper" }));
-    expect(screen.queryByText(/belongs in Fleet/i)).toBeNull();
+    expect(screen.queryByText(EXTERNAL_POSITION_MESSAGE)).toBeNull();
   });
 });
