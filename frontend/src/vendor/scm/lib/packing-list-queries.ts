@@ -135,3 +135,48 @@ export function usePackingRegions(opts: { date: string | null; unassignedOnly: b
     staleTime: 30_000,
   });
 }
+
+/** The most delivery orders one packing list QR covers (backend LORRY_DAY_MAX_DOS). */
+export const PACKING_QR_MAX_DOS = 60;
+
+/** One lorry's or region's packing list scan times for a day (owner 2026-11-28):
+ *  prepared = first scan of the sheet QR, loaded = second scan. */
+export type PackingScanStatus = {
+  kind: 'lorry' | 'region';
+  key: string;
+  prepared_at: string | null;
+  loaded_at: string | null;
+};
+
+export type PackingScanStatusResponse = { date: string; sheets: PackingScanStatus[] };
+
+export function packingScanStatusPath(date: string): string {
+  return `/trips/packing-scan-status?${new URLSearchParams({ date }).toString()}`;
+}
+
+/** The day's scan times, polled every 30 s so a scan at the lorry shows in the office. */
+export function usePackingScanStatus(date: string | null) {
+  return useQuery({
+    queryKey: ['packing-scan-status', date ?? ''],
+    queryFn: () => authedFetch<PackingScanStatusResponse>(packingScanStatusPath(date as string)),
+    enabled: !!date,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+}
+
+/** The server's plate key: letters and digits only, uppercased (backend plate-normalize.ts). */
+export function packingPlateKey(plate: string | null | undefined): string {
+  return String(plate ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+}
+
+/** The scan times for one lorry (by plate) or one region (by region key), or null. */
+export function packingScanTimesFor(
+  sheets: readonly PackingScanStatus[] | undefined,
+  kind: 'lorry' | 'region',
+  key: string | null,
+): PackingScanStatus | null {
+  const want = kind === 'lorry' ? packingPlateKey(key) : String(key ?? '').trim();
+  if (!want || !sheets) return null;
+  return sheets.find((s) => s.kind === kind && s.key === want) ?? null;
+}

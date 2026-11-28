@@ -195,7 +195,7 @@ const RUN = {
   ],
 };
 
-describe("the packing-list sheet: SCAN WHEN FULLY LOADED", () => {
+describe("the trip packing-list sheet: one scan loads the lorry", () => {
   it("reads as one lorry, with one button that loads all of it", async () => {
     serve(RUN);
     await mount();
@@ -303,5 +303,109 @@ describe("the lorry-day packing list (no trip behind it)", () => {
     await waitFor(() => expect(screen.queryByRole("button")).toBeNull());
     expect(screen.getByText("Lorry VJK 8821: 1 of 2 delivery orders loaded")).toBeTruthy();
     expect(screen.getByText(/Moved to another lorry/)).toBeTruthy();
+  });
+});
+
+describe("the two-step packing list: prepared, then loaded (owner 2026-11-28)", () => {
+  const SHEET = {
+    kind: "lorry_day", mode: "load_all", tripNo: null, tripDate: "2026-11-28", lorryPlate: "VJK 8821",
+    region: null, title: "Lorry VJK 8821", status: "",
+    members: [
+      { stopNo: 1, doNumber: "HC-DO-2611-201", customerName: "Customer One", status: "LOADED", willLoad: true, note: "Will be marked Loaded at the loaded scan." },
+    ],
+  };
+  const FRESH = {
+    ...SHEET, nextStep: "prepare", preparedAt: null, preparedAtText: "", loadedAt: null, loadedAtText: "",
+    step: { status: "prepare", label: "Mark packing list prepared", note: "Press this when everything on this packing list is picked and ready." },
+    blockReason: null,
+  };
+  const PREPARED = {
+    ...SHEET, nextStep: "load", preparedAt: "2026-11-28T01:42:00Z", preparedAtText: "2026/11/28 09:42", loadedAt: null, loadedAtText: "",
+    step: { status: "DISPATCHED", label: "Mark whole lorry loaded", note: "Press this once everything is on the lorry." },
+    blockReason: null,
+  };
+  const LOADED_SHEET = {
+    ...PREPARED, nextStep: "done", loadedAt: "2026-11-28T03:05:00Z", loadedAtText: "2026/11/28 11:05", step: null,
+  };
+  const postBody = () => {
+    const post = fetchMock.mock.calls.find((c) => (c[1] as RequestInit | undefined)?.method === "POST")!;
+    return JSON.parse(String((post[1] as RequestInit).body));
+  };
+
+  it("a fresh sheet offers only 'Mark packing list prepared' and says nothing is prepared or loaded yet", async () => {
+    serve(FRESH);
+    await mount();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("button").textContent).toContain("Mark packing list prepared");
+    expect(screen.getByText("Not prepared yet")).toBeTruthy();
+    expect(screen.getByText("Not loaded yet")).toBeTruthy();
+    expect(screen.queryByText(/Only confirmed delivery orders are marked Loaded/)).toBeNull();
+  });
+
+  it("pressing it POSTs the prepare step and shows the prepared time, with no second button", async () => {
+    serve(FRESH, {
+      kind: "lorry_day", mode: "prepare", outcome: "DONE", headline: "Lorry VJK 8821: packing list prepared",
+      message: "Prepared at 2026/11/28 09:42. Scan the same QR again when the lorry is loaded.", preparedAt: "2026-11-28T01:42:00Z",
+      preparedAtText: "2026/11/28 09:42",
+    });
+    await mount();
+    await act(async () => { fireEvent.click(screen.getByRole("button")); });
+    expect(postBody()).toEqual({ step: "prepare", to: "prepare" });
+    await waitFor(() => expect(screen.queryByRole("button")).toBeNull());
+    expect(screen.getByText("Lorry VJK 8821: packing list prepared")).toBeTruthy();
+    expect(screen.getByText("Prepared at 2026/11/28 09:42")).toBeTruthy();
+  });
+
+  it("a double tap answered as already prepared still reads as prepared", async () => {
+    serve(FRESH, {
+      kind: "lorry_day", mode: "prepare", outcome: "ALREADY_DONE", headline: "Lorry VJK 8821: packing list prepared",
+      message: "Prepared at 2026/11/28 09:42. Scan the same QR again when the lorry is loaded.", preparedAtText: "2026/11/28 09:42",
+    });
+    await mount();
+    await act(async () => { fireEvent.click(screen.getByRole("button")); });
+    await waitFor(() => expect(screen.getByText("Lorry VJK 8821: packing list prepared")).toBeTruthy());
+  });
+
+  it("a prepared sheet shows the prepared time and the load button, which POSTs the load step", async () => {
+    serve(PREPARED, {
+      kind: "lorry_day", mode: "load_all", tripNo: null, lorryPlate: "VJK 8821", outcome: "DONE", to: "DISPATCHED",
+      headline: "Lorry VJK 8821: 1 of 1 delivery order loaded", message: "", total: 1, loaded: 1, moved: 1,
+      preparedAtText: "2026/11/28 09:42", loadedAtText: "2026/11/28 11:05",
+      members: [{ stopNo: 1, doNumber: "HC-DO-2611-201", customerName: "Customer One", outcome: "DONE", from: "LOADED", to: "DISPATCHED", status: "DISPATCHED", message: "Marked as loaded." }],
+    });
+    await mount();
+    expect(screen.getByText("Prepared at 2026/11/28 09:42")).toBeTruthy();
+    expect(screen.getByRole("button").textContent).toContain("Mark whole lorry loaded");
+    await act(async () => { fireEvent.click(screen.getByRole("button")); });
+    expect(postBody()).toEqual({ step: "load", to: "DISPATCHED" });
+    await waitFor(() => expect(screen.getByText("Loaded at 2026/11/28 11:05")).toBeTruthy());
+    expect(screen.getByText("Lorry VJK 8821: 1 of 1 delivery order loaded")).toBeTruthy();
+  });
+
+  it("a loaded sheet shows both times, lists the drops, and has nothing to press", async () => {
+    serve(LOADED_SHEET);
+    await mount();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByText("Prepared at 2026/11/28 09:42")).toBeTruthy();
+    expect(screen.getByText("Loaded at 2026/11/28 11:05")).toBeTruthy();
+    expect(screen.getByText("Lorry VJK 8821: packing list loaded")).toBeTruthy();
+    expect(screen.getByText("Customer One")).toBeTruthy();
+  });
+
+  it("a stale page is told to reload, in plain words", async () => {
+    fetchMock.mockImplementation((_url: string, init?: RequestInit) =>
+      init?.method === "POST"
+        ? json({ error: "stale_step", message: "This packing list was already marked loaded. Reload the page to see the times." }, 409)
+        : json(PREPARED));
+    await mount();
+    await act(async () => { fireEvent.click(screen.getByRole("button")); });
+    await waitFor(() => expect(screen.getByText(/Reload the page/)).toBeTruthy());
+  });
+
+  it("a region sheet is titled by its region", async () => {
+    serve({ ...FRESH, kind: "region_day", lorryPlate: null, region: "KL", title: "Region KL" });
+    await mount();
+    expect(screen.getByText("Region KL")).toBeTruthy();
+    expect(screen.getByText("Scan packing list")).toBeTruthy();
   });
 });

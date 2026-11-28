@@ -68,7 +68,7 @@ const RUNNING_RULE_Y = M + 6;
 const CONT_TOP_A = RUNNING_RULE_Y + 4;
 const CONT_TOP_B = RUNNING_RULE_Y + 10;
 
-export const SCAN_CAPTION = 'SCAN WHEN FULLY LOADED';
+export const SCAN_CAPTION = 'SCAN: PREPARED, THEN LOADED';
 
 const qtyText = (n: number): string => String(n);
 const unitsLabel = (n: number): string => `${qtyText(n)} ${n === 1 ? 'unit' : 'units'}`;
@@ -738,6 +738,20 @@ export async function runUrlFor(
   return packingRunUrl(window.location.origin, token);
 }
 
+/** Where a region sheet's QR points: a region-day token holding the DOs printed on it,
+ *  in sheet order. Null off the browser, when arming fails, or over 60 DOs. */
+export async function regionRunUrlFor(
+  region: { region: string; dos: ReadonlyArray<{ do_id: string | null }> },
+  date: string,
+): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+  const doIds = region.dos.map((d) => d.do_id).filter((id): id is string => !!id);
+  if (!region.region.trim() || doIds.length === 0) return null;
+  const arm = await import('./packing-scan-token-arm');
+  const token = await arm.armRegionDayScanToken({ region: region.region, deliveryDate: date, doIds });
+  return packingRunUrl(window.location.origin, token);
+}
+
 /** One lorry's packing list -> its own file / print job / preview tab. */
 export async function generatePackingListPdf(
   list: PackingListRow,
@@ -822,7 +836,7 @@ export async function renderPackingRegionInto(
   doc: Doc,
   autoTable: AutoTable,
   region: PackingRegionRow,
-  opts: { date: string; logo: BrandingLogo | null },
+  opts: { date: string; runUrl: string | null; logo: BrandingLogo | null },
 ): Promise<void> {
   await ensurePdfCjkFont(doc, [region]);
   const fabric = await loadCustomerFabricMaps(region.dos.flatMap((d) => d.items));
@@ -834,7 +848,7 @@ export async function renderPackingRegionInto(
   const ruleY = drawSlimHeader(doc, {
     docNoText: `Region : ${label}`,
     subLine: `Delivery Date ${dateText}${day ? ` (${day})` : ''}`,
-    qr: null,
+    qr: opts.runUrl ? { url: opts.runUrl, caption: SCAN_CAPTION } : null,
     logo: opts.logo,
   });
   let y = drawRegionSummary(doc, ruleY + 3, region) + 5;
@@ -874,7 +888,8 @@ export async function generatePackingRegionsPdf(
   const { doc, autoTable } = await newDoc();
   for (let i = 0; i < regions.length; i += 1) {
     if (i > 0) doc.addPage();
-    await renderPackingRegionInto(doc, autoTable, regions[i]!, { date: opts.date, logo: null });
+    const region = regions[i]!;
+    await renderPackingRegionInto(doc, autoTable, region, { date: opts.date, runUrl: await regionRunUrlFor(region, opts.date), logo: null });
   }
   const name = regions.length === 1 ? packingRegionFileName(regions[0]!, opts.date) : `packing-regions-${opts.date}.pdf`;
   deliverPdf(doc, name, opts.action);

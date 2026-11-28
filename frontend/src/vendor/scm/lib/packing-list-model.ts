@@ -28,6 +28,7 @@
 
 import type { PackingRegionDo, PackingRegionRow, PackingStop } from './packing-list-queries';
 import { shortRackLabel } from './rack-label';
+import { fmtDate, fmtDateTime, fmtTime } from '../../../../../shared/src/vendor/shared/format';
 
 
 export type LoadingSection<S> = {
@@ -379,4 +380,12 @@ export function regionCategoryUnits(region: Pick<PackingRegionRow, 'dos'>): Reco
   const out = Object.fromEntries(PACK_CATEGORY_ORDER.map((c) => [c, 0])) as Record<PackCategory, number>;
   for (const d of region.dos) for (const it of d.items) out[packCategory(it.item_group)] += it.qty;
   return out;
+}
+
+/** A packing list scan time for the Packing Lists tab: "09:42" (Malaysia time) on the
+ *  delivery day, "2026/11/27 18:05" on any other day, "—" when not scanned. PURE. */
+export function fmtScanTime(iso: string | null, sheetDate: string): string {
+  if (!iso) return '—';
+  const sameDay = fmtDate(iso) === fmtDate(sheetDate);
+  return sameDay ? fmtTime(iso) : fmtDateTime(iso);
 }

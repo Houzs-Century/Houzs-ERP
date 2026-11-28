@@ -85,6 +85,10 @@ export function lorryLoadHeadline(
   loaded: number,
   total: number,
 ): string {
-  const who = plate ? `Lorry ${plate}` : `Packing list ${sheetNo}`;
-  return `${who}: ${loaded} of ${total} delivery ${total === 1 ? 'order' : 'orders'} loaded`;
+  return sheetLoadHeadline(plate ? `Lorry ${plate}` : `Packing list ${sheetNo}`, loaded, total);
+}
+
+/** "Region KL: 5 of 6 delivery orders loaded". PURE. */
+export function sheetLoadHeadline(title: string, loaded: number, total: number): string {
+  return `${title}: ${loaded} of ${total} delivery ${total === 1 ? 'order' : 'orders'} loaded`;
 }

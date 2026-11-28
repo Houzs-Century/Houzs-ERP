@@ -10,12 +10,17 @@ const state: { data: PackingListsResponse | undefined; isLoading: boolean; error
 vi.mock('../lib/packing-list-queries', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/packing-list-queries')>()),
   usePackingLists: (opts: { date: string | null }) => { state.lastDate = opts.date; return state; },
+  usePackingScanStatus: (date: string | null) => { scanState.lastDate = date; return scanState; },
   usePackingRegions: (opts: { unassignedOnly: boolean; enabled: boolean }) => {
     regionState.lastUnassigned = opts.unassignedOnly;
     regionState.lastEnabled = opts.enabled;
     return regionState;
   },
 }));
+
+const scanState: { data: { date: string; sheets: Array<{ kind: 'lorry' | 'region'; key: string; prepared_at: string | null; loaded_at: string | null }> } | undefined; lastDate: string | null } = {
+  data: undefined, lastDate: null,
+};
 
 const regionState: {
   data: PackingRegionsResponse | undefined; isLoading: boolean; error: unknown;
@@ -33,6 +38,7 @@ const { MobilePackingLists } = await import('../../../mobile/MobilePackingLists'
 afterEach(() => {
   cleanup();
   state.data = undefined; state.error = null; state.lastDate = null;
+  scanState.data = undefined; scanState.lastDate = null;
   printAll.mockClear(); printOne.mockClear(); printRegions.mockClear();
   regionState.data = undefined; regionState.error = null; regionState.lastUnassigned = null; regionState.lastEnabled = null;
 });
@@ -159,5 +165,51 @@ describe('phone — Packing lists card on Delivery Orders', () => {
     fireEvent.click(screen.getByRole('button', { name: /Print all 2 lorries/ }));
     await waitFor(() => expect(printAll).toHaveBeenCalledTimes(1));
     expect((printAll.mock.calls[0] as unknown[])[0]).toBe(lists);
+  });
+});
+
+describe('Prepared and Loaded on the Packing Lists tab (owner 2026-11-28)', () => {
+  const SHEETS = {
+    date: '2026-11-28',
+    sheets: [
+      { kind: 'lorry' as const, key: 'VJK8821', prepared_at: '2026-11-28T01:42:00Z', loaded_at: '2026-11-28T03:05:00Z' },
+      { kind: 'lorry' as const, key: 'WXY1234', prepared_at: '2026-11-27T10:15:00Z', loaded_at: null },
+      { kind: 'region' as const, key: 'KL', prepared_at: '2026-11-28T00:50:00Z', loaded_at: null },
+    ],
+  };
+
+  it('By lorry: each lorry shows its prepared and loaded time in Malaysia time, matched by plate', () => {
+    scanState.data = SHEETS;
+    state.data = { date: '2026-11-28', lists: [row({}), row({ trip_id: 't2', lorry_plate: 'wxy-1234' }), row({ trip_id: 't3', lorry_plate: 'BNM 5520' })] };
+    render(<MemoryRouter initialEntries={['/scm/delivery-orders?tab=packing&date=2026-11-28']}><DoPackingListsView /></MemoryRouter>);
+    expect(scanState.lastDate).toBe('2026-11-28');
+    expect(screen.getAllByText('Prepared').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Loaded').length).toBeGreaterThan(0);
+    expect(screen.getByText('09:42')).toBeTruthy();
+    expect(screen.getByText('11:05')).toBeTruthy();
+    expect(screen.getByText('2026/11/27 18:15')).toBeTruthy();
+    expect(screen.getAllByTitle(/Not scanned as/).length).toBe(3);
+  });
+
+  it('By region: each region shows its times, a dash when not scanned', () => {
+    scanState.data = SHEETS;
+    regionState.data = { date: '2026-11-28', unassigned_only: false, regions: [regionRow({}), regionRow({ region: 'JB', label: 'Johor' })] };
+    render(<MemoryRouter initialEntries={['/scm/delivery-orders?tab=packing&date=2026-11-28&view=region']}><DoPackingListsView /></MemoryRouter>);
+    expect(screen.getAllByText('Prepared').length).toBeGreaterThan(0);
+    expect(screen.getByText('08:50')).toBeTruthy();
+    expect(screen.getAllByTitle(/Not scanned as/).length).toBe(3);
+  });
+
+  it('a sheet over 60 DOs says it prints without a QR instead of a dash', () => {
+    state.data = { date: '2026-11-28', lists: [row({ do_count: 61 })] };
+    render(<MemoryRouter initialEntries={['/scm/delivery-orders?tab=packing&date=2026-11-28']}><DoPackingListsView /></MemoryRouter>);
+    expect(screen.getAllByText('No QR (over 60 DOs)')).toHaveLength(2);
+  });
+
+  it('the phone card shows the same times per lorry and region', () => {
+    scanState.data = SHEETS;
+    state.data = { date: '2026-11-28', lists: [row({})] };
+    render(<MemoryRouter><MobilePackingLists /></MemoryRouter>);
+    expect(screen.getByText(/Prepared .* · Loaded /)).toBeTruthy();
   });
 });

@@ -2,7 +2,8 @@ import { describe, expect, test, vi } from 'vitest';
 
 const armPackingScanToken = vi.fn(async (_tripId: string) => 'trip-token');
 const armLorryDayScanToken = vi.fn(async (_input: { lorryPlate: string; deliveryDate: string; doIds: readonly string[] }) => 'day-token');
-vi.mock('./packing-scan-token-arm', () => ({ armPackingScanToken, armLorryDayScanToken }));
+const armRegionDayScanToken = vi.fn(async (_input: { region: string; deliveryDate: string; doIds: readonly string[] }): Promise<string | null> => 'region-token');
+vi.mock('./packing-scan-token-arm', () => ({ armPackingScanToken, armLorryDayScanToken, armRegionDayScanToken }));
 vi.mock('./authed-fetch', () => ({ authedFetch: async () => { throw new Error('offline in tests'); } }));
 
 import type { PackingStop } from './packing-list-queries';
@@ -39,5 +40,28 @@ describe('packing-list QR target', () => {
     expect(await runUrlFor({ source: 'crew', trip_id: 'x', lorry_plate: '', trip_date: null, stops: [stop(1, 'do-a')] }, '2026-11-28')).toBeNull();
     expect(await runUrlFor({ source: 'crew', trip_id: 'x', lorry_plate: 'VPC9058', trip_date: null, stops: [stop(1, null)] }, '2026-11-28')).toBeNull();
     expect(armLorryDayScanToken).not.toHaveBeenCalled();
+  });
+});
+
+describe('region sheet QR target (owner 2026-11-28)', () => {
+  test('a region arms a region-day token over its printed DOs, in sheet order', async () => {
+    const { regionRunUrlFor } = await import('./packing-list-pdf');
+    const url = await regionRunUrlFor({ region: 'KL', dos: [{ do_id: 'do-b' }, { do_id: 'do-a' }] }, '2026-11-28');
+    expect(armRegionDayScanToken).toHaveBeenCalledWith({ region: 'KL', deliveryDate: '2026-11-28', doIds: ['do-b', 'do-a'] });
+    expect(url).toBe(`${window.location.origin}/d/region-token`);
+  });
+
+  test('no region key or no DO prints no QR', async () => {
+    const { regionRunUrlFor } = await import('./packing-list-pdf');
+    armRegionDayScanToken.mockClear();
+    expect(await regionRunUrlFor({ region: ' ', dos: [{ do_id: 'do-a' }] }, '2026-11-28')).toBeNull();
+    expect(await regionRunUrlFor({ region: 'KL', dos: [] }, '2026-11-28')).toBeNull();
+    expect(armRegionDayScanToken).not.toHaveBeenCalled();
+  });
+
+  test('a failed arm prints no QR', async () => {
+    const { regionRunUrlFor } = await import('./packing-list-pdf');
+    armRegionDayScanToken.mockResolvedValueOnce(null);
+    expect(await regionRunUrlFor({ region: 'KL', dos: [{ do_id: 'do-a' }] }, '2026-11-28')).toBeNull();
   });
 });

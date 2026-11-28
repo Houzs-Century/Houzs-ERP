@@ -19,8 +19,9 @@ import { Button } from '../../../components/Button';
 import { Badge } from '../../../components/Badge';
 import { DataTable, type Column } from '../../../components/DataTable';
 import { DateField } from './DateField';
-import { usePackingLists, usePackingRegions, type PackingListRow } from '../lib/packing-list-queries';
-import { fmtM3, rollupDeliveryStatus, rollupLabel, shiftIsoDate } from '../lib/packing-list-model';
+import { packingScanTimesFor, usePackingLists, usePackingRegions, usePackingScanStatus, type PackingListRow } from '../lib/packing-list-queries';
+import { fmtM3, fmtScanTime, rollupDeliveryStatus, rollupLabel, shiftIsoDate } from '../lib/packing-list-model';
+import { ScanTimeCell } from './PackingScanTimeCell';
 import { usePackingPrint } from './usePackingPrint';
 import { DoPackingRegionsTable } from './DoPackingRegionsTable';
 import { fmtDate, todayMY } from '../../../../../shared/src/vendor/shared/format';
@@ -45,6 +46,8 @@ export function DoPackingListsView() {
   const regions = regionQuery.data?.regions ?? [];
   const regionDos = regions.reduce((n, r) => n + r.do_count, 0);
   const print = usePackingPrint(date);
+  const scanSheets = usePackingScanStatus(date).data?.sheets;
+  const lorryTimes = (l: PackingListRow) => packingScanTimesFor(scanSheets, 'lorry', l.lorry_plate);
 
   const setParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(params);
@@ -95,6 +98,16 @@ export function DoPackingListsView() {
           : <span className="text-ink-muted" title="No delivery order on this lorry could be read">—</span>;
       },
       getValue: (l) => rollupLabel(rollupDeliveryStatus(l.stops)) ?? '',
+    },
+    {
+      key: 'prepared', label: 'Prepared', width: '132px',
+      render: (l) => <ScanTimeCell iso={lorryTimes(l)?.prepared_at ?? null} date={date} what="prepared" doCount={l.do_count} />,
+      getValue: (l) => fmtScanTime(lorryTimes(l)?.prepared_at ?? null, date),
+    },
+    {
+      key: 'loaded', label: 'Loaded', width: '132px',
+      render: (l) => <ScanTimeCell iso={lorryTimes(l)?.loaded_at ?? null} date={date} what="loaded" doCount={l.do_count} />,
+      getValue: (l) => fmtScanTime(lorryTimes(l)?.loaded_at ?? null, date),
     },
     {
       key: 'actions', label: '', align: 'right', width: '190px',
@@ -189,6 +202,7 @@ export function DoPackingListsView() {
         {byRegion
           ? `${fmtDate(date)} · one packing list per region (the Delivery Planning regions), lorry or not. Picks by category; each line shows its lorry.`
           : `${fmtDate(date)} · one packing list per lorry. Part A picks by category; Part B loads the last customer first.`}
+        {' '}Scan the sheet QR once when it is prepared and again when the lorry is loaded; the times show here.
       </p>
       {print.error && <p role="alert" className="text-[12px] text-err">{print.error}</p>}
       {byRegion ? (
@@ -198,6 +212,7 @@ export function DoPackingListsView() {
           loading={regionQuery.isLoading}
           error={regionQuery.error ? `Could not load the delivery orders by region for this day. ${regionQuery.error instanceof Error ? regionQuery.error.message : ''}` : null}
           unassignedOnly={unassignedOnly}
+          scanSheets={scanSheets}
           busy={print.busy}
           onPrint={print.regions}
         />
