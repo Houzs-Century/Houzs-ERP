@@ -129,7 +129,20 @@ export function normalizePosSettingsGroup<G extends PosSettingsGroup>(group: G, 
     const key = group === "sst_receipt" ? "paper_width" : "default_paper";
     if (out[key] !== 58 && out[key] !== 80) out[key] = 58;
   }
+  if (group === "general" && receiptNoFormatProblem(String(out.receipt_no_format)) !== null) {
+    out.receipt_no_format = posSettingsDefaults().general.receipt_no_format;
+  }
   return out as PosSettings[G];
+}
+
+/** Why a receipt-number format is unsafe, or null when it is fine. Stock for a
+ *  POS sale is booked against the receipt number, so it must be unique across
+ *  the company's terminals: {TERM} keeps two terminals apart and a {000000}
+ *  run keeps one terminal's receipts apart (docs/bugs/README.md, audit H3). */
+export function receiptNoFormatProblem(format: string): string | null {
+  if (!format.includes("{TERM}")) return "The receipt no format must contain {TERM} (the terminal ID), or two terminals print the same receipt numbers.";
+  if (!/\{0+\}/.test(format)) return "The receipt no format must contain a running number such as {000000}.";
+  return null;
 }
 
 export function normalizePosSettings(raw: Partial<Record<PosSettingsGroup, unknown>>): PosSettings {

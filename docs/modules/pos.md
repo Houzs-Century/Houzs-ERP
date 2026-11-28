@@ -94,7 +94,10 @@ page, and the POS Admin menu. This guide carries only what is built.
   POS_VOID`, `notes "POS sale T02-000279"`) at the event's stock source
   warehouse, else the General POS store; no location, or a location gone
   negative, is kept on `pos_sales.stock_warning` (the FIFO trigger records
-  the short; over-sell is allowed). Idempotent per (doc type, receipt no).
+  the short; over-sell is allowed). Idempotent per (doc type, receipt no), so
+  the General "Receipt no format" must keep `{TERM}` and a `{0…}` run: refused
+  on save (`receipt_no_format_invalid`), replaced by the default on read, and a
+  NEW sale that finds its number already booked gets a `stock_warning`.
 - Backup (`pos/src/backup.ts`, tested): `houzs_pos_T02_backup.json`, every
   receipt AES-GCM encrypted under a key derived from the SHA-256 of the
   device token (the ERP holds that hash on `pos_terminals.token_hash`, so
