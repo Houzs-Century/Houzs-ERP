@@ -29,7 +29,7 @@ const r: RpReport = {
 
 describe('cashFlowSheet', () => {
   it('names the report, its period and its rows; Total alone when nothing is ticked, the ticked column before Total otherwise', () => {
-    const s = cashFlowSheet(r);
+    const s = cashFlowSheet(r, { codes: true });
     expect(s.title).toBe('Cash Flow');
     expect(s.subtitle).toBe("2026/07/01 – 2026/07/31 · every bank and cash account · by the owner's accounts · % of the side's total");
     expect(s.meta).toEqual([
@@ -43,8 +43,8 @@ describe('cashFlowSheet', () => {
       ['block', 'PAYMENTS'], ['row', 'Supplier advances (预付)'], ['total', 'Total payments'],
       ['net', 'Cash surplus / (deficit)'], ['total', 'Balance b/f'], ['net', 'Balance c/f'],
     ]);
-    expect(cashFlowSheet(r, { columns: ['310-0010'] }).tables[0]!.columns.map((c) => c.label)).toEqual(['310-0010 BANK', 'Total', '%']);
-    expect(cashFlowSheet({ ...r, byParty: true }).meta[2]).toEqual({ label: 'Rows', value: 'By debtor / creditor' });
+    expect(cashFlowSheet(r, { columns: ['310-0010'], codes: true }).tables[0]!.columns.map((c) => c.label)).toEqual(['310-0010 BANK', 'Total', '%']);
+    expect(cashFlowSheet({ ...r, byParty: true }, { codes: true }).meta[2]).toEqual({ label: 'Rows', value: 'By debtor / creditor' });
     expect(s.fmt).toBe(fmtRp);
   });
 

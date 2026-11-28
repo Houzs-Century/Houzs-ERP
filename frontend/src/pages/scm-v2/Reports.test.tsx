@@ -94,6 +94,7 @@ const OCT = '/scm/accounting?tab=pnl&from=2026-10-01&to=2026-10-31';
 type Sheet = { title: string; subtitle: string; tables: Array<{ columns: Array<{ label: string }>; rows: Array<{ label: string; kind: string; depth: number; cells: unknown[] }> }> };
 
 beforeEach(() => {
+  window.localStorage.removeItem('fin-statement-codes');
   reads.keys = [];
   reads.fail = false;
   navigateSpy.mockClear();
@@ -120,10 +121,13 @@ describe('the P&L', () => {
   /* SIGNS (owner 2026-09-14, docs/bugs/0910): an expense is the positive
      figure it is; only a period whose credits beat its debits prints in
      parentheses — and never "(-1,139.19)". No RM prefix (owner 2026-09-19). */
-  test('expenses print plain, a reversed line in parentheses with no minus inside them; the code before the name', () => {
+  test('expenses print plain, a reversed line in parentheses with no minus inside them; the code before the name on the Codes switch', () => {
     at(OCT, <PnLTab />);
     const advert = screen.getByText('ADVERT').closest('tr')!;
-    expect(within(advert).getByText('900-A001')).toBeTruthy();
+    /* Owner 2026-11-27: 代码可以收起来，但要能有个按钮点开. */
+    expect(within(advert).queryByText('900-A001')).toBeNull();
+    fireEvent.click(screen.getByRole('switch', { name: 'Codes' }));
+    expect(within(screen.getByText('ADVERT').closest('tr')!).getByText('900-A001')).toBeTruthy();
     expect(advert.textContent).toContain('120.00');
     expect(advert.textContent).not.toContain('(');
     expect(screen.getByText('ADVERT - SHOWROOM').closest('tr')!.textContent).toContain('(15.00)');
@@ -187,6 +191,7 @@ describe('the P&L', () => {
     const heads = screen.getAllByRole('columnheader').map((h) => h.textContent);
     expect(heads).toEqual(['Account', 'October 2026This period%', 'September 2026Previous period%', 'ChangeThis period less the other']);
     expect(reads.keys).toContainEqual(['report-pnl', '2026-09-01', '2026-09-30']);
+    fireEvent.click(screen.getByRole('switch', { name: 'Codes' }));
     const sales = screen.getByText('501-0000').closest('tr')!;
     expect([...sales.querySelectorAll('td')].at(-1)!.textContent).toBe('200.00');
     expect([...screen.getByText('NET PROFIT').closest('tr')!.querySelectorAll('td')].at(-1)!.textContent).toBe('200.00');

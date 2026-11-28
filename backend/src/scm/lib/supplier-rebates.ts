@@ -12,9 +12,12 @@
 //            read on that base; a display set is what the supplier's display-discount
 //            credit notes are a discount on — their total ÷ the discount rate
 //            (「这个减的就是display set」)
+//   Display  the display discount on the month's POs: each PO line whose own discount is
+//            the display rate of its price, within RM 1, in the month of the PO's date
+//            (owner 2026-11-28: the PO's own discount is the display discount)
 //
 // A month's purchases are the supplier's bills dated in it — purchase invoices and
-// AP invoices, neither cancelled nor draft.
+// AP invoices, neither cancelled nor draft; its POs likewise.
 // ----------------------------------------------------------------------------
 
 import { fmtMoneySen } from '../shared/format';
@@ -24,8 +27,8 @@ export type RebateTier = { fromSen: number; bp: number };
 /** One supplier's terms as Finance typed them. `namedWords`: the products the sponsor rebate
     leaves out, by a word of their name. `accessoryWords`: an accessory on a bill line that
     names no product, by a word of its description. `salesTiers`: ascending by `fromSen`;
-    below the first, no sales rebate. `displayDiscountBp`: the discount the supplier's
-    display credit notes give. */
+    below the first, no sales rebate. `displayDiscountBp`: the discount the supplier gives
+    on display sets — its display credit notes, and the display-set lines of its POs. */
 export type SupplierRebateRule = {
   supplierCode: string;
   label: string;
@@ -69,7 +72,7 @@ export function parseSupplierRebates(raw: unknown): SupplierRebateRule[] {
       salesTiers,
       displayDiscountBp: bpOf(r.displayDiscountBp),
     };
-    if (rule.sponsorBp === 0 && rule.salesTiers.length === 0) continue;
+    if (rule.sponsorBp === 0 && rule.salesTiers.length === 0 && rule.displayDiscountBp === 0) continue;
     out.push(rule);
   }
   return out;
@@ -80,6 +83,21 @@ export type RebateLineKind = 'named' | 'accessory' | 'counted';
 export type RebatePurchaseLine = { month: string; day: string; docNo: string; text: string; sen: number; kind: RebateLineKind };
 /** One display-discount credit note from the supplier. */
 export type RebateDisplayNote = { month: string; day: string; noteNo: string; sen: number };
+/** One discounted PO line from the supplier: its price before the discount, and the discount. */
+export type RebatePoLine = { id: string; month: string; day: string; poNo: string; text: string; grossSen: number; discountSen: number };
+
+/** How far a PO line's own discount may be from the display rate of its price and still be the display discount. */
+export const DISPLAY_LINE_TOLERANCE_SEN = 100;
+
+/** True when a PO line's own discount is the supplier's display discount: the display rate of the line's price, within RM 1. */
+export function isDisplayDiscountLine(displayDiscountBp: number, grossSen: number, discountSen: number): boolean {
+  return displayDiscountBp > 0 && grossSen > 0 && discountSen > 0
+    && Math.abs(discountSen - Math.round((grossSen * displayDiscountBp) / 10_000)) <= DISPLAY_LINE_TOLERANCE_SEN;
+}
+
+/** The PO lines whose own discount is the rule's display discount. */
+export const displayPoLines = (rule: Pick<SupplierRebateRule, 'displayDiscountBp'>, poLines: readonly RebatePoLine[]): RebatePoLine[] =>
+  poLines.filter((l) => isDisplayDiscountLine(rule.displayDiscountBp, l.grossSen, l.discountSen));
 
 /** What the sponsor rebate makes of a bill line: a named product, an accessory (its
     product's category, or — with no product — a word of its description), or counted. */
@@ -102,6 +120,8 @@ export type RebateMonth = {
   salesBaseSen: number;
   salesBp: number;
   salesSen: number;
+  poDisplayLines: number;
+  poDisplaySen: number;
 };
 
 const ofBp = (sen: number, bp: number): number => Math.round((sen * bp) / 10_000);
@@ -113,11 +133,14 @@ export function tierBp(tiers: readonly RebateTier[], baseSen: number): number {
   return bp;
 }
 
-/** Each month's two estimates and the figures they stand on. */
+/** Each month's estimates and the figures they stand on. */
 export function rebateMonths(
   rule: SupplierRebateRule, months: readonly string[], lines: readonly RebatePurchaseLine[], notes: readonly RebateDisplayNote[],
+  poLines: readonly RebatePoLine[],
 ): RebateMonth[] {
+  const display = displayPoLines(rule, poLines);
   return months.map((month) => {
+    const po = display.filter((l) => l.month === month);
     const mine = lines.filter((l) => l.month === month);
     const sum = (k: RebateLineKind | null) => mine.filter((l) => k == null || l.kind === k).reduce((s, l) => s + l.sen, 0);
     const purchasesSen = sum(null);
@@ -131,6 +154,7 @@ export function rebateMonths(
     return {
       month, purchasesSen, namedSen, accessorySen, sponsorBaseSen, sponsorSen: ofBp(sponsorBaseSen, rule.sponsorBp),
       displayNotesSen, displaySetSen, salesBaseSen, salesBp, salesSen: ofBp(salesBaseSen, salesBp),
+      poDisplayLines: po.length, poDisplaySen: po.reduce((s, l) => s + l.discountSen, 0),
     };
   });
 }
@@ -138,11 +162,14 @@ export function rebateMonths(
 /** A rate in basis points, in words: 1500 → "15%", 250 → "2.5%". */
 export const bpWords = (bp: number): string => `${(bp / 100).toFixed(2).replace(/\.?0+$/, '')}%`;
 
-/** The two lines a rule adds to the selling department's other income, by month. */
+/** The lines a rule adds to the selling department's other income, by month. */
 export type RebateFigure = { id: string; label: string; cells: Record<string, number> };
 
-/** The keys the two lines go by — what a figure opened sends back. */
-export const rebateKey = (supplierCode: string, kind: 'sponsor' | 'sales'): string => `rebate:${supplierCode}:${kind}`;
+/** The kinds of line a rule adds: the sponsor rebate, the sales rebate, the display discount on the POs. */
+export type RebateKind = 'sponsor' | 'sales' | 'display';
+
+/** The keys the lines go by — what a figure opened sends back. */
+export const rebateKey = (supplierCode: string, kind: RebateKind): string => `rebate:${supplierCode}:${kind}`;
 
 export function rebateFigures(rule: SupplierRebateRule, months: readonly RebateMonth[]): RebateFigure[] {
   const cells = (pick: (m: RebateMonth) => number) =>
@@ -163,8 +190,19 @@ export function rebateFigures(rule: SupplierRebateRule, months: readonly RebateM
       cells: cells((m) => m.salesSen),
     });
   }
+  if (rule.displayDiscountBp > 0) {
+    out.push({
+      id: rebateKey(rule.supplierCode, 'display'),
+      label: `${rule.label} display discount (estimate) — ${bpWords(rule.displayDiscountBp)} off the display sets on the month's POs`,
+      cells: cells((m) => m.poDisplaySen),
+    });
+  }
   return out.filter((f) => Object.keys(f.cells).length > 0);
 }
+
+/** A display-set PO line behind the display discount, in words — what the figure opened shows. */
+export const displayPoWorking = (rule: SupplierRebateRule, l: RebatePoLine): string =>
+  `${l.text ? `${l.text}: ` : ''}${bpWords(rule.displayDiscountBp)} off ${fmtMoneySen(l.grossSen)}`;
 
 /** A month's working behind one of the two figures, in words — what the figure opened shows. */
 export function rebateWorking(rule: SupplierRebateRule, m: RebateMonth, kind: 'sponsor' | 'sales'): string {
@@ -228,7 +266,9 @@ export function readSupplierRebateRules(raw: unknown): { ok: true; rules: Suppli
       if (last && fromSen <= last.fromSen) return { ok: false, message: `${supplierCode}: list the sales rebate tiers from the lowest amount up, each higher than the one before.` };
       salesTiers.push({ fromSen, bp });
     }
-    if (sponsorBp === 0 && salesTiers.length === 0) return { ok: false, message: `${supplierCode} earns nothing — give a sponsor rebate rate or a sales rebate tier.` };
+    if (sponsorBp === 0 && salesTiers.length === 0 && displayDiscountBp === 0) {
+      return { ok: false, message: `${supplierCode} earns nothing — give a sponsor rebate rate, a sales rebate tier or a display discount.` };
+    }
     rules.push({
       supplierCode, label: String(r.label ?? '').trim().slice(0, 60) || supplierCode,
       sponsorBp, namedWords, accessoryWords, salesTiers, displayDiscountBp,

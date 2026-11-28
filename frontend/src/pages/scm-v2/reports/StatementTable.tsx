@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
-import { fmtPct, folderOpen, foldsChildren, totalsBelow } from '../../../vendor/scm/lib/report-layout';
+import { fmtPct, folderOpen, foldsChildren, nameWithoutCode, totalsBelow } from '../../../vendor/scm/lib/report-layout';
 import { AccountLinesRow } from '../AccountLinesRow';
 import { AccountCell } from '../JournalEntryCards';
 import type { Level, ReportTree } from '../ReportLayoutTree';
@@ -10,12 +10,10 @@ import { columnsSpan, type StatementColumn, type StatementLine } from './stateme
 import { useStatementWidths, type WidthGroup } from './statementWidths';
 import s from './Statement.module.css';
 
-const DASH = '-';
 const ALL = '*';
 
 /** An account line's name without the code printed before it. */
-export const nameOf = (l: Pick<StatementLine, 'label' | 'code'>): string =>
-  l.code && l.label.startsWith(`${l.code} · `) ? l.label.slice(l.code.length + 3) : l.label;
+export const nameOf = (l: Pick<StatementLine, 'label' | 'code'>): string => nameWithoutCode(l.label, l.code);
 
 /** The columns a line's running cells cover — every column after a cell's first, by index. */
 export function coveredBy(columns: StatementColumn[], spans: StatementLine['spans']): Set<number> {
@@ -47,6 +45,8 @@ export type StatementTableProps = {
   level: Level;
   tree: ReportTree;
   showPct: boolean;
+  /** An account's code before its name — the Codes switch (owner 2026-11-27: 代码可以收起来，但要能有个按钮点开). */
+  showCodes: boolean;
   fmt?: (sen: number) => string;
   finalId?: string;
   strongIds?: ReadonlySet<string>;
@@ -63,7 +63,7 @@ export type StatementTableProps = {
 };
 
 export function StatementTable({
-  widthsKey, head, columns, lines, shown, level, tree, showPct, fmt = fmtSenPlain,
+  widthsKey, head, columns, lines, shown, level, tree, showPct, showCodes, fmt = fmtSenPlain,
   finalId, strongIds, onCategoryFigure, noteAfter, note, drillKey, ariaLabel, drillRows = 'accounts', renderLines,
   figureOpens, onOpenRow, accountCell = false,
 }: StatementTableProps) {
@@ -235,7 +235,7 @@ export function StatementTable({
                             {open ? <ChevronDown size={12} strokeWidth={2} aria-hidden /> : <ChevronRight size={12} strokeWidth={2} aria-hidden />}
                           </button>
                         ) : l.depth > 0 ? <span className={s.leaf} aria-hidden /> : null}
-                        {l.code && l.kind !== 'block' && !accountCell && <span className={s.code}>{l.code}</span>}
+                        {showCodes && l.code && l.kind !== 'block' && !accountCell && <span className={s.code}>{l.code}</span>}
                         {opensElsewhere ? (
                           <button type="button" className={s.nameBtn} title="Open its lines" onClick={() => onOpenRow?.(l)}>
                             {accountCell && l.code ? <AccountCell code={l.code} name={name} /> : name}
@@ -260,10 +260,10 @@ export function StatementTable({
                       ].join(' ');
                       if (l.kind === 'block' || l.bare) return <td key={c.key} className={cls} />;
                       const cell = l.cells[c.key];
-                      /* Under a heading a nil share stays blank (owner 2026-11-10: the dashes made the
-                         Settlement / Deposit view busy); a column of its own keeps its dash. */
-                      const text = cell ? fmt(cell.amountSen) : c.group ? '' : DASH;
-                      const pct = c.pct && showPct ? (cell ? fmtPct(cell.pct) : DASH) : null;
+                      /* An empty cell stays blank (owner 2026-11-10 and 2026-11-27: the dashes made the
+                         tables busy — on a by-month P&L "- -" filled two cells in five). */
+                      const text = cell ? fmt(cell.amountSen) : '';
+                      const pct = c.pct && showPct ? (cell ? fmtPct(cell.pct) : '') : null;
                       const opens = Boolean(cell) && c.kind !== 'change' && c.noDrill !== true && (drillable || ((folder || sub) && onCategoryFigure))
                         && (figureOpens?.(own, c, across > 1) ?? true);
                       return (
@@ -279,7 +279,7 @@ export function StatementTable({
                               >
                                 {text}
                               </button>
-                            ) : text !== '' && <span className={cell ? undefined : s.dash}>{text}</span>}
+                            ) : text}
                             {pct !== null && <span className={s.pct} data-pct>{pct}</span>}
                           </span>
                         </td>

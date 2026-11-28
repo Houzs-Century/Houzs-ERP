@@ -35,7 +35,7 @@ import {
 } from './reports/reportParts';
 import { StatementSkeleton, StatementTable } from './reports/StatementTable';
 import { monthName, monthsSpanned, type StatementColumn, type StatementLine } from './reports/statementColumns';
-import { LevelTool } from './reports/statementTools';
+import { CodesSwitch, LevelTool, linesWithCodes, useShowCodes } from './reports/statementTools';
 import { useReportRange } from './reports/useReportRange';
 
 const VIEW_COLUMN: Record<OverallPnlView, { label: string; sub: string; mark: NonNullable<StatementColumn['mark']> }> = {
@@ -144,6 +144,7 @@ export const PnlSideBySideTab = () => {
   }, { replace: true });
   const [level, setLevel] = useState<Level>('all');
   const [showPct, setShowPct] = useState(true);
+  const [showCodes, setShowCodes] = useShowCodes();
   const tree = useReportTree(level);
 
   const from = r.usable ? monthStart(r.from) : monthStart(r.today);
@@ -175,7 +176,7 @@ export const PnlSideBySideTab = () => {
     meta: [{ label: 'Months', value: period }],
     tables: [statementColumnsTable(columns.map((c) => ({
       key: c.key, label: c.label, pct: c.pct && showPct, ...(c.group ? { group: c.group.label } : {}),
-    })), shown)],
+    })), linesWithCodes(shown, showCodes))],
   } : null);
 
   return (
@@ -188,6 +189,7 @@ export const PnlSideBySideTab = () => {
         <ReportTool label="Show"><Segmented options={SHOW} value={show} onChange={setShow} label="Whole range or by month" /></ReportTool>
         <LevelTool depth={monthlyDepth(lines)} level={level} onLevel={setLevel} />
         <ReportSwitch on={showPct} onChange={setShowPct}>% beside</ReportSwitch>
+        <CodesSwitch on={showCodes} onChange={setShowCodes} />
       </ReportToolbar>
       {!enough && <ReportMessage>Turn on Actual and Forecast above to see them side by side.</ReportMessage>}
       {enough && q.failed > 0 && (
@@ -207,6 +209,7 @@ export const PnlSideBySideTab = () => {
           level={level}
           tree={tree}
           showPct={showPct}
+          showCodes={showCodes}
           finalId="net:net"
           note={show === 'month' ? `${NOTE}${MONTH_NOTE}` : NOTE}
           drillKey={`${show}|${span.from}|${span.to}|${sides.join(',')}`}
