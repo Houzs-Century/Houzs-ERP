@@ -173,12 +173,19 @@ export const PACK_CATEGORY_ORDER: readonly PackCategory[] = ['MATTRESS', 'BEDFRA
 const PIECE_CATEGORIES: ReadonlySet<PackCategory> = new Set<PackCategory>(['BEDFRAME', 'SOFA']);
 
 /** `item_group` -> pick category, case-insensitive. Unknown or empty = OTHER. */
+/** Owner 2026-11-28: a sofa order's fabric accessories (cushions, bolsters, square pillows) are
+ *  picked with that order's sofa, under its SO in the SOFA section, not as a separate group. */
+export function isSofaAccessory(itemGroup: string | null | undefined): boolean {
+  const g = (itemGroup ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return g === 'fabric_accessory' || g === 'fabric_accessories' || g === 'sofa_accessory';
+}
+
 export function packCategory(itemGroup: string | null | undefined): PackCategory {
   const g = (itemGroup ?? '').trim().toLowerCase();
   if (g === 'mattress' || g === 'mattresses') return 'MATTRESS';
   if (g === 'bedframe' || g === 'bedframes' || g === 'bed frame') return 'BEDFRAME';
   if (g === 'accessory' || g === 'accessories') return 'ACCESSORIES';
-  if (g === 'sofa' || g === 'sofas') return 'SOFA';
+  if (g === 'sofa' || g === 'sofas' || isSofaAccessory(g)) return 'SOFA';
   return 'OTHER';
 }
 
