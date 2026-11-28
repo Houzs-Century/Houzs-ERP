@@ -65,7 +65,7 @@ export async function refuseForeignProject(
 
 export const FOREIGN_ATTACHMENT_PREFIXES = [
   "mail-outbox/", "mail/", "hr-punch/", "user/", "memos/", "assr/",
-  "announcements/", "fleet/", "branding/",
+  "announcements/", "fleet/", "branding/", "driver/",
 ] as const;
 
 export type AttachmentKeyClass =

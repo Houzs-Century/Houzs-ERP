@@ -42,18 +42,41 @@ describe("crewPatch, editing", () => {
   });
 });
 
+const blankProfile = { licenseNo: "", licenseExpiry: "", address: "", emergencyName: "", emergencyPhone: "" };
+
 describe("crewPatch, a new person", () => {
   it("sends what was filled in and the employer", () => {
-    expect(crewPatch("driver", null, { name: " Ali ", phone: "0123", ic: "", vehicle: "", employer: "in", warehouseId: "" }))
+    expect(crewPatch("driver", null, { name: " Ali ", phone: "0123", ic: "", vehicle: "", employer: "in", warehouseId: "", ...blankProfile }))
       .toEqual({ name: "Ali", phone: "0123", warehouseId: null, inHouse: true });
-    expect(crewPatch("helper", null, { name: "Abu", phone: "", ic: "", vehicle: "x", employer: "c-2", warehouseId: "w" }))
+    expect(crewPatch("helper", null, { name: "Abu", phone: "", ic: "", vehicle: "x", employer: "c-2", warehouseId: "w", ...blankProfile }))
       .toEqual({ name: "Abu", warehouseId: "w", threeplCompanyId: "c-2" });
   });
   it("a driver needs a phone, a helper does not", () => {
-    const f = { name: "Ali", phone: "", ic: "", vehicle: "", employer: "in", warehouseId: "" };
+    const f = { name: "Ali", phone: "", ic: "", vehicle: "", employer: "in", warehouseId: "", ...blankProfile };
     expect(crewFormProblem("driver", f)).toBe("Enter the phone number.");
     expect(crewFormProblem("helper", f)).toBeNull();
     expect(crewFormProblem("helper", { ...f, name: " " })).toBe("Enter the name.");
+  });
+});
+
+describe("crewPatch, the office profile (driver only)", () => {
+  it("sends only the profile fields that changed, trimmed, blank as null", () => {
+    expect(crewPatch("driver", d, { ...crewFormOf(d), licenseNo: "  D123  " })).toEqual({ licenseNo: "D123" });
+    expect(crewPatch("driver", d, { ...crewFormOf(d), licenseExpiry: "2027-05-01" })).toEqual({ licenseExpiry: "2027-05-01" });
+    expect(crewPatch("driver", d, { ...crewFormOf(d), address: "12 Jalan", emergencyName: "Siti", emergencyPhone: "011-2" }))
+      .toEqual({ address: "12 Jalan", emergencyContactName: "Siti", emergencyContactPhone: "011-2" });
+  });
+  it("clears a profile field to null when emptied", () => {
+    const withProfile = driverAsCrew({ ...DRIVER, address: "Old place", license_no: "L1" });
+    expect(crewPatch("driver", withProfile, { ...crewFormOf(withProfile), address: "" })).toEqual({ address: null });
+  });
+  it("a new driver sends the profile fields that were filled in", () => {
+    expect(crewPatch("driver", null, { name: "Ali", phone: "0123", ic: "", vehicle: "", employer: "in", warehouseId: "", ...blankProfile, licenseNo: "D9", address: "Home" }))
+      .toEqual({ name: "Ali", phone: "0123", warehouseId: null, inHouse: true, licenseNo: "D9", address: "Home" });
+  });
+  it("never sends profile fields for a helper", () => {
+    const h = helperAsCrew({ id: "h1", helper_code: "HLP-1", name: "Ali", contact: null, ic_number: null, active: true, created_at: "" } as HelperRow);
+    expect(crewPatch("helper", h, { ...crewFormOf(h), licenseNo: "x", address: "y" })).toEqual({});
   });
 });
 

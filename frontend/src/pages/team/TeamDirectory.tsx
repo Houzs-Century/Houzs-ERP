@@ -57,8 +57,11 @@ export function TeamDirectory({
   const canManage = can("users.manage");
   const [params, setParams] = useSearchParams();
 
-  const members = useQuery<{ users: TeamMember[] }>("/api/users", () =>
-    api.get("/api/users"),
+  const [showExternal, setShowExternal] = useState(false);
+  const wantExternal = canManage && showExternal;
+  const members = useQuery<{ users: TeamMember[] }>(
+    ["/api/users", wantExternal ? "with-external" : "internal"],
+    () => api.get(`/api/users${wantExternal ? "?includeExternal=1" : ""}`),
   );
   const freshList = { staleTime: 60_000 };
   const depts = useQuery<{ departments: Department[] }>(
@@ -721,12 +724,22 @@ export function TeamDirectory({
               />
             </div>
           </div>
-          <div className="border-t border-border-subtle bg-surface-2 px-5 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle bg-surface-2 px-5 py-2">
             <FilterPills<StatusPill>
               value={statusPill}
               onChange={setStatusPill}
               options={pillOptions}
             />
+            {canManage && (
+              <label className="flex flex-none items-center gap-1.5 text-[12.5px] text-ink-secondary">
+                <input
+                  type="checkbox"
+                  checked={showExternal}
+                  onChange={(e) => setShowExternal(e.target.checked)}
+                />
+                Show outsource
+              </label>
+            )}
           </div>
         </div>
 

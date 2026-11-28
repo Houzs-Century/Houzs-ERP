@@ -15,6 +15,14 @@ export type DriverRow = {
   created_at: string;
   threepl_company_id?: string | null;
   warehouse_id?: string | null;
+  // Office-maintained outsource-driver profile (owner 2026-11-28). The photo
+  // itself streams from /drivers/:id/photo; this is only the R2 key marker.
+  photo_r2_key?: string | null;
+  license_no?: string | null;
+  license_expiry?: string | null;
+  address?: string | null;
+  emergency_contact_name?: string | null;
+  emergency_contact_phone?: string | null;
 };
 
 export type NewDriver = {
@@ -27,6 +35,11 @@ export type NewDriver = {
   inHouse?: boolean;
   active?: boolean;
   warehouseId?: string | null;
+  licenseNo?: string | null;
+  licenseExpiry?: string | null;
+  address?: string | null;
+  emergencyContactName?: string | null;
+  emergencyContactPhone?: string | null;
 };
 
 export function useDrivers(opts?: { includeInactive?: boolean }) {
