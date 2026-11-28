@@ -21,7 +21,7 @@
 
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
-import { fmtDateTime } from "../vendor/shared/format";
+import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
 
 export type ChangeLogDocType = "SO" | "PO" | "DO" | "GRN";
 export type ChangeLogAuthor = "person" | "machine";
@@ -104,15 +104,6 @@ export const CL_DOC_TYPE_LABEL: Record<ChangeLogDocType, string> = {
   GRN: "Goods receipt",
 };
 
-/**
- * The verbs, in words rather than in the audit table's vocabulary. Both tables
- * are covered: so-audit.ts uses per-module verbs (UPDATE_LINE, ADD_PAYMENT),
- * entity-audit.ts uses one stable set across five document types.
- *
- * An UNKNOWN verb is NOT hidden and NOT rewritten into a guess: it renders as
- * itself. A renderer that silently swallows a verb it has not met is how a new
- * kind of change becomes invisible on the one page that exists to show changes.
- */
 const CL_ACTION_LABEL: Record<string, string> = {
   CREATE: "Created",
   UPDATE: "Changed",
@@ -163,8 +154,6 @@ export function clValueLabel(v: unknown): string {
   return String(v);
 }
 
-/** Field keys as they land in field_changes, in the owner's words where we know
- *  them. Anything unmapped renders as its own key — see clActionLabel. */
 const CL_FIELD_LABEL: Record<string, string> = {
   status: "Status",
   qty: "Quantity",

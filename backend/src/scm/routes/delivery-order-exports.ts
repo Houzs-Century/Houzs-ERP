@@ -38,8 +38,6 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
 export async function doExportRowsHandler(c: Ctx) {
   const sb = c.get('supabase');
-  /* The same row-level visibility as the list (GET /delivery-orders-mfg), and
-     the same refusal when there is no Houzs identity to scope by. */
   const canViewAll = canViewAllSales(c);
   const houzsUserId = c.get('houzsUser')?.id;
   if (!canViewAll && houzsUserId == null) {

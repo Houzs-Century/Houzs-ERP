@@ -1,9 +1,3 @@
-// Resolver tests for effective-dated product selling price (Pricing B, Phase 1).
-// The fake `sb` implements the real query semantics (company+code filter,
-// effective_from bound, multi-key order, limit 1) over an in-memory fixture, so
-// these prove the owner's worked example (1/1=100, 3/1=200, 5/1=500) resolves to
-// the price effective ON the document's date — and that an empty history falls
-// back to null (the flat mfg_products price).
 import { describe, expect, test } from 'vitest';
 import {
   resolveSellPriceSenAsOf,
@@ -14,12 +8,10 @@ type Row = {
   company_id: number;
   item_code: string;
   sell_price_sen: number | null;
-  effective_from: string; // YYYY-MM-DD (lexicographic == chronological)
-  created_at: string;      // ISO
+  effective_from: string;
+  created_at: string;
 };
 
-/** Minimal supabase-js stand-in that honours .eq/.lte/.gt/.order/.limit and
- *  returns the first row of the resolved set from .maybeSingle(). */
 function fakeSb(rows: Row[]) {
   return {
     from(_table: string) {
@@ -69,10 +61,10 @@ const OWNER_EXAMPLE: Row[] = [
 describe('resolveSellPriceSenAsOf', () => {
   test("owner example: an order takes the price effective on ITS date", async () => {
     const sb = fakeSb(OWNER_EXAMPLE);
-    expect(await resolveSellPriceSenAsOf(sb, 1, 'SOFA-X', '2026-02-10')).toBe(10000); // Jan price
-    expect(await resolveSellPriceSenAsOf(sb, 1, 'SOFA-X', '2026-04-01')).toBe(20000); // Mar price
-    expect(await resolveSellPriceSenAsOf(sb, 1, 'SOFA-X', '2026-06-01')).toBe(50000); // May price
-    expect(await resolveSellPriceSenAsOf(sb, 1, 'SOFA-X', '2026-05-01')).toBe(50000); // boundary = inclusive
+    expect(await resolveSellPriceSenAsOf(sb, 1, 'SOFA-X', '2026-02-10')).toBe(10000);
+    expect(await resolveSellPriceSenAsOf(sb, 1, 'SOFA-X', '2026-04-01')).toBe(20000);
+    expect(await resolveSellPriceSenAsOf(sb, 1, 'SOFA-X', '2026-06-01')).toBe(50000);
+    expect(await resolveSellPriceSenAsOf(sb, 1, 'SOFA-X', '2026-05-01')).toBe(50000);
   });
 
   test('before the first scheduled date → null (caller uses the flat price)', async () => {

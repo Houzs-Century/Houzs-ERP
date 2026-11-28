@@ -1,35 +1,16 @@
-// do-line-racks — the RACK column on the DO detail / printed DO.
-//
-// A DO line names the rack(s) its goods were received onto by ITS OWN source
-// PO's GRN, never every rack that happens to hold the same product code in the
-// warehouse (BUG-102, Sim 2026-10-10: HC-DO-2610-156 printed six racks against
-// two JAGER-(Q) bedframes whose GRNs recorded none). A GRN line saved without a
-// rack places nothing, so that line prints a dash.
-//
-// Placement → PO: warehouse_rack_items.source_grn_id → grn_items (same grn,
-// item_code, rack_id).purchase_order_item_id → purchase_order_items
-// .purchase_order_id, falling back to grns.purchase_order_id (a multi-PO GRN's
-// header names only its first PO). Manual stock-in placements carry no GRN and
-// are not attributed to any PO. An operator's explicit pick
-// (delivery_order_items.rack_id) wins over all of this.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { pgrestIn } from './pgrest-in-list';
 import { chunkIn } from './paginate-all';
 
 export type DoLineRacks = {
-  /** `${warehouse_id}::${item_code}::${po_number}` → rack labels, sorted. */
   byPo: Map<string, string[]>;
-  /** Every rack in the ship-from warehouse(s): id → label. */
   labelById: Map<string, string>;
 };
 
 async function readIn<T>(
   sb: any, table: string, cols: string, column: string, values: string[],
 ): Promise<T[]> {
-  /* Each batch is PAGED (chunkIn): a warehouse's racks, or the placements of 200
-     item codes, pass PostgREST's 1,000-row page, and the rows past it were
-     dropped without an error, so the printed DO lost rack labels. */
   const { data, error, truncated } = await chunkIn<T>(values, (part, from, to) =>
     pgrestIn(sb.from(table).select(cols), column, part).order('id').range(from, to));
   if (error) throw error;
@@ -115,7 +96,7 @@ export async function resolveDoLineRacks(
       }
     }
     for (const [k, set] of sets) byPo.set(k, [...set].sort());
-  } catch { /* rack / GRN tables unreadable — every line shows a dash */ }
+  } catch { }
   return { byPo, labelById };
 }
 
@@ -132,13 +113,27 @@ export function shippedFromRacks(rows: ReadonlyArray<{ item_code: string | null;
   return new Map([...out].map(([k, v]) => [k, [...v].sort()]));
 }
 
-/** The racks a DO stocked its goods out of (load / dispatch), read back by its own
- *  number from a company-scoped `warehouse_rack_movements` select. Best-effort like
- *  the receipt walk: no number or a failed read answers null. */
-export async function loadShippedFromRacks(scopedSelect: any, doNumber: string | null): Promise<Map<string, string[]> | null> {
-  if (!doNumber) return null;
-  const r = await scopedSelect.eq('source_doc_no', doNumber).eq('movement_type', 'STOCK_OUT');
-  return r.error ? null : shippedFromRacks((r.data ?? []) as Array<{ item_code: string | null; rack_label: string | null }>);
+/** DO number -> the racks that DO stocked its goods out of (load / dispatch), for many DOs in
+ *  one chunked read of `warehouse_rack_movements`. `scopedSelect` builds the caller's
+ *  company-scoped `select('source_doc_no, item_code, rack_label')`. Best-effort like the
+ *  receipt walk: a failed read answers null and every line falls back to the receipt walk. */
+export async function loadShippedFromRacksByDo(
+  scopedSelect: () => any,
+  doNumbers: ReadonlyArray<string | null>,
+): Promise<Map<string, Map<string, string[]>> | null> {
+  const nos = [...new Set(doNumbers.filter((n): n is string => !!n))];
+  const out = new Map<string, Map<string, string[]>>();
+  if (nos.length === 0) return out;
+  const { data, error, truncated } = await chunkIn<{ source_doc_no: string | null; item_code: string | null; rack_label: string | null }>(
+    nos, (part, from, to) => pgrestIn(scopedSelect(), 'source_doc_no', part).eq('movement_type', 'STOCK_OUT').order('id').range(from, to));
+  if (error || truncated) return null;
+  const byDo = new Map<string, Array<{ item_code: string | null; rack_label: string | null }>>();
+  for (const r of data) {
+    if (!r.source_doc_no) continue;
+    (byDo.get(r.source_doc_no) ?? byDo.set(r.source_doc_no, []).get(r.source_doc_no)!).push(r);
+  }
+  for (const [no, rows] of byDo) out.set(no, shippedFromRacks(rows));
+  return out;
 }
 
 export function racksForDoLine(

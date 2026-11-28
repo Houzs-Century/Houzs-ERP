@@ -1,10 +1,3 @@
-// PurchaseOrdersListV2 — Theme C redesign of the Purchase Orders listing.
-// Twin of the SO/DO/SI/DR listing V2 template, but flipped for the procurement
-// side of the ERP: money moves OUT to suppliers, and the star of the show is
-// what's still on order + committed but not yet received.
-//
-// Route: /scm/purchase-orders (App.tsx flips ScmPurchaseOrdersV2 here).
-// Data: usePurchaseOrders (vendored suppliers-queries slice).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { funnelTicked } from "../../hooks/useServerColumnFunnels";
@@ -44,7 +37,7 @@ import { MrpAsOf } from "../../components/MrpAsOf";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
 import { DataTable, type Column } from "../../components/DataTable";
-import { poDisplayNumber } from "../../vendor/scm/lib/po-status";
+import { poDisplayNumber } from "../../../../shared/src/vendor/scm/lib/po-status";
 import { diningLineRemark } from "../../vendor/scm/lib/po-dining-remark";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import {
@@ -93,12 +86,7 @@ import { purchaseOrderPrintChain } from "../../lib/printChain";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
 
-// Filter-pill buckets. Five map 1:1 onto a raw purchase_orders.status;
-// "outstanding" is a ROLL-UP over open + partial (raised, not yet fully
-// received) — the pill twin of the Outstanding stat card. Because it overlaps,
-// the pill counts no longer sum to All; that is intended.
 type StatusTab =
   | "all"
   | "outstanding"
@@ -109,7 +97,6 @@ type StatusTab =
   | "cancelled"
   | "on_hold";
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtRm = (centi: number): string => fmtSen(centi);
 
@@ -124,10 +111,6 @@ const supplierCodeOf = (r: PoHeaderRow): string => r.supplier?.code || "—";
 const itemsSummaryOf = (r: PoHeaderRow): string =>
   (r.items ?? []).map((it) => `${it.item_code}×${it.qty}`).join(" · ");
 
-/* Purchase Location display — the ONE warehouse rule, code first then name
-   (vendor/scm/lib/warehouse-label.ts). This column printed the NAME first and
-   the grid truncated it to "BALAKONG WAREHO…", while the same page's PDF
-   export already printed the CODE — one page, two answers for one warehouse. */
 const locationOf = (r: PoHeaderRow): string =>
   warehouseLabel(r.purchase_location) ?? "";
 
@@ -137,15 +120,9 @@ const locationOf = (r: PoHeaderRow): string =>
 const supplierSkusOf = (r: PoHeaderRow): string =>
   (r.items ?? []).map((it) => it.supplier_sku?.trim() || "—").join(" · ");
 
-// Committed value = total_sen (subtotal + tax); the PO's face value.
 const totalOf = (r: PoHeaderRow): number =>
   r.total_sen ?? r.subtotal_sen ?? 0;
 
-// The line export prints these same words (PO_STATUS_WORDS in
-// po-line-export-columns.ts, refereed against this map by its canonical test).
-// PO lifecycle: DRAFT → SUBMITTED → PARTIALLY_RECEIVED → RECEIVED, plus
-// CANCELLED. Bucket them for the pills; the raw status still surfaces in
-// the row Badge.
 const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
@@ -170,11 +147,7 @@ const statusFor = (
     bucket: "open",
   };
 
-// ─── GRN No cell ────────────────────────────────────────────────────────────
 
-/* A worker predating 2026-07-31 sends bare doc-number strings; the current one
-   sends { id, grnNumber }. Normalise both, and let `id` stay null for the old
-   shape — a chip with nowhere to go should not pretend to be a link. */
 const grnRefsOf = (
   raw: PoHeaderRow["transfer_to_grns"]
 ): Array<{ id: string | null; grnNumber: string; receivedAt: string | null }> =>
@@ -184,14 +157,6 @@ const grnRefsOf = (
       : { id: g.id, grnNumber: g.grnNumber, receivedAt: g.receivedAt ?? null }
   );
 
-/* The Goods Received doc(s) this PO was received into. Styled as the sibling of
-   AssignedSoCell one column over — same chip, same one-per-line stacking — so
-   the two "where did this PO go" columns read as one pair. A PO with nothing
-   received yet is the normal case, not a gap: it shows a dash.
-
-   Every GRN is listed. A partially-received PO having more than one GRN is the
-   whole point of the column — 2990-PO-2606-024 has two, and showing one of them
-   plus a "+1" is exactly the view that let its second receipt go unnoticed. */
 function GrnNoCell({
   grns,
   onOpenGrn,
@@ -253,7 +218,6 @@ function GrnDateCell({ grns }: { grns: PoHeaderRow["transfer_to_grns"] }) {
   );
 }
 
-// ─── Split-menu dropdown ───────────────────────────────────────────────────
 
 function SplitDropdown({
   onFromSo,
@@ -261,7 +225,6 @@ function SplitDropdown({
   onDuplicate,
 }: {
   onFromSo: () => void;
-  /** Absent when the user may not edit purchase orders — the item is not offered. */
   onImport: (() => void) | null;
   onDuplicate: () => void;
 }) {
@@ -352,7 +315,6 @@ function ViewToggle({
   );
 }
 
-// ─── Cards grid ────────────────────────────────────────────────────────────
 
 function CardsGrid({ rows, onOpen }: { rows: PoHeaderRow[]; onOpen: (r: PoHeaderRow) => void }) {
   if (rows.length === 0) {
@@ -415,10 +377,7 @@ function CardsGrid({ rows, onOpen }: { rows: PoHeaderRow[]; onOpen: (r: PoHeader
   );
 }
 
-// ─── Detail drawer ─────────────────────────────────────────────────────────
 
-// Exported for the dining-remark drawer test (PurchaseOrdersListV2.dining-remark
-// .test.tsx) — rendered in isolation with a faked usePurchaseOrderDetail.
 export function DetailDrawer({
   row,
   onClose,
@@ -762,27 +721,15 @@ function TotalRow({ k, v, strong }: { k: string; v: string; strong?: boolean }) 
   );
 }
 
-// Table column key → backend sort-whitelist column. PO backend whitelist is
-// { po_date, po_number, status, total_sen }; only `total` differs from its
-// backend name. Non-whitelisted columns (supplier / expected) carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
   total: "total_sen",
 };
 
-// ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
-// Inline per-line breakdown for one PO, rendered under its parent row when the
-// chevron is toggled. Lazy-fetches via the SAME usePurchaseOrderDetail hook the
-// drawer uses — TanStack caches it, so expanding a row the drawer already opened
-// (or re-expanding) is instant. Group + item code/variant + Qty (ordered) +
-// Amount, via the shared DocumentLinesExpansion. A PO is a purchase-side doc
-// with no MRP coverage on its lines, so the SO/DO-only Stock + Incoming PO
-// columns are correctly absent.
 function PoLinesExpansion({ id }: { id: string }) {
   const navigate = useNavigate();
   const detailQ = usePurchaseOrderDetail(id);
   const covQ = usePoSoCoverage("po", id);
   const byCode = originsByCode(covQ.data);
-  // PR-3: the parallel stored-origin "bought for" slot, per SKU.
   const provByCode = provenanceByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
   const deliveredMap = deliveredByCode(covQ.data);
@@ -819,7 +766,6 @@ function PoLinesExpansion({ id }: { id: string }) {
   );
 }
 
-// ─── Main page ──────────────────────────────────────────────────────────────
 
 export function PurchaseOrdersListV2() {
   const navigate = useNavigate();
@@ -837,8 +783,6 @@ export function PurchaseOrdersListV2() {
 
   const [selected, setSelected] = useState<PoHeaderRow | null>(null);
   const [sort, setSort] = useState<string | undefined>(undefined);
-  // Multi-select → batch-convert N POs into one GRN. State is owned here (the
-  // DataTable `selection` prop only renders the checkboxes + reports toggles).
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
   /* The SERVER-FILTERABLE column funnels, reported by DataTable's
@@ -852,10 +796,6 @@ export function PurchaseOrdersListV2() {
   const [serverFunnels, setServerFunnels] = useState<{ creditorNames?: string[]; creditorCodes?: string[]; currencies?: string[]; docDates?: string[]; from?: string; to?: string }>({});
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
-  // Send the active tab's BUCKET NAME as `status`; the backend resolves each
-  // bucket to the raw status it covers (open→SUBMITTED, partial→PARTIALLY_RECEIVED,
-  // received→RECEIVED, draft/cancelled 1:1, outstanding→SUBMITTED +
-  // PARTIALLY_RECEIVED). `all` omits the filter.
   const apiStatus = status === "all" ? undefined : status;
 
   const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = usePurchaseOrdersPaged({
@@ -866,8 +806,6 @@ export function PurchaseOrdersListV2() {
     sort,
     ...serverFunnels,
   });
-  /* The server-filtered funnels list and count EVERY matching order, so an
-     option's count before the click equals the rows after it (DEV-13). */
   const facets = usePoListFacets({ status: apiStatus, q: debouncedSearch, ...serverFunnels }).data?.facets;
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -878,20 +816,12 @@ export function PurchaseOrdersListV2() {
     hasError: Boolean(error),
   });
   const listLoading = isLoading || searchTransition.isSearching;
-  // The list below is replaced by a pending panel while a search is in flight,
-  // and these tiles summarise the SAME payload - so a settled-looking "RM 0.00"
-  // (or the PREVIOUS term's money under a placeholder page) would outlive the
-  // rows it describes. Same flag SearchScopeHint already uses for its count.
   const statsFailed = Boolean(error);
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const { cancelPo } = usePoCancelAction();
   const holdAction = useHoldAction("po");
 
-  // Server already filtered + sorted this page — render verbatim. The MRP-derived
-  // columns (Assigned SO / Delivered) arrive from the deferred enrichment endpoint
-  // a beat later and are merged in here, so opening the list no longer waits on a
-  // company-wide computeMrp (perf/po-grn-list-mrp-off-load).
   const serverRows = (data?.purchaseOrders ?? []) as PoHeaderRow[];
   const { rows, mrp: mrpStatus } = useEnrichedPoListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
@@ -912,10 +842,6 @@ export function PurchaseOrdersListV2() {
      compares LENGTH rather than array identity, now live once in the hook. */
   const visible = useVisibleRows(rows);
 
-  /* A bulk action acts on the ticked rows the operator can SEE (sister review
-     G14): a tick left on a row a later search or funnel hid used to ride along
-     into "Supplier date (N)", which listed the visible POs and wrote all N.
-     A new search, tab or server filter starts with no ticks. */
   const tickedRows = useMemo(
     () => visible.rows.filter((r) => selectedIds.has(r.id)),
     [visible.rows, selectedIds],
@@ -925,8 +851,6 @@ export function PurchaseOrdersListV2() {
     setSelectedIds(new Set());
   }, [debouncedSearch, status, serverFunnelsSig]);
 
-  // Money-out KPIs sum the rows ON SCREEN (the paginated contract has no
-  // full-set money sums), so the cards and the table can never disagree.
   const money = useMemo(() => {
     let committed = 0;
     let outstanding = 0;
@@ -947,10 +871,6 @@ export function PurchaseOrdersListV2() {
     else next.set("page", String(p));
     setParams(next, { replace: true });
   };
-  /* DataTable reports its funnel state here; we lift the SERVER-FILTERABLE ones
-     into the list query. A changed server funnel restarts at page 1 (mirrors
-     setSortAndReset), but the FIRST report — the funnel DataTable restored from
-     storage on mount — must not clobber a deep-linked ?page=. */
   const funnelSyncedRef = useRef(false);
   const serverFunnelSigRef = useRef("");
   const onColFiltersChange = (colFilters: Record<string, string[] | undefined>) => {
@@ -1053,13 +973,9 @@ export function PurchaseOrdersListV2() {
   const goEdit = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}?edit=1`);
   const printDocument = usePrintDocument();
   const goFullPage = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}`);
-  // Transfer to Goods Received routes to the reviewable From-PO picker pre-scoped to this
-  // PO (?poId=<id>); the picker pre-ticks the PO's outstanding lines so the
-  // operator reviews a ready draft and only Save creates the GRN.
   const goGrnFromPo = (r: PoHeaderRow) =>
     navigate(convertToLink('poToGrn', r.id));
 
-  // ── Multi-select bulk convert ──────────────────────────────────────────────
   const toggleSelect = (id: string) =>
     setSelectedIds((s) => {
       const next = new Set(s);
@@ -1075,8 +991,6 @@ export function PurchaseOrdersListV2() {
       return next;
     });
   const clearSelection = () => setSelectedIds(new Set());
-  // Batch convert → the From-PO picker accepts a comma-separated poId list and
-  // pre-ticks each PO's outstanding lines (honouring its one-warehouse lock).
   const convertSelectedToGrn = () => {
     if (tickedRows.length === 0) return;
     const ids = tickedRows.map((r) => r.id);
@@ -1195,17 +1109,6 @@ export function PurchaseOrdersListV2() {
   };
   const batchPrint = usePrintPreview(deliverSelectedPos);
 
-  /* RECEIVABLE is the server's own allow-list (grns.ts RECEIVABLE_PO_STATUSES)
-     — SUBMITTED or PARTIALLY_RECEIVED.
-
-     THE HOLD USED TO RIDE ALONG FOR FREE AND NO LONGER DOES. This comment said
-     "a held or cancelled PO is excluded by being absent from it, which is why
-     ON_HOLD needed no line here", and that was true only while a hold OVERWROTE
-     the status. Since mig 0324 a held PO still reads SUBMITTED, so `rowIsHeld`
-     is checked explicitly — on the server too (grns.ts `isReceivablePo`), which
-     is the half that actually protects the stock. */
-  /* Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status.
-     The prompt wording and the write live in ./use-hold-action.ts. */
   const setPoHold = (r: PoHeaderRow, onHold: boolean) => holdAction(r.id, r.po_number, onHold);
   const poContextMenu = purchaseOrderRowMenu<PoHeaderRow>({
     open: goFullPage, edit: goEdit, print: printDocument,
@@ -1222,10 +1125,6 @@ export function PurchaseOrdersListV2() {
     if (await cancelPo(r.id, r.po_number)) setSelected(null);
   };
 
-  /* Default view = AutoCount's PO listing columns, in AutoCount's order (owner
-     2026-09-15: a default export equals the AutoCount file). Every other column
-     stays in the chooser, hidden until picked; the export follows whatever the
-     operator shows. */
   const lineCols = poLineColumns();
   // _R suffix applies to whichever number is shown (owner report 2026-09-18:
   // an AC-linked PO's revision was invisible because the AC doc no bypassed
@@ -1331,7 +1230,6 @@ export function PurchaseOrdersListV2() {
       lineValue: (_r, l) => l.delivery_date,
       exportFormat: "date",
       render: (r) => {
-        // Sent to the supplier and not fully received: a draft or a held PO is not late.
         const bucket = statusFor(r.status).bucket;
         const late = isPastDue(r.expected_at, bucket === "open" || bucket === "partial");
         return (
@@ -1443,13 +1341,11 @@ export function PurchaseOrdersListV2() {
       label: "Status",
       width: "144px",
       defaultHidden: true,
-      // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       // The export writes the word on screen, hold included (owner 2026-09-15).
       getValue: (r) => poStatusWord(r.status, rowIsHeld(r)) ?? "",
       render: (r) => {
         const st = statusFor(r.status);
-        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
         return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
@@ -1460,7 +1356,6 @@ export function PurchaseOrdersListV2() {
       defaultHidden: true,
       align: "right",
       getValue: (r) => totalOf(r),
-      /* Stored in sen; the file is in ringgit (docs/bugs — Total exported 1500000 for RM15,000.00). */
       exportValue: (r) => senToRinggit(totalOf(r), 2),
       exportFormat: "money",
       render: (r) => (
@@ -1474,10 +1369,6 @@ export function PurchaseOrdersListV2() {
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = [
     { value: "all", label: `All · ${counts.all}` },
-    // Roll-up first: "what's still on order" is the working view of this page,
-    // and it reads as a summary of the 1:1 pills that follow it. A worker
-    // predating the bucket omits the key — open + partial IS the same number
-    // off the same server-side aggregate, so derive rather than show nothing.
     {
       value: "outstanding",
       label: `Outstanding · ${counts.outstanding ?? counts.open + counts.partial}`,
@@ -1498,7 +1389,6 @@ export function PurchaseOrdersListV2() {
           selected ? "md:pr-[540px]" : ""
         )}
       >
-        {/* Mobile-only compact header */}
         <div className="mb-3 flex items-start justify-between gap-3 md:hidden">
           <div className="min-w-0">
             <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
@@ -1510,7 +1400,6 @@ export function PurchaseOrdersListV2() {
           </div>
         </div>
 
-        {/* Desktop chrome */}
         <div className="hidden md:block">
           <PageHeader
             eyebrow="Procurement"
@@ -1548,7 +1437,6 @@ export function PurchaseOrdersListV2() {
 
         <MrpAsOf status={mrpStatus} className="mb-2" />
 
-        {/* Stat strip */}
         <div className="mb-5 hidden grid-cols-2 gap-3 md:grid lg:grid-cols-4">
           {/* Owner 2026-08-12 — every tile now describes the rows ON SCREEN, and
               says so when a column funnel is narrowing them. The count tile is
@@ -1594,7 +1482,6 @@ export function PurchaseOrdersListV2() {
           />
         </div>
 
-        {/* Mobile sticky search */}
         <div className="sticky top-0 z-10 -mx-4 mb-3 bg-bg/95 px-4 py-2 backdrop-blur-sm md:hidden">
           <input
             type="search"
@@ -1607,7 +1494,6 @@ export function PurchaseOrdersListV2() {
           <SearchScopeHint scope="server" searching={searchTransition.isSearching} countPending={isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale} resultCount={total} term={search} className="mt-1" />
         </div>
 
-        {/* Filter row */}
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <FilterPills
             options={statusPillOptions}
@@ -1620,7 +1506,6 @@ export function PurchaseOrdersListV2() {
           </div>
         </div>
 
-        {/* Phone → Cards */}
         <div className="md:hidden">
           {error ? <ListErrorPanel message={(error as Error).message} /> : searchTransition.resultsAreStale ? <SearchPendingPanel label={searchTransition.statusText} /> : <CardsGrid rows={rows} onOpen={(r) => setSelected(r)} />}
           {!searchTransition.resultsAreStale && <div className="pb-24">
@@ -1634,7 +1519,6 @@ export function PurchaseOrdersListV2() {
           </div>}
         </div>
 
-        {/* Desktop → Table / Cards */}
         <div className="hidden md:block">
           {view === "table" ? (
             <>

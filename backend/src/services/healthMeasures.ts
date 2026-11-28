@@ -2,10 +2,6 @@ import { sql, type SQL } from "drizzle-orm";
 import type { DB } from "../db/client";
 import { JOB_CADENCE_MIN, classifyJob, classifyQueue, type Verdict } from "./jobHealth";
 
-// The measurements behind the System Health "Background jobs" and "Waiting
-// queues" panels (routes/systemHealthJobs.ts), shared with the 5-minute report
-// to the IT Hub (services/healthHub.ts) so the two can never disagree. Every
-// read is a system-wide count with no row data.
 
 const iso = (v: unknown) => (v == null ? null : new Date(v as string).toISOString());
 
@@ -82,9 +78,6 @@ export async function readJobs(db: DB, nowMs: number): Promise<JobRow[]> {
   });
 }
 
-// One statement per queue, each returning waiting / failed / oldest_s. "failed"
-// is failures in the last 24h, except the allocation queue's DEAD row, which is
-// a standing stop (not an event) and counts while it exists.
 export const QUEUES: Array<{ name: string; label: string; query: SQL }> = [
   {
     name: "email_outbox",
@@ -173,7 +166,6 @@ export async function readQueues(db: DB): Promise<QueueRow[]> {
   return Promise.all(
     QUEUES.map(async ({ name, label, query }): Promise<QueueRow> => {
       try {
-        // An aggregate with no GROUP BY always returns exactly one row.
         const [r] = await db.execute<{ waiting: number; failed: number; oldest_s: number | null }>(query);
         const oldestWaitingMin = r.oldest_s == null ? null : Math.round(r.oldest_s / 60);
         const failed = r.failed;

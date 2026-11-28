@@ -46,6 +46,7 @@ import { layOutBlock, type LaidLine, type LaidNode, type LayoutItem } from '../.
 import type { ChargeRates, DeptBasis, MonthCharges } from './department-charges';
 import { fmtMoneySen } from '../shared/format';
 import type { UnitRow, UnitView } from './department-units';
+import type { RebateFigure } from './supplier-rebates';
 import {
   GA_TEAMS, GA_TEAM_LABEL, MANPOWER_ROWS, OP_REGION_CODES, OP_ROWS, accountHome, lineHome, resolveDept,
   type DepartmentPlan, type DeptAccount, type DeptKey, type GaTeam, type LineHome, type ManpowerRow, type Nature, type OpRegion, type OpRow,
@@ -53,7 +54,6 @@ import {
 
 const monthOf = (day: string): string => day.slice(0, 7);
 
-/* ── ALL: one P&L line split across the departments ───────────────────────── */
 
 /** A P&L line's figure per department of the company (and `none`), keyed by DeptKey. */
 export type DeptCells = Partial<Record<DeptKey, number>>;
@@ -158,7 +158,6 @@ export function splitPnlLines(input: {
   return out;
 }
 
-/* ── OPERATION ───────────────────────────────────────────────────────────── */
 
 export type OpCells = Record<OpRegion, number>;
 const zeroOp = (): OpCells => ({ PG: 0, KL: 0, EM: 0 });
@@ -204,20 +203,14 @@ const ROWS_OF = (group: OpRowGroup): OpRowKey[] => operationRows(0).filter((r) =
 
 /** One month of the Logistics P&L as the Operation sheet reads it. */
 export type LogisticsMonthIn = {
-  /** The DOs' value, their count, the P&L's Transport Income (its % of DO), its
-      fair income and its net — each by Logistics region. */
   doValue: Partial<Record<RegionCode, number>>;
   doCount: Partial<Record<RegionCode, number>>;
   transportIncome: Partial<Record<RegionCode, number>>;
   fairIncome: Partial<Record<RegionCode, number>>;
   net: Partial<Record<RegionCode, number>>;
-  /** Each fair opened in the month: its transport income and its setup / dismantle
-      transport cost (the in-house charge and the outsourced lines). */
   fairs: ReadonlyArray<{ id: number; code: string | null; name: string; venue: string | null; region: RegionCode; incomeSen: number; costSen: number }>;
 };
 
-/** The sheet's row an OPERATION CHARGES line fills, by who was billed — the Logistics
-    P&L's own reading of the debtor (incomeRowOf): the owner's "Income:- 2990 income". */
 const CHARGES_ROW: Record<IncomeRow, 'income_2990' | 'income_other'> = { '2990': 'income_2990', houzs: 'income_other', conts: 'income_other', hookka: 'income_other' };
 
 export type OpSpreadKind = 'upkeep' | 'insurance';
@@ -235,19 +228,12 @@ export type OpManpowerLine = {
 
 /** How an amount behind an Operation figure was arrived at, where it is not simply its line's. */
 export type OpHow =
-  /** A payroll line naming no region: the whole line, shared by the month's DO value. */
   | { kind: 'shared'; wholeSen: number }
-  /** One month's part (`part` of `months`) of an upkeep or insurance bill. */
   | { kind: 'spread'; wholeSen: number; part: number; months: number }
-  /** The month's Delivery Orders in the region, as the Logistics cost report counts them. */
   | { kind: 'dos'; count: number }
-  /** Operation's rate of the month's DO value in the region. */
   | { kind: 'rate'; baseSen: number; bp: number }
-  /** The Logistics cost report's Transport Income (its own % of the DO value). */
   | { kind: 'transport'; baseSen: number }
-  /** The Logistics cost report's net, less its fair income. */
   | { kind: 'logistics'; netSen: number; fairIncomeSen: number }
-  /** One fair's transport income less its setup and dismantle transport. */
   | { kind: 'fair'; incomeSen: number; costSen: number };
 
 /** One amount behind a figure of the Operation sheet — a ledger line, an Other Debtor
@@ -256,15 +242,11 @@ export type OpHow =
     Expenses, Net, Net after) IS its lines added up. */
 export type OpLine = {
   id: string; row: OpRowKey; month: string; cells: OpCells;
-  /** A ledger line (a spread bill's month too), an Other Debtor bill line, a fair, a figure of the Logistics cost report. */
   src: 'ledger' | 'bill' | 'fair' | 'figure';
   day: string | null;
-  /** The journal entry, the bill or the fair's code. */
   ref: string | null;
   accountCode: string | null; accountName: string | null;
-  /** The line's own words: a ledger line's notes, a bill line's description, a fair's name. */
   text: string | null;
-  /** Who was billed; a fair's venue. */
   party: string | null;
   how: OpHow | null;
 };
@@ -272,11 +254,8 @@ export type OpLine = {
 export type OperationInput = {
   months: readonly string[];
   incomeBp: number;
-  /** The Logistics cost report's months, by Logistics region. */
   logistics: ReadonlyMap<string, LogisticsMonthIn>;
   bills: readonly BillLine[];
-  /** Every leg on the payroll accounts and the Operation accounts, from far enough
-      back for the longest spread; posted, on neither side of a reversal. */
   legs: readonly Leg[];
   chart: ReadonlyMap<string, DeptAccount>;
   payroll: ReadonlySet<string>;
@@ -287,7 +266,6 @@ export type OperationPnl = {
   months: string[];
   incomeBp: number;
   perMonth: OperationMonth[];
-  /** What every row but the results is made of, in the sheet's order. */
   lines: OpLine[];
   income: OpIncomeLine[];
   manpower: OpManpowerLine[];
@@ -322,13 +300,11 @@ export function buildOperationPnl(input: OperationInput): OperationPnl {
   const inRange = new Set(months);
   const doValue = new Map(months.map((m) => [m, fold(input.logistics.get(m)?.doValue ?? {})] as const));
   const only = (region: OpRegion, sen: number): OpCells => ({ ...zeroOp(), [region]: sen });
-  /* What every row but the results is made of; the rows are these added up, below. */
   const lines: OpLine[] = [];
   const ledger = (l: Leg, row: OpRowKey, month: string, cells: OpCells, how: OpHow | null, id = `gl:${l.lineId}`): OpLine => ({
     id, row, month, cells, src: 'ledger', day: l.day, ref: l.docNo, accountCode: l.accountCode, accountName: l.accountName, text: l.notes, party: null, how,
   });
 
-  /* The recharges billed: each in the month it names, in the region it names (else KL). */
   const income: OpIncomeLine[] = [];
   for (const b of input.bills) {
     const home = lineHome(undefined, b.description, { payroll: false, recharge: true });
@@ -344,7 +320,6 @@ export function buildOperationPnl(input: OperationInput): OperationPnl {
     income.push({ ...b, month, key, region });
   }
 
-  /* The books: manpower by team line, the Operation accounts by their row and region. */
   const manpower: OpManpowerLine[] = [];
   const spreads: OpSpreadRow[] = [];
   for (const l of input.legs) {
@@ -387,8 +362,6 @@ export function buildOperationPnl(input: OperationInput): OperationPnl {
     lines.push(ledger(l, row, month, only(region, net), null));
   }
 
-  /* The Logistics cost report's figures, region by region: the DOs, Operation's rate of
-     their value, the report's own Transport Income, its net less its fair income, the fairs. */
   for (const m of months) {
     const lg = input.logistics.get(m);
     const dv = doValue.get(m)!;
@@ -416,7 +389,6 @@ export function buildOperationPnl(input: OperationInput): OperationPnl {
     }
   }
 
-  /* Each month: its lines added up, then the results, region by region. */
   const byMonth = new Map(months.map((m) => [m, emptyRows()] as const));
   for (const l of lines) addInto(byMonth.get(l.month)![l.row], l.cells);
   const perMonth: OperationMonth[] = months.map((m) => {
@@ -444,20 +416,15 @@ export const opSum = (p: OperationPnl, key: OpRowKey, months: readonly string[] 
   p.perMonth.filter((m) => months.includes(m.month)).reduce((s, m) => s + regions.reduce((t, r) => t + m.rows[key][r], 0), 0);
 export { opTotal };
 
-/* ── G&A ─────────────────────────────────────────────────────────────────── */
 
 export type GaInput = {
   months: readonly string[];
-  /** Each month's Performance sales (the Performance P&L's own total). */
   sales: ReadonlyMap<string, number>;
   shareBp: number;
-  /** Every leg in the months on the payroll accounts and the accounts the Department column gives G&A. */
   legs: readonly Leg[];
   chart: ReadonlyMap<string, DeptAccount>;
   payroll: ReadonlySet<string>;
-  /** The company's departments: what folds into G&A (Houzs's showroom). */
   plan: DepartmentPlan;
-  /** The P&L's expense tree, which G&A's accounts are laid on. */
   layout: readonly LayoutItem[];
   companyId: number;
 };
@@ -466,9 +433,7 @@ export type GaPnl = {
   months: string[];
   shareBp: number;
   perMonth: GaMonth[];
-  /** G&A's accounts on the P&L's tree; every node carries its figure per month in `cells`. */
   tree: LaidNode[];
-  /** The payroll lines counted for each team, for the screen to list. */
   teams: Array<{ team: GaTeam; label: string; lines: Array<{ lineId: string; day: string; accountCode: string; notes: string | null; amountSen: number }> }>;
 };
 
@@ -511,8 +476,6 @@ export function buildGaPnl(input: GaInput): GaPnl {
     }
   }
 
-  /* The team rows print where the payroll sits on the P&L's tree: under the first
-     payroll account the tree places (Salary & related), else at the foot. */
   const placedCodes = new Set<string>();
   const walk = (items: readonly LayoutItem[]) => {
     for (const it of items) {
@@ -547,23 +510,18 @@ export function buildGaPnl(input: GaInput): GaPnl {
   return { months, shareBp: input.shareBp, perMonth, tree, teams };
 }
 
-/* ── ONE DEPARTMENT: its column of the P&L, month by month ─────────────────── */
 
 export type DeptMonthSplit = { month: string; blocks: Record<PnlBlock, ReadonlyArray<{ code: string; name: string; cells: DeptCells }>> };
 export type DeptViewMonth = {
   month: string; salesSen: number; costOfSalesSen: number; grossSen: number; otherIncomeSen: number;
   expensesSen: number; taxationSen: number;
-  /** What it pays the other departments (G&A, Operation, Setup & dismantle), and the sales
-      excluding service every rate is of — null for a department that pays none. */
   chargesSen: number;
   baseSen: number | null;
   netSen: number;
 };
 export type DeptView = {
   dept: DeptKey; basis: DeptBasis; months: string[]; perMonth: DeptViewMonth[]; tree: Record<PnlBlock, LaidNode[]>;
-  /** What it pays the other departments, a row each, every month's figure in `cells`. */
   charges: LaidNode[];
-  /** By order: the orders counted and how many are not delivered yet. */
   orders: { counted: number; notDelivered: number } | null;
 };
 
@@ -593,8 +551,6 @@ export type DeptCharges = {
   merchandise: { codes: ReadonlySet<string> } | null;
 };
 
-/** The product groups as tree rows (no account: a group's figure is the orders'), each
-    month's figure in `cells`; a group with nothing in any month is left out. */
 function orderGroupNodes(months: readonly OrdersMonthIn[], pick: 'salesSen' | 'cogsSen'): LaidNode[] {
   const byKey = new Map<string, { label: string; cells: Record<string, number> }>();
   for (const m of months) {
@@ -613,7 +569,6 @@ function orderGroupNodes(months: readonly OrdersMonthIn[], pick: 'salesSen' | 'c
 }
 
 const pctWords = (bp: number): string => `${(bp / 100).toFixed(2).replace(/\.?0+$/, '')}%`;
-/** A row of figures by month (no account behind it: it opens nothing). */
 const figureNode = (id: string, label: string, cells: Record<string, number>): LaidNode => ({
   kind: 'account', id, key: id, label, pct: null, children: [], cells, amountSen: Object.values(cells).reduce((a, b) => a + b, 0),
 });
@@ -624,12 +579,14 @@ const figureNode = (id: string, label: string, cells: Record<string, number>): L
     cost of sales are the product groups' from the orders and the commission account reads
     its bills. With charges, the fair transport leaves (Setup & dismantle carries it), in
     Performance merchandise stands where the terminal charges stood, and what it pays the
-    other departments is a block of its own. */
+    other departments is a block of its own. The supplier rebates estimated from purchases
+    (lib/supplier-rebates.ts) are added under other income. */
 export function buildDeptView(input: {
   dept: DeptKey; basis: DeptBasis; months: readonly string[]; split: readonly DeptMonthSplit[];
   layout: Readonly<Record<string, readonly LayoutItem[]>>; companyId: number;
   orders: DeptOrders | null;
   charges: DeptCharges | null;
+  rebates: readonly RebateFigure[] | null;
 }): DeptView {
   const tree = {} as Record<PnlBlock, LaidNode[]>;
   const perBlock = {} as Record<PnlBlock, Record<string, number>>;
@@ -669,7 +626,6 @@ export function buildDeptView(input: {
       const cur = byCode.get(c.code);
       if (cur) cur.label = c.label;
     }
-    /* Merchandise stands where the terminal charges stood, under its own sentence. */
     if (merch && ch) {
       const first = [...merch.codes].sort()[0]!;
       const named = [...new Map(replaced.map((r) => [r.code, r.name] as const)).entries()].map(([code, name]) => `${code} ${name}`).join(', ');
@@ -686,9 +642,14 @@ export function buildDeptView(input: {
         code, name: x.name, ...(x.label ? { label: x.label } : {}), cells, amountSen: Object.values(cells).reduce((a, b) => a + b, 0),
       }));
     tree[block] = layOutBlock([...(input.layout[block] ?? [])] as LayoutItem[], lines, input.companyId, null);
+    if (block === 'otherIncome') {
+      for (const f of input.rebates ?? []) {
+        tree[block].push(figureNode(f.id, f.label, f.cells));
+        for (const [m, v] of Object.entries(f.cells)) total[m] = (total[m] ?? 0) + v;
+      }
+    }
     perBlock[block] = total;
   }
-  /* What it pays the other departments: a row each, only for a department it pays. */
   const charges: LaidNode[] = [];
   const chargeTotal: Record<string, number> = {};
   if (ch) {
@@ -744,7 +705,6 @@ export function bookedByAccount(split: readonly DeptMonthSplit[], codes: Readonl
   return [...by.values()].sort((a, b) => a.code.localeCompare(b.code));
 }
 
-/* ── ALL: every department's own P&L, side by side ────────────────────────── */
 
 /** A department's own P&L in a few figures (owner 2026-11-25): what it earns — its sales,
     or what the other departments pay it — what that income costs directly, its other

@@ -1,5 +1,3 @@
-/* Calendar cell and overlay pieces: the task chip, the per-day count badge, the
- * bar hover card and the "+N more" day modal. */
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { CalendarProject, CalendarTask } from "./calendarModel";

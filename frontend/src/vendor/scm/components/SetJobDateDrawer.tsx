@@ -26,9 +26,9 @@ import {
   useScheduleDelivery,
   useUpdateDeliveryFields,
   assrJobKindLabel,
-  AMEND_REASONS,
   type PlanningOrder,
 } from '../lib/delivery-planning-queries';
+import { useAmendReasonOptions } from '../lib/delivery-amend-reasons-queries';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
 import { DateField } from "./DateField";
@@ -40,22 +40,20 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
   const updateFields = useUpdateDeliveryFields();
   const notify = useNotify();
 
-  /* The date Logistics confirmed (amended_delivery_date). Not confirmed yet: the
-     field opens on Service's requested date, so saving it confirms that date. */
   const current = (order.amended_delivery_date ?? '').slice(0, 10);
   const requested = (order.customer_delivery_date ?? '').slice(0, 10);
   const [date, setDate] = useState(current || requested);
 
-  /* The reason this leg's date moved (owner 2026-11-16) — the same preset list the
+  /* The reason this leg's date moved (owner 2026-11-16) — the same managed list the
      board's Amend Reason column offers; free text already on the leg is kept. */
   const currentReason = order.amend_reason ?? '';
   const [reason, setReason] = useState(currentReason);
+  const reasonOptions = useAmendReasonOptions();
 
   const legLabel = assrJobKindLabel(order.job_kind);
   const busy = sched.isPending || updateFields.isPending;
   const dirty = date !== current || reason !== currentReason;
 
-  // The date write (also used by "Clear date"); owns the success toast + close.
   const saveDate = (value: string | null) => {
     sched.mutate(
       {
@@ -83,8 +81,6 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
     );
   };
 
-  /* Save: record the per-leg amend reason FIRST (so a failure surfaces before the
-     date moves), then the date. Reason-only change closes with its own toast. */
   const saveAll = () => {
     const dateVal = date || null;
     const reasonVal = reason || null;
@@ -150,11 +146,10 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
               onChange={(e) => setReason(e.target.value)}
             >
               <option value="">—</option>
-              {/* Keep any free-text reason already on the leg selectable. */}
-              {currentReason && !(AMEND_REASONS as readonly string[]).includes(currentReason)
+              {currentReason && !reasonOptions.includes(currentReason)
                 ? <option value={currentReason}>{currentReason}</option>
                 : null}
-              {AMEND_REASONS.map((r) => (
+              {reasonOptions.map((r) => (
                 <option key={r} value={r}>{r}</option>
               ))}
             </select>
@@ -166,9 +161,6 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-3)', padding: 'var(--space-4)' }}>
-          {/* Clearing is its own action rather than "save an empty field": an
-              operator emptying the box and pressing Save should not have to
-              wonder whether that meant anything. */}
           <Button variant="ghost" onClick={() => saveDate(null)} disabled={busy || !current}>
             Clear date
           </Button>

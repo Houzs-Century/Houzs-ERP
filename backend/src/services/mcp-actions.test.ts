@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { actionOutcome, exportAlive, flowAnchorFromId, flowAnchorFromSearch, myRange, parseWhen, pdfKind, pickDateAmount, proposeEmail, proposeMeeting, shapeFlow, type MeetingBootstrap } from "./mcp-actions";
+import { actionOutcome, exportAlive, flowAnchorFromId, flowAnchorFromSearch, myRange, parseWhen, pdfDisposition, pdfKind, pickDateAmount, proposeEmail, proposeMeeting, shapeFlow, type MeetingBootstrap } from "./mcp-actions";
 import { admitMcpWrite, armAction, ARMED_TTL_MS } from "./mcp-inner";
 
-const NOW = Date.parse("2026-11-26T02:00:00Z"); // 10:00 Malaysia time
+const NOW = Date.parse("2026-11-26T02:00:00Z");
 const boot: MeetingBootstrap = {
   me: "u1",
   people: [
@@ -83,12 +83,12 @@ describe("confirmed-action outcome and fence", () => {
 
   it("an armed action expires and is single use", () => {
     const t = Date.now();
-    armAction("mcpx_exp", "email", "tok", t);
+    armAction("mcpx_exp", "email", "tok", "/api/mail-center/compose", t);
     expect(admitMcpWrite({ method: "POST", path: "/api/mail-center/compose", actionId: "mcpx_exp", tokenId: "tok", now: t + ARMED_TTL_MS + 1 })).toBe(false);
-    armAction("mcpx_once", "email", "tok", t);
+    armAction("mcpx_once", "email", "tok", "/api/mail-center/compose", t);
     expect(admitMcpWrite({ method: "POST", path: "/api/mail-center/compose/", actionId: "mcpx_once", tokenId: "tok", now: t })).toBe(true);
     expect(admitMcpWrite({ method: "POST", path: "/api/mail-center/compose", actionId: "mcpx_once", tokenId: "tok", now: t })).toBe(false);
-    armAction("mcpx_put", "email", "tok", t);
+    armAction("mcpx_put", "email", "tok", "/api/mail-center/compose", t);
     expect(admitMcpWrite({ method: "PUT", path: "/api/mail-center/compose", actionId: "mcpx_put", tokenId: "tok", now: t })).toBe(false);
   });
 });
@@ -142,6 +142,20 @@ describe("get_pdf plan", () => {
     expect(pdfKind("project")).toMatchObject({ financeOnly: true });
     expect(pdfKind("customer")).toBeNull();
     expect(pdfKind("__proto__")).toBeNull();
+  });
+
+  it("draws Sales / Purchase Orders, Sales Invoices and GRNs on the server; the other trading documents stay browser-only", () => {
+    expect(pdfKind("sales_order")?.server).toBe("so");
+    expect(pdfKind("purchase_order")?.server).toBe("po");
+    expect(pdfKind("sales_invoice")?.server).toBe("si");
+    expect(pdfKind("grn")?.server).toBe("grn");
+    for (const t of ["delivery_order", "purchase_invoice", "credit_note", "delivery_return", "payment_voucher", "assr_case", "project"]) expect(pdfKind(t)?.server).toBeNull();
+  });
+
+  it("names the download in plain ASCII and in UTF-8, so a Chinese supplier name survives", () => {
+    expect(pdfDisposition("HC-PO-2611-001-佛山家具.pdf")).toBe(`attachment; filename="HC-PO-2611-001-____.pdf"; filename*=UTF-8''HC-PO-2611-001-${encodeURIComponent("佛山家具")}.pdf`);
+    expect(pdfDisposition("Tan's (copy).pdf")).toBe(`attachment; filename="Tan's (copy).pdf"; filename*=UTF-8''Tan%27s%20%28copy%29.pdf`);
+    expect(pdfDisposition('a"b\\c.pdf')).toBe(`attachment; filename="a_b_c.pdf"; filename*=UTF-8''${encodeURIComponent('a"b\\c.pdf')}`);
   });
 
   it("export links die at their expiry", () => {

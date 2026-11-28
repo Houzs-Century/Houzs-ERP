@@ -23,7 +23,6 @@ const rowOf = (key: string, ps: OvProject[]): Row => {
   }
   return r;
 };
-/* Totals over totals, so a big booth weighs what it costs. */
 const perSqm = (r: Row) => (r.sqm > 0 ? r.rent / r.sqm : null);
 const perSqmDay = (r: Row) => (r.sqmDays > 0 ? r.rent / r.sqmDays : null);
 const perDay = (r: Row) => (r.eventDays > 0 ? r.rent / r.eventDays : null);

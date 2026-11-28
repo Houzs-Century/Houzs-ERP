@@ -131,7 +131,6 @@ export async function getStockItemCached(
     .first<StockItemRow>();
   if (cached) return cached;
 
-  // Miss or stale — pull fresh. Failures bubble; caller may swallow.
   const client = new AutoCountClient(env);
   const fresh = await client.getStockItem(itemCode);
   if (!fresh) return null;
@@ -168,11 +167,11 @@ export async function resolveCreditorForCase(
   if (!itemCode) return { code: null, soMissing: false };
 
   const existing = await env.DB.prepare(
-    `SELECT * FROM assr_cases WHERE id = ? LIMIT 1` // company_id is absent from the D1 test schema
+    `SELECT * FROM assr_cases WHERE id = ? LIMIT 1`
   )
     .bind(caseId)
     .first<{ creditor_code: string | null; creditor_source: string | null; doc_no: string | null; company_id?: number | string | null }>();
-  if (!existing) return { code: null, soMissing: false }; // case was deleted
+  if (!existing) return { code: null, soMissing: false };
   if (existing.creditor_source === "manual" && !opts.force) {
     return { code: existing.creditor_code, soMissing: false };
   }
@@ -192,13 +191,8 @@ export async function resolveCreditorForCase(
   if (opts.force && creditorCode === null && existing.creditor_code) return { code: existing.creditor_code, soMissing: false, kept: true };
 
   const same = (existing.creditor_code ?? null) === (creditorCode ?? null);
-  // Same value AND same owner (po/so/blank) → nothing to do. When force
-  // re-resolves a manual row to the same code, still fall through so
-  // ownership flips back to po/so.
   if (same && existing.creditor_source === source) return { code: creditorCode, soMissing: false };
 
-  // The read above can be stale: never let this write land on a manual pick
-  // (unless forced) or, for the read-time fill, on a row someone just filled.
   const upd = await env.DB.prepare(
     `UPDATE assr_cases SET creditor_code = ?, creditor_source = ?, updated_at = datetime('now')
       WHERE id = ?${opts.force ? "" : " AND (creditor_source IS NULL OR creditor_source <> 'manual')"}${opts.onlyIfBlank ? " AND creditor_code IS NULL" : ""}`
@@ -208,7 +202,6 @@ export async function resolveCreditorForCase(
   if (!upd.meta?.changes) return { code: existing.creditor_code, soMissing: false };
 
   if (!same) {
-    // Activity trail — mirrors other auto-resolved transitions.
     await env.DB.prepare(
       `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, user_id, category)
        VALUES (?, 'creditor_resolved', ?, ?, ?, NULL, 'supplier')`
@@ -223,7 +216,6 @@ export async function resolveCreditorForCase(
       )
       .run()
       .catch((e: any) => {
-        // A failed trail row must not undo the link; log it so it is seen.
         console.warn(`[resolveCreditorForCase] case=${caseId} activity insert failed:`, e?.message || e);
       });
   }

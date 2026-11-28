@@ -1,20 +1,9 @@
-// pod-photos-pdf — a job's / DO's proof-of-delivery photos as ONE A4 PDF, two
-// photos to a page, for sending on WhatsApp instead of N separate JPGs.
-// Sister: Conts `src/lib/photosPdf.ts` [external] (Conts PR #544).
-//
-// Every page carries the document number and "Page n of m"; under each photo,
-// its number and the time it reached storage (the photo endpoints' Last-Modified
-// — no table records a time per photo, and the crew upload each one the moment
-// it is picked). Photos are shrunk by the same transcode the SO / PO photo
-// blocks use (blobToSquarePdfImage: longest edge 1536 px, JPEG), so a phone
-// photo goes in at a few hundred KB and the file stays sendable. A photo that
-// cannot be fetched or decoded is skipped and counted on page 1; the PDF never
-// fails because of one photo.
 
 import { fmtDateTime } from '@2990s/shared';
-import { blobToSquarePdfImage, type PdfPhotoImage } from './pdf-item-photos';
+import type { PdfPhotoImage } from '../../../../../shared/src/vendor/scm/lib/pdf-item-photos';
+import { blobToSquarePdfImage } from './pdf-item-photos-canvas';
 import { safeName } from './pdf-common';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type PodPdfPhoto = { image: PdfPhotoImage; storedAt: string | null };
 
@@ -44,7 +33,6 @@ export const photoCaption = (n: number, total: number, storedAt: string | null):
 export async function buildPodPhotosPdf(o: {
   title: string;
   photos: PodPdfPhoto[];
-  /** Photos that could not be read, noted on page 1. */
   skipped: number;
 }): Promise<import('jspdf').jsPDF> {
   const { jsPDF } = await import('jspdf');
@@ -99,7 +87,6 @@ export async function makePodPhotosPdf(o: {
   paths: string[];
   fetchPhoto: (path: string) => Promise<{ blob: Blob; storedAt: string | null }>;
   onProgress?: (done: number, total: number) => void;
-  /** Swappable for tests (jsdom has no canvas). */
   shrink?: (blob: Blob) => Promise<PdfPhotoImage | null>;
 }): Promise<{ blob: Blob; filename: string; skipped: number }> {
   const shrink = o.shrink ?? blobToSquarePdfImage;

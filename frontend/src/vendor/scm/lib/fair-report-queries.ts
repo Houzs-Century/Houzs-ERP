@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// fair-report-queries.ts — typed read hooks for the Fair Report endpoint
-// (GET /scm/reports/fair-report + /scm/reports/fair-report/:docNo).
-//
-// The exhibition-performance report with THREE document-stage views selected by
-// `stage` (so | do | invoice). Every field mirrors the server output shape 1:1
-// (backend/src/scm/lib/fair-report.ts + routes/reports.ts) so the two cannot
-// drift. Read-only, thin: the server does all the fair-anchoring, the money
-// splits and the per-stage KPI summaries; these hooks only fetch + type.
-//
-// Same pattern as reports-queries.ts (useQuery + the vendored authedFetch, which
-// prepends /api/scm). The 7 shared filters + the stage all ride the query
-// string; the page keeps them in the URL (useSearchParams) so a report view is
-// shareable.
-// ----------------------------------------------------------------------------
 
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -27,15 +12,14 @@ export type FairTenderSplit = { Cash: number; Merchant: number; Installment: num
 /** The 7 shared filters (all live on the SO header server-side). Empty / unset
  *  fields are omitted from the query string. */
 export type FairFilters = {
-  venue?: string;        // venue TEXT (venue_id is a dead scm.venues FK; filter on the name)
-  state?: string;        // customer_state
-  project?: number;      // project_id (int)
+  venue?: string;
+  state?: string;
+  project?: number;
   branding?: string;
-  salesperson?: string;  // salesperson_id (uuid)
-  month?: string;        // YYYY-MM
-  dateFrom?: string;     // YYYY-MM-DD (inclusive)
-  dateTo?: string;       // YYYY-MM-DD (inclusive)
-  /** How the dates pick the rows: by the orders' SO date (default) or each stage by its own date. */
+  salesperson?: string;
+  month?: string;
+  dateFrom?: string;
+  dateTo?: string;
   dateBasis?: FairDateBasis;
 };
 
@@ -66,18 +50,17 @@ export type FairCostByCategory = {
   service_cost_sen: number;
 };
 
-// ── stage=so ─────────────────────────────────────────────────────────────────
 export type FairSoRow = FairDims & {
   so_date: string | null;
   so_no: string;
-  order_form: string | null;      // ref (handwritten HC number)
-  amount_sen: number;           // product + service
-  selling_sen: number;          // product only
+  order_form: string | null;
+  amount_sen: number;
+  selling_sen: number;
   service_rev_sen: number;
   cost_by_category: FairCostByCategory;
   total_so_cost_sen: number;
-  goods_cost_sen: number;       // total cost less the service lines' cost
-  margin_pct: number | null;    // goods only: (selling − goods cost) / selling
+  goods_cost_sen: number;
+  margin_pct: number | null;
   balance_sen: number;
   paid_total_sen: number;
   deposit_sen: number;
@@ -93,30 +76,29 @@ export type FairSoSummary = {
   total_service_rev_sen: number;
   total_so_cost_sen: number;
   total_goods_cost_sen: number;
-  total_margin_sen: number;     // goods: selling − goods cost
-  margin_pct: number | null;    // goods only
+  total_margin_sen: number;
+  margin_pct: number | null;
   total_balance_sen: number;
   below_deposit_count: number;
   tender_totals: FairTenderSplit;
 };
 
-// ── stage=do ─────────────────────────────────────────────────────────────────
 export type FairDoRow = FairDims & {
   delivery_date: string | null;
   do_no: string;
   so_no: string | null;
   status: string | null;
-  location: string | null;          // warehouse code, as the Delivery Orders list shows it
-  delivery_location: string | null; // the DO's own city, state
+  location: string | null;
+  delivery_location: string | null;
   delivery_address: string | null;
   qty: number;
-  so_amount_sen: number | null;   // linked SO's amount (matches the SO tab)
+  so_amount_sen: number | null;
   total_so_cost_sen: number;
   total_do_cost_sen: number;
   do_cost_is_legacy: boolean;
-  cost_delta_sen: number;       // do − so (positive = cost grew at delivery)
-  so_margin_pct: number | null; // goods only, over the SO's goods sales
-  do_margin_pct: number | null; // goods only
+  cost_delta_sen: number;
+  so_margin_pct: number | null;
+  do_margin_pct: number | null;
 };
 
 export type FairDoSummary = {
@@ -127,7 +109,6 @@ export type FairDoSummary = {
   legacy_count: number;
 };
 
-// ── stage=invoice ────────────────────────────────────────────────────────────
 export type FairInvoiceRow = FairDims & {
   invoice_date: string | null;
   inv_no: string;
@@ -137,10 +118,10 @@ export type FairInvoiceRow = FairDims & {
   invoiced_sen: number;
   so_cost_sen: number;
   do_cost_sen: number;
-  si_cost_sen: number;          // landed
-  goods_invoiced_sen: number;   // the invoice less its service lines
-  goods_si_cost_sen: number;    // their landed cost
-  margin_pct: number | null;      // goods only: goods invoiced vs their landed cost
+  si_cost_sen: number;
+  goods_invoiced_sen: number;
+  goods_si_cost_sen: number;
+  margin_pct: number | null;
 };
 
 export type FairInvoiceSummary = {
@@ -151,25 +132,24 @@ export type FairInvoiceSummary = {
   total_si_cost_sen: number;
   total_goods_invoiced_sen: number;
   total_goods_si_cost_sen: number;
-  margin_pct: number | null;    // goods only
+  margin_pct: number | null;
 };
 
-// ── stage=pnl (exhibition P&L) ───────────────────────────────────────────────
 export type FairPnlCostStage = 'so' | 'do' | 'invoice';
 
 export type FairPnlRow = FairDims & {
   so_date: string | null;
   so_no: string;
   order_form: string | null;
-  revenue_sen: number;             // product + service
+  revenue_sen: number;
   product_rev_sen: number;
   service_rev_sen: number;
-  so_cost_sen: number;             // SO category cost
-  do_cost_sen: number | null;      // null when no DO exists yet
-  si_cost_sen: number | null;      // null when no SI exists yet
-  effective_cost_sen: number;      // most-progressed booked cost (COGS)
+  so_cost_sen: number;
+  do_cost_sen: number | null;
+  si_cost_sen: number | null;
+  effective_cost_sen: number;
   effective_cost_stage: FairPnlCostStage;
-  gross_profit_sen: number;        // revenue − effective cost
+  gross_profit_sen: number;
   margin_pct: number | null;
 };
 
@@ -251,8 +231,8 @@ export type FairPnlFairRow = {
   project: string | null;
   project_start_date: string | null;
   project_end_date: string | null;
-  venue: string | null;     // the venue its orders were taken at (the commonest)
-  brand: string | null;     // the fair's brand — whose card prices its overhead
+  venue: string | null;
+  brand: string | null;
   rate_present: boolean;
   summary: FairPnlSummary;
 };
@@ -261,19 +241,15 @@ export type FairPnlResponse = {
   stage: 'pnl';
   rows: FairPnlRow[];
   summary: FairPnlSummary;
-  /** No fair picked: every fair with orders in the period, a line each. */
   fairs?: FairPnlFairRow[];
-  /** No fair picked: the period's orders that carry no fair (in no line). */
   no_fair?: { orders: number; revenue_sen: number };
   filters: FairFiltersEcho;
   meta: {
     access_tier: 'management' | 'sales_director' | 'none';
-    needs_project: boolean;   // true when no fair (project) is selected yet — the per-order rows wait for one
-    brand: string | null;     // the fair's brand (drives the rate card)
-    rate_present: boolean;    // false when the brand has no project_cost_rates card
-    /** The picked fair's card (null: none, or no fair picked). */
+    needs_project: boolean;
+    brand: string | null;
+    rate_present: boolean;
     rate?: FairCostRate | null;
-    /** The picked fair itself — named even when none of its orders is in the dates. */
     fair?: { project_id: number; project: string | null; project_start_date: string | null; project_end_date: string | null } | null;
   };
 };
@@ -305,7 +281,7 @@ export const useFairReport = (stage: FairStage, filters: FairFilters, enabled = 
     queryKey: ['reports', 'fair-report', qs],
     queryFn: () => authedFetch<FairReportResponse>(`/reports/fair-report?${qs}`),
     enabled,
-    placeholderData: (prev) => prev,  // TanStack v5 equivalent of keepPreviousData
+    placeholderData: (prev) => prev,
     staleTime: 30_000,
   });
 };
@@ -360,7 +336,6 @@ export function fairReportErrorInfo(error: unknown): { denied: boolean; message:
   return { denied: false, message: 'Could not load the Sales Report. Please retry.' };
 }
 
-// ── per-order detail (quick-view drawer) ─────────────────────────────────────
 export type FairDetailLine = {
   item_group: string | null;
   item_code: string | null;

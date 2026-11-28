@@ -1,6 +1,3 @@
-// The punch clock's pure rules: the day view (late / regular / OT from the two
-// times), what a punch does given what is stored, the forgotten-punch close,
-// and an HR correction's times.
 import { describe, expect, test } from "vitest";
 import { DEFAULT_PAY_RULES } from "../../scm/shared/hr-pay-rules";
 import { toAttendanceRules } from "../../scm/shared/hr-attendance";
@@ -13,7 +10,7 @@ const row = (over: Partial<AttendanceRow>): AttendanceRow => ({
   clock_in_at: null, clock_out_at: null, in_source: "PHONE", out_source: "PHONE",
   in_lat: null, in_lng: null, in_accuracy_m: null, in_geo: "IN", in_site_id: 3, in_distance_m: 40, in_photo_key: "k",
   out_lat: null, out_lng: null, out_accuracy_m: null, out_geo: null, out_site_id: null, out_distance_m: null, out_photo_key: null,
-  notes: null, ...over,
+  notes: null, segments: null, ...over,
 });
 const sites = new Map([[3, "KL WAREHOUSE"]]);
 
@@ -62,7 +59,6 @@ describe("planPunch", () => {
     expect(planPunch("CLOCK_IN", null, null)).toEqual({ kind: "insert" });
     expect(planPunch("CLOCK_IN", today({}), null)).toEqual({ kind: "stamp-in", rowId: 5 });
     expect(planPunch("CLOCK_IN", today({ clock_in_at: at("2026-10-22T08:00:00") }), { id: 5 })).toEqual({ kind: "already-in", rowId: 5 });
-    // Back on duty after clocking out (multi-punch): the day reopens, not refused.
     expect(planPunch("CLOCK_IN", today({ clock_in_at: at("2026-10-22T08:00:00"), clock_out_at: at("2026-10-22T18:02:00") }), null)).toEqual({ kind: "reopen", rowId: 5 });
   });
   test("clock out closes the open punch even from yesterday; nothing open is refused", () => {
@@ -100,7 +96,6 @@ describe("punchGateRefusal", () => {
     expect(punchGateRefusal(g, "insert", false, inSite)?.error).toBe("photo_required");
     expect(punchGateRefusal(g, "stamp-in", false, inSite)?.error).toBe("photo_required");
     expect(punchGateRefusal(g, "stamp-out", false, inSite)?.error).toBe("photo_required");
-    // Going back on duty (reopen) is a recording punch, so the gate still applies.
     expect(punchGateRefusal(g, "reopen", false, inSite)?.error).toBe("photo_required");
     expect(punchGateRefusal(g, "insert", true, inSite)).toBeNull();
   });

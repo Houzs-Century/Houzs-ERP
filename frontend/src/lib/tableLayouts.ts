@@ -42,8 +42,6 @@ export interface StoredLayout {
    *  than a reshaped `pinned`: every stored layout and every browser already
    *  holds the flat one. */
   pinnedRight: string[];
-  /** Group-by columns, outermost first — dragged onto the group banner (a
-   *  DataTable with `groupBanner`, or the vendored SCM DataGrid). */
   groupBy: string[];
 }
 
@@ -103,29 +101,15 @@ export interface LayoutSeed {
 }
 
 export interface TableLayoutsSnapshot {
-  /** True once the boot fetch has succeeded. Everything below is empty until. */
   ready: boolean;
   companies: LayoutCompany[];
   activeCompanyId: number | null;
-  /** May this user write a company-wide default? (settings.manage) */
   canManageDefaults: boolean;
-  /** May this user create / rename / delete layouts, and name the company
-   *  default? Owner and Super Admin only — the "*" wildcard. */
   canManageLayouts: boolean;
-  /** companyId → tableKey → the company's default layout. */
   defaults: Record<string, Record<string, StoredLayout>>;
-  /** companyId → tableKey → the name an admin gave that default. Absent means
-   *  the picker names it after the company instead. */
   defaultNames: Record<string, Record<string, string>>;
-  /** tableKey → this user's saved layouts, in the active company. */
   myLayouts: Record<string, NamedLayout[]>;
-  /** tableKey → the ACTIVE company's SHARED layouts (mig 20260925) — the
-   *  team-wide named views a layout manager edits for everyone. A layout
-   *  manager may write them; everyone reads them. Keyed by the preset id in
-   *  `name`, so a page's code seeds can adopt an admin's override. */
   sharedLayouts: Record<string, NamedLayout[]>;
-  /** Bumped whenever hydration changed stored prefs, so a mounted table can
-   *  re-read localStorage (it is read once, at mount, by design). */
   epoch: number;
 }
 
@@ -166,10 +150,6 @@ export function __resetTableLayoutsForTest(): void {
   emit(EMPTY);
 }
 
-// ── localStorage bridge ─────────────────────────────────────────────────────
-// The SAME key rule DataTable uses (see its `idKey`): company-scoped when a
-// company is resolved, byte-identical to the historical key when not. Exported
-// so there is one rule rather than two that drift.
 
 export function layoutIdKey(baseIdKey: string, companyId: number | null): string {
   return companyId != null ? `c${companyId}:${baseIdKey}` : baseIdKey;
@@ -187,13 +167,8 @@ export function dataGridIdKey(storageKey: string, companyId: number | null): str
 
 const PARTS = ["order", "hidden", "shown", "widths", "pinned", "pinnedr", "groupby"] as const;
 
-/** Marker holding the layout we last pushed for this table. Its absence means
- *  "never pushed"; a mismatch against localStorage means there are local edits
- *  the server has not seen, which hydration must not overwrite. */
 const syncKey = (idKey: string) => `dt:sync:${idKey}`;
 
-/** Local storage identity for a server table key: which family it belongs to,
- *  the key that family reads, and the marker key. */
 function localTarget(tableKey: string, companyId: number | null) {
   if (familyOf(tableKey) === "dg") {
     const storageKey = tableKey.slice(DG_PREFIX.length);
@@ -203,7 +178,6 @@ function localTarget(tableKey: string, companyId: number | null) {
       marker: `dt:sync:dg:${dataGridIdKey(storageKey, companyId)}`,
     };
   }
-  // A cross-company board's DataTable keeps one unscoped local copy, as its grid did.
   const idKey = isSharedDataGridStorageKey(tableKey) ? tableKey : layoutIdKey(tableKey, companyId);
   return { family: "dt" as const, idKey, marker: syncKey(idKey) };
 }
@@ -245,9 +219,6 @@ function writeLocal(tableKey: string, companyId: number | null, layout: StoredLa
   const target = localTarget(tableKey, companyId);
   try {
     if (target.family === "dg") {
-      /* The grid's own SORT is deliberately preserved: it lives in the same
-         stored blob but is working state, not layout, so a layout arriving from
-         the account must not silently re-sort the list under the operator. */
       const current = readDataGridLayout(target.idKey);
       writeDataGridLayout(target.idKey, {
         order: layout.order,
@@ -265,8 +236,6 @@ function writeLocal(tableKey: string, companyId: number | null, layout: StoredLa
       localStorage.setItem(`dt:${part}:${target.idKey}`, JSON.stringify(value));
     }
   } catch {
-    // quota / privacy mode — the server copy still exists; this browser just
-    // won't remember it between visits.
   }
 }
 
@@ -300,7 +269,6 @@ export function serializeLayout(layout: StoredLayout): string {
   });
 }
 
-// ── Boot hydration ──────────────────────────────────────────────────────────
 
 interface LayoutsResponse {
   companies?: LayoutCompany[];
@@ -366,8 +334,6 @@ export async function hydrateTableLayouts(): Promise<void> {
     try {
       res = await api.get<LayoutsResponse>("/api/table-layouts");
     } catch {
-      // Offline / pre-migration / 403. Stay inert: every table keeps using the
-      // local prefs it always did.
       hydrating = null;
       return;
     }
@@ -388,7 +354,6 @@ export async function hydrateTableLayouts(): Promise<void> {
       })();
       const localSerialized = serializeLayout(local);
       if (lastPushed !== null && lastPushed !== localSerialized) {
-        // Unpushed local edits — this browser is ahead; send them instead.
         repush.push([tableKey, local]);
         continue;
       }
@@ -397,7 +362,6 @@ export async function hydrateTableLayouts(): Promise<void> {
       try {
         localStorage.setItem(marker, serializeLayout(server));
       } catch {
-        /* best effort */
       }
       changed = true;
     }
@@ -419,7 +383,6 @@ export async function hydrateTableLayouts(): Promise<void> {
           ),
         ]),
       ),
-      // Only bump when stored prefs actually moved: the epoch remounts tables.
       epoch: snapshot.epoch + (changed ? 1 : 0),
     });
 
@@ -429,7 +392,6 @@ export async function hydrateTableLayouts(): Promise<void> {
   return hydrating;
 }
 
-// ── Pushing changes up ──────────────────────────────────────────────────────
 
 const pushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const PUSH_DELAY_MS = 1200;
@@ -455,15 +417,12 @@ export function saveMyLayout(tableKey: string, layout: StoredLayout): void {
         try {
           localStorage.setItem(marker, serializeLayout(layout));
         } catch {
-          /* best effort */
         }
       };
       const path = `/api/table-layouts/${encodeURIComponent(tableKey)}`;
       const request = isEmptyLayout(layout)
         ? api.del(path)
         : api.put(path, { layout });
-      // A failed push leaves the marker stale on purpose: the mismatch is
-      // exactly what tells the next hydration this browser is ahead.
       request.then(done).catch(() => {});
     }, PUSH_DELAY_MS),
   );
@@ -480,7 +439,6 @@ export async function saveCompanyDefault(
   if (isEmptyLayout(layout)) await api.del(path);
   else await api.put(path, { layout });
   if (companyId == null) return;
-  // Reflect it locally so the panel updates without a refetch.
   const cid = String(companyId);
   const tables = { ...(snapshot.defaults[cid] ?? {}) };
   if (isEmptyLayout(layout)) delete tables[baseIdKey];
@@ -488,10 +446,6 @@ export async function saveCompanyDefault(
   emit({ ...snapshot, defaults: { ...snapshot.defaults, [cid]: tables } });
 }
 
-// ── Named layouts (mig 0239) ────────────────────────────────────────────────
-// CRUD on the user's saved column sets. Each call refreshes the snapshot from
-// its own response rather than refetching: the boot fetch is a page-load thing,
-// and a picker that lags one action behind reads as a failed save.
 
 function putMyLayouts(tableKey: string, list: NamedLayout[]): void {
   emit({
@@ -573,12 +527,6 @@ export async function deleteNamedLayout(tableKey: string, id: number): Promise<v
   );
 }
 
-// ── Company-shared layouts (mig 20260925) ───────────────────────────────────
-// A layout MANAGER edits a team-wide named view; everyone in the company reads
-// it. Keyed by NAME (the preset id) so a page's code seed adopts the override.
-// Gated to canManageLayouts server-side; these calls are only wired for a
-// manager. The snapshot is updated from the call so the picker reflects it
-// without a refetch — same reason the named-layout CRUD does.
 
 /** Create or replace this company's shared layout for `name` (a preset id). */
 export async function saveSharedLayout(

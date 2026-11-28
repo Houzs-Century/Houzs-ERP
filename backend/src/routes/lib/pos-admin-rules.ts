@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-admin-rules.ts — the pure rules behind the POS Admin menu: what a
-// cashier PIN is, how a cashier / terminal code is minted, what an event's
-// status word is, and how one Excel import row becomes a POS item patch.
-// Tested without a database.
-// ----------------------------------------------------------------------------
-import { MFG_PRODUCT_CATEGORIES, isMfgProductCategory, type MfgProductCategory } from "../../scm/shared/product-categories";
 
 export const CASHIER_ROLES = ["PARTTIME", "SUPERVISOR"] as const;
 export type CashierRole = (typeof CASHIER_ROLES)[number];
@@ -100,7 +93,6 @@ export function parseImportRow(raw: ImportRowInput): ParsedImportRow {
   return { ok: true, item_code, barcode: barcode && /^[0-9A-Za-z-]{4,32}$/.test(barcode) ? barcode : null, fields };
 }
 
-/* ── POS Items > Add by category ─────────────────────────────────────────── */
 
 /** One ACTIVE inventory product as the add-by-category count sees it:
  *  `pos_active` is null when it is not a POS item yet. */
@@ -111,7 +103,7 @@ export type CategoryCount = { category: string; to_add: number; active: number; 
 
 export const hasSellingPrice = (r: { sell_price_sen: number | string | null }): boolean => Number(r.sell_price_sen ?? 0) > 0;
 
-/** Counts per category in enum order; a product without a category lands
+/** Counts per category, A-Z; a product without a category lands
  *  under "" at the end, so nothing is hidden from the picker. */
 export function countByCategory(rows: readonly CategoryProductRow[]): CategoryCount[] {
   const by = new Map<string, CategoryCount>();
@@ -124,10 +116,11 @@ export function countByCategory(rows: readonly CategoryProductRow[]): CategoryCo
     else c.no_price += 1;
     by.set(key, c);
   }
-  const order = (k: string): number => { const i = (MFG_PRODUCT_CATEGORIES as readonly string[]).indexOf(k); return i < 0 ? MFG_PRODUCT_CATEGORIES.length + (k === "" ? 1 : 0) : i; };
-  return [...by.values()].sort((a, b) => order(a.category) - order(b.category) || a.category.localeCompare(b.category));
+  return [...by.values()].sort((a, b) => Number(a.category === "") - Number(b.category === "") || a.category.localeCompare(b.category));
 }
 
-/** The categories a request names, each a real `mfg_product_category`; [] when none. */
-export const pickedCategories = (v: unknown): MfgProductCategory[] =>
-  Array.isArray(v) ? [...new Set(v.filter(isMfgProductCategory))] : [];
+/** The category codes a request names, once each; [] when none. Only the shape
+ *  is checked: the codes are matched against the products' own categories, so
+ *  a code no product carries simply matches nothing. */
+export const pickedCategories = (v: unknown): string[] =>
+  Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === "string" && /^[A-Z][A-Z0-9_]{1,29}$/.test(x)))] : [];

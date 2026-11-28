@@ -1,13 +1,3 @@
-// Item Groups tab (GL redesign item 1), in the redesign (Finance-1a-Setup,
-// batch 6 §6.2). What is pinned:
-//   • an unbound group arrives PRE-FILLED with the suggested defaults and says
-//     so — the sign-off flow: nothing writes until Save;
-//   • Save sends exactly the four drafted accounts for the active company;
-//   • a bound, untouched group says Bound and offers no Save; a change to it
-//     says so and Undo brings it back;
-//   • Turn off / Turn on sit in the row's ⋯ and its right-click menu;
-//   • the New item group modal refuses until code, name and all four accounts
-//     are given (born bound), and upper-cases the code.
 
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
@@ -53,10 +43,8 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
         { account_code: '502-0000', account_name: 'SALES OF BEDLINES', account_type: 'INCOME', section: 'SALES', is_active: true },
         { account_code: '510-0000', account_name: 'RETURN INWARDS', account_type: 'INCOME', section: 'SALES ADJUSTMENTS', is_active: true },
         { account_code: '612-0000', account_name: 'PURCHASES RETURN', account_type: 'EXPENSE', section: 'COST OF GOODS SOLD', is_active: true },
-        /* Noise the picker must HIDE: neither side of trading. */
         { account_code: '100-0000', account_name: 'CAPITAL', account_type: 'EQUITY', section: 'CAPITAL', is_active: true },
         { account_code: '310-0010', account_name: 'CASH AT BANK - MAYBANK', account_type: 'ASSET', section: 'CURRENT ASSETS', is_active: true },
-        /* Conts #338: a header (its only child retired) and a control special never offered. */
         { account_code: '600-0000', account_name: 'PURCHASES HEADER', account_type: 'EXPENSE', section: 'COST OF GOODS SOLD', is_active: true },
         { account_code: '600-0001', account_name: 'OLD PURCHASES', account_type: 'EXPENSE', section: 'COST OF GOODS SOLD', is_active: false, parent_code: '600-0000' },
         { account_code: '630-0000', account_name: 'STOCK CONTROL', account_type: 'EXPENSE', section: 'COST OF GOODS SOLD', is_active: true, special_type: 'SBS' },
@@ -66,7 +54,6 @@ vi.mock('../../vendor/scm/lib/accounting-queries', async (importOriginal) => ({
 }));
 
 vi.mock('../../lib/activeCompany', () => ({ getActiveCompanyId: () => 2 }));
-/* The backfill card below the groups has its own test (PiBackfill.test.tsx). */
 vi.mock('./PiBackfill', () => ({ PiBackfillCard: () => null }));
 
 import { ItemGroupsTab } from './ItemGroups';
@@ -89,11 +76,9 @@ describe('the sign-off flow', () => {
 
   test('an unbound group arrives pre-filled with the suggestion, marked not saved', () => {
     render(<ItemGroupsTab />);
-    // BEDLINES has no saved binding for company 2 → suggested defaults shown.
     expect(within(rowOf('BEDLINES')).getByText('Suggested · not saved')).toBeTruthy();
     const purchase = screen.getByLabelText('BEDLINES Purchase account') as HTMLInputElement;
     expect(purchase.value).toContain('602-0000');
-    /* A group with no suggestion and no binding is plainly unbound. */
     expect(within(rowOf('LAMP')).getByText('Unbound')).toBeTruthy();
   });
 
@@ -152,8 +137,6 @@ describe('the sign-off flow', () => {
     render(<ItemGroupsTab />);
     const purchase = screen.getByLabelText('BEDLINES Purchase account');
     fireEvent.focus(purchase);
-    /* EXPENSE list: the chart's cost section heads it (read off the account
-       rows, never decided here); equity/bank/income never show. */
     expect(screen.getByText('COST OF GOODS SOLD')).toBeTruthy();
     expect(screen.queryByText(/^CAPITAL/)).toBeNull();
     expect(screen.queryByText(/CASH AT BANK/)).toBeNull();
@@ -164,7 +147,6 @@ describe('the sign-off flow', () => {
     fireEvent.blur(purchase);
     const sales = screen.getByLabelText('BEDLINES Sales return account');
     fireEvent.focus(sales);
-    /* INCOME list: 510 files under SALES ADJUSTMENTS; expense rows stay out. */
     expect(screen.getByText('SALES ADJUSTMENTS')).toBeTruthy();
     expect(screen.queryByText(/PURCHASE OF SOFA/)).toBeNull();
   });
@@ -195,7 +177,6 @@ describe('new item group — born bound', () => {
       const input = screen.getByLabelText(`New group ${slot} account`);
       fireEvent.focus(input);
       fireEvent.change(input, { target: { value: code } });
-      // The combo picks on MOUSEDOWN (click fires after blur closes the list).
       fireEvent.mouseDown(screen.getAllByText(new RegExp(`^${code} — `))[0]!);
     }
     fireEvent.click(create);

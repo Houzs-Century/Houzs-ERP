@@ -1,31 +1,5 @@
-// ----------------------------------------------------------------------------
-// SalesOrderNewFromProducts — catalogue-to-cart SO assembler at
-// /scm/sales-orders/new/from-products.
-//
-// Parallel entry alongside the Full form (/scm/sales-orders/new) and the
-// Guided sofa wizard (/scm/sales-orders/new/guided). One SO out the door,
-// single customer, sticky-cart UX. Distinct from /scm/sales-orders/generate
-// which is a BULK batch-generate tool that fans out N SOs from N picked
-// products — different paradigm.
-//
-// Constraints (owner-confirmed across the three entries):
-//   · Single source of truth — POST goes through the SAME
-//     useCreateMfgSalesOrder hook the other two flows use.
-//   · No OCR / Payments / Address / Copy-from here — those stay on the Full
-//     form. After save we redirect to /scm/sales-orders/:docNo so the operator
-//     can enrich on the detail.
-//
-// Layout (Final F5):
-//   · Left  = catalogue (search field + category chips + product rows with
-//             "+ Add" buttons)
-//   · Right = sticky cart card (inline customer block above the lines, then
-//             −/qty/+ stepper per line, subtotal in primary-ink, Create CTA)
-//   · Mobile (Mobile phone-2 design): two-pane stacks; dark sticky bottom bar
-//             shows "N · subtotal · Create" with full-width tap target.
-//
-// URL is state: ?q= (search) and ?cat= (category filter).
-// ----------------------------------------------------------------------------
 
+import { useProductCategories, type MfgProductCategory } from "../../vendor/scm/lib/product-categories-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { expandSofaPieceItems } from "../../vendor/scm/lib/sofa-piece-lines";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -55,7 +29,7 @@ import {
 } from "../../vendor/scm/lib/sales-order-queries";
 import { useIdempotencyKey } from "../../lib/idempotency";
 import { cn } from "../../lib/utils";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { companyRequiresStockLocation } from "../../vendor/scm/lib/so-form-validate";
 import { authedFetch, type SaveProblem } from "../../vendor/scm/lib/authed-fetch";
 import { SaveBlockedIndicator } from "../../vendor/scm/components/SaveBlockedIndicator";
@@ -69,18 +43,9 @@ import { useFormTouched, useLeaveGuard } from "../../hooks/useLeaveGuard";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { passesSoffioReminder } from "../../vendor/scm/lib/soffio-reminder";
 
-// ── Types & constants ───────────────────────────────────────────────────────
 
-type Category = "ALL" | "SOFA" | "BEDFRAME" | "MATTRESS" | "ACCESSORY" | "SERVICE";
+type Category = "ALL" | MfgProductCategory;
 
-const CATEGORIES: Array<{ key: Category; label: string }> = [
-  { key: "ALL", label: "All" },
-  { key: "SOFA", label: "Sofas" },
-  { key: "BEDFRAME", label: "Bedframes" },
-  { key: "MATTRESS", label: "Mattresses" },
-  { key: "ACCESSORY", label: "Accessories" },
-  { key: "SERVICE", label: "Services" },
-];
 
 type Customer = {
   name: string;
@@ -89,7 +54,6 @@ type Customer = {
   debtorCode: string | null;
 };
 
-// Guarded centi→"RM …" — "—" for an absent/non-finite amount, never "RM NaN".
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 const errMsg = (e: unknown): string =>
@@ -105,19 +69,14 @@ const itemGroupFor = (cat: string): string => {
   return "others";
 };
 
-// ── Page ────────────────────────────────────────────────────────────────────
 
 export function SalesOrderNewFromProducts() {
   const navigate = useNavigate();
   const { touched: formTouched, markTouched } = useFormTouched();
   const { allowLeave } = useLeaveGuard(formTouched, null);
   const create = useCreateMfgSalesOrder();
-  /* One key for the one order this page is open to raise (lib/idempotency.ts).
-     Route-level form, navigates to the SO detail on success, so the MOUNT is
-     exactly one order — same rule as the other create surfaces. */
   const idemKey = useIdempotencyKey();
 
-  // URL state: ?q=<search> ?cat=<category>
   const [searchParams, setSearchParams] = useSearchParams();
   const q = searchParams.get("q") ?? "";
   const cat = (searchParams.get("cat") ?? "ALL") as Category;
@@ -141,20 +100,12 @@ export function SalesOrderNewFromProducts() {
     setSearchParams(sp, { replace: true });
   };
 
-  /* Perf (go-live 2026-07-13) — the search field is DEBOUNCED. `qInput` is the
-     live text box; only after a 250ms idle does it commit to the URL `q`, which
-     is the value that drives the server query (useMfgProducts). Without this,
-     every keystroke refetched the ~2000-SKU catalogue and re-rendered the whole
-     list, which froze the page while typing. Clearing (X / Clear filters) writes
-     both immediately so the reset is instant. */
   const [qInput, setQInput] = useState(q);
   useEffect(() => {
     const t = window.setTimeout(() => {
       if (qInput !== q) setQ(qInput);
     }, 250);
     return () => window.clearTimeout(t);
-    // setQ is stable-by-behaviour (writes the URL); q re-runs the timer to a
-    // no-op once the committed value catches up. qInput drives the debounce.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qInput, q]);
   const clearSearch = () => {
@@ -175,7 +126,6 @@ export function SalesOrderNewFromProducts() {
     enabled: q.trim().length >= 2 || cat !== "ALL",
   });
 
-  // Cart state — qty by SKU code (0 = not in cart).
   const [cartQty, setCartQty] = useState<Record<string, number>>({});
   const adjust = (code: string, delta: number) => {
     const next = Math.max(0, (cartQty[code] ?? 0) + delta);
@@ -194,7 +144,6 @@ export function SalesOrderNewFromProducts() {
   };
   const clearCart = () => setCartQty({});
 
-  /* Active company — feeds the shared stock-location guard in onCreate. */
   const branding = useBranding();
 
   /* WHY THIS FLOW LANDS A DRAFT UNDER COMPANY 1 (owner-approved 2026-08-13).
@@ -217,7 +166,6 @@ export function SalesOrderNewFromProducts() {
      and adding a company to that list moves this page with it. */
   const landsDraft = companyRequiresStockLocation(branding.companyCode);
 
-  // Customer state
   const [customer, setCustomer] = useState<Customer>({
     name: "",
     phone: "",
@@ -226,12 +174,8 @@ export function SalesOrderNewFromProducts() {
   });
   const [showValidation, setShowValidation] = useState(false);
 
-  // Manual-add modal (Empty-state secondary CTA + cart-side action).
   const [manualOpen, setManualOpen] = useState(false);
 
-  // Cart derived rows — index by code for O(1) lookup + bound to all known
-  // products in the cache so we can render rows even when the catalogue filter
-  // hides them (an item added before the user narrowed the category).
   const [knownByCode, setKnownByCode] = useState<Record<string, MfgProductRow>>({});
   useEffect(() => {
     if (!productsQ.data || productsQ.data.length === 0) return;
@@ -254,7 +198,6 @@ export function SalesOrderNewFromProducts() {
   const cartCount = cartLines.reduce((s, l) => s + l.qty, 0);
   const subtotalSen = cartLines.reduce((s, l) => s + l.priceSen * l.qty, 0);
 
-  // Submit
   const [postError, setPostError] = useState<string | null>(null);
   const notify = useNotify();
   const askConfirm = useConfirm();
@@ -286,7 +229,6 @@ export function SalesOrderNewFromProducts() {
     }
     setShowValidation(false);
     setPostError(null);
-    // One sofa piece = one line: a sofa module in the cart x2 goes out as two lines.
     const items = expandSofaPieceItems(cartLines.map((l) => ({
       itemCode: l.code,
       itemGroup: itemGroupFor(l.sku?.category ?? "OTHERS"),
@@ -343,9 +285,6 @@ export function SalesOrderNewFromProducts() {
       allowLeave();
       navigate(`/scm/sales-orders/${res.docNo}`);
     } catch (e) {
-      /* A server aggregated refusal (422 validation_failed — e.g. a CONFIRMED
-         create the server gates) shows every reason in the same popup; anything
-         else falls back to the inline banner. */
       await notifySaveProblems(notify, e, () => setPostError(errMsg(e)), errMsg(e));
     }
   };
@@ -353,7 +292,6 @@ export function SalesOrderNewFromProducts() {
   return (
     <FormTouchScope onTouch={markTouched}>
     <div className="space-y-4 py-4 sm:py-6">
-      {/* Header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <button
@@ -384,14 +322,12 @@ export function SalesOrderNewFromProducts() {
         </button>
       </div>
 
-      {/* POST error banner */}
       {postError && (
         <div className="rounded-md border border-err/40 bg-err/5 p-3 text-[12px] text-err">
           Couldn't create the sales order: {postError}
         </div>
       )}
 
-      {/* Body: catalogue left, cart right (stacks on mobile) */}
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <Catalogue
           q={q}
@@ -428,7 +364,6 @@ export function SalesOrderNewFromProducts() {
         />
       </div>
 
-      {/* Mobile sticky footer — only when the cart has lines, hidden on lg+ */}
       <MobileFooter
         cartCount={cartCount}
         subtotalSen={subtotalSen}
@@ -440,7 +375,6 @@ export function SalesOrderNewFromProducts() {
         onOpenBlocked={openBlockingList}
       />
 
-      {/* Manual-add modal (out-of-catalogue codes) */}
       {manualOpen && (
         <ManualAddModal
           onClose={() => setManualOpen(false)}
@@ -456,11 +390,7 @@ export function SalesOrderNewFromProducts() {
   );
 }
 
-// ── Catalogue (left) ────────────────────────────────────────────────────────
 
-// Perf cap — the catalogue never renders more than this many rows at once, so
-// a 2000-SKU "All / no search" set can't freeze the page. Beyond the cap a
-// hint tells the operator to narrow by category or search.
 const RENDER_CAP = 60;
 
 function Catalogue({
@@ -493,29 +423,27 @@ function Catalogue({
   onAdjust: (code: string, delta: number) => void;
   onClearFilters: () => void;
   onManualAdd: () => void;
-}) {
+}) {  const CATEGORIES: Array<{ key: Category; label: string }> = [
+    { key: "ALL", label: "All" },
+    ...useProductCategories().active.map((c) => ({ key: c.code, label: c.name })),
+  ];
+
   const filteredActive = useMemo(
     () => products.filter((p) => p.status === "ACTIVE"),
     [products],
   );
-  // Cap the DOM to RENDER_CAP rows — see RENDER_CAP note above.
   const shown = useMemo(
     () => filteredActive.slice(0, RENDER_CAP),
     [filteredActive],
   );
   const hiddenCount = filteredActive.length - shown.length;
   const hasFilters = q.trim() !== "" || cat !== "ALL";
-  /* Server-typeahead gate (2026-07-14): the catalogue query only fires once >= 2
-     search chars are typed OR a category chip is picked. Below the gate we show a
-     prompt rather than the "no products" empties (which would misread as "empty
-     catalogue"). Mirrors the parent's useMfgProducts `enabled`. */
   const gateOpen = q.trim().length >= 2 || cat !== "ALL";
   const isEmptyAfterFilters =
     !loading && !error && hasFilters && gateOpen && filteredActive.length === 0;
 
   return (
     <div className="rounded-xl border border-border bg-surface p-4 shadow-stone sm:p-5">
-      {/* Search */}
       <div className="relative">
         <Search
           size={14}
@@ -541,7 +469,6 @@ function Catalogue({
         )}
       </div>
 
-      {/* Category chips */}
       <div className="mt-3 flex flex-wrap gap-1.5">
         {CATEGORIES.map((c) => {
           const isOn = cat === c.key;
@@ -564,7 +491,6 @@ function Catalogue({
         })}
       </div>
 
-      {/* Loading skeleton */}
       {loading && (
         <div className="mt-4 divide-y divide-border-subtle">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -580,28 +506,24 @@ function Catalogue({
         </div>
       )}
 
-      {/* Error */}
       {error && !loading && (
         <div className="mt-4 rounded-md border border-err/40 bg-err/5 p-3 text-[12px] text-err">
           Couldn't load products: {error}
         </div>
       )}
 
-      {/* Server-typeahead prompt — shown below the gate (no fetch happens). */}
       {!loading && !error && !gateOpen && (
         <div className="mt-4 rounded-md border border-border bg-surface-2 p-4 text-[12px] text-ink-muted">
           Type at least 2 characters, or pick a category, to browse the catalogue.
         </div>
       )}
 
-      {/* Empty (no products at all in this category, ignoring search) */}
       {!loading && !error && gateOpen && !hasFilters && filteredActive.length === 0 && (
         <div className="mt-4 rounded-md border border-border bg-surface-2 p-4 text-[12px] text-ink-muted">
           No active products in this category yet.
         </div>
       )}
 
-      {/* Empty after filters (S1 design) */}
       {isEmptyAfterFilters && (
         <div className="mt-4 flex flex-col items-center rounded-xl border border-border bg-surface p-8 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-dashed border-border-strong text-ink-muted">
@@ -640,7 +562,6 @@ function Catalogue({
         </div>
       )}
 
-      {/* Product rows (capped at RENDER_CAP to keep the page responsive) */}
       {!loading && !error && filteredActive.length > 0 && (
         <ul className="mt-3 divide-y divide-border-subtle">
           {shown.map((p) => {
@@ -652,7 +573,6 @@ function Catalogue({
                 key={p.id}
                 className="flex min-h-[3.25rem] flex-nowrap items-center gap-3 py-2.5"
               >
-                {/* placeholder thumb */}
                 <div
                   className="h-10 w-10 shrink-0 rounded-lg border border-border"
                   style={{
@@ -661,14 +581,6 @@ function Catalogue({
                   }}
                   aria-hidden
                 />
-                {/* Description ONCE, code NOT displayed — the shared rule
-                    (vendor/shared/line-identity.ts) and the picker precedent it
-                    encodes (Commander 2026-05-27: "picker rows show description
-                    only — one scannable line per SKU. The code still binds on
-                    click"). The code still BINDS: this card's onClick adds
-                    p.code to the cart. BRANDING is kept and is not a duplicate —
-                    it appears nowhere else on the card — so its line renders
-                    whenever it exists, now without the leading code. */}
                 {(() => {
                   const { primary, secondary } = lineIdentity({
                     code: p.code,
@@ -728,7 +640,6 @@ function Catalogue({
         </ul>
       )}
 
-      {/* Cap hint — more matches exist than we render; narrow to reach them. */}
       {!loading && !error && hiddenCount > 0 && (
         <div className="mt-3 rounded-md border border-border bg-surface-2 px-3 py-2.5 text-center text-[11.5px] text-ink-muted">
           Showing the first {RENDER_CAP} of {filteredActive.length} products.
@@ -739,7 +650,6 @@ function Catalogue({
   );
 }
 
-// ── Cart card (right) ───────────────────────────────────────────────────────
 
 function CartCard({
   customer,
@@ -776,7 +686,6 @@ function CartCard({
 }) {
   return (
     <aside className="self-start rounded-xl border border-border bg-surface p-4 shadow-stone lg:sticky lg:top-4">
-      {/* Customer block */}
       <CustomerBlock
         customer={customer}
         setCustomer={setCustomer}
@@ -784,7 +693,6 @@ function CartCard({
       />
       <div className="my-3 h-px bg-border-subtle" />
 
-      {/* Lines header */}
       <div className="flex items-center justify-between">
         <div className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">
           Selected · {cartCount} pc{cartCount === 1 ? "" : "s"}
@@ -800,7 +708,6 @@ function CartCard({
         )}
       </div>
 
-      {/* Lines */}
       {cartLines.length === 0 ? (
         <div className="mt-3 rounded-md border border-dashed border-border bg-surface-2 px-3 py-6 text-center text-[12px] text-ink-muted">
           No products selected yet.
@@ -812,10 +719,6 @@ function CartCard({
           {cartLines.map((l) => (
             <li key={l.code} className="py-2.5">
               <div className="flex items-start justify-between gap-2">
-                {/* Description ONCE, code NOT displayed — the shared rule
-                    (vendor/shared/line-identity.ts). The code still BINDS: it is
-                    this cart row's key and what onRemove(l.code) acts on. The
-                    code stays the visible fallback for a SKU with no name. */}
                 <div className="min-w-0">
                   <div className="truncate text-[12.5px] font-semibold text-ink">
                     {lineIdentity({ code: l.code, description: l.sku?.name }).primary}
@@ -861,7 +764,6 @@ function CartCard({
         </ul>
       )}
 
-      {/* Subtotal */}
       <div className="mt-3 flex items-baseline justify-between border-t-2 border-border pt-3">
         <span className="text-[12px] font-bold text-ink">Subtotal</span>
         <span className="font-money text-[19px] font-extrabold text-primary-ink">
@@ -869,7 +771,6 @@ function CartCard({
         </span>
       </div>
 
-      {/* Validation hint */}
       {showValidation && !canSubmit && (
         <div className="mt-3 rounded-md border border-err/40 bg-err/5 p-2.5 text-[11.5px] text-err">
           {(!customer.name.trim() || !customer.phone.trim()) && (
@@ -879,7 +780,6 @@ function CartCard({
         </div>
       )}
 
-      {/* CTA — desktop. On mobile the sticky bottom bar handles submit. */}
       <div className="mt-3 hidden lg:block">
         <div className="mb-2 flex justify-end">
           <SaveBlockedIndicator problems={blockedProblems} onOpen={onOpenBlocked} />
@@ -907,7 +807,6 @@ function CartCard({
   );
 }
 
-// ── Inline customer block (in cart) ─────────────────────────────────────────
 
 function CustomerBlock({
   customer,
@@ -1003,7 +902,6 @@ function CustomerBlock({
   );
 }
 
-// ── Mobile sticky footer ────────────────────────────────────────────────────
 
 function MobileFooter({
   cartCount,
@@ -1064,7 +962,6 @@ function MobileFooter({
   );
 }
 
-// ── Manual-add modal ────────────────────────────────────────────────────────
 
 function ManualAddModal({
   onClose,
@@ -1088,9 +985,6 @@ function ManualAddModal({
   const submit = () => {
     if (!canAdd) return;
     const priceSen = Math.round(Number(priceRm) * 100);
-    // Construct a minimal MfgProductRow stand-in. The server validates the
-    // itemCode against mfg_products.code on POST, so a typo here gets caught
-    // at save time rather than silently riding through.
     const row: MfgProductRow = {
       id: `manual-${code.trim()}`,
       code: code.trim(),

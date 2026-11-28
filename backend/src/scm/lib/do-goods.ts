@@ -1,17 +1,7 @@
-// ----------------------------------------------------------------------------
-// do-goods — a delivery order's goods value: its own lines without the service
-// lines, bucketed as its header roll-up buckets them (do-totals.ts,
-// isServiceLine). What the Singapore carriers charge their shares of (owner
-// 2026-11-24: 「based on good」, confirmed as the order total less its service
-// part). Read for a rate card's Per DO charge (do-charge.ts). A DO's own lines,
-// not its order's: a follow-up DO carries only what it delivers.
-// ----------------------------------------------------------------------------
 import { isServiceLine } from '../shared';
 import { chunkIn } from './paginate-all';
 
 type Row = Record<string, unknown>;
-// The scm tables are not in the generated Supabase types; the same narrow
-// bridge as delivery-rate-cards.ts rc().
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = (sb: unknown): any => sb;
 

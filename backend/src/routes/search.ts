@@ -9,7 +9,6 @@ import {
   scopeToCompany,
   type CompanyScopeCtx,
 } from "../scm/lib/companyScope";
-// The ONE definition of ASSR's company scope — see the note above its use below.
 import { assrCompanySql } from "./assr";
 import { inArm, poIdsForSoDocNos, soDocNosByRef } from "../scm/lib/so-ref-search";
 import { initialsLikes } from "../services/projects";
@@ -17,7 +16,6 @@ import { scmAreaReadable } from "../scm/middleware/area-guard";
 import type { AuthUser } from "../services/auth";
 import { NOTE_KIND_WORD } from "../acc/credit-notes";
 
-/** Each word on its own, in any field, as the project list searches ("mle sccc"). */
 function projectWordSearch(q: string): { sql: string; binds: string[] } {
   const binds: string[] = [];
   const arm = (like: string, cols: string[]) => cols.map((col) => { binds.push(like); return `${col} LIKE ?${binds.length}`; });
@@ -29,59 +27,6 @@ function projectWordSearch(q: string): { sql: string; binds: string[] } {
   return { sql: arms.join(" AND "), binds };
 }
 
-/**
- * Global search across the workspace.
- *
- *   GET /api/search?q=<term>
- *
- * Returns up to N matches per source, grouped by type. Designed for
- * the frontend Cmd+K palette (desktop) AND the mobile search palette —
- * the result shape stays uniform so both UIs can render a flat list
- * with type chips and bold the matched keyword.
- *
- * Sources:
- *   - project          (public.projects)              — env.DB
- *   - assr_case        (public.assr_cases)            — env.DB
- *   - user             (public.users)                 — env.DB
- *   - sales_order      (scm.mfg_sales_orders)         — Supabase (scm schema)
- *   - product          (scm.mfg_products)             — Supabase (scm schema)
- *   - purchase_order   (scm.purchase_orders)          — Supabase (scm schema)
- *   - grn              (scm.grns)                      — Supabase (scm schema)
- *   - delivery_order   (scm.delivery_orders)          — Supabase (scm schema)
- *   - sales_invoice    (scm.sales_invoices)           — Supabase (scm schema)
- *   - purchase_invoice (scm.purchase_invoices)        — Supabase (scm schema)
- *   - supplier         (scm.suppliers)                — only if the caller can open Suppliers
- *   - customer         (scm.acc_debtors)              — Finance's customer master (Other Debtors)
- *   - credit_note      (scm.acc_credit_notes)         — credit / debit notes
- *   - receipt          (scm.acc_receipts + acc_debtor_receipts)
- *   - delivery_return  (scm.delivery_returns)
- *   - payment_voucher  (scm.payment_vouchers)
- *   The last five need Finance / Sales Returns area access — see MASTER_AREA.
- *
- * The public-schema sources use LIKE (rewritten to ILIKE + Postgres `$n`
- * by the d1-compat shim). The scm-schema sources talk to the SAME
- * Supabase over PostgREST via getSupabaseService (db.schema='scm').
- *
- * SCM sources are wrapped in a guarded helper: if the Supabase keys are
- * unset (tests / local) or PostgREST hiccups, we return the public-schema
- * hits we DO have rather than 500-ing the whole search. Existing search
- * behaviour is therefore never broken by the SCM additions.
- *
- * That degradation is REPORTED, never silent. Every source that fails is named
- * in `degraded`, and both palettes say so instead of rendering "No matches" —
- * a search that could not read a table must never look like a table with
- * nothing in it. (Hookka hit the same class from the other direction: a
- * timed-out global search rendered "No results" and an existing order looked
- * deleted. Their fix was the same principle — an honest error state distinct
- * from an empty one.)
- *
- * Auth: gated by the global /api/* auth middleware (mounted in
- * src/index.ts). COMPANY scoping IS enforced per source (see the scoping block
- * in the handler) — that is the multi-company isolation boundary. ROW-LEVEL
- * PERMISSION scoping (PIC / brand / salesperson visibility) is intentionally
- * loose: search shows match metadata only (no full record contents), and
- * follow-up navigation hits the relevant module, which enforces its own perms.
- */
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -105,10 +50,6 @@ type HitType =
   | "delivery_return"
   | "payment_voucher";
 
-/* The six sources added 2026-11-10 are offered only to a caller who could OPEN
-   the result: each is the area its own router is guarded by in scm/index.ts.
-   The older ten predate this and stay as they were (metadata only; the module
-   they open enforces its own gate). */
 const AREA_OF = {
   supplier: "scm.procurement.suppliers",
   customer: "scm.finance.accounting",
@@ -130,23 +71,18 @@ export interface GlobalSearchResult {
 
 interface Hit {
   type: HitType;
-  id: string | number;       // primary key for deep-link
-  title: string;             // headline
-  subtitle?: string | null;  // contextual line
-  date?: string | null;      // optional anchor date (DD/MM/YYYY on the client)
-  status?: string | null;    // where the record stands, as stored (DRAFT, POSTED, ...)
-  link: string;              // SPA destination (with focus= when relevant)
+  id: string | number;
+  title: string;
+  subtitle?: string | null;
+  date?: string | null;
+  status?: string | null;
+  link: string;
 }
 
 export function searchPattern(raw: string, postgrest = false): string | null {
-  // `%` and `_` are SQL LIKE wildcards; PostgREST also accepts `*` as an
-  // alias for `%`. Neutralise all three before either query grammar sees them.
   const grammarSafe = postgrest ? escapeForOr(raw) : raw;
   const term = grammarSafe.replace(/[%_*]/g, "").trim();
   if (!term) return null;
-  // A one-character contains scan cannot use pg_trgm at ERP scale. Make the
-  // first key a real whole-database prefix search; from the second key onward
-  // the existing trigram-backed contains search takes over.
   return [...term].length === 1 ? `${term}%` : `%${term}%`;
 }
 
@@ -159,22 +95,6 @@ export function soPhoneArms(raw: string, wildcard: string): string[] {
   return phoneSearchOrParts(wildcard.slice(1, -1), raw, normalizePhone);
 }
 
-/* ASSR company scope — now IMPORTED from routes/assr.ts rather than copied.
-   This was a local copy carrying the comment "MUST stay in sync with
-   routes/assr.ts assrCompanySql()", and it had NOT stayed in sync. It still
-   pinned rank-and-file Sales to HOUZS via houzsCompanySql, which emits
-   `AND company_id = <houzsId>` REGARDLESS of the caller's grants. The owner
-   removed that pin on 2026-07-20 — assr.ts records the decision trail:
-   "Service Cases now follow the caller's GRANTED companies like the rest of the
-   SCM portal — no ASSR-specific role pin."
-
-   So the same person got two different answers: /api/assr showed a 2990 rep
-   their own cases, while global SEARCH showed them HOUZS cases they hold no
-   grant for and hid their own. A cross-company disclosure and a blind spot from
-   one stale copy.
-
-   Sharing the function is the fix; a comment asking two files to agree is not a
-   mechanism. Verified 2026-08-13 against assr.ts:131. */
 
 /**
  * The search itself, callable WITHOUT the HTTP layer. The route below is a thin
@@ -198,23 +118,9 @@ export async function runGlobalSearch(
   const hits: Hit[] = [];
   const degraded: HitType[] = [];
 
-  // Multi-company scoping. Each fragment is "" ONLY when the company context is
-  // unresolved (pre-migration / D1 test mirror / cold-start), so legacy
-  // single-company SQL runs unchanged; a RESOLVED-but-restricted caller gets a
-  // match-nothing predicate instead — never fail open, because the DB client is
-  // service-role (RLS bypassed) so these predicates ARE the isolation boundary:
-  //   · projects follow the ACTIVE company (per-company module, like the
-  //     Projects page itself) via activeCompanySql;
-  //   · ASSR is HOUZS-only: rank-and-file Sales are PINNED to HOUZS, office /
-  //     backend / directors widen to their allowed set — the exact rule the
-  //     /api/assr list uses (assrCompanySql, mirrored above);
-  //   · users stay global — matches /api/users, an unscoped shared directory.
   const projectCoSql = activeCompanySql(c);
   const assrCoSql = assrCompanySql(c);
 
-  // ── Public-schema sources (env.DB) ─────────────────────────
-  // Fire all source queries in parallel — they share a Postgres client
-  // anyway, so this just avoids serial round-trip latency.
   const projectWords = projectWordSearch(raw);
   const [projectRows, assrRows, userRows] = await Promise.all([
     env.DB.prepare(
@@ -253,8 +159,6 @@ export async function runGlobalSearch(
         complained_date: string | null;
       }>(),
 
-    // role_id joins to roles table for the human-readable name; left
-    // join is fine because the user list is short.
     env.DB.prepare(
       `SELECT u.id, u.name, u.email, u.user_type, r.name AS role_name
          FROM users u
@@ -274,7 +178,6 @@ export async function runGlobalSearch(
       }>(),
   ]);
 
-  // Projects — start_date anchors the hit's date and drives the calendar jump.
   for (const r of projectRows.results ?? []) {
     const code = pick(r, "code");
     const name = pick(r, "name");
@@ -312,9 +215,6 @@ export async function runGlobalSearch(
     });
   }
 
-  // ── SCM sources (Supabase, scm schema) ─────────────────────
-  // Guarded: any failure here degrades to the public hits above, and names the
-  // source it could not read in `degraded`.
   await appendScmHits(c, env, raw, hits, degraded);
 
   return { hits, degraded };
@@ -326,26 +226,6 @@ app.get("/", async (c) => {
   return c.json({ q: raw, hits, degraded });
 });
 
-/**
- * Append the scm-schema hits: Sales Order, Product, and the five
- * procurement/fulfilment DOCUMENTS a real ERP expects Cmd+K to reach directly —
- * Purchase Order, GRN, Delivery Order, Sales Invoice, Purchase Invoice.
- *
- * Never throws — a missing Supabase config or a PostgREST error just yields zero
- * SCM hits so the public-schema search still returns. A source that FAILED is
- * pushed onto `degraded` so the caller can say so; a source that merely matched
- * nothing is not. An unconfigured Supabase (tests / local) is not degradation —
- * that deployment has no SCM half to read. Each `.or(...)` free-text is passed
- * through escapeForOr() (via searchPattern) so a term with PostgREST grammar
- * chars (`,(){}`) can't corrupt the filter.
- *
- * Every doc source matches ONLY its base-table text columns — supplier name and
- * the PO/GRN source refs are embedded FK resources (not base columns) and so are
- * ilike-safe to SELECT for display but not to filter, exactly as each list route
- * documents. All five are per-company documents, scoped through the SAME
- * scopeToCompany helper as Sales Orders / Products, and deep-link to their detail
- * route by primary-key id (the routes are /scm/<doc>/:id).
- */
 async function appendScmHits(
   c: CompanyScopeCtx,
   env: Env,
@@ -361,17 +241,12 @@ async function appendScmHits(
   try {
     sb = getSupabaseService(env);
   } catch (e) {
-    // Configured but unbuildable: every SCM source is unreadable, not empty.
     console.warn("[search] SCM client unavailable:", (e as Error)?.message ?? e);
     const can = openableNewerTypes((c.get("user") as AuthUser | undefined) ?? null);
     degraded.push(...SCM_SOURCE_TYPES.filter((t) => !(t in AREA_OF) || can.has(t as keyof typeof AREA_OF)));
     return;
   }
 
-  // Documents are found by their SO's reference too: the DO / SI copy of it is
-  // often empty and a PO has none (lib/so-ref-search.ts). A failed lookup only
-  // drops that extra arm; the direct matches still run. One-character terms
-  // are prefix searches and skip it.
   let soRefDocNos: string[] = [];
   let soRefPoIds: string[] = [];
   if (wildcard.startsWith("%")) {
@@ -383,11 +258,6 @@ async function appendScmHits(
     }
   }
 
-  // Multi-company: SOs + products are PER-COMPANY modules, so their search hits
-  // follow the ACTIVE company via scopeToCompany — the same helper the SO /
-  // product list routes use. Unresolved → no predicate (legacy single-company);
-  // resolved-but-restricted → an empty `in` that matches nothing (never fail
-  // open).
   const soQuery = sb
     .from("mfg_sales_orders")
     .select("doc_no, debtor_name, phone, ref, so_date, branding, status")
@@ -404,10 +274,6 @@ async function appendScmHits(
     .eq("status", "ACTIVE")
     .or(`code.ilike.${wildcard},name.ilike.${wildcard},description.ilike.${wildcard}`);
 
-  // ── Procurement / fulfilment documents ──────────────────────
-  // Each matches the SAME base-table text columns its own list route searches
-  // (supplier name / PO / GRN refs are embedded FK resources — SELECTed for
-  // display, not filtered). supplier(name) rides the SELECT for the subtitle.
   const poQuery = sb
     .from("purchase_orders")
     .select("id, po_number, po_date, notes, status, supplier:suppliers(name)")
@@ -444,7 +310,6 @@ async function appendScmHits(
         `notes.ilike.${wildcard}`
     );
 
-  // The six newer sources run alongside, not after, the seven below.
   const newer = appendNewerScmHits(c, sb, wildcard, hits, degraded);
   const [soRes, prodRes, poRes, grnRes, doRes, siRes, piRes] = await Promise.allSettled([
     scopeToCompany(soQuery, c)
@@ -482,9 +347,6 @@ async function appendScmHits(
         str(r.phone),
       date: str(r.so_date),
       status: str(r.status),
-      // Deep-link the SPA straight to the SO detail route
-      // (/scm/sales-orders/:docNo); the mobile palette maps the same doc_no
-      // onto its own so-detail screen.
       link: `/scm/sales-orders/${encodeURIComponent(docNo)}`,
     });
   }
@@ -502,7 +364,6 @@ async function appendScmHits(
     });
   }
 
-  // Purchase Orders — supplier(name) embed drives the subtitle.
   for (const r of sourceRows(poRes, "purchase_order", degraded)) {
     const id = str(r.id);
     const docNo = str(r.po_number);
@@ -518,7 +379,6 @@ async function appendScmHits(
     });
   }
 
-  // GRNs — supplier + source PO number make the subtitle.
   for (const r of sourceRows(grnRes, "grn", degraded)) {
     const id = str(r.id);
     const docNo = str(r.grn_number);
@@ -538,7 +398,6 @@ async function appendScmHits(
     });
   }
 
-  // Delivery Orders — customer + source SO ref.
   for (const r of sourceRows(doRes, "delivery_order", degraded)) {
     const id = str(r.id);
     const docNo = str(r.do_number);
@@ -556,7 +415,6 @@ async function appendScmHits(
     });
   }
 
-  // Sales Invoices — customer + source SO ref.
   for (const r of sourceRows(siRes, "sales_invoice", degraded)) {
     const id = str(r.id);
     const docNo = str(r.invoice_number);
@@ -574,7 +432,6 @@ async function appendScmHits(
     });
   }
 
-  // Purchase Invoices — supplier + the supplier's own invoice ref.
   for (const r of sourceRows(piRes, "purchase_invoice", degraded)) {
     const id = str(r.id);
     const docNo = str(r.invoice_number);
@@ -606,14 +463,6 @@ export function openableNewerTypes(user: AuthUser | null): Set<keyof typeof AREA
 }
 
 
-/**
- * Suppliers, customers (Finance's Other Debtors master), credit / debit notes,
- * receipts, delivery returns and payment vouchers. Each is company-scoped by the
- * same scopeToCompany as the rest, capped at PER_SOURCE_LIMIT, searched only on
- * columns migration 20261110T2000 gives a trigram index (suppliers' came in
- * 0240), and skipped outright for a caller who cannot open that area — a hit
- * the person cannot follow is noise, and a skipped source is not "degraded".
- */
 async function appendNewerScmHits(
   c: CompanyScopeCtx,
   sb: ReturnType<typeof getSupabaseService>,
@@ -702,7 +551,6 @@ async function appendNewerScmHits(
     });
   }
 
-  // Two receipt tables, one hit type: the newest PER_SOURCE_LIMIT of the pair.
   const receipts = [
     ...sourceRows(rcptRes, "receipt", degraded).map((r) => ({
       r, payer: str(r.payer_name), link: `/scm/receipts/sundry/${encodeURIComponent(String(r.id))}`,
@@ -758,8 +606,6 @@ async function appendNewerScmHits(
   }
 }
 
-// Every SCM source, in the order appendScmHits queries them. Used to mark the
-// whole SCM half degraded when the client itself cannot be built.
 const SCM_SOURCE_TYPES = [
   "sales_order",
   "product",
@@ -776,14 +622,6 @@ const SCM_SOURCE_TYPES = [
   "payment_voucher",
 ] as const satisfies readonly HitType[];
 
-/**
- * Rows from one settled source, or [] with the source recorded as degraded.
- *
- * This exists because the previous shape — `if (res.status === "fulfilled" &&
- * !res.value.error)` repeated per source — made "this source errored" and "this
- * source matched nothing" the same observable outcome. Routing both through one
- * function makes the failure branch impossible to forget when a source is added.
- */
 function sourceRows(
   res: PromiseSettledResult<{ data: unknown; error: unknown }>,
   type: HitType,
@@ -802,8 +640,6 @@ function sourceRows(
   return (res.value.data ?? []) as Array<Record<string, unknown>>;
 }
 
-// A to-one FK embed arrives as an object OR (Supabase typegen) a single-element
-// array; pull one string field out of whichever shape, null-safe throughout.
 function embedField(v: unknown, field: string): string | null {
   if (v == null) return null;
   const row = Array.isArray(v) ? v[0] : v;
@@ -811,12 +647,6 @@ function embedField(v: unknown, field: string): string | null {
   return str((row as Record<string, unknown>)[field]);
 }
 
-// Dual-read camelCase ?? snake_case. NOTE: this repo's postgres.js client sets
-// NO column transform (db/pg.ts says so explicitly, and deliberately — Houzs
-// reads snake_case everywhere, unlike Hookka whose adapter camelCases every
-// column and who pay for it with a recurring bug class). So the camelCase arm
-// never fires today; it is harmless belt-and-braces, not a requirement. Do not
-// copy this pattern outward believing snake_case reads are unsafe here.
 function pick<T extends Record<string, unknown>>(row: T, snake: string): string | null {
   const camel = snake.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase());
   const v = (row as Record<string, unknown>)[camel] ?? (row as Record<string, unknown>)[snake];

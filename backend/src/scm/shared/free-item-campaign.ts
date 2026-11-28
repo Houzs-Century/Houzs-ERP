@@ -1,8 +1,3 @@
-// Free Item Campaign (standalone giveaway, no qualifying purchase). Pure,
-// shared by the POS cart "Make free" button and the server SO validator so the
-// two NEVER drift (honest-pricing). A campaign lists eligible targets; each
-// target is a Model + scope (model / variant / combo / compartment) — see
-// rule-target.ts (the unified matcher). Ported from 2990 (#691, Wave 1).
 import { lineMatchesTargets, parseRuleTargets, type RuleTarget } from './rule-target';
 
 /** A campaign eligibility entry is a unified RuleTarget. Kept as an alias so the
@@ -13,20 +8,15 @@ export interface FreeItemCampaign {
   id: string;
   name: string;
   active: boolean;
-  /** per-line max free units (>= 1). */
   maxFreeQty: number;
   eligible: RuleTarget[];
 }
 
 /** One cart/order line flattened to what the matcher needs. */
 export interface FreeItemLineInput {
-  /** SOFA / MATTRESS / BEDFRAME / ACCESSORY (case-insensitive). */
   category: string;
-  /** product_models.id of the line's Model (null = no match possible). */
   modelId: string | null;
-  /** mfg_products.size_code for mattress/bedframe (UPPERCASE); null otherwise. */
   sizeCode: string | null;
-  /** sofa build module codes (normalized later); [] for non-sofa. */
   builtModuleIds: string[];
 }
 
@@ -56,11 +46,6 @@ export function campaignsCoveringLine(
     sizeCode: line.sizeCode,
     builtCompartments: line.builtModuleIds,
   };
-  // A Free Item Campaign must list explicit targets — an EMPTY eligible covers
-  // NOTHING (mirrors the original `eligible.some()`, where [].some() === false).
-  // The matcher's "empty = all of category" is a PWP-only semantic (PWP carries
-  // a trigger/reward category to scope it); applying it here would make every
-  // Model in every category free-eligible. Guard before delegating.
   return campaigns.filter(
     (c) => c.active && c.eligible.length > 0 && lineMatchesTargets(li, c.eligible, comboModulesById),
   );

@@ -36,13 +36,6 @@ import {
 } from "../vendor/scm/lib/crew-stop-photos";
 import { api as apiClient } from "../api/client";
 
-/* A photo must never sit on "Uploading" for ever (HC-DO-2611-151, 2026-11-11: an
-   iPhone photo stuck while the driver could not complete). Stamping decodes the
-   photo on a canvas, which iOS can leave pending with no error on a large image;
-   the upload itself has a fetch timeout but the compression inside it does not.
-   So: the clock read and the stamp fall back (phone time / the unstamped photo)
-   after a short wait, and the whole upload gives up after UPLOAD_WATCHDOG_MS and
-   shows the photo as failed with Retry. */
 export const CLOCK_TIMEOUT_MS = 5_000;
 export const STAMP_TIMEOUT_MS = 20_000;
 export const UPLOAD_WATCHDOG_MS = 90_000;
@@ -60,22 +53,15 @@ export type FieldPhotoStatus = "queued" | "uploading" | "done" | "failed";
 
 export type FieldPhoto = {
   id: string;
-  /** What is uploaded: the stamped copy once stamping ran, the original before.
-   *  null for a photo re-listed from the server after a reload. */
   file: File | null;
   stamped: boolean;
   previewUrl: string | null;
   status: FieldPhotoStatus;
   key: string | null;
-  /** The upload session, so Remove can tell the server; null until uploaded. */
   sessionId: string | null;
   error: string | null;
-  /** Who took it, when another crew member did; null for this phone's own. */
   uploadedBy: string | null;
   canRemove: boolean;
-  /** The server has listed it, so its absence from a later list means it was
-   *  removed or completed elsewhere (a photo just uploaded here may not be
-   *  listed yet, and must not vanish). */
   serverSeen: boolean;
 };
 
@@ -96,15 +82,11 @@ export function fieldPhotosReducer(state: FieldPhoto[], a: FieldPhotosAction): F
   const patch = (id: string, p: Partial<FieldPhoto>) => state.map((x) => (x.id === id ? { ...x, ...p } : x));
   switch (a.type) {
     case "add": return [...state, ...a.photos];
-    // Re-listed after a reload: put back only what the screen does not already hold.
     case "restore": {
       const have = new Set(state.map((x) => x.key).filter(Boolean));
       const fresh = a.photos.filter((x) => x.key && !have.has(x.key));
       return fresh.length ? [...fresh, ...state] : state;
     }
-    // A later list from the server: new crew photos come in, the ones it no
-    // longer lists (removed or completed by someone else) go, this phone's
-    // uploads it has not listed yet stay.
     case "sync": {
       const incoming = new Map(a.photos.filter((x) => x.key).map((x) => [x.key as string, x]));
       let changed = false;
@@ -128,7 +110,6 @@ export function fieldPhotosReducer(state: FieldPhoto[], a: FieldPhotosAction): F
     case "preview": return patch(a.id, { previewUrl: a.url });
     case "start": return patch(a.id, { status: "uploading", error: null });
     case "stamped": return patch(a.id, { file: a.file, stamped: true });
-    // A result for a photo already removed is ignored by patch (no such id).
     case "done": return patch(a.id, { status: "done", key: a.key, sessionId: a.sessionId, error: null });
     case "failed": return patch(a.id, { status: "failed", error: a.error });
     case "retry": return state.map((x) => (x.id === a.id && x.status === "failed" ? { ...x, status: "queued" as const, error: null } : x));
@@ -195,13 +176,9 @@ export type FieldPhotosApi = {
   photos: FieldPhoto[];
   max: number;
   restore: RestoreState;
-  /** After a failed re-list: ask the server again. */
   retryRestore: () => void;
-  /** After a failed re-list: go on without the photos uploaded earlier. */
   skipRestore: () => void;
-  /** A capacity or file-type message from the last add, or null. */
   notice: string | null;
-  /** A background re-list failed; the next one retries. null when the last worked. */
   syncError: string | null;
   add: (files: File[]) => void;
   retry: (id: string) => void;
@@ -210,8 +187,6 @@ export type FieldPhotosApi = {
   gate: (noneMessage: string) => CompletionGate;
 };
 
-/* The upload pipeline's own whitelist (slip.ts), images only: one home, so a
-   type the server refuses is never offered here. */
 export const ACCEPTED_PHOTO_TYPES: readonly string[] = ALLOWED_SLIP_MIMES.filter((m) => m.startsWith("image/"));
 
 export type ListedFieldPhoto = {
@@ -229,7 +204,6 @@ export type FieldPhotoRestore = {
   key: string;
   pollMs: number | null;
   list: () => Promise<ListedFieldPhoto[]>;
-  /** A displayable URL for one uploaded photo (a blob URL; revoked on unmount). */
   preview: (uploadSessionId: string) => Promise<string>;
   discard: (uploadSessionId: string) => Promise<void>;
 };
@@ -273,9 +247,7 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
   const [photos, dispatch] = useReducer(fieldPhotosReducer, []);
   const [notice, setNotice] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
-  // Bumped by a Remove so the list is asked again at once, not at the next poll.
   const [syncNonce, setSyncNonce] = useState(0);
-  // Keys removed on this phone: a list already in flight must not bring them back.
   const removedKeys = useRef(new Set<string>());
   const syncSeq = useRef(0);
   const [restoreState, setRestoreState] = useState<RestoreState>(restore ? { phase: "loading" } : { phase: "off" });
@@ -289,12 +261,10 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
   const photosRef = useRef(photos);
   photosRef.current = photos;
 
-  // Revoke every preview when the screen goes away.
   useEffect(() => () => { for (const p of photosRef.current) if (p.previewUrl) URL.revokeObjectURL(p.previewUrl); }, []);
 
   const showPreviews = (r: FieldPhotoRestore, photos: FieldPhoto[], run: { live: boolean }) => {
     for (const p of photos) {
-      // A thumbnail that cannot load still leaves the photo counted and sent.
       r.preview(p.sessionId as string).then((url) => {
         if (run.live) dispatch({ type: "preview", id: p.id, url }); else URL.revokeObjectURL(url);
       }, () => {});
@@ -305,7 +275,6 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
   useEffect(() => {
     const r = latest.current.restore;
     if (!r || restoreKey === null) { setRestoreState({ phase: "off" }); return; }
-    // An object, not a let: the cleanup flips it while the list is in flight.
     const run = { live: true };
     setRestoreState({ phase: "loading" });
     void (async () => {
@@ -327,8 +296,6 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
     return () => { run.live = false; };
   }, [restoreKey, restoreNonce]);
 
-  // The crew's later changes: asked again every pollMs while the stop is open
-  // (not while the phone is in a pocket with the screen off), and after a Remove.
   const restoreDone = restoreState.phase === "done" || restoreState.phase === "skipped";
   useEffect(() => {
     const r = latest.current.restore;
@@ -344,7 +311,6 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
         if (run.live) setSyncError((e as Error).message || "no connection");
         return;
       }
-      // An older answer than one already applied is dropped.
       if (!run.live || seq !== syncSeq.current) return;
       setSyncError(null);
       const incoming = listed(rows);
@@ -361,7 +327,6 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
   useEffect(() => {
     if (!next) return;
     const { id } = next;
-    // One upload per attempt, even if the effect runs twice for the same state.
     const attempt = `${id}:${next.error ?? ""}:${photosRef.current.indexOf(next)}`;
     if (started.current.has(attempt)) return;
     started.current.add(attempt);
@@ -370,7 +335,6 @@ export function useFieldPhotos({ stampLabel, max, upload, restore }: {
     dispatch({ type: "start", id });
     void (async () => {
       try {
-        // Only a photo re-listed from the server has no file, and it is never queued.
         if (!file) throw new Error("This photo is no longer on the phone. Remove it and take it again.");
         let toSend: File = file;
         const label = latest.current.stampLabel;

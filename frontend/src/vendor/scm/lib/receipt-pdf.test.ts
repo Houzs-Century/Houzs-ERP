@@ -1,11 +1,3 @@
-/* The Official Receipt print (the owner's Claude Design, batch 5 §9: A5
-   landscape, half an A4 sheet) — what it DRAWS, captured off `doc.text` the way
-   credit-note-pdf.test.ts does. Pinned: OFFICIAL RECEIPT with its number and
-   date; RECEIVED FROM beside PAYMENT DETAILS (method, paid on, the order, who
-   confirmed the money — or the counter, for cash); the one line `Payment for
-   sales order <SO>`; AMOUNT RECEIVED; the words; Received by and the chop —
-   inside the half sheet; a draft's DRAFT and a cancelled one's CANCELLED; a
-   sales invoice's payment never prints the invoice's id as an order. */
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
@@ -47,7 +39,6 @@ async function render(over: Partial<ReceiptPdfData> = {}): Promise<{ draws: Text
   renderReceiptInto(doc, autoTable as unknown as Parameters<typeof renderReceiptInto>[1], { ...OR, ...over });
   return { draws, doc };
 }
-/* Joined, because a long value in the right info column now wraps onto a second line (drawInfoColumns). */
 const has = (draws: TextDraw[], needle: string): boolean => draws.map((d) => d.text).join(' ').includes(needle);
 
 describe('the official receipt — A5 landscape', () => {
@@ -73,7 +64,6 @@ describe('the official receipt — A5 landscape', () => {
     expect(has(draws, 'Received by')).toBe(true);
     expect(has(draws, 'Company chop')).toBe(true);
     expect(has(draws, 'DRAFT')).toBe(false);
-    /* Everything sits inside the half sheet. */
     expect(Math.max(...draws.map((d) => d.y))).toBeLessThan(148);
   });
 

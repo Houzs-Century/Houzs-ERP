@@ -31,9 +31,10 @@ import { CATEGORY_SOURCES, isPlaceholderBrandText } from '../shared/so-branding-
  *  the system can produce (CATEGORY_SOURCES), not a second copy of it — plus
  *  the plural 2990's brand list spells. */
 export const NOT_A_BRAND: ReadonlySet<string> = new Set<string>([
-  ...CATEGORY_SOURCES.productEnum,
+  ...CATEGORY_SOURCES.categoryNouns,
   ...CATEGORY_SOURCES.normBuckets,
   'ACCESSORIES',
+  'FABRIC_ACCESSORY',
 ]);
 
 const key = (s: string): string => s.trim().toUpperCase();

@@ -24,11 +24,8 @@ import { variantKeyLabel } from "../vendor/scm/lib/variant-key-label";
 
 type LineDraft = { _key: string; itemCode: string; productName: string; variantKey?: string; qty: number; notes?: string };
 
-// Humanise a variant_key into a bucket label — the one shared rule the desktop
-// picker and the PDFs read. '' = the unclassified / plain-SKU bucket.
 const humanizeVariantKey = (k: string): string => variantKeyLabel(k, "(unclassified)");
 
-// Sentinel for "no bucket picked yet" — distinct from '' (a real unclassified bucket).
 const UNPICKED = "__UNPICKED__";
 
 // One transfer line. Owns its OWN inventory-bucket query so each line offers only
@@ -133,14 +130,6 @@ function MobileStockTransferForm({
   const notify = useNotify();
   const confirm = useConfirm();
   const create = useCreateStockTransfer();
-  /* One key for the one transfer this screen is open to raise
-     (lib/idempotency.ts). MobileApp mounts this behind a screen and onCreated /
-     onBack leave it, so the MOUNT is exactly one transfer — and "New stock
-     transfer" after a create is onStartNew, a REMOUNT with a fresh key, never a
-     field reset on this mount (which would replay the first transfer).
-     The desktop twin (StockTransferNew) mints its own — the same document
-     protected on both sides in one PR, since a document covered on one side only
-     is a new divergence. */
   const idemKey = useIdempotencyKey();
   const warehouses = useWarehouses();
 
@@ -151,25 +140,15 @@ function MobileStockTransferForm({
   const [lines, setLines] = useState<LineDraft[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  // Per-line variant buckets (available at the source) are pulled inside
-  // <MobileTransferLine> so each line offers only its own SKU's real buckets.
 
   const whList = warehouses.data ?? [];
   const sameWarehouse = Boolean(fromWarehouseId && toWarehouseId && fromWarehouseId === toWarehouseId);
-  // A line is valid only once its variant BUCKET is picked (variantKey set) —
-  // moving stock without it would desync the FIFO bucket + MRP.
   const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0 && l.variantKey !== undefined);
   const needsBucket = lines.some((l) => l.itemCode.trim() && l.qty > 0 && l.variantKey === undefined);
   const canCreate =
     !!fromWarehouseId && !!toWarehouseId && !sameWarehouse && !!transferDate &&
     validLines.length > 0 && !needsBucket && !create.isPending;
 
-  // A SKU whose source stock is split across variant buckets (e.g. bf-16 + bf-20)
-  // needs ONE line PER bucket — each <MobileTransferLine> owns its own bucket
-  // picker and is keyed by _key (not code), so duplicate codes never collide.
-  // The old dedup no-op'd the second add of the same code, forcing a
-  // split-bucket SKU into SEPARATE transfer documents. Append a fresh line every
-  // time (the desktop StockTransferNew has no such dedup either).
   const addSku = (sku: PickedSku) => {
     setPickerOpen(false);
     setLines((prev) => [...prev, { _key: newKey(), itemCode: sku.itemCode, productName: sku.name, qty: 1 }]);

@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// accounting-todo-calendar — GET /accounting/todo/calendar?month=YYYY-MM, the
-// To do's calendar (the owner's Claude Design redesign, batch 2; rules in
-// acc/todo-calendar.ts). What falls on each day of the month: supplier bills
-// and vouchers to pay, customer invoices due, routines and tasks, and the
-// uploads that went late — plus the next 7 days from today. A read that fails
-// is named in `problems`; the rest still shows.
-// ----------------------------------------------------------------------------
 
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
@@ -34,10 +26,6 @@ async function supplierNames(sb: any, companyId: number, ids: string[]): Promise
   return new Map(r.data.map((s) => [String(s.id), String(s.name ?? '')]));
 }
 
-/** Supplier bills to pay in [from, to], on the day Finance planned (the
-    redesign, step 7) or else their due date: AP invoices and purchase
-    invoices still owing, in ringgit. A bill planned into the month but due
-    outside it is read by its id. */
 async function billEvents(sb: any, companyId: number, from: string, to: string): Promise<CalEvent[]> {
   const plans = await billPlans(sb, companyId);
   if (!plans.ok) throw new Error(plans.reason);
@@ -65,7 +53,6 @@ async function billEvents(sb: any, companyId: number, from: string, to: string):
   ]);
   if (api.error) throw new Error(`AP invoices: ${api.error.message}`);
   if (pi.error) throw new Error(`purchase invoices: ${pi.error.message}`);
-  /* One row per bill: due in the month, planned into it, or both. */
   const seen = new Set<string>();
   const rows: Rows = [];
   for (const [kind, list] of [['API', [...(api.data ?? []), ...apiPlanned.data]], ['PI', [...(pi.data ?? []), ...piPlanned.data]]] as const) {
@@ -86,7 +73,6 @@ async function billEvents(sb: any, companyId: number, from: string, to: string):
       return {
         key: `bill:${r.invoice_number}`, day: planned ?? due ?? '', kind: 'pay' as const,
         label: `${who} · pay bill`, short: `${who.split(/\s+/)[0]} bill`,
-        /* The design's words: the plan beside the supplier's own due date. */
         detail: planned
           ? `Planned ${fmtDate(planned)} · supplier due ${due ? fmtDate(due) : '—'} · ${r.invoice_number}`
           : `Supplier due ${due ? fmtDate(due) : '—'} · ${r.invoice_number}`,
@@ -97,7 +83,6 @@ async function billEvents(sb: any, companyId: number, from: string, to: string):
     .filter((e) => (e.amountSen ?? 0) > 0 && e.day >= from && e.day <= to);
 }
 
-/** Vouchers on their way through checking and approval, on their voucher day. */
 async function voucherEvents(sb: any, companyId: number, from: string, to: string): Promise<CalEvent[]> {
   const r = await paginateAll<Record<string, any>>((lo, hi) => sb.from('payment_vouchers')
     .select('id, pv_number, payee_name, voucher_date, total_sen, exchange_rate, checked_at')
@@ -112,7 +97,6 @@ async function voucherEvents(sb: any, companyId: number, from: string, to: strin
   }));
 }
 
-/** Customer invoices falling due in [from, to], one entry per day. */
 async function invoiceEvents(sb: any, companyId: number, from: string, to: string): Promise<CalEvent[]> {
   const r = await paginateAll<Record<string, any>>((lo, hi) => sb.from('sales_invoices')
     .select('id, invoice_number, debtor_name, due_date, total_sen, paid_sen')
@@ -139,7 +123,6 @@ export async function readCalendarPage(sb: any, companyId: number, today: string
   const co = { companyId };
   const from = firstOf(month);
   const to = lastOf(month);
-  /* The next 7 days may run past the month shown: read both. */
   const lo = from < today ? from : today;
   const hi = to > addDays(today, 6) ? to : addDays(today, 6);
   const problems: string[] = [];
@@ -158,7 +141,6 @@ export async function readCalendarPage(sb: any, companyId: number, today: string
     SUPPLIER_BILLS_ON_CALENDAR ? safe('supplier bills', () => billEvents(sb, co.companyId, lo, hi)) : Promise.resolve([] as CalEvent[]),
     safe('payment vouchers', () => voucherEvents(sb, co.companyId, lo, hi)),
     safe('customer invoices', () => invoiceEvents(sb, co.companyId, lo, hi)),
-    /* What went late, on the day it did: the To do's upload rules. */
     safe('late uploads', async () => {
       const facts = await readFinanceTodoFacts(sb, co.companyId, today, false);
       problems.push(...facts.problems);

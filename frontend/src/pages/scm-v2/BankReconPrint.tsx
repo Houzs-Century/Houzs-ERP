@@ -1,16 +1,7 @@
-// ----------------------------------------------------------------------------
-// BankReconPrint — the Bank Reconciliation Statement on A4, printed by the
-// browser (the owner's Claude Design, batch 3; owner question d6, built as
-// designed): the walk from the ledger to the bank statement, then the three
-// lists — bank lines not in the ledger yet, ledger entries not on the bank yet,
-// and lines set aside. Matched lines are not printed. Marked Draft until the
-// month is locked, Final after. Built from exactly what the month screen holds,
-// so the paper and the screen cannot disagree; the old PDF stays one release.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { FileDown, Printer, X } from 'lucide-react';
-import { fmtDate, fmtDateTime, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { useBranding } from '../../hooks/useBranding';
 import { useAuth } from '../../auth/AuthContext';
 import { byDateThenLine } from './bank-reconcile-pick';
@@ -34,7 +25,6 @@ export type ReconSheetData = {
   files: string[]; lines: BankLine[]; entries: LedgerEntry[];
 };
 
-/** A bank line on the sheet: the same four columns in both of its lists. */
 const LINE_HEAD = ['Date', 'Description', 'In (RM)', 'Out (RM)'];
 
 const money = (sen: number | null): string => (sen == null ? '—' : fmtSenPlain(sen));
@@ -46,9 +36,6 @@ export function BankReconSheet({ d, companyName, printedBy, printedAt }: { d: Re
   const open = byDateThenLine(d.lines.filter((l) => l.state === 'OPEN'));
   const aside = byDateThenLine(setAsideLines(d.lines));
   const asideSen = aside.reduce((n, l) => n + l.amount_sen, 0);
-  /* The server's unexplained holds the set-aside lines too (they are out of
-     the ledger and on the statement); printed apart, what is left is what
-     nobody has accounted for. */
   const unexplained = r.unexplainedSen == null ? null : r.unexplainedSen - asideSen;
   const lock = d.lock;
   const final = lock != null;

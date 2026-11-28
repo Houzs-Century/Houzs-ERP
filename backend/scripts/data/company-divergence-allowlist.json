@@ -441,9 +441,9 @@
       "whoSetIt": "House branding — document presentation."
     },
     {
-      "file": "frontend/src/vendor/scm/lib/pdf-common.ts",
-      "text": "if (getBrandingCompanyCode() === HOUZS_COMPANY_CODE) return 'Houzs ERP';",
-      "why": "Producer/application name written into PDF metadata.",
+      "file": "shared/src/vendor/scm/lib/pdf-letterhead.ts",
+      "text": "if ((companyCode || '').trim().toUpperCase() === HOUZS_COMPANY_CODE) return 'Houzs ERP';",
+      "why": "Footer portal label printed on documents (moved from pdf-common.ts so the browser and the Worker's AI Connector get_pdf print the same letterhead).",
       "whoSetIt": "House branding."
     },
     {

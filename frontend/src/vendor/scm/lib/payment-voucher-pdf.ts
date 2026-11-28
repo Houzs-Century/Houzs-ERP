@@ -25,9 +25,9 @@ import { docPageLabel,
 } from './pdf-common';
 /* The status WORD comes from the one home for it (POSTED prints "Approved" —
    the four-layer vocabulary, docs/modules/document-status-vocabulary.md). */
-import { statusLabel } from './status-pill';
+import { statusLabel } from '../../../../../shared/src/vendor/scm/lib/status-pill';
 import { fetchPvPrintBundle } from './payment-voucher-queries';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type PvPdfHeader = {
   pv_number: string; status: string; voucher_date: string | null;
@@ -38,11 +38,9 @@ export type PvPdfHeader = {
   currency?: string | null; exchange_rate?: string | number | null;
   credit_account_code: string; total_sen?: number | null;
   supplier?: { code: string; name: string } | null;
-  /* A Customer Refund (§14) prints its kind and the document it refunds. */
   purpose?: string | null;
   refund_source_type?: string | null;
   refund_source_doc_no?: string | null;
-  /* The four layers — names as recorded by the approval routes. */
   submitted_at?: string | null; submitted_by?: string | null;
   checked_at?: string | null;   checked_by?: string | null;
   approved_at?: string | null;  approved_by?: string | null;
@@ -67,9 +65,6 @@ const payToRows = (h: PvPdfHeader): Array<[string, string | null]> => [
   ['Remark', h.notes ?? null],
 ];
 
-/* The four-layer strip: one dashed box per layer, the recorded name + date
-   INSIDE the box where a wet signature would go. drawSignatureBoxes is the
-   two-box shape; the voucher needs four, so it is drawn here. */
 function drawFourLayerStrip(doc: import('jspdf').jsPDF, startY: number, h: PvPdfHeader): number {
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 14;
@@ -100,10 +95,6 @@ function drawFourLayerStrip(doc: import('jspdf').jsPDF, startY: number, h: PvPdf
   return ty + 32;
 }
 
-/* Draw ONE voucher's content into `doc`. Does NOT make the doc or deliver it —
-   the caller finalizes ONCE, so the batch screen can put several vouchers (and
-   each one's files) into one combined file. Footer pages run from `startPage`
-   for the same reason renderPurchaseInvoiceInto's do. */
 export async function renderPaymentVoucherInto(
   doc: import('jspdf').jsPDF,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- autotable fn loosely typed (matches the PI generator)
@@ -123,14 +114,8 @@ export async function renderPaymentVoucherInto(
   const rate = Number(header.exchange_rate ?? 1) || 1;
   const totalSen = Number(header.total_sen ?? 0) || lines.reduce((s, l) => s + Number(l.amount_sen), 0);
 
-  /* An AP Payment IS a payment voucher wearing its settlement — the owner's
-     AutoCount vocabulary keeps both under one printed title. An INTERNAL
-     TRANSFER (GL redesign item 10) is the same paper moving our own money,
-     and says so: the payee the transfer form derives is the marker, so the
-     batch printer re-titles without any new parameter. */
   let y = drawHeader(doc, {
     docTitle: header.purpose === 'CUSTOMER_REFUND' ? 'CUSTOMER REFUND'
-      /* Case-blind: the payee is stored in upper case from 2026-11-09 (INTERNAL TRANSFER TO …). */
       : /^internal transfer to /i.test(String(header.payee_name)) ? 'TRANSFER VOUCHER' : 'PAYMENT VOUCHER',
     rightMeta: [
       { label: 'PV No', value: header.pv_number },
@@ -214,8 +199,6 @@ export async function renderPaymentVoucherInto(
     ty += 5;
   }
 
-  /* Amount in words — the voucher convention the owner reads in AutoCount.
-     MYR only: spelling a yuan figure as RINGGIT would be a false sentence. */
   if (!isForeign) {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
     doc.text(amountInWordsMyr(totalSen), margin, ty, { maxWidth: pageW - margin * 2 });
@@ -254,9 +237,6 @@ export async function renderPaymentVoucherInto(
   }
 }
 
-/* jsPDF output → base64, chunked: fromCharCode over one spread stack-overflows
-   on a multi-page voucher, and the payload here is the RENDERED page (small),
-   not the bills — those never leave the server. */
 export function pdfBytesToBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let bin = '';
@@ -266,10 +246,6 @@ export function pdfBytesToBase64(buf: ArrayBuffer): string {
   return btoa(bin);
 }
 
-/* Single voucher → its own file. `withFilesOf` = the pv id whose STORED files
-   should follow the page: the merge happens on the Worker (print-bundle —
-   the files live there; see fetchPvPrintBundle), and the finished PDF comes
-   back for the same three exits. */
 export async function generatePaymentVoucherPdf(
   header: PvPdfHeader,
   lines: PvPdfLine[],

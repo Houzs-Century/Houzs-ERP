@@ -42,19 +42,15 @@ import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
 import { StaffMultiPick } from '../../vendor/scm/components/StaffMultiPick';
 import { todayMyt } from '../../vendor/scm/lib/dates';
-import { MFG_CATEGORY_LABELS, MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
+import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-// Every product category, so a count sheet can cover Dining / Carpet / ... too (HC-0258).
-const CATEGORIES = MFG_PRODUCT_CATEGORIES.map((c) => ({ value: c, label: MFG_CATEGORY_LABELS[c] }));
-
 export const StockTakeNew = () => {
+  // Every product category from the registry, so a count sheet covers Dining / Carpet / ... too (HC-0258).
+  const CATEGORIES = useProductCategories().active.map((c) => ({ value: c.code, label: c.name }));
   const navigate = useNavigate();
   const create   = useCreateStockTake();
-  /* One key for the one take this page is open to raise (lib/idempotency.ts).
-     Route-level form, navigates to the take detail on success, so the MOUNT is
-     exactly one take. */
   const idemKey  = useIdempotencyKey();
 
   const askConfirm = useConfirm();
@@ -73,13 +69,8 @@ export const StockTakeNew = () => {
 
   const warehouses = useWarehouses();
   const allSkus    = useMfgProducts();
-  /* Assignee options: the ACTIVE company's staff (the pickable list, not the
-     display roster) — the person responsible must be someone here and now. */
   const pickableStaff = usePickableStaff();
 
-  // Live "expected count sheet size" — same query the server will use
-  // (v_inventory_all_skus filtered by scope) so the commander sees a
-  // realistic preview before clicking Create. Empty when no warehouse picked.
   const balances = useInventoryBalances({
     warehouseId: warehouseId || undefined,
     showAll:     true,
@@ -89,9 +80,6 @@ export const StockTakeNew = () => {
   const previewCount = useMemo(() => {
     if (!warehouseId) return 0;
     const list = balances.data?.balances ?? [];
-    /* Same approximation for "only SKUs with stock": the server resolves
-       per-variant buckets; here we count SKUs whose balance ≠ 0 so the sheet
-       visibly shrinks before Create. */
     const inScope = scopeType === 'CODE_PREFIX' && scopeValue.trim()
       ? list.filter((b) => b.item_code.toUpperCase().startsWith(scopeValue.trim().toUpperCase()))
       : list;
@@ -100,8 +88,6 @@ export const StockTakeNew = () => {
       : inScope.length;
   }, [balances.data, scopeType, scopeValue, warehouseId, nonzeroOnly]);
 
-  // Suggested prefixes from the actual SKU master so the commander doesn't
-  // have to remember every code shape. Top-3 most common 2-3 letter prefixes.
   const prefixOptions = useMemo(() => {
     const counts = new Map<string, number>();
     for (const sku of allSkus.data ?? []) {
@@ -198,8 +184,6 @@ export const StockTakeNew = () => {
 
             <div className={styles.field}>
               <span className={styles.fieldLabel}>Assignees *</span>
-              {/* Who is counting — often two or three people (owner
-                  2026-10-06). A record; it does not decide who may post. */}
               <StaffMultiPick
                 label="Add assignee"
                 options={pickableStaff.data ?? []}
@@ -309,10 +293,6 @@ export const StockTakeNew = () => {
             </label>
           </div>
 
-          {/* Blind count (phase 1): the counter works without seeing what the
-              system expects — the honest way to count. Server-enforced: while
-              OPEN, system qty + variance are stripped from the wire for
-              everyone except stock-take supervisors. */}
           <div style={{ marginTop: 'var(--space-3)' }}>
             <label style={{
               display: 'inline-flex', alignItems: 'center', gap: 8,

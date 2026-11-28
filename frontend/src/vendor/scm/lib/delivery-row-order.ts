@@ -17,7 +17,7 @@ export function orderComparator(orderedKeys: readonly string[]): (a: string, b: 
   return (a, b) => {
     const ia = idx.get(a) ?? Infinity;
     const ib = idx.get(b) ?? Infinity;
-    return ia === ib ? 0 : ia - ib; // equal (incl. both unlisted) → keep input order
+    return ia === ib ? 0 : ia - ib;
   };
 }
 

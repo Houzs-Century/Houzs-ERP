@@ -31,8 +31,6 @@ const row = (postcode: string, city: string, state: string): LocalityRow => ({
   postcode, city, state, stateCode: '', country: 'Malaysia',
 });
 
-// "Taman Melati" deliberately sits under TWO states — the ambiguity the
-// resolvers refuse to guess at, and that the cascade still has to behave under.
 const ROWS: LocalityRow[] = [
   row('43300', 'Seri Kembangan', 'Selangor'),
   row('47810', 'Petaling Jaya', 'Selangor'),
@@ -61,9 +59,6 @@ describe('postcodeOptionsFor', () => {
     expect(postcodeOptionsFor(ROWS, 'Selangor', 'Petaling Jaya')).toEqual(['47810', '47820']);
   });
 
-  /* The regression the hand-copied wiring carried: with a State picked and City
-     still blank every copy showed the NATIONWIDE list, so top-down narrowed
-     City but not Postcode. */
   it('still narrows to the STATE when only the state is picked', () => {
     expect(postcodeOptionsFor(ROWS, 'Selangor', '')).toEqual(['43300', '47810', '47820']);
     expect(postcodeOptionsFor(ROWS, 'Selangor', '')).not.toContain('50000');
@@ -78,8 +73,6 @@ describe('postcodeOptionsFor', () => {
     );
   });
 
-  /* An ambiguous city that could not resolve a State still narrows Postcode to
-     the states that share the name, rather than the whole country. */
   it('narrows to the city name when a city is picked but no state resolved', () => {
     expect(postcodeOptionsFor(ROWS, '', 'Taman Melati')).toEqual(['53100', '81100']);
   });
@@ -171,8 +164,6 @@ describe('placeholders advertise the field as a starting point', () => {
 });
 
 describe('a round trip through both directions agrees with itself', () => {
-  /* The two directions read the SAME my_localities rows, so a postcode picked
-     bottom-up must land on a state/city pair the top-down lists would offer. */
   it('bottom-up lands on a triple top-down would have produced', () => {
     const viaPostcode = pickPostcode(ROWS, empty, '47810');
     expect(cityOptionsFor(ROWS, viaPostcode.state)).toContain(viaPostcode.city);
@@ -180,9 +171,6 @@ describe('a round trip through both directions agrees with itself', () => {
   });
 });
 
-// An imported / old-PMS order stores the state as "PENANG" or "KL" while the
-// dataset says "Pulau Pinang" / "Wilayah Persekutuan Kuala Lumpur". The exact
-// compare left City and Postcode empty ("No cities seeded") on edit.
 describe('legacy state spellings still narrow City and Postcode', () => {
   it('PENANG finds the Pulau Pinang cities and postcodes', () => {
     expect(cityOptionsFor(ROWS, 'PENANG')).toEqual(['George Town']);

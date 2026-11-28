@@ -22,32 +22,18 @@ export type DayRateDivisorMode = "fixed26" | "calendarDays" | "workingDays";
 export type HourRateDivisorMode = "hoursPlusLunch" | "hoursOnly" | "fixed";
 
 export type PayRulesConfig = {
-  /** "fixed26": the employee's working days / month (26). "calendarDays": the
-   *  month's 28-31. "workingDays": the month's Mon-Sat minus public holidays. */
   dayRateDivisorMode: DayRateDivisorMode;
-  /** "hoursPlusLunch": hours / day + lunch (9h + 1h = ÷10). "hoursOnly": ÷9.
-   *  "fixed": rateHoursPerDay for everyone. No hours set = rateHoursPerDay. */
   hourRateDivisorMode: HourRateDivisorMode;
-  /** Minutes since midnight (480 = 08:00). */
   shiftStartMin: number;
-  /** Shift end and the OT boundary, minutes since midnight (1080 = 18:00). */
   shiftEndMin: number;
-  /** Unpaid lunch, minutes. */
   lunchMin: number;
-  /** Lateness forgiven up to this many minutes. */
   lateGraceMin: number;
-  /** Penal lateness rounds UP to blocks of this many minutes (1 = actual minutes). */
   lateBlockMin: number;
-  /** OT floors to whole blocks of this many minutes; less than one block earns nothing. */
   otBlockMin: number;
-  /** Fallback / fixed hour divisor. */
   rateHoursPerDay: number;
   sundayOtMultiplier: number;
   holidayOtMultiplier: number;
-  /** A working day with no hours stays "Pending" this many working days before it counts as absent. */
   absenceGraceWorkingDays: number;
-  /** Tapped in and out in the same minute at knock-off: true = credit a normal
-   *  shift, false = the day is an absence (charged once, never also hour-docked). */
   brokenPunchCreditsFullDay: boolean;
   epfEmployeePct: number;
   epfEmployerPct: number;
@@ -59,7 +45,6 @@ export type PayRulesConfig = {
 
 export type PayRuleVersion = {
   id: number;
-  /** YYYY-MM-DD, the first date these rules apply to. */
   effectiveFrom: string;
   rules: PayRulesConfig;
   note: string | null;

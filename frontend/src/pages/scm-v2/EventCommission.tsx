@@ -60,7 +60,7 @@ import {
   type CommissionSoRow, type EventCommission,
 } from '../../vendor/scm/lib/event-queries';
 import { useConfirm, usePrompt } from '../../vendor/scm/components/ConfirmDialog';
-import { fmtDateOrDash, fmtDayMonthRange } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtDayMonthRange } from '../../../../shared/src/vendor/shared/format';
 import { DataTable, type Column } from '../../components/DataTable';
 import { cn } from '../../lib/utils';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
@@ -89,7 +89,6 @@ const downloadText = (name: string, text: string) => {
 };
 
 const num = (text: string) => <span className="tabular-nums">{text}</span>;
-/** A rate or a share as the export writes it: "13%". */
 const pctText = (p: number | null | undefined): string | null => (p == null ? null : `${p}%`);
 
 /** An order number opens the sales order (owner 2026-11-12: 不能 right click 开新
@@ -110,10 +109,8 @@ const OrderLink = ({ docNo }: { docNo: string }) => {
   );
 };
 
-/* ── Finance's two buttons ──────────────────────────────────────────────────── */
 
 type MarkCtl = {
-  /** One month, whole or so far, that is not closed: the buttons show. */
   canMark: boolean;
   month: string | null;
   busy: boolean;
@@ -121,11 +118,9 @@ type MarkCtl = {
   undo: (m: CommissionMarkInfo) => void;
 };
 
-/** Why and by whom, for a mark's hover. */
 const markNote = (mark: CommissionMarkInfo): string | undefined =>
   [mark.reason, mark.markedBy ? `by ${mark.markedBy}` : null].filter(Boolean).join(' · ') || undefined;
 
-/** The order's mark with Undo, or the two buttons; a dash when neither applies. */
 const MarkCell = ({ docNo, mark, ctl }: { docNo: string; mark?: CommissionMarkInfo; ctl: MarkCtl }) => {
   if (mark) {
     return (
@@ -174,7 +169,6 @@ const changeMarkColumn = (ctl: MarkCtl): Column<CommissionChangedOrder> => ({
   render: (o) => <ChangeMarkCell row={o} ctl={ctl} />, getValue: (o) => (o.changeMark ? markWords(o.changeMark) : ''),
 });
 
-/* ── Columns ──────────────────────────────────────────────────────────────── */
 
 /* Brand, organizer, venue and state as columns (owner 2026-10-26). */
 const placeColumns = <R,>(placeOf: (row: R) => ReturnType<typeof fairPlace>, w: { brand: string; organizer: string; venue: string; state: string }, dim?: (row: R) => boolean): Column<R>[] => [
@@ -204,8 +198,6 @@ const customerColumn = <R extends { customer: string | null }>(): Column<R> => (
   key: 'customer', label: 'Customer', width: '140px', defaultHidden: true, render: (r) => r.customer ?? '—', getValue: (r) => r.customer,
 });
 
-/** A fair's goods (its Total Sales on this page) and those × the rate — from the
-    server, or summed here for a report from before 2026-11-12. */
 const goodsOf = (f: CommissionFairRow): number => f.goodsSen ?? sum(f.sos, (s) => s.goodsSen);
 const estimateOf = (f: CommissionFairRow): number => f.estimateSen ?? (f.ratePct == null ? 0 : Math.round((goodsOf(f) * f.ratePct) / 100));
 
@@ -249,8 +241,6 @@ const fairColumns = (): Column<CommissionFairRow>[] => [
   },
 ];
 
-/** Each upsale / drop sale on its own line: + in green, − in red, the day and
-    how it came in after it; one that does not count is grey and says why. */
 const Changes = ({ changes }: { changes: CommissionChange[] }) => (changes.length === 0
   ? <span className="text-ink-muted">—</span>
   : (
@@ -269,7 +259,6 @@ const Changes = ({ changes }: { changes: CommissionChange[] }) => (changes.lengt
     </div>
   ));
 
-/* An order's own columns — the fair's orders and the By SO date list share them. */
 const orderMoneyColumns = <R extends CommissionSoRow>(rateOf: (s: R) => number | null): Column<R>[] => [
   {
     key: 'sales', label: 'Sales', align: 'right', description: 'The order total: its goods plus delivery and service. Paid % is of this.',
@@ -305,7 +294,6 @@ const orderMoneyColumns = <R extends CommissionSoRow>(rateOf: (s: R) => number |
   },
   {
     key: 'commission', label: 'Commission', align: 'right',
-    /* Less than goods × rate when a price change is left out: the hover says by how much. */
     render: (s) => (
       <span className="font-semibold tabular-nums" title={s.uncountedSen ? `A price change is left out: RM ${fmtRm(s.uncountedSen)} not counted` : undefined}>
         {amt(s.commissionSen)}
@@ -315,7 +303,6 @@ const orderMoneyColumns = <R extends CommissionSoRow>(rateOf: (s: R) => number |
     exportValue: (s) => s.commissionSen / 100, exportFormat: 'money', total: (rows) => num(fmtRm(sum(rows, (s) => s.commissionSen))),
   },
 ];
-/* Last, after the mark: a wide cell that would push the mark off the screen. */
 const changesColumn = <R extends CommissionSoRow>(): Column<R> => ({
   key: 'changes', label: 'Upsales / drop sales', render: (s) => <Changes changes={s.changes} />,
   getValue: (s) => sum(s.changes.filter((ch) => !ch.notCounted && !ch.uncounted), (ch) => ch.deltaGoodsSen),
@@ -334,12 +321,9 @@ const orderColumns = (ctl: MarkCtl, ratePct: number | null): Column<CommissionSo
   changesColumn<CommissionSoRow>(),
 ];
 
-/* The columns a fair's orders show, for the export while no fair is open: a hidden
-   table under the same id reads them (its buttons are never drawn). */
 const IDLE_CTL: MarkCtl = { canMark: false, month: null, busy: false, mark: () => undefined, undo: () => undefined };
 const FAIR_ORDER_COLUMNS = orderColumns(IDLE_CTL, null);
 
-/** A fair opened: one line on what its orders came to, then the orders. */
 const FairOrders = ({ fair, ctl, onShownColumnsChange }: {
   fair: CommissionFairRow; ctl: MarkCtl; onShownColumnsChange: (columns: Column<CommissionSoRow>[]) => void;
 }) => {
@@ -361,7 +345,6 @@ const FairOrders = ({ fair, ctl, onShownColumnsChange }: {
 /* By SO date: one row per order, its fair as columns (owner 2026-11-12: 「by SO
    date 应该是 SO list，不要分 by fair」). */
 const soListColumns = (ctl: MarkCtl): Column<SoListRow>[] => {
-  /* "No fair": its own brand, the venue typed on the order. */
   const placeOf = (o: SoListRow) => (isNoFair(o.fair) ? { brand: o.fair.brand?.toUpperCase() ?? null, organizer: null, venue: o.venue ?? null, state: null } : fairPlace(o.fair));
   const [brand, ...place] = hideState(placeColumns<SoListRow>(placeOf, { brand: '85px', organizer: '115px', venue: '150px', state: '100px' }));
   return [
@@ -386,7 +369,6 @@ const soListColumns = (ctl: MarkCtl): Column<SoListRow>[] => {
   ];
 };
 
-/** Original → Latest and the difference: + in green, − in red. */
 const amendedCell = (sen: number) => (sen === 0
   ? <span className="text-ink-muted">–</span>
   : <span className={cn('font-medium tabular-nums', sen > 0 ? 'text-synced' : 'text-err')}>{sen > 0 ? '+' : '−'}{fmtRm(Math.abs(sen))}</span>);
@@ -553,7 +535,6 @@ const markedColumns = (ctl: MarkCtl): Column<CommissionMarkedOrder>[] => [
 /* ── Finance's own lines (owner 2026-11-13, 「做」) ──────────────────────────── */
 
 type LineCtl = {
-  /** One month, whole or so far, that is not closed: a line can be typed and taken away. */
   canEdit: boolean;
   month: string | null;
   busy: boolean;
@@ -563,7 +544,6 @@ type LineCtl = {
 const manualColumns = (ctl: LineCtl): Column<CommissionManualLine>[] => [
   { key: 'order', label: 'Order', width: '135px', render: (m) => <OrderLink docNo={m.docNo} />, getValue: (m) => m.docNo },
   refColumn<CommissionManualLine>(),
-  /* The organizer is in the Columns: a typed line reads by its order, its amount and its reason, and Remove stays in sight. */
   ...hideState(placeColumns<CommissionManualLine>(orderPlace, { brand: '85px', organizer: '115px', venue: '130px', state: '100px' }))
     .map((c) => (c.key === 'organizer' ? { ...c, defaultHidden: true } : c)),
   { key: 'salesperson', label: 'Salesperson', width: '100px', render: (m) => m.salesperson ?? '—', getValue: (m) => m.salesperson },
@@ -588,7 +568,6 @@ const manualColumns = (ctl: LineCtl): Column<CommissionManualLine>[] => [
   },
 ];
 
-/** Finance types a line: the order, an amount of goods (less than 0 takes back) and why. */
 const AddLineForm = ({ month, busy, onAdd, onCancel }: {
   month: string; busy: boolean; onAdd: (line: { docNo: string; goodsSen: number; reason: string }) => void; onCancel: () => void;
 }) => {
@@ -604,7 +583,6 @@ const AddLineForm = ({ month, busy, onAdd, onCancel }: {
   const orderRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     const form = formRef.current;
-    /* jsdom has no scrollIntoView: asked for, not assumed. */
     if (form && 'scrollIntoView' in form) form.scrollIntoView({ block: 'center' });
     orderRef.current?.focus({ preventScroll: true });
   }, []);
@@ -631,7 +609,6 @@ const AddLineForm = ({ month, busy, onAdd, onCancel }: {
   );
 };
 
-/* ── Closing a month ──────────────────────────────────────────────────────── */
 
 /** Where the range stands on closing (owner 2026-10-26, 关月): the months closed,
     the latest of them, and whether the range is the whole month next in line
@@ -650,7 +627,6 @@ function closeState(r: EventCommission, range: { from: string; to: string }) {
   };
 }
 
-/** The month close's line under the toolbar: a closed month as closed, else which months are. */
 const MonthCloseNote = ({ r, range }: { r: EventCommission; range: { from: string; to: string } }) => {
   const st = closeState(r, range);
   if (r.closed) {
@@ -673,7 +649,6 @@ const MonthCloseNote = ({ r, range }: { r: EventCommission; range: { from: strin
   );
 };
 
-/** Close / Reopen, in the header before Excel (the redesign keeps the month close where Finance reaches it). */
 const MonthCloseAction = ({ r, range }: { r: EventCommission; range: { from: string; to: string } }) => {
   const askConfirm = useConfirm();
   const close = useCloseCommissionMonth();
@@ -709,7 +684,6 @@ const MonthCloseAction = ({ r, range }: { r: EventCommission; range: { from: str
   );
 };
 
-/** A part of the report as a card: its title, a grey hint, then the table. */
 const Card = ({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) => (
   <section className={ec.card} aria-label={title}>
     <div className={ec.cardHead}><h3 className={ec.cardTitle}>{title}</h3>{hint && <span className={ec.cardHint}>{hint}</span>}</div>
@@ -719,8 +693,6 @@ const Card = ({ title, hint, children }: { title: string; hint?: string; childre
 
 /* ── What is kept when you come back (owner 2026-11-12: 打开后返回会关掉原本打开的) ── */
 
-/** sessionStorage, this browser tab only (lib/browserStorageRegistry.ts): the view,
-    the brand, the folded fairs and which fairs are open, per range and view. */
 const VIEW_KEY = 'houzs.eventCommission.v1';
 type SavedView = { basis?: CommissionBasis; brand?: string; showIdle?: boolean; open?: Record<string, string[]> };
 const readView = (): SavedView => {
@@ -735,7 +707,6 @@ const writeView = (v: SavedView) => {
   try {
     sessionStorage.setItem(VIEW_KEY, JSON.stringify(v));
   } catch {
-    /* Storage refused (private window): the page still works, it just forgets. */
   }
 };
 
@@ -762,12 +733,10 @@ export const EventCommissionTab = () => {
   const full = q.data;
   const brands = useMemo(() => brandsOf(full), [full]);
   const brandNow = brands.includes(brand) ? brand : '';
-  /* One filtered report feeds the tiles, every table and the exports. */
   const r = useMemo(() => (full ? forBrand(full, brandNow) : undefined), [full, brandNow]);
   const words = BASIS_WORDS[basis];
   const byFair = basis === 'fair';
 
-  /* Finance's two buttons: on one month (whole, or so far) that is not closed. */
   const askReason = usePrompt();
   const askConfirm = useConfirm();
   const { mutate: markMutate, isPending: marking } = useMarkCommissionOrder();
@@ -813,7 +782,6 @@ export const EventCommissionTab = () => {
   const earlierCols = useMemo(() => earlierColumns(ctl), [ctl]);
   const changedCols = useMemo(() => changedColumns(ctl), [ctl]);
   const markedCols = useMemo(() => markedColumns(ctl), [ctl]);
-  /* Finance's own lines: typed and taken away on the month the marks act on. */
   const lineCtl = useMemo<LineCtl>(() => ({
     canEdit: canMark, month, busy: adding || removing,
     remove: (m) => {
@@ -847,7 +815,6 @@ export const EventCommissionTab = () => {
   const people = useMemo(() => (r ? salespeopleOf(r) : []), [r]);
   const runExport = async (format: EcFormat, { who, part, leaveOutZero }: EcChoice): Promise<void> => {
     if (!r) return;
-    /* A fair's orders as one list: the order and its fair first, then the columns an open fair shows. */
     const soByKey = new Map(soListCols.map((c) => [c.key, c]));
     const fairOrderKeys = tables.fairOrderKeys() ?? FAIR_ORDER_COLUMNS.filter((c) => !c.defaultHidden).map((c) => c.key);
     const shown: ShownTables = {
@@ -1041,7 +1008,6 @@ export const EventCommissionTab = () => {
         </Card>
       )}
       {r && <p className={ec.notes}>{RULE_NOTE}</p>}
-      {/* What a fair's orders show, read while no fair is open. */}
       {byFair && (
         <div hidden>
           <DataTable<CommissionSoRow> tableId="event-commission-orders" embedded freezeHeight="off" columns={FAIR_ORDER_COLUMNS} rows={[]} getRowKey={(s) => s.docNo}

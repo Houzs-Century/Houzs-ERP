@@ -8,7 +8,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ResizableDrawer } from "../../../components/ResizableDrawer";
 import { cn } from "../../../lib/utils";
 import { api } from "../../../api/client";
-import { fmtDate, fmtSen } from "../../../vendor/shared/format";
+import { fmtDate, fmtSen } from "../../../../../shared/src/vendor/shared/format";
 import { DateField } from "../../../vendor/scm/components/DateField";
 import { writeFailed, writeFailedAs } from "../../../vendor/scm/lib/mutation-error";
 import { useConfirm } from "../../../vendor/scm/components/ConfirmDialog";
@@ -47,7 +47,6 @@ const LinkBtn = ({ onClick, children }: { onClick: () => void; children: ReactNo
   <button type="button" onClick={onClick} className="text-[12.5px] font-semibold text-primary hover:underline">{children}</button>
 );
 const inputCls = "min-h-[40px] w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-ink";
-/** When a trip on this lorry counts as full, in words. */
 const fullWhen = (l: LorryRow): string => {
   const sets = `${l.max_sets ?? 10} sets`, value = fmtSen(l.max_revenue_sen ?? 3_000_000);
   const layer = (l.capacity_layer ?? "SETS") as CapacityLayer;
@@ -116,7 +115,6 @@ export function LorryDrawer({ lorry, warehouses, drivers, helpers, carriers, gps
   );
 }
 
-/** Kilometres and driving time by road this month, home and back, from Last Mile. */
 function RoadThisMonth({ lorryId }: { lorryId: string }) {
   const today = todayMyt();
   const road = useRoadFigures(`${today.slice(0, 7)}-01`, today, lorryId);
@@ -158,7 +156,6 @@ function Documents({ lorry }: { lorry: LorryRow }) {
       await qc.invalidateQueries({ queryKey: ["lorries"] });
       setRenew(null); setExpiry(""); setRef("");
     } catch (e) {
-      /* The renew writes the Fleet Health vault, which needs fleet.write, not the lorry master's permission. */
       if ((e as { status?: number } | null)?.status === 403) {
         writeFailedAs("The document was not renewed")(new Error("You do not have Fleet Health permission (fleet write). Ask an admin to grant it."));
       } else writeFailed(e);

@@ -33,7 +33,7 @@ import { ICON, fmt, btn, softText, danger, good, panel, refusalText } from './se
 import styles from './Suppliers.module.css';
 import grid from './MerchantRecon.module.css';
 import { BankAccountTabs, currentAccount } from './BankAccountTabs';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import { DataTable } from '../../components/DataTable';
 import { ReconcilePickProvider, byDateThenLine, useReconcilePick } from './bank-reconcile-pick';
 import { EntryDocument, entryDocText } from './bank-entry-doc';
@@ -45,9 +45,7 @@ export const BankStatementTab = ({ onUpload }: { onUpload?: () => void }) => {
   return <UploadAndList onOpen={setStatementId} onUpload={onUpload} />;
 };
 
-/* ── Upload, and the statements already read ──────────────────────────────── */
 
-/* The upload itself is the page's Upload drawer (BankUpload.tsx) — one door, opened from here or from an account. */
 const UploadAndList = ({ onOpen, onUpload }: { onOpen: (id: number) => void; onUpload?: () => void }) => {
   const statements = useBankStatements();
   const rows = statements.data?.statements ?? [];
@@ -111,7 +109,6 @@ const UploadAndList = ({ onOpen, onUpload }: { onOpen: (id: number) => void; onU
   );
 };
 
-/* ── One statement ────────────────────────────────────────────────────────── */
 
 /* The obvious ones, for a statement that was already up when the rule
    arrived (docs/bugs/0814; owner: 只要名字金额一样就自动都对). One press runs the
@@ -172,7 +169,6 @@ const RefileAsMonth = ({ statement }: { statement: { id: number; period_from: st
 const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
   const q = useBankStatement(id);
   const [showDone, setShowDone] = useState(false);
-  /* Back from an order opened here lands on the same spot (bank-entry-doc). */
   useReturnScroll(q.data != null);
 
   const statement = q.data?.statement ?? null;
@@ -311,13 +307,8 @@ export const BooksNotOnBank = ({ entries }: { entries: LedgerEntry[] }) => {
 const WhereItIsSaved = ({ statement, openCount, lineCount }: {
   statement: BankStatement;
   openCount: number;
-  /** How many movements were actually READ. A failed read gives an empty list,
-     which is indistinguishable from a finished statement — so the completion
-     sentence below is spoken over counted rows, never over an absence. */
   lineCount: number;
 }) => {
-  /* The month this file's own dates put it in. Where it straddles a month end
-     both are named, because closing one of them does not close the other. */
   const months = [...new Set(
     [statement.period_from, statement.period_to]
       .filter((d): d is string => typeof d === 'string' && d.length >= 7)
@@ -332,11 +323,6 @@ const WhereItIsSaved = ({ statement, openCount, lineCount }: {
         reconciliation above is recomputed from the ledger each time it is read.
       </span>
       <span>
-        {/* The completion half is spoken ONLY over movements that were read and
-            counted. A failed read hands back an empty list, which is
-            indistinguishable from a finished statement — so lineCount === 0
-            falls to the neutral sentence rather than claiming the work is
-            done. */}
         {openCount > 0 || lineCount === 0
           ? <>A reconciliation is <b>recorded</b> by closing its month, on the <b>By month</b> tab.</>
           : <>
@@ -348,7 +334,6 @@ const WhereItIsSaved = ({ statement, openCount, lineCount }: {
   );
 };
 
-/* ── Does it agree? ───────────────────────────────────────────────────────── */
 
 const Figure = ({ label, sen, tone }: { label: string; sen: number | null; tone?: 'good' | 'bad' }) => (
   <div>
@@ -386,9 +371,6 @@ const WalkRow = ({ label, sen, count, what, strong, tone }: {
 );
 
 export const ReconciliationPanel = ({ r }: { r: Reconciliation }) => {
-  /* The inconsistency comes FIRST and replaces the walk. Publishing a walk
-     the numbers cannot account for is worse than publishing nothing: it looks
-     like work has been done. */
   if (!r.consistent) {
     return (
       <div style={{ ...panel('plain'), border: `1px solid ${danger}` }}>
@@ -438,7 +420,6 @@ export const ReconciliationPanel = ({ r }: { r: Reconciliation }) => {
   );
 };
 
-/* ── One movement still to decide ─────────────────────────────────────────── */
 
 const KIND_LABEL: Record<BankLine['kind'], string> = {
   PAYOUT: 'a card payout, matched',
@@ -591,7 +572,6 @@ const QrSalesBlock = ({ line, qr }: { line: BankLine; qr: BankQrSales }) => {
       {qr.waiting.map((w) => (
         <div key={`waiting-${w.lineNo}`} className={grid.sub}>line {w.lineNo} · {fmt(w.grossSen)} — no sale linked yet</div>
       ))}
-      {/* Not ready: the row's own note (the server's clue) already says what is missing — said once. */}
       {qr.ready && (
         <button type="button" style={{ ...btn(true, group.isPending), justifySelf: 'start' }} disabled={group.isPending}
           onClick={() => group.mutate({ lineIds: [line.id], jeNos: qr.jeNos })}>
@@ -605,7 +585,6 @@ const QrSalesBlock = ({ line, qr }: { line: BankLine; qr: BankQrSales }) => {
 
 export const OpenLine = ({ line, isPicked = false, onPick, onRecordJournal }: {
   line: BankLine; isPicked?: boolean; onPick?: () => void;
-  /** No entry found: record the movement as a manual journal (BankRecordJournal). Offered only where the month allows it. */
   onRecordJournal?: () => void;
 }) => {
   const book = useBookBankReceipt();
@@ -625,16 +604,9 @@ export const OpenLine = ({ line, isPicked = false, onPick, onRecordJournal }: {
   const toggle = (id: number) =>
     setPicked((was) => (was.includes(id) ? was.filter((x) => x !== id) : [...was, id]));
 
-  /* Did the matcher settle this one? Then the other reports are noise until
-     asked for — and "asked for" has to stay possible, because the matcher is
-     sometimes wrong and that is the whole reason a person is here. */
   const decided = line.kind === 'PAYOUT' || line.kind === 'PAYOUT_SPLIT';
   const [showAll, setShowAll] = useState(false);
 
-  /* Each statement takes what it is still owed. The shares must add up to the
-     credit to the sen — the same rule the merchant side applies to a swipe
-     covering two orders — so the button says the difference rather than
-     letting a leftover through. */
   const chosen = line.candidates.filter((b) => picked.includes(b.id));
   const allocatedSen = chosen.reduce((s, b) => s + b.outstandingSen, 0);
   const shortSen = line.amount_sen - allocatedSen;
@@ -657,9 +629,6 @@ export const OpenLine = ({ line, isPicked = false, onPick, onRecordJournal }: {
   const chargeReady = charging && account !== '' && chargeNote.trim() !== '' && chargedShareSen > 0;
   const [note, setNote] = useState('');
   const [asking, setAsking] = useState(false);
-  /* Which ledger entry the operator says this movement is. Nothing is
-     pre-selected: he is agreeing that two records are one fact, and a
-     pre-ticked answer to that is a decision made for him. */
   const [entry, setEntry] = useState<string | null>(null);
   const failed = book.isError ? book.error
     : match.isError ? match.error
@@ -680,8 +649,6 @@ export const OpenLine = ({ line, isPicked = false, onPick, onRecordJournal }: {
         <div className={grid.sub} style={{ wordBreak: 'break-word' }}>{line.description}</div>
       </td>
       <DepWd amountSen={line.amount_sen}>
-        {/* The gross the bank actually credited, when it split the payout —
-            otherwise the number here matches no line on his page. */}
         {line.charge_sen > 0 && (
           <div className={grid.sub}>{fmt(line.amount_sen + line.charge_sen)} less {fmt(line.charge_sen)} charge</div>
         )}
@@ -729,8 +696,6 @@ export const OpenLine = ({ line, isPicked = false, onPick, onRecordJournal }: {
                   : `Not this one? ${line.candidates.length - picked.length} other report(s)`}
               </button>
             )}
-            {/* Only when it does NOT add up — a running total nobody needs is
-                one more number in the way. */}
             {picked.length > 0 && shortSen !== 0 && !charging && (
               <span className={grid.sub}>
                 Selected {fmt(allocatedSen)} of {fmt(line.amount_sen)} —{' '}
@@ -833,8 +798,6 @@ export const OpenLine = ({ line, isPicked = false, onPick, onRecordJournal }: {
         )}
         {asking && (
           <div style={{ display: 'grid', gap: 4, marginTop: 4 }}>
-            {/* A reason, required — an ignored movement leaves the difference
-                for ever and this sentence is all the next person will have. */}
             <input value={note} onChange={(e) => setNote(e.target.value)}
               aria-label={`Why line ${line.line_no} is not ours`} placeholder="Why? e.g. own transfer, booked from the other side"
               style={{ padding: '4px 6px', fontSize: 'var(--fs-12)', minWidth: 220 }} />

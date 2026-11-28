@@ -1,8 +1,3 @@
-// buildDeptNodes' lead resolution (mig-pg 0331). A department's lead is now a
-// REAL, settable field; the derived-from-manager_id inference is only the
-// fallback. These pin that an explicit choice wins, that the fallback still
-// works when none is set, and that a stale choice (person left the roster)
-// degrades to the derived lead rather than showing a ghost.
 import { describe, expect, it } from "vitest";
 import type { TeamMember, Department } from "../../types";
 import { buildDeptNodes } from "./teamShared";
@@ -36,8 +31,6 @@ const dept = (id: number, name: string, extra: Partial<Department> = {}): Depart
 
 describe("buildDeptNodes — real lead vs derived", () => {
   it("a chosen lead_user_id wins over the derived lead", () => {
-    // Carol reports to Alice, so Alice is the DERIVED lead — but the department
-    // explicitly names Bob, so Bob leads and the node is marked chosen.
     const members = [m(1, "Alice", 10), m(2, "Bob", 10), m(3, "Carol", 10, 1)];
     const { nodes } = buildDeptNodes(members, [dept(10, "Ops", { lead_user_id: 2 })]);
     expect(nodes[0].lead?.id).toBe(2);
@@ -47,14 +40,14 @@ describe("buildDeptNodes — real lead vs derived", () => {
   it("falls back to the derived lead when no lead is set", () => {
     const members = [m(1, "Alice", 10), m(3, "Carol", 10, 1)];
     const { nodes } = buildDeptNodes(members, [dept(10, "Ops")]);
-    expect(nodes[0].lead?.id).toBe(1); // Alice, derived
+    expect(nodes[0].lead?.id).toBe(1);
     expect(nodes[0].leadIsChosen).toBe(false);
   });
 
   it("falls back to derived when the chosen lead has left the roster", () => {
     const members = [m(1, "Alice", 10), m(3, "Carol", 10, 1)];
     const { nodes } = buildDeptNodes(members, [dept(10, "Ops", { lead_user_id: 999 })]);
-    expect(nodes[0].lead?.id).toBe(1); // 999 is nobody → derived
+    expect(nodes[0].lead?.id).toBe(1);
     expect(nodes[0].leadIsChosen).toBe(false);
   });
 

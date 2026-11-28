@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// BillPlanDialog — Plan date on a supplier bill (the owner's Claude Design,
-// Money out batch 4 step 7): when Finance plans to pay it, beside the
-// supplier's due date — never instead of it, so Overdue still counts by the
-// due date. Opened from Supplier bills' ⋯ and the bill's page; the To do
-// calendar moves the same date by dragging the bill. Posts nothing.
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { Button } from '@2990s/design-system';
@@ -12,7 +5,7 @@ import { Modal } from '../../vendor/scm/components/Modal';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useToastOptional } from '../../hooks/useToast';
 import { usePlanBill } from '../../vendor/scm/lib/ap-invoice-queries';
-import { fmtDate, fmtSen, todayMY } from '../../vendor/shared/format';
+import { fmtDate, fmtSen, todayMY } from '../../../../shared/src/vendor/shared/format';
 import mo from './MoneyOut.module.css';
 
 export type PlannableBill = {

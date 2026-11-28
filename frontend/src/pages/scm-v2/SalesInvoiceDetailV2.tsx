@@ -1,35 +1,3 @@
-// SalesInvoiceDetailV2 — Theme C ("Ink & Petrol") redesign of the Sales
-// Invoice detail page. Money-forward twin of DeliveryOrderDetailV2 —
-// same DetailLayout shell, but the SI is the point in the chain where
-// money actually enters the ledger, so the entire chrome pivots around
-// Outstanding vs Paid.
-//
-// Key departures from the DO detail template:
-//   · Aside dark hero flips from Dispatch (driver + vehicle + date) back
-//     to a MONEY hero — total + outstanding + paid, err-tinted when
-//     outstanding > 0 and success-tinted when it's cleared. Outstanding
-//     is the number finance reads first when opening an SI.
-//   · Status flow = payment lifecycle (Sent → Partially paid → Paid /
-//     Overdue, plus Cancelled). Mirrors SI listing V2.
-//   · Header CTA by payment state. BOTH record money; neither writes a
-//     status (the server derives it from the payments ledger):
-//       Record payment — payable + balance > 0, opens an empty ledger row
-//       Mark paid      — payable + balance > 0 + the order's deposit is
-//                        readable; opens ONE row pre-filled at the balance
-//                        (markPaidPlan.ts). Was `balance == 0` until
-//                        2026-08-23, when it wrote a status and no payment.
-//   · Line-items get the SO detail's 5-column layout back — Item · Qty ·
-//     Unit price · Disc · Amount — with the FOC badge on zero-price
-//     lines. An SI without money is a design bug, not a valid state.
-//   · Origin doc is a DO (not an SO). Both are promoted into the sticky
-//     header meta line: "From DO XYZ · From SO ABC".
-//   · Invoice-specific dates (invoice_date + due_date) live in the Key
-//     dates aside; due_date renders in err colour when overdue.
-//
-// The old ledger-style SalesInvoiceDetail.tsx stays; App.tsx flip on
-// ScmSalesInvoiceDetailV2 is the whole switch. Data + mutations use the
-// vendored sales-invoice-queries slice (useSalesInvoiceDetail /
-// useUpdateSalesInvoiceStatus).
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -98,21 +66,19 @@ import {
 } from "../../components/scm-v2/DocumentRelationshipMapModal";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
-import { statusLabel } from "../../vendor/scm/lib/status-pill";
+import { statusLabel } from "../../../../shared/src/vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetryNavigationState, planPaymentDraftFlush, readPaymentRetryHandoff, readPaymentRetryNavigationState } from "../../lib/paymentRetryHandoff";
 import { transferFromColumnLabel } from "../../lib/convertScope";
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 
 import { useSalesInvoiceAddLine } from "./SalesInvoiceAddLine";
 import { salesInvoiceLinesOpen } from "../../vendor/scm/lib/line-add-lock";
 import { ActivityRow } from "./ActivityRow";
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
-// ─── Row shapes (subset — see SalesInvoiceDetail.tsx for the full 40-field
-// header) ───────────────────────────────────────────────────────────────
 
 type SiStatus =
   | "DRAFT"
@@ -161,11 +127,9 @@ type SiHeader = {
   local_total_sen: number;
   total_sen: number;
   paid_sen: number;
-  credit_notes_sen?: number | null; // credit notes knocked off it (si-credit-notes); null = unread
+  credit_notes_sen?: number | null;
   line_count: number;
   currency: string;
-  // Finance-gated cost / margin fields (served on the detail payload; shown only
-  // to a project_finance_viewer — same rule as the SI list columns, #574).
   mattress_sofa_sen?: number;
   bedframe_sen?: number;
   accessories_sen?: number;
@@ -195,19 +159,12 @@ type SiItem = {
   cancelled?: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
-  /* Per-line delivery date carried from the DO line. */
   line_delivery_date?: string | null;
 };
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
-/* ONE shared centi formatter (vendor/shared/format.ts) — the page-local copy
-   this replaces had no finite guard, so an absent / non-numeric cost rendered
-   the literal "MYR NaN"; the shared helper renders "—" instead. */
 const fmtMoney = fmtMoneySen;
 
-// Days between today and an ISO date; positive when the date is in the past.
-// Only used for the due-date overdue check, so time-of-day noise is fine.
 const daysPast = (iso: string | null | undefined): number => {
   if (!iso) return -1;
   const s = iso.replace(/T.*$/, "");
@@ -230,17 +187,9 @@ const doOf = (h: SiHeader): string => h.do_number || "—";
 
 const brandOf = (h: SiHeader): string => h.branding || "—";
 
-// The header-carried total is the source of truth (server-stamped); line rows
-// exist for display. If for any reason the header total is 0 while the lines
-// aren't, fall back to the line sum so the drawer never lies.
 const totalOf = (h: SiHeader, items: SiItem[]): number =>
   h.total_sen || h.local_total_sen || items.reduce((s, l) => s + (l.line_total_sen ?? 0), 0);
 
-/* The deposit taken on the SALES ORDER this invoice came from, served beside
-   paid_sen by GET /sales-invoices/:id (backend lib/si-order-deposit). It is NOT
-   folded into paid_sen anywhere: the two are different money, banked against
-   different documents, and the office reading this screen has to be able to see
-   which document took it. */
 type OrderDeposit = {
   so_doc_no: string;
   order_collected_sen: number;
@@ -255,33 +204,15 @@ type OrderDeposit = {
   }>;
 };
 
-/* Everything settling this invoice: its own receipts PLUS the slice of the
-   order's deposit allocated to it. `depositSen` is a REQUIRED argument on both
-   helpers below, not an optional one — its absence changes the answer, so an
-   optional parameter would leave every caller that forgot it silently showing
-   the old, wrong figure with no compile error (CLAUDE.md, optional-param-noop).
-
-   The arithmetic itself is the SHARED rule (vendor/scm/lib/si-outstanding.ts),
-   not a local copy: this page held the only deposit-aware formula in the app
-   for one day, and the list, the cards, the mobile card and the customer's PDF
-   all disagreed with it. `totalOf` stays local because only this screen has the
-   line items to fall back on. */
-/* ONE site reads the column, so the runtime guard on a hand-typed payload lives
-   in one place instead of once per formula. */
 const paidOf = (h: SiHeader): number => h.paid_sen ?? 0;
 
-/* The credit notes knocked off it ride the header (credit_notes_sen) — the same three kinds of money the list nets. */
 const settledOf = (h: SiHeader, depositSen: number): number =>
   siSettledSen(paidOf(h), depositSen, siCreditNotesSen(h));
 
 const outstandingOf = (h: SiHeader, items: SiItem[], depositSen: number): number =>
   siOutstandingSen(totalOf(h, items), paidOf(h), depositSen, siCreditNotesSen(h));
 
-// Payment-lifecycle bucket for tone + blurb.
 type Effective = "draft" | "sent" | "partial" | "paid" | "overdue" | "cancelled";
-/* The pill and the Outstanding figure are computed from the SAME `settledOf`,
-   so they cannot disagree: an invoice covered by the order's deposit cannot
-   read "Outstanding 0" beside a "Sent · awaiting payment" pill. */
 const effectiveOf = (h: SiHeader, items: SiItem[], depositSen: number): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "CANCELLED") return "cancelled";
@@ -289,7 +220,6 @@ const effectiveOf = (h: SiHeader, items: SiItem[], depositSen: number): Effectiv
   if (s === "PARTIALLY_PAID" || settledOf(h, depositSen) > 0) return "partial";
   if (s === "OVERDUE") return "overdue";
   if (s === "DRAFT") return "draft";
-  // Sent + anything else with no payment yet.
   const overdueDays = daysPast(h.due_date);
   if (overdueDays > 0 && outstandingOf(h, items, depositSen) > 0) return "overdue";
   return "sent";
@@ -331,8 +261,6 @@ const EFFECTIVE_TONE: Record<
   },
 };
 
-// Raw-stage label so the header Badge still shows the exact stored status
-// instead of the bucketed effective label.
 /* The header BADGE reads its word from vendor/scm/lib/status-pill.ts. It used to
    read a hand-written STAGE_LABEL here, which said "Sent" for SENT - contradicting the
    owner's ruling that this rung reads one word on every surface, and invisible to
@@ -351,7 +279,6 @@ const initialsOf = (name: string | null | undefined): string => {
   );
 };
 
-// ─── Field cell (identical to SO/DO detail V2) ─────────────────────────────
 
 function Field({
   label,
@@ -385,7 +312,6 @@ function Field({
   );
 }
 
-// ─── Aside sub-primitives ───────────────────────────────────────────────────
 
 function AsideCard({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -457,12 +383,6 @@ function PersonRow({
 
 
 
-// ─── Invoice total / outstanding hero (dark aside slab) ────────────────────
-//
-// SO detail's hero is Order total; DO detail's hero is Dispatch; SI detail's
-// hero is Outstanding. Big number is what's still owed — a red beacon while
-// non-zero, a green Paid stamp once cleared. Total + Paid render as sub-lines
-// so the three canonical figures stay together.
 
 function OutstandingHeroCard({
   header,
@@ -516,8 +436,6 @@ function OutstandingHeroCard({
           v={fmtMoney(paid, header.currency)}
           tone={paid > 0 ? "success" : "muted"}
         />
-        {/* Named for the document that actually took the money — the office
-            reads this line to know it does not have to chase it. */}
         {depositSen > 0 && (
           <HeroLine
             k={`Deposit on ${orderDeposit!.so_doc_no}`}
@@ -577,7 +495,6 @@ function HeroLine({
   );
 }
 
-// ─── Main page ─────────────────────────────────────────────────────────────
 
 export function SalesInvoiceDetailV2() {
   const { id } = useParams<{ id: string }>();
@@ -591,18 +508,8 @@ export function SalesInvoiceDetailV2() {
   const notify = useNotify();
   const askConfirm = useConfirm();
   const { pageAccess } = useAuth();
-  // Mutation gate — a salesperson opens this invoice read-only via the sales
-  // inherit hatch (allowSales; backend readInheritsFrom scm.sales.orders) and
-  // cannot confirm/cancel/edit or record payments. Hide those controls (owner
-  // off-not-hide rule); Print PDF + Relationship Map stay so the rep can still
-  // find + send the invoice. `*` resolves to "full".
   const canWriteSi = ["edit", "full"].includes(pageAccess("scm.sales.invoices"));
 
-  // ── Payments (shared DRAFT-mode PaymentsTable + manual flush) ──────────
-  // Mirrors the vendored ledger SalesInvoiceDetail.tsx: the SAVED PaymentsTable
-  // mode is hardwired to the SO payment endpoints, so an SI records payments via
-  // DRAFT mode — persisted rows are mapped into PaymentDraft[] and adds/deletes
-  // flush through the SI payment hooks on Save.
   const paymentsQ = useSalesInvoicePayments(id ?? null);
   const addPayment = useAddSalesInvoicePayment();
   const deletePayment = useDeleteSalesInvoicePayment();
@@ -636,11 +543,6 @@ export function SalesInvoiceDetailV2() {
       ),
     [detail.data]
   );
-  /* The order's deposit, served alongside the invoice. `undefined` here is the
-     server saying it could not read the order (orderDepositUnavailable) — NOT
-     "there is no deposit", which is why the banner below exists: an invoice
-     whose order we cannot see must not quietly claim the customer owes
-     everything. That is the bug this whole screen change is about. */
   const orderDeposit =
     (detail.data as { orderDeposit?: OrderDeposit | null } | undefined)
       ?.orderDeposit ?? null;
@@ -650,7 +552,6 @@ export function SalesInvoiceDetailV2() {
   );
   const depositSen = orderDeposit?.applied_sen ?? 0;
 
-  // Persisted SI payment row → the shared PaymentsTable draft shape.
   const apiToDraft = useCallback(
     (p: NonNullable<typeof paymentsQ.data>[number]): PaymentDraft => {
       /* `credit` and `installment` deliberately fall through to "Merchant" —
@@ -674,7 +575,6 @@ export function SalesInvoiceDetailV2() {
         accountSheet: p.account_sheet ?? "",
         approvalCode: p.approval_code ?? "",
         collectedBy: p.collected_by ?? "",
-        // SI payments carry no per-payment slip (Spec D4 is SO-only).
         slipUploadSessionId: null,
       };
     },
@@ -735,13 +635,7 @@ export function SalesInvoiceDetailV2() {
   // browser history happens to point). The list restores its own sticky
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/sales-invoices"));
-  // Header-only edit — seed the drafts from the invoice and reveal the inline
-  // editor (no navigation; ?edit=1 was dead). invoice_date is only editable
-  // while DRAFT; the backend rejects it once issued.
   const siIsDraft = (salesInvoice?.status || "").toUpperCase() === "DRAFT";
-  /* Add line — the SI has no separate editor page to hand off to, so its add
-     row opens in place. Gated on the Edit permission AND on DRAFT, which is
-     exactly what POST /:id/items allows. See SalesInvoiceAddLine.tsx. */
   const addLine = useSalesInvoiceAddLine(id ?? null, canWriteSi && salesInvoiceLinesOpen({ status: salesInvoice?.status ?? null }));
   const startEditHeader = () => {
     if (!salesInvoice) return;
@@ -758,8 +652,6 @@ export function SalesInvoiceDetailV2() {
       dueDate: hdrDueDate || null,
       notes: hdrNotes,
     };
-    // Only send invoice date when it may change (DRAFT) — the backend freezes it
-    // once issued and rejects the whole PATCH if a frozen field is present.
     if (siIsDraft) body.invoiceDate = hdrInvoiceDate || null;
     updateHeader.mutate(
       { id, ...body },
@@ -773,10 +665,6 @@ export function SalesInvoiceDetailV2() {
       },
     );
   };
-  // Status transitions post to the same server endpoint the ledger page uses.
-  // The endpoint keys off UPPERCASE status values (SENT / CANCELLED / PAID) — a
-  // lowercase value silently misroutes (e.g. cancel would write "cancelled" and
-  // skip the revenue reversal), so all four transitions send UPPERCASE.
   const doCancel = async () => {
     if (!salesInvoice) return;
     if (
@@ -790,9 +678,6 @@ export function SalesInvoiceDetailV2() {
       updateStatus.mutate({ id: salesInvoice.id, status: "CANCELLED" });
     }
   };
-  // Confirm a DRAFT SI → SENT. The server posts the AR/GL revenue JE
-  // (Dr AR / Cr Sales) and auto-applies any customer credit ONCE on this
-  // transition; both were skipped on draft create. Mirrors the SO/DO Confirm.
   const doConfirm = async () => {
     if (!salesInvoice) return;
     if (
@@ -805,8 +690,6 @@ export function SalesInvoiceDetailV2() {
       updateStatus.mutate({ id: salesInvoice.id, status: "SENT" });
     }
   };
-  // Reopen a CANCELLED SI → SENT. The server re-posts revenue and reverses the
-  // cancel-credit; payment status is re-derived from the ledger.
   const doReopen = async () => {
     if (!salesInvoice) return;
     if (
@@ -822,9 +705,6 @@ export function SalesInvoiceDetailV2() {
   const [relMapOpen, setRelMapOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const goRelationshipMap = () => setRelMapOpen(true);
-  // Render + download the SI PDF via the shared jspdf generator (client-side),
-  // mirroring the V1 SalesInvoiceDetail handler. The old `?print=1` navigation
-  // was dead — nothing consumed that param — so the button did nothing.
   const deliverPrintPdf = (action: PdfAction) => {
     if (!salesInvoice) return;
     return import("../../vendor/scm/lib/sales-invoice-pdf")
@@ -842,11 +722,6 @@ export function SalesInvoiceDetailV2() {
   const print = usePrintPreview(deliverPrintPdf);
   useOpenPrintPreviewFromUrl(print.openPreview, !!salesInvoice);
 
-  // Chain nodes for the shared Relationship Map modal, read from the LIVE
-  // `/document-flow` graph (the SO map's source) instead of a hand-built chain.
-  // The 5-node shape's downstream slot is now the AR Payments the graph carries
-  // off this invoice — the old chain dropped them for a dead "no GRN" tile
-  // (audit R8). Upstream SO / DO nodes reflect the real family documents.
   const relMapHeader = useMemo(
     () =>
       salesInvoice
@@ -869,9 +744,6 @@ export function SalesInvoiceDetailV2() {
     pickChoice: pickChainChoice,
   } = useSiRelationshipMap(relMapHeader);
 
-  // Open the in-place payments editor (seeded from persisted rows) and scroll it
-  // into view. Replaces the old dead `?tab=payments&record=1` navigation —
-  // nothing consumed that param, so the button did nothing.
   const goRecordPayment = () => {
     paymentEditBaselineIds.current = new Set(persistedDrafts.map((draft) => draft.uid));
     setPaymentDrafts([...persistedDrafts, ...paymentRetryDrafts]);
@@ -893,19 +765,8 @@ export function SalesInvoiceDetailV2() {
     setEditingPayments(false);
     setPaymentDrafts([]);
   };
-  // Flush the draft ledger against the persisted rows: delete removed rows, POST
-  // new ones. Existing (unchanged) rows keep their persisted uid and are skipped
-  // — parity with the vendored ledger SalesInvoiceDetail (no in-place edit of a
-  // persisted SI payment; add / delete only).
   const flushPaymentDrafts = async () => {
     if (!salesInvoice) return;
-    /* `paymentsQ.data ?? []` here was a money bug, not a cosmetic one. This
-       flush decides what to POST by DIFFERENCE against what is already stored.
-       If the payments read failed, `data` is undefined, so `persisted` became
-       empty, `persistedIds` became empty, and every draft — including rows that
-       are already in the ledger — was re-POSTed: duplicate payment rows against
-       a real invoice. An empty array means "no payments"; undefined means "we do
-       not know", and you must not diff against a set you never read. */
     const persisted = paymentsQ.data;
     if (!Array.isArray(persisted)) {
       throw new Error(
@@ -931,9 +792,6 @@ export function SalesInvoiceDetailV2() {
         accountSheet: d.accountSheet || null,
         approvalCode: d.approvalCode || null,
         collectedBy: d.collectedBy || null,
-        // Per-draft key (lib/idempotency.ts). This flush posts rows one by one
-        // and aborts on the first throw, so a re-press of Save re-posts the ones
-        // that already landed — the key replays them instead of duplicating.
         idempotencyKey: d.idempotencyKey,
       };
       Object.assign(body, draftMethodFields(method, d));
@@ -963,10 +821,6 @@ export function SalesInvoiceDetailV2() {
       )
       .finally(() => setSavingPayments(false));
   };
-  /* Mark paid RECORDS THE MONEY and writes NO status; markPaidPlan.ts holds the
-     trace and the four refusals. It stops at the editor rather than committing
-     because the METHOD is the operator's — a guessed `cash` lands in the daily
-     cash-up and leaves the drawer short. */
   const doMarkPaid = () => {
     if (!salesInvoice) return;
     const plan = planMarkPaid({
@@ -976,7 +830,6 @@ export function SalesInvoiceDetailV2() {
       creditNotesUnavailable: salesInvoice.credit_notes_sen === null,
     });
     if (!plan.ok) {
-      // Fire-and-forget: the dialog's own OK button closes it (NotifyDialog).
       void notify({
         title: "Nothing to record",
         body: MARK_PAID_REFUSAL_MESSAGE[plan.reason],
@@ -999,10 +852,6 @@ export function SalesInvoiceDetailV2() {
     );
   };
 
-  /* The LIST's two payment entries land here (siPaymentIntent.ts). They delegate
-     because a receipt's amount must be decided where `orderDepositUnavailable`
-     is known: a list row cannot tell "the order collected nothing" from "we
-     could not read the order", and the second books the deposit twice. */
   useSiPaymentIntent({
     invoiceId: id ?? null,
     ready: paymentsQ.isSuccess,
@@ -1010,7 +859,6 @@ export function SalesInvoiceDetailV2() {
     onBalance: doMarkPaid,
   });
 
-  // ── SI line item columns — money-forward, 5 cols like SO detail ────────
   const lineColumns: Column<SiItem>[] = [
     {
       key: "item",
@@ -1115,7 +963,6 @@ export function SalesInvoiceDetailV2() {
     },
   ];
 
-  // ── Loading / error states ───────────────────────────────────────────
   if (!id) {
     return (
       <div className="p-8 text-center text-ink-muted">
@@ -1158,12 +1005,7 @@ export function SalesInvoiceDetailV2() {
   const isCancelled = rawStatus === "CANCELLED";
   const isDraft = rawStatus === "DRAFT";
   const isTerminal = isCancelled || rawStatus === "PAID";
-  // A DRAFT SI is not payable (the server 409s any payment) until Confirm issues
-  // it — so payment actions are hidden until it leaves DRAFT.
   const canRecordPayment = !isTerminal && !isDraft && outstanding > 0;
-  /* WAS `outstanding === 0` — offered ONLY where there was no money to record,
-     which is why it could not have been recording any. Same rule `doMarkPaid`
-     re-checks on click, so a stale screen refuses rather than books. */
   const canMarkPaid = canOfferMarkPaid({
     status: salesInvoice.status,
     outstandingSen: outstanding,
@@ -1173,7 +1015,6 @@ export function SalesInvoiceDetailV2() {
 
   return (
     <div className="pb-24 md:pb-0">
-      {/* ─── Mobile-only dark sticky header ─────────────────────────── */}
       <div className="sticky top-0 z-20 -mx-4 -mt-4 bg-sidebar text-sidebar-ink shadow-slab md:hidden">
         <div className="flex items-center justify-between gap-3 px-4 pt-3">
           <button
@@ -1212,7 +1053,6 @@ export function SalesInvoiceDetailV2() {
         </div>
       </div>
 
-      {/* ─── Desktop sticky header ─────────────────────────────────── */}
       <div className="sticky top-0 z-10 -mx-4 hidden border-b border-border bg-bg/95 px-4 py-4 backdrop-blur-sm sm:-mx-6 sm:px-6 md:block">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3 min-w-0">
@@ -1361,7 +1201,6 @@ export function SalesInvoiceDetailV2() {
         </div>
       </div>
 
-      {/* ─── Detail body ────────────────────────────────────────────── */}
       <div className="py-5">
         {/* Header-only edit panel (owner 2026-08-20). Lines stay read-only — an
             invoice's lines are what the DO shipped. Only invoice date (DRAFT
@@ -1407,8 +1246,6 @@ export function SalesInvoiceDetailV2() {
             </div>
           </div>
         )}
-        {/* Mobile-only Outstanding hero — sits at the top of the scroll body.
-            On md+ the dark aside hero replaces this. */}
         <div className="mb-3 rounded-lg border border-border bg-surface p-4 shadow-stone md:hidden">
           <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
             {outstanding === 0 ? "Paid in full" : "Outstanding"}
@@ -1430,8 +1267,6 @@ export function SalesInvoiceDetailV2() {
           </div>
         </div>
 
-        {/* Draft banner — a DRAFT SI has posted no revenue / AR and can't take a
-            payment yet. Confirm issues it (posts revenue + applies credit). */}
         {isDraft && (
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning-text/30 bg-warning-bg px-4 py-3">
             <div className="flex items-start gap-2 text-warning-text">
@@ -1455,7 +1290,6 @@ export function SalesInvoiceDetailV2() {
         )}
         <DetailGrid>
           <DetailMain>
-            {/* Customer */}
             <Section title="Customer">
               <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-3">
                 <Field
@@ -1494,7 +1328,6 @@ export function SalesInvoiceDetailV2() {
               </div>
             </Section>
 
-            {/* Invoice info — the SI's editorial primary section. */}
             <Section title="Invoice info">
               <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-4">
                 <Field
@@ -1573,8 +1406,6 @@ export function SalesInvoiceDetailV2() {
               )}
             </Section>
 
-            {/* Delivery address + Emergency contact — identical layout to DO
-                detail V2 (the DO's fields carry through to the SI on convert). */}
             <Section title="Delivery address">
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-[1.4fr_1fr] sm:divide-x sm:divide-border-subtle">
                 <div className="sm:pr-6">
@@ -1629,7 +1460,6 @@ export function SalesInvoiceDetailV2() {
               </div>
             </Section>
 
-            {/* Line items — money-forward, 5 cols. FOC badge on zero-price. */}
             <Section title={`Line items · ${items.length}`} actions={addLine.action}>
               <DataTable<SiItem>
                 tableId={`si-lines-${id}`}
@@ -1648,9 +1478,6 @@ export function SalesInvoiceDetailV2() {
                 moves to the separate Finance "Fulfillment Costing" module. The
                 customer-facing invoice totals are untouched. */}
 
-            {/* Payments — shared ledger. DRAFT-mode PaymentsTable seeded from the
-                persisted rows; adds / deletes flush on Save. A DRAFT SI isn't
-                payable until Confirm; a cancelled SI shows its ledger read-only. */}
             <div ref={paymentsSectionRef}>
               {paymentRetryDrafts.length > 0 && (
                 <div className="mb-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[12px] text-ink" role="status">
@@ -1711,11 +1538,6 @@ export function SalesInvoiceDetailV2() {
               </Section>
             </div>
 
-            {/* Collected on the ORDER — deliberately its own section rather than
-                extra rows in the table above. These receipts were banked against
-                the Sales Order, not this invoice, and merging the two lists would
-                lose exactly the fact the office needs: which document took the
-                money. Read-only here; it is edited on the order. */}
             {orderDepositUnavailable && (
               <div className="mt-4 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[12px] text-ink" role="status">
                 We could not read the sales order behind this invoice, so any
@@ -1867,7 +1689,6 @@ export function SalesInvoiceDetailV2() {
         </DetailGrid>
       </div>
 
-      {/* ─── Fixed bottom action bar (phone only) ───────────────────── */}
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">
         <div className="flex items-center gap-2">
           {canWriteSi &&
@@ -1916,20 +1737,14 @@ export function SalesInvoiceDetailV2() {
         </div>
       </div>
 
-      {/* Relationship map modal — shared 5-node graph, live `/document-flow` */}
       <DocumentRelationshipMapModal
         open={relMapOpen}
         onClose={() => setRelMapOpen(false)}
         nodes={chainNodes}
         onNodeClick={(n) => {
-          // TRUE = the click navigated away, so close the map; a notice keeps it
-          // open (renders over the map).
           if (onChainNodeClick(n)) setRelMapOpen(false);
         }}
       />
-      {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. The picked one opens in its own tab of the
-          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}

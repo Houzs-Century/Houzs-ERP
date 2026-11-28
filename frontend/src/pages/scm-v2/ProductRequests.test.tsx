@@ -104,18 +104,15 @@ describe('Product Requests — the requester', () => {
     fireEvent.click(screen.getByRole('button', { name: /New request/ }));
     const dialog = screen.getByRole('dialog', { name: 'New product request' });
     fireEvent.change(within(dialog).getByLabelText('Application'), { target: { value: 'SAMPLE' } });
-    /* Line 1: a Model the catalogue has not got. */
     fireEvent.change(within(dialog).getByLabelText('Product kind line 1'), { target: { value: 'new' } });
     fireEvent.change(within(dialog).getByLabelText('New Model name line 1'), { target: { value: 'Aurora 2-seater' } });
     fireEvent.change(within(dialog).getByLabelText('Fabric line 1'), { target: { value: 'LIN-01' } });
     fireEvent.change(within(dialog).getByLabelText('Sofa size line 1'), { target: { value: '22' } });
     fireEvent.change(within(dialog).getByLabelText('Leg size line 1'), { target: { value: '4' } });
     fireEvent.change(within(dialog).getByLabelText('Remarks line 1'), { target: { value: 'Deeper seat' } });
-    /* Line 2: an existing SKU, three of them. */
     fireEvent.click(within(dialog).getByRole('button', { name: /Add line/ }));
     fireEvent.change(within(dialog).getByLabelText('SKU line 2'), { target: { value: '5530-3S' } });
     fireEvent.change(within(dialog).getByLabelText('Qty line 2'), { target: { value: '3' } });
-    /* A third line, then removed: it must not be sent. */
     fireEvent.click(within(dialog).getByRole('button', { name: /Add line/ }));
     expect(within(dialog).getByLabelText('SKU line 3')).toBeTruthy();
     fireEvent.click(within(dialog).getByLabelText('Remove line 3'));
@@ -161,7 +158,6 @@ describe('Product Requests — the requester', () => {
     await waitFor(() => expect(withdrawMutate).toHaveBeenCalledWith('r1'));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Edit' }));
     const edit = screen.getByRole('dialog', { name: 'Edit HC-PDR-2610-001' });
-    /* The stored line comes back as line 1, editable. */
     expect((within(edit).getByLabelText('New Model name line 1') as HTMLInputElement).value).toBe('Aurora');
     fireEvent.change(within(edit).getByLabelText('Qty line 1'), { target: { value: '3' } });
     fireEvent.click(within(edit).getByRole('button', { name: 'Save' }));
@@ -189,7 +185,6 @@ describe('Product Requests — files (owner 2026-10-15)', () => {
     expect(within(dialog).getByLabelText('Attach a file')).toBeTruthy();
     expect(within(dialog).getByLabelText('Remove quotation.pdf')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    /* Approved: the requester may still attach, but the files stay. */
     openDetail('HC-PDR-2610-003');
     dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-003' });
     expect(within(dialog).getByLabelText('Attach a file')).toBeTruthy();
@@ -221,7 +216,6 @@ describe('Product Requests — the Purchaser', () => {
   test('approves, rejects with a note, builds the Model + SKU per line, then is sent to PC Order New once every line has a SKU', async () => {
     requests = [
       base({ id: 'r1', requested_by: 99 }),
-      /* Approved, two lines: one new Model still to build, one existing SKU. */
       base({ id: 'r3', request_no: 'HC-PDR-2610-003', requested_by: 99, status: 'APPROVED', lines: [line({}), line({ id: 'l2', line_no: 2, item_code: '5530-3S', proposed_model_name: null, qty: 3 })] }),
       base({ id: 'r4', request_no: 'HC-PDR-2610-004', requested_by: 99, status: 'APPROVED', lines: [line({ item_code: 'AURORA-2S', proposed_model_name: null })] }),
     ];
@@ -230,7 +224,6 @@ describe('Product Requests — the Purchaser', () => {
     expect(screen.getAllByText('Amy Tan').length).toBeGreaterThan(0);
     openDetail('HC-PDR-2610-001');
     let dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-001' });
-    /* Another person's request: the Purchaser decides, never edits or withdraws. */
     expect(within(dialog).queryByRole('button', { name: 'Withdraw' })).toBeNull();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(approveMutate).toHaveBeenCalledTimes(1));
@@ -240,7 +233,6 @@ describe('Product Requests — the Purchaser', () => {
     expect((promptFn.mock.calls[0][0] as { input: { required: boolean } }).input.required).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
-    /* Approved but line 1 has no SKU yet: build it on that line, not an order. */
     openDetail('HC-PDR-2610-003');
     dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-003' });
     expect(within(dialog).queryByRole('button', { name: 'Raise PC Order' })).toBeNull();
@@ -254,7 +246,6 @@ describe('Product Requests — the Purchaser', () => {
     expect(buildAsync.mock.calls[0][0]).toMatchObject({ id: 'r3', lineId: 'l1', modelCode: 'AURORA', skuCode: null, name: 'Aurora' });
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
 
-    /* Every line has its SKU: the order is raised on PC Order New, from the request. */
     openDetail('HC-PDR-2610-004');
     dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-004' });
     expect(within(dialog).queryByRole('button', { name: 'Create Model + SKU' })).toBeNull();
@@ -271,12 +262,10 @@ describe('Product Requests — the Purchaser', () => {
     approver = true;
     draw();
     expect(screen.getByText('HC-PO-2610-007')).toBeTruthy();
-    /* A line still without a SKU: neither order. */
     openDetail('HC-PDR-2610-003');
     let dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-003' });
     expect(within(dialog).queryByRole('button', { name: 'Raise PO' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    /* PO issued: no second order of either kind; the PO is named and linked, and it may be closed. */
     openDetail('HC-PDR-2610-005');
     dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-005' });
     expect(within(dialog).getByText('PO raised')).toBeTruthy();
@@ -285,7 +274,6 @@ describe('Product Requests — the Purchaser', () => {
     expect(within(dialog).getByRole('link', { name: 'Open HC-PO-2610-007 →' }).getAttribute('href')).toBe('/scm/purchase-orders/po-1');
     expect(within(dialog).getByRole('button', { name: 'Close request' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    /* Ready: both doors, and Raise PO lands on PO New carrying the request. */
     openDetail('HC-PDR-2610-004');
     dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-004' });
     expect(within(dialog).getByRole('button', { name: 'Raise PC Order' })).toBeTruthy();
@@ -302,10 +290,8 @@ describe('Product Requests — the Purchaser', () => {
     draw();
     openDetail('HC-PDR-2610-001');
     const dialog = screen.getByRole('dialog', { name: 'Product request HC-PDR-2610-001' });
-    /* The built line's code is a link straight to the Model it created. */
     const link = within(dialog).getByRole('link', { name: 'AURORA-2S' });
     expect(link.getAttribute('href')).toBe('/scm/product-models/m1');
-    /* The line still to be built shows its name as plain text, not a link. */
     expect(within(dialog).queryByRole('link', { name: 'Nimbus (new)' })).toBeNull();
     expect(within(dialog).getAllByText('Nimbus (new)', { exact: false }).length).toBeGreaterThan(0);
   });

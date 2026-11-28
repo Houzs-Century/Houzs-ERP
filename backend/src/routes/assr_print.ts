@@ -23,29 +23,11 @@ import { assrStageLabel } from "../scm/shared/assr-stage-labels";
 import { assrMergedPoText } from "../scm/shared/assr-case-pos";
 import { assrSubStatusLabelOf } from "../scm/shared/assr-sub-statuses";
 
-// Formal service-case document modeled on a standard Malaysian business
-// invoice/service report:
-//   · Letterhead with company name, registration no., and address
-//   · Plain document title + reference metadata
-//   · Two-column labeled customer / service details (no boxes)
-//   · Minimal itemised list separated by horizontal rules
-//   · Plain numbered sections
-//   · Black & white, light use of a single accent rule
-// No coloured backgrounds, no pills, no zebra rows, no decorative blocks.
-//
-// Three variants share the same chrome; differ in which sections they
-// include and what extras (tracker SVG, QR code, acknowledgement) ride
-// along. Variant chosen via `?variant=customer|supplier|office`.
-// Default `office` preserves the legacy single-template behaviour.
 
 const app = new Hono<{ Bindings: Env }>();
 
 type Variant = "office" | "customer" | "supplier";
 
-/* Sign-off panels and footer contact name the entity on the letterhead, not
-   the case's company — a 2990 case printed on Houzs paper used to say
-   "2990 HOME Representative" under a Houzs Century heading. `both` heads with
-   Houzs, so Houzs signs. */
 export function signoffCompanyCode(entity: string, companyCode: string): string {
   const caseEntity = companyCode === HOUZS_COMPANY_CODE ? "houzs" : "2990";
   if (entity === caseEntity) return companyCode;
@@ -70,22 +52,9 @@ export function docCodes(text: string | null | undefined): string {
     .join("");
 }
 
-// All printed dates/timestamps render in Malaysia wall-clock time
-// (UTC+8). The Worker runs in UTC and the old getUTC* formatting
-// printed instants 8 hours behind the office clock (Nick 2026-07-14:
-// the printed "Generated" stamp read 8h early). Date-only strings (YYYY-MM-DD)
-// parse as UTC midnight, so the +8h shift never moves their calendar day.
 const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
 
-// fmtDate / fmtDateTime come from scm/shared/format — the one date rule. The
-// hand-rolled +8h copies that used to live here produced the same DD/MM/YYYY,
-// which is exactly why they survived: agreeing today is not the same as being
-// one rule, and the ASSR copy of fmtDateTime had ALREADY drifted (it lacked the
-// naive-wall-clock branch the Projects copy grew on 2026-08-12, so a crew time
-// typed as 11:00 printed as 19:00).
 
-// "Printed 2026/07/30 11:05 PM" — the sign-off footer's print stamp
-// (Nico 2026-07-30: yyyy/mm/dd [hh:mm @AM/PM]). MYT like fmtDateTime.
 function printedStamp(): string {
   const d = new Date(Date.now() + MYT_OFFSET_MS);
   const yyyy = d.getUTCFullYear();
@@ -98,12 +67,6 @@ function printedStamp(): string {
   return `${yyyy}/${mm}/${dd} ${h12}:${min} ${ampm}`;
 }
 
-/* The stage wording moved to scm/shared/assr-stage-labels.ts (assrStageLabel).
-   This map was one of FIVE hand-written copies, and the note below — written
-   when RESOLUTION_LABEL was unified — applied word for word to the map that
-   used to sit right here and was not applied to it. The customer portal's copy
-   had no `voided` arm at all and printed the raw slug, while this one printed
-   "Voided — Not Valid". */
 
 /* Owner-approved wording (2026-08-11). Kept identical in all three
    copies of this map — backend print, desktop StatusDot, mobile — because
@@ -142,12 +105,6 @@ async function fetchAsDataUri(env: Env, key: string, fallbackMime = "image/png")
   }
 }
 
-/**
- * Compute the on-paper "Target Completion" for the supplier variant.
- * Uses `stage_entered_at + stage_target_days` for the case's CURRENT
- * stage — i.e. the supplier sees how long they've got from now to
- * the next handoff, not the case's e2e deadline.
- */
 function supplierTargetDateIso(stageEnteredAt: string | null, stageTargetDays: number | null | undefined): string | null {
   if (!stageEnteredAt || !stageTargetDays) return null;
   const iso = stageEnteredAt.endsWith("Z") ? stageEnteredAt : stageEnteredAt + "Z";
@@ -172,20 +129,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
   const detail = await getAssrDetail(c.env, id);
   if (!detail) return c.text("Not found", 404);
 
-  /* Multi-company: getAssrDetail's SQL is `WHERE c.id = ?` with no company
-     predicate, so this route rendered ANY company's service case to anyone
-     holding service_cases.read — the permission alone says nothing about
-     which company's cases you may see.
-
-     The JSON detail route already applies this exact guard (assr.ts, "a case
-     must fall inside the caller's ASSR company scope"); the PRINTABLE one,
-     which emits the same content as a document with letterhead, did not.
-
-     Same semantics, deliberately: an UNRESOLVED scope (undefined —
-     pre-migration / the D1 test mirror) skips the check, while an EMPTY scope
-     means the caller is granted no active company and every company-stamped
-     case must 404. Those two used to share `[]` and the merged state failed
-     open. Out-of-scope answers 404, indistinguishable from a missing id. */
   const allowedCo = allowedCompanyIds(c as any);
   if (allowedCo) {
     const caseCo = Number(
@@ -196,22 +139,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     }
   }
 
-  /* Row-level visibility — the SECOND half of the JSON route's guard, and the
-     half this route never had. The company check above answers "whose company",
-     `service_cases.read` answers "may you read service cases at all"; neither
-     answers "is this case yours". So a visibility-scoped salesperson could
-     render ANY case in their own company as a letterheaded document by walking
-     the id, and get more out of it than the JSON route would give them (see the
-     creditor strip below). Both halves now come from routes/assr.ts, so the rule
-     cannot drift between the two surfaces again. */
   if (!(await assrCaseRowInScope(c as any, detail.case as any))) {
     return c.text("Not found", 404);
   }
 
-  /* The Supplier Service Order is the paper that goes to the supplier, so it
-     must carry a Return No. A case moved onto the supplier leg by the stage
-     dropdown never had a trip opened, so it had no SVC-RTN and printed without
-     one. Seed trip #1 (and its number) here, after the scope checks. */
   if (isSupplier && !((detail as any).supplier_returns ?? []).length) {
     const userId = Number((c as any).get?.("userId") ?? 0) || null;
     await ensureFirstSupplierReturn(c.env, id, userId);
@@ -229,7 +160,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
   if (callerScoped && isOffice) stripCreditorFields(detail.case as any);
 
   const { case: cs, items, attachments, activity, logistics } = detail;
-  // Postcode / City / State live in assr_case_address (getAssrDetail reads assr_cases only).
   const caseAddr = await getCaseAddress(c.env, id);
 
   // Related Cases (owner 2026-09-28): this customer's service-case history up to
@@ -253,7 +183,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       issue_category: string | null;
       stage: string;
     }>);
-  // Fallback so the section always renders at least this case (no/blank name).
   if (!relatedCases.some((r) => r.assr_no === cs.assr_no)) {
     relatedCases.push({
       assr_no: cs.assr_no,
@@ -264,11 +193,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     });
   }
 
-  // ── Company identity (per-company branding) ─────────────────
-  // Letterhead / footer / inline labels come from the DOCUMENT's company —
-  // the case row's company_id (a 2990 case must print 2990's identity no
-  // matter which company the operator has active). Fallback: the request's
-  // active company, then HOUZS.
   const companyCode = await resolveCompanyCode(
     c.env,
     (cs as any).company_id ?? c.get("companyCode"),
@@ -276,11 +200,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
   const branding = await getBrandingForCompany(c.env, companyCode);
   const coAddressLines = brandingAddressLines(composeBrandingAddress(branding));
 
-  // Uploaded per-company letterhead logo wins; the bundled Houzs wordmark is
-  // HOUZS-only (it must never head another company's paper); otherwise the
-  // text fallback renders the company name.
-  // letterheadLogoKey: the dedicated print logo when one is uploaded, else the
-  // on-screen one (the app chrome is dark, paper is white — see Branding).
   const printLogoKey = letterheadLogoKey(branding);
   const logoUri = printLogoKey
     ? await fetchAsDataUri(c.env, printLogoKey)
@@ -305,9 +224,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       ? (rawEntity as PrintEntity)
       : caseEntity;
 
-  /* One entity's letterhead facts. Everything comes from the Branding config
-     (Settings → Branding) — the identity is edited in one place and every
-     document follows, which is the whole point of that record. */
   type EntityProfile = {
     name: string;
     reg: string | null;
@@ -315,7 +231,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     tel: string | null;
     email: string | null;
     logo: string | null;
-    /** Square mark vs wide wordmark — drives the logo's fit, not its width. */
     square: boolean;
   };
   const loadEntityProfile = async (code: string): Promise<EntityProfile> => {
@@ -326,10 +241,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
       : code === HOUZS_COMPANY_CODE
         ? await fetchAsDataUri(c.env, "static/logo-wordmark.png")
         : null;
-    /* The contact row is driven by the CS contact fields, not by a hardcoded
-       company check: Houzs carries csPhone/csEmail (the numbers a customer
-       should actually call), 2990 carries neither, so 2990's letterhead comes
-       out contact-free without this code naming either of them. */
     const csTel = (b as { csPhone?: string | null }).csPhone || null;
     const csMail = (b as { csEmail?: string | null }).csEmail || null;
     return {
@@ -348,8 +259,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
   const homeProfile = entity === "2990" || entity === "both"
     ? await loadEntityProfile("2990")
     : null;
-  // `both` heads the paper with Houzs (the service provider) and names 2990 in
-  // the band below; the single-entity modes head with whoever was picked.
   const headProfile = (entity === "2990" ? homeProfile : houzsProfile) ?? {
     name: branding.companyName,
     reg: branding.registrationNo || null,
@@ -365,9 +274,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     ? branding
     : await getBrandingForCompany(c.env, signCode);
   const coShort = shortCompanyName(signBranding.companyName);
-  // Warehouse/CS contact line: the historical HOUZS CS number is not part of
-  // the Branding config, so HOUZS keeps its literal (unchanged output); other
-  // companies show their branding phone (blank → line renders without one).
   const csPhone = signCode === HOUZS_COMPANY_CODE ? "011-6155 6133" : signBranding.phone;
 
   const imageAttachments = attachments.filter((a: any) =>
@@ -376,17 +282,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
   const otherAttachments = attachments.filter(
     (a: any) => !(a.content_type || "").startsWith("image/")
   );
-  // Customer print hides only attachments staff EXPLICITLY marked
-  // internal (visible_to_customer = 0). The column's D1-era default was
-  // 1 (show), but the Postgres cut-over dropped that default so every
-  // upload since lands as NULL — treating NULL as hidden silently
-  // stripped all photos from the customer copy. NULL/undefined now
-  // means "not hidden" → visible, matching the original intent.
-  // Supplier print shows everything; office sees the lot.
   const showImage = (a: any): boolean => {
     if (isOffice) return true;
     if (isCustomer) return a.visible_to_customer !== 0 && a.visible_to_customer !== false;
-    return true; // supplier
+    return true;
   };
   const inlinedImages: Array<{ category: string; file_name: string | null; data_url: string }> = [];
   for (const att of imageAttachments as any[]) {
@@ -400,13 +299,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     });
   }
 
-  // Nick 2026-07-03: customer print follows the boxed ASSR Form too —
-  // all three sheets share the strict-B&W boxed design, so the colour
-  // tracker, QR panel, and notice layout are gone from print. Customers
-  // reach the portal via the track-link message instead.
 
-  // Supplier variant — derive the target-completion date for the
-  // current stage from the snapshotted `stage_target_days`.
   const supplierTargetIso = isSupplier
     ? supplierTargetDateIso((cs as any).stage_entered_at, (cs as any).stage_target_days)
     : null;
@@ -421,10 +314,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     : null;
   if (Number.isFinite(roundId) && !trip) return c.text("Not found", 404);
 
-  /* The Supplier Service Order (supplier copy, no explicit ?round=) still shows
-     the case's CURRENT supplier-return number before the ASSR No (owner
-     2026-09-28), so the paper the supplier receives is traceable to its return
-     document. Per-trip Return Notes (?round=) keep their own number. */
   const currentReturn = trip || !isSupplier
     ? null
     : ((detail as any).supplier_returns ?? [])
@@ -441,22 +330,10 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     : isSupplier ? "Supplier Copy — for acknowledgement"
     : "";
 
-  // Status pills (design: two outlined pills top-right). SERVICE maps
-  // the resolution method to a service-location bucket; STATUS is the
-  // workflow stage. Both render static — change in-app and reprint.
-  /* The REAL resolution method, worded exactly as the app words it (owner
-     2026-08-11). This used to collapse the five methods into three buckets —
-     "At Customer" / "Return to Supplier" / "Internal (own team)" — which threw
-     away the distinction the reader cares about most: Replace Unit and Supplier
-     Service both printed "Return to Supplier", so a customer could not tell
-     from the paper whether they were waiting on a new unit or a repair. Same
-     for the two on-site methods, which hid whether we or the supplier turns up. */
   const servicePillLabel = cs.resolution_method
     ? RESOLUTION_LABEL[cs.resolution_method] || cs.resolution_method
     : "—";
   const statusPillLabel = assrStageLabel(cs.stage);
-  // Void reason prints beneath the status when the case is voided
-  // (Nico 2026-07-29) so the recipient sees why it was rejected.
   const voidReason = cs.stage === "voided" && (cs as any).void_reason
     ? String((cs as any).void_reason)
     : null;
@@ -477,12 +354,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
   const subKey = String((cs as any).sub_status ?? "");
   const subStatusLabel = PRINT_SUB_STATUS_LABEL[subKey] ?? assrSubStatusLabelOf(subKey);
 
-  // Warehouse — auto-detected from the case's delivery area (location
-  // code) via the SCM State-to-Warehouse mapping (scm.state_warehouse_
-  // mappings, company-scoped, configurable in SCM settings), so the
-  // supplier copy shows which warehouse the item moves through. Falls
-  // back to the legacy public.warehouses code table, then em-dash.
-  // Wrapped in try/catch: the D1 test mirror has no scm schema.
   const LOCATION_STATE: Record<string, string> = {
     KL: "Kuala Lumpur",
     PG: "Pulau Pinang",
@@ -1157,8 +1028,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     </div>` : ""}
 
     ${!isSupplier ? (() => {
-      // ── ASSR Form (design handoff) — boxed meta grid, black section
-      // bars, fixed items table, 3-up photo grid, dual sign-off. ──
       const officeItems = (items as any[]).map((it, i) => `
         <div class="itable" style="grid-template-columns: 10mm 1fr 12mm 12mm 1.4fr;">
           <span class="td">${i + 1}</span>
@@ -1167,13 +1036,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
           <span class="td">${esc(it.qty_carton ?? 1)}</span>
           <span class="td remark">${it.remark ? esc(it.remark) : i === 0 && cs.action_remark ? esc(cs.action_remark) : ""}</span>
         </div>`);
-      // Split the case photos into the two panels ops asked for on the
-      // customer copy: the reported defect ("Service Issue") vs the
-      // post-return quality shots ("QC Approved"). Categories mirror the
-      // case-page grouping. Completion / sign-off / delivery images
-      // belong to the sign-off block, not the reference grids, so they
-      // are excluded from both; anything else (incl. uncategorised
-      // legacy photos) falls under Service Issue so none is dropped.
       const qcCats = new Set(["inspection_report", "receipt_evidence"]);
       const skipCats = new Set(["completion", "delivery_pod", "sign_off", "signature"]);
       const qcPhotos = inlinedImages.filter((a) => qcCats.has(a.category));
@@ -1261,12 +1123,6 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     })() : ""}
 
     ${isSupplier ? (() => {
-      // ── Supplier Service Order (design handoff). ──
-      /* BUG-92 (Farra 2026-10-08): the per-item Supplier remark is one note for
-         the whole case, so on a 2nd/3rd return it still said trip 1's problem
-         while the Reason row said this trip's. Once the trip has a Reason, that
-         is the only instruction the supplier sees. A trip without one keeps the
-         old remark so papers already in flight do not go blank. */
       const tripReason = String((trip || currentReturn)?.reason ?? "").trim();
       const supRemark = (it: any, i: number): string =>
         tripReason ? (i === 0 ? tripReason : "")

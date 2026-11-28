@@ -85,14 +85,10 @@ const log = (...args: unknown[]): void => {
 
 export type MoneyPayment = {
   id: string; paidOn: string; method: string; provider: string | null; amountSen: number;
-  /** Reached this ledger (an active SOPAY / SOCONV journal). */
   booked: boolean;
-  /** Brought over from AutoCount (method `imported`) — counts beside the booked ones. */
   imported: boolean;
   collectedBy: string | null;
-  /** A converted row: the cancelled order it moved money from. */
   convertedFrom: string | null;
-  /** The proof the money arrived with (an R2 key), if one was attached. */
   slipKey: string | null;
 };
 export type MoneyRefund = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
@@ -104,10 +100,7 @@ export type OrderMoney = {
   cancelled: boolean;
   customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
   payments: MoneyPayment[];
-  /** The money in the pool: what this ledger booked plus what came over from
-      AutoCount (the name is older than the AutoCount half). */
   bookedSen: number;
-  /** The part of it brought over from AutoCount. */
   importedSen: number;
   refunds: MoneyRefund[];
   refundedSen: number;
@@ -118,15 +111,10 @@ export type OrderMoney = {
   conversions: MoneyConversion[];
   convertedSen: number;
   remainingSen: number;
-  /** The order's total (local currency, every line — transport included). */
   totalSen: number;
-  /** The deposit fraction a LIVE order keeps (Houzs 0.3 / 2990 0.5); 0 once cancelled. */
   keepFraction: number;
-  /** What must stay on a live order: ceil(keepFraction × total). 0 once cancelled. */
   keepSen: number;
-  /** What may move to another order: remaining − keepSen, never below 0. A refund has no floor. */
   movableSen: number;
-  /** The money may still be refunded or moved: something is left. */
   open: boolean;
   reason: string | null;
 };
@@ -178,12 +166,8 @@ export async function ordersMoney(sb: Db, companyId: number, docNosRaw: readonly
     .eq('company_id', companyId).in('so_doc_no', batch)
     .order('paid_at').order('id').range(f, t));
   if (pays.error) return { ok: false, reason: pays.error.message };
-  /* A mirror row (the money that left, negative) is not money in: the pool
-     reads what left off the vouchers and the converted rows themselves. */
   const payRows = pays.data.filter((r) => Number(r.amount_sen ?? 0) >= 0);
 
-  /* Which payments carry an ACTIVE journal — the payment's own (SOPAY) or the
-     transfer a converted row booked (SOCONV). */
   const jes = await chunkIn<Row>(payRows.map((r) => String(r.id)), (batch, f, t) => sb.from('journal_entries')
     .select('id, source_doc_no, reversed')
     .eq('company_id', companyId).in('source_type', ['SOPAY', CONVERT_SOURCE]).in('source_doc_no', batch)
@@ -191,26 +175,21 @@ export async function ordersMoney(sb: Db, companyId: number, docNosRaw: readonly
   if (jes.error) return { ok: false, reason: jes.error.message };
   const booked = new Set(jes.data.filter((r) => !r.reversed).map((r) => String(r.source_doc_no)));
 
-  /* Every non-cancelled refund voucher on the orders, draft or posted. */
   const pvs = await chunkIn<Row>(docs, (batch, f, t) => sb.from('payment_vouchers')
     .select('id, pv_number, status, voucher_date, total_sen, refund_source_doc_no')
     .eq('company_id', companyId).eq('purpose', 'CUSTOMER_REFUND').neq('status', 'CANCELLED').in('refund_source_doc_no', batch)
     .order('id').range(f, t));
   if (pvs.error) return { ok: false, reason: pvs.error.message };
 
-  /* The refund requests raised on them — the waiting ones hold their money. */
   const asked = await refundRequestsOn(sb, companyId, docs);
   if (!asked.ok) return { ok: false, reason: asked.reason };
 
-  /* Every converted row on another order that names one of these as its source. */
   const convs = await chunkIn<Row>(docs, (batch, f, t) => sb.from('mfg_sales_order_payments')
     .select('id, so_doc_no, amount_sen, paid_at, created_at, converted_from_so_doc_no')
     .eq('company_id', companyId).in('converted_from_so_doc_no', batch)
     .order('id').range(f, t));
   if (convs.error) return { ok: false, reason: convs.error.message };
 
-  /* The floor a live order keeps: the Processing-Date gate's own fraction of
-     the same total (shared/order-rules.ts) — one rule, one number per company. */
   let liveFraction = 0;
   if (orders.some((o) => String(o.status ?? '').toUpperCase() !== 'CANCELLED')) {
     try { liveFraction = processingDateThresholdFor(await companyCodeById(sb, companyId)); }
@@ -283,10 +262,8 @@ export async function orderMoney(sb: Db, companyId: number, docNoRaw: unknown): 
 export type ConvertPlan = {
   fromDocNo: string;
   amountSen: number;
-  /** The cancelled order's first booked payment: its day and collector ride on the converted row. */
   paidAt: string;
   collectedBy: string | null;
-  /** The cancelled order's customer, for the screen. */
   fromCustomer: string | null;
   /** The proof the money arrived with (owner 2026-09-16: attachment 可以带过来):
       the first booked payment's slip, else the first slip any payment on the
@@ -371,13 +348,10 @@ export async function cancelledRemovalGuard(
 
 export type ConvertSource = {
   docNo: string; customer: string | null; status: string | null;
-  /** The day it was cancelled; null while it stands. */
   cancelledOn: string | null;
   remainingSen: number; bookedSen: number;
-  /** What may move to another order — the remaining, less the floor a live order keeps. */
   movableSen: number;
   keepSen: number;
-  /** Who sold it (the salesperson, else the order's agent) — on Finance's lists (batch 6 c2). */
   salesperson?: string | null;
 };
 
@@ -451,7 +425,6 @@ export async function ordersWithMoney(sb: Db, companyId: number, p: { phone?: st
     const m = money.money.get(String(r.doc_no));
     return m != null && m.bookedSen !== 0 && m.remainingSen > 0;
   });
-  /* Who sold each: the salesperson's staff row, else the agent typed on the order. */
   const staffIds = [...new Set(kept.map((r) => String(r.salesperson_id ?? '')).filter(Boolean))];
   const staff = await chunkIn<Row>(staffIds, (batch, lo, hi) => sb.from('staff').select('id, name').in('id', batch).order('id').range(lo, hi));
   if (staff.error) return { ok: false, reason: `staff: ${staff.error.message}` };

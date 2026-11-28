@@ -1,17 +1,3 @@
-// ----------------------------------------------------------------------------
-// packing-list-queries — the day's PACKING LISTS read hook.
-//
-// `GET /trips/packing?date=&warehouseId=` returns ONE ENTRY PER TRIP for the
-// picked day, because a packing list IS a trip: one lorry, one day (owner
-// 2026-08-25). Three lorries out = three lists; a six-day week with one lorry
-// a day = six lists on six dates. Nothing here writes — Delivery Time
-// Arrangement sequences the stops and Last Mile Delivery crews them; this is a
-// render of what they produced.
-//
-// Same pattern as the sibling fleet-day-queries: TanStack Query + authedFetch,
-// rows as the API emits them. Stops arrive in DELIVERY order (stop_no
-// ascending); the LOADING order is packing-list-model.ts's business.
-// ----------------------------------------------------------------------------
 
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
@@ -21,11 +7,15 @@ export type PackingItem = {
   item_code: string;
   description: string | null;
   qty: number;
-  /** The rack(s) this LINE left from as locked when it shipped; before that the
-   *  explicit pick, or null when no pick was made. */
   rack: string | null;
-  /** True when `rack` is the rack(s) stamped at dispatch, not a pick. */
-  rack_locked?: boolean;
+  rack_locked: boolean;
+  po: string | null;
+  po_locked: boolean;
+  worked_out: boolean;
+  item_group: string | null;
+  variants: Record<string, unknown> | null;
+  description2: string | null;
+  so_line_no: number | null;
 };
 
 export type PackingStop = {
@@ -36,8 +26,10 @@ export type PackingStop = {
   do_id: string | null;
   do_number: string | null;
   do_status: string | null;
-  /** The stop names a delivery order outside the companies you hold a grant for. */
   do_missing: boolean;
+  so_doc_no: string | null;
+  phone: string | null;
+  time_range: string | null;
   units: number;
   items: PackingItem[];
 };
@@ -49,13 +41,16 @@ export type PackingListRow = {
   trip_status: string | null;
   lorry_plate: string | null;
   driver_name: string | null;
+  driver_phone: string | null;
+  helper_1_name: string | null;
+  helper_2_name: string | null;
   warehouse_name: string | null;
   stop_count: number;
   do_count: number;
   units: number;
-  /** Null — never 0 — when no member delivery order carries a volume. */
   m3_milli: number | null;
   stops: PackingStop[];
+  source: 'trip' | 'crew';
 };
 
 export type PackingListsResponse = {
@@ -78,6 +73,65 @@ export function usePackingLists(opts: { date: string | null; warehouseId?: strin
     queryKey: ['packing-lists', date ?? '', warehouseId ?? ''],
     queryFn: () => authedFetch<PackingListsResponse>(packingListsPath(date as string, warehouseId ?? null)),
     enabled: !!date,
+    staleTime: 30_000,
+  });
+}
+
+export type PackingRegionDo = {
+  do_id: string;
+  do_number: string | null;
+  do_status: string | null;
+  so_doc_no: string | null;
+  customer_name: string | null;
+  address: string | null;
+  phone: string | null;
+  time_range: string | null;
+  debtor_code: string | null;
+  m3_milli: number | null;
+  lorry_plate: string | null;
+  driver_name: string | null;
+  driver_phone: string | null;
+  helper_1_name: string | null;
+  helper_2_name: string | null;
+  trip_no: string | null;
+  trip_stop_no: number | null;
+  state: string | null;
+  country: string | null;
+  units: number;
+  items: PackingItem[];
+};
+
+export type PackingRegionRow = {
+  region: string;
+  label: string;
+  do_count: number;
+  customer_count: number;
+  units: number;
+  lorry_plates: string[];
+  not_arranged: number;
+  dos: PackingRegionDo[];
+};
+
+export type PackingRegionsResponse = {
+  date: string;
+  unassigned_only: boolean;
+  regions: PackingRegionRow[];
+};
+
+export function packingRegionsPath(date: string, unassignedOnly: boolean): string {
+  const p = new URLSearchParams();
+  p.set('date', date);
+  p.set('unassignedOnly', unassignedOnly ? '1' : '0');
+  return `/trips/packing-regions?${p.toString()}`;
+}
+
+/** One day's DOs by Delivery Planning region, lorry or not. */
+export function usePackingRegions(opts: { date: string | null; unassignedOnly: boolean; enabled: boolean }) {
+  const { date, unassignedOnly, enabled } = opts;
+  return useQuery({
+    queryKey: ['packing-regions', date ?? '', unassignedOnly],
+    queryFn: () => authedFetch<PackingRegionsResponse>(packingRegionsPath(date as string, unassignedOnly)),
+    enabled: enabled && !!date,
     staleTime: 30_000,
   });
 }

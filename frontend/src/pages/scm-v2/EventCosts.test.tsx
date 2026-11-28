@@ -67,7 +67,6 @@ describe('Event costs', () => {
     expect(tiles.getByText('1 with money booked')).toBeTruthy();
     expect(tiles.getByText('12,000.00')).toBeTruthy();
     expect(tiles.getByText('3,000.00')).toBeTruthy();
-    /* The total row: cost and other kept apart. */
     const total = t.getAllByText('12,000.00').map((e) => e.closest('tr')!).find((tr) => tr.textContent.includes('3,000.00') && !tr.textContent.includes('SETIA'));
     expect(total).toBeTruthy();
 
@@ -76,7 +75,6 @@ describe('Event costs', () => {
     const lines = within(screen.getByRole('table', { name: /^Entries on .*SETIA SPICE/ }));
     expect(lines.getByText('JE-2609-0012')).toBeTruthy();
     expect(lines.getByText('HC-API-2609-003')).toBeTruthy();
-    /* Accounts print code over name (the house rule for an account). */
     expect(screen.getAllByText('RENTAL DEPOSIT').length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('switch', { name: 'Only events with money booked' }));
@@ -102,7 +100,6 @@ describe('Event costs', () => {
     expect(sheet.title).toBe('Event costs');
     expect(sheet.tables[0]!.rows.map((r) => r.kind)).toEqual(['category', 'row', 'row', 'category', 'total']);
     expect(file).toBe('event-costs-2026-09-2026-09.xlsx');
-    /* The CSV moved under the ⋯. */
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
     expect(screen.getByRole('menuitem', { name: 'CSV' })).toBeTruthy();
   });
@@ -121,7 +118,6 @@ describe('Event costs', () => {
     expect(rows[0]).toBe('"Event","Dates","Status","Entry","Date","Document","Account","Notes","Cost","Other"');
     expect(rows[1]).toContain('"Pulau Pinang [AKEMI] HOMELOVE @ SETIA SPICE"');
     expect(rows[1]).toContain('"12,000.00","3,000.00"');
-    /* The rental entry lands under Cost, the deposit under Other. */
     expect(rows[2]).toMatch(/"JE-2609-0012".*"900-A001".*"12,000.00",""$/);
     expect(rows[3]).toMatch(/"JE-2609-0040".*"200-D001".*"","3,000.00"$/);
     expect(rows.at(-1)).toBe('"Total","","","","","","","","12,000.00","3,000.00"');

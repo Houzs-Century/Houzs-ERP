@@ -3,8 +3,6 @@ import { useQuery } from "../../hooks/useQuery";
 import { api } from "../../api/client";
 import { cn, relativeTime } from "../../lib/utils";
 
-// One line: does the 5-minute health report reach the IT Hub
-// (backend services/healthHub.ts)? Read from its job_runs rows.
 
 export type HubReportPayload =
   | {

@@ -40,7 +40,6 @@
 /** A lock as it is stored, as far as deciding anything cares. */
 export type MonthLock = {
   accountCode: string;
-  /** The month, as YYYY-MM. */
   month: string;
   lockedBy: string | null;
   lockedAt: string;
@@ -56,26 +55,16 @@ export type MonthLock = {
 export type LockRequest = {
   accountCode: string;
   month: string;
-  /** Movements still undecided. Anything above zero refuses. */
   openCount: number;
   /** Movements the month has at all. Zero is the ordinary quiet month, not a
       refusal (docs/bugs/0794) — what a close needs is a STATEMENT. */
   lineCount: number;
-  /** Files filed for the month. Closing a month no file speaks for is closing
-      nothing, and is refused so an empty month cannot be used to make a
-      claim. */
   statementCount: number;
-  /** The books, allowing for the outstanding items, plus what is on the bank
-      and not in the books — and the bank's printed closing it must reach.
-      Null when no file printed one. */
   computedClosingSen: number;
   closingStatementSen: number | null;
   unexplainedSen: number | null;
-  /** Did the walk reach the bank's closing? */
   tallies: boolean;
-  /** Did the server's own identity check hold? */
   consistent: boolean;
-  /** Covered end to end by the files uploaded? */
   complete: boolean;
 };
 

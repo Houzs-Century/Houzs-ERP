@@ -40,10 +40,8 @@ const card: React.CSSProperties = {
   background: 'var(--c-cream)', border: '1px solid var(--c-line, rgba(34,31,32,0.12))', borderRadius: 'var(--radius-md)',
 };
 const num: React.CSSProperties = { textAlign: 'right', whiteSpace: 'nowrap', padding: '2px 10px', fontVariantNumeric: 'tabular-nums' };
-/* The % under an amount — the same figure the % toggle prints alone. */
 /* The % rides BESIDE the amount, on the same line (owner 2026-09-18: percentage 应该在 amount 旁边而不是下面). */
 const pctBeside: React.CSSProperties = { ...pctSlotStyle, fontSize: 'var(--fs-11, 11px)', color: 'var(--text-soft, #8a8578)', fontWeight: 400, textAlign: 'right' };
-/* A row's dress: every line row dashed and frozen; a total and a subtotal (net) shaded apart from the account rows; a block plain. */
 const rowClass = (kind: MonthlyLine['kind']): string | undefined =>
   (kind === 'block' ? undefined : [styles.row, kind === 'total' ? styles.total : kind === 'net' ? styles.net : ''].join(' ').trim());
 const chevron: React.CSSProperties = { background: 'none', border: 'none', padding: '0 4px 0 0', cursor: 'pointer', font: 'inherit', color: 'var(--text-soft, #8a8578)', width: 18, display: 'inline-block', textAlign: 'left' };
@@ -60,18 +58,13 @@ const btn = (active: boolean): React.CSSProperties => ({
 const myt = (): string => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 7);
 
 export type MonthlyProps<T> = {
-  /** Names the query and the CSV file. */
   report: string;
   title: string;
-  /** The balance sheet has no cumulative column: a month IS a balance. */
   withCumulative: boolean;
-  /** One request per column — the report's own endpoint for that period. */
   fetchColumn: (col: MonthColumn) => Promise<T>;
-  /** The report as the lines the single-period screen prints. */
   linesOf: (data: T) => FlatLine[];
   fmt: (sen: number) => string;
   pctTitle: string;
-  /** Extra query-key parts (the R&P's accounts and party toggle). */
   keyParts?: string[];
 };
 
@@ -88,8 +81,6 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
   const [showPct, setShowPct] = useState(false);
   const [level, setLevel] = useState<Level>('all');
   const tree = useReportTree(level);
-  /* Which month an opened account shows: null is the whole range (the name was
-     clicked), a key is that month alone (its figure was clicked). */
   const [drillMonth, setDrillMonth] = useState<Record<string, string | null>>({});
   useEffect(() => { setDrillMonth({}); }, [level]);
   const openLines = (id: string, month: string | null, drilledNow: boolean, monthNow: string | null) => {
@@ -116,7 +107,6 @@ export function MonthlyReport<T>({ report, title, withCumulative, fetchColumn, l
   ), [columns, results, linesOf]);
   const depth = monthlyDepth(lines);
   const shown = linesVisible(lines, level, tree.open);
-  /* An account's lines open for the whole range on screen. */
   const range = { from: columns.reduce((a, c) => (c.from < a ? c.from : a), columns[0]?.from ?? ''), to: columns.reduce((a, c) => (c.to > a ? c.to : a), columns[0]?.to ?? '') };
   /* The exports carry the table as shown — these columns, these lines at this level, amounts or % (owner 2026-09-19). */
   const oldest = columns[columns.length - 1]?.key ?? '';

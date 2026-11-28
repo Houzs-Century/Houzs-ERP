@@ -1,17 +1,8 @@
-// ----------------------------------------------------------------------------
-// An account's lines for the report's period, opened under its row on the
-// statement itself — read from the General Ledger's own endpoint so the two
-// never disagree (the owner's Claude Design, batch 6 §4.1): a head with the
-// account and the period, "Open in General ledger ›" (the full ledger page,
-// with Back to this report) and × to close, then the lines as a Finance-Table
-// (rep-lines): Date · Description · Other side · Ref. 1 · Ref. 2 · Debit ·
-// Credit, totalled.
-// ----------------------------------------------------------------------------
 
 import { Link, useLocation } from 'react-router-dom';
 import { BookOpen, ChevronRight, X } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { ledgerHref } from '../../vendor/scm/lib/report-layout';
 import { counterLabel, fmtLedger, fmtSide, useLedger, type LedgerLine } from '../../vendor/scm/lib/ledger-queries';
 import { ACCOUNTING_TAB_TITLES, accountingTabFromSearch } from './accounting-tabs';
@@ -33,7 +24,6 @@ const COLUMNS: Column<LedgerLine>[] = [
   },
 ];
 
-/** What Back on the General ledger reads: the report this row sits on. */
 function reportName(pathname: string, search: string): string {
   const tab = accountingTabFromSearch(new URLSearchParams(search).get('tab'));
   if (pathname === '/scm/accounting' && tab) return ACCOUNTING_TAB_TITLES[tab];
@@ -45,9 +35,7 @@ export const AccountLinesRow = ({ code, from, to, colSpan, title, onClose }: {
   from: string;
   to: string;
   colSpan: number;
-  /** The account as the head names it; its code when absent. */
   title?: string;
-  /** × closes the lines; without it the row stays until its opener closes it. */
   onClose?: () => void;
 }) => {
   const q = useLedger({ from, to, accounts: [code] });

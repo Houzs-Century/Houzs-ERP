@@ -1,27 +1,6 @@
-/* Request-body coercion for the fleet maintenance routes.
- *
- * WHY THESE ARE ONE MODULE, AND WHY THEY ARE TESTED. Each returns a
- * discriminated `{ ok: true, value } | { ok: false }`, and the whole point of
- * that shape is the distinction between the two ways a field can be "empty":
- *
- *   { ok: true, value: null }   the caller legitimately sent nothing — write NULL
- *   { ok: false }               the caller sent something INVALID — refuse, 400
- *
- * Collapse those two and a typo'd mileage silently becomes NULL on a
- * compliance row instead of a refusal the operator can see. They lived as
- * private functions inside a 2,100-line router with no test of any kind, which
- * is the combination the coverage ratchet calls out: a file that decides what
- * reaches the database, and nothing pinning it.
- *
- * The blank-is-null-not-invalid rule is deliberate and shared by all of them:
- * `null`, `undefined` and `""` all mean "not supplied". An HTML form posts `""`
- * for an untouched field, so treating `""` as invalid would refuse every save
- * that left an optional box alone.
- */
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** `{ ok: true, value: null }` for every shape that means "not supplied". */
 const blank = (v: unknown): boolean => v === null || v === undefined || v === '';
 
 /** A YYYY-MM-DD prefix, or null when the value is absent or unparseable.
@@ -106,7 +85,6 @@ export function workOrderFileKey(woId: string, kind: WorkOrderFileKind, ext: str
   return `fleet/work-orders/${woId}/${kind}/${fileTail(ext, name, nowMs)}`;
 }
 
-/** <ms>-<safe name>.<ext> - the file name rides inside the key. */
 function fileTail(ext: string, name: string | null, nowMs: number): string {
   const stem = (name ?? '').replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
   return `${nowMs}${stem ? `-${stem}` : ''}.${ext}`;
@@ -118,10 +96,6 @@ export function isWorkOrderFileKeyOf(key: string, woId: string): boolean {
   return key.startsWith(`fleet/work-orders/${woId}/`) && !key.includes('..');
 }
 
-/* -- Breakdown media -----------------------------------------------------------
-   lorry_breakdown_cases.media_refs (mig 0204) holds the scene photos/videos.
-   New files get a server-minted key under the case; older mobile reports put a
-   SLIPS-bucket key (slips/...) there, which the read route still serves. */
 
 /** fleet/breakdowns/<caseId>/<ms>-<safe name>.<ext> */
 export function breakdownFileKey(caseId: string, ext: string, name: string | null, nowMs: number): string {

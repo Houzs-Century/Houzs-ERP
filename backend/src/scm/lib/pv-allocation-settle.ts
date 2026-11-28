@@ -1,24 +1,12 @@
-// ----------------------------------------------------------------------------
-// pv-allocation-settle - settle (or unsettle) one payment-voucher allocation
-// exactly once, through scm.settle_pv_allocation / scm.unsettle_pv_allocation
-// (migration *_scm_pv_allocation_settle_once.sql).
-//
-// Each call is one database transaction: the invoice's paid_sen and the
-// allocation's applied_sen + settled_at move together or not at all. So a
-// voucher post or cancel that dies part-way can simply be pressed again: the
-// allocations already done answer "already settled" and only the rest move.
-// ----------------------------------------------------------------------------
 
 export type AllocationSettleOutcome = {
   ok: boolean;
   appliedSen: number;
   askedSen: number;
-  /** True when an earlier post already settled it; nothing moved now. */
   alreadySettled: boolean;
   reason: string | null;
 };
 
-/** All this needs of the client: one RPC call. Both the PostgREST client and the test fakes have it. */
 type RpcClient = { rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: { message: string } | null }> };
 
 const firstRow = <T>(data: unknown): T | undefined => (Array.isArray(data) ? data[0] : data) as T | undefined;

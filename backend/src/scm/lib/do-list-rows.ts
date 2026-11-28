@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// do-list-rows — the Delivery Order LIST's per-row fields, built for a page of
-// header rows the list's own filter already matched.
-//
-// Lifted VERBATIM out of GET /delivery-orders-mfg (routes/delivery-orders-mfg.ts)
-// on 2026-09-15 so the list page and the export (GET
-// /delivery-orders-mfg/export/rows) produce the identical row shape. The
-// comments below are the handler's own, moved with the code. The reads are sized
-// for ONE page of rows (several send every row id in one request), so a caller
-// with more rows passes them in pages. The one thing the route owns —
-// its finance-key list — is passed in, so this module never imports the route
-// that imports it.
-// ----------------------------------------------------------------------------
 
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
@@ -29,23 +16,12 @@ export async function buildDoListRows(
   deps: DoListRowDeps,
 ): Promise<Array<{ id: string } & Record<string, unknown>>> {
   const DO_FINANCE_KEYS = deps.financeKeys;
-  /* Tier 2 downstream-lock — one extra batched read per doc set: pull every
-     non-cancelled DR/SI that points back to a listed DO and stamp has_children
-     on the row. The list grid uses this to hide Edit / Cancel actions on DOs
-     that are downstream-locked (mirrors computeGrnFlags in lib/grn-consumption-flags). */
   const childIds = new Set<string>();
-  /* DISPLAY-ONLY transfer-to columns (audit R8): the SI number(s) each DO was
-     invoiced into and the DR number(s) returned against it. Derived from the
-     SAME batched child reads that already stamp has_children — one added column
-     in each select, no extra round-trip, and never touches DO status/lifecycle
-     (which stays lib/do-lifecycle.ts below). */
   const invoicedSiByDo = new Map<string, Set<string>>();
   const returnedDrByDo = new Map<string, Set<string>>();
   let lifecycleByDo = new Map<string, DoLifecycle>();
   if (rows.length > 0) {
     const ids = rows.map((r) => r.id);
-    /* The lifecycle badge's dates ride these two reads (lib/do-lifecycle.ts):
-       computeDoLifecycle read the same tables with the same filter a second time. */
     const [drRes, siRes] = await Promise.all([
       sb.from('delivery_returns').select('delivery_order_id, return_number, return_date, created_at').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
       sb.from('sales_invoices').select('delivery_order_id, invoice_number, invoice_date, created_at').in('delivery_order_id', ids).neq('status', 'CANCELLED'),
@@ -74,11 +50,6 @@ export async function buildDoListRows(
   }
   const sortedNos = (set: Set<string> | undefined): string[] =>
     set ? [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : [];
-  /* Linked-SO Processing date (mfg_sales_orders.processing_date — the one true
-     user date, one column since 0189 and one name since 0284).
-     The DO quick-view drawer shows it next to the DO's own delivery
-     date; one batched read keyed by so_doc_no, same pattern as the DR/SI child
-     reads above. */
   const soProcByDoc = new Map<string, string | null>();
   {
     const soDocNos = [...new Set(rows.map((r) => r.so_doc_no as string | null).filter((d): d is string => !!d))];
@@ -103,15 +74,9 @@ export async function buildDoListRows(
   const sourceTraceByDo = rows.length > 0
     ? await resolveDoHeaderSources(sb, rows.map((r) => r.id))
     : new Map<string, { pos: string[]; adjQty: number }>();
-  /* The SOs this DO's LINES draw on — see resolveDoSourceSos. so_doc_no is a
-     header LABEL (from-sos copies the first pick's SO), so a merged DO shows one
-     source and hides the rest, and two DOs can appear to ship one Sales Order
-     while sharing no quantity at all. */
   const sourceSosByDo = rows.length > 0
     ? await resolveDoSourceSos(sb, rows.map((r) => r.id))
     : new Map<string, string[]>();
-  /* Finance gate — cost / margin / per-category subtotals reach ONLY a
-     finance-viewer; stripped from every row otherwise. */
   const showFinance = canViewScmFinance(c);
   const deliveryOrders = rows.map((r) => {
     const row: Record<string, unknown> = {
@@ -122,7 +87,6 @@ export async function buildDoListRows(
       source_pos: sourceTraceByDo.get(r.id)?.pos ?? [],
       source_sos: sourceSosByDo.get(r.id) ?? [],
       source_adj: (sourceTraceByDo.get(r.id)?.adjQty ?? 0) > 0,
-      // Transfer-to (display-only, audit R8): SI(s) invoiced / DR(s) returned.
       invoiced_si_nos: sortedNos(invoicedSiByDo.get(r.id)),
       return_nos: sortedNos(returnedDrByDo.get(r.id)),
     };

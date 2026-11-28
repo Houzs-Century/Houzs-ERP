@@ -1,15 +1,8 @@
-// ----------------------------------------------------------------------------
-// Supplier bills — the list's rules in the owner's Claude Design (batch 4,
-// step 5). One row shape for the AP bills raised here, Procurement's purchase
-// invoices and the suppliers' credit notes; the kind tabs, the status chips,
-// the supplier filter, the search and the status tag all read from here, so a
-// chip's count and the rows it shows can never disagree.
-// ----------------------------------------------------------------------------
 
 import type { ApListRow } from '../../vendor/scm/lib/ap-invoice-queries';
 import type { CreditNote } from '../../vendor/scm/lib/credit-note-queries';
 import type { ApListingRow } from '../../vendor/scm/lib/ap-invoice-listing-pdf';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 
 export type BillKindTab = 'ALL' | 'API' | 'PI' | 'SCN';
 export type BillChip = 'all' | 'unpaid' | 'overdue' | 'draft' | 'paid' | 'cancelled';
@@ -20,28 +13,22 @@ export type BillTone = 'calm' | 'warn' | 'info' | 'late';
 export type BillRow = {
   key: string;
   kind: 'API' | 'PI' | 'SCN';
-  /** An AP bill that is a supplier's debit note (series {co}SDN-). */
   debitNote: boolean;
   id: string;
   number: string;
   supplierId: string | null;
   supplierName: string | null;
   supplierCode: string | null;
-  /** The control it sits on, the server's rule: AP (400) or AP_OTHER (405). */
   controlRole: 'AP' | 'AP_OTHER' | null;
   ref: string | null;
   description: string | null;
   date: string | null;
   due: string | null;
-  /** When Finance plans to pay it (step 7); only a posted bill still owed carries one. */
   planned: string | null;
   currency: string;
   totalSen: number;
-  /** Paid on a bill; used on a credit note. */
   paidSen: number;
-  /** Still owed on a posted bill; null on a draft, a cancelled bill and every credit note. */
   outstandingSen: number | null;
-  /** A posted credit note's credit not used yet; null otherwise. */
   unusedSen: number | null;
   status: string;
   held: boolean;

@@ -31,10 +31,6 @@ describe('soVersionAfter — never adopts a version the server did not name', ()
   });
 });
 
-/* Both screens end a save through this module. The bug was the SAME conditional
-   written twice — `completeLineWrites` only when the diff is empty, and
-   `version` adopted as-is — so a copy creeping back into either file is the
-   regression. */
 describe('the desktop editor and the phone both end a save here', () => {
   const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8');
   const surfaces = {

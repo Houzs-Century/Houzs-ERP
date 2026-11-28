@@ -112,7 +112,6 @@ export async function claimReportedOrders(env: Env, today: string): Promise<Fair
     for (const c of ordersToClaim(reports, orders.data ?? [], booths)) {
       const before = (orders.data ?? []).find((o) => o.doc_no === c.docNo);
       const patch = { project_id: c.toProjectId, fair_match: 'PICKED' };
-      /* The old event in the predicate: a rep's edit since the read wins. */
       const write = sb.from('mfg_sales_orders').update(patch).eq('doc_no', c.docNo).eq('company_id', companyId);
       const { error } = await (c.fromProjectId == null ? write.is('project_id', null) : write.eq('project_id', c.fromProjectId));
       if (error) { console.error('[fair-claim] move', c.docNo, error.message); out.failed += 1; continue; }

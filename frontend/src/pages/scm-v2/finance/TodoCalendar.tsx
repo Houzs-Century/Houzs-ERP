@@ -1,15 +1,8 @@
-// ----------------------------------------------------------------------------
-// TodoCalendar — the To do's Calendar view (the owner's Claude Design redesign,
-// Finance-1a-To-do, batch 2): what falls on each day of the month — payments
-// due, money due in, routines, tasks, uploads gone late — with the chosen day's
-// list and the next 7 days. A task or routine is dragged to another day to move
-// it this time only; a bill or invoice keeps its own document's date.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Paperclip } from 'lucide-react';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import styles from './TodoCalendar.module.css';
 import { useMarkTask, useTodoCalendar, type CalEvent, type CalKind } from './finance-todo-queries';
 import { usePlanBill } from '../../../vendor/scm/lib/ap-invoice-queries';
@@ -32,10 +25,8 @@ const monthTitle = (ym: string): string =>
   new Date(`${ym}-01T00:00:00Z`).toLocaleString('en-MY', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 const weekdayOf = (ymd: string): string => new Date(`${ymd}T00:00:00Z`).toLocaleString('en-MY', { weekday: 'short', timeZone: 'UTC' });
 
-/** Mon … Sun, as the date library names them (2 Nov 2026 was a Monday). */
 const WEEKDAYS = Array.from({ length: 7 }, (_, i) => weekdayOf(ymdOf(dayNo('2026-11-02') + i)));
 
-/** The month's grid, Monday first, whole weeks. */
 function gridDays(month: string): string[] {
   const first = `${month}-01`;
   const lead = (new Date(`${first}T00:00:00Z`).getUTCDay() + 6) % 7;
@@ -45,7 +36,6 @@ function gridDays(month: string): string[] {
   return Array.from({ length: weeks * 7 }, (_, i) => ymdOf(start + i));
 }
 
-/** What an item's button says and does — or nothing. */
 function useItemAction() {
   const mark = useMarkTask();
   const navigate = useNavigate();
@@ -76,7 +66,6 @@ export function TodoCalendar({ today, onOpenTask }: {
   const q = useTodoCalendar(month);
   const mark = useMarkTask();
   const actionOf = useItemAction();
-  /* A bill dragged to another day moves its planned payment date (step 7). */
   const plan = usePlanBill();
   const toast = useToastOptional();
   const sel = selected ?? (month === today.slice(0, 7) ? today : `${month}-01`);
@@ -95,7 +84,6 @@ export function TodoCalendar({ today, onOpenTask }: {
     if (!e || day === e.day) return;
     const bill = e.bill;
     if (bill) {
-      /* The planned day moves; the supplier's due date stays (the design's toast). */
       if (day < today) { toast?.error('A bill cannot be planned on a past day.'); return; }
       plan.mutate({ kind: bill.kind, id: bill.id, plannedOn: day }, {
         onSuccess: () => toast?.success(planMovedText(bill.no, day, bill.due)),

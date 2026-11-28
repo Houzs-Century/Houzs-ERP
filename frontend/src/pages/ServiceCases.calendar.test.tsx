@@ -21,7 +21,6 @@ import { CasesCalendarView } from "./ServiceCases";
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
-  // 01:30 on 1 December in Malaysia; still 30 November in UTC.
   vi.setSystemTime(new Date("2026-11-30T17:30:00Z"));
   apiGet.mockReset();
   apiGet.mockResolvedValue({ data: [], total: 0 });
@@ -39,7 +38,6 @@ describe("Service Cases calendar", () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole("heading", { level: 2 }).textContent).toBe("12/2026");
-    // December 2026 starts on a Tuesday, so the Monday-first grid opens on 30 Nov.
     expect(String(apiGet.mock.calls[0]?.[0])).toMatch(/from=2026-11-30.*to=2027-01-10|to=2027-01-10.*from=2026-11-30/);
   });
 });

@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { friendlySaveMessage, verifiedSave } from "./verified-save";
 
-/* Hookka #268: a write that returned 2xx and whose confirming read was then
-   interrupted was reported as "Save failed", so staff re-keyed a SKU price that
-   had saved. Such a save is UNVERIFIED, never "network" or a failure. */
 const okWrite = async () => new Response("{}", { status: 200 });
 
 describe("verifiedSave after a successful write", () => {
@@ -42,8 +39,6 @@ describe("verifiedSave after a successful write", () => {
   });
 });
 
-/* Sister-ERP gap review P11: one dropped confirming read is retried before the
-   save is reported as unconfirmed. */
 describe("verifiedSave confirming read retries", () => {
   afterEach(() => { vi.useRealTimers(); });
 

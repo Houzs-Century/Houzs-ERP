@@ -2,7 +2,7 @@
 // orders delivered, their amount, the average order, how many lorries went out
 // and the average a lorry carried; per region the same money in one table.
 import { useState } from "react";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, Toggle } from "../../components/scm-v2/OverviewKit";
 import { Columns, PALETTE, TONE } from "../../components/scm-v2/Charts";
@@ -96,10 +96,6 @@ export function LogisticDailySection({ days, regions, region, setRegion, day, se
   );
 }
 
-/* Each lorry's revenue and occupancy: delivery days earn the revenue, days in use
-   show how full it is, both over the days it could work (Sundays and workshop days
-   off). Our own lorries carry a fixed crew and instalment, so every working day one
-   stays in costs money. */
 export function LorrySection({ lorries, days, recorded, total, region, day, onLorry }: { lorries: LorryRow[]; days: LorryDay[]; recorded: number; total: number; region: string | null; day: string | null; onLorry: (plate: string) => void }) {
   const own = lorries.filter((l) => l.internal);
   const ownDays = own.reduce((a, l) => a + l.daysOut, 0);

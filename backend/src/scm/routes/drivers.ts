@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// /drivers — CRUD for the scm.drivers table. Used to populate the DO driver
-// picker so we stop relying on free-text names.
-//
-// Houzs adaptation: ported from 2990's apps/api/src/routes/drivers.ts. Same
-// plumbing as the sibling SCM routes — supabaseAuth bridge + scm-scoped service
-// client via c.get('supabase'). The only change vs 2990 is the normalizePhone
-// import: @2990s/shared/phone → ../shared (the vendored shared barrel). The
-// scm.drivers table already exists (2990s-full-schema.sql) with the same shape:
-// id / driver_code / name / phone / ic_number / vehicle / active / created_at.
-//
-// Mounted at '/drivers' in scm/index.ts.
-// ----------------------------------------------------------------------------
 
 import { idOrNull } from '../lib/lorry-warehouses';
 import { Hono } from 'hono';
@@ -22,9 +9,6 @@ import { carrierLinkForInsert, resolveCarrierLink } from '../lib/threepl-link';
 import { nextCode, CODE_PREFIX } from '../lib/fleet-code-mint';
 import { normalizeIc, INVALID_IC, NAME_MAX } from '../lib/fleet-crew-fields';
 
-/** The next DRV- code. Read scope is GLOBAL because driver_code carries a bare
- *  UNIQUE(driver_code) and the roster is one shared list across companies —
- *  minting per company would collide across tenants. */
 async function mintDriverCode(sb: { from: (t: string) => any }): Promise<string> {
   const { data } = await sb.from('drivers').select('driver_code');
   return nextCode(CODE_PREFIX.DRIVER, ((data ?? []) as Array<{ driver_code?: string | null }>).map((r) => r.driver_code));
@@ -35,7 +19,6 @@ drivers.use('*', supabaseAuth);
 
 const COLS = 'id, driver_code, name, phone, ic_number, vehicle, in_house, threepl_company_id, active, created_at, warehouse_id';
 
-/* The caller's in_house as a tri-state: absent stays absent (see threepl-link). */
 const ownFlagOf = (body: Record<string, unknown>): boolean | undefined =>
   body.inHouse === undefined ? undefined : body.inHouse !== false;
 const carrierOf = (body: Record<string, unknown>): string | null | undefined =>
@@ -43,13 +26,9 @@ const carrierOf = (body: Record<string, unknown>): string | null | undefined =>
 
 drivers.get('/', async (c) => {
   const sb = c.get('supabase');
-  const onlyActive = c.req.query('active') !== 'false';   // default: active only
+  const onlyActive = c.req.query('active') !== 'false';
   let q = sb.from('drivers').select(COLS).order('driver_code');
   if (onlyActive) q = q.eq('active', true);
-  // UNIFIED FLEET: the driver roster is one shared list across ALL companies —
-  // every company's TMS page shows the same drivers regardless of the viewer's
-  // company grants. company_id on a row is only a "created-by" stamp, not an
-  // isolation boundary. So we deliberately do NOT scope this read by company.
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ drivers: data ?? [] });
@@ -65,17 +44,12 @@ drivers.post('/', async (c) => {
   if (name.length > NAME_MAX) return c.json({ error: 'name_too_long', reason: `Keep the name under ${NAME_MAX} characters.` }, 400);
   if (!phone) return c.json({ error: 'phone_required' }, 400);
 
-  /* Task #91 — store driver phone in E.164. It used to fall back to the RAW
-     string when normalisation failed (`?? phone`), so "abc" was stored as
-     "abc" and the field silently stopped being a phone number. A value that
-     cannot be normalised is not a phone; say so instead of keeping it. */
   const normalizedPhone = normalizePhone(phone);
   if (!normalizedPhone) return c.json({ error: 'invalid_phone', reason: 'That is not a usable phone number.' }, 400);
 
   const icNumber = normalizeIc(body.icNumber);
   if (icNumber === INVALID_IC) return c.json({ error: 'invalid_ic', reason: 'An IC / passport number is at most 20 characters.' }, 400);
 
-  /* A driver registered under a 3PL carrier is outsource, whatever was ticked. */
   const home = idOrNull(body.warehouseId ?? null);
   if (!home.ok) return c.json({ error: 'invalid_id', reason: 'warehouseId must be a warehouse id or blank' }, 400);
   const link = carrierLinkForInsert({ threeplCompanyId: carrierOf(body), ownFlag: ownFlagOf(body) });
@@ -101,22 +75,11 @@ drivers.post('/', async (c) => {
     warehouse_id: home.value,
   };
 
-  /* Retry the MINT, never the whole create: the only thing that can race is the
-     number, and re-reading the highest is exactly what settles it. A 23505 that
-     is NOT the code is the caller's problem and must not be retried. */
   for (let attempt = 0; attempt < 4; attempt++) {
     const driverCode = suppliedCode || await mintDriverCode(sb);
     const { data, error } = await sb.from('drivers')
       .insert({ ...row, driver_code: driverCode }).select(COLS).single();
     if (!error) return c.json({ driver: data }, 201);
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     if (error.code !== '23505') return c.json({ error: 'insert_failed', reason: error.message }, 500);
     if (suppliedCode) return c.json({ error: 'duplicate_code' }, 409);
@@ -144,10 +107,6 @@ drivers.patch('/:id', async (c) => {
     if (!home.ok) return c.json({ error: 'invalid_id', reason: 'warehouseId must be a warehouse id or blank' }, 400);
     updates.warehouse_id = home.value;
   }
-  /* The SAME rules the create path applies. They used to differ — create
-     normalised the phone and PATCH did too, but both fell back to the raw
-     string, and neither touched the IC or capped the name. A field validated
-     on create and not on edit is validated nowhere. */
   const map: Array<[string, string]> = [
     ['driverCode', 'driver_code'], ['name', 'name'], ['vehicle', 'vehicle'],
   ];

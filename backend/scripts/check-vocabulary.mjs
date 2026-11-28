@@ -35,6 +35,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOTS = [
   path.join(here, "..", "src"),
   path.join(here, "..", "..", "frontend", "src"),
+  path.join(here, "..", "..", "shared", "src"),
   path.join(here, "..", "scripts"),
 ];
 const REPO = path.join(here, "..", "..");

@@ -1,6 +1,3 @@
-/* Which finished events are missing a line every settled fair carries
-   (routes/projectDataGaps.ts). Amounts are RM as project_finance_lines keeps
-   them; soSen is the Sales Orders opened at the event, in sen. */
 export interface GapProject {
   id: number; code: string; name: string; brand: string | null; end_date: string | null;
   income: number; cogs: number; commission: number; cost: number; soSen: number;

@@ -17,7 +17,7 @@ import { PunchFixBody } from "./MobilePunchFix";
 import "./mobile.css";
 
 type Side = { clock: string; geo: "IN" | "OUT" | "NONE" | null; siteName: string | null; distanceM: number | null; source: string | null } | null;
-type Day = { id: number; workDate: string; status: string; in: Side; out: Side; open: boolean; lateMin: number; otMin: number; spanMin: number | null; notes: string | null };
+type Day = { id: number; workDate: string; status: string; in: Side; out: Side; open: boolean; lateMin: number; otMin: number; spanMin: number | null; notes: string | null; segments?: { in: Side; out: Side }[] };
 type Me =
   | { linked: false }
   | {
@@ -217,6 +217,15 @@ export function MobilePunch({ onBack }: { onBack: () => void }) {
                   <span>{formatDate(d.workDate)}</span>
                   <span>{d.in ? `${d.in.clock} to ${d.out?.clock ?? "..."}` : d.status.replace(/_/g, " ").toLowerCase()}</span>
                 </div>
+                {d.segments && d.segments.length > 1 && (
+                  <div style={{ color: "var(--ink)", marginTop: 3, fontSize: 11.5 }}>
+                    {d.segments.map((s, i) => (
+                      <div key={i}>
+                        clock {i + 1}: {s.in?.clock ?? "--"} to {s.out?.clock ?? "..."}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div style={{ color: "var(--mut)", marginTop: 2 }}>
                   {[d.lateMin > 0 ? `late ${d.lateMin} min` : null, d.otMin > 0 ? `OT ${hm(d.otMin)}` : null, d.out?.source === "AUTO" ? "forgot to punch out" : null]
                     .filter(Boolean)

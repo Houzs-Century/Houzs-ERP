@@ -29,10 +29,6 @@ import {
   type SearchHitType,
 } from "../lib/globalSearch";
 
-// The Cmd+K overlay, split from GlobalSearch.tsx (the provider + trigger the
-// shell always loads) so the shell's initial bundle does not carry it: it is
-// fetched right after first paint and is in hand long before a person opens it.
-// ── Palette overlay ──────────────────────────────────────────
 
 export function Palette({ onClose }: { onClose: () => void }) {
   const [q, setQ] = useState("");
@@ -54,21 +50,17 @@ export function Palette({ onClose }: { onClose: () => void }) {
     });
   }, [onClose]);
 
-  // Focus the input on mount.
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
-  // A new term must never retain the prior term's keyboard selection.
   useEffect(() => {
     setSelected(0);
   }, [term]);
 
-  // Visual grouping is also the canonical keyboard order.
   const groups = useMemo(() => groupHits(hits), [hits]);
   const orderedHits = useMemo(() => groups.flatMap((group) => group.items), [groups]);
 
-  // Esc / arrows / enter
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -107,9 +99,6 @@ export function Palette({ onClose }: { onClose: () => void }) {
         return;
       }
       if (e.key === "Enter") {
-        // Native buttons handle their own Enter activation. Letting the event
-        // bubble into the palette handler would also open the keyboard-selected
-        // row (for example when the Close button has focus).
         if (e.target !== inputRef.current) return;
         e.preventDefault();
         const hit = selected >= 0 ? orderedHits.at(selected) : undefined;
@@ -122,7 +111,6 @@ export function Palette({ onClose }: { onClose: () => void }) {
     [orderedHits, selected, navigate, closeAndRestoreFocus]
   );
 
-  // Keep the selected row scrolled into view.
   useEffect(() => {
     const el = listRef.current?.querySelector<HTMLElement>(`[data-idx="${selected}"]`);
     el?.scrollIntoView({ block: "nearest" });
@@ -144,7 +132,6 @@ export function Palette({ onClose }: { onClose: () => void }) {
         aria-modal="true"
         aria-label="Global search"
       >
-        {/* Search input row */}
         <div className="group flex items-center gap-3 border-b border-border-subtle px-4 py-3">
           <Search
             size={16}
@@ -178,7 +165,6 @@ export function Palette({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        {/* Results */}
         <div
           ref={listRef}
           id="global-search-results"
@@ -210,8 +196,6 @@ export function Palette({ onClose }: { onClose: () => void }) {
           {term.length >= GLOBAL_SEARCH_MIN_LENGTH && !loading && hits.length === 0 && !error && (
             <div role="status" aria-live="polite" className="flex flex-col items-center gap-1 px-4 py-10 text-center">
               <Search size={20} className="text-ink-muted" />
-              {/* Never claim absence when a source went unread — degradedNotice
-                  above already says so, and this copy must not contradict it. */}
               <div className="text-[12.5px] text-ink">
                 {degradedNotice ? `No matches found for “${term}” in what could be searched.` : `No matches for “${term}”.`}
               </div>
@@ -245,7 +229,6 @@ export function Palette({ onClose }: { onClose: () => void }) {
             ))}
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-between gap-3 border-t border-border-subtle bg-bg/50 px-4 py-2 text-[10px] text-ink-muted">
           <div className="flex items-center gap-3">
             <span className="flex items-center gap-1">
@@ -314,7 +297,6 @@ function HitRow({
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          {/* Bold the matched keyword in the title (query passed from palette). */}
           <span className="truncate text-[12.5px] font-medium text-ink">
             <HighlightedText text={item.title} query={query} className={HIGHLIGHT_CLASS} />
           </span>
@@ -385,7 +367,6 @@ function EmptyHelp() {
   );
 }
 
-// Group hits in the same order users see and keyboard navigation follows.
 function groupHits(hits: SearchHit[]): Array<{
   type: SearchHitType;
   items: Array<SearchHit & { _idx: number }>;
@@ -431,12 +412,6 @@ function groupHits(hits: SearchHit[]): Array<{
   return out;
 }
 
-// Nico 2026-07-13 (GlobalSearch Theme C handoff) — each result type gets a
-// coloured 26×26 icon tile so the palette scans by type at a glance. Hex
-// literals are the exact Theme C secondary swatches from vendor/design-system/
-// tokens.css (--c-secondary-a forest, --c-secondary-b blue, --c-warn amber).
-// `learning` is already registered as #1F3A8A in tailwind.config.js so the
-// project + product tiles share that blue via its opacity variants.
 const TYPE_META: Record<
   SearchHitType,
   { label: string; icon: ReactNode; tile: string }

@@ -23,11 +23,26 @@ export const DEFECT_REGION_STATES = [
   "perak",
 ] as const;
 
+/** Owner 2026-11-26: the all-state defect finaliser (Farra, Service Exec) reviews
+ *  fresh defects in EVERY state, on top of the region split. Keyed on her ACCOUNT
+ *  ID because her role "Purchaser" and position "Operation Executive" are both
+ *  shared (an id, not her email, so no staff PII ships in the bundle). MIRRORS the
+ *  backend ALL_STATE_DEFECT_REVIEWER_IDS in backend/src/services/projectGates.ts —
+ *  keep the two in sync. */
+export const ALL_STATE_DEFECT_REVIEWER_IDS = [83] as const;
+
 export interface DefectReviewUser {
+  id?: number | null;
   permissions?: string[] | null;
   position_name?: string | null;
   role_name?: string | null;
   capabilities?: Record<string, unknown> | null;
+}
+
+/** True when this user finalises the whole defect list — reviews every state,
+ *  not just one side of the region split. Mirrors the backend predicate. */
+export function isAllStateDefectReviewer(user: DefectReviewUser | null | undefined): boolean {
+  return user?.id != null && (ALL_STATE_DEFECT_REVIEWER_IDS as readonly number[]).includes(user.id);
 }
 
 export function isDefectRegionState(state: string | null | undefined): boolean {
@@ -46,6 +61,7 @@ export function canReviewDefect(
   if (!user) return false;
   const perms = user.permissions ?? [];
   if (perms.includes("*") || perms.includes("projects.manage")) return true;
+  if (isAllStateDefectReviewer(user)) return true;
   const inRegion = isDefectRegionState(state);
   const isShukor = user.capabilities
     ? user.capabilities["org.defect.reviewer"] === true
@@ -65,13 +81,10 @@ export function canPurchaseDefect(user: DefectReviewUser | null | undefined): bo
   );
 }
 
-// ── The stage machine ────────────────────────────────────────────────────────
 
 export type DefectStage = "fresh" | "purchaser" | "resolved";
 
-/** Resolved: the defect is closed and drops out of every open list. */
 const RESOLVED_STATUSES = new Set(["done", "done_clean"]);
-/** Escalated or in progress: the purchaser (Farra) owns it. `replace` is legacy. */
 const PURCHASER_STATUSES = new Set(["exchange", "service", "in_progress", "replace"]);
 
 /** Which lane a defect photo is in, from its LATEST timeline status. Anything
@@ -88,7 +101,6 @@ export function defectIsResolved(latest: string | null | undefined): boolean {
   return defectStage(latest) === "resolved";
 }
 
-// ── The buttons each actor sees ──────────────────────────────────────────────
 
 export type DefectActionTone = "done" | "escalate" | "progress";
 export interface DefectAction {

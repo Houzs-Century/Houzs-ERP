@@ -1,17 +1,13 @@
-// ----------------------------------------------------------------------------
-// statementTools — what the statements on the StatementTable share (the P&L,
-// the Balance sheet, the Performance P&L; the owner's Claude Design, batch 6):
-// one read per column, the Levels tool, the General ledger opened from a
-// category's figure with Back, and the sheet the exports draw.
-// ----------------------------------------------------------------------------
 
+import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQueries } from '@tanstack/react-query';
-import { ledgerHref } from '../../../vendor/scm/lib/report-layout';
+import { ledgerHref, nameWithoutCode } from '../../../vendor/scm/lib/report-layout';
 import type { FlatLine } from '../../../vendor/scm/lib/report-monthly';
 import { statementColumnsTable, statementTable, type SheetTable } from '../../../vendor/scm/lib/report-sheet';
 import type { Level } from '../ReportLayoutTree';
-import { ReportTool, Segmented } from './reportParts';
+import { ReportSwitch, ReportTool, Segmented } from './reportParts';
+import { readShowCodes, writeShowCodes } from './reportPrefs';
 import { MONTH_COUNTS, type StatementColumn, type StatementLine, type StatementView } from './statementColumns';
 
 /** The columns' reads: one request per column, each the report for its period. */
@@ -29,6 +25,21 @@ export function useColumnReads<T>(columns: StatementColumn[], key: (c: Statement
     complete: read.length > 0 && read.every((c) => byKey[c.key] !== undefined),
   };
 }
+
+/** The Codes switch's state: off until this browser turns it on, then kept (reportPrefs). */
+export function useShowCodes(): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(readShowCodes);
+  return [on, (next: boolean) => { writeShowCodes(next); setOn(next); }];
+}
+
+/** Account codes before the names, or the names alone (owner 2026-11-27: 代码可以收起来，但要能有个按钮点开). */
+export function CodesSwitch({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+  return <ReportSwitch on={on} onChange={onChange}>Codes</ReportSwitch>;
+}
+
+/** The lines as a file prints them — as the screen does: with the codes off, an account's name alone. */
+export const linesWithCodes = <L extends { label: string; code?: string }>(lines: L[], showCodes: boolean): L[] =>
+  (showCodes ? lines : lines.map((l) => (l.code ? { ...l, label: nameWithoutCode(l.label, l.code) } : l)));
 
 /** By month: 3 / 6 / 12 months. */
 export const MONTH_OPTIONS = MONTH_COUNTS.map((n) => ({ value: n, label: String(n) }));
@@ -58,7 +69,8 @@ export function useOpenLedger(backLabel: string) {
 
 /** The sheet the exports draw: the single period as today's statement sheet, the
  *  other views their columns, each amount with its % beside when shown. */
-export function sheetTable(view: StatementView, columns: StatementColumn[], shown: StatementLine[], showPct: boolean, pctTitle: string): SheetTable {
+export function sheetTable(view: StatementView, columns: StatementColumn[], lines: StatementLine[], showPct: boolean, showCodes: boolean, pctTitle: string): SheetTable {
+  const shown = linesWithCodes(lines, showCodes);
   if (view === 'single' && showPct) {
     const col = columns[0]!;
     return statementTable(shown.map((l): FlatLine => ({ ...l, amountSen: l.cells[col.key]?.amountSen ?? 0, pct: l.cells[col.key]?.pct ?? null })), pctTitle);

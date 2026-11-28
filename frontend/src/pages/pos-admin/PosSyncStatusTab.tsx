@@ -1,10 +1,3 @@
-/* POS Admin > Sync Status (layout E7): the one page that says whether every
- * booth terminal's sales have reached the ERP. KPI tiles, the terminals
- * table with last seen / last sync colour-coded and a status word, the
- * alert log with its email state, and a red / amber banner while an alert
- * is open. Alerts open, email and resolve on their own (cron, every 30
- * minutes); Acknowledge is for the case the watchdog cannot see: the bills
- * were recovered from a backup, or the device is written off. */
 import { useState } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -12,7 +5,7 @@ import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { cn, formatDateTime } from "../../lib/utils";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { POS_ADMIN, useSyncStatus, type SyncAlert, type SyncStatusWord, type SyncTerminal } from "./posAdminApi";
 import { Empty, Pill, Table, errText, ghostBtn, td, th } from "./posAdminUi";
 

@@ -48,7 +48,6 @@ export async function armDoScanToken<T extends object>(
     );
     return scanToken ? { ...header, scanToken } : header;
   } catch {
-    /* Never block a print on the QR. The operator asked for the document. */
     return header;
   }
 }

@@ -1,14 +1,5 @@
-// ----------------------------------------------------------------------------
-// journal-sheet — the Journal entries as the report sheet the Excel, the PDF
-// and Print draw (the owner's redesign, batch 6 §2.3 a6; vendor report-sheet):
-// each entry a bold row named by its number with its date, journal,
-// references, description, totals and status, then its lines one step in —
-// the account, the party under Ref. 1, the note under Description, debit or
-// credit. Exactly the entries the screen shows: the journal and the search
-// already applied.
-// ----------------------------------------------------------------------------
 
-import { fmtDate } from '../../../vendor/shared/format';
+import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
 import type { ReportSheet, SheetColumn, SheetRow } from '../../../vendor/scm/lib/report-sheet';
 import type { JournalEntryGrouped } from '../accounting-phase1-queries';
 
@@ -16,7 +7,6 @@ export type JournalSheetInput = {
   rows: JournalEntryGrouped[];
   from: string;
   to: string;
-  /** What else narrowed the list, for the subtitle ("Sales journal", "Source: PV"). */
   narrowedBy: string[];
   nameOf: (code: string) => string;
   journalWord: (cls: string) => string;
@@ -34,7 +24,6 @@ const COLUMNS: SheetColumn[] = [
   { label: 'Status', kind: 'text' },
 ];
 
-/** A side of a line: the amount, or blank when nothing moved there. */
 const side = (sen: number): number | string => (sen > 0 ? sen : '');
 
 export function journalSheet(p: JournalSheetInput): ReportSheet {

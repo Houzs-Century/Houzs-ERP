@@ -22,9 +22,6 @@ export function useReorderable<T extends { id: number }>(
   const [dragId, setDragId] = useState<number | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
 
-  // Keep localOrder in lockstep with `items` whenever the upstream
-  // refetches. Using JSON.stringify of ids as the dep is cheap and
-  // avoids the array-identity churn that would otherwise loop.
   const sig = items.map((i) => i.id).join(",");
   useEffect(() => {
     setLocalOrder(items);

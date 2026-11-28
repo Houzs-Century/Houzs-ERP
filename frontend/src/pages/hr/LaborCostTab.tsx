@@ -1,9 +1,3 @@
-/* HR · Labor Cost. A month's logged hours priced the way payroll prices them, by
- * department and by employee, with the month's short-hour docks (Settle month /
- * Undo). Each block is the SYSTEM DataTable (search / per-column sort + funnel /
- * Columns / export), so the lists read like the rest of the ERP; the month picker,
- * the amount eye and Settle month stay page controls. (Ported from the old
- * hand-rolled tables; data and actions unchanged.) */
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -12,7 +6,7 @@ import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
-import { fmtSen, todayMY } from "../../vendor/shared/format";
+import { fmtSen, todayMY } from "../../../../shared/src/vendor/shared/format";
 import { errText } from "../pos-admin/posAdminUi";
 import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";
 import { Tag } from "./HrTablePage";

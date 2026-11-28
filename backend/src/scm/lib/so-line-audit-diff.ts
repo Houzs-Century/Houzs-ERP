@@ -27,18 +27,10 @@
 import type { FieldChange } from './so-audit';
 import { buildVariantSummary, withoutFabricSupplierCode } from '../shared/variant-summary';
 
-/** Money columns that are PURE functions of qty / unit price / discount / cost —
- *  all of which are reported in their own right. Listing them too would put five
- *  redundant rows on the timeline for every price edit and bury the field that
- *  actually moved. */
 const DERIVED_FROM_REPORTED = new Set([
   'total_sen', 'total_inc_sen', 'balance_sen', 'line_cost_sen', 'line_margin_sen',
 ]);
 
-/** snake column → the camel label the timeline renderer already knows. LABELS
- *  ONLY: a column missing from this map is still emitted, under its column name.
- *  Do not turn this into an allow-list — that is the bug this module exists to
- *  have removed. */
 const LABEL: Record<string, string> = {
   qty: 'qty',
   unit_price_sen: 'unitPriceSen',
@@ -60,8 +52,6 @@ const LABEL: Record<string, string> = {
   custom_specials: 'customSpecials',
 };
 
-/** Loose scalar comparison — null and '' are the same, 5 and '5' are the same.
- *  Avoids noisy diffs from JSON round-tripping through the client. */
 function scalarChanged(from: unknown, to: unknown): boolean {
   const a = from == null ? '' : String(from);
   const b = to == null ? '' : String(to);
@@ -87,21 +77,10 @@ export function soLineFieldChanges(
 
   for (const [col, toVal] of Object.entries(updates)) {
     if (DERIVED_FROM_REPORTED.has(col)) continue;
-    if (col === 'variants') continue;   // handled below, as a readable spec diff
+    if (col === 'variants') continue;
     if (scalarChanged(prevRow[col], toVal)) push(LABEL[col] ?? col, prevRow[col], toVal);
   }
 
-  /* `variants` is a jsonb blob. Dumping it from→to would put two walls of JSON
-     on the timeline and still not say what changed, so render both sides through
-     the SAME summariser the document lines use: the row reads
-     "EZ-002 / SEAT 24" → "EZ-002 / SEAT 24 / LEG 6\"". buildVariantSummary is
-     also what the persisted description2 stores, so the audit and the line can
-     never tell different stories about one edit.
-
-     When the summary is UNCHANGED but the object is not, fall back to a
-     key-level diff: the summary covers the PHYSICAL attributes, and a change
-     outside them (buildKey, cellIndex, an addon note) is still a change to the
-     line and must not vanish just because it does not print. */
   if (updates['variants'] !== undefined) {
     const group = String((updates['item_group'] ?? prevRow['item_group']) ?? '');
     const before = stampless(prevRow['variants']);
@@ -123,6 +102,5 @@ export function soLineFieldChanges(
   return out;
 }
 
-// A saved supplier-code stamp is display only; a re-stamp on save is not an edit.
 const stampless = (v: unknown): Record<string, unknown> | null =>
   v && typeof v === 'object' ? withoutFabricSupplierCode(v as Record<string, unknown>) : null;

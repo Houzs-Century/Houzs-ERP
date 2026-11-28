@@ -53,18 +53,12 @@ export function useDoCancelAction() {
     if (reason == null) return false;
     try {
       const res = await cancel.mutateAsync({ id, reason: reason.trim() });
-      /* The cancel stands even when returning its stock partly failed — the
-         handler reports that in-band as `movementErrors` rather than refusing,
-         so "its stock is back" is only said when it is true. */
       const stockErrors = res.movementErrors ?? [];
       void serviceNotify(stockErrors.length > 0
         ? { title: `${doNumber} cancelled, but its stock was not all returned`, body: `${stockErrors.join("\n")}\n\nFix manually via Stock Adjustments.`, tone: "error" }
         : { title: `${doNumber} cancelled`, body: "Its stock is back and its lines are released to the Sales Order." });
       return true;
     } catch (err) {
-      /* A refusal that reaches nobody is worse than a crash (CLAUDE.md). The
-         server's own words carry the reason — a Sales Invoice or Delivery Return
-         already raised on it, or a reason too short. */
       void serviceNotify({
         title: "Could not cancel this delivery order",
         body: err instanceof Error ? err.message : "Something went wrong with this delivery order.",

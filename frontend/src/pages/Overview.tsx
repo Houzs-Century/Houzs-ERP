@@ -10,13 +10,12 @@ import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
 import { AckTrendCard, AnnouncementBannerStack, TeamPendingCard } from "../components/AnnouncementDashboard";
 import { cn } from "../lib/utils";
-import { fmtDate, fmtSen, todayMY } from "../vendor/shared/format";
+import { fmtDate, fmtSen, todayMY } from "../../../shared/src/vendor/shared/format";
 import { formatCurrency } from "../lib/utils";
 import { totalsOf, type OvProject } from "./projects/projectOverviewModel";
 import { ManagementWatch, type WatchInputs } from "./overview/ManagementWatch";
 import { DashboardPeriodPicker, useDashboardPeriod } from "../components/scm-v2/DashboardPeriod";
 
-// ── Types for the data this page aggregates ──────────────────
 interface InboxItem {
   type: string;
   id: number;
@@ -33,7 +32,6 @@ interface InboxResp {
   counts: { my_tasks: number; review_queue: number; blockers: number; this_week: number };
 }
 
-// ── Helpers ──────────────────────────────────────────────────
 function greeting(h: number): string {
   if (h < 12) return "Good morning";
   if (h < 18) return "Good afternoon";
@@ -56,11 +54,6 @@ export function Overview() {
   const { user, can, pageAccess } = useAuth();
   const navigate = useNavigate();
 
-  // OFF-NOT-HIDE: the home dashboard's org-summary KPIs hit permission-gated
-  // aggregate endpoints. A user without the read permission (e.g. a Sales
-  // Manager/Agent) would otherwise fire these on every home load and get a
-  // "Forbidden: missing …" toast. Gate the fetch so it never fires for them —
-  // the tile just shows 0 instead of erroring.
   const inbox = useQuery<InboxResp>("/api/inbox", () => api.get("/api/inbox"));
   const assr = useQuery<{ active_count: number; breach_count: number }>("/api/assr/summary",
     () => api.get("/api/assr/summary"),
@@ -73,10 +66,7 @@ export function Overview() {
     { enabled: can("projects.read") },
   );
 
-  /* The module overviews' headline figures, each fetched only for a viewer of
-     that module (OFF-NOT-HIDE, as above). */
   const today = todayMY();
-  /* The figures below follow the dashboard period (this month by default). */
   const [period, setPeriod] = useDashboardPeriod(today, "from", "to", []);
   const pFrom = period.from; const pTo = period.to;
   const proc = useQuery<NonNullable<WatchInputs["procurement"]> & { total: { open: { sen: number } }; cachedAt?: string }>("/api/scm/procurement-overview#home",
@@ -84,19 +74,16 @@ export function Overview() {
     [pFrom, pTo],
     { enabled: pageAccess("scm.procurement.po") !== "none" },
   );
-  const logi = useQuery<NonNullable<WatchInputs["logistic"]> & { runsToday: number; weeks: { doCount: number; current: boolean }[]; cachedAt?: string }>("/api/scm/logistic-overview",
+  const logi = useQuery<NonNullable<WatchInputs["logistic"]> & { runsToday: number | null; weeks: { doCount: number; current: boolean }[]; cachedAt?: string }>("/api/scm/logistic-overview",
     () => api.get("/api/scm/logistic-overview"),
     [],
     { enabled: pageAccess("scm.transportation.drivers") !== "none" },
   );
-  /* The same figures as Project Overview: keyed books, else the event's Sales Orders. */
   const pnl = useQuery<{ projects: OvProject[]; cachedAt?: string }>("/api/projects/overview",
     () => api.get("/api/projects/overview"),
     [],
     { enabled: !!user?.project_finance_viewer && pageAccess("projects.finances") !== "none" },
   );
-  /* Those three overviews are served from a copy up to 2 h old: the watchlist says
-     the oldest copy's time and Refresh recomputes the ones this viewer reads. */
   const { refresh, refreshing } = useCacheRefresh();
   const onRefresh = () => void refresh([
     ...(proc.data ? [{ queryKey: buildQueryKey("/api/scm/procurement-overview#home", [pFrom, pTo]), load: () => api.get(withFresh(`/api/scm/procurement-overview?from=${pFrom}&to=${pTo}`)) }] : []),
@@ -116,12 +103,9 @@ export function Overview() {
   const thisWeek = logi.data?.weeks.find((w) => w.current);
 
   const now = new Date();
-  /* The WEEKDAY is a word by design; the date beside it is the one rule. */
   const dateLabel = `${now.toLocaleDateString("en-GB", { weekday: "long" })} ${fmtDate(now)}`.toUpperCase();
   const name = user?.name || user?.email?.split("@")[0] || "";
 
-  // Merge the inbox sections into one prioritised "needs me" feed, tagging
-  // each row with its kind so we can colour the dot + badge.
   const feed = useMemo(() => {
     const d = inbox.data;
     if (!d) return [] as (InboxItem & { kind: string })[];
@@ -134,11 +118,6 @@ export function Overview() {
   }, [inbox.data]);
 
   const c = inbox.data?.counts;
-  /* `?? 0` on every one of these turned "we could not read it" into a confident
-     "zero" on the first screen everyone sees each morning — "0 items need you
-     today", "0 SLA risks". A zero is a claim; absence of an answer is not. Each
-     figure now renders as an em dash when its read failed, so a broken endpoint
-     looks broken instead of looking like a quiet day. */
   const inboxUnknown = !!inbox.error || !c;
   const assrUnknown = !!assr.error || !assr.data;
   const projectsUnknown = !!projects.error || !projects.data;
@@ -153,13 +132,12 @@ export function Overview() {
     { label: "Project sales", value: pnl.loading ? "…" : pt ? formatCurrency(pt.sales) : "—", sub: pt ? `${pt.projects} projects · GP ${pct(pt.gp, pt.sales)}${pt.fromSalesOrders ? ` · ${pt.fromSalesOrders} from Sales Orders` : ""}` : pnl.error ? "Couldn't load" : "Project finance viewers only" },
     { label: "PO not received", value: proc.loading ? "…" : po ? fmtSen(po.sen) : "—", sub: po ? `${po.lines} open lines · ${po.late} late` : proc.error ? "Couldn't load" : "Procurement only" },
     { label: "Open Cases", value: assr.loading ? "…" : num(assrUnknown, assr.data?.active_count), sub: assrUnknown ? "Couldn't load" : `${slaRisk} SLA risks` },
-    { label: "Runs today", value: logi.loading ? "…" : logi.data ? String(logi.data.runsToday) : "—", sub: thisWeek ? `${thisWeek.doCount} DO issued this week` : logi.error ? "Couldn't load" : "Logistics only" },
+    { label: "Runs today", value: logi.loading ? "…" : logi.data?.runsToday != null ? String(logi.data.runsToday) : "—", sub: thisWeek ? `${thisWeek.doCount} DO issued this week` : logi.error ? "Couldn't load" : "Logistics only" },
     { label: "Active Projects", value: projects.loading ? "…" : num(projectsUnknown, projects.data?.live_count), sub: projectsUnknown ? "Couldn't load" : `${projects.data?.upcoming_30d ?? 0} due this month` },
   ];
 
   return (
     <div className="space-y-4">
-      {/* ── Focus hero — dark slab with a petrol glow ───────────── */}
       <div className="relative overflow-hidden rounded-2xl bg-sidebar px-6 py-7 text-sidebar-ink shadow-slab sm:px-8">
         <div
           className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full opacity-60 blur-2xl"
@@ -192,19 +170,12 @@ export function Overview() {
         </div>
       </div>
 
-      {/* ── Unacknowledged notices (design handoff 2026-09-04): up to three
-          cards, no modal wall; the supervisor card below it renders only for
-          a user with direct reports. Both read the announcements feed the
-          modal reads, so an acknowledgement here settles everywhere. */}
       <AnnouncementBannerStack />
-      {/* Two-up panel row (handoff screen 5): the supervisor card and the
-          announcer's ack-rate chart; each renders only for its audience. */}
       <div className="grid gap-3.5 lg:grid-cols-2">
         <TeamPendingCard />
         <AckTrendCard />
       </div>
 
-      {/* ── KPI ribbon ──────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2">
         <DashboardPeriodPicker period={period} today={today} onChange={setPeriod} />
         <span className="text-[11.5px] text-ink-muted">Project sales, P&amp;L and PO figures follow this period; open cases, runs and projects are live.</span>
@@ -225,13 +196,10 @@ export function Overview() {
         ))}
       </div>
 
-      {/* ── What every module overview found, ranked ──────────── */}
       <ManagementWatch inputs={watchInputs} loading={logi.loading || proc.loading || gaps.loading || assr.loading}
         stamp={(proc.data || logi.data || pnl.data) ? <CacheStamp cachedAt={overviewsAt} onRefresh={onRefresh} refreshing={refreshing} /> : null} />
 
-      {/* ── Two columns: needs-me feed + P&L of the period ──────── */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.3fr_1fr]">
-        {/* Needs me */}
         <div className="rounded-xl border border-border bg-surface p-4 shadow-stone sm:p-5">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-[15px] font-bold text-ink">Needs you</h2>
@@ -240,11 +208,6 @@ export function Overview() {
           {inbox.loading && !inbox.data ? (
             <div className="py-8 text-center text-[12px] text-ink-muted">Loading…</div>
           ) : inbox.error ? (
-            /* Was: "Inbox zero — nothing needs you". On a failed read that told
-               someone their work queue was empty and congratulated them for it.
-               A failure must never be indistinguishable from an empty result,
-               least of all on the screen people check to decide what to do
-               first. (The emoji also broke the repo's no-emoji rule.) */
             <div className="py-8 text-center text-[12px] text-err">
               We couldn't load what needs you. This is not the same as having nothing to do — please refresh.
             </div>
@@ -274,7 +237,6 @@ export function Overview() {
           )}
         </div>
 
-        {/* P&L of the period, opening Project Overview on it. */}
         <div className="space-y-4">
           <button onClick={() => navigate(`/projects?view=finances&af_from=${pFrom}&af_to=${pTo}`)}
             className="block w-full rounded-xl border border-primary/30 bg-primary-soft p-4 text-left shadow-stone sm:p-5">

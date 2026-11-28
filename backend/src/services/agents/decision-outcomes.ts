@@ -1,21 +1,3 @@
-// ---------------------------------------------------------------------------
-// decision-outcomes.ts — did the approved action actually happen, and did it do
-// what it said it would? (Spec §9.1, the half nothing implemented.)
-//
-// The GCOA is required to "track whether approved actions were executed and
-// whether the expected result occurred; open a recovery task when verification
-// fails". Until now a decision was recorded and then forgotten: agent_decisions
-// has an `outcome` column that nothing ever filled, because that table is
-// append-only and filling it later would mean editing a decision after the fact.
-//
-// An outcome is therefore its own row. One decision can accrue several — executed
-// now, verified later, contradicted next week — which is what the question needs.
-//
-// THIS FILE PROMOTES NOTHING. summarisePromotionEvidence() returns evidence and a
-// list of reasons NOT to promote; the Stage 1→2→3 ladder stays a human decision
-// (§10.5). Encoding "80% success = promote" would quietly turn a governance
-// question into an arithmetic one, and the spec puts it in a human's hands.
-// ---------------------------------------------------------------------------
 
 export type OutcomeKind = 'EXECUTED' | 'FAILED' | 'VERIFIED' | 'CONTRADICTED' | 'SKIPPED';
 
@@ -60,15 +42,9 @@ export interface PromotionEvidence {
   verified: number;
   contradicted: number;
   skipped: number;
-  /** Decisions with an EXECUTED but no VERIFIED/CONTRADICTED yet. The honest
-   *  middle: we did it and never checked. */
   executedButUnverified: number;
-  /** FAILED or CONTRADICTED with no recovery_ref — nobody picked it up. */
   unrecovered: number;
-  /** NEVER true. Promotion is a human act; this carries the reasons a human
-   *  should weigh, not a verdict. */
   autoPromote: false;
-  /** Concrete reasons to hold, newest concern first. Empty ≠ "promote". */
   concerns: string[];
 }
 

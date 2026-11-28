@@ -1,11 +1,3 @@
-/* GET /sales-analysis/lines — the 2990 POS Marketing > Sales analysis feed.
- * Pinned: who may read it (the all-sales tier and the POS marketing account,
- * not an ordinary salesperson); the company boundary; which orders and lines
- * count; that the payload carries the customer's age but never the birthday,
- * the name on the order and its city but never the phone, and never a cost;
- * and that only a finance caller gets the margin, and only while
- * the cost display switch is on. The caller goes through the real SCM auth bridge, so the
- * Title fields reach the gate the way production stashes them. */
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 
@@ -57,7 +49,6 @@ vi.mock('../../db/supabase', () => ({ getSupabaseService: () => sb }));
 
 const { salesAnalysis } = await import('./sales-analysis');
 
-/** A Houzs session user, as the global /api auth hands it to the SCM bridge. */
 const member = (position_name: string, permissions: string[] = []) => ({
   id: 41, email: 'm@2990.test', name: 'Member', position_name, department_name: 'Sales Department',
   permissions, permissions_set: new Set(permissions), position_policy: null,

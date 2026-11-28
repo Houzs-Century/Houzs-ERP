@@ -51,7 +51,6 @@ function world(deliveryOrders: Row[], crew: Row[] = []) {
     delivery_order_items: [],
     delivery_orders: deliveryOrders,
     delivery_order_crew: crew,
-    // The shared fleet: created under Houzs, used for both companies' orders.
     drivers: [{ id: 'drv-1', name: 'SHAMSUL', ic_number: '930428-10-5331', phone: '011-3192 8090', vehicle: null, company_id: HOUZS }],
     helpers: [],
     lorries: [{ id: 'lor-1', plate: 'VQE9058', company_id: HOUZS }],
@@ -65,7 +64,7 @@ function app(sb: ReturnType<typeof fakeSb>, allowed: number[]) {
   const a = new Hono<{ Bindings: Env; Variables: Variables }>();
   a.use('*', async (c, next) => {
     c.set('user', CALLER);
-    c.set('companyId', HOUZS as Variables['companyId']); // switched to Houzs
+    c.set('companyId', HOUZS as Variables['companyId']);
     c.set('allowedCompanyIds', allowed as Variables['allowedCompanyIds']);
     c.set('supabase', sb as unknown as Variables['supabase']);
     c.set('houzsUser', { id: 9, name: 'Planner', permissions_set: new Set(['*']), permissions: ['*'] } as unknown as Variables['houzsUser']);
@@ -97,17 +96,16 @@ describe('Delivery Planning crew on a 2990 order, caller switched to Houzs', () 
     const a = app(sb, [HOUZS, S2990]);
 
     expect((await putCrew(a, 'do-2990', { driver1Id: 'drv-1' })).status).toBe(200);
-    expect((await putCrew(a, 'do-2990', { lorryId: 'lor-1' })).status).toBe(200); // one seat at a time, as the board does
+    expect((await putCrew(a, 'do-2990', { lorryId: 'lor-1' })).status).toBe(200);
 
     const crew = await boardCrew(a, '2990-SO-2610-009');
     expect(crew).toMatchObject({
       driver_1_name: 'SHAMSUL',
-      driver_1_ic: '930428-10-5331', // what the Driver Info blast prints
+      driver_1_ic: '930428-10-5331',
       driver_1_contact: '+601131928090',
       lorry_plate: 'VQE9058',
     });
     expect(crew?.driver_1_typed).toBeUndefined();
-    // The crew row and the DO header carry the ORDER's company, not the planner's.
     expect(sb.tables.delivery_order_crew![0]!.company_id).toBe(S2990);
     expect(sb.tables.delivery_orders![0]!.driver_name).toBe('SHAMSUL');
   });
@@ -130,7 +128,6 @@ describe('Delivery Planning crew follows the NEWEST delivery order', () => {
       ],
     );
     const a = app(sb, [HOUZS, S2990]);
-    // The board's own crew cell writes the last DO it lists; the read must show that same DO.
     const res = await a.request('/delivery-planning', {}, {} as Env);
     const body = (await res.json()) as { orders: Array<{ so_doc_no: string; delivery_orders: Array<{ id: string }> }> };
     const dos = body.orders.find((o) => o.so_doc_no === 'HC-SO-2611-001')!.delivery_orders;

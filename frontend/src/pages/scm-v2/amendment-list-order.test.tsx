@@ -1,13 +1,3 @@
-/* Amendment queues open with what still needs an action on top (staff request,
-   2026-09-14): Requested, then Approved, then Rejected, newest first inside
-   each. Before this the SO and PO queues opened in fetch order (newest first,
-   so a week-old Requested row sat under a page of Approved ones) and clicking
-   Status sorted the bucket NAMES A-Z, which put Approved above Requested.
-
-   One order, owned by status-pill.ts beside the buckets it ranks, read by the
-   desktop grids (as DataGrid's defaultSort + the Status column's sortFn) and
-   by the two phone queues. Each surface is rendered here, not just the helper,
-   because the bug was a surface that never asked for an order at all. */
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -20,9 +10,6 @@ const row = (id: string, status: string, createdAt: string): Row => ({
   requested_by: null, created_at: createdAt, updated_at: null, lane: 'LINES',
 });
 
-/* Fetch order = newest first, exactly what both list endpoints return. The
-   granular SO statuses are in here on purpose: SUPPLIER_PENDING is a Requested
-   row, SENT and SO_APPROVED are Approved rows. */
 const SO_ROWS: Row[] = [
   row('a', 'SENT', '2026-09-10T08:00:00Z'),
   row('b', 'REJECTED', '2026-09-09T08:00:00Z'),
@@ -35,6 +22,9 @@ const EXPECTED = ['d', 'e', 'a', 'c', 'b', 'f'];
 
 let soRows: Row[] = SO_ROWS;
 let poRows: Row[] = [];
+/* The refund approvals (owner 2026-11-27) are their own section with their own tests (RefundApprovals.test.tsx). */
+vi.mock('./RefundApprovals', () => ({ RefundApprovals: () => null }));
+vi.mock('../../mobile/MobileRefundApprovals', () => ({ MobileRefundApprovals: () => null }));
 vi.mock('../../vendor/scm/lib/so-amendment-queries', () => ({
   useAmendments: () => ({ data: { amendments: soRows }, isLoading: false, error: null }),
 }));
@@ -113,8 +103,8 @@ describe('desktop SO amendment queue', () => {
     const bucketOf = (id: string) => ({ a: 1, b: 2, c: 1, d: 0, e: 0, f: 2 } as Record<string, number>)[id];
     const first = render(<MemoryRouter><Amendments /></MemoryRouter>);
     const status = screen.getByRole('columnheader', { name: /^Status/ });
-    fireEvent.click(status); // ascending
-    fireEvent.click(status); // descending: Requested at the bottom for THIS visit
+    fireEvent.click(status);
+    fireEvent.click(status);
     expect(gridIds(first.container, 'SO').map(bucketOf)).toEqual([2, 2, 1, 1, 0, 0]);
     first.unmount();
     const { container } = render(<MemoryRouter><Amendments /></MemoryRouter>);
@@ -145,8 +135,8 @@ describe('desktop PO amendment queue', () => {
     ];
     const first = render(<MemoryRouter><PoAmendments /></MemoryRouter>);
     const created = screen.getByRole('columnheader', { name: /^Created/ });
-    fireEvent.click(created); // oldest first
-    fireEvent.click(created); // newest first: the Rejected row leads this visit
+    fireEvent.click(created);
+    fireEvent.click(created);
     expect(gridIds(first.container, 'PO')[0]).toBe('r');
     first.unmount();
     const { container } = render(<MemoryRouter><PoAmendments /></MemoryRouter>);

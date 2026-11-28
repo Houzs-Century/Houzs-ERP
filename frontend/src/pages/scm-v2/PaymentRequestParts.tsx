@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// PaymentRequestParts — what both readers of Payment requests share: the
-// requester's own page and Finance's view under Money out (the redesign, batch
-// 4). Which list a request sits in, who may still change it, the balance of a
-// bill paid in instalments, its official invoice and its files. One home each,
-// so the two views can never disagree about a request.
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { Button } from '@2990s/design-system';
@@ -22,7 +15,7 @@ import { DocFilesCard } from '../../vendor/scm/components/DocFilesCard';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
@@ -99,7 +92,7 @@ export function BalanceForm({ request, onDone, onCancel }: { request: PaymentReq
         }
       }
       onDone(res.request.id);
-    } catch { /* the mutation's own onError told the user */ }
+    } catch { }
   };
 
   return (
@@ -164,7 +157,7 @@ export function OfficialDocPanel({ request, finance, mayUpload }: { request: Pay
           body: res.note ?? (res.received.length > 0 ? `Finance checks it on ${res.received.map((d) => d.number ?? d.kind).join(', ')}.` : 'It is kept with the request and its payment.'),
           tone: res.note ? 'error' : 'info',
         });
-      } catch { /* the mutation's own onError told the user */ }
+      } catch { }
     }
   };
   return (
@@ -175,7 +168,6 @@ export function OfficialDocPanel({ request, finance, mayUpload }: { request: Pay
       {state === 'OWED' && !finance && <span style={soft}>Paid on a proforma or quotation — upload the official invoice when you have it.</span>}
       {mayUpload && (state === 'OWED' || state === 'RECEIVED') && (
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-12)', flexWrap: 'wrap' }}>
-          {/* Finance reads English (the redesign); the requester keeps both. */}
           <span style={{ fontWeight: 600 }}>{finance ? 'Upload the official invoice' : 'Upload the official invoice'}</span>
           <input type="file" accept={PV_FILE_ACCEPT} aria-label="Upload the official invoice" disabled={upload.isPending}
             onChange={(e) => { void pick(e.target.files); e.target.value = ''; }} />
@@ -185,7 +177,6 @@ export function OfficialDocPanel({ request, finance, mayUpload }: { request: Pay
   );
 }
 
-/* ── The bill — the requester's own until Finance answers ─────────────────── */
 export function RequestFilesCard({ request, canWrite }: { request: PaymentRequest; canWrite: boolean }) {
   const filesQ = usePaymentRequestFiles(request.id);
   const upload = useUploadPaymentRequestFile();

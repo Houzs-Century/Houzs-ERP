@@ -89,10 +89,10 @@ import { Button } from '@2990s/design-system';
 import { useAuth } from '../../auth/AuthContext';
 import { canCreateEvent } from '../../auth/salesAccess';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 import { cn } from '../../lib/utils';
 import { markWorkspaceOpenIntent } from '../../lib/workspaceTabs';
-import { fmtDateOrDash, fmtDayMonth } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtDayMonth } from '../../../../shared/src/vendor/shared/format';
 import {
   useFairChecks,
   useFairPending,
@@ -109,9 +109,7 @@ import {
 import { allBoothChoices, boothChoices } from '../../vendor/scm/lib/fair-booth-choices';
 import { SearchableSelect, type SearchableSelectOption } from '../../vendor/scm/components/SearchableSelect';
 
-/** The group of an order with no verdict at all (fair_match NULL). */
 const NO_VERDICT = 'NO_VERDICT';
-/** The server sends at most this many, newest first. */
 const LIST_LIMIT = 500;
 
 const GROUPS = [
@@ -130,7 +128,6 @@ const CHECK_GROUPS = [
 
 const soft: CSSProperties = { color: 'var(--fg-muted)' };
 const mono: CSSProperties = { fontFamily: 'var(--font-mono)' };
-/* The second line of a booth: where and when. */
 const detailLine: CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 
 /* A boxed table, its heading drawn as the system's lists draw theirs
@@ -156,9 +153,6 @@ const NOTE = 'bg-surface-2 px-3 pb-2 pt-1.5 text-[12px] text-ink-muted';
 const COLUMNS: Array<number | string | undefined> = [172, 116, 96, 112, '15%', 110, 124, undefined];
 const COLS = COLUMNS.length;
 const TABLE_MIN = 1212;
-/* The Fair cell: the box, a grey line, the buttons — one under the other. The
-   items stretch, so the box (SearchableSelect: an input in a plain div) fills
-   the cell; a lone button keeps its own width with self-start. */
 const FAIR_CELL = 'flex flex-col gap-1.5';
 
 function money(sen: number | null): string {
@@ -183,7 +177,6 @@ export function FairPending() {
   const checks = checksQ.data ?? [];
   const reported = useMemo(() => checks.filter((r) => r.check === 'REPORT_ELSEWHERE'), [checks]);
 
-  /* An unlinked order a report names is listed once — under the report. */
   const byGroup = useMemo(() => {
     const inReport = new Set(reported.map((r) => r.doc_no));
     const m = new Map<string, FairPendingRow[]>();
@@ -202,7 +195,6 @@ export function FairPending() {
     <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
         <h1 style={{ margin: 0, fontSize: 20 }}>Fair links to settle</h1>
-        {/* A list that could not be read must not read as "nothing to settle". */}
         {rowsQ.isError ? (
           <p role="alert" style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--c-festive-b, var(--hz-dk-festive-b, #B8331F))' }}>
             Couldn’t load the orders with no fair — try again.
@@ -306,16 +298,13 @@ function PutAsideGroup({ rows, busy, onBringBack }: { rows: FairPendingRow[]; bu
  *  them at one click, to the fair in their box (owner 2026-10-20). */
 function ReportGroup({ rows, busy, reachAll, onAssign, onPutAside }: {
   rows: FairCheckRow[];
-  /** A write is under way, or the person may not re-assign. */
   busy: boolean;
-  /** Finance / PMS: every fair may be picked. */
   reachAll: boolean;
   onAssign: (v: { docNo: string; projectId: number | null }) => void;
   onPutAside: (docNo: string, aside: boolean) => void;
 }) {
   const transfer = useFairTransfer();
   const [ticked, setTicked] = useState<ReadonlySet<string>>(new Set());
-  /* A box a person changed; one left alone holds the booth the report names. */
   const [picked, setPicked] = useState<ReadonlyMap<string, string>>(new Map());
   const [said, setSaid] = useState<string | null>(null);
   const boxOf = (r: FairCheckRow): string => picked.get(r.doc_no) ?? (r.target ? String(r.target.projectId) : '');
@@ -387,8 +376,6 @@ function ReportGroup({ rows, busy, reachAll, onAssign, onPutAside }: {
   );
 }
 
-/** The booths the reports name for an order — what its Fair box lists first —
- *  with a name for each in case the box's own lists do not carry it. */
 type ReportedBooths = { ids: readonly number[]; names: ReadonlyMap<number, string> };
 
 function reportedBooths(row: FairCheckRow): ReportedBooths {
@@ -398,13 +385,10 @@ function reportedBooths(row: FairCheckRow): ReportedBooths {
   return { ids: both.map((c) => c.projectId), names: new Map(both.map((c) => [c.projectId, c.detail ? `${c.title} · ${c.detail}` : c.title])) };
 }
 
-/** Where the evening report puts the order, and the day of that report, on one
- *  line under its Fair box. Two fairs' reports: both named. */
 function reportLine(row: FairCheckRow): string {
   const t = row.target;
   if (t) {
     const on = t.reportDate ? `reported ${fmtDayMonth(t.reportDate)}` : '';
-    /* An older server sends one line only. */
     const where = t.title ? [t.title, t.detail].filter(Boolean).join(' · ') : t.label;
     return `Report says ${[where, on].filter(Boolean).join(' · ')}`;
   }
@@ -412,8 +396,6 @@ function reportLine(row: FairCheckRow): string {
   return both ? `Two reports list it: ${both}` : 'Two reports list it';
 }
 
-/** One order the report puts elsewhere: where it is now, its Fair box with the
- *  booth the report names first, Link and Put aside. */
 function ReportRow({ row, value, onPick, tick, busy, reachAll, onAssign, onPutAside }: {
   row: FairCheckRow;
   value: string;
@@ -426,7 +408,6 @@ function ReportRow({ row, value, onPick, tick, busy, reachAll, onAssign, onPutAs
 }) {
   const reported = useMemo(() => reportedBooths(row), [row]);
   const { options } = useFairChoices(row, reachAll, reported);
-  /* Already under the fair in the box: nothing to link — Put aside leaves it there. */
   const already = value !== '' && row.project_id != null && Number(value) === Number(row.project_id);
   return (
     <tr>
@@ -450,7 +431,6 @@ function ReportRow({ row, value, onPick, tick, busy, reachAll, onAssign, onPutAs
   );
 }
 
-/** A booth on two lines: "[AKEMI] HOMELOVE" over "IOIGECC · 10/09 - 10/11". */
 function BoothLines({ title, detail }: { title: string; detail: string }) {
   return (
     <>
@@ -460,7 +440,6 @@ function BoothLines({ title, detail }: { title: string; detail: string }) {
   );
 }
 
-/** Where the order is now: its booth, or "Not linked" over the venue it records. */
 function NowUnder({ row }: { row: FairCheckRow }) {
   if (row.current) return <BoothLines title={row.current.title} detail={row.current.detail} />;
   if (row.project_id == null) {
@@ -469,17 +448,12 @@ function NowUnder({ row }: { row: FairCheckRow }) {
   return <span style={soft}>—</span>;
 }
 
-/** One group: its title, what to do, and its orders in the shared columns. */
 function Group({ title, hint, place = 'Venue', last, lead, actions, children }: {
   title: ReactNode;
   hint: string;
-  /** The fifth column: the order's venue, or (report group) where it is now. */
   place?: 'Venue' | 'Now under';
-  /** The column before the buttons. */
   last: 'Fair' | 'Status' | 'Put aside';
-  /** The report group's tick-all box, ahead of "SO No.". */
   lead?: ReactNode;
-  /** Buttons above the table. */
   actions?: ReactNode;
   children: ReactNode;
 }) {
@@ -530,9 +504,6 @@ function SoLink({ docNo }: { docNo: string }) {
 
 type OrderRow = Pick<FairPendingRow, 'doc_no' | 'so_date' | 'venue' | 'branding' | 'local_total_sen' | 'ref' | 'customer_so_no' | 'salesperson_id'>;
 
-/** The cells every group shares: number (the report group's tick ahead of it),
- *  Ref No., date, salesperson, venue, brand, amount. The report group puts
- *  where the order is now in the venue's place. */
 function OrderCells({ row, lead, place }: { row: OrderRow; lead?: ReactNode; place?: ReactNode }) {
   const ref = customerRefOf(row);
   const seller = useStaffLookup().nameOf(null, row.salesperson_id, '');
@@ -552,7 +523,6 @@ function OrderCells({ row, lead, place }: { row: OrderRow; lead?: ReactNode; pla
   );
 }
 
-/** The server's sentence under an order, inside that order's box. */
 function NoteRow({ note }: { note: string }) {
   return <tr><td colSpan={COLS} className={NOTE}>{note}</td></tr>;
 }
@@ -578,11 +548,9 @@ function PendingRow(props: {
   /** Put the order aside (owner 2026-10-21) — out of the list until brought back. */
   onPutAside: (docNo: string, aside: boolean) => void;
   busy: boolean;
-  /** Finance / PMS: every fair may be picked, not only the order's own place. */
   reachAll: boolean;
 }) {
   const { row, note, onAssign, onPutAside, busy, reachAll } = props;
-  /* null = untouched, so the suggestion shows; '' = the person cleared it. */
   const [pick, setPick] = useState<string | null>(null);
   const { options, suggested } = useFairChoices(row, reachAll);
   const value = pick ?? (suggested != null ? String(suggested) : '');
@@ -603,15 +571,10 @@ function PendingRow(props: {
   );
 }
 
-/** The fairs a row may be linked to, in the order a person reads them. */
 function useFairChoices(row: OrderRow, reachAll: boolean, reported?: ReportedBooths): {
   options: SearchableSelectOption[];
   suggested: number | null;
 } {
-  /* The SAME options the salesperson saw, resolved for THIS order's date — not
-     today's. An order from last week must be settled against the fairs that were
-     running last week, or the screen offers an attribution that is wrong by
-     construction. They come first, the order's own brand filled in. */
   const optionsQ = useFairOptions(row.so_date);
   const { choices, suggested } = boothChoices(
     [...(optionsQ.data?.running ?? []), ...(optionsQ.data?.earlier ?? [])],
@@ -642,7 +605,6 @@ function useFairChoices(row: OrderRow, reachAll: boolean, reported?: ReportedBoo
   return { options, suggested };
 }
 
-/** A row's Fair box: one list that typing narrows. */
 function FairBox({ docNo, value, options, disabled, onChange }: {
   docNo: string;
   value: string;
@@ -668,7 +630,6 @@ function SettleButtons({ docNo, value, busy, linkOff = false, linkTitle, onAssig
   docNo: string;
   value: string;
   busy: boolean;
-  /** Nothing to link: the order is already under the fair in its box. */
   linkOff?: boolean;
   linkTitle?: string;
   onAssign: (v: { docNo: string; projectId: number | null }) => void;

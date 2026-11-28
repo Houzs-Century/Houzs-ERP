@@ -9,6 +9,8 @@ import { APPROVED_LEAVE_STATUSES } from "../../scm/shared/hr-attendance";
 import { asDate } from "./hr-attendance-view";
 import { ASSR_LEG_BY_STOP, assrBoardLocation } from "../../scm/lib/assr-board-scope";
 import { doRunDate, isOwnLorryDoRun } from "../../scm/lib/own-lorry-do-run";
+import { regionOfDo } from "../../scm/lib/logistics-cost";
+import { normalizePlate } from "../../scm/lib/plate-normalize";
 import { getDb } from "../../db/client";
 import { hr_attendance, hr_employees, hr_payslips, hr_public_holidays, hr_trip_missed_days, hr_trip_rate_versions, hr_trip_rows, hr_working_hours } from "../../db/schema";
 import {
@@ -17,6 +19,7 @@ import {
   computeTripMonth,
   eventTypeOf,
   isFairJob,
+  isHookkaSupplierName,
   jobTypeOfKind,
   kindOfJobType,
   missedWorkingDays,
@@ -82,6 +85,7 @@ export function tripRowOf(r: RowRecord): TripRow {
     jobType: jobTypeOfRow(r),
     eventType: TRIP_EVENT_TYPES.includes(r.event_type as TripEventType) ? (r.event_type as TripEventType) : null,
     localTotalSen: Number(r.local_total_sen),
+    allowanceOverrideSen: r.allowance_override_sen == null ? null : Number(r.allowance_override_sen),
     state: r.state,
     postcode: r.postcode,
     lorryPlate: r.lorry_plate,
@@ -98,14 +102,12 @@ export type TripMonth = {
   month: string;
   first: string;
   last: string;
-  /** The month's rows HR has not removed, and what each earned (same order). */
   rows: RowRecord[];
   rowPay: TripRowPay[];
   people: Person[];
   rates: TripRates;
   pay: Map<number, TripPay>;
   missed: Map<number, MissedInfo>;
-  /** Names on the rows that resolve to nobody, with how many rows carry each. */
   unmatched: { name: string; rows: number }[];
 };
 
@@ -182,7 +184,6 @@ export async function loadTripMonth(db: Db, companyId: number, month: string, to
   const workedBy = group(worked);
   const leaveBy = group(leave);
   const overrideBy = new Map(overrides.map((o) => [o.employee_id, o]));
-  /* Only days already gone count: today is still being worked. */
   const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86400000).toISOString().slice(0, 10);
   const missed = new Map<number, MissedInfo>();
   const missedOf = (id: number): MissedInfo => {
@@ -227,9 +228,7 @@ export async function loadTripMonth(db: Db, companyId: number, month: string, to
   };
 }
 
-/* ── Delivery Planning -> rows ─────────────────────────────────────────── */
 
-/* Each stop type as a Delivery Planning job type (DP_ENTRY_MENU). */
 const STOP_KIND: Partial<Record<string, TripJobType>> = {
   DELIVERY: "DELIVERY_ORDER",
   PICKUP: "ASSR_PICKUP",
@@ -241,22 +240,21 @@ const STOP_KIND: Partial<Record<string, TripJobType>> = {
   TRANSFER: "TRANSFER",
   LORRY_SERVICE: "LORRY_SERVICE",
 };
-/* A service case's legs ride stops carrying assr_case_id, typed by the board's
-   own ASSR_LEG_BY_STOP, so its delivery leg is a DELIVERY stop that is NOT a DO. */
 const CASE_LEG_KIND: Partial<Record<string, TripJobType>> = { customer_pickup: "ASSR_PICKUP", delivery: "ASSR_SERVICE", inspection: "ASSR_INSPECTION" };
+
+/** A delivery to Singapore (its state, or a 6-digit postcode): read as a Transfer item (RM15, no commission), the way the lorry carries it to the border. Reuses regionOfDo so SG has one home. */
+export const isSingaporeDestination = (state: string | null, postcode: string | null): boolean =>
+  regionOfDo({ state, postcode, city: null, address: null }).code === "SG";
 
 export type PlanningStop = {
   stop_id: string;
-  /** The DO the stop delivers (null for a job that is not a DO). */
   do_id: string | null;
   stop_type: string;
   trip_id: string;
   trip_date: string;
   trip_no: string;
   plate: string | null;
-  /** The stop's own snapshot: the DO's or SO's total when it was scheduled. */
   revenue_sen: string | number | null;
-  /** The DP job's own sales amount ("Delivery (no SO)"), sen; null when none. */
   dp_sales_sen?: string | number | null;
   customer_name: string | null;
   stop_dp_no: string | null;
@@ -269,6 +267,7 @@ export type PlanningStop = {
   dp_state: string | null;
   dp_postcode: string | null;
   dp_no: string | null;
+  dp_supplier_name: string | null;
   project_id: string | null;
   event_slug: string | null;
   event_name: string | null;
@@ -326,7 +325,11 @@ export function planningRowOf(s: PlanningStop, who: (id: string | null) => Seat)
   const caseLoc = isCase ? assrBoardLocation(s.case_addr3, s.case_addr4, s.case_so_state, s.case_so_postcode, { postcode: s.case_own_postcode, state: s.case_own_state }) : null;
   /* A delivery with no SO carries its own amount on the DP job (owner 2026-11-20). */
   const amount = s.local_total_sen ?? (isCase ? 0 : s.dp_sales_sen ?? s.revenue_sen);
-  const jobType = (isCase ? CASE_LEG_KIND[ASSR_LEG_BY_STOP[s.stop_type] ?? ""] : undefined) ?? STOP_KIND[s.stop_type] ?? "NONE";
+  const jobType0 = (isCase ? CASE_LEG_KIND[ASSR_LEG_BY_STOP[s.stop_type] ?? ""] : undefined) ?? STOP_KIND[s.stop_type] ?? "NONE";
+  const jobType =
+    jobType0 === "SUPPLIER" && isHookkaSupplierName(s.dp_supplier_name) ? "SUPPLIER_HOOKKA"
+      : jobType0 === "DELIVERY_ORDER" && isSingaporeDestination(s.do_state || s.dp_state, s.do_postcode || s.dp_postcode) ? "TRANSFER"
+        : jobType0;
   return {
     source: "PLANNING",
     source_ref: s.stop_id,
@@ -362,22 +365,16 @@ export type PlanningDo = {
   so_doc_no: string | null;
   debtor_name: string | null;
   do_status: string | null;
-  /** The SO's due date (amended, else the customer's): the day Last Mile puts it on the lorry. */
   so_due_date: string | null;
-  /** This is its SO's newest live DO (not cancelled, newest created_at, ties by id), the one Last Mile shows. */
   is_latest_live: boolean | null;
-  /** The Malaysia date of delivered_at. */
   delivered_day: string | null;
   do_date: string | null;
   local_total_sen: string | number | null;
   do_state: string | null;
   do_postcode: string | null;
   is_dropship: boolean | null;
-  /** A 3PL carrier billed this DO (scm.threepl_do_charges). */
   has_3pl: boolean | null;
-  /** A stop on a trip that is not cancelled carries this DO: that stop is its row. */
   on_live_trip: boolean | null;
-  /** The plate typed on the crew record, and the lorry master it resolves to. */
   crew_plate: string | null;
   lorry_plate: string | null;
   lorry_internal: boolean | null;
@@ -391,8 +388,6 @@ export type PlanningDo = {
   h2_name: string | null;
 };
 
-/* Which DOs our own lorries ran, and the day each ran: the rule the Own fleet
-   cost reads too (scm/lib/own-lorry-do-run.ts). */
 export { doRunDate, isOwnLorryDoRun };
 
 /** Each delivery order our own lorries ran on a day of [first, last], as a
@@ -415,6 +410,7 @@ export function deliveryOrderRows(
       if (date < first || date > last) return [];
       const [d1, d2, h1, h2] = [who(d.d1, d.d1_name), who(d.d2, d.d2_name), who(d.h1, d.h1_name), who(d.h2, d.h2_name)];
       const plate = (d.lorry_plate || d.crew_plate || "").trim();
+      const jobType: TripJobType = isSingaporeDestination(d.do_state, d.do_postcode) ? "TRANSFER" : "DELIVERY_ORDER";
       return [{
         source: "PLANNING",
         source_ref: `do:${d.do_id}`,
@@ -422,8 +418,8 @@ export function deliveryOrderRows(
         doc_no: d.so_doc_no ?? d.do_number ?? d.debtor_name ?? "",
         transfer_to: d.do_number ?? "",
         ref_no: d.do_number ?? "",
-        kind: kindOfJobType("DELIVERY_ORDER"),
-        job_type: "DELIVERY_ORDER",
+        kind: kindOfJobType(jobType),
+        job_type: jobType,
         event_type: null,
         local_total_sen: Math.max(0, Math.round(Number(d.local_total_sen ?? 0)) || 0),
         state: d.do_state ?? "",
@@ -490,19 +486,33 @@ export type ProjectLeg = {
 
 /** A project's Setup and Dismantle, scheduled in the Projects module, as trip
  *  rows: one per lorry of the phase's crew (the legacy single driver when no
- *  crew was stored). Crew are names, matched to employees by name. A phase
- *  Delivery Planning already carries as a stop (`planned`, keyed
- *  "<project id>|<job type>|<date>") is left to that stop. Pure. */
-export function projectLegRows(p: ProjectLeg, first: string, last: string, planned: ReadonlySet<string>, byName: (name: string) => number | null): SourceRow[] {
+ *  crew was stored). Crew are names, matched to employees by name. A lorry a
+ *  Delivery Planning stop already carries (`plannedLorry`, keyed
+ *  "<project>|<job>|<date>|<plate>") is left to that stop, so a DP order for one
+ *  lorry of a multi-lorry phase does not drop the others; a plate-less leg, or a
+ *  plate-less DP stop (`plannedPhase`, keyed "<project>|<job>|<date>"), matches
+ *  the whole phase. Pure. */
+export function projectLegRows(
+  p: ProjectLeg,
+  first: string,
+  last: string,
+  plannedPhase: ReadonlySet<string>,
+  plannedLorry: ReadonlySet<string>,
+  byName: (name: string) => number | null,
+): SourceRow[] {
   const out: SourceRow[] = [];
   for (const jobType of ["SETUP", "DISMANTLE"] as const) {
     const at = jobType === "SETUP" ? p.setup_start_at : p.dismantle_start_at;
     const date = String(at ?? "").slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < first || date > last || planned.has(`${p.id}|${jobType}|${date}`)) continue;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < first || date > last) continue;
+    const key = `${p.id}|${jobType}|${date}`;
     let lorries = projectCrewLorries(jobType === "SETUP" ? p.setup_crew : p.dismantle_crew);
     const legacyDriver = (jobType === "SETUP" ? p.setup_driver_name : p.dismantle_driver_name)?.trim();
     if (!lorries.length && legacyDriver) lorries = [{ plate: "", drivers: [legacyDriver], helpers: [] }];
     lorries.forEach((l, i) => {
+      const plate = normalizePlate(l.plate);
+      const carried = plate ? plannedLorry.has(`${key}|${plate}`) || plannedLorry.has(`${key}|`) : plannedPhase.has(key);
+      if (carried) return;
       const seat = (name: string | undefined): Seat => ({ name: name ?? "", employeeId: name ? byName(name) : null });
       const [d1, d2, h1, h2] = [seat(l.drivers[0]), seat(l.drivers[1]), seat(l.helpers[0]), seat(l.helpers[1])];
       const ref = `project:${p.id}:${jobType}:${i + 1}`;
@@ -536,9 +546,6 @@ export function projectLegRows(p: ProjectLeg, first: string, last: string, plann
   return out;
 }
 
-/* The company's shipped DOs with every date doRunDate may pick (its SO's due
-   date, whether it is the SO's newest live DO, the Malaysia day it was delivered,
-   its DO date). SQL only narrows to DOs with any of them in range; doRunDate decides. */
 const doRunCandidates = (companyId: number) => sql`
     live AS (
       SELECT l.id, ROW_NUMBER() OVER (PARTITION BY l.so_doc_no ORDER BY l.created_at DESC, l.id DESC) AS rn
@@ -555,6 +562,14 @@ const doRunCandidates = (companyId: number) => sql`
         LEFT JOIN scm.mfg_sales_orders so ON so.doc_no = d.so_doc_no AND so.company_id = d.company_id
        WHERE d.company_id = ${companyId} AND d.status::text NOT IN ('DRAFT', 'CANCELLED'))`;
 
+/* HOUZS (company 1) pays its crew for 2990 (company 2) trips too: the same people
+   run both and are employed by HOUZS, so 2990's work was earning nothing anywhere
+   (owner 2026-11-27). A company's Trip Pay therefore also reads its sisters'
+   source, each still pulled under its own hard company_id scope (planningRows
+   stays single-company) and attributed to this company's employees by name. */
+const TRIP_PAY_INCLUDES_COMPANIES: Readonly<Record<number, readonly number[]>> = { 1: [2] };
+export const tripPaySisterCompanies = (companyId: number): readonly number[] => TRIP_PAY_INCLUDES_COMPANIES[companyId] ?? [];
+
 /** Everything Delivery Planning and the Projects module say a trip month's crews
  *  did: each stop of our own lorry runs (crew from the DO's crew record, else the
  *  run's; outsourced and cancelled runs and cancelled DOs left out), each
@@ -570,7 +585,7 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
            d.do_number, d.so_doc_no, d.status::text AS do_status, d.local_total_sen,
            COALESCE(NULLIF(d.state, ''), d.customer_state) AS do_state, d.postcode AS do_postcode,
            dp.state AS dp_state, dp.postcode AS dp_postcode, dp.dp_no, dp.project_id::text AS project_id,
-           dp.sales_amount_sen AS dp_sales_sen,
+           dp.sales_amount_sen AS dp_sales_sen, sup.name AS dp_supplier_name,
            et.slug AS event_slug, et.name AS event_name,
            s.assr_case_id, ac.assr_no, ac.addr3 AS case_addr3, ac.addr4 AS case_addr4,
            so.customer_state AS case_so_state, so.postcode AS case_so_postcode,
@@ -582,6 +597,7 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
       LEFT JOIN scm.delivery_orders d ON d.id = s.do_id
       LEFT JOIN scm.delivery_order_crew cr ON cr.do_id = s.do_id
       LEFT JOIN scm.dp_orders dp ON dp.trip_stop_id = s.id
+      LEFT JOIN scm.suppliers sup ON sup.id = dp.supplier_id
       LEFT JOIN public.projects pj ON pj.id = dp.project_id
       LEFT JOIN public.project_event_types et ON et.id = pj.event_type_id
       LEFT JOIN scm.lorries l ON l.id = t.lorry_id
@@ -644,7 +660,9 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
     return { name: c?.name ?? "", employeeId: c?.user_id != null ? (employeeOfUser.get(c.user_id) ?? null) : null };
   };
   const stopRows = stops.filter((s) => s.do_status !== "CANCELLED").map((s) => planningRowOf(s, who));
-  const planned = new Set(stopRows.filter((r) => isFairJob(r.job_type) && r.venue_key).map((r) => `${r.venue_key.slice(1)}|${r.job_type}|${r.trip_date}`));
+  const plannedStops = stopRows.filter((r) => isFairJob(r.job_type) && r.venue_key);
+  const plannedPhase = new Set(plannedStops.map((r) => `${r.venue_key.slice(1)}|${r.job_type}|${r.trip_date}`));
+  const plannedLorry = new Set(plannedStops.map((r) => `${r.venue_key.slice(1)}|${r.job_type}|${r.trip_date}|${normalizePlate(r.lorry_plate)}`));
   const byName = nameIndex(people);
   const stopDoIds = new Set(stops.map((s) => s.do_id).filter((x): x is string => !!x));
   const doSeat = (id: string | null, typed: string | null): Seat => {
@@ -652,7 +670,7 @@ export async function planningRows(db: Db, companyId: number, month: string, peo
     const name = typed?.trim() ?? "";
     return seat.name || !name ? seat : { name, employeeId: byName(name) };
   };
-  return [...stopRows, ...deliveryOrderRows(dos, first, last, stopDoIds, doSeat), ...projects.flatMap((p) => projectLegRows(p, first, last, planned, byName))];
+  return [...stopRows, ...deliveryOrderRows(dos, first, last, stopDoIds, doSeat), ...projects.flatMap((p) => projectLegRows(p, first, last, plannedPhase, plannedLorry, byName))];
 }
 
 /** The days of [first, last] whose Delivery Planning / delivery order / Projects source changed after `since`. */

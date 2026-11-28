@@ -64,25 +64,18 @@
    `source` is absent entirely — becomes none, which is the stricter direction.
    ---------------------------------------------------------------------------- */
 
-import { TRANSFER_DOC, type TransferDoc } from "../vendor/shared/transfer-vocabulary";
+import { TRANSFER_DOC, type TransferDoc } from "../../../shared/src/vendor/shared/transfer-vocabulary";
 
 /** One printable document: what the operator reads, and what the fetch uses. */
 export type PrintTarget = {
   doc: TransferDoc;
-  /** The human document number. Shown in the menu and in the print preview. */
   docNo: string;
-  /** What the detail endpoint is addressed by — `docNo` for a Sales Order, the
-   *  row UUID for every other document. */
   key: string;
 };
 
 /** A related document as a list payload carries it: an address and a number. */
 export type DocRef = { id: string; docNo: string };
 
-/* A list payload is JSON off the wire, so an ELEMENT can be null even where the
-   array is not — and the guards below have to be allowed to say so. Writing it
-   into the type is the honest form; guarding a value the compiler has been told
-   is non-nullish is what `no-unnecessary-condition` is for. */
 type Wire<T> = ReadonlyArray<T | null | undefined> | null | undefined;
 
 /**
@@ -104,9 +97,7 @@ export const PRINT_CHAIN_MAX = 5;
 /** What a row can print: its own document, then the chain around it. */
 export type PrintChain = {
   own: PrintTarget;
-  /** Related documents this row carries an ADDRESS for. Upstream first. */
   related: PrintTarget[];
-  /** Types capped by PRINT_CHAIN_MAX, with how many are NOT in `related`. */
   hidden: Array<{ doc: TransferDoc; count: number }>;
 };
 
@@ -123,19 +114,14 @@ export const printChainOverflowLabel = (h: { doc: TransferDoc; count: number }):
 
 const target = (doc: TransferDoc, docNo: string, key: string): PrintTarget => ({ doc, docNo, key });
 
-/** A Sales Order is addressed by its own number, so ref and target coincide. */
 const soTarget = (docNo: string | null | undefined): PrintTarget[] =>
   docNo ? [target("so", docNo, docNo)] : [];
 
-/** One uuid-keyed related document, or nothing when the row has no address. */
 const refTarget = (doc: TransferDoc, id: string | null | undefined, docNo: string | null | undefined): PrintTarget[] =>
   id && docNo ? [target(doc, docNo, id)] : [];
 
 type Capped = { shown: PrintTarget[]; hidden: Array<{ doc: TransferDoc; count: number }> };
 
-/** Take at most PRINT_CHAIN_MAX of one type and count what that leaves out.
- *  Refs with no id are dropped BEFORE the cap — an unaddressable number must
- *  not consume one of the five slots a printable document could have had. */
 function capRefs(doc: TransferDoc, refs: Wire<DocRef>): Capped {
   const usable = (refs ?? []).filter((r): r is DocRef => !!r?.id && !!r.docNo);
   const shown = usable.slice(0, PRINT_CHAIN_MAX).map((r) => target(doc, r.docNo, r.id));
@@ -153,10 +139,6 @@ const merge = (own: PrintTarget, parts: Array<PrintTarget[] | Capped>): PrintCha
   return { own, related, hidden };
 };
 
-/* ── The purchase side's "which Sales Order was this bought for" ────────────
-   Only a STORED link or a DELIVERED fact. See the header: an `'mrp'` row is a
-   live allocation that binds nothing, and a row with no `source` at all came
-   from a backend that could not tell us which it was. */
 type AssignedSo = { soDocNo: string; source?: "delivered" | "linked" | "mrp" };
 const boundSos = (xs: Wire<AssignedSo>): PrintTarget[] => {
   const seen = new Set<string>();
@@ -171,16 +153,10 @@ const boundSos = (xs: Wire<AssignedSo>): PrintTarget[] => {
   return out.slice(0, PRINT_CHAIN_MAX);
 };
 
-/* ══ The eight document lists ═══════════════════════════════════════════════
-   Each row type below is STRUCTURAL — the fields this file reads, and nothing
-   else — so a list's own row type satisfies it without being imported here and
-   without this file growing a copy of forty columns it does not use. */
 
 export type SoChainRow = {
   doc_no: string;
-  /** `delivery_orders.id` + `do_number`, newest first. */
   do_refs?: Wire<DocRef>;
-  /** `sales_invoices.id` + `invoice_number`. */
   si_refs?: Wire<DocRef>;
 };
 
@@ -245,9 +221,6 @@ export type PoChainRow = {
   id: string;
   po_number: string;
   assigned_sos?: Wire<AssignedSo>;
-  /** The PO list's GRN No. column. A BARE STRING is the pre-2026-07-31 wire
-   *  shape (number only) — those carry no address, so they build no entry;
-   *  `suppliers-queries.ts` documents why both shapes reach a live page. */
   transfer_to_grns?: Wire<{ id: string; grnNumber: string } | string>;
 };
 
@@ -263,8 +236,6 @@ export function purchaseOrderPrintChain(r: PoChainRow): PrintChain {
   ]);
 }
 
-/** The three purchase-side documents that hang off a PO and a GRN carry both
- *  parents as `{ id, <number> }` objects already. */
 type PoParent = { id: string; po_number: string } | null;
 type GrnParent = { id: string; grn_number: string } | null;
 

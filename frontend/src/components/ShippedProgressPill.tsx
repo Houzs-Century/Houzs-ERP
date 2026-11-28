@@ -1,7 +1,3 @@
-/* ShippedProgressPill — the "Delivered" cell, on the list row and on the line.
-   One renderer, because the SO list and the drill-down must not grow two
-   vocabularies for one fact (the exact way "READY (PARTIAL)" ended up on a
-   board header and its own rows at the same moment — so-readiness-row.ts). */
 import {
   shippedProgressOf,
   shippedProgressOfLine,
@@ -22,9 +18,6 @@ const TITLE = {
   full: "Fully delivered — every committed unit has left.",
 } as const;
 
-/* Exactly one of `row` (an SO-list row) or `line` (a drill-down line) — the two
-   carry the same two facts under different names, and the adapter for each is
-   in shipped-progress.ts so neither surface owns a second rule. */
 export function ShippedProgressPill(
   props: { row: ShippedProgressFields; line?: never } | { line: ShippedProgressLineFields; row?: never },
 ) {

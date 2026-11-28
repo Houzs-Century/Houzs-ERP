@@ -1,30 +1,3 @@
-// ----------------------------------------------------------------------------
-// GrnNew — full-page Create Goods Receipt at /grns/new.
-//
-// Commander 2026-05-29: New GRN must work like New PO — land straight on a
-// fillable FORM (header + line items) you can complete directly. Three ways in:
-//
-//   1. Single PO dropdown (or ?poId= deep link from a PO detail "Receive
-//      Goods") → its outstanding lines load into the items grid.
-//   2. "From PO (multi)" picker (/grns/from-po) → multi-select PO lines across
-//      one supplier, stashed in the scoped `grnFromPoPicks` handoff, which this
-//      form reads ONCE on mount and loads as lines (supplier locked, header
-//      purchaseOrderId = first pick's PO id; each line keeps its own
-//      purchase_order_item_id so received_qty rolls up to every source PO).
-//   3. Manual / blank GRN — no PO at all: pick a supplier, search products,
-//      add line items by hand. Saves with purchaseOrderId:null + each item
-//      purchaseOrderItemId:null (server writes inventory-IN, skips PO rollup).
-//
-// POST /grns creates the row POSTED directly (rolls received_qty onto the PO +
-// writes inventory_movements inline). Adjust qty received/accepted/rejected per
-// line → Receive & Post.
-//
-// HOUZS VENDOR — verbatim from apps/backend/src/pages/GrnNew.tsx. Import boundary
-// only: react-router → react-router-dom; GRN create/post hooks → vendored
-// grn-queries; suppliers/mfg-products/inventory/warehouse/category-badges/dates +
-// the GrnFromPoPick type → ../../vendor/scm/* (the type stays colocated in
-// ./GrnFromPo); nav repointed to /scm/grns.
-// ----------------------------------------------------------------------------
 
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -92,7 +65,6 @@ const VariantSelect = ({
     <span className={styles.fieldLabel}>{label}</span>
     <span className={styles.selectWrap}>
       <select className={styles.fieldSelect} value={value} onChange={(e) => onChange(e.target.value)}>
-        {/* Empty option keeps the variant unset — blank label (no confusing dash). */}
         <option value=""></option>
         {options.map((o) => (
           <option key={o.value} value={o.value}>
@@ -116,30 +88,18 @@ type DraftLine = {
      path). Render + create-payload fall back to the live supplier binding when
      null (old PO lines predate the snapshot column — GRN-detail #1217 parity). */
   supplierSku:       string | null;
-  /* Commander 2026-05-29 — GRN must show WHAT is being received (carry the
-     PO line's category + variant selections, exactly like the PO shows). */
   itemGroup:         string | null;
   variants:          Record<string, unknown> | null;
-  /** Outstanding qty for PO-linked lines; for manual lines there's no cap so
-      this is null (the qty inputs go uncapped). */
   outstanding:       number | null;
   qtyReceived:       number;
   qtyAccepted:       number;
   qtyRejected:       number;
   unitPriceSen:    number;
   notes:             string;
-  /* Commander 2026-06-04 — optional per-line destination Rack (warehouse-scoped).
-     Persists to grn_items.rack_id when the create payload forwards rackId. */
   rackId:            string;
-  /* DEV-28 (Sim 2026-10-01): the PO each line came from, shown on the line like
-     the purchase invoice does. A from-PO receipt can span several orders, so it
-     is per line, never the header's PO. Absent on drafts stashed before this. */
   sourcePo?:         LinePoFields | null;
 };
 
-/* Stashed to sessionStorage before leaving for the From-PO-multi picker, so the
-   in-progress GRN draft (lines + header) survives the round trip AND the picker
-   can grey-out / cap PO lines this draft already holds (anti-double-pick). */
 type GrnNewDraft = {
   lines:            DraftLine[];
   picks:            GrnFromPoPick[] | null;
@@ -152,8 +112,6 @@ type GrnNewDraft = {
   /* Landed-cost allocation (Phase 1-A) — freight "平摊" basis, survives the
      From-PO picker round trip. */
   allocationMethod?: 'QTY' | 'VALUE' | 'CBM';
-  /* Multi-currency (Phase 1-A) — the manually-chosen currency for a GRN whose
-     currency isn't dictated by a source PO. */
   manualCurrency?:  string;
 };
 
@@ -166,29 +124,20 @@ export const GrnNew = () => {
   const notify = useNotify();
   const [params] = useSearchParams();
 
-  // ── From-PO-multi picks (Commander 2026-05-29) — read ONCE on mount.
-  //    When present, they drive the form: lines pre-loaded, supplier locked,
-  //    header purchaseOrderId = first pick's PO id. ────────────────────────
   const [picks, setPicks] = useState<GrnFromPoPick[] | null>(null);
   const pickSupplierId   = picks?.[0]?.supplierId ?? null;
   const pickSupplierName = picks?.[0]?.supplierName ?? picks?.[0]?.supplierCode ?? null;
   const pickPoId         = picks?.[0]?.poId ?? null;
   const hasPicks         = !!picks && picks.length > 0;
 
-  // Inline single-PO picker (drives the form when there are no picks).
   const [selPoId, setSelPoId] = useState<string>(params.get('poId') ?? '');
   const poListQ = usePurchaseOrders();
   const poQ     = usePurchaseOrderDetail(selPoId || null);
-  // The PO this receipt was raised from; null once the operator picks a different PO in the form.
   const backToPo = selPoId && selPoId === params.get('poId') ? sourceDocPath.purchaseOrder(selPoId) : null;
 
-  // Manual-mode supplier (Commander 2026-05-29 — blank GRN, no PO).
   const [manualSupplierId, setManualSupplierId] = useState<string>('');
   const suppliersQ = useSuppliers({ status: 'ACTIVE' });
 
-  // Commander 2026-05-29 — maintenance config drives the per-category variant
-  // editor on MANUAL bedframe/sofa lines (same dropdown pools as New PO / the
-  // PO Edit modal: divan/leg/total height, gap, special, seat size, fabric).
   const maintQ = useMaintenanceConfig('master');
   const maint  = maintQ.data?.data ?? null;
 
@@ -213,101 +162,29 @@ export const GrnNew = () => {
   );
 
   const create = useCreateGrn();
-  /* One key for the one receipt this page is open to raise (lib/idempotency.ts).
-     Minted once by useState's lazy init, so it is stable across re-renders and
-     across a re-press after a stalled submit.
-
-     This page is the one create surface in the set that does NOT navigate on
-     success — it shows ActionResultDialog and stays mounted — so the reasoning
-     is spelled out rather than inherited:
-
-     WHY STABLE IS RIGHT HERE. The submit is TWO calls: create, then (non-draft)
-     `post.mutateAsync(createRes.id)` — both inside one try. If the POST fails,
-     the catch shows "Save failed" WHILE THE GRN ALREADY EXISTS, so a re-press is
-     not hypothetical, it is invited by the copy. With a stable key that re-press
-     REPLAYS the first grnNumber and re-runs post on the SAME id (itself an
-     idempotent no-op when already POSTED — see usePostGrn); without one it books
-     the stock IN a second time. This is exactly the case lib/idempotency.ts
-     refuses to rotate a key for, and it is live here rather than theoretical.
-
-     THE RESIDUAL, STATED. Because the mount outlives the document, an operator
-     who closes the success dialog and submits AGAIN gets the first GRN back —
-     replayed if the lines are untouched, and refused with
-     idempotency_key_reused if they were re-authored, which names the status the
-     first submit finished with and sends them to refresh and check. Either way
-     one document, not two. Accepted, not overlooked:
-     the lines are not reset on success, so a re-press submits the SAME goods and
-     replay is the correct answer; raising a genuinely different receipt goes
-     through the picker route (/scm/grns/from-po), which remounts this page and
-     mints a new key. Fixing the residual properly means retiring the key only
-     after the whole create+post sequence lands, which needs a rotate() that
-     lib/idempotency.ts deliberately does not have; not worth inventing here for
-     a path the picker already covers.
-
-     AND SINCE 2026-08-21 THE REPLAY ANNOUNCES ITSELF. "The dialog names the
-     FIRST GRN's number" was true and insufficient: an operator receiving a
-     SECOND identical batch pressed Create on the stale form, and a dialog
-     titled "created" told them the new batch was received when nothing was
-     written. lastCreatedIdRef below detects the replay (same mount + same key
-     can only mint one id) and the dialog says no second GRN was written and
-     points at the picker for a genuinely new batch. */
   const idemKey = useIdempotencyKey();
   const post   = usePostGrn();
   const saving = create.isPending || post.isPending;
-  /* Replay detector for the residual above. authedFetch exposes no response
-     headers, but one mount + one key can only ever mint ONE GRN — so a second
-     successful submit answering the SAME id IS the middleware's verbatim replay.
-     The dialog then says so instead of "created": the silent branch was an
-     operator receiving a second identical batch, pressing Create on the stale
-     form, and being told the goods were received when nothing was written. */
   const lastCreatedIdRef = useRef<string | null>(null);
 
   const [receivedAt, setReceivedAt]           = useState<string>(() => todayMyt());
   const [deliveryNoteRef, setDeliveryNoteRef] = useState<string>('');
   const [notes, setNotes]                     = useState<string>('');
-  /* Landed-cost core (Phase 1-A) — MYR per 1 unit of the GRN currency, kept as a
-     string so the numeric input stays editable. Shown only for a foreign
-     currency; MYR receives 1:1. The rate converts the FIFO lot cost to MYR. */
   const [exchangeRate, setExchangeRate]       = useState<string>('1');
-  /* Track a manual rate edit so the currency-master auto-fill stops overwriting it. */
   const [rateTouched, setRateTouched]         = useState<boolean>(false);
   /* Landed-cost allocation (Phase 1-A) — how a SERVICE-line freight charge
      ("平摊" / transportation) is split across the goods lines into the FIFO lot
      cost: QTY (default) | VALUE | CBM. Sent on create; the server allocates. */
   const [allocationMethod, setAllocationMethod] = useState<'QTY' | 'VALUE' | 'CBM'>('QTY');
-  /* Multi-currency (Phase 1-A) — the currency for a GRN NOT dictated by a source
-     PO (manual / from-picks). A PO-linked GRN locks to the PO's currency
-     (resolved below) and the server re-derives it, so this is ignored there. */
   const [manualCurrency, setManualCurrency]   = useState<string>('MYR');
   const [lines, setLines]                     = useState<DraftLine[]>([]);
-  /* Commander 2026-05-29 — New GRN must mirror New PO's header, including a
-     "Receive into" Warehouse picker (PO calls it Purchase Location). The chosen
-     warehouse threads into the create payload (warehouseId) → grns.ts sets it on
-     the header so the inventory-IN movement lands there. */
   const [warehouseId, setWarehouseId]         = useState<string>('');
   const warehousesQ = useWarehouses();
-  /* Commander 2026-06-04 — racks of the chosen "Receive into" warehouse, for the
-     optional per-line Rack picker. Racks are warehouse-scoped, so this re-queries
-     whenever the header warehouse changes; gated until a warehouse is chosen. */
   const racksQ = useGrnRackOptions(warehouseId || undefined);
   const racks = racksQ.racks;
-  /* True once the on-mount From-PO picks restore has run (whether or not picks
-     were found). The warehouse-default effect MUST wait for this — otherwise it
-     races the async restore: on first render hasPicks is false simply because
-     the picks haven't loaded yet, and defaulting to warehousesQ.data[0] then
-     LOCKS the GRN to the wrong (first) warehouse, which the picks' real
-     warehouse can never override (the `if (warehouseId) return` guard blocks the
-     correction). This was the GRN-2605 "received into PG instead of SLGR" bug. */
   const [picksResolved, setPicksResolved]     = useState<boolean>(false);
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string; goLabel?: string } | null>(null);
 
-  // ── On mount: restore the stashed draft + merge the From-PO-multi picks.
-  //    Commander 2026-05-30 (anti-double-pick): leaving for the picker now
-  //    stashes the in-progress draft (grnNewDraft). On return we restore those
-  //    lines + header first, THEN append only the newly-picked PO lines that
-  //    aren't already in the draft (dedupe by purchase_order_item_id) — so the
-  //    same PO line can't be received twice across the round trip, and existing
-  //    edits aren't lost. Mirrors PurchaseOrderNew's restore-then-append. ─────
   const readPicksRef = useRef(false);
   useEffect(() => {
     if (readPicksRef.current) return;
@@ -315,17 +192,13 @@ export const GrnNew = () => {
 
     const newPicks = readScmHandoff<GrnFromPoPick[]>('grnFromPoPicks');
     if (!newPicks) {
-      // No round-trip picks → drop any stale stashed draft (e.g. the picker was
-      // cancelled, which navigates away) so a fresh New GRN starts clean.
       removeScmHandoff('grnNewDraft');
-      setPicksResolved(true); // no picks — release the warehouse-default effect
+      setPicksResolved(true);
       return;
     }
     removeScmHandoff('grnFromPoPicks');
-    // Lines brought back from the picker are work the person did.
     markTouched();
 
-    // Restore the draft saved before we left for the picker (header + lines).
     const draft = readScmHandoff<GrnNewDraft>('grnNewDraft');
     removeScmHandoff('grnNewDraft');
 
@@ -340,7 +213,6 @@ export const GrnNew = () => {
       if (draft.manualCurrency) setManualCurrency(draft.manualCurrency);
     }
 
-    // Merge: restored draft lines + only the new picks not already drafted.
     const baseLines = (draft?.lines ?? []) as DraftLine[];
     const seen = new Set(baseLines.map((l) => l.purchaseOrderItemId).filter(Boolean) as string[]);
     const pickLines: DraftLine[] = newPicks
@@ -365,27 +237,17 @@ export const GrnNew = () => {
       }));
     setLines([...baseLines, ...pickLines]);
 
-    // Picks state drives the supplier lock + header PO — union of draft + new
-    // (deduped by PO line id).
     const pickMap = new Map<string, GrnFromPoPick>();
     for (const p of (draft?.picks ?? [])) pickMap.set(p.poItemId, p);
     for (const p of newPicks) pickMap.set(p.poItemId, p);
     const union = [...pickMap.values()];
     if (union.length) setPicks(union);
-    // Picks restore is done — now the warehouse-default effect may run, and it
-    // will see the picks' real warehouse (warehouseLocationId) before falling
-    // back to the first warehouse.
     setPicksResolved(true);
   }, []);
 
-  // Load lines from the selected single PO (only outstanding qty > 0). Skipped
-  // when From-PO-multi picks already populated the form.
   useEffect(() => {
     if (hasPicks) return;
     if (!selPoId) {
-      // Manual mode — seed ONE blank starter line so a LINE 1 card shows
-      // immediately (matches New PO). Never clobber existing lines (picks /
-      // hand-added) — only seed when empty.
       setLines((prev) => prev.length > 0 ? prev : [{
         rid:                 `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         purchaseOrderItemId: null,
@@ -437,9 +299,6 @@ export const GrnNew = () => {
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
-  // ── Leave for the From-PO-multi picker, stashing the in-progress draft so it
-  //    survives the round trip + the picker can exclude lines already drafted
-  //    here (anti-double-pick). Mirrors PurchaseOrderNew's goToFromSo. ────────
   const goToFromPo = () => {
     const draft: GrnNewDraft = {
       lines, picks, receivedAt, deliveryNoteRef, notes, warehouseId,
@@ -457,7 +316,6 @@ export const GrnNew = () => {
     () => lines.reduce((s, l) => s + l.qtyReceived * l.unitPriceSen, 0),
     [lines],
   );
-  // Freight/service lines are charges, not units received.
   const totalQty = lines
     .filter((l) => l.itemCode.trim() && !isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode }))
     .reduce((s, l) => s + l.qtyReceived, 0);
@@ -475,7 +333,7 @@ export const GrnNew = () => {
       .reduce((s, l) => s + l.qtyReceived * l.unitPriceSen, 0);
     const basisOf = (l: DraftLine): number => {
       if (allocationMethod === 'VALUE') return l.qtyReceived * l.unitPriceSen;
-      if (allocationMethod === 'CBM') return l.qtyReceived; // volume unknown client-side → qty proxy
+      if (allocationMethod === 'CBM') return l.qtyReceived;
       return l.qtyReceived;
     };
     let sumBasis = goods.reduce((s, l) => s + basisOf(l), 0);
@@ -494,13 +352,9 @@ export const GrnNew = () => {
     return { chargePool, allocByRid };
   }, [lines, allocationMethod]);
 
-  // ── Mode + resolved supplier / header PO. ──────────────────────────────
-  // Manual mode = no picks AND no single PO chosen. Then the operator picks a
-  // supplier + adds lines by hand.
   const po       = poQ.data?.purchaseOrder;
   const isManual = !hasPicks && !selPoId;
 
-  // The effective supplier id + display name for the save + header card.
   const supplierId =
     hasPicks   ? pickSupplierId
     : po       ? po.supplier_id
@@ -511,7 +365,6 @@ export const GrnNew = () => {
     : po       ? (po.supplier?.name ?? po.supplier?.code ?? null)
     : isManual ? ((suppliersQ.data ?? []).find((s) => s.id === manualSupplierId)?.name ?? null)
     : null;
-  // Header PO id: picks → first pick's PO; single-PO → that PO; manual → null.
   const headerPoId = hasPicks ? pickPoId : (po?.id ?? null);
   /* Owner 2026-09-10 — the free "Add another item" affordance is no longer
      manual-only. A from-PO-picks / single-PO GRN can also receive an EXTRA item
@@ -521,19 +374,11 @@ export const GrnNew = () => {
      header PO. Gated on a resolved supplier so the binding-aware picker has one;
      manual mode keeps showing it even before a supplier is chosen. */
   const canAddManualLine = isManual || !!supplierId;
-  /* Multi-currency (Phase 1-A) — a PO-linked GRN inherits (and the server
-     re-derives) the source PO's currency, so the picker is LOCKED to it; a
-     manual / from-picks GRN lets the operator choose (defaults MYR = no-op). */
   const poCurrency     = (po?.currency as string | undefined) ?? null;
   const currencyLocked = !!poCurrency;
   const currency       = poCurrency ?? manualCurrency;
-  /* Landed-cost core (Phase 1-A) — show the Exchange rate field + MYR previews
-     only for a foreign-currency receipt. An MYR GRN posts 1:1 (rate 1), so the
-     lot cost / COGS are unchanged (strict no-op). */
   const isForeign  = String(currency).toUpperCase() !== 'MYR';
   const rateNum    = resolveFxRate(exchangeRate);
-  /* Auto-fill the rate from the currencies MASTER when the GRN settles on a
-     foreign currency (still editable). MYR resets to 1; a manual edit wins. */
   const currenciesQ = useActiveCurrencies();
   useEffect(() => {
     if (!isForeign) { setExchangeRate('1'); setRateTouched(false); return; }
@@ -541,11 +386,6 @@ export const GrnNew = () => {
     setExchangeRate(String(rateFor(currenciesQ.data, String(currency).toUpperCase())));
   }, [isForeign, currency, currenciesQ.data, rateTouched]);
 
-  // Commander 2026-05-29 — make the MANUAL item picker supplier-binding-aware,
-  // exactly like New PO. Once a supplier is chosen the per-line Item Code
-  // datalist lists THAT supplier's bound SKUs (item_code + name + price);
-  // picking one fills name + unit price + itemGroup from the binding. When no
-  // supplier is set yet we fall back to the free useMfgProducts search below.
   const supplierDetailQ = useSupplierDetail(supplierId);
   const bindings        = useMemo(() => supplierDetailQ.data?.bindings ?? [], [supplierDetailQ.data?.bindings]);
   /* Owner 2026-07-27 — per-line Supplier SKU, snapshot-first (the PO line's /
@@ -561,26 +401,11 @@ export const GrnNew = () => {
     );
     return code === '—' ? null : code;
   };
-  /* Commander 2026-05-29 — the resolved supplier object (same source PO uses)
-     so the GRN header can auto-fill Name + Address + the Contact · Phone ·
-     Email · Terms · Currency info bar, exactly like New PO. */
   const supplier        = supplierDetailQ.data?.supplier ?? null;
 
-  /* Default the Warehouse picker sensibly: prefer the source PO's purchase
-     location (so receiving against a PO lands where the PO expected), else the
-     first warehouse. Only seeds when the picker is still blank — never clobbers
-     a manual choice. */
   useEffect(() => {
     if (warehouseId) return;
-    // CRITICAL ordering guard — do nothing until the on-mount picks restore has
-    // run. Before that hasPicks is false only because the async restore is still
-    // pending; defaulting to warehousesQ.data[0] now would lock the GRN to the
-    // wrong (first) warehouse and the picks' real warehouse could never win.
     if (!picksResolved) return;
-    // In the from-PO picks flow no single PO is selected (selPoId is unset, so
-    // `po` is undefined). The picked lines all share one warehouse — honour it
-    // first, so the GRN receives into the PO's warehouse instead of silently
-    // defaulting to the first warehouse in the list.
     const pickLoc = hasPicks
       ? (picks?.find((p) => p.warehouseLocationId)?.warehouseLocationId ?? null)
       : null;
@@ -594,38 +419,19 @@ export const GrnNew = () => {
     if (fallback) setWarehouseId(fallback);
   }, [warehouseId, picksResolved, hasPicks, picks, po, warehousesQ.data]);
 
-  // ── Manual product search (gated by min query length, mirrors PO form). ──
-  // Commander 2026-05-29 — the single top "ADD ITEM" box is gone. Each MANUAL
-  // line now carries its own inline Item Code picker (PO parity). The search
-  // query is shared: only one line input is focused at a time, so a single
-  // gated query feeds whichever line's datalist is active.
   const [productQuery, setProductQuery] = useState<string>('');
-  /* Perf — debounce the datalist search so a fast typist fires one
-     /mfg-products request per pause, not per keystroke. Native <datalist>
-     renders <option>s directly, so no render cap is needed — only the refetch. */
   const debouncedProductQuery = useDebouncedValue(productQuery, 250);
   const productsQ = useMfgProducts({
     search: debouncedProductQuery,
-    // The catalogue search fires only when someone types >=2 chars, which only
-    // happens in a MANUAL line's item-code picker — so it stays dormant in a
-    // pure PO receipt without gating on isManual (which used to suppress it for
-    // a manual line added beside PO picks).
     enabled: debouncedProductQuery.trim().length >= 2,
   });
 
-  // Commander 2026-05-29 — supplier-bound picks carry no category on the
-  // binding row, so (mirroring New PO's `allSkus`/`categoryForCode`) we pull
-  // the full catalogue to resolve a bound SKU's itemGroup. Fires only when a
-  // supplier is set AND a manual line actually exists (in any mode), so a
-  // PO-sourced receipt with no hand-added line never pays for the lookup.
   const allSkusQ = useMfgProducts({ enabled: !!supplierId && lines.some((l) => l.purchaseOrderItemId === null) });
   const categoryForCode = (code: string): string | undefined => {
     const sku = (allSkusQ.data ?? []).find((p) => p.code === code);
     return sku?.category ? sku.category.toLowerCase() : undefined;
   };
 
-  // Append a fresh, empty MANUAL line (the per-line picker fills it in). Used by
-  // the dashed "Add another item" button at the bottom of the items card.
   const addEmptyManualLine = () => {
     setLines((prev) => [...prev, {
       rid:                 `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -646,15 +452,11 @@ export const GrnNew = () => {
     }]);
   };
 
-  // Pick / type an internal SKU on a manual line → fill code + name + itemGroup
-  // (category drives the variant editor below, exactly like the PO line picker).
   const pickItemForLine = (rid: string, code: string) => {
     const sku = (productsQ.data ?? []).find((p) => p.code === code);
     setLine(rid, {
       itemCode: code,
       materialName: sku?.name ?? code,
-      // Catalogue pick carries no supplier code — clear any stale one; the
-      // render/payload fall back to the live binding for this supplier+code.
       supplierSku:  null,
       itemGroup:    sku?.category ? sku.category.toLowerCase() : null,
     });
@@ -678,9 +480,6 @@ export const GrnNew = () => {
   const canSave = !!supplierId && lines.length > 0 &&
     lines.every((l) => l.qtyReceived >= 0);
 
-  // asDraft=true saves the GRN as a DRAFT (no stock IN, no PO rollup) for later
-  // review + Confirm on the detail page. asDraft=false (default) creates then
-  // immediately confirms (the historical "Receive & Post" behaviour).
   const onSave = async (asDraft = false) => {
     if (!supplierId) {
       setDialog({ title: 'Pick a supplier', body: hasPicks
@@ -688,7 +487,6 @@ export const GrnNew = () => {
         : 'Choose the PO you are receiving against, or pick a supplier for a manual receipt.' });
       return;
     }
-    // Drop the blank starter line(s) — only real items (with a code) are saved.
     const realLines = lines.filter((l) => l.itemCode.trim());
     if (realLines.length === 0) {
       setDialog({ title: 'Add at least one item', body: 'Pick at least one SKU to receive.' });
@@ -703,20 +501,11 @@ export const GrnNew = () => {
         idempotencyKey: idemKey,
         purchaseOrderId: headerPoId,
         supplierId,
-        // Draft/Confirmed — when true the server lands the GRN at DRAFT and
-        // commits nothing until it's confirmed on the detail page.
         asDraft,
-        // Commander 2026-05-29 — chosen "Receive into" warehouse (PO parity).
-        // grns.ts persists it on the header (falls back to the default warehouse
-        // when omitted) so the inventory-IN movement lands in the right place.
         warehouseId:     warehouseId || undefined,
         receivedAt,
         deliveryNoteRef: deliveryNoteRef || undefined,
         notes:           notes || undefined,
-        /* Landed-cost core (Phase 1-A) — send the resolved currency + rate. The
-           server re-derives the currency from the source PO when PO-linked; the
-           rate (MYR per 1 unit) converts the FIFO lot cost to MYR. MYR forces 1
-           server-side, so a manual MYR receipt is unaffected (no-op). */
         currency,
         exchangeRate:    isForeign ? rateNum : 1,
         // Landed-cost allocation (Phase 1-A) — the freight "平摊" basis.
@@ -731,29 +520,15 @@ export const GrnNew = () => {
           // reconciles against the supplier's delivery note (grn_items.supplier_sku).
           supplierSku:         supplierSkuOf(l) ?? undefined,
           qtyReceived:         l.qtyReceived,
-          // Commander 2026-05-29 — GRN only captures received qty; accepted
-          // follows received (rejected 0) so the existing API + inventory
-          // rollup keep working with the simplified single-qty UI.
           qtyAccepted:         l.qtyReceived,
           qtyRejected:         0,
           unitPriceSen:      l.unitPriceSen,
           notes:               l.notes || undefined,
-          // Commander 2026-05-29 — persist the line's category + variant
-          // selections (manual bedframe/sofa lines pick these below; PO-sourced
-          // lines carry them through) so the GRN/inventory reflect WHAT was received.
           itemGroup:           l.itemGroup,
           variants:            l.variants,
-          // Commander 2026-06-04 — optional destination rack (warehouse-scoped).
-          // grns.ts reads it.rackId and writes grn_items.rack_id. Empty = no rack.
           rackId:              l.rackId || undefined,
         })),
       });
-      // Non-draft → confirm immediately (the historical Receive & Post). A draft
-      // is left at DRAFT for review; the detail page's Confirm runs the commit.
-      /* Same mount, same key, same id back = the middleware replayed the earlier
-         201; nothing new was written. Post still runs (idempotent, and it is the
-         recovery path when the first submit's post half failed), but the dialog
-         must not say "created". */
       const isReplay = lastCreatedIdRef.current === createRes.id;
       lastCreatedIdRef.current = createRes.id;
       if (!asDraft) await post.mutateAsync(createRes.id);
@@ -767,14 +542,6 @@ export const GrnNew = () => {
         });
         return;
       }
-      /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT. A goods receipt raised
-         from a purchase order is TRANSFERRED into AutoCount, and the transfer
-         route applies a narrower set of header fields than an edit does — so
-         the book can hold this receipt with no supplier delivery-note number
-         and no date of its own. Shown through the shared frame rather than
-         folded into the dialog below: what counts as "the accounts did not get
-         it" and how it is worded must not be re-decided per screen
-         (ac-not-sent.tsx's own header). Never blocks; the goods are received. */
       await notifyAcNotSent(notify, createRes, 'Goods receipt');
       allowLeave();
       setDialog({
@@ -795,15 +562,12 @@ export const GrnNew = () => {
         title={`New Goods Receipt${po?.po_number ? ` · ${po.po_number}` : ''}`}
         actions={
           <div className={styles.actions}>
-            {/* Bulk / multi-PO picker that FEEDS this form. */}
             <Button variant="ghost" size="md" onClick={goToFromPo}>
               <ArrowRightLeft {...ICON} /> From Purchase Order
             </Button>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/grns')}>
               <X {...ICON} /> Cancel
             </Button>
-            {/* Save as Draft — lands the GRN at DRAFT (no stock IN, no PO rollup)
-                for later review + Confirm. */}
             <Button variant="ghost" size="md" onClick={() => onSave(true)} disabled={saving}>
               <Save {...ICON} />
               {saving ? 'Saving…' : 'Save as Draft'}
@@ -818,13 +582,10 @@ export const GrnNew = () => {
         }
       />
 
-      {/* Header card — PO picker is inline so you stay on the form. */}
       <section className={styles.card}>
         <div className={styles.cardHeader}><h2 className={styles.cardTitle}>Header</h2></div>
         <div className={styles.cardBody}>
           <div className={styles.formGrid2}>
-            {/* Receive-against picker. Hidden when From-PO-multi picks drive the
-                form (supplier + PO are locked to the picks). */}
             {hasPicks ? (
               <label className={styles.field}>
                 <span className={styles.fieldLabel}>Receiving from PO picks</span>
@@ -862,7 +623,6 @@ export const GrnNew = () => {
               <input type="text" readOnly value="(assigned on Save)" className={styles.fieldInput} style={{ background: 'var(--c-cream)', color: 'var(--fg-muted)' }} />
             </label>
 
-            {/* Supplier — locked from picks / PO, or a manual <select>. */}
             <label className={styles.field}>
               <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Supplier <span className={styles.req}>*</span>{hasPicks ? ' (from picks)' : ''}</span>
               {isManual ? (
@@ -878,8 +638,6 @@ export const GrnNew = () => {
                 <input type="text" readOnly value={supplierName ?? '(auto-filled from PO)'} className={styles.fieldInput} style={{ background: 'var(--c-cream)', color: 'var(--fg-muted)' }} />
               )}
             </label>
-            {/* Commander 2026-05-29 — Name + Address auto-fill once a supplier is
-                resolved (manual / from PO / from picks), mirroring New PO. */}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Name</span>
               <input
@@ -904,8 +662,6 @@ export const GrnNew = () => {
                 rows={3}
               />
             </label>
-            {/* Receive into — Warehouse picker (PO's Purchase Location equivalent).
-                Threads into the create payload → inventory-IN lands here. */}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Receive into *</span>
               <SearchableSelect
@@ -935,10 +691,6 @@ export const GrnNew = () => {
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Receiving notes — visible on the GRN detail page" className={styles.fieldInput} rows={2} style={{ resize: 'vertical', minHeight: 60 }} />
             </label>
 
-            {/* Multi-currency + landed cost (Phase 1-A). Currency defaults to MYR
-                (a strict no-op — the rate field stays hidden); a foreign currency
-                reveals the auto-filled, editable exchange rate. A PO-linked GRN
-                locks the currency to its source PO. */}
             <CurrencySelect
               currency={currency}
               onCurrencyChange={setManualCurrency}
@@ -973,7 +725,6 @@ export const GrnNew = () => {
             </label>
           </div>
 
-          {/* Read-only supplier-info bar — same markup/classes as New PO. */}
           {supplier && (
             <div style={{
               marginTop: 'var(--space-3)',
@@ -997,7 +748,6 @@ export const GrnNew = () => {
         </div>
       </section>
 
-      {/* Items card */}
       <section className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items</h2>
@@ -1007,13 +757,6 @@ export const GrnNew = () => {
               : selPoId
                 ? (poQ.isLoading
                     ? 'Loading PO items…'
-                    /* The ternary had no error arm and no honest empty arm: a
-                       FAILED PO read and a PO with work left both rendered as
-                       "all qty already received", and the operator receives
-                       nothing against a live order. An empty read proves only
-                       that the query found nothing — the read is company-scoped
-                       and scopeToCompany fails closed (scm/lib/companyScope.ts
-                       -> .in('company_id', []) returns [] with error: null). */
                     : poQ.isError
                       ? "We couldn't load this PO's lines — please refresh and try again."
                       : lines.length === 0
@@ -1022,10 +765,6 @@ export const GrnNew = () => {
                 : lines.length === 0
                   ? 'Manual receipt — pick a supplier above, then add items below'
                   : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalSen, currency)}`}
-            {/* Commander 2026-05-29 — same supplier-binding hint New PO shows:
-                once a supplier is chosen the manual picker filters to that
-                supplier's bound SKUs (or falls back to the full catalogue when
-                the supplier has no bindings yet). */}
             {isManual && supplierId && (
               <span style={{ display: 'block', marginTop: 2, color: 'var(--c-burnt)' }}>
                 {bindings.length > 0
@@ -1052,19 +791,11 @@ export const GrnNew = () => {
             lines.map((l, idx) => {
               const lineValueSen = l.qtyReceived * l.unitPriceSen;
               const variantSummary = buildVariantSummary(l.itemGroup, l.variants);
-              /* Landed-cost allocation (Phase 1-A) — this goods line's share of the
-                 freight pool + its landed unit cost (base + per-unit freight),
-                 shown only when there's a charge to spread. Service lines get 0. */
               const lineIsSvc = isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode });
               const lineAllocSen = allocPreview.allocByRid.get(l.rid) ?? 0;
               const landedUnitSen = l.unitPriceSen + (l.qtyReceived > 0 ? Math.round(lineAllocSen / l.qtyReceived) : 0);
-              // Manual lines have no outstanding cap — qty inputs go uncapped.
               const cap = l.outstanding;
               const isManualLine = l.purchaseOrderItemId === null;
-              // Commander 2026-05-29 — editable variant section only for MANUAL
-              // lines (purchaseOrderItemId === null) that are bedframe/sofa, once
-              // the maintenance pools are loaded. PO-sourced lines keep their
-              // read-only summary (their variants came from the PO).
               const showVariantEditor =
                 isManualLine &&
                 (l.itemGroup === 'bedframe' || l.itemGroup === 'sofa') &&
@@ -1088,7 +819,6 @@ export const GrnNew = () => {
               const setVariant = (key: string, value: string) =>
                 setLine(l.rid, { variants: (() => {
                   const variants: Record<string, unknown> = { ...(l.variants ?? {}), [key]: value };
-                  // Auto-compute bedframe Total Height = Divan + Leg + Gap.
                   if (isTotalHeightCategory(l.itemGroup) && isTotalHeightPart(key)) {
                     variants.totalHeight = computeTotalHeight(l.itemGroup, variants);
                   }
@@ -1108,7 +838,6 @@ export const GrnNew = () => {
                     gap: 'var(--space-3)',
                   }}
                 >
-                  {/* Card header — LINE N · category pill · line value · remove */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                       <span style={{
@@ -1130,14 +859,11 @@ export const GrnNew = () => {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                       <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
                         <span className={styles.previewPrice}>{fmtRm(lineValueSen, currency)}</span>
-                        {/* Landed-cost core — MYR cost preview for a foreign GRN. */}
                         {isForeign && (
                           <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
                             ≈ {fmtRm(Math.round(lineValueSen * rateNum), 'MYR')}
                           </span>
                         )}
-                        {/* Landed-cost allocation — +freight & landed unit cost, on
-                            goods lines only when there's a charge pool. */}
                         {allocPreview.chargePool > 0 && !lineIsSvc && (
                           <span style={{ fontSize: 'var(--fs-11)', color: 'var(--c-accent, #8a6d3b)', marginTop: 2 }}>
                             +{fmtRm(lineAllocSen, currency)} freight · landed {fmtRm(landedUnitSen, currency)}/unit
@@ -1177,21 +903,12 @@ export const GrnNew = () => {
                             onChange={(e) => {
                               const code = e.target.value;
                               setProductQuery(code);
-                              // Commander 2026-05-29 — supplier-binding-aware
-                              // pick (New PO parity). When a supplier is chosen
-                              // and the code matches one of its bindings, fill
-                              // name + unit price + itemGroup from the binding.
                               const bound = supplierId
                                 ? bindings.find((b) => b.item_code === code)
                                 : undefined;
                               if (bound) { pickBindingForLine(l.rid, bound); return; }
-                              // No supplier (or no binding for this code) → fall
-                              // back to the full SKU search match.
                               const match = (productsQ.data ?? []).find((p) => p.code === code);
                               if (match) { pickItemForLine(l.rid, code); return; }
-                              // Free typing — keep what's typed so the field
-                              // stays editable; a stale supplier code must not
-                              // outlive the pick it belonged to.
                               setLine(l.rid, { itemCode: code, supplierSku: null });
                             }}
                             placeholder={supplierId && bindings.length > 0
@@ -1201,9 +918,6 @@ export const GrnNew = () => {
                             style={{ fontFamily: 'var(--font-mono)' }}
                           />
                           <datalist id={`grn-products-${l.rid}`}>
-                            {/* Supplier chosen + has bindings → list THAT
-                                supplier's bound SKUs (New PO parity). Else fall
-                                back to the gated full-catalogue search. */}
                             {supplierId && bindings.length > 0
                               ? sortByText(bindings).map((b) => (
                                   <option key={b.id} value={b.item_code}>
@@ -1225,9 +939,6 @@ export const GrnNew = () => {
                         />
                       )}
                     </label>
-                    {/* The SUPPLIER's own code beside ours — the pair the
-                        receiver reconciles against the delivery note. Read-only;
-                        snapshot-first, else the live binding (supplierSkuOf). */}
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Supplier SKU</span>
                       <input
@@ -1252,16 +963,10 @@ export const GrnNew = () => {
                     </label>
                   </div>
 
-                  {/* PO-sourced lines: read-only variant summary (variants came
-                      from the PO). Manual lines get the editable variant block. */}
                   {!isManualLine && variantSummary && (
                     <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{variantSummary}</div>
                   )}
 
-                  {/* Per-category VARIANT EDITOR for MANUAL bedframe/sofa lines —
-                      Commander 2026-05-29: mirrors New PO / the PO Edit modal so
-                      the receiver specifies divan/leg/total height, gap, special,
-                      seat size + fabric. Same variant keys the PO/SO store. */}
                   {specialSurface.block && (
                     <div style={{ marginTop: 'var(--space-2)' }}>
                       <SpecialOrders
@@ -1331,11 +1036,6 @@ export const GrnNew = () => {
                     </div>
                   )}
 
-                  {/* Fields row — Outstanding · Received · Unit Price · Line Value.
-                      Commander 2026-05-29: GRN only needs the RECEIVED qty.
-                      Accepted/Rejected are gone from the UI — internally accepted
-                      tracks received (rejected 0) so the inventory rollup is intact.
-                      (Outstanding is read-only / PO lines only; manual lines "—".) */}
                   <div className={styles.formGrid4}>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Outstanding</span>
@@ -1353,16 +1053,12 @@ export const GrnNew = () => {
                         onChange={(e) => {
                           let v = Math.max(0, Number(e.target.value) || 0);
                           if (cap != null) v = Math.min(cap, v);
-                          // Accepted follows received (rejected 0) — kept in sync so
-                          // the create payload + inventory rollup stay correct.
                           setLine(l.rid, { qtyReceived: v, qtyAccepted: v, qtyRejected: 0 });
                         }}
                         className={styles.fieldInput} style={{ textAlign: 'right' }} />
                     </label>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Unit Price ({currency})</span>
-                      {/* Editable unit price — carried from the PO / manual entry,
-                          adjustable at receiving time (Commander 2026-05-29). */}
                       <MoneyInput bare valueSen={l.unitPriceSen}
                         onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
                         inputClassName={styles.fieldInput} selectOnFocus />
@@ -1377,11 +1073,6 @@ export const GrnNew = () => {
                         style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />
                     </label>
-                    {/* Commander 2026-06-04 — optional destination Rack. Racks are
-                        warehouse-scoped, so the options come from the header
-                        "Receive into" warehouse. Disabled (with a hint) until a
-                        warehouse is chosen; shows "No racks…" when the warehouse
-                        has none. Empty value = "— No rack —". */}
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Rack</span>
                       <SearchableSelect
@@ -1394,10 +1085,6 @@ export const GrnNew = () => {
                           : racksQ.isLoading ? 'Loading racks…'
                           : racks.length === 0 ? 'No racks in this warehouse'
                           : '— No rack — (type to search)'}
-                        /* The picker seeds its search with the selected label, so
-                           an empty rack must have no option of its own or opening
-                           it would filter the list down to "— No rack —". The
-                           clear option appears once a rack is picked. */
                         options={[
                           ...(l.rackId ? [{ value: '', label: '— No rack —' }] : []),
                           ...racksQ.options,
@@ -1420,9 +1107,6 @@ export const GrnNew = () => {
         </div>
       </section>
 
-      {/* Line Summary — one row per line + Total Quantity / Total Amount, so the
-          receiver can check the whole GRN at a glance (AutoCount-style footer).
-          lg:pr-32 clears the fixed FAB cluster. */}
       <div className="lg:pr-32" style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <section className={styles.card} style={{ maxWidth: 640, width: '100%' }}>
           <div className={styles.cardHeader}>
@@ -1460,7 +1144,6 @@ export const GrnNew = () => {
                 </tr>
               </tfoot>
             </table>
-            {/* Landed-cost core — MYR inventory cost for a foreign GRN. */}
             {isForeign && (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', marginTop: 'var(--space-2)' }}>
                 <span>Inventory cost (MYR)</span>

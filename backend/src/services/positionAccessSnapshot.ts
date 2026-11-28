@@ -52,7 +52,6 @@ export interface PositionAccessSnapshotEntry {
   slug: string;
   department_id: number | null;
   department_name: string | null;
-  /** EXPLICIT rows only. An absent key means NO ROW (inherit), not "none". */
   entries: Readonly<Partial<Record<string, AccessLevel>>>;
 }
 
@@ -61,7 +60,6 @@ export interface PositionAccessSnapshotEntry {
 export const POSITION_ACCESS_SNAPSHOT_SOURCE = "https://erp.houzscentury.com (autocount-sync-api.houzs-erp.workers.dev)";
 
 export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = [
-  // Management
   {
     id: 1,
     name: "Super Admin",
@@ -78,7 +76,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "team": "full",
     },
   },
-  // Management
   {
     id: 2,
     name: "HR Manager",
@@ -89,8 +86,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "team": "view",
     },
   },
-  // Management
-  // orphan keys (not in the page registry, inert at login): orders, orders.balance, orders.overdue, orders.pnl, overview, petty_cash
   {
     id: 3,
     name: "Finance Manager",
@@ -154,7 +149,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "team.roles": "view",
     },
   },
-  // Sales Department
   {
     id: 5,
     name: "Sales Director",
@@ -169,7 +163,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "service_cases": "edit",
     },
   },
-  // Sales Department
   {
     id: 6,
     name: "Sales Manager",
@@ -183,7 +176,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "service_cases": "edit",
     },
   },
-  // Sales Department
   {
     id: 7,
     name: "Sales Executive",
@@ -197,7 +189,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "service_cases": "edit",
     },
   },
-  // Sales Department
   {
     id: 8,
     name: "Sales Person",
@@ -211,7 +202,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "service_cases": "edit",
     },
   },
-  // Operation Department
   {
     id: 10,
     name: "Operation Manager",
@@ -231,7 +221,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "team.roles": "view",
     },
   },
-  // Operation Department
   {
     id: 12,
     name: "Operation Executive",
@@ -250,7 +239,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "service_cases": "edit",
     },
   },
-  // Operation Department
   {
     id: 13,
     name: "Procurement/Purchasing",
@@ -263,7 +251,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "service_cases": "view",
     },
   },
-  // Operation Department
   {
     id: 14,
     name: "Logistic Admin",
@@ -280,7 +267,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "service_cases": "view",
     },
   },
-  // Operation Department
   {
     id: 15,
     name: "Storekeeper",
@@ -298,7 +284,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "scm.warehouse": "view",
     },
   },
-  // Operation Department
   {
     id: 16,
     name: "Driver",
@@ -314,7 +299,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "scm.transportation.drivers": "view",
     },
   },
-  // Operation Department
   {
     id: 17,
     name: "Helper",
@@ -331,7 +315,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "scm.warehouse": "view",
     },
   },
-  // Operation Department
   {
     id: 18,
     name: "Service Admin",
@@ -344,7 +327,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "service_cases": "full",
     },
   },
-  // Operation Department
   {
     id: 19,
     name: "Storekeeper Supervisor",
@@ -362,7 +344,6 @@ export const POSITION_ACCESS_SNAPSHOT: readonly PositionAccessSnapshotEntry[] = 
       "scm.warehouse": "view",
     },
   },
-  // Management
   {
     id: 20,
     name: "Calendar Viewer",

@@ -14,7 +14,6 @@ describe('rowMarkTint', () => {
   });
 
   it('offers exactly the eight tokens the backend allow-list stores', () => {
-    // Must match backend/src/scm/lib/row-mark-colours.ts ROW_MARK_COLOURS.
     expect(ROW_MARK_PALETTE.map((p) => p.token)).toEqual(['red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'grey']);
   });
 });

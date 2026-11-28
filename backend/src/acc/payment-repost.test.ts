@@ -63,8 +63,6 @@ const world = () => fakeSb({
   journal_entry_lines: [],
 });
 
-/* The state every re-post test starts from: the payment already booked once,
-   the way the sales panel books it. */
 const booked = async () => {
   const sb = world();
   const out = await postSoPayment(sb, PAY() as unknown as SoPaymentRow);
@@ -96,8 +94,6 @@ describe('ledgerBearingChange — which edits move the books', () => {
   });
 
   it('an acquirer on a method that does not use one is not a ledger change', () => {
-    /* cash and transfer never reach transitFor, so the provider cannot pick an
-       account — and the route nulls it out anyway. */
     expect(ledgerBearingChange(facts(), facts({ merchantProvider: 'MBB' }))).toEqual([]);
   });
 
@@ -133,15 +129,11 @@ describe('repostSoPaymentEdit — the entry follows the payment', () => {
       after: PAY({ amount_sen: 199_100 }) as unknown as SoPaymentRow,
     });
     expect(out).toMatchObject({ ok: true, status: 'reposted', moved: ['amount'] });
-    /* Both numbers come back, because the audit row will carry them: the
-       contra that voided the old entry and the entry booked in its place. */
     const contraNo = sb.tables.journal_entries.find((j: Row) => String(j.source_type).endsWith('_REVERSAL'))!.je_no;
     const originalNo = sb.tables.journal_entries.find((j: Row) => j.source_type === 'SOPAY' && j.reversed)!.je_no;
     expect(out).toMatchObject({ originalJeNo: originalNo, contraJeNo: contraNo, jeNo: active(sb)[0].je_no });
     expect(originalNo).not.toBe(contraNo);
 
-    /* Exactly one entry still speaks for this payment, and it says the new
-       figure. The old one is reversed, not deleted. */
     const live = active(sb);
     expect(live).toHaveLength(1);
     expect(live[0].total_debit_sen).toBe(199_100);
@@ -185,7 +177,6 @@ describe('repostSoPaymentEdit — the entry follows the payment', () => {
 
   it('a corrected ACQUIRER moves the money to that acquirer\'s own transit account', async () => {
     const sb = await booked();
-    /* First make it a card payment on MBB, then correct the bank to PBB. */
     await repostSoPaymentEdit(sb, {
       before: facts(),
       after: PAY({ method: 'merchant', merchant_provider: 'MBB' }) as unknown as SoPaymentRow,
@@ -231,12 +222,6 @@ describe('repostSoPaymentEdit — the entry follows the payment', () => {
     expect(sb.tables.journal_entries).toHaveLength(0);
   });
 
-  /* THE STATE THAT MUST NEVER HAPPEN: the old entry reversed and no new one
-     written, silently. It CAN happen — a chart change can make the new method's
-     account unpostable between the two steps — so it must come back as a
-     refusal the caller can log, not as an ok. The payment then has no active
-     entry, which is the Self-check unbooked card's finding and the backfill's
-     to heal. */
   it('a re-post the gate refuses comes back as a refusal, naming the reason', async () => {
     const sb = await booked();
     for (const a of sb.tables.accounts) if (a.account_code === DEFAULT_ROLE_CODES.BANK_DEFAULT) a.is_active = false;

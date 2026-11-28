@@ -1,7 +1,3 @@
-// The reports' month chart (the owner's Claude Design, batch 6 §4.1): twelve
-// months (up to twenty-four) that stay put while the period sits inside them,
-// the period shaded with its labels petrol, net under each month (a loss
-// red), the card beside a pointed column, and a click that opens the month.
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -31,12 +27,9 @@ describe('which months a chart shows', () => {
     const w = nextChartWindow(null, '2026-10-01', '2026-10-29');
     expect(w).toEqual({ from: '2025-11-01', to: '2026-10-01' });
     expect(windowMonths(w)).toHaveLength(12);
-    /* A month inside: the window stays. */
     expect(nextChartWindow(w, '2026-03-01', '2026-03-31')).toBe(w);
-    /* Past either edge: it moves to that edge. */
     expect(nextChartWindow(w, '2025-06-01', '2025-06-30')).toEqual({ from: '2025-06-01', to: '2026-05-01' });
     expect(nextChartWindow(w, '2026-12-01', '2026-12-31')).toEqual({ from: '2026-01-01', to: '2026-12-01' });
-    /* A longer range shows itself, up to twenty-four months. */
     expect(windowMonths(nextChartWindow(w, '2025-01-01', '2026-10-29'))).toHaveLength(22);
     expect(nextChartWindow(w, '2023-01-01', '2026-10-29')).toEqual({ from: '2024-11-01', to: '2026-10-01' });
   });
@@ -82,7 +75,6 @@ describe('the P&L chart', () => {
     const notes = [...container.querySelectorAll('[data-note]')].map((n) => n.textContent);
     expect(notes).toEqual(['(9.5)', '41']);
     expect((container.querySelector('[data-note]') as SVGElement).style.fill).toContain('a83434');
-    /* Three bars for each month with figures. */
     expect(container.querySelectorAll('rect[data-group="revenue"]')).toHaveLength(2);
   });
 

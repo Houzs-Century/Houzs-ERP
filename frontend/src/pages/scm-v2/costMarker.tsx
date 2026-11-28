@@ -1,10 +1,5 @@
 import type { MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 
-/* B1 — the SKU Master cost-column marker on the derived cost (Price 2 / base
-   price = the Product Maintenance cost). teal dot = derived cleanly, amber dot =
-   suppliers differ (took highest), red "Gap" chip = no supplier cost. Service and
-   un-annotated rows get nothing. The full detail (which supplier) is one
-   double-click away in the drawer, so the list stays clean (owner's rule). */
 export const costMarker = (state?: MfgProductRow['costAnchorState']) => {
   const dot = (bg: string, title: string) => (
     <span title={title} style={{ marginLeft: 5, width: 7, height: 7, borderRadius: '50%', background: bg, display: 'inline-block', verticalAlign: 'middle' }} />

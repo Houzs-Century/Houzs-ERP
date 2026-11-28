@@ -19,8 +19,6 @@ type Draft = {
   driver1Ic: string; driver1Phone: string; plannedDepart: string;
 };
 
-/** Which trips THIS day already carry a given driver (for the double-book
- *  warning), excluding the run being edited. */
 function doubleBookedPlates(trips: readonly FleetDayTrip[], driverId: string, exceptTripId: string): string[] {
   if (!driverId) return [];
   return trips.filter((t) => t.id !== exceptTripId && t.driver?.id === driverId).map((t) => t.lorry?.plate ?? t.trip_no ?? t.id);
@@ -46,7 +44,6 @@ export function CrewModal({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
 
-  // (Re)seed the draft whenever a different run opens.
   useEffect(() => {
     if (!run || !run.trip) { setDraft(null); return; }
     const master = run.trip.driver?.id ? drivers.find((d) => d.id === run.trip!.driver!.id) : undefined;
@@ -71,8 +68,6 @@ export function CrewModal({
   const icDirty = !!master1 && (draft.driver1Ic !== (master1.ic_number ?? '') || draft.driver1Phone !== master1.phone);
   const dbl = doubleBookedPlates(trips, draft.driver1Id, trip.id);
 
-  // Propose: fill empty seats with the first active, not-on-leave person not
-  // already used on another run today.
   const propose = () => {
     const usedDrivers = new Set(trips.filter((t) => t.id !== trip.id).map((t) => t.driver?.id).filter(Boolean) as string[]);
     const freeDriver = drivers.find((d) => d.active && !usedDrivers.has(d.id) && !leaveNote('driver', d.id));
@@ -106,12 +101,10 @@ export function CrewModal({
       } catch { doFailed += 1; }
     }
 
-    // Driver-master write-back (owner decision 5): editing IC/phone updates the
-    // driver everywhere.
     let driverSaved = false;
     if (icDirty && draft.driver1Id) {
       try { await updateDriver.mutateAsync({ id: draft.driver1Id, icNumber: draft.driver1Ic, phone: draft.driver1Phone }); driverSaved = true; }
-      catch { /* surfaced in the summary below */ }
+      catch { }
     }
     setSaving(false);
     void notify({
@@ -157,7 +150,6 @@ export function CrewModal({
             <span className="mt-0.5 block text-[11px] text-ink-muted">The card flags a run that leaves more than 15 min after this.</span>
           </label>
 
-          {/* Driver 1 + editable IC / phone */}
           <div className="rounded-lg border border-border p-3">
             <div className="font-mono text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Driver 1</div>
             <select

@@ -15,7 +15,6 @@ describe("openLoadedTab", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
     let resolve!: (u: string) => void;
     const done = openLoadedTab(() => new Promise<string>((r) => { resolve = r; }), null);
-    // Still inside the tap: the tab must already exist.
     expect(open).toHaveBeenCalledWith("", "_blank");
     expect(tab.location.href).toBe("");
     resolve("blob:x");
@@ -39,9 +38,6 @@ describe("openLoadedTab", () => {
   });
 });
 
-/* Every other window.open in the app runs synchronously in the click. A new one
-   that follows an await would be silently blocked on phones: route it through
-   openLoadedTab, or add it here only if it opens before any await. */
 const SYNC_WINDOW_OPEN_FILES = new Set([
   "components/TopNavbar.tsx",
   "lib/openLoadedTab.ts",

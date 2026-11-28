@@ -26,7 +26,6 @@ const PAY = (id: string, over: Partial<Row> = {}): Row => ({
   id, so_doc_no: 'SO-2610-001', paid_at: '2026-10-05T14:00:00+08:00', method: 'transfer', merchant_provider: null, amount_sen: 50_000, company_id: 1, ...over,
 });
 
-/* Everything booked while Receive into was Hong Leong; then the owner set Maybank. */
 async function world(extra: { matches?: Row[]; locks?: Row[] } = {}) {
   const pays = [
     PAY('pay-1'),
@@ -81,7 +80,6 @@ describe('moving transfer receipts to Receive into', () => {
 
     const again = await rebankCandidates(sb, 1, '2026-10-01', '2026-10-31');
     expect(again.ok && again.rows.map((x) => x.paymentId)).toEqual(['pay-2']);
-    /* Moving it twice skips it, and writes nothing. */
     const n = sb.tables.journal_entries.length;
     const twice = await rebankReceipts(sb, 1, [{ source: 'SOPAY', paymentId: 'pay-1' }], fakeRebankTx(sb, null));
     expect(twice.ok && twice.results[0]!.status).toBe('skipped');
@@ -114,19 +112,12 @@ describe('moving transfer receipts to Receive into', () => {
   });
 });
 
-/* ALL OR NOTHING (owner-approved root fix). The contra and the new entry are
- * one transaction: a new entry that cannot post takes the contra back out, and
- * the receipt stays live on Hong Leong. Before this the reversal committed on
- * its own and the money sat in no bank. */
 describe('a receipt moves whole or not at all', () => {
   type World = Awaited<ReturnType<typeof world>>;
   const allEntries = (sb: World) => JSON.stringify([sb.tables.journal_entries, sb.tables.journal_entry_lines]);
-  /* Maybank deactivated after the list: the new entry is refused AFTER the contra was written. */
   const refuseMaybank = (sb: World) => {
-    /* Copies, not the rows: CHART is shared by every world. */
     sb.tables.accounts = sb.tables.accounts.map((a: Row) => (a.account_code === MBB && a.company_id === CO ? { ...a, is_active: false } : a));
   };
-  /* A client whose SOPAY entry insert throws, as the transaction client does on a database error. */
   const throwingOnPost = (message: string, paymentId: string | null) => (db: World): World => ({
     ...db,
     from: (t: string) => {
@@ -202,7 +193,6 @@ describe('a receipt moves whole or not at all', () => {
     const sb = await world();
     const je1 = sb.tables.journal_entries.find((j: Row) => j.source_doc_no === 'pay-1')!.je_no;
     const je2 = sb.tables.journal_entries.find((j: Row) => j.source_doc_no === 'pay-2')!.je_no;
-    /* The matches land between the list and the move: pay-1's in THIS company, pay-2's number in another. */
     let landed = false;
     const tx = fakeRebankTx(sb, (db) => {
       if (!landed) { landed = true; db.tables.acc_bank_statement_matches.push({ company_id: CO, je_no: je1 }, { company_id: 2, je_no: je2 }); }
@@ -214,7 +204,6 @@ describe('a receipt moves whole or not at all', () => {
       ['pay-2', 'moved', null],
     ]);
     expect(liveLegs(sb, 'pay-1')).toEqual([{ date: '2026-10-05', bank: HLB }]);
-    /* Another company's receipt, named by id, is never touched on the atomic path. */
     const other = await rebankReceipts(sb, CO, [{ source: 'SOPAY', paymentId: 'pay-other-co' }], fakeRebankTx(sb, null));
     expect(other.ok && other.results[0]!.status).toBe('skipped');
     expect(liveLegs(sb, 'pay-other-co')).toEqual([{ date: '2026-10-05', bank: HLB }]);

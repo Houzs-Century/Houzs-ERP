@@ -27,7 +27,6 @@ let isFinance = false;
 let hasEvents: boolean | undefined;
 /* Whether the caller may raise a request here (owner 2026-10-14, option A); undefined = an older server. */
 let mayRaise: boolean | undefined;
-/* What the bill reader read off the bill being attached (item 1, 2026-10-01). */
 const plainRead = (over: Req = {}): Req => ({
   ok: true, bill: { billNo: 'MLE-0925', billDate: '2026-09-01', totalSen: 850_000, vendorName: 'MLE EVENTS SDN BHD' },
   hasEvents: true, eventBill: false, eventSuggestions: [], matches: [], ...over,
@@ -158,7 +157,6 @@ describe('the requester', () => {
     fireEvent.change(within(d).getByLabelText('Account no.'), { target: { value: '5123' } });
     const bill = new File(['%PDF'], 'mle-invoice.pdf', { type: 'application/pdf' });
     fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [bill] } });
-    /* Read as it is attached: number, date and total said back. */
     await waitFor(() => expect(within(d).getByText(/Read from the bill: No\. MLE-0925 · 2026\/09\/01 · total RM 8,500\.00/)).toBeTruthy());
     expect(readAsync).toHaveBeenCalledWith({ files: [{ name: 'mle-invoice.pdf', mime: 'application/pdf', dataBase64: 'b64:mle-invoice.pdf' }] });
     fireEvent.click(within(d).getByText('Send to Finance'));
@@ -169,7 +167,6 @@ describe('the requester', () => {
       billNo: 'MLE-0925', billDate: '2026-09-01', billTotalSen: 850_000, eventBill: false, note: null, noEventReason: null, payPct: null,
     });
     await waitFor(() => expect(uploadAsync).toHaveBeenCalledWith({ id: 'r-new', file: { name: 'mle-invoice.pdf', mime: 'application/pdf', dataBase64: 'b64:mle-invoice.pdf' } }));
-    /* The requester's picker reads the requests' own event list, not Finance's. */
     expect(optionPaths.every((p) => p === '/payment-requests/event-options')).toBe(true);
   });
 
@@ -180,7 +177,7 @@ describe('the requester', () => {
     ];
     isFinance = false; withdrawAsync.mockClear();
     draw();
-    expect(screen.getAllByText('Paid')).toHaveLength(2); // the filter chip and the stage
+    expect(screen.getAllByText('Paid')).toHaveLength(2);
     expect(screen.getByText(/HC-PV-2609-014/)).toBeTruthy();
     expect(screen.queryByText('Requested by')).toBeNull();
     fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
@@ -347,14 +344,10 @@ describe('Finance', () => {
     expect(screen.getByText('Finance · Money out')).toBeTruthy();
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['To do1', 'Turned into vouchers1', 'Sent back2', 'Paid1', 'Official invoice owed0', 'All4']);
     expect(tabNamed(/^To do/).getAttribute('aria-selected')).toBe('true');
-    /* The design's columns in its order (the request number first, to open it;
-       the row's buttons last). Event, Pay by and Date wait in the chooser.
-       To do leads with the tick column — several requests, ONE voucher. */
     expect(screen.getAllByRole('columnheader').map((h) => h.textContent))
       .toEqual(['', 'Request', 'Kind', 'For', 'Why', 'Amount', 'Pay to', 'Requested by', 'Waiting', 'Stage', '']);
     expect(screen.getByText('Payment')).toBeTruthy();
     expect(screen.getByText('Maybank ···· 8901')).toBeTruthy();
-    /* The stage reads English only on Finance's list. */
     expect(screen.getByText('Submitted')).toBeTruthy();
     expect(screen.getByLabelText('Only my requests')).toBeTruthy();
   });
@@ -389,10 +382,8 @@ describe('Finance', () => {
     fireEvent.click(screen.getByText('HC-PRQ-2609-001'));
     const d = screen.getByRole('dialog', { name: 'Payment request HC-PRQ-2609-001' });
     expect(within(d).getByText('Raised by Luis Teo on 2026/09/10')).toBeTruthy();
-    /* The bank whole in the drawer; the list shows only its last four digits. */
     expect(within(d).getByText('Maybank · 5123 · MLE EVENTS SDN BHD')).toBeTruthy();
     expect(within(d).getByText(/starts as a draft\. It is checked, then approved, before any money moves\./)).toBeTruthy();
-    /* Not Finance's own request: no Edit / Withdraw. */
     expect(within(d).queryByText('Edit')).toBeNull();
     expect(within(d).queryByText('Withdraw')).toBeNull();
     fireEvent.click(within(d).getByText('Make voucher ›'));
@@ -470,7 +461,6 @@ describe('Finance', () => {
     expect(within(d).getByText('Voucher HC-PV-2609-004 · RM 8,500.00 · posted')).toBeTruthy();
   });
 
-  /* Item 2: a balance of a bill booked as an AP invoice is paid ON that invoice. */
   test('a balance of a bill booked as an AP invoice offers "Pay on" that invoice', () => {
     requests = [base({
       id: 'r2', request_no: 'HC-PRQ-2610-002', requested_by: 40, requested_by_name: 'Luis Teo', parent_request_id: 'r1', installment_no: 2,
@@ -544,7 +534,6 @@ describe('the form filled from the bill', () => {
     draw();
     fireEvent.click(screen.getByText('New request'));
     const d = screen.getByRole('dialog');
-    /* Typed before the bill is read — it stays. */
     fireEvent.change(within(d).getByLabelText('What is it for'), { target: { value: 'HC share of Aug payroll' } });
     fireEvent.change(within(d).getByLabelText('Bill files'), { target: { files: [new File(['%PDF'], 'invoice-HV-INV-202608-0051.pdf', { type: 'application/pdf' })] } });
     const note = await within(d).findByLabelText('Filled in from the bill');
@@ -553,7 +542,6 @@ describe('the form filled from the bill', () => {
     expect((within(d).getByLabelText('Pay to') as HTMLInputElement).value).toBe('HOUZS VENTURE HOLDINGS SDN BHD');
     expect((within(d).getByLabelText('What is it for') as HTMLTextAreaElement).value).toBe('HC share of Aug payroll');
     expect((within(d).getByLabelText('Account no.') as HTMLInputElement).value).toBe('123-4567-8901');
-    /* Still theirs to change: a changed field leaves the note and goes as typed. */
     fireEvent.change(within(d).getByLabelText('Pay to'), { target: { value: 'Houzs Venture Holding Sdn Bhd' } });
     expect(within(d).getByLabelText('Filled in from the bill').textContent).not.toContain('Pay to');
     fireEvent.click(within(d).getByText('Send to Finance'));
@@ -597,7 +585,6 @@ describe('the form in the order it is filled', () => {
     await waitFor(() => expect(readAsync).toHaveBeenCalledTimes(3));
     expect(readAsync.mock.calls[2]![0]).toEqual({ files: [{ name: 'page-2.pdf', mime: 'application/pdf', dataBase64: 'b64:page-2.pdf' }] });
     expect(within(d).queryByText('page-1.pdf')).toBeNull();
-    /* What was read is said once, under the bill. */
     const bill = within(d).getByRole('region', { name: 'The bill' });
     await waitFor(() => expect(within(bill).getByText(/Read from the bill: No\. MLE-0925/)).toBeTruthy());
   });

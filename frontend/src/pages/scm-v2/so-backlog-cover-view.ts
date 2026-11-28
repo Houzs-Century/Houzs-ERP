@@ -8,7 +8,7 @@
 import type { Count, CoverPart, CoverRates, CoverRow, SoBacklogCoverData } from '../../vendor/scm/lib/so-backlog-cover-queries';
 import { AMOUNT_COLUMN, PCT_COLUMN, type ReportSheet, type SheetRow, type SheetTable } from '../../vendor/scm/lib/report-sheet';
 import { fmtPct } from '../../vendor/scm/lib/report-layout';
-import { fmtQty, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtQty, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { monthName } from './reports/statementColumns';
 
 export const PART_LABEL: Readonly<Record<CoverPart, string>> = {
@@ -56,7 +56,6 @@ export const COVER_NOTES: readonly string[] = [
 const TEXT = (label: string) => ({ label, kind: 'text' as const, align: 'left' as const });
 const COUNT = (label: string) => ({ label, kind: 'text' as const, align: 'right' as const });
 
-/** A by-month table of the sheet: each month's backlog, processed and the two rates, the average under them. */
 function monthsTable(d: SoBacklogCoverData, by: 'amount' | 'orders'): SheetTable {
   const cell = (c: Count) => (by === 'amount' ? c.amountSen : fmtQty(c.orders));
   const rates = (r: CoverRates) => [r.onBacklog, r.onMonth];

@@ -108,17 +108,6 @@ export interface ScmAreaGuardOpts {
   openReadPaths?: readonly string[];
   writeLevel?: AccessLevel;
   readInheritsFrom?: string;
-  /**
-   * A narrow WRITE escape hatch keyed on something the area level cannot
-   * express — a per-position operational CAPABILITY. When it returns true the
-   * write is admitted WITHOUT the area level, and the guard sets
-   * `scmWriteBypassed=true` so the handler knows this caller got in on a
-   * capability (not real area access) and must enforce the capability's exact
-   * verb itself. Runs AFTER the JD / money / wildcard rules, so it can never
-   * widen past a code rule; keep the predicate as tight as the verb it admits
-   * (e.g. only `PATCH …/status` for a caller holding scm.do.load|dispatch).
-   * Reads are unaffected.
-   */
   writeBypass?: (c: Context<{ Bindings: Env; Variables: Variables }>) => boolean;
   /** READS admitted without the area level when this returns true (e.g. a Sales
    *  Director on Procurement Overview, owner 2026-11-24). Writes never pass. Runs
@@ -131,12 +120,9 @@ export function scmAreaGuard(area: string, opts?: ScmAreaGuardOpts): MiddlewareH
   Variables: Variables;
 }> {
   return async (c, next) => {
-    // c.get('user') is still the Houzs AuthUser at this point (supabaseAuth has
-    // not run yet — see ordering note above).
     const user = c.get("user") as unknown as AuthUser | undefined;
     if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
 
-    // 1) Owner / wildcard bypasses the L2 gate entirely.
     if (user.permissions_set?.has("*") || user.permissions?.includes("*")) {
       await next();
       return;
@@ -187,8 +173,6 @@ export function scmAreaGuard(area: string, opts?: ScmAreaGuardOpts): MiddlewareH
       return;
     }
 
-    // 3) No explicit SCM L2 config → fall back to the coarse scm.access umbrella
-    //    (already enforced upstream). Never lock out a current scm.access holder.
     if (!user.scm_l2_configured) {
       await next();
       return;
@@ -196,37 +180,25 @@ export function scmAreaGuard(area: string, opts?: ScmAreaGuardOpts): MiddlewareH
 
     const write = isWrite(c.req.method);
 
-    // Reference reads open to every caller who passed the coarse umbrella —
-    // see ScmAreaGuardOpts above. Reads only; writes fall through to the check.
     if (!write && opts?.openRead) {
       await next();
       return;
     }
 
-    // Same hatch, narrowed to named sub-paths — see ScmAreaGuardOpts above.
     if (!write && opts?.openReadPaths?.some((p) => c.req.path.endsWith(p))) {
       await next();
       return;
     }
 
-    // Capability write-bypass — a caller who lacks the area level but holds the
-    // operational capability the handler will enforce (e.g. a storekeeper's
-    // scan-to-LOADED on scm.do.load). Flagged so the handler knows to enforce
-    // the exact verb; it runs after the JD/money/wildcard rules above, so it
-    // never widens past a code rule.
     if (write && opts?.writeBypass?.(c)) {
       c.set("scmWriteBypassed", true);
       await next();
       return;
     }
 
-    // 2) Explicit SCM L2 config → enforce per-area, per-method.
     const requiredLevel: AccessLevel = write ? (opts?.writeLevel ?? "edit") : "view";
     const level: AccessLevel = (user.page_access?.[area] ?? "none") as AccessLevel;
     if (!meetsLevel(level, requiredLevel)) {
-      // Read-inherit hatch — a GET/HEAD may be satisfied by `view` on a second
-      // area (e.g. a salesperson reading their own SO's Delivery Orders / Sales
-      // Invoices via scm.sales.orders). Writes never inherit.
       if (!write && opts?.readInheritsFrom) {
         const inherited = (user.page_access?.[opts.readInheritsFrom] ?? "none") as AccessLevel;
         if (meetsLevel(inherited, "view")) {

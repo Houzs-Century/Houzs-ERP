@@ -16,7 +16,7 @@ import { DateField } from '../../../vendor/scm/components/DateField';
 import { useDepositInvoiceSettings, useSaveDepositInvoiceSettings } from '../../../vendor/scm/lib/deposit-invoice-queries';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
-import { fmtDate } from '../../../vendor/shared/format';
+import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
 import { Skeleton, Switch } from './SetupParts';
 import css from './SetupParts.module.css';
 
@@ -25,7 +25,6 @@ const errText = (e: unknown): string => (e instanceof Error && e.message ? e.mes
 export function DepositInvoiceSetup() {
   const toast = useToastOptional();
   const { can } = useHouzsAuth();
-  /* The switch is the post key's, as the server says (deposit-invoices.ts). */
   const canSave = can('scm.payment_voucher.post');
   const q = useDepositInvoiceSettings();
   const save = useSaveDepositInvoiceSettings();
@@ -37,7 +36,6 @@ export function DepositInvoiceSetup() {
 
   const onSave = () => {
     setError(null);
-    /* Switching on needs the day it counts from. */
     if (v.enabled && !v.fromDate) { setError('Type the start day as 2026/09/15'); return; }
     save.mutate({ enabled: v.enabled, fromDate: v.fromDate.trim() || null }, {
       onSuccess: (r) => {

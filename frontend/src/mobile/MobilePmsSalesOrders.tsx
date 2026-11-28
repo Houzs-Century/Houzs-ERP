@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { formatCurrency, formatDate } from "../lib/utils";
-import { fmtSen } from "../vendor/shared/format";
+import { fmtSen } from "../../../shared/src/vendor/shared/format";
 import {
   normalizeProjectSalesOrders,
   soStatusLabel,
@@ -23,7 +23,6 @@ export function MobilePmsSalesOrders({
   finalTotalRm,
 }: {
   projectId: number;
-  /** project_finance.total_sales (RM) — the lump sum typed into Total Sales. */
   finalTotalRm: number | null;
 }) {
   const { data, isPending, error } = useQuery({

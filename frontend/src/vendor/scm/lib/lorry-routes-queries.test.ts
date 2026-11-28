@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmtDrive, fmtKm, roadTotalsByLorry, legLabelsByRef, diffPct, dailyTotalsByLorry } from './lorry-routes-queries';
+import { decodePolyline, fmtDrive, fmtKm, roadTotalsByLorry, legLabelsByRef, diffPct, dailyTotalsByLorry } from './lorry-routes-queries';
 import { slotSortKey } from './fleet-day-cards';
 
 describe('road figures', () => {
@@ -9,9 +9,6 @@ describe('road figures', () => {
     expect(fmtDrive(11_400)).toBe('3 h 10 min');
     expect(fmtDrive(2_700)).toBe('45 min');
   });
-  /* The server orders each run with windowStartMinutes (backend/src/scm/lib/lorry-day-runs.ts,
-     backend/tests/lorryDayRuns.test.ts holds the same table): the card order and the road
-     order must not drift apart. */
   it.each([
     ['9:00-12:00', 540], ['TIME AROUND 9AM TO 11AM', 540], ['2pm - 6pm', 840], ['10.30am', 630],
     ['AM', 0], ['PM', 720], ['', Number.MAX_SAFE_INTEGER], [null, Number.MAX_SAFE_INTEGER], ['call first', Number.MAX_SAFE_INTEGER],
@@ -51,5 +48,14 @@ describe('Google against what really happened', () => {
     ]);
     expect(t.get('A')).toEqual({ gpsKm: 80.5, driveS: 3600, googleTimedS: 3000, timedStops: 3 });
     expect(t.get('B')?.gpsKm).toBeNull();
+  });
+});
+
+describe('decodePolyline', () => {
+  it("decodes Google's documented example into the run's road points", () => {
+    expect(decodePolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@')).toEqual([
+      { lat: 38.5, lng: -120.2 }, { lat: 40.7, lng: -120.95 }, { lat: 43.252, lng: -126.453 },
+    ]);
+    expect(decodePolyline('')).toEqual([]);
   });
 });

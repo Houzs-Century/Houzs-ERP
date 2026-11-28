@@ -194,6 +194,7 @@ const SHAPES = [
    per-company assumption gets declared correct and frozen. */
 const ROOTS = [
   path.join(repoRoot, "frontend", "src"),
+  path.join(repoRoot, "shared", "src"),
   path.join(repoRoot, "backend", "src"),
   /* An EXTRA root, used by tests/companyDivergenceGate.test.ts to plant a
      violation OUTSIDE the source tree and watch this exit 1. A gate nobody has

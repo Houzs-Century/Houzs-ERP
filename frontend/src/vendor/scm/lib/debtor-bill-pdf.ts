@@ -19,13 +19,11 @@ import {
 import { getBrandingCache } from '../../../lib/branding';
 import type { DebtorBill, OtherDebtor } from './accounting-queries';
 import { partyAddressLines, type DebtorPartyColumns } from './debtor-party';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type DebtorBillPdfData = {
   bill: DebtorBill;
-  /** The registry row: the name and phone, and the party's data where filled (2026-09-21) — BILL TO prints what is there. */
   debtor: Pick<OtherDebtor, 'name' | 'phone'> & Partial<DebtorPartyColumns>;
-  /** The chart's name for a line's account — the fallback description of a line left blank. */
   accountName?: (code: string) => string | null | undefined;
 };
 
@@ -50,7 +48,6 @@ export async function renderDebtorBillInto(doc: JsPdf, autoTable: AutoTable, d: 
   const totalSen = Number(d.bill.total_sen) || lines.reduce((s, l) => s + Number(l.amount_sen), 0);
   const receivedSen = Number(d.bill.received_sen);
   const dueSen = Math.max(0, totalSen - receivedSen);
-  /* A debit note to the debtor (2026-10-28) is the same paper under its own name. */
   const dn = d.bill.doc_kind === 'DN';
   const noLabel = dn ? 'Debit Note No' : 'Invoice No';
 
@@ -68,7 +65,6 @@ export async function renderDebtorBillInto(doc: JsPdf, autoTable: AutoTable, d: 
       rows: [
         ['Name', d.debtor.name],
         ['Account', d.debtor.code ?? null],
-        /* The address as the registry holds it; a blank label keeps the continuation lines under the first. */
         ...partyAddressLines(d.debtor).map((line, i): [string, string] => [i === 0 ? 'Address' : ' ', line]),
         ['Attention', d.debtor.attention || d.debtor.contact_person || null],
         ['Phone', [d.debtor.phone, d.debtor.mobile].filter((s) => s && s.trim()).join(' / ') || null],
@@ -90,9 +86,6 @@ export async function renderDebtorBillInto(doc: JsPdf, autoTable: AutoTable, d: 
     },
   );
 
-  /* The reader's view of a line: what it was for and how much — our account
-     is the bookkeeping behind it and stays off the paper. */
-  /* A TEXT line (no account, amount zero) is words alone — no number, no amount; the money lines count on. */
   let n = 0;
   const rows = lines.map((l) => {
     if (l.credit_account_code == null && Number(l.amount_sen) === 0) return ['', l.description ?? '', ''];
@@ -161,7 +154,6 @@ export async function renderDebtorBillInto(doc: JsPdf, autoTable: AutoTable, d: 
 
   drawSignatureBoxes(doc, ty + 4, 'Issued by', 'Company chop');
 
-  /* The watermark LAST, over everything: a void invoice must read as void. */
   if (d.bill.status === 'CANCELLED') {
     const pageH = doc.internal.pageSize.getHeight();
     doc.saveGraphicsState();

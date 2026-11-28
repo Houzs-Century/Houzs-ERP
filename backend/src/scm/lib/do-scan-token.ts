@@ -80,13 +80,11 @@
  * being squeezed into 14mm.
  */
 
+import type { ResolvedLorryDayScan } from './lorry-day-scan';
+
 /** The two shapes a live token may have: 10-char base32, or the legacy 64 hex. */
 export const DO_SCAN_TOKEN_RE = /^(?:[0-9a-hjkmnp-tv-z]{10}|[0-9a-f]{64})$/i;
 
-/* CROCKFORD'S ALPHABET, minus nothing it does not already exclude: no i, l, o
-   or u. Not decoration — a warehouse reads these off paper when a code will not
-   scan and types them into the office, and `1/l/I` and `0/O` are the pairs that
-   get read back wrong. `u` is dropped for the reason Crockford drops it. */
 const TOKEN_ALPHABET = '0123456789abcdefghjkmnpqrstvwxyz';
 const TOKEN_LEN = 10;
 
@@ -101,8 +99,6 @@ const TOKEN_LEN = 10;
  */
 export function newDoScanToken(): string {
   if (TOKEN_ALPHABET.length !== 32) {
-    /* Unreachable today; here so an edit to the alphabet fails loudly instead
-       of quietly skewing the distribution. */
     throw new Error('newDoScanToken: the alphabet must be exactly 32 symbols');
   }
   const bytes = new Uint8Array(TOKEN_LEN);
@@ -131,7 +127,6 @@ export type ResolvedDoScan = {
   onHold: boolean | null;
 };
 
-/** The columns the resolve reads. No money, no address line, no contact. */
 const RESOLVE_COLS =
   'id, company_id, do_number, debtor_name, city, state, status, on_hold, qr_revoked_at';
 
@@ -180,13 +175,8 @@ export async function resolveDoScanToken(
     debtor_name?: string | null; city?: string | null; state?: string | null;
     status?: string | null; on_hold?: boolean | null; qr_revoked_at?: string | null;
   };
-  /* Killed. Same answer as never-existed, deliberately — see above. */
   if (row.qr_revoked_at) return { status: 'unknown' };
   const companyId = Number(row.company_id);
-  /* NO USABLE COMPANY = UNKNOWN, never "serve it unscoped". company_id is NOT
-     NULL (mig 0083), so this branch is unreachable on a healthy row — and it
-     exists because the alternative to refusing is running the rest of the
-     request with no tenant boundary at all. */
   if (!Number.isInteger(companyId) || companyId <= 0) return { status: 'unknown' };
   if (!row.id || !row.do_number) return { status: 'unknown' };
   return {
@@ -204,9 +194,7 @@ export async function resolveDoScanToken(
   };
 }
 
-/* ── THE PACKING-LIST (TRIP) HALF ─────────────────────────────────────────── */
 
-/** The columns the trip resolve reads. No money, no address, no contact. */
 const TRIP_RESOLVE_COLS = 'id, company_id, trip_no, trip_date, status, qr_revoked_at';
 
 /**
@@ -240,8 +228,8 @@ export type ResolvedTripScan = {
 export type TripScanMember = {
   stopNo: number;
   doId: string;
-  /** Null for a foreign member — deliberately withheld, see above. */
   doNumber: string | null;
+  customerName: string | null;
   status: string | null;
   onHold: boolean | null;
   foreign: boolean;
@@ -307,7 +295,7 @@ export async function getOrCreateScanToken(
       .eq('company_id', companyId)
       .maybeSingle();
     if (error) return { status: 'read_failed' };
-    if (!data) return { status: 'not_found' }; // no such row IN THIS COMPANY
+    if (!data) return { status: 'not_found' };
     return { status: 'ok', token: (data as { qr_token: string | null }).qr_token ?? null };
   };
 
@@ -316,13 +304,6 @@ export async function getOrCreateScanToken(
   if (existing.token) return { status: 'ok', token: existing.token };
 
   const fresh = newDoScanToken();
-  /* THE CLAIM. `.is('qr_token', null)` is what makes this atomic — Postgres
-     serialises the two updates, so the second one matches no row and returns
-     nothing. Never `.update()` after a plain read-then-branch: nothing
-     re-checks between two PostgREST round trips (the standing company-scope
-     rule (a), and the same mechanism as the double-cancel guard on the status
-     handler). The company predicate rides on the write itself for the same
-     reason, not only on the read above. */
   const { data: claimed, error: claimErr } = await sb
     .from(table)
     .update({ qr_token: fresh })
@@ -331,14 +312,9 @@ export async function getOrCreateScanToken(
     .is('qr_token', null)
     .select('qr_token')
     .maybeSingle();
-  /* A FAILED CLAIM IS NOT A LOST RACE. Both come back with no row, and reading
-     them alike would send the caller to the re-read below, where a second blip
-     answers not_found — a printable delivery order reported as somebody else's.
-     Say the write failed. */
   if (claimErr) return { status: 'read_failed' };
   if (claimed) return { status: 'ok', token: (claimed as { qr_token: string }).qr_token };
 
-  // Lost the race (or the row moved): the winner's value is the truth.
   const after = await read();
   if (after.status !== 'ok') return after;
   return after.token ? { status: 'ok', token: after.token } : { status: 'not_found' };
@@ -360,6 +336,7 @@ export async function getOrCreateScanToken(
 export type ResolvedScanResult =
   | { status: 'ok'; kind: 'do'; row: ResolvedDoScan }
   | { status: 'ok'; kind: 'trip'; row: ResolvedTripScan }
+  | { status: 'ok'; kind: 'lorry_day'; row: ResolvedLorryDayScan }
   | { status: 'unknown' }
   | { status: 'read_failed' };
 
@@ -376,18 +353,13 @@ export async function resolveScanToken(sb: any, token: string): Promise<Resolved
     .eq('qr_token', token)
     .maybeSingle();
   if (error) return { status: 'read_failed' };
-  if (!data) return { status: 'unknown' };
+  if (!data) return resolveLorryDayToken(sb, token);
   const row = data as {
     id?: string; company_id?: number | string | null; trip_no?: string | null;
     trip_date?: string | null; status?: string | null; qr_revoked_at?: string | null;
   };
-  /* Killed. Same answer as never-existed — a different one would tell whoever
-     holds a leaked sheet that the code used to be real. */
   if (row.qr_revoked_at) return { status: 'unknown' };
   const companyId = Number(row.company_id);
-  /* NO USABLE COMPANY = UNKNOWN, never "serve it unscoped". company_id is NOT
-     NULL on scm.trips (mig 0083); refusing is the only alternative to running
-     the rest of the request with no tenant boundary at all. */
   if (!Number.isInteger(companyId) || companyId <= 0) return { status: 'unknown' };
   if (!row.id || !row.trip_no) return { status: 'unknown' };
   return {
@@ -399,6 +371,36 @@ export async function resolveScanToken(sb: any, token: string): Promise<Resolved
       tripNo: row.trip_no,
       tripDate: row.trip_date ?? null,
       status: row.status ?? null,
+    },
+  };
+}
+
+async function resolveLorryDayToken(sb: Parameters<typeof resolveScanToken>[0], token: string): Promise<ResolvedScanResult> {
+  const { data, error } = await sb
+    .from('packing_scan_sets')
+    .select('id, company_id, lorry_plate, delivery_date, do_ids, qr_revoked_at')
+    .eq('qr_token', token)
+    .maybeSingle();
+  if (error) return { status: 'read_failed' };
+  if (!data) return { status: 'unknown' };
+  const row = data as {
+    id?: string; company_id?: number | string | null; lorry_plate?: string | null;
+    delivery_date?: string | null; do_ids?: unknown; qr_revoked_at?: string | null;
+  };
+  if (row.qr_revoked_at) return { status: 'unknown' };
+  const companyId = Number(row.company_id);
+  if (!Number.isInteger(companyId) || companyId <= 0) return { status: 'unknown' };
+  const doIds = Array.isArray(row.do_ids) ? row.do_ids.filter((x): x is string => typeof x === 'string') : [];
+  if (!row.id || !row.lorry_plate || !row.delivery_date || doIds.length === 0) return { status: 'unknown' };
+  return {
+    status: 'ok',
+    kind: 'lorry_day',
+    row: {
+      id: row.id,
+      companyId,
+      lorryPlate: row.lorry_plate,
+      deliveryDate: String(row.delivery_date).slice(0, 10),
+      doIds,
     },
   };
 }
@@ -448,12 +450,12 @@ export async function loadTripScanMembers(
 
   const { data: doData, error: doErr } = await sb
     .from('delivery_orders')
-    .select('id, company_id, do_number, status, on_hold')
+    .select('id, company_id, do_number, debtor_name, status, on_hold')
     .in('id', stops.map((r) => r.do_id as string));
   if (doErr) return { status: 'read_failed' };
   const byId = new Map<string, {
     id: string; company_id: number | string | null; do_number: string | null;
-    status: string | null; on_hold: boolean | null;
+    debtor_name: string | null; status: string | null; on_hold: boolean | null;
   }>();
   for (const r of (doData ?? []) as any[]) byId.set(String(r.id), r);
 
@@ -461,17 +463,11 @@ export async function loadTripScanMembers(
   const seen = new Set<string>();
   for (const s of stops) {
     const doId = s.do_id as string;
-    /* A delivery order can legitimately appear at more than one stop; it is ONE
-       document and must be advanced once, or the second pass reports a spurious
-       "already done" and the count on the sheet stops matching the load. */
     if (seen.has(doId)) continue;
     seen.add(doId);
     const row = byId.get(doId);
     if (!row) {
-      /* The stop names a delivery order the read did not return. Not silently
-         dropped: it is a member the driver can see on his sheet, so it is
-         reported as one he cannot move. */
-      members.push({ stopNo: Number(s.stop_no ?? 0), doId, doNumber: null, status: null, onHold: null, foreign: true });
+      members.push({ stopNo: Number(s.stop_no ?? 0), doId, doNumber: null, customerName: null, status: null, onHold: null, foreign: true });
       continue;
     }
     const foreign = Number(row.company_id) !== trip.companyId;
@@ -479,6 +475,7 @@ export async function loadTripScanMembers(
       stopNo: Number(s.stop_no ?? 0),
       doId,
       doNumber: foreign ? null : (row.do_number ?? null),
+      customerName: foreign ? null : (row.debtor_name ?? null),
       status: foreign ? null : (row.status ?? null),
       onHold: foreign ? null : (row.on_hold ?? null),
       foreign,

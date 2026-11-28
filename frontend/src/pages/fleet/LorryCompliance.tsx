@@ -1,9 +1,6 @@
-// The Compliance tab of a lorry: one card per document, answering the question
-// the page is opened for, how long until this one must be renewed. Older renewals
-// stay behind a toggle; they are the audit trail, not what is being looked at.
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
-import { fmtDate } from "../../vendor/shared/format";
+import { fmtDate } from "../../../../shared/src/vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { BTN_GHOST, CARD, orNotSet } from "./FleetUi";
 import { AddRenewalForm, AttachmentStrip, DOC_LABEL, DOC_TYPES, Pill, fmtDays, money, type DocType, type DocView, type Tone, type VehicleDetailPayload } from "../FleetHealth";

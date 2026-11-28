@@ -38,7 +38,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { fmtDate, fmtSen, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtSen, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useAuth } from '../../auth/AuthContext';
@@ -56,7 +56,7 @@ import {
   type ReportTile,
 } from './reports/reportParts';
 import { StatementSkeleton, StatementTable } from './reports/StatementTable';
-import { LevelTool, MONTH_OPTIONS, sheetTable, useColumnReads, useOpenLedger } from './reports/statementTools';
+import { CodesSwitch, LevelTool, MONTH_OPTIONS, sheetTable, useColumnReads, useOpenLedger, useShowCodes } from './reports/statementTools';
 import {
   COMPARE_WITH, balanceColumns, columnsSpan, monthName, pnlColumns, statementLines,
   type CompareWith, type StatementColumn, type StatementLine, type StatementView,
@@ -71,9 +71,6 @@ import s from './reports/Statement.module.css';
 
 type Line = { code: string; name: string; amountSen: number };
 
-/* ── The P&L chart (batch 6 §4.1): three bars a month — revenue, cost of
-   sales, operating expenses — and net profit under each, from the
-   Dashboard's one read of the P&L builder's figures. ── */
 const PNL_SERIES: ChartBarSeries[] = [
   { key: 'revenue', label: 'Revenue', color: REPORT_CHART_COLORS.petrol },
   { key: 'cost', label: 'Cost of sales', color: REPORT_CHART_COLORS.gold },
@@ -110,7 +107,6 @@ function PnlChart({ win }: { win: ChartWindow }) {
   );
 }
 
-/** The views a statement offers, in the design's words. */
 const PNL_VIEWS: ReadonlyArray<{ value: StatementView; label: string }> = [
   { value: 'single', label: 'Single' },
   { value: 'compare', label: 'Compare' },
@@ -121,20 +117,15 @@ const BS_VIEWS = PNL_VIEWS.filter((v) => v.value !== 'compare');
 const layoutWord = (stored: boolean | undefined): string =>
   stored === undefined ? '' : stored ? ' · on the saved layout' : " · on the chart's own tree";
 
-/* ── P&L ──────────────────────────────────────────────────────────────────── */
 type PnlLayout = {
   stored: boolean;
-  /** Sales of the period — what every % is of; null when nothing sold. */
   baseSen: number | null;
   tradingIncome: LaidNode[]; costOfSales: LaidNode[]; otherIncome: LaidNode[]; expenses: LaidNode[]; taxation: LaidNode[];
 };
 type PnlResponse = {
   tradingIncome: Line[]; costOfSales: Line[]; otherIncome: Line[]; expenses: Line[];
-  /** TAXATION section rows — a profit-before-tax line appears when any posted. */
   taxation?: Line[];
-  /** The closing stock is the stock engine's as of the last day (2026-09-21); provisional until the month-end close books it. */
   stock?: { closingProvisional: boolean; asOf: string };
-  /** The same figures on the report's layout. */
   layout: PnlLayout;
   totals: {
     tradingIncomeSen: number; costOfSalesSen: number; grossProfitSen: number; otherIncomeSen: number; expensesSen: number;
@@ -150,6 +141,7 @@ export const PnLTab = () => {
   const [months, setMonths] = useState<number>(6);
   const [level, setLevel] = useState<Level>('all');
   const [showPct, setShowPct] = useState(true);
+  const [showCodes, setShowCodes] = useShowCodes();
   const [editing, setEditing] = useState(false);
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
@@ -184,10 +176,9 @@ export const PnLTab = () => {
     title: 'P&L',
     subtitle: `${periodText} · ${showPct ? '% of sales beside' : 'amounts'}${layoutWord(stored)}${levelText}`,
     meta: [{ label: 'Period', value: view === 'month' ? `${monthName(span.from)} – ${monthName(span.to)}` : `${fmtDate(r.from)} – ${fmtDate(r.to)}` }],
-    tables: [sheetTable(view, columns, shown, showPct, '% of sales')],
+    tables: [sheetTable(view, columns, shown, showPct, showCodes, '% of sales')],
   } : null);
 
-  /* The closing stock note sits under Cost of sales while the stock is provisional. */
   const noteAfter = (l: StatementLine) => (l.id === 'tot:costOfSales' && head?.stock?.closingProvisional ? (
     <tr className={s.noteRow}><td colSpan={columns.length + 1}>Closing stock is what the shelves hold as of {fmtDate(head.stock.asOf)} — provisional until the month-end close books it.</td></tr>
   ) : null);
@@ -208,6 +199,7 @@ export const PnLTab = () => {
         )}
         <LevelTool depth={depth} level={level} onLevel={setLevel} />
         <ReportSwitch on={showPct} onChange={setShowPct}>% beside</ReportSwitch>
+        <CodesSwitch on={showCodes} onChange={setShowCodes} />
       </ReportToolbar>
       {editing && <ReportLayoutEditor report="pnl" onClose={() => setEditing(false)} />}
       {chartWin && <PnlChart win={chartWin} />}
@@ -228,6 +220,7 @@ export const PnLTab = () => {
           level={level}
           tree={tree}
           showPct={showPct}
+          showCodes={showCodes}
           finalId="net:net"
           onCategoryFigure={openLedger}
           noteAfter={noteAfter}
@@ -240,16 +233,13 @@ export const PnLTab = () => {
   );
 };
 
-/* ── Balance sheet ────────────────────────────────────────────────────────── */
 type BsLayout = {
   stored: boolean;
-  /** Total assets — what every % is of, both sides; null when there are none. */
   baseSen: number | null;
   assets: LaidNode[]; liabilities: LaidNode[]; equity: LaidNode[];
 };
 type BsResponse = {
   assets: Line[]; liabilities: Line[]; equity: Line[];
-  /** The same figures on the report's layout. */
   layout: BsLayout;
   totals: { assetsSen: number; liabilitiesSen: number; equitySen: number; earningsSen: number; checkSen: number };
 };
@@ -281,7 +271,6 @@ export const BalanceSheetTab = () => {
   const [level, setLevel] = useState<Level>('all');
   const [showPct, setShowPct] = useState(true);
   const [editing, setEditing] = useState(false);
-  /* The Forecast Balance Sheet beside the month-ends (step 6) — By month only. */
   const [forecast, setForecast] = useState(false);
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
@@ -313,7 +302,7 @@ export const BalanceSheetTab = () => {
     title: 'Balance Sheet',
     subtitle: `${periodText} · ${showPct ? '% of total assets beside' : 'amounts'}${layoutWord(stored)}${levelText}`,
     meta: [{ label: 'As at', value: fmtDate(asAt) }],
-    tables: [sheetTable(view, shownCols, shown, showPct, '% of total assets')],
+    tables: [sheetTable(view, shownCols, shown, showPct, true, '% of total assets')],
   } : null);
   const fileBase = view === 'month' ? `balance-sheet-monthly${forecastOn ? '-forecast' : ''}-${span.from.slice(0, 7)}-${span.to.slice(0, 7)}` : `balance-sheet-${asAt}`;
 
@@ -354,6 +343,7 @@ export const BalanceSheetTab = () => {
           level={level}
           tree={tree}
           showPct={showPct}
+          showCodes
           finalId="net:check"
           strongIds={STRONG_BS}
           onCategoryFigure={openLedger}

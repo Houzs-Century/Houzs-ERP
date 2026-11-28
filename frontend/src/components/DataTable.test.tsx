@@ -91,9 +91,6 @@ describe("DataTable onFilteredRowsChange", () => {
     expect(seen.at(-1)).toHaveLength(rows.length);
   });
 
-  /* docs/bugs 2026-09-15: a remembered funnel made a fresh filtered array on
-     every render, and a page that stores the report and rebuilds its columns on
-     each render (every list page) looped forever — the vitest worker crashed. */
   it("settles when a funnel is saved and the parent stores the report and rebuilds its columns", () => {
     setViewport(1280);
     primeInVisitColFilters("orders-loop", { status: ["Open"] });
@@ -113,7 +110,6 @@ describe("DataTable onFilteredRowsChange", () => {
 
   it("reports only the rows a persisted column filter leaves visible", () => {
     setViewport(1280);
-    // A funnel restored on remount, as in-visit memory rehydrates it.
     primeInVisitColFilters("orders-filtered", { status: ["Open"] });
     const seen: Row[][] = [];
     render(
@@ -128,8 +124,6 @@ describe("DataTable onFilteredRowsChange", () => {
     const last = seen.at(-1)!;
     expect(last).toHaveLength(rows.filter((r) => r.status === "Open").length);
     expect(last.every((r) => r.status === "Open")).toBe(true);
-    // The caller compares against rows.length to decide "is a funnel active" —
-    // so a filtered set MUST NOT be the full length.
     expect(last.length).not.toBe(rows.length);
   });
 
@@ -379,14 +373,7 @@ describe("DataTable column width persistence", () => {
     );
 
     const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index) ?? "");
-    // The guarantee: nothing is keyed by the DOCUMENT (that would grow
-    // localStorage without bound, one entry per SO ever opened) — every
-    // per-table preference is keyed by the layout FAMILY instead.
     expect(keys.some((key) => key.includes("SO-2026-000123"))).toBe(false);
-    // `dt:cols-drawer-az` is the one deliberate exception: how the Columns
-    // drawer LISTS columns (table order vs A-Z) is a habit that belongs to the
-    // operator, not to a table, so it is a single global key. Anything else
-    // appearing outside the family is a regression.
     const perTable = keys.filter((key) => key !== "dt:cols-drawer-az");
     // hidden, shown, order, sort, mview, widths, pinned, pinnedr, groups, groupby, wrap, fit.
     // `groupby` is the group-banner column list (DataGrid parity, 2026-09-25).
@@ -452,8 +439,6 @@ describe("DataTable column width persistence", () => {
       />,
     );
 
-    // Ignore the preference hooks' initial mount writes; this assertion is
-    // specifically about writes caused by the resize gesture.
     setItem.mockClear();
     const handle = screen.getAllByRole("separator", { name: "Resize column" })[0];
 
@@ -695,7 +680,6 @@ describe("DataTable column reorder", () => {
   const headerLabels = (container: HTMLElement) =>
     Array.from(container.querySelectorAll("thead th")).map((th) => th.textContent?.trim());
 
-  /** jsdom has no drag machinery — hand the events the dataTransfer they need. */
   function dragOnto(source: Element, target: Element) {
     const dataTransfer = { effectAllowed: "", dropEffect: "", setData: vi.fn(), getData: vi.fn() };
     fireEvent.dragStart(source, { dataTransfer });
@@ -720,7 +704,6 @@ describe("DataTable column reorder", () => {
       Array.from(container.querySelectorAll("thead th")).find(
         (el) => el.textContent?.trim() === label,
       )!;
-    // Carry the last column onto the first — it should land in first place.
     dragOnto(th("Bravo"), th("Alpha"));
 
     expect(headerLabels(container)).toEqual(["Bravo", "Alpha", "Delta", "Charlie"]);
@@ -743,12 +726,8 @@ describe("DataTable column reorder", () => {
       )!;
 
     dragOnto(th("Bravo"), th("Alpha"));
-    // Chromium delivers this click after the drag; it must be swallowed.
     fireEvent.click(th("Bravo"));
 
-    // useLocalStorage persists the initial null state as the string "null", so
-    // assert the PARSED value: no sort is active. (A swallowed click leaves it
-    // null; a leaked one would have written {key:"b",dir:"asc"}.)
     expect(JSON.parse(localStorage.getItem("dt:sort:reorder-no-sort") ?? "null")).toBeNull();
   });
 
@@ -764,8 +743,6 @@ describe("DataTable column reorder", () => {
     );
     fireEvent.click(screen.getByTitle(/^Columns —/));
 
-    // Scope to the drawer's draggable rows — the label text also appears in
-    // the table header, so an unscoped getByText would be ambiguous.
     const drawerRow = (label: string) =>
       Array.from(document.querySelectorAll("div[draggable='true']")).find(
         (el) => el.textContent?.includes(label),
@@ -788,11 +765,6 @@ describe("DataTable column reorder", () => {
     fireEvent.click(screen.getByTitle(/^Columns —/));
     expect(document.querySelectorAll("[title='Drag to reorder']").length).toBe(4);
 
-    /* The redesign replaced the drawer's A-Z mode with search (handoff
-       2026-08-01) — but the hazard it existed for is the same one: dropping a
-       row into a FILTERED list would land it at a position the operator never
-       pointed at, because the rows either side are hidden. So a filtered list
-       refuses the drag outright rather than offering a handle that lies. */
     fireEvent.change(screen.getByLabelText("Search columns"), { target: { value: "a" } });
 
     expect(document.querySelectorAll("div[draggable='true']").length).toBe(0);
@@ -831,15 +803,11 @@ describe("DataTable layout presets", () => {
       />,
     );
 
-    // Charlie is defaultHidden yet named by the preset → shown; Alpha and Delta
-    // are default-visible yet unnamed → hidden. The preset order wins too.
     expect(headerLabels(container)).toEqual(["Bravo", "Charlie"]);
   });
 
   it("leaves an already-customised table alone", () => {
     setViewport(1280);
-    // A user who has only ever ticked a column keeps BOTH their set and the
-    // plain column order — a new default must never rearrange it under them.
     localStorage.setItem("dt:hidden:preset-stored", JSON.stringify(["d"]));
 
     const { container } = render(
@@ -872,8 +840,6 @@ describe("DataTable layout presets", () => {
     fireEvent.click(screen.getByRole("option", { name: /Sales Layout/ }));
 
     expect(headerLabels(container)).toEqual(["Alpha", "Bravo", "Delta"]);
-    // Written as the same prefs a hand-arranged layout writes, so the very next
-    // toggle edits it instead of fighting a separate "preset mode".
     expect(JSON.parse(localStorage.getItem("dt:order:preset-apply")!)).toEqual(["a", "b", "d", "c"]);
     expect(JSON.parse(localStorage.getItem("dt:hidden:preset-apply")!)).toEqual(["c"]);
   });
@@ -894,8 +860,6 @@ describe("DataTable layout presets", () => {
     fireEvent.click(screen.getByRole("option", { name: /Sales Layout/ }));
     cleanup();
 
-    // Remount: the pick must survive rather than reading as "untouched" and
-    // snapping back to the default preset.
     const { container } = render(
       <DataTable
         tableId="preset-equal"
@@ -921,21 +885,16 @@ describe("DataTable layout presets", () => {
     );
     fireEvent.click(screen.getByTitle(/^Columns —/));
 
-    // The picker line names the layout the table currently matches.
     const picker = screen.getByRole("button", { name: /^Layout/ });
     expect(picker.textContent).toContain("Ops Layout");
     expect(screen.getByText(/of .* shown/).textContent).not.toContain("edited");
 
-    // …and the popover marks that row as the selected one.
     fireEvent.click(picker);
     expect(
       screen.getByRole("option", { name: /Ops Layout/ }).getAttribute("aria-selected"),
     ).toBe("true");
     fireEvent.keyDown(window, { key: "Escape" });
 
-    /* Hide a column the layout shows: the arrangement is now the operator's,
-       not the layout's. The redesign says so in the footer ("· edited") and by
-       dropping the layout name — the old panel's "Custom" chip. */
     fireEvent.click(screen.getAllByRole("button", { name: "Hide column" })[0]!);
 
     expect(screen.getByText(/of .* shown/).textContent).toContain("edited");
@@ -963,21 +922,13 @@ describe("DataTable layout presets", () => {
     expect(headerLabels(container)).toEqual(["Bravo", "Charlie"]);
 
     fireEvent.click(screen.getByTitle(/^Columns —/));
-    // Alpha and Delta are both hidden; the drawer lists them in table order.
     fireEvent.click(screen.getAllByRole("button", { name: "Show column" })[0]!);
 
-    // Alpha lands in the preset's own order (which the toggle also banks, or the
-    // columns would snap back to definition order as the baseline lifts).
     expect(headerLabels(container)).toEqual(["Bravo", "Charlie", "Alpha"]);
     expect(JSON.parse(localStorage.getItem("dt:order:preset-reveal")!)).toEqual(["b", "c", "a", "d"]);
     expect(JSON.parse(localStorage.getItem("dt:hidden:preset-reveal")!)).toEqual(["d"]);
   });
 
-  /* The other half of banking the baseline: hiding ONE column under a default
-     used to store only that column, and the first stored pref ends the baseline
-     for good — so the next mount read "hid Bravo, arranged nothing else" and
-     brought Alpha and Delta back. Hiding a column is not a request to unhide
-     two, nor to re-sort the table into definition order. */
   it("hiding one column under a default doesn't unhide the rest on remount", () => {
     setViewport(1280);
     render(
@@ -1038,7 +989,6 @@ describe("DataTable header filter + sort menu", () => {
     render(
       <DataTable tableId="filter-ubiquity" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
     );
-    // Neither column sets `filterable`, yet both are funnellable.
     expect(screen.getByTitle("Filter & sort Order")).toBeTruthy();
     expect(screen.getByTitle("Filter & sort Status")).toBeTruthy();
   });
@@ -1052,7 +1002,6 @@ describe("DataTable header filter + sort menu", () => {
 
     openFunnel("Status");
     fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
-    // rows: id 1..6 → status Closed,Open,Closed,Open,Closed,Open → 3 Open.
     expect(rowCount(container)).toBe(3);
 
     fireEvent.click(screen.getByText("Clear"));
@@ -1067,12 +1016,10 @@ describe("DataTable header filter + sort menu", () => {
 
     openFunnel("Status");
     fireEvent.click(screen.getByText("Select all"));
-    // Both values allowed = every row visible.
     expect(rowCount(container)).toBe(6);
     const boxes = () => screen.getAllByRole("checkbox") as HTMLInputElement[];
     expect(boxes().every((b) => b.checked)).toBe(true);
 
-    // Invert with all selected → none selected → no filter → all rows show.
     fireEvent.click(screen.getByText("Invert"));
     expect(boxes().every((b) => !b.checked)).toBe(true);
     expect(rowCount(container)).toBe(6);
@@ -1084,15 +1031,12 @@ describe("DataTable header filter + sort menu", () => {
       <DataTable tableId="filter-search" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
     );
     openFunnel("Status");
-    // Tick Closed, then search "Open" and Select-all the search — Closed must
-    // survive because it is outside the current search.
     fireEvent.click(screen.getByRole("checkbox", { name: /Closed/ }));
     fireEvent.change(screen.getByPlaceholderText("Search values…"), { target: { value: "Open" } });
     expect(screen.queryByRole("checkbox", { name: /Closed/ })).toBeNull();
     expect(screen.getByRole("checkbox", { name: /Open/ })).toBeTruthy();
 
     fireEvent.click(screen.getByText("Select all"));
-    // Clear the search box; both Closed and Open should now be ticked.
     fireEvent.change(screen.getByPlaceholderText("Search values…"), { target: { value: "" } });
     const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
     expect(boxes.every((b) => b.checked)).toBe(true);
@@ -1101,8 +1045,6 @@ describe("DataTable header filter + sort menu", () => {
   it("client-sorts a disableSort column on a server-sorted table without touching the server query", () => {
     setViewport(1280);
     const onSortChange = vi.fn();
-    // name = backend-sortable; status = NOT in the backend whitelist
-    // (disableSort) → must still sort, client-side over the loaded page.
     const serverCols: Column<Row>[] = [
       { key: "name", label: "Order", render: (r) => r.name, getValue: (r) => r.name },
       { key: "status", label: "Status", render: (r) => r.status, getValue: (r) => r.status, disableSort: true },
@@ -1117,7 +1059,6 @@ describe("DataTable header filter + sort menu", () => {
         onSortChange={onSortChange}
       />,
     );
-    // Mount handshake: exactly one call, with no restored sort → null.
     expect(onSortChange).toHaveBeenCalledTimes(1);
     expect(onSortChange).toHaveBeenLastCalledWith(null);
 
@@ -1128,17 +1069,12 @@ describe("DataTable header filter + sort menu", () => {
       Array.from(container.querySelectorAll("tbody tr[data-vrow]")).map(
         (tr) => tr.querySelectorAll("td")[1]?.textContent?.trim(),
       );
-    // Loaded order alternates Closed/Open. Clicking the non-whitelisted
-    // header sorts the LOADED rows in memory…
     fireEvent.click(statusTh);
     expect(statusColumn()).toEqual(["Closed", "Closed", "Closed", "Open", "Open", "Open"]);
     fireEvent.click(statusTh);
     expect(statusColumn()).toEqual(["Open", "Open", "Open", "Closed", "Closed", "Closed"]);
-    // …and never reports the un-whitelisted key upward (the mapped value is
-    // still null, and null was already reported on mount — deduped).
     expect(onSortChange).toHaveBeenCalledTimes(1);
 
-    // A whitelisted column still goes to the server and is NOT re-sorted here.
     const nameTh = Array.from(container.querySelectorAll("thead th")).find(
       (el) => el.textContent?.trim().startsWith("Order"),
     )!;
@@ -1155,15 +1091,11 @@ describe("DataTable header filter + sort menu", () => {
       <DataTable tableId="clip-cells" rows={rows.slice(0, 2)} columns={clipCols} getRowKey={(r) => r.id} />,
     );
     const td = container.querySelector<HTMLElement>("tbody tr[data-vrow] td")!;
-    // The clip rule: never paint over a neighbour column.
     expect(td.className).toContain("overflow-hidden");
     expect(td.className).toContain("text-ellipsis");
     expect(td.className).toContain("whitespace-nowrap");
-    // A declared px width is a cap, not a suggestion.
     expect(td.style.maxWidth).toBe("80px");
-    // The cropped value stays readable via the native tooltip.
     expect(td.getAttribute("title")).toBe("Order 1");
-    // Headers clip too.
     const th = container.querySelector<HTMLElement>("thead th")!;
     expect(th.className).toContain("overflow-hidden");
     expect(th.style.maxWidth).toBe("80px");
@@ -1183,8 +1115,6 @@ describe("DataTable header filter + sort menu", () => {
       key: "name",
       dir: "desc",
     });
-    // "Order 6" sorts last ascending, first descending (string compare puts
-    // "Order 6" after "Order 1".."Order 5" but the reverse leads with 6).
     expect(firstName()).toBe("Order 6");
   });
 
@@ -1195,13 +1125,8 @@ describe("DataTable header filter + sort menu", () => {
     );
     openFunnel("Status");
     const menu = screen.getByPlaceholderText("Search values…").closest("div.fixed")!;
-    // Scroll originating INSIDE the popover (the value checklist is its own
-    // scroller) must not dismiss it — this was the "can't scroll the list"
-    // bug: the capture-phase window listener heard the inner scroll too.
     fireEvent.scroll(menu.querySelector(".overflow-y-auto")!);
     expect(screen.queryByPlaceholderText("Search values…")).toBeTruthy();
-    // A scroll anywhere else (page/table) no longer closes it either: the
-    // popover moves with its funnel (DataTableFilterStaysOpen.test.tsx).
     fireEvent.scroll(document);
     expect(screen.queryByPlaceholderText("Search values…")).toBeTruthy();
   });
@@ -1217,18 +1142,14 @@ describe("DataTable header filter + sort menu", () => {
     openFunnel("Status");
     fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
     expect(rowCount(container)).toBe(3);
-    // The funnel is NOT written to localStorage — it lives in in-visit memory.
     expect(localStorage.getItem("dt:filters:filter-visit")).toBeNull();
 
-    // A client-side remount (the module stays loaded) keeps the funnel…
     unmount();
     const second = render(
       <DataTable tableId="filter-visit" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
     );
     expect(rowCount(second.container)).toBe(3);
-    // …and the funnel stays highlighted so the narrowed view is explained.
     expect(screen.getByTitle("Filter & sort Status").className).toContain("text-accent");
-    // Clear drops the remembered entry so a later remount reads clean.
     openFunnel("Status");
     fireEvent.click(screen.getByText("Clear"));
     expect(rowCount(second.container)).toBe(6);
@@ -1239,13 +1160,10 @@ describe("DataTable header filter + sort menu", () => {
     expect(rowCount(third.container)).toBe(6);
   });
 
-  /* Fresh page load = empty module store = clean list, even if a pre-2026-09-16
-     dt:filters:* key is still sitting in localStorage; that stale key is erased
-     on mount so it can never re-narrow the list again. */
   it("opens clean on a fresh load and erases a stale localStorage funnel", () => {
     setViewport(1280);
     localStorage.setItem("dt:filters:filter-fresh", JSON.stringify({ status: ["Open"] }));
-    resetInVisitColFilters(); // simulate a fresh bundle evaluation
+    resetInVisitColFilters();
     const { container } = render(
       <DataTable tableId="filter-fresh" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
     );
@@ -1263,7 +1181,6 @@ describe("DataTable header filter + sort menu", () => {
     const first = render(
       <DataTable tableId="filter-session" persistFilters={false} rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
     );
-    // The old saved filter does not apply, and is gone from storage.
     expect(rowCount(first.container)).toBe(6);
     expect(localStorage.getItem("dt:filters:filter-session")).toBeNull();
 
@@ -1289,18 +1206,16 @@ describe("DataTable header filter + sort menu", () => {
     const { container } = render(
       <DataTable tableId="filter-reset" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
     );
-    // Nothing filtered → no button, so a fresh list carries no extra chrome.
     expect(screen.queryByTitle("Clear all filters and search")).toBeNull();
 
     openFunnel("Status");
     fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
-    fireEvent.keyDown(window, { key: "Escape" }); // dismiss the funnel popover
+    fireEvent.keyDown(window, { key: "Escape" });
     expect(rowCount(container)).toBe(3);
 
     const reset = screen.getByTitle("Clear all filters and search");
     fireEvent.click(reset);
     expect(rowCount(container)).toBe(6);
-    // The funnel lived in in-visit memory, never localStorage.
     expect(localStorage.getItem("dt:filters:filter-reset")).toBeNull();
     expect(screen.queryByTitle("Clear all filters and search")).toBeNull();
   });
@@ -1339,8 +1254,6 @@ describe("DataTable header filter + sort menu", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /Open/ }));
     fireEvent.keyDown(window, { key: "Escape" });
 
-    // The page says "no filters"; the table knows better and still offers the
-    // button — under the page's own label, clearing both sides at once.
     fireEvent.click(screen.getByText("Reset layout"));
     expect(rowCount(container)).toBe(6);
     expect(onReset).toHaveBeenCalledTimes(1);
@@ -1348,8 +1261,6 @@ describe("DataTable header filter + sort menu", () => {
 
   it("ignores any leftover localStorage funnel instead of applying or crashing on it", () => {
     setViewport(1280);
-    // A pre-2026-09-16 dt:filters:* blob (even a corrupt one) is never read as a
-    // funnel now — the list opens clean and the stale key is erased on mount.
     localStorage.setItem(
       "dt:filters:filter-corrupt",
       JSON.stringify({ status: ["Open"], name: [1, 2], "": ["x"] }),
@@ -1376,7 +1287,7 @@ describe("DataTable header filter + sort menu", () => {
     expect(JSON.parse(localStorage.getItem("dt:funnels:filter-kept") ?? "null")).toEqual({ status: ["Open"] });
     first.unmount();
 
-    resetInVisitColFilters(); // simulate a fresh page load
+    resetInVisitColFilters();
     const second = render(
       <DataTable tableId="filter-kept" persistFilters="always" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} />,
     );
@@ -1408,7 +1319,7 @@ describe("DataTable header filter + sort menu", () => {
     await waitFor(() => expect(rowCount(second.container)).toBe(1));
     second.unmount();
 
-    resetInVisitColFilters(); // simulate a fresh page load
+    resetInVisitColFilters();
     const third = render(
       <DataTable tableId="search-kept" rows={rows.slice(0, 6)} columns={columns} getRowKey={(r) => r.id} clientSearch={{ placeholder: "Find" }} />,
     );
@@ -1432,13 +1343,6 @@ describe("DataTable header filter + sort menu", () => {
   });
 });
 
-/* An expandable table used to be disqualified from row windowing outright,
-   which excluded the biggest list in the app (/scm/inventory: 344 rows,
-   11,963 DOM nodes). It may window WHILE COLLAPSED — the reason for the
-   exclusion, an expanded sub-row of unpredictable height breaking the uniform
-   row-height the spacers assume, only exists once something is open. These pin
-   both halves, because "windows while collapsed" is worthless if the fallback
-   on expand does not actually happen. */
 describe("DataTable windowing with expandable rows", () => {
   const expandable = {
     render: (row: Row) => <div data-testid={`detail-${row.id}`}>detail for {row.name}</div>,
@@ -1480,8 +1384,6 @@ describe("DataTable windowing with expandable rows", () => {
 
     fireEvent.click(screen.getAllByLabelText("Expand row")[0]);
 
-    // Every row is realized while one is open — the spacers are gone, so the
-    // expanded sub-row cannot be measured against a stale uniform height.
     expect(container.querySelectorAll("tr[data-vrow]").length).toBe(rows.length);
     expect(screen.getByTestId("detail-1")).toBeTruthy();
 
@@ -1533,7 +1435,6 @@ describe("DataTable getRowClassName with expandable rows", () => {
 
     fireEvent.click(screen.getAllByLabelText("Expand row")[0]);
 
-    // The data row AND its expansion row carry the class; other rows never do.
     expect(container.querySelectorAll("tr.dt-row-cancelled").length).toBe(2);
     expect(screen.getByTestId("detail-1").closest("tr")?.className).toContain(
       "dt-row-cancelled",
@@ -1588,8 +1489,6 @@ describe("Sort is persisted, and Reset must clear it", () => {
     fireEvent.click(screen.getByTitle(/^Columns —/));
     fireEvent.click(screen.getByRole("button", { name: "Reset to default" }));
 
-    // The parent must be told, or the next query keeps the old ORDER BY even
-    // though the table no longer shows a sorted column.
     expect(onSortChange).toHaveBeenCalledWith(null);
     const stored = localStorage.getItem("dt:sort:sort-persist");
     expect(stored === null || stored === "null").toBe(true);
@@ -1764,15 +1663,12 @@ describe("DataTable initialRowLimit — first page + Load more (owner 2026-09-26
         onFilteredRowsChange={(r) => seen.push(r)}
       />,
     );
-    // First page: 1-3 shown, 4 hidden behind the limit.
     expect(screen.getByText("Order 1")).toBeTruthy();
     expect(screen.queryByText("Order 4")).toBeNull();
-    // The button counts the rest of the whole set, and the parent still saw all 10.
     expect(seen.at(-1)?.length).toBe(10);
     const more = screen.getByRole("button", { name: /7 more rows/ });
 
     fireEvent.click(more);
-    // Second page: up to 6 shown now, 7 still hidden.
     expect(screen.getByText("Order 6")).toBeTruthy();
     expect(screen.queryByText("Order 7")).toBeNull();
     expect(screen.getByRole("button", { name: /4 more rows/ })).toBeTruthy();
@@ -1797,7 +1693,6 @@ describe("DataTable onRowReorder — drag to reorder (owner 2026-09-26)", () => 
     );
     const rows = container.querySelectorAll<HTMLElement>("tr[data-rowkey]");
     const dataTransfer = { effectAllowed: "", setData: () => {}, getData: () => "" };
-    // Drag row 1 and drop it on row 3 → 1 moves to just before 3.
     fireEvent.dragStart(rows[0], { dataTransfer });
     fireEvent.dragOver(rows[2], { dataTransfer, clientY: 100 });
     fireEvent.drop(rows[2], { dataTransfer });
@@ -1830,17 +1725,11 @@ describe("DataTable row-cell memoisation", () => {
   it("skips re-rendering row cells when the table re-renders with unchanged inputs", () => {
     setViewport(1280);
     const renderSpy = vi.fn((row: Row) => row.name);
-    // Stable identities (defined once), like a real board's memoised columns and
-    // react-query rows — so a re-render hands the cells the very same props.
     const memoCols: Column<Row>[] = [
       { key: "name", label: "Order", render: renderSpy, getValue: (row) => row.name },
       { key: "status", label: "Status", render: (row) => row.status, getValue: (row) => row.status },
     ];
     const smallRows = rows.slice(0, 5);
-    // Stable getRowKey: an inline one would change identity each wrapper render
-    // and ripple through DataTable's column memos (udfColumns depends on it), the
-    // way any unstable prop would. A scroll never re-renders the parent, so its
-    // props stay put; this stable key models that path.
     const getRowKey = (row: Row) => row.id;
     let bump: () => void = () => {};
     function Wrapper() {
@@ -1851,10 +1740,7 @@ describe("DataTable row-cell memoisation", () => {
       );
     }
     render(<Wrapper />);
-    // Cells rendered on mount; start from a clean slate.
     renderSpy.mockClear();
-    // Force a re-render whose DataTable props are all unchanged references — the
-    // memo must skip every row's cells.
     act(() => { bump(); });
     expect(renderSpy).not.toHaveBeenCalled();
   });

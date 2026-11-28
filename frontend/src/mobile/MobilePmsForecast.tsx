@@ -11,8 +11,6 @@ import {
   type DetailForecast, type ForecastLine, type LayeredTotal,
 } from "../pages/projects/forecastLayers";
 
-/* The totals sit where the desktop table has them: COGS Total and Gross Profit
-   before Rental, Total Cost and Net Profit at the end. */
 const MID_TOTALS: Array<[keyof DetailForecast["totals"], string]> = [["cogs_total", "COGS Total"], ["gross_profit", "Gross Profit"]];
 const END_TOTALS: Array<[keyof DetailForecast["totals"], string]> = [["total_cost", "Total Cost"], ["net_profit", "Net Profit"]];
 

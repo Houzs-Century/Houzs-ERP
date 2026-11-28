@@ -36,18 +36,12 @@ import { DateField } from "./DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/* The exact subset of a board row this drawer reads. Structural, so BOTH
-   callers fit without adapters: the board passes its full PlanningOrder, and
-   the /scm/dp-orders list synthesizes one from a raw dp_orders row. */
 export type ScheduleDpOrderTarget = Pick<
   PlanningOrder,
   'so_doc_no' | 'dp_job_type' | 'debtor_name' | 'address'
   | 'effective_delivery_date' | 'customer_delivery_date'
 >;
 
-/* The DP order's id rides on the synthetic `DP:<id>` row key (the board stamps it
-   as so_doc_no so the DataGrid has a stable rowKey) — same extraction the board's
-   cancel action uses. */
 const dpIdOf = (o: ScheduleDpOrderTarget): string => String(o.so_doc_no ?? '').replace(/^DP:/, '');
 
 export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: ScheduleDpOrderTarget; onClose: () => void }) => {
@@ -61,15 +55,11 @@ export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: ScheduleDpOrd
   // Optional driver for the run (owner 2026-10-30) — set it here and Driver +
   // Lorry fill in on the board; a run can also be crewed on the board later.
   const [driverId, setDriverId] = useState('');
-  // Prefill the date with the job's requested/effective date when it has one.
   const [tripDate, setTripDate] = useState(
     (dpRow.effective_delivery_date ?? dpRow.customer_delivery_date ?? '').slice(0, 10),
   );
   const [tripId, setTripId] = useState('');
 
-  /* Trips this job can be appended to: PLANNED trips for the CHOSEN lorry on the
-     CHOSEN date. Attaching is optional — with none picked the endpoint still
-     mints the number, just without a stop. */
   const { data: tripsResp } = useTrips(tripDate ? { from: tripDate, to: tripDate, status: 'PLANNED' } : {});
   const tripOptions = (tripsResp?.trips ?? []).filter(
     (t) => t.trip_date === tripDate && (!lorryId || t.lorry_id === lorryId),
@@ -90,10 +80,6 @@ export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: ScheduleDpOrd
               body: `The job got its DP number but was NOT added to the trip: ${res.tripStop.reason ?? 'unknown error'}. Add it to the trip manually.`,
               tone: 'error',
             });
-          /* A lorry service whose availability window failed to write is the
-             more dangerous half-success of the two: the job looks scheduled
-             while the lorry it takes in still shows as bookable that day. Say
-             so, and name the manual fix. */
           } else if (res?.lorryBlocked?.failed) {
             notify({
               title: `Scheduled ${res.dp_no ?? ''}`.trim(),

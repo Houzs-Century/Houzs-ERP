@@ -7,19 +7,12 @@ import {
   type BannerScope,
 } from "../components/useAnnouncementBanner";
 
-// One scope's un-acked count. Shares the query KEY with the MobileAnnouncements
-// list / bell and the pop-up (announcementFeedKey), so React Query fetches each
-// scope ONCE however many surfaces are mounted; polls 30s (the notifications
-// cadence) so the badge stays live app-wide. Fail-soft: any hiccup leaves
-// `data` undefined and yields 0 — a failed poll must never invent a number.
 function useScopeUnread(scope: BannerScope): number {
   const { user } = useAuth();
   const { data } = useQuery({
     queryKey: announcementFeedKey(scope),
     queryFn: () =>
       api.get<BannerResponse>(`/api/announcements/banner?scope=${scope}`),
-    // 3 min, not 30s: mobile bell/unread is not real-time chat, and the backend
-    // caches the banner per-user for 5 min, so this lands mostly on hits.
     staleTime: 180_000,
     refetchInterval: 180_000,
     enabled: !!user?.id,

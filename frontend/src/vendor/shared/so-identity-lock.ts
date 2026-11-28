@@ -1,6 +1,3 @@
-/* The SO header's partial lock, extracted from mfg-sales-orders.ts so the rule
-   can be read and tested without a Hono context, a database, or a 12,000-line
-   scroll. The route imports these; nothing else about the lock moved. */
 
 /* Owner 2026-05-31 — Identity + value columns a downstream DO / SI snapshots.
    These are frozen on the SO header once a non-cancelled child exists; payment,
@@ -24,9 +21,6 @@ export const SO_IDENTITY_LOCK_COLS: ReadonlySet<string> = new Set<string>([
   'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
 ]);
 
-/** Loose equality mirroring the route's `norm()` — null / undefined / '' all
-    collapse, so a form re-sending a blank field as '' does not read as a
-    change from null. */
 const norm = (v: unknown): string => (v === null || v === undefined ? '' : String(v));
 
 /** The header PATCH's refusal when a caller without `scm.so.attribute_other`

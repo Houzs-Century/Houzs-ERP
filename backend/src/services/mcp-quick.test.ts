@@ -1,3 +1,5 @@
+import { HOWTO_TOOLS } from "./mcp-howto";
+import { SCREEN_TOOLS } from "./mcp-screen";
 import { describe, it, expect } from "vitest";
 import {
   docTitle,
@@ -19,6 +21,7 @@ import {
 } from "./mcp-quick";
 import { recallVerified, rememberVerified, VERIFIED_TTL_MS } from "./mcp-inner";
 import { MAX_RESULT_CHARS, MCP_INSTRUCTIONS, MCP_TOOLS } from "../routes/mcp";
+import { ROUND3_TOOLS } from "./mcp-round3";
 
 describe("AI Connector quick answers", () => {
   it("money and percent helpers", () => {
@@ -29,7 +32,7 @@ describe("AI Connector quick answers", () => {
   });
 
   it("windows end today and compare with the same days one period earlier", () => {
-    expect(myToday(new Date("2026-11-25T17:00:00Z"))).toBe("2026-11-26"); // Malaysia is UTC+8
+    expect(myToday(new Date("2026-11-25T17:00:00Z"))).toBe("2026-11-26");
     expect(shiftMonths("2026-03-31", 1)).toBe("2026-02-28");
     expect(shiftMonths("2026-01-10", 1)).toBe("2025-12-10");
     expect(shiftMonths("2026-11-25", 12)).toBe("2025-11-25");
@@ -39,7 +42,7 @@ describe("AI Connector quick answers", () => {
     expect(resolveWindow({ period: "2026-q4" }, today)).toEqual({ from: "2026-10-01", to: "2026-11-25", label: "2026-Q4", months: 3, prev: { from: "2026-07-01", to: "2026-08-25" } });
     expect(resolveWindow({ period: "2025" }, today)?.prev).toEqual({ from: "2024-01-01", to: "2024-12-31" });
     expect(resolveWindow({ from: "2026-11-03", to: "2026-11-09" }, today)?.prev).toEqual({ from: "2026-10-03", to: "2026-10-09" });
-    expect(resolveWindow({ period: "2027-01" }, today)).toBeNull(); // the future
+    expect(resolveWindow({ period: "2027-01" }, today)).toBeNull();
     expect(resolveWindow({ period: "2026-13" }, today)).toBeNull();
     expect(resolveWindow({ period: "junk" }, today)).toBeNull();
     expect(resolveWindow({ from: "2026-11-09", to: "2026-11-01" }, today)).toBeNull();
@@ -67,7 +70,7 @@ describe("AI Connector quick answers", () => {
     expect(s.topModels?.[0]).toEqual({ model: "Posture", category: "MATTRESS", units: 2, salesRm: 2000 });
     expect(s.trend?.map((t) => t.month)).toEqual(["2026-09", "2026-10", "2026-11"]);
     expect(s.goodsMarginPct).toBe(41.2);
-    expect(JSON.stringify(s)).not.toContain("cost"); // per-order cost never copied into the answer
+    expect(JSON.stringify(s)).not.toContain("cost");
   });
 
   it("sales summary leaves out what the reads did not give", () => {
@@ -115,7 +118,7 @@ describe("AI Connector quick answers", () => {
     expect(parseFetchId("../etc")).toBeNull();
     expect(parseFetchId("sales_order:a/b")).toBeNull();
     expect(FETCH_KINDS.sales_order.api("HC-SO-1")).toBe("/api/scm/mfg-sales-orders/HC-SO-1");
-    expect(fetchKind("receipt")).toBeNull(); // two receipt tables share one hit type: no single record to open
+    expect(fetchKind("receipt")).toBeNull();
     expect(fetchKind("__proto__")).toBeNull();
     expect(fetchKind("constructor")).toBeNull();
     expect(fetchKind("delivery_order")?.page("abc")).toBe("/scm/delivery-orders/abc");
@@ -124,7 +127,8 @@ describe("AI Connector quick answers", () => {
   });
 
   it("prompts expand to a question; an unknown prompt is refused", () => {
-    expect(PROMPTS.map((p) => p.name)).toEqual(["monthly_sales_review", "delivery_review", "find_document"]);
+    expect(PROMPTS.map((p) => p.name)).toEqual(["monthly_sales_review", "delivery_review", "find_document", "daily-brief"]);
+    expect(promptText("daily-brief", {})).toMatch(/daily_brief/);
     expect(promptText("monthly_sales_review", { period: "2026-10" })).toMatch(/2026-10.*sales_summary/);
     expect(promptText("find_document", { number: "HC-SO-013402" })).toMatch(/HC-SO-013402/);
     expect(promptText("nope", {})).toBeNull();
@@ -138,14 +142,14 @@ describe("AI Connector quick answers", () => {
   });
 
   it("the tool list: quick answers first, reads read-only, only the action tools write, the instructions point at them", () => {
-    expect(MCP_TOOLS.map((t) => t.name)).toEqual(["sales_summary", "delivery_summary", "search", "fetch", "whoami", "list_modules", "list_endpoints", "erp_get", "document_flow", "get_pdf", "propose_meeting", "propose_email", "confirm_action", "cancel_action"]);
-    const writers = ["propose_meeting", "propose_email", "confirm_action", "cancel_action"];
+    expect(MCP_TOOLS.map((t) => t.name)).toEqual(["sales_summary", "delivery_summary", "search", "fetch", "whoami", "list_modules", "list_endpoints", "erp_get", "document_flow", "get_pdf", "propose_meeting", "propose_email", "propose_mail_reply", "propose_note", "confirm_action", "cancel_action", ...ROUND3_TOOLS.map((t) => t.name), ...HOWTO_TOOLS.map((t) => t.name), ...SCREEN_TOOLS.map((t) => t.name), "show_me"]);
+    const writers = ["propose_meeting", "propose_email", "propose_mail_reply", "propose_note", "confirm_action", "cancel_action"];
     for (const t of MCP_TOOLS) expect(t.annotations.readOnlyHint).toBe(!writers.includes(t.name));
     for (const t of MCP_TOOLS.filter((x) => x.name.startsWith("propose_"))) {
       expect(t.annotations).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
       expect(t.description).toContain("Only call confirm_action after they explicitly say yes.");
     }
-    for (const name of ["sales_summary", "delivery_summary", "search", "fetch", "document_flow", "get_pdf", "confirm_action"]) expect(MCP_INSTRUCTIONS).toContain(name);
+    for (const name of ["sales_summary", "delivery_summary", "search", "fetch", "document_flow", "get_pdf", "confirm_action", ...ROUND3_TOOLS.map((t) => t.name)]) expect(MCP_INSTRUCTIONS).toContain(name);
     expect(MAX_RESULT_CHARS).toBe(30_000);
   });
 });

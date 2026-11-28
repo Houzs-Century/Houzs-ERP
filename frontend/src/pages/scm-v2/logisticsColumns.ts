@@ -1,17 +1,8 @@
-// ----------------------------------------------------------------------------
-// logisticsColumns — the columns every Logistics cost view shares (owner
-// 2026-11-05): Single month = the four regions across the top and Total; By
-// month = a Total column first, then one per month — or, with "Split each month
-// by region", each month's four regions and its total. A column names the months
-// and regions it adds up (scopeOf); a figure with no region (3PL lines on no DO
-// yet, the in-house cost of a month with no trip) counts in Total columns only.
-// And the sheet Excel / PDF draw from the rows as shown.
-// ----------------------------------------------------------------------------
 
 import type { GridColumn, GridRow } from './reports/FinanceGrid';
 import { cellText } from './reports/FinanceGrid';
 import type { LogisticsMonth, PnlRegion } from '../../vendor/scm/lib/logistics-queries';
-import { PCT_COLUMN, type ReportSheet, type SheetColumn, type SheetRow } from '../../vendor/scm/lib/report-sheet';
+import { PCT_COLUMN, type ReportSheet, type SheetColumn, type SheetRow, type SheetValue } from '../../vendor/scm/lib/report-sheet';
 import { monthName } from './reports/statementColumns';
 
 export const REGIONS: ReadonlyArray<{ code: PnlRegion; name: string }> = [
@@ -92,12 +83,14 @@ export function gridSheet(input: {
   const out: SheetRow[] = [];
   const walk = (rows: GridRow[], depth: number) => {
     for (const r of rows) {
-      const cells = (row: GridRow) => keys.map(({ key, pct, kind }) => {
-        if (pct) return row.pct?.[key] ?? null;
+      /* Blank where the screen prints nothing (owner 2026-11-27): no value, a hidden zero, its %. */
+      const cells = (row: GridRow) => keys.map(({ key, pct, kind }): SheetValue => {
         const v = row.cells[key];
-        if (v != null && typeof v === 'object') return v.text ?? null;
-        if (v == null) return null;
-        return kind === 'money' && !row.int && !row.isPct ? v : cellText(v, kind, row);
+        if (v != null && typeof v === 'object') return pct ? '' : v.text ?? '';
+        const text = v == null ? null : cellText(v, kind, row);
+        if (text == null) return '';
+        if (pct) return row.pct?.[key] ?? '';
+        return kind === 'money' && !row.int && !row.isPct ? v! : text;
       });
       if (r.kids) {
         out.push({ kind: depth === 0 ? 'block' : 'category', depth, label: r.label, cells: [] });

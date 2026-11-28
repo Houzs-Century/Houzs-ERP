@@ -1,7 +1,3 @@
-/* The Delivery Order right-click menu must not offer a delivered row a move
-   BACK. "Mark Loaded" / "Mark In Transit" on a DELIVERED row used to un-deliver
-   it with no reason and no audit; the way back is "Undo delivered" on the
-   detail page, and the server refuses the plain move (`use_revert`). */
 import { describe, expect, test, vi } from "vitest";
 import type { RowMenuItem } from "../../lib/rowMenu";
 import { deliveryOrderRowMenu } from "./row-menus";

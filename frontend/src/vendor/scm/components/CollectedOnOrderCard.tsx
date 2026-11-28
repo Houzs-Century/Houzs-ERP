@@ -13,15 +13,12 @@
    same week, cost every change log in the system its honesty
    (docs/bugs/0848). */
 
-import { fmtMoneySen } from '../../shared/format';
+import { fmtMoneySen } from '../../../../../shared/src/vendor/shared/format';
 import { summariseCollected, type CollectedPayment } from '../lib/collected-on-order';
 
 export type CollectedOnOrderCardProps = {
-  /** The order's document number, shown so the reader knows WHICH document took
-      the money. `null` means this document has no order behind it. */
   soDocNo: string | null;
   payments: readonly CollectedPayment[] | undefined;
-  /** The read's failure, if it failed. Required — see the header. */
   error: unknown;
   isLoading: boolean;
   currency: string | null | undefined;

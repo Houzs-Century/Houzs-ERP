@@ -3,10 +3,6 @@ import { useToast } from "../../hooks/useToast";
 import { useDialog } from "../../hooks/useDialog";
 import { api } from "../../api/client";
 
-// ── Organizer picker ─────────────────────────────────────────
-// Combobox-style: select from existing organizers OR add a new one
-// inline. Picks land in projects.organizer (free text) and also get
-// recorded in project_organizers so the next project sees them.
 
 export function OrganizerPicker({
   value,
@@ -52,9 +48,7 @@ export function OrganizerPicker({
       onChange={(e) => {
         const v = e.target.value;
         if (v === SENTINEL_NEW) {
-          // Don't commit the sentinel — open the prompt and let it
-          // call onChange with the actual new name.
-          void addNew(); // same idiom as the other async handlers here (:2116, :7691)
+          void addNew();
           return;
         }
         onChange(v || null);
@@ -65,7 +59,6 @@ export function OrganizerPicker({
       }
     >
       <option value="">— select organizer —</option>
-      {/* Surface legacy values that aren't in the lookup yet */}
       {value && !options.some((o) => o.name === value) && (
         <option value={value}>{value}</option>
       )}
@@ -79,9 +72,6 @@ export function OrganizerPicker({
   );
 }
 
-// Same pattern as OrganizerPicker but for project_venues. Includes an
-// optional `state` callback that fires when the picked venue carries a
-// state hint, so the create form can pre-fill the state field.
 export function VenuePicker({
   value,
   onChange,

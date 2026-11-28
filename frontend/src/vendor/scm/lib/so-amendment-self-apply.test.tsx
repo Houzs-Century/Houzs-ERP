@@ -32,7 +32,6 @@ const submit = async () => {
   return res;
 };
 
-/** Which paths were called, in order. */
 const paths = () => authedFetch.mock.calls.map((c) => String(c[0]));
 
 beforeEach(() => authedFetch.mockReset());
@@ -74,9 +73,6 @@ describe('raising an amendment the raiser may apply', () => {
     expect(res.autoApplied).toBe(0);
   });
 
-  /* THE FAILURE PATH. The amendment was raised; only the shortcut failed. The
-     submit must SUCCEED and report 0 applied — the notice then says the desk is
-     waiting, which is exactly what the queue now holds. */
   it('a refused apply does not fail the submit — the amendment stays raised', async () => {
     authedFetch
       .mockResolvedValueOnce({ amendment: { id: 'a1' }, amendments: [{ id: 'a1' }], selfApprovable: ['a1'] })
@@ -84,7 +80,6 @@ describe('raising an amendment the raiser may apply', () => {
     const res = await submit();
     expect(res.amendment).toMatchObject({ id: 'a1' });
     expect(res.autoApplied).toBe(0);
-    // RECORDED, not swallowed — the caller can say which half is still waiting.
     expect(res.notApplied).toEqual(['a1']);
   });
 });

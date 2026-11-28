@@ -80,7 +80,6 @@ async function readBody(c: Ctx): Promise<Record<string, unknown>> {
   }
 }
 
-/* ── trip pay ──────────────────────────────────────────────────────────── */
 
 type RowRecord = typeof hr_trip_rows.$inferSelect;
 const rowOut = (r: RowRecord) => ({
@@ -94,6 +93,7 @@ const rowOut = (r: RowRecord) => ({
   jobType: jobTypeOfRow(r),
   eventType: r.event_type,
   localTotalSen: Number(r.local_total_sen),
+  allowanceOverrideSen: r.allowance_override_sen == null ? null : Number(r.allowance_override_sen),
   state: r.state,
   postcode: r.postcode,
   lorryPlate: r.lorry_plate,
@@ -218,7 +218,6 @@ hrTripPay.post("/trip-pay/pull", async (c) => {
   if (!PERIOD.test(month)) return c.json({ error: "validation_failed", message: "Pick a month." }, 400);
   const db = getDb(c.env);
   if (await tripMonthLocked(db, co.companyId, month)) return c.json(LOCKED(month), 409);
-  /* Reading Planning replaces a pasted Trip Report; rows HR added or edited stay. */
   await db.delete(hr_trip_rows).where(and(eq(hr_trip_rows.company_id, co.companyId), eq(hr_trip_rows.trip_month, month), eq(hr_trip_rows.source, "SHEET")));
   const r = await syncTripMonth(db, co.companyId, month, { mode: "all", yesterday: todayMyt(-1), since: null, by: c.get("user").id });
   await audit(c, {
@@ -238,6 +237,7 @@ type RowInput = {
   jobType: TripJobType;
   eventType: TripEventType | null;
   localTotalSen: number;
+  allowanceOverrideSen: number | null;
   state: string;
   postcode: string;
   lorryPlate: string;
@@ -252,6 +252,13 @@ function parseRow(b: Record<string, unknown>): RowInput | string {
   const eventType = isFairJob(jobType) && TRIP_EVENT_TYPES.includes(b.eventType as TripEventType) ? (b.eventType as TripEventType) : null;
   const sen = Number(b.localTotalSen ?? 0);
   if (!Number.isInteger(sen) || sen < 0) return "Local Total must be RM 0.00 or more.";
+  const ov = b.allowanceOverrideSen;
+  let allowanceOverrideSen: number | null = null;
+  if (ov != null && ov !== "") {
+    const n = Number(ov);
+    if (!Number.isInteger(n) || n < 0) return "Allowance must be RM 0.00 or more, or left blank.";
+    allowanceOverrideSen = n;
+  }
   const names = { driver_1_name: str(b.driver1, 80), driver_2_name: str(b.driver2, 80), helper_1_name: str(b.helper1, 80), helper_2_name: str(b.helper2, 80) };
   if (!names.driver_1_name && !names.driver_2_name) return "Name the driver.";
   return {
@@ -262,6 +269,7 @@ function parseRow(b: Record<string, unknown>): RowInput | string {
     jobType,
     eventType,
     localTotalSen: sen,
+    allowanceOverrideSen,
     state: str(b.state, 60),
     postcode: str(b.postcode, 10),
     lorryPlate: str(b.lorryPlate, 30),
@@ -292,6 +300,7 @@ hrTripPay.post("/trip-pay/rows", async (c) => {
       job_type: r.jobType,
       event_type: r.eventType,
       local_total_sen: r.localTotalSen,
+      allowance_override_sen: r.allowanceOverrideSen,
       state: r.state,
       postcode: r.postcode,
       lorry_plate: r.lorryPlate,
@@ -316,9 +325,7 @@ hrTripPay.patch("/trip-pay/rows/:id", async (c) => {
   if (typeof r === "string") return c.json({ error: "validation_failed", message: r }, 400);
   if (tripMonthOf(r.tripDate) !== cur.trip_month) return c.json({ error: "validation_failed", message: `The date must stay inside trip month ${cur.trip_month}.` }, 400);
   if (await tripMonthLocked(db, co.companyId, cur.trip_month)) return c.json(LOCKED(cur.trip_month), 409);
-  /* A renamed person is matched by name again; an unchanged one keeps the employee Planning found. */
   const keep = (name: string, was: string, id: number | null) => (name === was ? id : null);
-  /* An unchanged job type keeps the old kind an earlier rates version reads (a fair night stays one). */
   const kind: TripKind = r.jobType === jobTypeOfRow(cur) ? (cur.kind as TripKind) : kindOfJobType(r.jobType);
   await db
     .update(hr_trip_rows)
@@ -331,6 +338,7 @@ hrTripPay.patch("/trip-pay/rows/:id", async (c) => {
       job_type: r.jobType,
       event_type: r.eventType,
       local_total_sen: r.localTotalSen,
+      allowance_override_sen: r.allowanceOverrideSen,
       state: r.state,
       postcode: r.postcode,
       lorry_plate: r.lorryPlate,
@@ -357,7 +365,6 @@ hrTripPay.delete("/trip-pay/rows/:id", async (c) => {
   const cur = (await db.select().from(hr_trip_rows).where(and(eq(hr_trip_rows.company_id, co.companyId), eq(hr_trip_rows.id, id))).limit(1)).at(0);
   if (!cur) return c.json({ error: "not_found_in_company" }, 404);
   if (await tripMonthLocked(db, co.companyId, cur.trip_month)) return c.json(LOCKED(cur.trip_month), 409);
-  /* A row read from Planning is kept, removed and paid nothing, so no later read adds it back. */
   if (cur.source === "PLANNING") {
     const now = new Date().toISOString();
     await db.update(hr_trip_rows).set({ removed_at: now, hr_edited: true, updated_at: now }).where(and(eq(hr_trip_rows.company_id, co.companyId), eq(hr_trip_rows.id, id)));
@@ -397,7 +404,6 @@ hrTripPay.put("/trip-pay/missed", async (c) => {
   return c.json({ ok: true });
 });
 
-/* ── trip rates (effective-dated) ──────────────────────────────────────── */
 
 hrTripPay.get("/trip-rates", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -408,8 +414,6 @@ hrTripPay.get("/trip-rates", async (c) => {
   return c.json({ versions, defaults: DEFAULT_TRIP_RATES, effectiveToday: resolveTripRatesAsOf(versions, today), today, canManage: canManage(c) });
 });
 
-/* Rates may start on a past date (Nico sets September's after the fact), but
- * never inside a trip month whose payroll is approved. */
 async function firstOpenDate(db: ReturnType<typeof getDb>, companyId: number): Promise<string | null> {
   const locked = [...(await lockedPeriods(db, companyId))].sort();
   return locked.length ? tripMonthBounds(locked[locked.length - 1]).last : null;
@@ -457,7 +461,6 @@ hrTripPay.delete("/trip-rates/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-/* ── monthly allowances ────────────────────────────────────────────────── */
 
 hrTripPay.get("/allowances", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -506,7 +509,6 @@ function parseAllowance(b: Record<string, unknown>): { employeeId: number; kind:
   return { employeeId, kind, amountSen, fromPeriod, untilPeriod, note: str(b.note) || null };
 }
 
-/** Months an allowance range touches that are already approved. */
 async function lockedIn(c: Ctx, companyId: number, from: string, until: string | null): Promise<string | null> {
   const locked = [...(await lockedPeriods(getDb(c.env), companyId))].sort();
   return locked.find((p) => p >= from && (until === null || p <= until)) ?? null;
@@ -542,7 +544,6 @@ hrTripPay.patch("/allowances/:id", async (c) => {
   if (!cur) return c.json({ error: "not_found_in_company" }, 404);
   const a = parseAllowance({ ...(await readBody(c)), employeeId: cur.employee_id });
   if (typeof a === "string") return c.json({ error: "validation_failed", message: a }, 400);
-  /* Approved months keep what they paid: only the open end of a range may move, and only past them. */
   const hit = (await lockedIn(c, co.companyId, cur.from_period, cur.until_period)) ?? (await lockedIn(c, co.companyId, a.fromPeriod, a.untilPeriod));
   if (hit) {
     const onlyEndMoves = a.kind === cur.kind && a.amountSen === Number(cur.amount_sen) && a.fromPeriod === cur.from_period && a.untilPeriod !== null && a.untilPeriod >= hit;

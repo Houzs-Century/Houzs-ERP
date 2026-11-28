@@ -1,18 +1,12 @@
-// ----------------------------------------------------------------------------
-// DeliveryReturnDetailListing — Task #120 L2 page for Delivery Returns.
-// One row per delivery_return_items line, with the DR header denormalised.
-// "Outstanding" here means the return hasn't been settled
-// (status is not REFUNDED / CREDIT_NOTED / REJECTED).
-// ----------------------------------------------------------------------------
 
 import { useCallback } from 'react';
-import { fmtDateOrDash, fmtQty, fmtSen } from '../../vendor/shared/format';
-import { statusLabel } from '../../vendor/scm/lib/status-pill';
+import { fmtDateOrDash, fmtQty, fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { statusLabel } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useDeliveryReturnDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import type { GridColumn } from '../../components/DataGridCompat';
 import styles from './SalesOrderDetailListing.module.css';
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 
 type DrRow = DetailListingRow & {
   return_number?: string;

@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Plus, Save, Trash2 } from "lucide-react";
 import { useToast } from "../../hooks/useToast";
 import { useDialog } from "../../hooks/useDialog";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { Field, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
 import { deleteKpiMetric, deleteKpiTier, rmFromSen, saveKpiMetric, saveKpiTier, senFromRm, type KpiMetric, type KpiTier } from "./hrApi";
 

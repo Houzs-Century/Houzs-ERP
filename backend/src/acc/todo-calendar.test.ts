@@ -1,6 +1,3 @@
-// The To do's calendar (the owner's Claude Design redesign, batch 2): a task or
-// routine shows on the day it falls or where it was moved, done ones stay but
-// read done, and the next 7 days count what is still open.
 
 import { describe, it, expect } from 'vitest';
 import { lastOf, monthOrToday, nextSeven, taskEvents, type CalEvent } from './todo-calendar';

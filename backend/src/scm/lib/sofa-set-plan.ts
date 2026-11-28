@@ -51,16 +51,12 @@ import { sofaSetKey } from '../shared/sofa-set-identity';
 export type SofaSetLine = {
   soItemId: string;
   docNo: string;
-  /** composite(warehouse, item_code, variant_key) — the engine's bucket key. */
   bucketKey: string;
   whId: string | null;
   code: string;
   vkey: string;
-  /** Units still to fulfil (effQty). */
   need: number;
-  /** mfg_sales_order_items.allocated_batch_no — the allocator's whole-set lock. */
   lockedBatchNo: string | null;
-  /** Effective delivery date (the engine's deliveryOf) — the walk's priority. */
   delivery: string | null;
 };
 
@@ -77,7 +73,6 @@ export type SofaPlan = {
   poNumber: string | null;
   poEta: string | null;
   poSupplierId: string | null;
-  /** The batch (= PO number) the WHOLE set is planned from; null = nothing covers it. */
   batchNo: string | null;
 };
 
@@ -104,13 +99,24 @@ export function planSofaSets(
   poRaisedFor: SofaPoRaisedFor,
 ): Map<string, SofaPlan> {
   const planByLine = new Map<string, SofaPlan>();
-  const setsByKey = new Map<string, SofaSetLine[]>(); // `${wh}|${doc_no}|${model}` — the allocator's set key
+  const setsByKey = new Map<string, SofaSetLine[]>();
   for (const l of lines) {
     const key = `${l.whId ?? WH_NONE}|${sofaSetKey(l.docNo, l.code)}`;
     const arr = setsByKey.get(key) ?? [];
     arr.push(l);
     setsByKey.set(key, arr);
   }
+  const planned = new Set<string>();
+  const ownerOf = new Map<string, { key: string; line: SofaSetLine }>();
+  for (const [key, set] of setsByKey) for (const l of set) ownerOf.set(l.soItemId, { key, line: l });
+  const heldForOthers = (batch: string, bucketKey: string, setKey: string): number => {
+    let held = 0;
+    for (const id of poRaisedFor.get(batch) ?? []) {
+      const o = ownerOf.get(id);
+      if (o && o.key !== setKey && !planned.has(o.key) && o.line.bucketKey === bucketKey) held += o.line.need;
+    }
+    return held;
+  };
   /* Open PO units per (PO number = batch, bucket). A bucket's OWN PO lines
      only — the '' fallback was removed on both paths (owner 2026-08-16). */
   const poOpenByBatch = new Map<string, Map<string, BatchPo>>();
@@ -119,16 +125,12 @@ export function planSofaSets(
       const perBucket = poOpenByBatch.get(p.poNumber) ?? new Map<string, BatchPo>();
       const cur = perBucket.get(k) ?? { qtyLeft: 0, eta: null, supplierId: p.supplierId };
       cur.qtyLeft += p.qtyLeft;
-      // The set is complete when its LAST unit lands: latest line date wins.
       if (cur.eta == null || (p.eta != null && p.eta > cur.eta)) cur.eta = p.eta;
       perBucket.set(k, cur);
       poOpenByBatch.set(p.poNumber, perBucket);
     }
   }
 
-  /* Two lines of the SAME module + variant (a symmetric sofa's two identical
-     arms) are summed before comparing to a batch — findCoveringBatch's own
-     audit fix (2026-06-03), kept here for the same reason. */
   const modulesOf = (set: SofaSetLine[]): Module[] => {
     const m = new Map<string, Module>();
     for (const l of set) {
@@ -140,8 +142,9 @@ export function planSofaSets(
   };
   const lotQty = (batch: string, m: Module): number =>
     m.whId ? (lots.remaining.get(sofaStockKey(m.whId, batch, m.code, m.vkey)) ?? 0) : 0;
-  const poQty = (batch: string, m: Module): number => poOpenByBatch.get(batch)?.get(m.bucketKey)?.qtyLeft ?? 0;
-  const fitOf = (batch: string, mods: Module[]): Fit => {
+  const poQty = (batch: string, m: Module, setKey: string): number =>
+    Math.max(0, (poOpenByBatch.get(batch)?.get(m.bucketKey)?.qtyLeft ?? 0) - heldForOthers(batch, m.bucketKey, setKey));
+  const fitOf = (batch: string, mods: Module[], setKey: string): Fit => {
     let stockOnly = true;
     let full = true;
     let covered = 0;
@@ -150,11 +153,11 @@ export function planSofaSets(
     let supplierId: string | null = null;
     for (const m of mods) {
       const lot = Math.min(lotQty(batch, m), m.need);
-      const po = Math.min(poQty(batch, m), m.need - lot);
+      const po = Math.min(poQty(batch, m, setKey), m.need - lot);
       if (lot < m.need) stockOnly = false;
       if (lot + po < m.need) full = false;
       covered += lot + po;
-      if (poQty(batch, m) > 0) onOrder = true;
+      if (poQty(batch, m, setKey) > 0) onOrder = true;
       if (po > 0) {
         const e = poOpenByBatch.get(batch)?.get(m.bucketKey);
         if (e) {
@@ -171,9 +174,9 @@ export function planSofaSets(
     const ids = poRaisedFor.get(batch);
     return !!ids && set.some((l) => ids.has(l.soItemId));
   };
-  const chooseBatch = (set: SofaSetLine[]): Fit | null => {
+  const chooseBatch = (set: SofaSetLine[], setKey: string): Fit | null => {
     const mods = modulesOf(set);
-    const fits = candidates().map((b) => fitOf(b, mods)).filter((f) => f.covered > 0);
+    const fits = candidates().map((b) => fitOf(b, mods, setKey)).filter((f) => f.covered > 0);
     const stockOnly = fits.filter((f) => f.stockOnly);
     if (stockOnly.length > 0) {
       return stockOnly.sort((a, b) => receivedAt(a.batch).localeCompare(receivedAt(b.batch)) || a.batch.localeCompare(b.batch))[0]!;
@@ -188,11 +191,7 @@ export function planSofaSets(
     }
     return null;
   };
-  /* Draw the set's units from `fit.batch` — received lots first, then the
-     open PO — and record the plan on every line. A set the batch only partly
-     covers still names it on EVERY line (allocSourceCoveringPo's question),
-     and each line's own remainder is its shortage. */
-  const planSet = (set: SofaSetLine[], fit: Fit | null): void => {
+  const planSet = (set: SofaSetLine[], fit: Fit | null, setKey: string): void => {
     for (const l of set) {
       if (!fit) {
         planByLine.set(l.soItemId, { fromStock: 0, need: l.need, poNumber: null, poEta: null, poSupplierId: null, batchNo: null });
@@ -205,8 +204,9 @@ export function planSofaSets(
       if (lotKey && fromStock > 0) lots.remaining.set(lotKey, lotHave - fromStock);
       need -= fromStock;
       const po = poOpenByBatch.get(fit.batch)?.get(l.bucketKey);
-      if (po && need > 0) {
-        const take = Math.min(po.qtyLeft, need);
+      const free = po ? po.qtyLeft - heldForOthers(fit.batch, l.bucketKey, setKey) : 0;
+      if (po && need > 0 && free > 0) {
+        const take = Math.min(free, need);
         po.qtyLeft -= take;
         need -= take;
       }
@@ -222,28 +222,23 @@ export function planSofaSets(
   };
   const setDelivery = (set: SofaSetLine[]): string | null =>
     set.reduce<string | null>((min, l) => (byDateAsc(l.delivery, min) < 0 ? l.delivery : min), null);
-  // Same priority as the allocator and section 7: effective delivery date
-  // ascending (nulls last), then SO doc number — so a scarce batch goes to
-  // the earliest delivery and the walk never flips nondeterministically.
   const orderedSets = [...setsByKey.entries()].sort(([, a], [, b]) => {
     const byDate = byDateAsc(setDelivery(a), setDelivery(b));
     if (byDate !== 0) return byDate;
     return (a[0]?.docNo ?? '').localeCompare(b[0]?.docNo ?? '');
   });
-  const planned = new Set<string>();
   for (const [key, set] of orderedSets) {
     const lock = set[0]!.lockedBatchNo;
     if (!lock || set.some((l) => l.lockedBatchNo !== lock)) continue;
-    const fit = fitOf(lock, modulesOf(set));
-    /* A stale lock (units transferred, stock-taken or oversold since the
-       allocator last ran) reserves nothing: the set competes like any other. */
+    const fit = fitOf(lock, modulesOf(set), key);
     if (!fit.stockOnly) continue;
-    planSet(set, fit);
+    planSet(set, fit, key);
     planned.add(key);
   }
   for (const [key, set] of orderedSets) {
     if (planned.has(key)) continue;
-    planSet(set, chooseBatch(set));
+    planSet(set, chooseBatch(set, key), key);
+    planned.add(key);
   }
   return planByLine;
 }

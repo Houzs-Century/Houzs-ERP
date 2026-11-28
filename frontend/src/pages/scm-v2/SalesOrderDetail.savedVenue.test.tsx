@@ -65,7 +65,6 @@ const DOC = "2990-SO-2609-014";
 
 const venue = (id: string, name: string) => ({ id, name, address: null, state: null, active: true, created_at: "2026-01-01", origin: "PROJECT", warehouseId: null });
 const VENUES = [venue("V-DEFAULT", "PJ SHOWROOM"), venue("107", "2990s PJ")];
-/* S1 is Scarlett's shape on production: a default venue of her own. */
 const STAFF = [{
   id: "S1", staffCode: "S1", name: "S1", role: "sales", showroomId: null, venueId: "V-DEFAULT", initials: "S1", color: "#000",
   active: true, userId: null, email: null, phone: null,

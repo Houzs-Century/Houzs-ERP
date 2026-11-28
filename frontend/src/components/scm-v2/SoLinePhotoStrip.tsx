@@ -41,10 +41,6 @@ import {
   type LinePhotoSource,
 } from "../../vendor/scm/lib/so-line-photo";
 
-/* `source` decides which document family's routes serve the keys — REQUIRED,
-   because a strip that silently defaulted to 'so' would 404 every thumb the
-   day a PO surface forgot to pass it (the optional-param-noop bug class).
-   `docId` is the SO doc_no or the PO row id, whichever the routes key on. */
 
 function Thumb({
   source, docId, itemId, photoKey, onOpen,
@@ -57,10 +53,6 @@ function Thumb({
 }) {
   const { src, error, onImgError } = useScmLinePhoto(source, photoKey, docId, itemId);
 
-  /* "err" survives here for the same reason it does on the edit card: when the
-     proxy ALSO fails (404 missing object, 401/403 refused) a missing photo must
-     read AS missing. It is not a button — a retry that re-runs the same failing
-     request is theatre, and the title carries the real reason for a bug report. */
   if (!src) {
     return error ? (
       <span
@@ -94,12 +86,8 @@ function Thumb({
 }
 
 export type LinePhotoEdit = {
-  /** Upload one image onto this line; the caller owns errors + refetch. */
   onUpload: (file: File) => Promise<void>;
-  /** Delete one key from this line; only offered where canDeleteKey passes. */
   onDelete: (photoKey: string) => Promise<void>;
-  /** Which keys THIS surface owns (PO: `po-items/...`; carried SO keys stay
-   *  read-only here and are managed on the Sales Order). */
   canDeleteKey: (photoKey: string) => boolean;
 };
 
@@ -110,8 +98,6 @@ export function SoLinePhotoStrip({
   docId: string;
   itemId: string;
   photoKeys: string[];
-  /** Optional is the STRICTER direction here (CLAUDE.md optional-param rule):
-   *  absent = read-only display, exactly what every pre-existing caller gets. */
   edit?: LinePhotoEdit | null;
 }) {
   const [openAt, setOpenAt] = useState<number | null>(null);
@@ -122,13 +108,6 @@ export function SoLinePhotoStrip({
     return <span className="text-[11px] text-ink-muted">—</span>;
   }
 
-  /* MediaLightbox joins `${baseUrl}/${r2_key}` verbatim, so the key is
-     PRE-ENCODED: an SO photo key is `so-items/<docNo>/<itemId>/<name>.jpg` and
-     its slashes have to survive as ONE path segment or Hono's `:photoKey`
-     param never matches and the proxy 404s. `caption` carries the bare file
-     name because MediaLightbox derives its Download filename from
-     `caption || r2_key.split("/").pop()` — and the encoded key has no "/" left
-     to split on, so without this a download saves as one %2F-mangled blob. */
   const items = photoKeys.map((k) => ({
     r2_key: encodeURIComponent(k),
     content_type: photoContentType(k),

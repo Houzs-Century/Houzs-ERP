@@ -1,9 +1,3 @@
-// useMfgSalesOrdersPaged's `enabled` gate — the fix for the SO-list double
-// fetch. The list page defers its FIRST fetch by one render (enabled:false)
-// until the DataTable reports its localStorage-restored sort, so the one and
-// only query already carries `sort`. These tests pin that gate: no fetch while
-// disabled, and the sort param on the wire once enabled. authed-fetch is mocked
-// at the module seam (the so-versioned-mutation.test.ts / accounting pattern).
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
@@ -36,7 +30,6 @@ describe('useMfgSalesOrdersPaged — the enabled gate', () => {
       () => useMfgSalesOrdersPaged({ page: 1, pageSize: 25, sort: 'so_date:desc', enabled: false }),
       { wrapper },
     );
-    // Give React Query a beat; a disabled query must never touch the network.
     await Promise.resolve();
     expect(mockedFetch).not.toHaveBeenCalled();
     expect(result.current.fetchStatus).toBe('idle');

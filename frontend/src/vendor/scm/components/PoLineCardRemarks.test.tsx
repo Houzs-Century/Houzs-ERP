@@ -19,7 +19,6 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// The card's only data hook. Stubbed so the test needs no QueryClientProvider.
 vi.mock("../lib/mfg-products-queries", () => ({
   useModelAllowedOptionsByCode: () => ({ data: null }),
 }));
@@ -68,12 +67,9 @@ describe("the PO line card's Remarks box", () => {
     );
 
     const box = screen.getByPlaceholderText("Type remarks…") as HTMLInputElement;
-    // The book's own wording, on screen, where nothing rendered it before.
     expect(box.value).toBe("col:PC-151-03/m.gap:12inch/divan:8inch+2inchleg");
 
     await userEvent.type(box, "!");
-    // The parent is told about `notes` — the column that is NOT regenerated on
-    // save and NOT on the AutoCount write-back path (PO_ITEM_COLS omits it).
     expect(onChange).toHaveBeenCalledWith({
       notes: "col:PC-151-03/m.gap:12inch/divan:8inch+2inchleg!",
     });
@@ -81,8 +77,6 @@ describe("the PO line card's Remarks box", () => {
 
   it("renders NO box at all unless the parent opted in", () => {
     render(<PoLineCard {...props(line({ notes: "book wording" }), () => {})} />);
-    // Not merely hidden — absent. A parent that does not send `notes` must not
-    // offer a field that looks like it saves.
     expect(screen.queryByPlaceholderText("Type remarks…")).toBeNull();
     expect(screen.queryByText("Remarks")).toBeNull();
   });

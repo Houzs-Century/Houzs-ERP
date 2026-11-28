@@ -27,14 +27,13 @@ describe('collectProcessingGateProblems', () => {
        removed that condition on 2026-08-20 (「以电脑为准 —— 两边都不查」). */
     const ps = collectProcessingGateProblems({
       procDate: '2020-05-10',
-      delivDate: '2020-05-01', // proc > deliv → after-delivery; both < today → past
+      delivDate: '2020-05-01',
       todayMY: '2026-07-18',
       variantOffenders: [
         { itemCode: 'FENRIR-5FT', group: 'bedframe', missing: ['legHeight'] },
         { itemCode: 'TELLUC-2S', group: 'sofa', missing: ['fabricCode'] },
       ],
     });
-    // 2 variant + proc-past + deliv-past + after-delivery = 5 problems.
     expect(ps).toHaveLength(5);
     expect(codes(ps)).toEqual([
       'variants_incomplete',
@@ -55,7 +54,6 @@ describe('collectProcessingGateProblems', () => {
       ],
     });
     expect(ps).toHaveLength(2);
-    // canonical axis key -> human label, and the line is named.
     expect(ps[0]).toMatchObject({ code: 'variants_incomplete', line: 'FENRIR-5FT', field: 'Leg Height' });
     expect(ps[0]!.message).toBe('FENRIR-5FT — Leg Height is required');
     expect(ps[1]).toMatchObject({ line: 'FENRIR-5FT', field: 'Gap' });
@@ -67,16 +65,15 @@ describe('collectProcessingGateProblems', () => {
       procDate: '2020-01-01',
       delivDate: '2020-02-01',
       todayMY: '2026-07-18',
-      origProcDate: '2020-01-01',  // unchanged → not a fresh past entry
+      origProcDate: '2020-01-01',
       origDelivDate: '2020-02-01',
     });
-    // past-date suppressed for both; proc <= deliv so no after-delivery either.
     expect(ps).toEqual([]);
   });
 
   it('still rejects a MOVED past date even if the old value was also past', () => {
     const ps = collectProcessingGateProblems({
-      procDate: '2020-03-01', // moved
+      procDate: '2020-03-01',
       delivDate: '2020-04-01',
       todayMY: '2026-07-18',
       origProcDate: '2020-01-01',
@@ -105,9 +102,6 @@ describe('collectProcessingGateProblems', () => {
     });
 
     it('KIV line + a save that does NOT touch the Processing Date -> allowed', () => {
-      // Routes only pass kivOffenders when the date genuinely changes, but even
-      // if one slips through, no procDate on this save means no block — editing
-      // remarks on an old KIV order must still work.
       const ps = collectProcessingGateProblems({
         procDate: null,
         delivDate: null,
@@ -139,7 +133,7 @@ describe('collectProcessingGateProblems', () => {
         kivOffenders: [{ itemCode: 'SOFA-XAMMAR-L', fabricLabel: 'EZ' }],
       });
       expect(codes(ps)).toEqual(['variants_incomplete', 'fabric_colour_kiv']);
-      expect(ps[0]!.field).toBe('Seat Size'); // the bare fabricCode axis is suppressed, not the others
+      expect(ps[0]!.field).toBe('Seat Size');
     });
 
     it('a series-less KIV offender still reads as a sentence', () => {
@@ -171,8 +165,6 @@ describe('collectProcessingGateProblems', () => {
     });
 
     it('grandfathers a stored unpaired delivery date when the save touches neither date', () => {
-      // The 19 live orders AutoCount could not pair must stay editable for an
-      // unrelated change — the same carve-out the past-date rules use.
       const ps = collectProcessingGateProblems({
         procDate: null,
         delivDate: '2099-02-10',
@@ -280,7 +272,6 @@ describe('unified Processing-Date gate: completeness', () => {
   });
 
   it('an email is NOT required — the owner dropped it', () => {
-    /* There is no email input at all; a complete order with no email clears. */
     expect(codes({ ...base, completeness: complete })).toHaveLength(0);
   });
 
@@ -336,8 +327,6 @@ describe('collectProceedGateProblems', () => {
     expect(ps).toHaveLength(1);
     expect(ps[0]!.field).toBe('Postcode');
     expect(ps[0]!.message).toContain('postcode');
-    /* The word that sent him down the wrong path for a day. It must not be in
-       the response AT ALL — not in a message, not in a field, not in a code. */
     expect(JSON.stringify(ps).toLowerCase()).not.toContain('deposit');
   });
 
@@ -377,9 +366,9 @@ describe('collectProceedGateProblems', () => {
     const [p] = collectProceedGateProblems({ ...complete, paidSen: 0, totalSen: 1000_00, companyCode: '2990' });
     expect(p).toBeDefined();
     expect(p!.field).toBe('Deposit');
-    expect(p!.message).toContain('50%');     // 2990's rule, not the Houzs 30%
-    expect(p!.message).toContain('RM 500');  // half of RM 1,000
-    expect(p!.message).toContain('RM 0');    // what is actually paid
+    expect(p!.message).toContain('50%');
+    expect(p!.message).toContain('RM 500');
+    expect(p!.message).toContain('RM 0');
   });
 
   it('returns [] when the gate is met', () => {
@@ -387,9 +376,6 @@ describe('collectProceedGateProblems', () => {
   });
 });
 
-/* THE OUTCOMES MAY NOT MOVE. Only the words change: an order that could proceed
-   before must still proceed, and one that could not must still not. The list
-   being empty IS the gate — same predicate, one expression. */
 describe('collectProceedGateProblems agrees with meetsProceedGate on every input', () => {
   it('empty list <=> gate met, across the full matrix', () => {
     let checked = 0;
@@ -406,8 +392,6 @@ describe('collectProceedGateProblems agrees with meetsProceedGate on every input
                   hasCustomerName, hasAddress, hasPostcode, hasDeliveryDate,
                   paidSen, totalSen, companyCode,
                 };
-                /* The pre-change predicate, written out literally so this
-                   compares against the RULE and not against a refactor of it. */
                 const legacy =
                   hasCustomerName && hasAddress && hasPostcode && hasDeliveryDate &&
                   meetsDepositGate(paidSen, totalSen, companyCode);
@@ -429,9 +413,6 @@ describe('proceedGateUnmetBody', () => {
     ]);
     expect(body.error).toBe('proceed_gate_unmet');
     expect(body.problems).toHaveLength(1);
-    /* One problem -> `reason` IS that problem, so a surface that only reads
-       `reason` (mobile line, PDF, an un-migrated client) still learns which
-       condition failed instead of hearing about all five. */
     expect(body.reason).toBe('Delivery postcode is required before this order can be proceeded');
   });
 

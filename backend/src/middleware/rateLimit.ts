@@ -1,14 +1,6 @@
 import type { Context } from "hono";
 import type { Env } from "../types";
 
-// KV-backed brute-force speed bump (ported from Hookka's rate-limit.ts onto the
-// existing SESSION_CACHE binding). A simple per-key counter: `max` attempts per
-// `windowSec`, then 429 until the TTL expires.
-//
-// Deliberately NOT a hard security boundary — KV is eventually consistent and
-// can over-count under concurrency, which errs on the defender's side. Fails
-// OPEN when KV is unbound (tests/dev) or on any KV blip, so it never blocks a
-// legitimate login because of an infra hiccup.
 
 const RL_PREFIX = "rl:";
 

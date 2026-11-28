@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-sales-list.ts — the pure half of GET /api/project-pos-sales/:projectId:
-// how synced POS bills, their lines and their payments become the grouped
-// receipt list the project page (E9) shows, and the totals in its header.
-//
-// Pure so it can be tested without a database. Money is integer sen. Test
-// sales (is_test) never reach here: the device never syncs them, and the
-// import path drops them, so the query does not filter them again.
-// ----------------------------------------------------------------------------
 import {
   emptyPosSalesTotals,
   isPosPaymentMethod,
@@ -115,7 +106,6 @@ export type PosReceipt = {
   voided_at: string | null;
   source: string;
   synced_at: string;
-  /** Distinct methods on the bill, for the list's filter and its Paid-by cell. */
   methods: string[];
   lines: PosReceiptLine[];
   payments: { method: string; amount_sen: number; reference: string | null }[];
@@ -231,8 +221,6 @@ export function posSalesTotals(receipts: readonly PosReceipt[]): PosSalesTotals 
       t.sst_sen += r.sst_amount_sen;
     }
     for (const p of r.payments) {
-      /* A refund is stored negative on the payment row already; a RETURN's
-         "customer pays" difference is positive. Sum as stored. */
       t.by_method[p.method] = (t.by_method[p.method] ?? 0) + p.amount_sen;
     }
   }
@@ -240,7 +228,6 @@ export function posSalesTotals(receipts: readonly PosReceipt[]): PosSalesTotals 
 }
 
 export type PosSalesFilter = {
-  /** YYYY-MM-DD in the app's timezone, matched against sold_at's local date. */
   date: string | null;
   terminal: string | null;
   cashier_id: number | null;

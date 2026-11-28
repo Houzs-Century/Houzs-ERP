@@ -1,20 +1,3 @@
-// ----------------------------------------------------------------------------
-// PaymentRequestsFinance — Payment requests as Finance reads them under Money
-// out (the owner's Claude Design, batch 4 step 9). One table in three tabs —
-// To do · Turned into vouchers · Sent back — with today's finer lists (Paid,
-// Official invoice owed, All) beside them; the request's own buttons on its
-// row; the whole request in a drawer on the right, opened from its number (the
-// rows open nothing on a double-click, as in the design).
-//
-// Every answer goes through the door it went through before. Make voucher
-// opens New payment voucher prefilled from the request (?fromRequest= — a
-// voucher needs a debit account the request does not carry, so it cannot be
-// drafted in one click); Make AP invoice opens the AP invoice form
-// (?fromRequest=); Pay on <AP invoice> opens an AP payment on that bill; Send
-// back POSTs /payment-requests/:id/return with the reason it requires. Nothing
-// here posts to the ledger. A requester reads their own page instead
-// (PaymentRequests.tsx), unchanged.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -37,7 +20,7 @@ import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash, fmtSen, todayMY } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtSen, todayMY } from '../../../../shared/src/vendor/shared/format';
 import { BatchBar } from './money-in/MoneyInParts';
 import { EVENTS_PATH, RequestForm } from './PaymentRequestForm';
 import {
@@ -46,20 +29,14 @@ import {
 } from './PaymentRequestParts';
 import look from './PaymentRequestsFinance.module.css';
 
-/* ── Which list ─────────────────────────────────────────────────────────── */
 
 type View = 'todo' | 'vouchers' | 'back' | 'paid' | 'official' | 'all';
 
-/* The design's three tabs, then today's finer lists beside them, so nothing is lost. */
 const TABS: ReadonlyArray<readonly [View, string]> = [['todo', 'To do'], ['vouchers', 'Turned into vouchers'], ['back', 'Sent back']];
 const MORE: ReadonlyArray<readonly [View, string]> = [['paid', 'Paid'], ['official', 'Official invoice owed'], ['all', 'All']];
 
-/* The server lists the newest 500 (listPaymentRequestsHandler). A count over a
-   list that may be cut short is not the population, so the tabs count only
-   while everything came back. */
 const LIST_CAP = 500;
 
-/** ?filter= keeps today's words: the Payment vouchers strip and To do link to ?filter=waiting. */
 const viewOfFilter = (f: string | null): View => {
   switch (f) {
     case 'waiting': return 'todo';
@@ -72,7 +49,6 @@ const viewOfFilter = (f: string | null): View => {
   }
 };
 
-/** The tabs are made of the requester's own lists (one home for which list a request sits in). */
 const inView = (r: PaymentRequest, v: View): boolean => {
   switch (v) {
     case 'todo': return inFilter(r, 'waiting');
@@ -82,10 +58,8 @@ const inView = (r: PaymentRequest, v: View): boolean => {
   }
 };
 
-/** The column each tab adds (the design): how long it has waited, what answered it, or why it went back. */
 const extraColumnOf = (v: View): 'waiting' | 'voucher' | 'reason' => (v === 'todo' ? 'waiting' : v === 'back' ? 'reason' : 'voucher');
 
-/* What an empty list says — what it looked for, never a verdict (the empty-state rule). */
 const emptyOf = (v: View): string => {
   switch (v) {
     case 'todo': return 'No requests waiting.';
@@ -97,7 +71,6 @@ const emptyOf = (v: View): string => {
   }
 };
 
-/* ── What a request shows ───────────────────────────────────────────────── */
 
 const toneClass = (t: StageTagTone): string => {
   switch (t) {
@@ -108,14 +81,12 @@ const toneClass = (t: StageTagTone): string => {
   }
 };
 
-/** The official invoice's state in English (OFFICIAL_LABEL's first half) — owed reads late, to check warn. */
 const officialTag = (r: PaymentRequest): { text: string; tone: string } | null => {
   const s = r.officialDoc?.state;
   if (!isOfficialState(s)) return null;
   return { text: OFFICIAL_LABEL[s].label.split(' · ')[0], tone: s === 'OWED' ? look.toneLate : s === 'RECEIVED' ? look.toneWarn : look.toneCalm };
 };
 
-/** Whole days, on Malaysia's calendar, since the request was raised — the design's Waiting. */
 const waitingDays = (createdAt: string, today: string): number => {
   const raised = Date.parse(createdAt);
   if (!Number.isFinite(raised)) return 0;
@@ -124,10 +95,8 @@ const waitingDays = (createdAt: string, today: string): number => {
 };
 const waitingText = (days: number): string => (days === 0 ? 'Today' : `${days} day${days === 1 ? '' : 's'}`);
 
-/** Why: what it is for — and, for a refund, the order its money comes off. */
 const whyOf = (r: PaymentRequest): string => (isRefundRequest(r) ? `${r.purpose} · ${r.refund_source_doc_no ?? ''}` : r.purpose);
 
-/** Pay to, as the design shows it: the bank and the account's last four digits. The drawer holds it whole. */
 const payToShort = (r: PaymentRequest): string => {
   const digits = (r.bank_account_no ?? '').replace(/\s+/g, '');
   const parts = [r.bank_name?.trim() ?? '', digits ? `···· ${digits.slice(-4)}` : ''].filter((s) => s !== '');
@@ -135,7 +104,6 @@ const payToShort = (r: PaymentRequest): string => {
 };
 const bankFull = (r: PaymentRequest): string => [r.bank_name, r.bank_account_no, r.bank_account_name].filter(Boolean).join(' · ') || '—';
 
-/** The document that answered it — an AP invoice, else a voucher (answerText's order) — and where it opens. */
 const answerDoc = (r: PaymentRequest): { kind: 'invoice' | 'voucher'; no: string; path: string; paid: string | null } | null => {
   if (r.invoice) {
     return {
@@ -157,20 +125,16 @@ export const TICK_VIEWS: ReadonlySet<View> = new Set<View>(['todo', 'all']);
 export const oneVoucherHref = (ids: string[]): string => `/scm/payment-vouchers/new?fromRequests=${ids.map(encodeURIComponent).join(',')}`;
 
 const movesOf = (r: PaymentRequest, me: number) => ({
-  /* Finance answers what waits: a voucher, or back with a reason. */
   answer: awaitsFinance(r),
   /* Book the supplier's bill first (owner 2026-09-30, 6.1) — never for a refund. */
   apInvoice: awaitsFinance(r) && !isRefundRequest(r),
-  /* A balance of a bill booked as an AP invoice is paid ON that invoice (item 2). */
   payOn: awaitsFinance(r) && apBalanceOn(r),
   /* 申请付余额 (item 2): the next instalment of the same bill. */
   balance: !isRefundRequest(r) && mayAskBalance(r),
-  /* Finance's own request, while it is theirs to change. */
   edit: mayEditRequest(r, me),
   withdraw: mayWithdrawRequest(r, me),
 });
 
-/* The words and doors To do's request drawer shares (finance/RequestsDrawer.tsx). */
 export const makeVoucherLabel = (r: PaymentRequest): string => (isRefundRequest(r) ? 'Make refund voucher' : 'Make voucher');
 const makeVoucherTitle = (r: PaymentRequest): string => (isRefundRequest(r)
   ? `Approve — a Customer Refund on ${r.refund_source_doc_no ?? 'its order'}, the customer's bank in its notes`
@@ -181,7 +145,6 @@ const payOnLabel = (r: PaymentRequest): string => `Pay on ${r.familyInvoice?.inv
 export const AP_INVOICE_TITLE = "Book the supplier's bill first — an AP invoice, paid later by an AP Payment";
 export const apInvoiceFromRequestHref = (r: PaymentRequest): string => `/scm/ap-invoices?fromRequest=${encodeURIComponent(r.id)}`;
 
-/** Every way out of the page a request offers — the row, the ⋯ menu and the drawer press the same ones. */
 type Doors = {
   makeVoucher: (r: PaymentRequest) => void;
   makeApInvoice: (r: PaymentRequest) => void;
@@ -206,14 +169,12 @@ function StageTags({ r }: { r: PaymentRequest }) {
   );
 }
 
-/** A document number that opens in its own workspace tab — and still a link to copy or open elsewhere. */
 function DocAnchor({ path, label, open }: { path: string; label: string; open: (path: string) => void }) {
   return (
     <a href={path} className={look.docLink} onClick={(e) => { e.preventDefault(); open(path); }}>{label}</a>
   );
 }
 
-/* ── The page ───────────────────────────────────────────────────────────── */
 
 export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ: RequestListQuery; mineOnly: boolean; onMineOnly: (on: boolean) => void }) {
   const { user } = useHouzsAuth();
@@ -224,10 +185,7 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
   const toast = useToastOptional();
   const [searchParams] = useSearchParams();
   const [view, setView] = useState<View>(() => viewOfFilter(searchParams.get('filter')));
-  /* ?open=<id> opens one request in the drawer — a PMS row, an order's money
-     panel and a voucher raised from the request all link back here. */
   const [openId, setOpenId] = useState<string | null>(() => searchParams.get('open'));
-  /* Send back from a row: the reason box above the table (the design). */
   const [backOf, setBackOf] = useState<PaymentRequest | null>(null);
   const [form, setForm] = useState<{ mode: 'new' } | { mode: 'edit'; req: PaymentRequest } | null>(null);
   /* 申请付余额 (item 2): the request the next instalment is asked from. */
@@ -249,15 +207,13 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
 
   const onWithdraw = async (r: PaymentRequest) => {
     const ok = await askConfirm({ title: `Withdraw ${r.request_no}?`, body: 'Finance will not pay it. You can raise a new request later.', confirmLabel: 'Withdraw', danger: true });
-    if (ok) withdraw.mutate(r.id); // a refusal reaches the user through the mutation's own onError
+    if (ok) withdraw.mutate(r.id);
   };
-  /* The reason is required; the requester reads it on the request (and a
-     refund's on its order). */
   const onSendBack = async (r: PaymentRequest, note: string): Promise<boolean> => {
     try {
       await sendBack.mutateAsync({ id: r.id, note });
     } catch {
-      return false; // the mutation's own onError told the user
+      return false;
     }
     const who = r.requested_by_name ?? 'the requester';
     toast?.success(isRefundRequest(r) ? `Rejected · ${who} sees why` : `Sent back to ${who} · they see your reason`);
@@ -274,7 +230,6 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
     sendBack: onSendBack,
   };
 
-  /* ⋯ and right-click: one menu — every move the request has. */
   const menuOf = (r: PaymentRequest): MenuItem[] => {
     const m = movesOf(r, me);
     const doc = answerDoc(r);
@@ -331,7 +286,6 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
         render: (r) => (
           <span className={look.tags}>
             <button type="button" className={look.docLink} onClick={(e) => { e.stopPropagation(); setOpenId(r.id); }}>{r.request_no}</button>
-            {/* An instalment of a bill (item 2): which one. */}
             {(r.installment_no ?? 1) > 1 && <span className={look.aside}>#{r.installment_no} · balance</span>}
             {/* 同一张单: the same bill number and date on another live document. */}
             {(r.billMatches?.length ?? 0) > 0 && (
@@ -359,7 +313,6 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
       { key: 'by', label: 'Requested by', width: '140px', render: (r) => <span className={look.muted}>{r.requested_by_name ?? '—'}</span>, getValue: (r) => r.requested_by_name ?? '' },
       perTab,
       { key: 'stage', label: 'Stage', width: '210px', render: (r) => <StageTags r={r} />, getValue: (r) => stageLabelEn(r) },
-      /* Today's columns the design leaves out — in the column chooser. */
       {
         key: 'event', label: 'Event', width: '240px', defaultHidden: true,
         render: (r) => <span className={r.project_id == null ? look.muted : undefined}>{eventCellText(labelsQ.data, r.project_id)}</span>,
@@ -368,8 +321,6 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
       { key: 'due', label: 'Pay by', defaultHidden: true, render: (r) => fmtDateOrDash(r.due_date), getValue: (r) => r.due_date, exportFormat: 'date' },
       { key: 'date', label: 'Date', defaultHidden: true, render: (r) => fmtDateOrDash(r.created_at), getValue: (r) => r.created_at, exportFormat: 'date' },
       {
-        /* The request's own buttons (the design): what waits — Send back, Make
-           voucher; what was answered — its voucher. ⋯ last. */
         key: 'actions', label: '', width: '260px', align: 'right', disableSort: true, disableFilter: true,
         render: (r) => {
           const m = movesOf(r, me);
@@ -453,7 +404,6 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
         emptyLabel={emptyOf(view)}
         getRowKey={(r) => r.id}
         getRowStyle={(r) => {
-          /* A withdrawn request fades; the one open in the drawer is marked. */
           const style = { ...(r.stage === 'WITHDRAWN' ? { opacity: 0.55 } : {}), ...(r.id === openId ? { background: 'var(--hz-dk-surface-2, #f3f8f7)' } : {}) };
           return Object.keys(style).length > 0 ? style : undefined;
         }}
@@ -520,7 +470,6 @@ export function PaymentRequestsFinance({ listQ, mineOnly, onMineOnly }: { listQ:
   );
 }
 
-/* ── Send back — the reason is required (the design's box) ───────────────── */
 function SendBackBox({ request: r, busy, onCancel, onSend }: { request: PaymentRequest; busy: boolean; onCancel: () => void; onSend: (note: string) => void }) {
   const [note, setNote] = useState('');
   const input = useRef<HTMLInputElement>(null);
@@ -549,7 +498,6 @@ function SendBackBox({ request: r, busy, onCancel, onSend }: { request: PaymentR
   );
 }
 
-/* ── The request, whole, in a drawer on the right ────────────────────────── */
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <>

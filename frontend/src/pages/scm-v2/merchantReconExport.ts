@@ -7,6 +7,7 @@
 import type { LineExportMatrix } from '../../components/dataTableLineExport';
 import type { PrintedLine, PrintedReport } from '../../vendor/scm/lib/merchant-recon-pdf';
 import type { SettlementBatch, SettlementRow } from './settlement-queries';
+import { lineFeeSen, lineNetSen } from './settlement-line-money';
 import { payableOf } from './settlement-ui';
 
 /** Whichever side is showing, the ORDER columns read from one shape, so a claimed
@@ -16,7 +17,6 @@ export const ordersOf = (r: SettlementRow) => (
     ? r.linked.map((l) => ({
       key: l.payment_id,
       docNo: l.doc_no ?? l.payment_id,
-      /* No document number: the payment id is shown, and it opens nothing. */
       source: l.doc_no ? l.payment_source : null,
       customer: l.customer_name ?? null,
       sales: l.salesperson ?? null,
@@ -63,7 +63,6 @@ export const isQrLine = (r: Pick<SettlementRow, 'channel'>): boolean => r.channe
 /** What a QR line's Reference column says: HLB prints a placeholder there, never a reference. */
 export const QR_REF_WORDS = 'DuitNow QR';
 
-/* A QR line's sale is the Online payment keyed for it, so its words say so. */
 const QR_STATUS_WORDS: Record<LineStatus, string> = {
   done: 'done',
   matched: 'linked to its Online sale',
@@ -86,8 +85,8 @@ const printedLine = (r: SettlementRow): PrintedLine => {
     lineNo: r.line_no,
     ref: isQrLine(r) ? QR_REF_WORDS : r.ref,
     grossSen: Number(r.gross_sen),
-    feeSen: Number(r.fee_sen),
-    netSen: Number(r.net_sen),
+    feeSen: lineFeeSen(r),
+    netSen: lineNetSen(r),
     document: orders.length === 0 && r.candidates.length > 0 ? `${r.candidates.length} possible` : null,
     orders: orders.map((o) => ({
       docNo: o.docNo, customer: o.customer, sales: o.sales, sheet: o.sheet, paidOn: o.paidOn, code: o.code,

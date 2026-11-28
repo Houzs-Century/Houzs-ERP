@@ -36,7 +36,6 @@ describe('pickDueSupplierPrice', () => {
 
 type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-// Minimal filtering fake: eq / in / lte / is, update applies to matching rows.
 function fakeSb(tables: Record<string, Row[]>) {
   return {
     from(t: string) {
@@ -97,7 +96,6 @@ describe('applyDueSupplierPrices', () => {
     expect(t.mfg_product_cost_history).toHaveLength(1);
     expect(t.mfg_product_cost_history[0]).toMatchObject({ base_price_sen: 175000, source_supplier_id: 'sup-a' });
 
-    // A second run the same night is a no-op.
     expect(await applyDueSupplierPrices(fakeSb(t), { today: '2026-10-01' })).toEqual({ bindings: 0, applied: 0, failed: 0 });
   });
 

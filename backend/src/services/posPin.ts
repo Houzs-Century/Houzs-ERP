@@ -1,11 +1,3 @@
-// ----------------------------------------------------------------------------
-// POS PIN writes — shared by the two places that issue a tablet credential:
-//   routes/pos.ts   POST /api/pos/admin-set-pin/:userId   (Members → Set PIN)
-//   routes/users.ts POST /api/users/invite  { pos_pin }   (Invite Member)
-//
-// It lives here rather than inline in users.ts because that handler is Drizzle
-// throughout and scm.pos_pins has no Drizzle model (raw SQL, like routes/pos.ts).
-// ----------------------------------------------------------------------------
 import type { Env } from "../types";
 import { hashPassword } from "./auth";
 

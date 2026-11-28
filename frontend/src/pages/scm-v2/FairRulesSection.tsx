@@ -11,7 +11,7 @@
 // ----------------------------------------------------------------------------
 
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
-import { fmtDateTime } from '../../vendor/shared/format';
+import { fmtDateTime } from '../../../../shared/src/vendor/shared/format';
 import { useSetSoSetting, useSoSettings, VENUE_DIFFERS_BLOCKS_KEY } from '../../vendor/scm/lib/so-settings-queries';
 
 export const FairRulesSection = () => {

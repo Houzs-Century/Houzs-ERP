@@ -1,19 +1,9 @@
-// ----------------------------------------------------------------------------
-// OfficialReceiptDoc — /scm/receipts/official/:id, one official receipt as a
-// page (the owner's Claude Design, batch 5 §8). The paper a customer holds for
-// one payment: who paid, for which order, how and when, who sold it, the
-// payment's journal (the receipt posts nothing — the payment did), whether the
-// money is confirmed, the receipt that replaced it (or that it replaced), and
-// what the payment says now when that is no longer the receipt's amount.
-// Confirm money is the Official receipts list's own door: the draft turns
-// formal and takes its official number, nothing posts.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useAccounts } from '../../../vendor/scm/lib/accounting-queries';
 import { generateReceiptPdf } from '../../../vendor/scm/lib/receipt-pdf';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { useToastOptional } from '../../../hooks/useToast';
 import {
   DocBooks, DocState, MoneyInDocPage, byTime, journalTrail, personOf,
@@ -26,10 +16,8 @@ import s from './MoneyInDoc.module.css';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
 
-/* The fact that says whether the money is real, as the design names it. */
 const MONEY_SEEN = 'Confirmed';
 
-/* Card money usually turns formal by itself, when its merchant line is confirmed. */
 const isCard = (method: string | null): boolean => method === 'merchant' || method === 'installment';
 
 export const OfficialReceiptDoc = () => {
@@ -38,7 +26,6 @@ export const OfficialReceiptDoc = () => {
   const q = useOfficialReceipt(id || null);
   const d = q.data;
   const r = d?.receipt;
-  /* The receipt's books are its PAYMENT's entry (source SOPAY / SIPAY, the payment's id). */
   const journals = useDocJournals(r?.payment_source ?? 'SOPAY', r?.payment_id);
   const accountsQ = useAccounts();
   const formalise = useFormaliseReceipt();
@@ -62,7 +49,6 @@ export const OfficialReceiptDoc = () => {
       setFailure(null);
       formalise.mutate(r.id, {
         onSuccess: (res) => toast?.success(`${r.or_number} is formal · ${res.orNumber}`),
-        /* The server's refusal verbatim — e.g. a bank with no series letter yet. */
         onError: (e) => setFailure(errText(e)),
       });
     },
@@ -71,7 +57,6 @@ export const OfficialReceiptDoc = () => {
   const facts: DocFact[] = [
     d.salesInvoice
       ? { label: 'Sales invoice', value: d.salesInvoice.number, to: moneyInDocHref('salesInvoice', d.salesInvoice.id) }
-      /* A sales-invoice payment's doc_no holds the invoice's id, never an order number. */
       : { label: 'Sales order', value: d.salesOrder ?? (r.payment_source === 'SOPAY' ? r.doc_no : null) ?? '—', to: d.salesOrder ? `/scm/sales-orders/${encodeURIComponent(d.salesOrder)}` : null },
     ...(d.salesInvoice && d.salesOrder ? [{ label: 'Sales order', value: d.salesOrder, to: `/scm/sales-orders/${encodeURIComponent(d.salesOrder)}` }] : []),
     { label: 'Paid on', value: fmtDate(r.paid_at) },

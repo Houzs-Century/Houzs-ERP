@@ -24,17 +24,6 @@ import {
 
 const app = new Hono<{ Bindings: Env }>();
 
-/* BOUNDED (2026-11-10). Production showed some of these reads running 600-960 s.
-   The cause is the shape, not a bug in one row: since the PIC/brand ACL was
-   removed (2026-08-19) every caller's unread count covers EVERY project of the
-   company, and a project the caller never opened has no project_reads row, so
-   COALESCE(last_read_at, '1970-01-01') made its WHOLE activity history unread —
-   a full scan + sort of project_activity on every poll, by everyone, every
-   minute. Two bounds:
-     1. "Unread" means unread within the last UNREAD_WINDOW_DAYS. Older activity
-        stays in the history feed (no `unread=1`) but no longer counts.
-     2. Every query here runs under a statement timeout, so a bad plan answers
-        504 in seconds instead of holding a connection for a quarter hour. */
 export const UNREAD_WINDOW_DAYS = 30;
 const STATEMENT_TIMEOUT = sql`SET LOCAL statement_timeout = '10s'`;
 
@@ -44,7 +33,11 @@ export function unreadWindowStart(now: number, days: number = UNREAD_WINDOW_DAYS
   return new Date(now - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
-/** Postgres's answer to statement_timeout (SQLSTATE 57014). */
+/** Same shape as the created_at default: unread is a TEXT compare, and " " sorts below "T". */
+export function readMarkStamp(now: number): string {
+  return new Date(now).toISOString().slice(0, 19) + "Z";
+}
+
 function isStatementTimeout(err: unknown): boolean {
   const e = err as { code?: unknown; message?: unknown } | null;
   return e?.code === "57014" || /statement timeout/i.test(String(e?.message ?? ""));
@@ -87,25 +80,13 @@ app.get("/", async (c) => {
 
   const db = getDb(c.env);
   const windowStart = unreadWindowStart(Date.now());
-  /* Each read in its own transaction so SET LOCAL scopes the timeout to it, and
-     the two big reads can still run side by side on two connections. */
   const bounded = <T>(run: (q: DB) => Promise<T>): Promise<T> =>
     db.transaction(async (tx) => {
       await tx.execute(STATEMENT_TIMEOUT);
       return run(tx as unknown as DB);
     });
 
-  // Reusable scope predicate — same for the feed query and the per-project
-  // unread counts. Company scope only (PIC/brand ACL removed 2026-08-19).
   const scopeConds: SQL[] = [];
-  // Multi-company: the activity feed is PROJECT-derived, so it follows the
-  // caller's ALLOWED companies via projects.company_id (mig-pg 0093). No-op
-  // when the company context is UNRESOLVED (pre-migration / D1 test mirror).
-  // `[]` is NOT that case — it means the caller is granted no active company
-  // and must see nothing (see the sentinel doc on allowedCompanyIds). That case
-  // is spelled `sql\`1=0\`` rather than `inArray(col, [])`: drizzle's empty-array
-  // handling has changed across versions, and this predicate is an isolation
-  // boundary — it must not depend on which one we resolve to.
   const allowedCo = allowedCompanyIds(c);
   if (allowedCo !== undefined) {
     scopeConds.push(
@@ -113,8 +94,6 @@ app.get("/", async (c) => {
     );
   }
 
-  // Feed conditions — exclude the user's own rows so your own posts
-  // don't spam the bell.
   const feedConds = [
     isNull(projects.archived_at),
     isNull(project_activity.archived_at),
@@ -126,18 +105,12 @@ app.get("/", async (c) => {
   ];
   if (since) feedConds.push(gt(project_activity.created_at, since));
   if (unreadOnly) {
-    // Activity strictly newer than the user's last_read_at for that
-    // project. Users who've never opened a project see every item as
-    // unread (COALESCE on the join).
     feedConds.push(
       gte(project_activity.created_at, windowStart),
       sql`${project_activity.created_at} > COALESCE(${project_reads.last_read_at}, '1970-01-01')`
     );
   }
 
-  // Build the feed query. The unread join is conditional — using
-  // .$dynamic() so the leftJoin can be appended later without TS
-  // narrowing complaints.
   const feedRead = (q: DB) => {
     let feedQ = q
       .select({
@@ -173,12 +146,6 @@ app.get("/", async (c) => {
       );
     }
 
-    // Pull limit+1 rows so we can tell the frontend whether there's a
-    // next page without an extra COUNT(*) query.
-    // The feed page and the per-project unread counts are INDEPENDENT queries
-    // (neither reads the other's result). This endpoint is polled by the bell, so
-    // run them CONCURRENTLY instead of serially — roughly halves the poll latency.
-    // Two queries take two connections from the Hyperdrive pool; well within it.
     return feedQ
       .where(and(...feedConds))
       .orderBy(desc(project_activity.created_at), desc(project_activity.id))
@@ -186,9 +153,6 @@ app.get("/", async (c) => {
       .offset(offset);
   };
 
-  // Per-project unread counts: activity rows strictly newer than the
-  // user's last_read_at for that project. Null (never opened) counts
-  // everything inside the window. Still scoped to visible projects.
   const unreadRead = (q: DB) => q
     .select({
       project_id: projects.id,
@@ -226,7 +190,6 @@ app.get("/", async (c) => {
   } catch (err) {
     if (!isStatementTimeout(err)) throw err;
     console.error("[notifications] read hit the statement timeout", { userId: user.id });
-    // 504, not 503: the client retries a 503, and a retry is more of the same load.
     return c.json({ error: "notifications_timeout" }, 504);
   }
 
@@ -240,9 +203,6 @@ app.get("/", async (c) => {
     total_unread += r.unread_count;
   }
 
-  // Houzs Points snapshot — same poll cadence, near-zero cost
-  // (single SELECT). Powers the topbar chip and lets the
-  // gamification page header render without a second round-trip.
   const me = await db
     .select({
       points_balance: users.points_balance,

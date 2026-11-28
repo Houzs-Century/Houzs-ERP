@@ -31,7 +31,7 @@ import {
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestLine, type ProductRequestLineInput, type ProductRequestType,
 } from "../vendor/scm/lib/product-request-queries";
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from "../vendor/scm/lib/mfg-products-queries";
-import { MFG_PRODUCT_CATEGORIES } from "../vendor/shared/product-categories";
+import { useProductCategories } from "../vendor/scm/lib/product-categories-store";
 import { useFabricTrackings, fabricOptionLabel } from "../vendor/scm/lib/fabric-queries";
 import { useWarehouses } from "../vendor/scm/lib/inventory-queries";
 import { sortByNumeric, sortByText } from "../vendor/scm/lib/sort-options";
@@ -39,7 +39,7 @@ import { DateField } from "../vendor/scm/components/DateField";
 import { useConfirm, usePrompt } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useAuth } from "../auth/AuthContext";
-import { fmtDateOrDash } from "../vendor/shared/format";
+import { fmtDateOrDash } from "../../../shared/src/vendor/shared/format";
 import { fileToBase64, PV_FILE_ACCEPT } from "../vendor/scm/lib/payment-voucher-queries";
 import { docFileMime } from "../vendor/scm/lib/doc-file-mime";
 import { takePickedFiles } from "../vendor/scm/lib/pick-files";
@@ -83,7 +83,6 @@ const StatusText = ({ r }: { r: Pick<ProductRequest, "status"> }) => (
   <span style={{ fontSize: 11.5, fontWeight: 600, color: REQUEST_STATUS[r.status].tone }}>{REQUEST_STATUS[r.status].label}</span>
 );
 
-/* ── The list ─────────────────────────────────────────────────────────────── */
 function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNew: () => void; onOpen: (id: string) => void }) {
   const q = useProductRequests(false);
   const rows = useMemo(() => q.data?.requests ?? [], [q.data]);
@@ -132,7 +131,6 @@ function RequestListScreen({ onBack, onNew, onOpen }: { onBack: () => void; onNe
   );
 }
 
-/* ── One request ──────────────────────────────────────────────────────────── */
 function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () => void; onEdit: (r: ProductRequest) => void }) {
   const { user } = useAuth();
   const me = Number(user?.id);
@@ -206,7 +204,7 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
       const res = await build.mutateAsync({ id: r.id, lineId: l.id, modelCode: code.trim() });
       const left = linesNeedingModel(res.request).length;
       void notify({ title: `${res.sku.code} created`, body: `Model ${res.model.modelCode}. ${left === 0 ? "Every line has its SKU — raise the PC Order or Purchase Order on the computer." : `${left} line${left === 1 ? "" : "s"} still need${left === 1 ? "s" : ""} a Model.`}` });
-    } catch { /* the mutation's own onError told the user */ }
+    } catch { }
   };
   const onLink = async (l: ProductRequestLine) => {
     const code = await askPrompt({ title: `Existing SKU — line ${l.line_no}`, body: `${l.proposed_model_name ?? "The new Model"} · ${mfgCategoryLabel(l.category)}. For a SKU already in the catalogue (imported in SKU Master); no second SKU is made.`, confirmLabel: "Use SKU", input: { label: "SKU code", placeholder: "e.g. 2385-2RR", required: true } });
@@ -215,7 +213,7 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
       const res = await link.mutateAsync({ id: r.id, lineId: l.id, itemCode: code.trim().toUpperCase() });
       const left = linesNeedingModel(res.request).length;
       void notify({ title: `Line ${l.line_no} is ${res.sku.code}`, body: left === 0 ? "Every line has its SKU — raise the PC Order or Purchase Order on the computer." : `${left} line${left === 1 ? "" : "s"} still need${left === 1 ? "s" : ""} a SKU.` });
-    } catch { /* the mutation's own onError told the user */ }
+    } catch { }
   };
   const onClose = async () => {
     if (!(await askConfirm({ title: `Close ${r.request_no}?`, body: "Nothing more will be done on it.", confirmLabel: "Close request" }))) return;
@@ -305,7 +303,6 @@ function RequestDetailScreen({ id, onBack, onEdit }: { id: string; onBack: () =>
   );
 }
 
-/* ── New / edit ───────────────────────────────────────────────────────────── */
 type DraftLine = ProductRequestLineInput & { rid: string; newModel: boolean };
 const draftLine = (from: ProductRequestLineInput | null): DraftLine => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -314,11 +311,11 @@ const draftLine = (from: ProductRequestLineInput | null): DraftLine => ({
 });
 
 function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductRequest | null; onBack: () => void; onDone: (id: string) => void }) {
+  const categoryOptions = useProductCategories().active;
   const create = useCreateProductRequest();
   const update = useUpdateProductRequest();
   const upload = useUploadProductRequestFile();
   const notify = useNotify();
-  /* Files picked before the request exists; uploaded once it does (new request only). */
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const pickRef = useRef<HTMLInputElement>(null);
   const [v, setV] = useState<Omit<ProductRequestInput, "lines">>(() => ({
@@ -375,10 +372,10 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
       for (const f of pendingFiles) {
         try {
           await upload.mutateAsync({ id: res.request.id, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
-        } catch { /* the mutation's own onError told the user; attach again on the request */ }
+        } catch { }
       }
       onDone(res.request.id);
-    } catch { /* the mutation's own onError told the user */ }
+    } catch { }
   };
 
   const field = (label: string, control: React.ReactNode) => (
@@ -436,7 +433,7 @@ function RequestFormScreen({ initial, onBack, onDone }: { initial: ProductReques
               : field("New Model name *", <input className="cal-sel" aria-label={`New Model name line ${n}`} value={l.proposedModelName ?? ""} placeholder="e.g. Aurora 2-seater" onChange={(e) => setLine(l.rid, { proposedModelName: e.target.value || null })} />)}
             {field("Category", (
               <select className="cal-sel" aria-label={`Category line ${n}`} value={l.category} disabled={existing && !!l.itemCode} onChange={(e) => setLine(l.rid, { category: e.target.value })}>
-                {MFG_PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{mfgCategoryLabel(c)}</option>)}
+                {categoryOptions.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
               </select>
             ))}
             {field("Fabric", <input className="cal-sel" list="mpr-fabrics" aria-label={`Fabric line ${n}`} value={l.fabricCode ?? ""} placeholder="Type or pick a fabric code…" onChange={(e) => setLine(l.rid, { fabricCode: e.target.value || null })} />)}

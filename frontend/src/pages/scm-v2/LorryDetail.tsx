@@ -1,21 +1,3 @@
-// ----------------------------------------------------------------------------
-// LorryDetail — the drawer behind a row click on Fleet's Lorries section.
-// Owner-approved mockup: a COMPLIANCE strip (road tax / insurance / Puspakom /
-// next service) over the purchase record and the service/repair history.
-//
-// All thresholds, cadence labels and the next-service rules come from
-// vendor/shared/lorry-compliance.ts — the single logic layer, so a phone screen
-// added later cannot disagree with this one about when a tile turns red.
-//
-// THE ONE RULE THIS FILE MUST NOT BREAK: the odometer is only as fresh as the
-// last service (readings are entered per-service, owner option A), so nothing
-// here renders a current-mileage or "due in N km" figure. The Next Service tile
-// takes its colour from the DATE alone and states the km target as the workshop
-// set it, next to the reading it was measured against and how old that reading
-// is. See the header of lorry-compliance.ts for why a confident km countdown
-// would be the same bug as the costing card that reported a green 100% margin
-// off an empty cost table.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type ReactNode } from 'react';
 import { X, Paperclip, Trash2 } from 'lucide-react';
@@ -38,7 +20,7 @@ import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { useThreePLCompanies } from '../../vendor/scm/lib/threepl-companies-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 import { formatDate } from '../../lib/utils';
 import styles from './Suppliers.module.css';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -47,8 +29,6 @@ import { openLoadedTab } from "../../lib/openLoadedTab";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-// WS3: box capacity (m3) from L x W x H (ft). Mirrors the backend derivation
-// (lorries.ts boxCapacityM3) so the live preview matches what gets stored.
 const FT3_TO_M3 = 0.0283168;
 const numOrNull = (v: number | string | null | undefined): number | null => {
   if (v == null || v === '') return null;
@@ -58,9 +38,8 @@ const numOrNull = (v: number | string | null | undefined): number | null => {
 const boxM3 = (l: number | null, w: number | null, h: number | null): number | null =>
   l != null && w != null && h != null ? Math.round(l * w * h * FT3_TO_M3 * 100) / 100 : null;
 
-// ─────────────────────────────────────────────────────────────────────────────
 
-export /** A date column the LorryRow type does not declare yet (mig 0245). */
+export
 const fmtDateField = (l: unknown, col: string): string => {
   const v = (l as Record<string, unknown>)[col];
   return typeof v === 'string' && v ? formatDate(v) : '—';
@@ -139,10 +118,7 @@ export const LorryDetail = ({ lorry, onClose }: { lorry: LorryRow; onClose: () =
   );
 };
 
-// ── purchase ─────────────────────────────────────────────────────────────────
 
-// Fleet A1 — the per-lorry delivery capacity ceilings the auto-propose packer
-// reads. Blank max_* => the packer uses its config default (10 sets / RM30k).
 /** The warehouses a lorry serves (owner, 2026-10-16: one lorry can cover several). */
 export const lorryWarehouseIds = (l: LorryRow): string[] => {
   const many = (l as { warehouse_ids?: string[] | null }).warehouse_ids;
@@ -181,7 +157,6 @@ export const CapacitySection = ({ lorry, ownFleet = false }: { lorry: LorryRow; 
     return m;
   }, [companies.data]);
 
-  // Live preview of the derived capacity (edit) / stored value (view).
   const formM3 = boxM3(numOrNull(form.lengthFt), numOrNull(form.widthFt), numOrNull(form.heightFt));
   const viewM3 = numOrNull(lorry.capacity_m3 ?? null);
 
@@ -219,8 +194,6 @@ export const CapacitySection = ({ lorry, ownFleet = false }: { lorry: LorryRow; 
           <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Edit</Button>
         </div>
         <dl style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-3)', margin: 0 }}>
-          {/* WS3: region gates which trips can pick this lorry. "Any region" =
-              warehouse_id NULL, i.e. selectable from any depot until pinned. */}
           <Fact label="Warehouses it serves" value={lorryWarehouseIds(lorry).length ? lorryWarehouseIds(lorry).map((id) => whName.get(id) ?? '—').join(', ') : 'Any warehouse'} />
           {!ownFleet && <Fact label="3PL company" value={lorry.threepl_company_id ? (coName.get(lorry.threepl_company_id) ?? '—') : 'Own fleet'} />}
           <Fact label="Box (L x W x H)" value={box} />
@@ -290,9 +263,6 @@ export const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     model: lorry.model ?? '',
-    /* Mig 0245 — four DIFFERENT dates. A reconditioned import is registered
-       here years after it was built, and a lorry can start work before its
-       transfer paperwork clears, so none of them can be inferred from another. */
     manufactureDate: (lorry as Record<string, unknown>).manufacture_date as string ?? '',
     registrationDate: (lorry as Record<string, unknown>).registration_date as string ?? '',
     inServiceDate: (lorry as Record<string, unknown>).in_service_date as string ?? '',
@@ -302,7 +272,6 @@ export const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
   });
   const set = <K extends keyof typeof form>(k: K, v: string) => setForm((s) => ({ ...s, [k]: v }));
 
-  // Edit → Save, never a naked edit: nothing is written until Save is pressed.
   const save = () => {
     const rm = form.price.trim();
     if (rm && !Number.isFinite(Number(rm))) { notify({ title: 'Purchase price must be a number.', tone: 'error' }); return; }
@@ -315,8 +284,6 @@ export const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
       registrationDate: form.registrationDate || null,
       inServiceDate: form.inServiceDate || null,
       purchaseDate: form.purchaseDate || null,
-      // RM → cents. Math.round because 1234.56 * 100 is 123455.99999 in binary
-      // floating point and a truncation would quietly lose a sen per lorry.
       purchasePriceSen: rm ? Math.round(Number(rm) * 100) : null,
       costPerKmSen: perKm ? Math.round(Number(perKm) * 100) : null,
     }, {
@@ -365,7 +332,6 @@ export const PurchaseSection = ({ lorry }: { lorry: LorryRow }) => {
       <div className={styles.formGrid}>
         <Field label="Purchase date" type="date" value={form.purchaseDate} onChange={(v) => set('purchaseDate', v)} />
         <Field label="Purchase price (RM)" value={form.price} onChange={(v) => set('price', v)} placeholder="e.g. 128000" />
-        {/* Fuel, tyres, service, driver: whatever the company counts as running cost, per km. Times the Velocity km on the Live Map. */}
         <Field label="Running cost per km (RM)" value={form.perKm} onChange={(v) => set('perKm', v)} placeholder="e.g. 0.85" />
       </div>
       <div style={{ display: 'flex', gap: 'var(--space-2)', marginTop: 'var(--space-3)' }}>
@@ -392,7 +358,6 @@ const Fact = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
-// ── one history row ──────────────────────────────────────────────────────────
 
 const ServiceRow = ({ record, lorryId }: { record: LorryServiceRecord; lorryId: string }) => {
   const upload = useUploadServiceInvoice(lorryId);
@@ -408,7 +373,6 @@ const ServiceRow = ({ record, lorryId }: { record: LorryServiceRecord; lorryId: 
     }
   };
 
-  // Destructive → in-app confirm, never a naked delete.
   const remove = async () => {
     const ok = await confirm({
       title: 'Delete this service record?',
@@ -430,8 +394,6 @@ const ServiceRow = ({ record, lorryId }: { record: LorryServiceRecord; lorryId: 
           <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
             {formatDate(record.service_date)}
             {record.workshop ? ` · ${record.workshop}` : ''}
-            {/* 0 km is treated as "not recorded" rather than a real reading —
-                the table allows 0 but nobody services a lorry at 0 km. */}
             {record.odometer_km ? ` · ${record.odometer_km.toLocaleString()} km` : ''}
           </div>
           {record.notes ? (
@@ -464,7 +426,6 @@ const ServiceRow = ({ record, lorryId }: { record: LorryServiceRecord; lorryId: 
                 upload.mutate({ id: record.id, file }, {
                   onError: (err: unknown) => notify({ title: (err as Error)?.message ?? 'Upload failed.', tone: 'error' }),
                 });
-                // Reset so re-picking the same file after a failure re-fires.
                 e.target.value = '';
               }}
             />
@@ -487,10 +448,6 @@ const Field = ({
 }) => (
   <label className={styles.field}>
     <span className={styles.fieldLabel}>{label}</span>
-    {/* type="date" routes to DateField, not to a native date input: the native
-           one renders in the OPERATING SYSTEM's locale, so the same field read
-           DD/MM/YYYY on one machine and MM/DD/YYYY on another. Same ISO contract
-           in and out. */}
     {type === 'date' ? (
       <DateField className={styles.fieldInput} value={value} placeholder={placeholder} onChange={onChange} fullWidth/>
     ) : (

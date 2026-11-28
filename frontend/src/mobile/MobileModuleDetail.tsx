@@ -4,7 +4,7 @@ import { offersRecordPayment, piPaymentHint } from "./doc-payment";
 import { visibleFields, canOperateDeliveryOrders, canOperateSalesInvoices, canPostGoodsReceipts } from "../auth/salesAccess";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lineIdentity, orderLineIdentity } from "@2990s/shared";
-import { buildVariantSummary } from "../vendor/shared/variant-summary";
+import { buildVariantSummary } from "../../../shared/src/vendor/shared/variant-summary";
 import { formatPhone } from "@2990s/shared/phone";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { usePoSoCoverage, originsByCode, provenanceByCode, storedLinkSkus, deliveredByCode, type OriginAssignment } from "../vendor/scm/lib/flow-queries";
@@ -37,51 +37,17 @@ import { formatDate } from "../lib/utils";
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from "../vendor/scm/lib/payment-methods";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
-import { humaniseStatusKey, statusLabel, type StatusDocType } from "../vendor/scm/lib/status-pill";
+import { humaniseStatusKey, statusLabel, type StatusDocType } from "../../../shared/src/vendor/scm/lib/status-pill";
 import "./mobile.css";
 
-// ---------------------------------------------------------------------------
-// MobileModuleDetail — ONE generic, read-only DETAIL screen behind the generic
-// MobileModuleList. Given the module key + the already-loaded list `row`, it
-// renders a clean full detail: a header card (doc number, party, status pill,
-// date, money stats) plus — for document modules — a line-items list fetched by
-// id. Simple (non-document) modules just render a tidy key/value dump of the
-// row already handed in. Header + card idiom is a 1:1 match of MobileSODetail /
-// MobilePMS (safe-area header, hz-scroll paddingBottom:120, status pill via
-// color-mix, kv grid, .money numerals). Everything degrades: a missing field is
-// an em-dash, never undefined / null / NaN.
-//
-// Document `:id` (or `:docNo`) endpoints + shapes wired (backend/src/scm/routes):
-//   delivery-orders-mfg          GET /delivery-orders-mfg/:id           → { deliveryOrder,          items }
-//   sales-invoices               GET /sales-invoices/:id                → { salesInvoice,           items }
-//   grns                         GET /grns/:id                          → { grn,                    items }
-//   mfg-purchase-orders          GET /mfg-purchase-orders/:id           → { purchaseOrder,          items }
-//   purchase-invoices            GET /purchase-invoices/:id             → { purchaseInvoice,        items }
-//   purchase-returns             GET /purchase-returns/:id              → { purchaseReturn,         items }
-//   delivery-returns             GET /delivery-returns/:id              → { deliveryReturn,         items }
-//   consignment-orders           GET /consignment-orders/:docNo         → { salesOrder,             items }
-//   consignment-notes            GET /consignment-notes/:id             → { deliveryOrder,          items }
-//   consignment-returns          GET /consignment-returns/:id           → { deliveryReturn,         items }
-//   purchase-consignment-orders  GET /purchase-consignment-orders/:id   → { purchaseOrder,          items }
-//   purchase-consignment-receives GET /purchase-consignment-receives/:id → { grn,                   items }
-//   purchase-consignment-returns GET /purchase-consignment-returns/:id  → { purchaseReturn,         items }
-// ---------------------------------------------------------------------------
 
-// Money is stored as integer *_sen — delegate display to the shared SCM
-// formatter (fmtSen). The local Number() coercion is what this adds: the
-// callers hand in `unknown` (raw payload fields), which fmtSen does not take.
-// The non-finite guard now also lives INSIDE fmtSen/fmtAmt, so this one is
-// belt-and-braces — do not read it as the only thing standing between a stray
-// NaN and the user.
 const money = (centi: unknown) => {
   const n = Number(centi);
   return fmtSen(Number.isFinite(n) ? n : 0);
 };
 
-/** DD/MM/YYYY (TZ-aware via the shared helper), or em-dash when absent / unparseable. */
 const dmy = (d: unknown) => (d == null || d === "" ? "—" : formatDate(String(d)));
 
-/** Coerce anything to a safe display string; blanks / nullish → "". */
 const s = (v: unknown): string => {
   if (v == null) return "";
   if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
@@ -92,13 +58,11 @@ const s = (v: unknown): string => {
 
 const join = (...parts: unknown[]) => parts.map(s).map((p) => p.trim()).filter(Boolean).join(" · ");
 
-/** Run a config accessor (primary / pill) against a row, swallowing throws. */
 const safeCall = (fn: ((row: any) => string) | undefined, row: any): string => {
   if (!fn) return "";
   try { return fn(row) ?? ""; } catch { return ""; }
 };
 
-/** first non-empty string of the candidates, else "—". */
 const firstOf = (...vals: unknown[]): string => {
   for (const v of vals) {
     const str = s(v).trim();
@@ -113,7 +77,6 @@ const pct = (basis: unknown) => {
   return `${(n / 100).toLocaleString("en-MY", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 };
 
-// ── Status → three-phase pill (mirror MobileSODetail phase()) ────────────────
 function phase(status: unknown): "draft" | "cancelled" | "live" {
   const st = s(status).toUpperCase();
   if (st === "DRAFT") return "draft";
@@ -121,14 +84,10 @@ function phase(status: unknown): "draft" | "cancelled" | "live" {
   return "live";
 }
 
-/** A cancelled / voided document renders greyed + a "Cancelled {date}" ribbon
- *  and drops its action bar (spec §lifecycle: CANCELLED = read-only forever). */
 function isCancelledDoc(status: unknown): boolean {
   return phase(status) === "cancelled";
 }
 
-/** Ribbon shown at the top of a cancelled document's scroll area. Dual-reads
- *  the cancel timestamp (camelCase ?? snake_case), degrading to a bare label. */
 function CancelledRibbon({ header }: { header: any }) {
   const when = dmy(header?.cancelledAt ?? header?.cancelled_at ?? header?.voidedAt ?? header?.voided_at ?? header?.updatedAt ?? header?.updated_at);
   return (
@@ -149,8 +108,6 @@ function StatusPill({ status, statusDoc }: { status: unknown; statusDoc: StatusD
   const raw = s(status).trim();
   if (!raw) return null;
   const p = phase(status);
-  // VERBATIM from MobileSODetail's soPill: Submitted [#e1efed,#0c3f39,none] ·
-  // Draft [#f4f6f3,#767b6e,border] · Cancelled [#f8eaea,#b23a3a,none].
   const map: Record<string, [string, string, string]> = {
     live: ["#e1efed", "#0c3f39", "none"],
     draft: ["#f4f6f3", "#767b6e", "1px solid #e3e6e0"],
@@ -167,9 +124,6 @@ function StatusPill({ status, statusDoc }: { status: unknown; statusDoc: StatusD
   );
 }
 
-// ── Shared little presentational bits (design classes from MobileSODetail) ───
-/** One key/value cell as it sits inside a `.pgrid2` grid — `.pkv-l` label over
- *  a `.pkv-v` value (money-monospaced when `mono`). Verbatim SO-detail idiom. */
 function Kv({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div>
@@ -179,7 +133,6 @@ function Kv({ label, value, mono }: { label: string; value: string; mono?: boole
   );
 }
 
-/** Money stat card — one of the 3 white cards under the header, `.ey` label. */
 function Stat({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 11, padding: 10, textAlign: "center" }}>
@@ -193,18 +146,9 @@ function Eyebrow({ children }: { children: string }) {
   return <div className="ey" style={{ color: "var(--hz-c-ink-muted)", margin: "4px 2px 6px" }}>{children}</div>;
 }
 
-/** One `.docrow` line item: name + qty on top, unit price + amount below. */
 function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, racks, sourceState, delivered, committedBatch, substituted, poRef }: {
   name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown; remark?: string | null;
-  // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
-  // Sales Order(s) this line was raised from + that SO's effective delivery
-  // date, matched by SKU. Empty array → dash, mirroring the desktop columns.
-  // Display-only on mobile (the phone shell doesn't route to the SO).
   assigned?: OriginAssignment[];
-  // PR-3 (2026-08-07): the coverage wire's PARALLEL stored-origin slot — the
-  // "bought for" SO(s), rendered muted BESIDE the precedence rows above
-  // (deduped by soDocNo inside PairedSoRowsMobile). Desktop twin: the
-  // DocumentLinesExpansion provenance chips — one product.
   provenance?: OriginAssignment[];
   // Sales docs (DO / SI): the source PO(s) the shipped goods actually came from
   // (batch trail, GRN-healed) + the PO-less adjustment flag — the mobile twin
@@ -212,32 +156,18 @@ function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, source
   // data on every surface).
   sourcePos?: string[];
   sourceAdj?: boolean;
-  // DO lines only: the rack(s) the goods left, and whether PO / rack were locked
-  // when the line shipped or worked out (older DO) — desktop "Source racks" twin.
   racks?: string[];
   sourceState?: "locked" | "worked_out" | null;
-  // DO lines only (mig 0230): the incoming PO batch this line committed to at
-  // DO creation — the hard-from-DO anchor. Rendered as an anchored solid chip
-  // (CommittedBatchRowMobile); absent → nothing. Display-only.
   committedBatch?: string | null;
-  // Purchase docs (PO / GRN / PI): the DO(s) that shipped this line's goods,
-  // with per-DO qty + the DO's own SO (soDocNo) so each chip pairs with its
-  // Assigned-SO row — the mobile twin of the desktop per-SO sub-table.
   delivered?: Array<{ doNo: string; qty: number; soDocNo?: string | null }>;
   // false = no stored so_item_id behind the chip above; it is an MRP allocation
   // only. Desktop and mobile say this the same way (one-product rule): in the
   // chip's tooltip, since the owner removed the visible caption (2026-08-01).
   sourceLinked?: boolean;
-  // mig 0235 — PO lines only: the line's sub-numbered allocations (which
-  // customer / STOCK each slice of a consolidated purchase serves). Display-
-  // only on mobile, matching the documented precedent (the phone PO surface
-  // has no per-line editor at all); the split editor is the desktop detail's.
-  // Rendered only when the line actually has slices — an unsplit line stays
-  // exactly as it always was.
   allocations?: Array<{ seq: number; qty: number; so_doc_no: string | null }>;
   poNumber?: string;
-  /* DO lines only (mig 20260907T2340) — see SubstitutedRowMobile. */ substituted?: boolean;
-  /* GRN / PI lines (#26): the line's own PO — see MobileLinePoRef. */ poRef?: React.ReactNode;
+ substituted?: boolean;
+ poRef?: React.ReactNode;
 }) {
   const q = Number(qty);
   const qtyLabel = Number.isFinite(q) ? q : 0;
@@ -304,10 +234,8 @@ function LineItem({ name, sub, remark, qty, unitSen, amountSen, assigned, source
   );
 }
 
-// ── Header card (shared by every module) ────────────────────────────────────
 function DetailHeader({ eyebrow, title, subtitle, status, statusDoc, onBack, onEdit, onPdf, onMap }: {
   eyebrow: string; title: string; subtitle?: string; status?: unknown; statusDoc: StatusDocType | null; onBack: () => void; onEdit?: () => void; onPdf?: () => void;
-  /** Opens the mobile Relationship Map (document modules with a flow anchor). */
   onMap?: () => void;
 }) {
   return (
@@ -344,12 +272,8 @@ function DetailHeader({ eyebrow, title, subtitle, status, statusDoc, onBack, onE
 
 const scrollStyle: React.CSSProperties = { padding: 14, paddingBottom: 120 };
 const wrapStyle: React.CSSProperties = { display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" };
-// Line-items / list card — same white rounded shell as MobileSODetail's item card.
 const cardStyle: React.CSSProperties = { background: "var(--hz-c-surface)", border: "1px solid var(--hz-c-border-subtle)", borderRadius: 12, padding: "2px 12px", marginBottom: 13 };
 
-// ---------------------------------------------------------------------------
-// Document detail — fetches header + line items by id, per module.
-// ---------------------------------------------------------------------------
 
 type DocMap = {
   path: string;
@@ -358,16 +282,10 @@ type DocMap = {
   title: (h: any) => string;
   subtitle?: (h: any) => string;
   status: (h: any) => unknown;
-  /** status-pill.ts vocabulary for the header pill. REQUIRED - null is a decision (humanise the stored value). */
   statusDoc: StatusDocType | null;
-  /** KV grid rows: [label, value]. */
   meta: (h: any, items: any[]) => Array<[string, string]>;
-  /** [Total, Secondary, Tertiary] stats — each [label, value, color] or null. */
   stats: (h: any) => Array<[string, string, string] | null>;
   line: (it: any) => { name: string; sub?: string; remark?: string | null; qty: unknown; unitSen: unknown; amountSen: unknown };
-  /** Optional amber warning bar between the stats and the line items —
-   *  computed from the SAME detail payload (header + items), so no extra
-   *  fetch. Return null for "nothing to warn about". */
   notice?: (h: any, items: any[]) => string | null;
 };
 
@@ -396,10 +314,6 @@ const DOC_MODULES: Record<string, DocMap> = {
     stats: (h) => [
       ["Total", money(h.local_total_sen), "var(--ink)"],
     ],
-    /* Description ONCE, code NOT displayed — the shared rule
-       (vendor/shared/line-identity.ts). `name` already preferred the
-       description; the code was then repeated on `sub`, which is the reported
-       shape. WAREHOUSE and DELIVERY DATE are NOT duplicates and stay on `sub`. */
     line: (it) => ({
       name: lineIdentity({ code: it.item_code, description: it.description }).primary,
       sub: join(it.warehouse_code, dmy(it.line_delivery_date) !== "—" ? dmy(it.line_delivery_date) : ""),
@@ -425,8 +339,8 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Salesperson", firstOf(h.agent)],
     ],
     stats: (h) => {
-      const depositSen = siDepositAppliedSen(h); // own stat, never folded into Paid
-      const creditSen = siCreditNotesSen(h); // credit notes knocked off it — their own stat too
+      const depositSen = siDepositAppliedSen(h);
+      const creditSen = siCreditNotesSen(h);
       const bal = siOutstandingSen(Number(h.total_sen ?? h.local_total_sen ?? 0), Number(h.paid_sen ?? 0), depositSen, creditSen);
       return [
         ["Total", money(h.total_sen ?? h.local_total_sen), "var(--ink)"],
@@ -482,8 +396,6 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Tax", money(h.tax_sen), "#767b6e"],
       ["Total", money(h.total_sen), "var(--ink)"],
     ],
-    // A scanned draft's note says which PO it may be wrong about and which
-    // delivery-order lines were left off; the phone must see it before posting.
     notice: (h) => (h.status === "DRAFT" && s(h.notes).trim() ? s(h.notes).trim() : null),
     line: (it) => ({
       name: firstOf(it.material_name, it.description, it.item_code),
@@ -516,20 +428,12 @@ const DOC_MODULES: Record<string, DocMap> = {
     ],
     line: (it) => ({
       name: firstOf(it.material_name, it.description, it.item_code),
-      /* variant summary FIRST (item #1 of the mobile UI audit — every doc line
-         surfaces the sofa/bedframe colour+composition), then item_code +
-         cumulative received_qty. buildVariantSummary returns "" when the row
-         has no variants, so a bare material line still reads correctly. */
       sub: join(buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""), it.item_code, s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : ""),
-      remark: it.notes ?? null, // MobileLineRemark's header has the why
+      remark: it.notes ?? null,
       qty: it.qty,
       unitSen: it.unit_price_sen,
       amountSen: it.line_total_sen,
     }),
-    /* SO→PO drift (desktop parity, Commander 2026-06-16) — the detail payload's
-       items already carry so_drift; same status gate as the desktop banner
-       (only an order that is with the supplier can be stale). The phone gets
-       the warning, the sync/re-send workflow stays on desktop. */
     notice: (h, items) => {
       const st = s(h?.status);
       const mode = poDriftMode(st);
@@ -541,9 +445,6 @@ const DOC_MODULES: Record<string, DocMap> = {
     },
   },
 
-  /* Purchase Invoice — supplier + PI number in the header, supplier code +
-     supplier_invoice_ref (their invoice) as subtitle, PO + GRN in the meta
-     grid. Balance = total_sen − paid_sen (mirrors the SI stat trio). */
   "purchase-invoices": {
     path: "/purchase-invoices",
     headerKey: "purchaseInvoice",
@@ -579,10 +480,6 @@ const DOC_MODULES: Record<string, DocMap> = {
         ["Balance", money(bal), bal > 0 ? "#a16a2e" : "var(--ink)"],
       ];
     },
-    /* line: PI items key on item_code (PC/PO family) rather than item_code —
-       hand it to lineIdentity as the code, description = material_name, and put
-       the variant summary in secondary so the sofa/bedframe spec shows on every
-       row. Falls back to the server-stamped description2 for pre-variant rows. */
     line: (it) => {
       const { primary } = lineIdentity({
         code: it.item_code,
@@ -598,9 +495,6 @@ const DOC_MODULES: Record<string, DocMap> = {
     },
   },
 
-  /* Purchase Return — supplier + return number, source PO/GRN in subtitle so
-     the operator sees which supplier goods this reverses. Only stat is the
-     refund total. Warehouse resolves per-line (backend stamps warehouse_code). */
   "purchase-returns": {
     path: "/purchase-returns",
     headerKey: "purchaseReturn",
@@ -643,10 +537,6 @@ const DOC_MODULES: Record<string, DocMap> = {
     },
   },
 
-  /* Delivery Return — the SO-side twin of purchase-returns. Customer + return
-     number in the header, source DO number as subtitle. Total + Refund stats
-     because the header carries both local_total_sen (line sum) and
-     refund_sen (payable-out); the customer sees both on the printed slip. */
   "delivery-returns": {
     path: "/delivery-returns",
     headerKey: "deliveryReturn",
@@ -689,10 +579,6 @@ const DOC_MODULES: Record<string, DocMap> = {
     },
   },
 
-  /* Consignment Order — the CO is a clone of the SO for loaner goods; the URL
-     key is doc_no (endpoint /consignment-orders/:docNo, NOT /:id — see
-     backend/src/scm/routes/consignment-orders.ts). docId() falls back to
-     row.doc_no so the DocumentDetail fetch hits the right URL. */
   "consignment-orders": {
     path: "/consignment-orders",
     headerKey: "salesOrder",
@@ -737,10 +623,6 @@ const DOC_MODULES: Record<string, DocMap> = {
     },
   },
 
-  /* Consignment Note — the CN is the CO's delivery twin (a shipped loaner).
-     Endpoint /consignment-notes/:id returns { deliveryOrder, items }. Header
-     carries local_total_sen (line sum); no paid/balance because payment on
-     a consignment happens against the CO, not the note. */
   "consignment-notes": {
     path: "/consignment-notes",
     headerKey: "deliveryOrder",
@@ -778,9 +660,6 @@ const DOC_MODULES: Record<string, DocMap> = {
     },
   },
 
-  /* Consignment Return — the CN's reverse. Endpoint /consignment-returns/:id
-     returns { deliveryReturn, items }. Same two-money stats as delivery-returns
-     (Total = local_total_sen, Refund = refund_sen). */
   "consignment-returns": {
     path: "/consignment-returns",
     headerKey: "deliveryReturn",
@@ -820,9 +699,6 @@ const DOC_MODULES: Record<string, DocMap> = {
     },
   },
 
-  /* Purchase Consignment Order — the supplier-side PC family clone of a PO.
-     Same shape as mfg-purchase-orders: supplier + pc_number, Subtotal/Tax/Total
-     tiles. Endpoint returns { purchaseOrder, items } keyed by uuid :id. */
   "purchase-consignment-orders": {
     path: "/purchase-consignment-orders",
     headerKey: "purchaseOrder",
@@ -862,9 +738,6 @@ const DOC_MODULES: Record<string, DocMap> = {
     },
   },
 
-  /* Purchase Consignment Receive — the PC family's GRN. Endpoint returns
-     { grn, items } (same headerKey as regular GRN by design — the desktop
-     clones the GRN screen). pc_order_no is the source PC Order's pc_number. */
   "purchase-consignment-receives": {
     path: "/purchase-consignment-receives",
     headerKey: "grn",
@@ -908,9 +781,6 @@ const DOC_MODULES: Record<string, DocMap> = {
     },
   },
 
-  /* Purchase Consignment Return — the reverse of a PC Receive. Endpoint
-     returns { purchaseReturn, items }. Only stat is refund_sen (a supplier
-     credit); no per-line warehouse column on this doc's ITEM select. */
   "purchase-consignment-returns": {
     path: "/purchase-consignment-returns",
     headerKey: "purchaseReturn",
@@ -951,11 +821,6 @@ const DOC_MODULES: Record<string, DocMap> = {
   },
 };
 
-/** Derive the id to fetch by from the list row. Most detail routes key on the
- *  uuid `id`; consignment-orders keys on `doc_no` (its list HEADER doesn't even
- *  select `id`), and the PC family adds `pc_number` / `receive_number`. Fall
- *  back through every human key so a row that arrived without `id` still
- *  resolves to the right URL segment. */
 function docId(row: any): string {
   return s(
     row?.id ??
@@ -970,13 +835,6 @@ function docId(row: any): string {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Per-document ACTIONS — status transitions + Record Payment, rendered as a
-// sticky footer over the detail. Every action's transition set is read from the
-// backend route's state machine (backend/src/scm/routes/*.ts): only transitions
-// VALID from the doc's CURRENT status are offered, so no button ever 409s.
-// Destructive actions (Cancel / Void) go through the in-app confirm (danger).
-// ---------------------------------------------------------------------------
 
 /**
  * May this user OPERATE the document behind `moduleKey` (advance its status,
@@ -996,9 +854,6 @@ function useMayOperateDoc(moduleKey: string): boolean {
   return true;
 }
 
-/** Build the valid status actions for a doc from its CURRENT status. Empty when
- *  the doc is terminal, the module has no status route, or the caller may only
- *  view it (`mayOperate` false → the footer renders nothing at all). */
 /* Posting a GRN is its own permission (owner 2026-10-01): a storekeeper with
    Goods Receipt edit drafts and sets racks, the purchaser posts. Same helper as
    desktop; the server gate is scm/lib/grn-post-capability.ts. */
@@ -1048,8 +903,6 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       return out;
     }
 
-    // Sales Invoice — PATCH /:id/status. DRAFT→SENT (Confirm) or Cancel; active
-    // (SENT/PARTIALLY_PAID/PAID/OVERDUE)→Cancel; CANCELLED→Reopen (to SENT).
     case "sales-invoices": {
       const path = `/sales-invoices/${enc}/status`;
       if (st === "DRAFT") {
@@ -1065,8 +918,6 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       return out;
     }
 
-    // Purchase Order — /confirm (DRAFT→SUBMITTED), /cancel, /reopen. RECEIVED is
-    // terminal. Receiving into a GRN is a separate flow — not offered here.
     case "mfg-purchase-orders": {
       if (st === "RECEIVED") return out;
       if (st === "DRAFT") {
@@ -1081,12 +932,10 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
         // terminal state and the record stays. Reopen is the only way back.
         return out;
       }
-      // SUBMITTED / PARTIALLY_RECEIVED
       out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/mfg-purchase-orders/${enc}/cancel`, method: "PATCH" }, reasonPrompt: PO_CANCEL_PROMPT });
       return out;
     }
 
-    // GRN — /post (DRAFT→POSTED), /cancel. CANCELLED / CLOSED are terminal.
     case "grns": {
       if (st === "CANCELLED" || st === "CLOSED") return out;
       if (st === "DRAFT" && mayPostGrn) {
@@ -1096,8 +945,6 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       return out;
     }
 
-    // Sales Return (delivery-returns) — PATCH /:id/status. RECEIVED→INSPECTED→
-    // REFUNDED; CANCELLED is final. Offer the next hand-walk step + Cancel.
     case "delivery-returns": {
       if (st === "CANCELLED" || st === "REFUNDED") return out;
       const path = `/delivery-returns/${enc}/status`;
@@ -1111,8 +958,6 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       return out;
     }
 
-    // Purchase Return — /complete (POSTED→COMPLETED), /cancel. COMPLETED /
-    // CANCELLED are terminal. (POST /:id/post only echoes — not a real action.)
     case "purchase-returns": {
       if (st === "COMPLETED" || st === "CANCELLED") return out;
       if (st === "POSTED") {
@@ -1122,8 +967,6 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
       return out;
     }
 
-    // Purchase Invoice — /post (DRAFT→POSTED), /cancel (blocked once paid).
-    // Payment is an AP Payment voucher, not an action here (see piPaymentHint).
     case "purchase-invoices": {
       if (st === "CANCELLED" || st === "PAID") return out;
       if (st === "DRAFT") {
@@ -1131,8 +974,6 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
         out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/purchase-invoices/${enc}/cancel`, method: "PATCH" }, confirm: { title: "Cancel this purchase invoice?", body: "This voids the PI and reverses its accounting.", confirmLabel: "Cancel PI" } });
         return out;
       }
-      // POSTED / PARTIALLY_PAID — cancel allowed only while unpaid; the backend
-      // rejects a cancel once paid_sen > 0, so hide Cancel then.
       const paid = Number(header?.paid_sen ?? 0);
       if (!(Number.isFinite(paid) && paid > 0)) {
         out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/purchase-invoices/${enc}/cancel`, method: "PATCH" }, confirm: { title: "Cancel this purchase invoice?", body: "This voids the PI and reverses its accounting.", confirmLabel: "Cancel PI" } });
@@ -1145,28 +986,18 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
   }
 }
 
-// Payment-method options, single-sourced from the canonical payment-methods lib
-// (vendor/scm/lib/payment-methods.ts) so the picker reads identically to desktop
-// and never drifts. The option VALUE is the canonical CODE the payment endpoints
-// store + expect (desktop reads back method === 'cash' | 'transfer' | 'merchant';
-// SalesInvoiceDetail.tsx), and the LABEL is the canonical friendly label.
 const SI_METHODS: Array<{ value: string; label: string }> = PAYMENT_METHOD_CODES.map(
   (code) => ({ value: code, label: PAYMENT_METHOD_DEFAULT_LABELS[code] }),
 );
 
-// Footer action buttons ride the design's `.btn` (teal solid) and re-skin per
-// variant, mirroring the SO-detail actbar (Edit / Cancel = white outline).
 function actSkin(variant: ActVariant, disabled: boolean): React.CSSProperties {
   const skin: React.CSSProperties =
     variant === "solid" ? { background: "var(--hz-c-primary)", color: "#fff", border: "none" }
     : variant === "danger" ? { background: "var(--hz-c-surface)", color: "var(--hz-c-err)", border: "1.5px solid #f0d4d4" }
     : { background: "var(--hz-c-surface)", color: "var(--hz-c-primary)", border: "1.5px solid var(--hz-c-primary)" };
-  // white-space:nowrap per spec — labels never wrap; the row lets buttons flex.
   return { flex: 1, padding: 12, borderRadius: 11, fontSize: 13.5, whiteSpace: "nowrap", ...skin, opacity: disabled ? 0.55 : 1 };
 }
 
-/** Record-Payment bottom sheet for a Sales Invoice:
- *  POST /sales-invoices/:id/payments { paidAt, method, amountSen, ... }. */
 function PaymentSheet({ id, header, onClose, onDone }: {
   id: string; header: any; onClose: () => void; onDone: () => void;
 }) {
@@ -1180,10 +1011,6 @@ function PaymentSheet({ id, header, onClose, onDone }: {
   const [date, setDate] = useState(() => todayMyt());
   const [ref, setRef] = useState("");
   const [error, setError] = useState<string | null>(null);
-  /* One key for the one payment this sheet is open to record (lib/idempotency.ts).
-     The parent mounts the sheet behind `payOpen` and onSuccess closes it, so the
-     MOUNT is the intent: every retry of THIS submit reuses this key, and
-     recording a second payment means re-opening, i.e. a new mount and a new key. */
   const idemKey = useIdempotencyKey();
 
   const mutation = useMutation({
@@ -1256,16 +1083,8 @@ function PaymentSheet({ id, header, onClose, onDone }: {
   );
 }
 
-/** Sticky action footer for a document detail: status transition buttons +
- *  (for SI) a Record Payment action opening the PaymentSheet. Invalidates
- *  the detail + list queries on success; surfaces errors inline. Renders
- *  nothing when there is no valid action from the current status. */
 function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }: {
   moduleKey: string; id: string; header: any; invalidate: () => void; onPOD?: () => void;
-  /** Called after a `removes` action succeeds — navigate back to the list since
-   *  the detail's record no longer exists. No action sets `removes` today (the
-   *  Delete PO that used to be the example is gone, 2026-08-11); this stays
-   *  wired for a future draft-discard. */
   onDeleted?: () => void;
 }) {
   const qc = useQueryClient();
@@ -1278,11 +1097,6 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
 
   const mayOperate = useMayOperateDoc(moduleKey);
   const mayPostGrn = useMayPostGrn();
-  /* POD confirms a delivery (stock + SO sync) → an operate action, gated on the
-     SAME helper as the status actions (mirrors DeliveryOrderDetailV2's
-     canWriteDo). MobileApp already withholds onPOD for a view-only user; this is
-     defence-in-depth so the button, the early-return, the error offset and the
-     scroll padding all agree. */
   const podEnabled = !!onPOD && mayOperate;
   const statusActions = useMemo(() => statusActionsFor(moduleKey, id, header, mayOperate, mayPostGrn), [moduleKey, id, header, mayOperate, mayPostGrn]);
   const canPay = offersRecordPayment(moduleKey, header);
@@ -1290,9 +1104,6 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
   const refresh = () => {
     invalidate();
     void qc.invalidateQueries({ queryKey: ["mobile-module"] });
-    /* ["mobile-module"] is this screen's own key — the desktop lists these same
-       documents under their vendored roots, and a GRN post / return completion
-       also moves stock, so the shared roots for this module must refetch too. */
     invalidateModuleShared(qc, moduleKey);
   };
 
@@ -1306,9 +1117,6 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
       }),
     onSuccess: (data, action) => {
       setRunningKey(null);
-      // A `removes` action drops the record → refresh the list and pop back to
-      // it; every other action stays on the (now-updated) detail. Nothing sets
-      // `removes` today — see the field's note on DocAction.
       if (action.removes) {
         void qc.invalidateQueries({ queryKey: ["mobile-module"] });
         invalidateModuleShared(qc, moduleKey);
@@ -1319,11 +1127,6 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
       refresh();
       void notify(actionDoneNotice(action.label, data));
     },
-    /* A zero-cost receipt refusal is the one error here that CAN be answered on
-       this screen: the sheet carries the same sentence plus the two remedies the
-       refusal names (a unit price, or a per-line "Received free"). Mobile had
-       neither and sent the receiver to a PC. Everything else keeps the inline
-       line. */
     onError: (e) => {
       setRunningKey(null);
       if (zeroCost.capture(e)) { setError(null); return; }
@@ -1336,7 +1139,7 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
     setError(null);
     if (action.confirm && !(await confirm({ title: action.confirm.title, body: action.confirm.body, confirmLabel: action.confirm.confirmLabel, danger: true }))) return;
     const fired = await askActionReason(action, prompt);
-    if (!fired) return; // the reason IS the confirmation — dismissed means no
+    if (!fired) return;
     setRunningKey(action.key);
     mutation.mutate(fired);
   };
@@ -1361,11 +1164,6 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
      departure marker MobileDeliveryPlanning writes for "On the way"
      (MobileDeliveryPlanning.tsx:1280), so deleting it to match the desktop's
      single jump would have removed a step drivers actually use. ── */
-  /* The status guard is not defensive noise: `header` falls back to `{}` when
-     this screen is reached with a synthetic { id } row (the Relationship Map's
-     flowNav does exactly that), and an absent status would otherwise render the
-     GENERIC sentence for a second and then swap it for the real one. Saying the
-     wrong thing briefly is its own version of the bug this note exists to fix. */
   const doNextStepNote =
     moduleKey === "delivery-orders-mfg" && mayOperate && s(header?.status)
       ? (siTransferBlockReason(header?.status) ?? SI_TRANSFER_MOBILE_ROUTE_HINT)
@@ -1409,11 +1207,6 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
   );
 }
 
-/* Purchase docs (PO / GRN / PI) show the REAL origin Sales Order per line,
-   matched by SKU — see PoSoCoverageMobile's replacement: the assignment now
-   rides each line row (LineItem `assigned`), fed from the same
-   /po-so-coverage/:type/:id read. Display-only on mobile (the phone shell is a
-   screen machine, not a router). */
 const COVERAGE_TYPE: Record<string, "po" | "grn" | "pi"> = {
   "mfg-purchase-orders": "po",
   grns: "grn",
@@ -1424,22 +1217,14 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
   const id = docId(row);
   const qc = useQueryClient();
   const detailNotify = useNotify();
-  /* Relationship Map — the mobile twin of the desktop DocumentFlowModal /
-     DocumentRelationshipMapModal (PO / GRN / PI / DO anchors here; the SO
-     anchor lives on MobileSODetail). Zero added backend load: the map reads
-     the same useDocumentFlow query the desktop modal reads and, for purchase
-     docs, the SAME usePoSoCoverage key covQ below already fetched. */
   const [mapOpen, setMapOpen] = useState(false);
   const mapAnchor = flowAnchorForModule(moduleKey);
   const filesKind = FLOW_DOC_KIND_BY_MODULE[moduleKey];
-  // Purchase docs only: the real per-SKU origin SO(s) for each line.
   const coverageType = COVERAGE_TYPE[moduleKey] ?? null;
   const covQ = usePoSoCoverage(coverageType, coverageType && id ? id : null);
   const originByCode = originsByCode(covQ.data);
-  // PR-3: the parallel stored-origin "bought for" slot, per SKU.
   const provByCode = provenanceByCode(covQ.data);
   const linkedSkus = storedLinkSkus(covQ.data);
-  // Per-SKU Delivered (DO + qty) — same resolver payload the desktop lists read.
   const deliveredMap = deliveredByCode(covQ.data);
   const { data, isLoading, error } = useQuery({
     queryKey: ["mobile-module-detail", map.path, id],
@@ -1449,8 +1234,6 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
   });
   const { nameOf: salespersonNameOf } = useStaffLookup();
 
-  // While loading / on error, keep the header populated from the list `row` so
-  // the screen never flashes empty.
   const header = (data?.[map.headerKey] as any) ?? row ?? {};
   const items = (data?.items as any[]) ?? [];
   const meta = map.meta(header, items).filter(([, v]) => v && v !== "—");
@@ -1458,15 +1241,6 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
 
   const cancelled = isCancelledDoc(map.status(header));
 
-  /* Download the DO / SI PDF — reuses the SAME desktop generators so phone output
-     is byte-identical. Only wired for the two doc types with a mobile-relevant PDF.
-
-     The screen already says "Couldn't load line items" when the detail read
-     fails (see below), but the PDF button stayed live and `items` fell back to
-     `[]` — so tapping it produced a Delivery Order or Sales Invoice PDF with an
-     EMPTY line table. That is not a degraded document, it is a false one: it
-     reads as a complete record of a delivery of nothing, and unlike a screen it
-     is durable and leaves the phone. Refuse instead, and say why. */
   const canPdf = !error && !isLoading;
   const refusePdf = async () => {
     void detailNotify({
@@ -1476,9 +1250,6 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
         : "We couldn't load the line items for this document. Making the PDF now would produce one with no items on it. Please refresh and try again.",
     });
   };
-  /* One deliver step per printable doc type; the preview dialog picks which of
-     its three exits (view / print / download) runs. Phone and desktop now open
-     the SAME Print preview — see components/scm-v2/PrintPreviewModal. */
   const printableDocTitle =
     moduleKey === "delivery-orders-mfg"
       ? "Delivery Order"
@@ -1489,11 +1260,8 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
     try {
       if (moduleKey === "delivery-orders-mfg") {
         const { generateDeliveryOrderPdf } = await import("../vendor/scm/lib/delivery-order-pdf");
-        // armDoScanToken puts the PUBLIC scan token on the header (desktop parity).
         const { armDoScanToken } = await import("../vendor/scm/lib/do-scan-token-arm");
         const doId = (header as { id?: string }).id ?? "";
-        // Resolve the salesperson name for the DELIVERY DETAILS block (desktop
-        // parity); blank ⇒ the row is omitted on the PDF.
         const salesperson =
           header.salesperson_name ||
           salespersonNameOf(header.agent ?? null, header.salesperson_id ?? null, "") ||
@@ -1509,20 +1277,14 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
     }
   };
   const print = usePrintPreview(deliverPdf);
-  /* The refusal path stays AHEAD of the preview: a document whose lines failed
-     to load must not even reach a dialog offering to print it. */
   const onPdf = !printableDocTitle
     ? undefined
     : !canPdf
       ? refusePdf
       : print.openPreview;
 
-  // Whether a sticky footer will render — used to reserve scroll padding so it
-  // never covers the last line item. A POD button (delivery orders) also counts.
   const mayOperate = useMayOperateDoc(moduleKey);
   const mayPostGrn = useMayPostGrn();
-  // POD entry is gated on the operate helper (same as DocActionFooter) so a
-  // view-only user gets no POD button — and the footer/scroll padding agree.
   const podEnabled = !!onPOD && mayOperate;
   const hasStatusActions = !!id && (statusActionsFor(moduleKey, id, header, mayOperate, mayPostGrn).length > 0 || offersRecordPayment(moduleKey, header) || piPaymentHint(moduleKey, header) !== null);
   const hasFooter = hasStatusActions || podEnabled;
@@ -1542,9 +1304,6 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
         onMap={mapAnchor && id ? () => setMapOpen(true) : undefined}
       />
       {printableDocTitle && (
-        /* Summary rows come off the SAME DocMap the screen renders from
-           (eyebrow = doc no, title = party, meta = the KV grid), so the
-           preview can never disagree with the page behind it. */
         <PrintPreviewModal
           open={print.open}
           onClose={print.close}
@@ -1576,9 +1335,6 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
               {stats.map((st, i) => (st ? <Stat key={st[0]} label={st[0]} value={st[1]} color={st[2]} /> : <div key={i} />))}
             </div>
 
-            {/* Module-declared warning bar (e.g. PO SO→drift) — amber is the
-                intentional warning slot; computed off the loaded payload, so it
-                can only appear once the items are actually here. */}
             {!isLoading && !error && (() => {
               const notice = map.notice?.(header, items) ?? null;
               return notice ? (
@@ -1606,9 +1362,6 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                 const l = map.line(it);
                 const code = String(((it?.item_code ?? it?.item_code) ?? "")).trim();
                 const assigned = coverageType ? (originByCode.get(code) ?? []) : undefined;
-                /* mig 0235 — PO lines carry their sub-numbered allocations off
-                   the same detail read (display-only twin of the desktop
-                   Allocations column; one-product rule). */
                 const allocations = moduleKey === "mfg-purchase-orders"
                   ? ((it?.allocations as Array<{ seq: number; qty: number; so_doc_no: string | null }> | undefined) ?? undefined)
                   : undefined;
@@ -1623,10 +1376,6 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                   : undefined;
                 const sourceAdj = isSalesDoc ? Boolean(it?.source_adj) : undefined;
                 const isDo = moduleKey === "delivery-orders-mfg";
-                /* DO lines only (mig 0230): the committed batch — the
-                   hard-from-DO anchor the detail GET already returns
-                   (committed_po_batch_no). Same field the desktop detail's
-                   CommittedBatchCell reads (one-product rule). */
                 const committedBatch = moduleKey === "delivery-orders-mfg"
                   ? ((it?.committed_po_batch_no as string | null | undefined) ?? null)
                   : null;
@@ -1640,9 +1389,6 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
         )}
         {!!id && filesKind && <div style={{ marginTop: 13 }}><FlowDocFilesCard kind={filesKind} docId={id} status={s(header?.status) || null} /></div>}
       </div>
-      {/* Collected on the ORDER — desktop parity (DeliveryOrderDetailV2's aside
-          card). Read-only on both surfaces: the order is the one place a
-          payment is taken. */}
       {moduleKey === "delivery-orders-mfg" && id && <MobileDoDeliveryIssues doId={id} />}
       {moduleKey === "delivery-orders-mfg" && id && (
         <DoEarlierPodAttempts doId={id} docNo={s(header?.do_number) || `DO ${id.slice(0, 8)}`} />
@@ -1650,9 +1396,6 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
       {moduleKey === "delivery-orders-mfg" && s(header?.so_doc_no) && (
         <MobileCollectedOnOrder soDocNo={s(header?.so_doc_no)} currency={s(header?.currency) || "MYR"} />
       )}
-      {/* CANCELLED = no lifecycle bar (spec); only the desktop-parity recovery
-          actions (Reopen / Delete, the sole actions statusActionsFor returns for
-          a cancelled doc) survive so a mis-cancel is still recoverable. */}
       {hasFooter && <DocActionFooter moduleKey={moduleKey} id={id} header={header} invalidate={invalidate} onPOD={onPOD} onDeleted={onBack} />}
       {mapOpen && mapAnchor && !!id && (
         <MobileRelationshipMap
@@ -1667,11 +1410,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
   );
 }
 
-// ---------------------------------------------------------------------------
-// Simple detail — a tidy key/value dump of the row already provided. No fetch.
-// ---------------------------------------------------------------------------
 
-/** Humanize a snake_case / camelCase key into a Title-Case label. */
 function humanize(key: string): string {
   return key
     .replace(/_sen$|_sen$/i, "")
@@ -1682,8 +1421,6 @@ function humanize(key: string): string {
     .replace(/\b\w/g, (m) => m.toUpperCase());
 }
 
-/** Keys we never surface in a simple dump (internal / noisy). Raw foreign-key
- *  ids (*_id) and color hex are hidden — the joined *_name carries the meaning. */
 const HIDDEN_KEYS = /^(id|created_by|updated_by|.*_by|.*_id|.*_color|color|.*_json|variants|custom_specials|password|token)$/i;
 
 type Field = { label: string; value: string; mono: boolean; wide: boolean };
@@ -1694,7 +1431,7 @@ function rowToFields(row: any): Field[] {
   for (const [key, raw] of Object.entries(row)) {
     if (HIDDEN_KEYS.test(key)) continue;
     if (raw == null || raw === "") continue;
-    if (typeof raw === "object") continue; // skip nested objects / arrays
+    if (typeof raw === "object") continue;
     let value: string;
     let mono = false;
     let wide = false;
@@ -1747,26 +1484,14 @@ const SIMPLE_META: Record<string, { eyebrow: (r: any) => string; title: (r: any)
   },
 };
 
-/* Doc-like simple modules used to sit here (PI / PR / DR) — a stub that pulled
-   the full header into SimpleDetail's KV dump. Item #8 of the 2026-07-23 mobile
-   UI audit promoted all three to first-class DOC_MODULES adapters (meta rows +
-   money-stat tiles + variant-aware line items), so this table is empty by
-   design. Adding a new "doc-like simple" module here still works — SimpleDetail
-   reads it — but any doc worth its own header/stats belongs in DOC_MODULES. */
 const SIMPLE_DOC_PATHS: Record<string, { path: string; headerKey: string }> = {};
 
-// Member account actions (Team -> Members: Set password / Send reset link /
-// Resend invitation) moved to ./MemberAccountActions so this file stays under its
-// size ceiling. The admin-reset invariant test scans that module by path.
 
 function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: string; row: any; title: string; onBack: () => void; onEdit?: (fresh?: Record<string, unknown>) => void }) {
   /* Owner 2026-07-17 — cost is director-only. Its own useAuth: the costing gate
      further up this file lives in a DIFFERENT component, so there is nothing to
      borrow here. */
   const { user: detailUser } = useAuth();
-  // Suppliers carries a richer GET /suppliers/:id ({ supplier, bindings }).
-  // Merge that over the list row when available; every other simple module just
-  // dumps the row it was handed.
   const wantSupplier = moduleKey === "suppliers";
   const id = s(row?.id);
   const supplierQ = useQuery({
@@ -1776,10 +1501,6 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
     staleTime: 30_000,
   });
 
-  // Doc-like simple modules (PI / PR / DR) fetch their full header so the
-  // read-only detail shows the richer fields the list row lacks (paid_sen /
-  // notes / dates). The 4 richer doc types (DO/SI/GRN/PO) never reach here —
-  // they use DocumentDetail.
   const docCfg = SIMPLE_DOC_PATHS[moduleKey];
   const wantDoc = !!docCfg && !!id;
   const docQ = useQuery({
@@ -1798,9 +1519,6 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
 
   const meta = SIMPLE_META[moduleKey];
   const config = MODULE_CONFIGS[moduleKey];
-  // Design-style detail: when the module config declares `fields`, render those
-  // labelled rows (so-k / so-v pairs) exactly like the prototype's openDetail;
-  // else fall back to the humanized full-row dump.
   const configFields = useMemo(() => {
     /* Owner 2026-07-17 — cost is director-only. This grid renders the SAME
        MODULE_CONFIGS.fields as MobileModuleList's ListCard, so it needs the
@@ -1826,14 +1544,9 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
     : config?.pill
       ? safeCall(config.pill, effectiveRow)
       : "";
-  // A cancelled doc-like module (PI / PR / DR) greys its body + shows the ribbon.
-  // Non-doc simple modules (suppliers / drivers) never reach a cancelled state.
   const cancelled = wantDoc && isCancelledDoc(status);
   const dumpFields = rowToFields(effectiveRow);
 
-  // Status action bar for the DOC-like simple modules (Sales/Purchase Returns,
-  // Purchase Invoices) — driven off the list row's id + status. Other simple
-  // modules (suppliers, drivers, …) have no status route → no footer.
   const qc = useQueryClient();
   const actionRow = row ?? {};
   const actionId = s(row?.id);
@@ -1850,7 +1563,6 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
         status={status}
         statusDoc={null}
         onBack={onBack}
-        /* A supplier edits from its full record, not the list row: the list view lacks Email 2 / 3. */
         onEdit={onEdit && wantSupplier && supplierQ.data?.supplier ? () => onEdit(effectiveRow) : onEdit}
       />
       <div className="scroll hz-scroll" style={hasFooter ? { ...scrollStyle, paddingBottom: 96 } : scrollStyle}>
@@ -1858,8 +1570,6 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
         <div style={cancelled ? { opacity: 0.55, pointerEvents: "none" } : undefined}>
         <Eyebrow>Details</Eyebrow>
         {configFields ? (
-          // Designer MobileDetail.tsx: a single titled .card whose body is a list
-          // of .row label/value pairs (row-l muted label, row-v money value).
           <div className="card" style={{ marginBottom: 13 }}>
             {configFields.map((f) => (
               <div className="row" key={f.label}>
@@ -1893,29 +1603,15 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
   );
 }
 
-// ---------------------------------------------------------------------------
-// Public entry — routes by moduleKey to the document or the simple detail.
-// ---------------------------------------------------------------------------
 
 export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdit, flowNav }: {
   moduleKey: string; row: any; title: string; onBack: () => void; onPOD?: () => void;
-  /** Wired by the parent when the module's form supports edit (updatePath).
-   *  The header "Edit" button calls this. MobileApp passes the current row's
-   *  id + the module's FormSchema through to MobileModuleForm; `fresh` is the
-   *  full record when the detail loaded one (suppliers). */
   onEdit?: (fresh?: Record<string, unknown>) => void;
-  /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
   flowNav?: FlowNav;
 }) {
-  // Edit is offered for modules whose form declares an updatePath, and for the
-  // Delivery Order, whose header edit is its own screen (MobileDoHeaderEdit).
   const editable = !!MODULE_CONFIGS[moduleKey]?.form?.updatePath || moduleKey === "delivery-orders-mfg";
   const editHandler = editable ? onEdit : undefined;
   const doc = DOC_MODULES[moduleKey];
-  // Document modules host their own sticky footer (status actions + Record
-  // Payment, plus the Proof-of-Delivery entry for Delivery Orders). Simple
-  // modules (Sales/Purchase Returns, Purchase Invoices) get a status action bar
-  // driven off the list row's id + status.
   if (doc) {
     return <DocumentDetail map={doc} row={row} moduleKey={moduleKey} onBack={onBack} onEdit={editHandler} onPOD={onPOD} flowNav={flowNav} />;
   }

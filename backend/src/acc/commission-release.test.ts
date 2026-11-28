@@ -1,16 +1,3 @@
-// The monthly commission release, read off the books and posted (owner
-// 2026-11-25). Made-up figures throughout. What is pinned:
-//   • a bill's month is read off its own line (OCT'26, AUG26, SEP 1 – SEP 30,
-//     2026); the books' opening line is the opening balance; reversal pairs and
-//     the release itself are not bills;
-//   • a company that has not switched it on books nothing;
-//   • one entry per month (COMMREL-{co}-{YYYY-MM}) on the month's last day,
-//     Dr the commission expense / Cr the prepayment; a second run with nothing
-//     moved writes only its log rows;
-//   • a bill booked late lands in the month it pays for; a sales invoice
-//     cancelled out of an earlier month re-posts that month — the old entry
-//     reversed on its own date, never edited, never doubled;
-//   • a replacement the chart refuses leaves the old entry standing.
 
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
@@ -19,7 +6,6 @@ import { endedOnOf, mytMonths, runCommissionRelease } from './commission-release
 import { commissionReleaseLines } from './rules';
 
 const CO = 1;
-/* 2 December 2026, 10:00 MYT: November is the last month the release books. */
 const NOW = Date.UTC(2026, 11, 2, 2, 0, 0);
 
 describe('the month a bill pays for', () => {
@@ -97,7 +83,6 @@ describe('when an ended order ended', () => {
   });
 });
 
-/* ── The books: a company with an opening, an October bill and a September bill booked late ── */
 
 const acct = (code: string, parent: string | null, type: string, active = true): Row => ({
   company_id: CO, account_code: code, account_name: code, account_type: type, parent_code: parent, is_active: active,
@@ -165,9 +150,9 @@ describe('posting the months', () => {
     expect(r1.ok).toBe(true);
     if (!r1.ok) return;
     expect(r1.outcomes.map((o) => [o.month, o.action, o.releasedSen])).toEqual([
-      ['2026-09', 'posted', 200_00],   // the opening, carried by SO-07, invoiced in September
-      ['2026-10', 'posted', 400_00],   // SO-10A whole
-      ['2026-11', 'posted', 100_00],   // SO-10B half (200 x 1,000 / 2,000)
+      ['2026-09', 'posted', 200_00],
+      ['2026-10', 'posted', 400_00],
+      ['2026-11', 'posted', 100_00],
     ]);
     const oct = entriesOf(t, '2026-10');
     expect(oct).toHaveLength(1);
@@ -189,7 +174,6 @@ describe('posting the months', () => {
 
     const r = await runCommissionRelease(sb, CO, 'manual', NOW);
     expect(r.ok && r.outcomes.map((o) => [o.month, o.action, o.releasedSen])).toEqual([
-      /* September's bill has no close: split by the goods of September's orders — SO-09, invoiced in September. */
       ['2026-09', 'reposted', 280_00],
       ['2026-10', 'cleared', 0],
       ['2026-11', 'unchanged', 100_00],
@@ -197,7 +181,6 @@ describe('posting the months', () => {
     const sep = entriesOf(t, '2026-09');
     expect(sep.map((e) => e.entry_date)).toEqual(['2026-09-30', '2026-09-30', '2026-09-30']);
     expect(sep.filter((e) => e.reversed !== true && !e.reversed_by_je)).toHaveLength(1);
-    /* October: the entry and its contra, both on 31 October, nothing active left. */
     const oct = entriesOf(t, '2026-10');
     expect(oct.map((e) => e.entry_date)).toEqual(['2026-10-31', '2026-10-31']);
     expect(oct.filter((e) => e.reversed !== true && !e.reversed_by_je)).toHaveLength(0);

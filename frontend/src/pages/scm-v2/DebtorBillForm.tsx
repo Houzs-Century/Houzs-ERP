@@ -27,7 +27,7 @@ import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../vendor/scm/lib/use-save-h
 import { DateField } from '../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { EventSelect } from '../../vendor/scm/components/EventSelect';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 import ui from './MoneyIn.module.css';
 
 /** projectId: the event a money line is for (item 6, optional) — null = none. */
@@ -57,7 +57,6 @@ export const toBillSubmit = (v: BillFormValues): BillFormSubmit => ({
         })),
 });
 
-/** The one event every line names, or null when they differ (or none is named). */
 const sharedEvent = (lines: BillFormLine[]): number | null =>
   lines.length > 0 && lines.every((l) => l.projectId === lines[0]!.projectId) ? lines[0]!.projectId : null;
 
@@ -69,12 +68,9 @@ export const DebtorBillForm = ({
   initial: BillFormValues;
   accounts: Account[];
   accountName: (code: string) => string | null;
-  /** The registry's active debtors (and the bill's own on an edit). */
   debtors: Array<{ id: string; name: string; code?: string | null }>;
   debtorId?: string;
-  /** The other debtors control the bill debits (the AR_OTHER role). */
   controlCode?: string;
-  /** Money already received against the bill being edited: the total may not fall below it. */
   receivedSen?: number;
   saving: boolean;
   onSubmit: (values: BillFormSubmit, debtorId: string) => void | Promise<void>;
@@ -85,7 +81,6 @@ export const DebtorBillForm = ({
   const patchLine = (rid: number, patch: Partial<BillFormLine>) =>
     setV((prev) => ({ ...prev, lines: prev.lines.map((l) => (l.rid === rid ? { ...l, ...patch } : l)) }));
 
-  /* Insert adds a line and lands on it; Enter on an amount moves down. */
   const linesRef = useRef<HTMLDivElement>(null);
   const [landOn, setLandOn] = useState<number | null>(null);
   useEffect(() => {
@@ -133,7 +128,6 @@ export const DebtorBillForm = ({
           <div className={`${ui.formCard} ${ui.formFields}`}>
             <label className={ui.formField}>
               <span className={ui.formLabel}>Debtor</span>
-              {/* A bill keeps its debtor: the edit re-posts the same party. */}
               <select aria-label="Bill debtor" value={debtorId} className={ui.formInput} disabled={mode === 'edit'} onChange={(e) => setDebtorId(e.target.value)}>
                 <option value="">— Pick the debtor —</option>
                 {debtors.map((d) => <option key={d.id} value={d.id}>{d.name}{d.code ? ` · ${d.code}` : ''}</option>)}
@@ -151,8 +145,6 @@ export const DebtorBillForm = ({
               <input data-upper className={ui.formInput} value={v.notes} onChange={(e) => { const t = e.target.value; setV((p) => ({ ...p, notes: t })); }} aria-label="Bill description"
                 placeholder="What the bill is for · prints on the invoice" />
             </label>
-            {/* The event this bill is for — optional: sets every line, and a line
-                can still name its own below. */}
             <label className={`${ui.formField} ${ui.formFull}`}>
               <span className={ui.formLabel}>Event (all lines, optional)</span>
               <EventSelect value={commonEvent} around={v.billDate || null} className={ui.formInput} aria-label="Event for all lines"
@@ -173,8 +165,6 @@ export const DebtorBillForm = ({
                   <MoneyInput bare valueSen={l.amountSen} inputClassName={ui.formInput} selectOnFocus aria-label={`line ${l.rid} amount`}
                     placeholder="0.00" onCommit={(sen) => patchLine(l.rid, { amountSen: sen ?? 0 })}
                     onKeyDown={(e) => { if (e.key === 'Enter') hopFrom(l.rid); }} />
-                  {/* The event last: the owner's typing order (account, description,
-                      amount) stays unbroken; the picker above usually sets it. */}
                   <EventSelect value={l.projectId} around={v.billDate || null} className={ui.formInput} aria-label={`line ${l.rid} event`}
                     onChange={(id) => patchLine(l.rid, { projectId: id })} />
                   <button type="button" className={ui.clear} aria-label={`remove line ${l.rid}`} title="Remove line" disabled={v.lines.length === 1}

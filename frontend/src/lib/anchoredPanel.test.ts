@@ -1,10 +1,3 @@
-// Geometry for the shared floating-panel placement (lib/anchoredPanel.ts).
-//
-// WHAT THIS CANNOT PROVE. jsdom does no layout, so nothing here shows pixels
-// are no longer sliced off by a card's overflow — that was measured in a
-// browser against prod. What IS mechanically checkable is the arithmetic the
-// browser fix rests on: the flip, the clamp, the floor, and the listener
-// lifecycle. Same split the StatePicker suite documents.
 
 import { renderHook, act } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
@@ -26,7 +19,7 @@ const anchor = (top: number, height = 28, left = 40, width = 200) => ({
 describe('measureAnchoredPanel', () => {
   test('hangs below the anchor when the room below can hold the whole panel', () => {
     const pos = measureAnchoredPanel(anchor(100), 800, 280);
-    expect(pos.top).toBe(132); // anchor.bottom (128) + 4px gap
+    expect(pos.top).toBe(132);
     expect(pos.bottom).toBeUndefined();
     expect(pos.maxHeight).toBe(280);
   });
@@ -38,30 +31,24 @@ describe('measureAnchoredPanel', () => {
   });
 
   test('flips above when below cannot hold it and above holds more', () => {
-    // 700px down a 800px viewport: 60px below, 688px above.
     const pos = measureAnchoredPanel(anchor(700), 800, 280);
     expect(pos.top).toBeUndefined();
-    expect(pos.bottom).toBe(104); // 800 - anchor.top (700) + 4px gap
+    expect(pos.bottom).toBe(104);
     expect(pos.maxHeight).toBe(280);
   });
 
   test('stays below when neither side can hold it but below has more room', () => {
-    // A 200px viewport with the anchor at 60: 108px below, 48px above.
     const pos = measureAnchoredPanel(anchor(60), 200, 280);
     expect(pos.top).toBe(92);
     expect(pos.bottom).toBeUndefined();
   });
 
   test('clamps max-height to the room actually available, never past the cap', () => {
-    // 150px below a 300px viewport with a 280px cap.
     const pos = measureAnchoredPanel(anchor(110), 300, 280);
     expect(pos.maxHeight).toBe(150);
   });
 
   test('never shrinks below the 120px floor, even in a cramped viewport', () => {
-    // A 200px viewport with the anchor at 90: 70px below, 78px above. Both are
-    // under the floor, so the panel deliberately overhangs rather than opening
-    // as a two-row sliver nobody can use.
     const pos = measureAnchoredPanel(anchor(90), 200, 280);
     expect(pos.maxHeight).toBe(120);
   });
@@ -80,30 +67,22 @@ describe('measureAnchoredPanel', () => {
   });
 
   test('a flipped panel ends inside the viewport at the TOP edge too', () => {
-    // Same 460px request from a field near the bottom: it flips, and the
-    // clamp has to hold on the other side or the first rows go off the top.
     const pos = measureAnchoredPanel(anchor(760), 800, 460);
     expect(pos.top).toBeUndefined();
     expect(pos.maxHeight).toBe(460);
-    // bottom is measured from the viewport bottom; the top edge is what must
-    // stay on screen.
     expect(800 - pos.bottom! - pos.maxHeight).toBeGreaterThanOrEqual(8);
   });
 
   test('picks the side with MORE room when neither side can hold the cap', () => {
-    // 600px down a 700px viewport with a 460px cap: 88 below, 588 above.
     const below = measureAnchoredPanel(anchor(600), 700, 460);
     expect(below.top).toBeUndefined();
     expect(below.maxHeight).toBe(460);
-    // 100px down the same viewport: 560 below, 88 above. Stays put.
     const above = measureAnchoredPanel(anchor(100), 700, 460);
     expect(above.top).toBe(132);
     expect(above.maxHeight).toBe(460);
   });
 
   test('honours the caller cap rather than a house default', () => {
-    // The cap is the list's own design — a two-row menu must not open ten rows
-    // tall just because the state picker does.
     expect(measureAnchoredPanel(anchor(100), 800, 160).maxHeight).toBe(160);
     expect(measureAnchoredPanel(anchor(100), 800, 300).maxHeight).toBe(300);
   });
@@ -118,8 +97,6 @@ describe('measureFixedWidthPanel', () => {
   });
 
   test('pulls a panel back inside the right edge', () => {
-    // A column funnel on the far-right column: the button is at 1150, so a
-    // 236-wide menu hung from it would end at 1386, off the screen.
     const pos = measureFixedWidthPanel({ top: 100, bottom: 128, left: 1150 }, 236, viewport, 400);
     expect(pos.left).toBe(1200 - 236 - 8);
   });
@@ -188,9 +165,6 @@ describe('useAnchoredPanel', () => {
   });
 
   test('re-measures on a CAPTURE-phase scroll from a nested container', () => {
-    // The trigger sits inside a scrolling card, and those scroll events never
-    // reach window on the bubble path — a bubble-only listener sees nothing and
-    // the panel detaches from the field.
     const ref = stubAnchor(100);
     const nested = document.createElement('div');
     document.body.appendChild(nested);
@@ -218,8 +192,6 @@ describe('useAnchoredPanel', () => {
   });
 
   test('keeps the SAME object when a scroll did not move the anchor', () => {
-    // Otherwise every one of the dozens of events in a scroll gesture
-    // re-renders the picker, and a caller with an unstable ref spins forever.
     const ref = stubAnchor(100);
     const { result } = renderHook(() => useAnchoredPanel(ref, true, 280));
     const first = result.current;
@@ -258,21 +230,6 @@ describe('useAnchoredPanel', () => {
   });
 });
 
-/* ── anchoredPanelStyle must neutralise BOTH edges ─────────────────────────
- *
- * Measured on production 2026-08-22, the Sales Order fabric picker. The panel
- * flipped up, so `pos.top` was undefined; `top: undefined` is OMITTED by React,
- * and the list's own class (`position:absolute; top:100%; left:0; right:0`)
- * kept its `top: 100%`. Against a fixed element that resolves to the full
- * viewport height, so the box carried BOTH a top and a bottom:
- *
- *   816 (top) - 816 (viewport) - 376 (bottom) = -376  ->  height clamped to 0
- *
- * The list rendered with all 18 rows in it, parked on the bottom edge of the
- * window at 2px tall — its own borders. It read as "the dropdown never opens".
- *
- * The assertion is on the property being PRESENT and 'auto', not merely absent:
- * absent is exactly the state that let the class win. */
 describe('anchoredPanelStyle — the unused edge is auto, never omitted', () => {
   test('flipped up: bottom is the number, top is auto', () => {
     const st = anchoredPanelStyle({ left: 295, width: 286, bottom: 376, maxHeight: 432 });
@@ -298,9 +255,6 @@ describe('anchoredPanelStyle — the unused edge is auto, never omitted', () => 
   });
 
   test('the exact production case is no longer over-constrained', () => {
-    /* Input at y=444..472 in an 816px viewport: 344px below, 444px above, so
-       the measurer flips up. With both edges written, only `bottom` is a
-       number — the box has one anchor and grows to its content. */
     const pos = measureAnchoredPanel({ top: 444, bottom: 472, left: 295, width: 286 }, 816, 460);
     const st = anchoredPanelStyle(pos);
     expect(st.top).toBe('auto');

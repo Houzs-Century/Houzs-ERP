@@ -38,22 +38,15 @@
  * reach a row, so any delivery_orders entry here is a committed DO.
  */
 export interface DispatchStop {
-  // Row kind: 'so' = a Sales-Order delivery; anything else (project / dp / assr)
-  // is a non-delivery leg that never carries a DO. Absent → treated as a
-  // delivery (the strictest arm), so a mislabelled row is never let through on
-  // the weaker crew-only gate.
   row_type?: string | null;
   delivery_orders?: { id?: string | null }[] | null;
   crew?: { driver?: string | null } | null;
-  // The order's Delivery Date — amended wins, else the original customer date.
   amended_delivery_date?: string | null;
   customer_delivery_date?: string | null;
 }
 
 export function isDispatched(o: DispatchStop): boolean {
   const hasDriver = (o.crew?.driver ?? "").trim().length > 0;
-  // Non-delivery legs (Setup / Dismantle, service, manual DP) never carry a DO;
-  // a named driver is the only thing that puts them on the sheet.
   if ((o.row_type ?? "so") !== "so") return hasDriver;
   // A delivery stop needs a cut DO, a driver, and a Delivery Date to sit on
   // (owner 2026-10-31). Which day it shows is runDateOf's job, not this test's —

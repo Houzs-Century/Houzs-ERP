@@ -20,13 +20,10 @@ import type { PbbAdvice } from './pbb-advice';
 /** One settlement date of a payout, against the report for that date. */
 export type PayoutDay = {
   settledOn: string;
-  /** What the advice says that day came to. */
   adviceNetSen: number;
   batchId: number | null;
   fileName: string | null;
-  /** What the uploaded report itself nets, when there is one. */
   reportNetSen: number | null;
-  /** report − (advice + charge). Zero is agreement; anything else is the finding. */
   differenceSen: number | null;
   /** What the bank deducted from this day's payout and where it was booked
       (docs/bugs/0787) — 0 / null when nothing was. Counted as paid: the money
@@ -35,8 +32,6 @@ export type PayoutDay = {
   chargeAccountCode: string | null;
   chargeNote: string | null;
   chargeJeNo: string | null;
-  /** Whether that report has every line decided — a payout cannot be booked
-      against a report whose fees are not in the books yet. */
   reportOpenLines: number | null;
   state: 'AGREES' | 'DIFFERS' | 'REPORT_MISSING' | 'REPORT_NOT_RECONCILED';
 };
@@ -44,9 +39,7 @@ export type PayoutDay = {
 export type PayoutStatus = {
   netSen: number;
   days: PayoutDay[];
-  /** Every day has a report, they all agree, and every report is reconciled. */
   readyToReceive: boolean;
-  /** One sentence saying what is in the way, or null when nothing is. */
   blockedBy: string | null;
 };
 
@@ -56,7 +49,6 @@ export type ReportForPayout = {
   fileName: string;
   periodFrom: string;
   periodTo: string;
-  /** stated net when the file states one, else the sum of its lines. */
   payableSen: number;
   openLines: number;
 };
@@ -94,7 +86,6 @@ export function statusOfPayout(
   for (const b of advice.batches) {
     const at = byDate.get(b.settledOn) ?? { netSen: 0, charge: {} };
     at.netSen += b.netSen;
-    /* One charge per day row, and one day row per settled_on. */
     if (b.chargeSen != null && b.chargeSen > 0) at.charge = b;
     byDate.set(b.settledOn, at);
   }
@@ -116,8 +107,6 @@ export function statusOfPayout(
         state: 'REPORT_MISSING' as const,
       };
     }
-    /* A charge the bank deducted is money that left the transit account, just
-       not into the bank — so it counts toward what the advice paid for. */
     const differenceSen = report.payableSen - (adviceNetSen + chargeSen);
     return {
       settledOn,
@@ -134,10 +123,6 @@ export function statusOfPayout(
     };
   });
 
-  /* ONE sentence, naming the first thing in the way — and the order is the
-     order they have to be dealt with in: a missing report cannot be checked, a
-     report that disagrees cannot be reconciled past, and a reconciled report is
-     the last gate. Listing all three at once would be a wall nobody reads. */
   const missing = days.filter((d) => d.state === 'REPORT_MISSING');
   const differs = days.filter((d) => d.state === 'DIFFERS');
   const open = days.filter((d) => d.state === 'REPORT_NOT_RECONCILED');

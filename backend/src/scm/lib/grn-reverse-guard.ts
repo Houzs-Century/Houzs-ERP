@@ -42,24 +42,11 @@ export async function grnReverseWouldGoNegative(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- unchanged from grns.ts: the PostgREST-shaped client has no honest type until schema.pg.ts covers the SCM tables.
   sb: any,
   warehouseId: string | null,
-  /* qty_accepted NULLABLE, and qty below likewise: both are read straight off a
-     PostgREST `any` client whose columns accept NULL, and the `?? 0` guards are
-     the only thing standing between a null and a wrong verdict. Typing them
-     `number` because a caller's hand-written cast says so is what makes the
-     linter call those guards redundant. Same reasoning as GrnCancelLine. */
   lines: Array<{ qty_accepted: number | null; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }>,
 ): Promise<{ error: string; message: string } | null> {
   if (!warehouseId) return null;
-  // Sum the qty we'd reverse OUT per (item_code, variant_key) bucket.
   const needByBucket = new Map<string, { item_code: string; variant_key: string; need: number }>();
   for (const l of lines) {
-    /* SERVICE lines never entered inventory, so they cannot be reversed out of
-       it. The POST path skips them and this guard did not, which made a
-       landed-cost GRN impossible to cancel: a freight line produces no IN, so
-       onHand 0 < need 1 and the cancel returned 409 grn_consumed_downstream,
-       naming a cause that does not exist. It also blocked the warehouse relocate
-       and the line's own deletion. Counting it as stock is a live hazard too:
-       the movement build would write an OUT for a non-stock SKU. */
     if (isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code })) continue;
     const qty = Number(l.qty_accepted ?? 0);
     if (qty <= 0) continue;
@@ -76,7 +63,7 @@ export async function grnReverseWouldGoNegative(
     .from('inventory_balances')
     .select('item_code, variant_key, qty')
     .eq('warehouse_id', warehouseId), 'item_code', itemCodes);
-  if (error) return null; // best-effort: don't block on a balance read failure
+  if (error) return null;
   const onHand = new Map<string, number>();
   for (const r of (balRows ?? []) as Array<{ item_code: string; variant_key: string | null; qty: number | null }>) {
     onHand.set(`${r.item_code}::${r.variant_key ?? ''}`, Number(r.qty ?? 0));

@@ -1,9 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-/* AddSupplierBinding reuses the Supplier-side create-binding mutation to bind a
-   SKU to a supplier from the product drawer. Mock the data hooks; MoneyInput and
-   Button render for real. */
 const h = vi.hoisted(() => ({
   mutate: vi.fn(),
   invalidate: vi.fn(),
@@ -35,7 +32,7 @@ describe('AddSupplierBinding', () => {
       supplierId: 'sup-1',
       materialKind: 'mfg_product',
       itemCode: 'ZOFIA-(S)',
-      supplierSku: 'ZOFIA-(S)', // defaults to our code when left blank
+      supplierSku: 'ZOFIA-(S)',
     });
   });
 

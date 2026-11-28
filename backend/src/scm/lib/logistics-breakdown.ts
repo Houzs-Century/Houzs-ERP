@@ -40,13 +40,10 @@ export type MonthCost = {
   ownTrips: number;
   inHouseSen: number;
   lorries: LorryLine[];
-  /** In-house cost of a month with no trip of ours: Total only. */
   inHouseNoTripSen: number;
   carriers: CarrierLine[];
-  /** The 3PL bills' amount no DO carries yet: Total only. */
   threeplNoDo: { lines: number; sen: number };
   outsourceSen: number;
-  /** DOs nobody took: no lorry picked and no 3PL charge. */
   noDeliverer: Record<RegionCode, number>;
 };
 
@@ -79,13 +76,10 @@ export function scaleTo(parts: RegionSen, totalSen: number): RegionSen {
 
 export function buildMonthCost(input: {
   month: string;
-  /** The month's DOs (by delivery day). */
   dos: readonly LogisticsDo[];
   regionOf: ReadonlyMap<string, RegionCode>;
   lorries: readonly LogisticsLorry[];
-  /** DOs a 3PL charge names. */
   charged: ReadonlySet<string>;
-  /** The P&L's Total In-house Expenses for the month. */
   inHouseSen: number;
   legs: readonly OutsourceLeg[];
   bills: ReadonlyMap<string, ThreeplBill>;
@@ -95,7 +89,6 @@ export function buildMonthCost(input: {
   const goodsSen = zero();
   const noDeliverer: Record<RegionCode, number> = zero();
 
-  /* Our trips: one lorry, one day. */
   const trips = new Map<string, { plate: string; day: string; dos: LogisticsDo[] }>();
   for (const d of input.dos) {
     const r = regionOf.get(d.id) ?? 'KL';
@@ -125,7 +118,6 @@ export function buildMonthCost(input: {
   const lorries = [...byPlate.values()].sort((a, b) => a.plate.localeCompare(b.plate));
   for (const l of lorries) l.tripList.sort((a, b) => a.day.localeCompare(b.day));
 
-  /* 3PL: the ledger's outsource, one bill at a time. */
   const byBill = new Map<string, OutsourceLeg[]>();
   const loose: OutsourceLeg[] = [];
   for (const l of input.legs) {
@@ -192,15 +184,12 @@ export const monthCostTotal = (m: MonthCost): number =>
   m.lorries.reduce((s, l) => s + sumOf(l.sen), 0) + m.inHouseNoTripSen
   + m.carriers.reduce((s, c) => s + sumOf(c.sen), 0) + m.threeplNoDo.sen;
 
-/* ── Setup & Dismantle ───────────────────────────────────────────────────── */
 export type FairLineIn = { kind?: string | null; category?: string | null; amount?: number | null; auto_source?: string | null; source?: string | null; description?: string | null; doc_no?: string | null };
 export type FairBlock = {
   id: number; code: string | null; name: string; venue: string | null; startDate: string | null; endDate: string | null;
   region: RegionCode; salesSen: number; incomeSen: number;
-  /** The Logistics setup / dismantle charge: its trips and amount. */
   chargeTrips: number; chargeSen: number;
   setupSen: number; dismantleSen: number; transportSen: number;
-  /** The fair's own books: Project Overview's Setup + Transport Setup & Dismantle rows. */
   booksSen: number;
   who: 'inhouse' | '3pl';
 };

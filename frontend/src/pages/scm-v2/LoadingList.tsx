@@ -14,7 +14,7 @@ import { Link } from 'react-router-dom';
 import { Loader2, PackageSearch, Search, Truck, MapPin, CalendarDays, QrCode } from 'lucide-react';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import { matchesSearch, soRefOfStamp, type SoRefStamp } from '../../lib/so-ref-search';
 
@@ -78,7 +78,6 @@ export const LoadingList = () => {
         description="Delivery orders waiting to load — what is on each, where it goes, and which lorry takes it. Scan the printed delivery order to confirm loading."
       />
 
-      {/* Status filter + search */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="inline-flex rounded-md border border-line bg-surface p-0.5">
           {FILTERS.map((f) => (
@@ -127,7 +126,6 @@ export const LoadingList = () => {
       <div className="space-y-3">
         {rows.map((d) => (
           <article key={d.id} className="overflow-hidden rounded-md border border-line bg-surface">
-            {/* Header row */}
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -158,7 +156,6 @@ export const LoadingList = () => {
               )}
             </div>
 
-            {/* Line items — product + qty, NO price */}
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wide text-ink-secondary">

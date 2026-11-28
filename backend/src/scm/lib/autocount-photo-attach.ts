@@ -24,7 +24,6 @@
 /** AcSyncService.cs `const int MaxBody = 2 * 1024 * 1024`. */
 export const AC_HOST_MAX_BODY_BYTES = 2 * 1024 * 1024;
 
-/** Room for the JSON punctuation and anything the drain adds after sizing. */
 const BODY_HEADROOM_BYTES = 64 * 1024;
 
 /** The sentence a sent row carries when pictures were left behind. The health
@@ -53,12 +52,10 @@ const photoExt = (key: string): string => {
 export const isUndecodablePhoto = (key: string): boolean => PHOTO_UNDECODABLE_EXT.has(photoExt(key));
 
 const base64Length = (bytes: number) => Math.ceil(bytes / 3) * 4;
-/* `{"Jpeg":""}` plus a separator, per picture. */
 const PER_PICTURE_JSON = 12;
 
 export interface PhotoLineCost {
   dtlKey: number;
-  /** Raw byte length of each picture on the line. */
   sizes: number[];
 }
 
@@ -118,9 +115,6 @@ export async function attachPhotos(
   const lines = Array.isArray(body.Lines) ? (body.Lines as Array<Record<string, unknown>>) : [];
 
   const fetched: Array<{ line: Record<string, unknown>; dtlKey: number; bufs: ArrayBuffer[] }> = [];
-  /* Pictures in a format AutoCount's image service cannot decode (WebP, HEIC …):
-     dropped so the whole edit is not lost to "Parameter is not valid.", noted so
-     the row says why. Same shape of decision as a too-large picture below. */
   const badFormat: Array<{ dtlKey: number; exts: string[] }> = [];
   for (const want of photos) {
     const line = lines.find((l) => Number(l.DtlKey) === want.dtlKey);

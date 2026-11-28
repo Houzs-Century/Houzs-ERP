@@ -19,7 +19,6 @@ export function jobDone(o: PlanningOrder, progress: Progress): boolean {
   if (o.row_type === "so") return o.delivery_state === "DELIVERED" && dosClosed(o);
   const ref = jobRefOf(o);
   const completed = ref != null && progress.get(jobKey(ref))?.completed_at != null;
-  /* An event leg has no delivered state of its own: only the crew's Complete closes it. */
   if (o.row_type === "project") return completed;
   return completed || o.delivery_state === "DELIVERED";
 }

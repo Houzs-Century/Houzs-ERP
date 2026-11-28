@@ -15,12 +15,6 @@ import { resolveDatabaseUrl } from "../db/pg";
 import { activeCompanyId, type CompanyScopeCtx } from "../scm/lib/companyScope";
 import { USD_TO_MYR_EST, mytDate, mytMonth, mytMonthRangeUtc, taskFamily } from "./agent-console";
 
-// ── Prices ───────────────────────────────────────────────────────────────────
-// USD per million tokens, from Anthropic's public price list (claude.com/pricing)
-// as of 2026-10. UPDATE THIS when any call site changes model; a model missing
-// here is priced as DEFAULT_PRICE_MODEL. cacheWrite is the 5-minute TTL price.
-// scan_so and cache_warm write their catalog prefix with the 1-hour TTL, which
-// Anthropic bills at 2x input ($6), so their cache-write cost reads LOW here.
 export interface ModelPrice { input: number; output: number; cacheRead: number; cacheWrite: number }
 export const AI_PRICES_USD_PER_MTOK: Record<string, ModelPrice> = {
   "claude-sonnet-4-6": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
@@ -58,7 +52,6 @@ export function agentFeature(family: string): string {
   return `agent:${family.toLowerCase()}`;
 }
 
-// ── Recorder ─────────────────────────────────────────────────────────────────
 
 export interface AiUsageTag {
   env: Env;
@@ -66,8 +59,6 @@ export interface AiUsageTag {
   model: string;
   companyId: number | null;
   userId: number | null;
-  /** The request's waitUntil (waitUntilOf(c)); null means the write is awaited
-   *  by whoever awaits the record call. */
   waitUntil: ((p: Promise<unknown>) => void) | null;
 }
 
@@ -134,7 +125,6 @@ export function aiUsageRow(
       const v: unknown = JSON.parse(body);
       if (v && typeof v === "object") json = v as Record<string, unknown>;
     } catch {
-      /* not JSON: recorded as the error text below */
     }
   } else if (body && typeof body === "object" && !(body instanceof Error)) {
     json = body as Record<string, unknown>;
@@ -169,11 +159,7 @@ export function aiUsageRow(
 }
 
 async function insertRow(env: Env, row: AiUsageRow): Promise<void> {
-  // No Postgres configured (vitest pins DATABASE_URL to ""): nothing to record to.
   if (!resolveDatabaseUrl(env)) return;
-  // Through the invocation's own env.DB (dbInject / withPgDb), NOT getDb: getDb
-  // opens a fresh socket that is never closed, and a cron or agent loop records
-  // many calls in one invocation, past the Worker's open-connection cap.
   await env.DB.prepare(
     `INSERT INTO public.ai_usage_events
        (feature, company_id, user_id, model, input_tokens, output_tokens,
@@ -199,7 +185,6 @@ function schedule(tag: AiUsageTag, row: Promise<AiUsageRow>): Promise<void> {
       tag.waitUntil(work);
       return Promise.resolve();
     } catch {
-      /* fall through: the caller's await covers it */
     }
   }
   return work;
@@ -245,7 +230,6 @@ export async function recordAi(tag: AiUsageTag | null, call: Promise<Response>):
   return resp;
 }
 
-// ── Report ───────────────────────────────────────────────────────────────────
 
 /** The last `n` MYT calendar months, oldest first, ending with `now`'s month. */
 export function lastMonths(now: Date, n: number): string[] {
@@ -416,8 +400,6 @@ export async function loadAiUsageReport(env: Env, monthCount: number, now: Date)
      WHERE e.created_at >= ${startIso}::timestamptz AND e.created_at < ${endIso}::timestamptz
      GROUP BY 1, 2, 3, 4, 5`);
 
-  // agent_runs.started_at is ISO text: a plain string compare bounds it (see
-  // agent-console's MYT bucket note), the cast only labels the month.
   const runs = await db.execute<Record<string, unknown>>(sql`
     SELECT to_char(started_at::timestamptz AT TIME ZONE 'Asia/Kuala_Lumpur', 'YYYY-MM') AS month,
            agent,

@@ -6,7 +6,6 @@ import {
 } from './so-submit-problems';
 import { SOFA_MIX_REASON } from '../lib/main-mix';
 
-/** A fully-complete confirmed create — every gate passes. Tests override slices. */
 const OK: SoSubmitFacts = {
   customerName: 'Ada Lovelace',
   phone: '0123456789',
@@ -39,7 +38,6 @@ describe('collectSoSubmitProblems', () => {
   it('an edit of an order saved without a phone is not blocked for it (B16)', () => {
     expect(codes({ ...OK, phone: '', origPhone: '' })).toEqual([]);
     expect(codes({ ...OK, phone: '  ', origPhone: '   ' })).toEqual([]);
-    // A create, and an edit that blanks a stored phone, still need one.
     expect(messages({ ...OK, phone: '', origPhone: null })).toContain('Phone number is required.');
     expect(messages({ ...OK, phone: '', origPhone: '+60123456789' })).toContain('Phone number is required.');
   });
@@ -108,8 +106,6 @@ describe('collectSoSubmitProblems', () => {
   });
 
   it('drops the bare "Customer name is required." when a Processing Date restates it', () => {
-    // Proceeding with no customer name: the tier-1 completeness restates it with
-    // the reason, so the bare required duplicate must not also appear.
     const ps = collectSoSubmitProblems({
       ...OK,
       customerName: '',
@@ -122,7 +118,6 @@ describe('collectSoSubmitProblems', () => {
       },
     });
     const customerMsgs = ps.filter((p) => p.field === 'Customer' || p.field === 'Customer name');
-    // Exactly one customer-name problem, and it is the gate's (with the reason).
     expect(ps.filter((p) => p.message.startsWith('Customer name is required')).length).toBe(1);
     expect(customerMsgs[0]!.code).toBe('processing_date_incomplete');
   });
@@ -138,7 +133,7 @@ describe('collectSoSubmitProblems', () => {
       ...OK,
       gate: {
         procDate: '2020-05-10',
-        delivDate: '2020-05-01', // proc > deliv, both past
+        delivDate: '2020-05-01',
         todayMY: '2026-09-16',
         variantOffenders: [{ itemCode: 'TELLUC-2S', group: 'sofa', missing: ['fabricCode'] }],
         completeness: { hasCustomerName: true, hasAddress: true, hasPostcode: true },
@@ -204,7 +199,6 @@ describe('collectSoSubmitProblems', () => {
       sofaMixConflict: true,
       paymentGaps: [{ row: 1, method: 'Merchant', missing: 'Bank' }],
     });
-    // phone + venue + stock-location + sofa + payment = 5, all at once.
     expect(ps).toHaveLength(5);
     expect(messages({
       ...OK, phone: '', hasVenue: false, salesLocation: '', customerState: '',

@@ -1,19 +1,11 @@
-// ----------------------------------------------------------------------------
-// listing-pdf: a list on paper, as the AR and AP listings print. Landscape A4 on
-// the shared letterhead, a sentence on top, the autoTable dress every document
-// wears, "Page n of m" at the foot. A screen's table prints WHAT THE SCREEN SHOWS:
-// the columns the reader has showing, in their order, the cells its Excel holds,
-// the money column totalled. Merchant reports (merchant-recon-pdf.ts) and the
-// Payment listing (payment-listing-pdf.ts) print with it.
-// ----------------------------------------------------------------------------
 
 import { jsPDF } from 'jspdf';
 import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont,
   fmtDocDate, fmtDocStamp, type PdfAction,
 } from './pdf-common';
-import { fmtSenPlain } from '../../shared/format';
-import { PDF_COMPRESS } from './pdf-options';
+import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type Rgb = [number, number, number];
 export type Meta = { label: string; value: string };

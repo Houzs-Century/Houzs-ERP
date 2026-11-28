@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { productSchema } from './product';
 
-// Minimal valid sofa SKU input. The ≥1-active rules live on the OUTER
-// productSchema.superRefine, so tests parse through productSchema (not the bare
-// sofaProductSchema). bundles/compartments are valid so each test isolates the
-// fabric rule.
 const base = {
   pricingKind: 'sofa_build' as const,
   sku: 'SOF-TEST', categoryId: 'sofa', seriesId: null,

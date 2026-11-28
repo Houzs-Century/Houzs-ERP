@@ -28,7 +28,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
-import { fmtSen } from "../vendor/shared/format";
+import { fmtSen } from "../../../shared/src/vendor/shared/format";
 import {
   zeroCostRefusalFrom,
   zeroCostRefusalText,
@@ -36,7 +36,6 @@ import {
   type ZeroCostRefusalLine,
 } from "../vendor/scm/lib/zero-cost-refusal";
 
-/** What the operator decided about ONE refused line. */
 type Decision = { price: string; ack: boolean; reason: string };
 
 const blank = (): Decision => ({ price: "", ack: false, reason: "" });
@@ -82,9 +81,6 @@ export function MobileGrnZeroCostSheet({ grnId, refusal, onClose, onPosted }: {
   const patchDecision = (k: string, patch: Partial<Decision>) =>
     setDecisions((prev) => ({ ...prev, [k]: { ...(prev[k] ?? blank()), ...patch } }));
 
-  /* A line the server named but could not identify cannot be PATCHed from here.
-     It has never been observed (the guard reads grn_items.id), and saying so is
-     better than a control that silently writes nothing. */
   const unaddressable = refusal.lines.filter((l) => !l.id);
   const answerable = refusal.lines.filter((l) => l.id);
   const allAnswered =
@@ -110,9 +106,6 @@ export function MobileGrnZeroCostSheet({ grnId, refusal, onClose, onPosted }: {
           { method: "PATCH", body: JSON.stringify(body) },
         );
       }
-      /* Same call the footer's Post button makes. A second zero-cost refusal is
-         possible (a price typed as 0 on a line that was then not ticked) and it
-         surfaces here as its own sentence rather than as a dead end. */
       await authedFetch(`/grns/${encodeURIComponent(grnId)}/post`, { method: "PATCH" });
     },
     onSuccess: () => { onPosted(); onClose(); },
@@ -133,8 +126,6 @@ export function MobileGrnZeroCostSheet({ grnId, refusal, onClose, onPosted }: {
           <button onClick={onClose} style={{ border: "none", background: "transparent", fontSize: 15, fontWeight: 700, color: "var(--teal)", cursor: "pointer", fontFamily: "inherit" }}>Close</button>
         </div>
 
-        {/* The server's own words, unedited — the same sentence the desktop
-            Confirm shows, so the two surfaces cannot explain it differently. */}
         <p style={{ margin: "0 0 14px", fontSize: 12, lineHeight: 1.55, color: "#6b7280", whiteSpace: "pre-wrap" }}>
           {zeroCostRefusalText(refusal)}
         </p>
@@ -169,7 +160,6 @@ export function MobileGrnZeroCostSheet({ grnId, refusal, onClose, onPosted }: {
                 />
               </label>
 
-              {/* Per line, and it carries a reason — see the header note. */}
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--ink)" }}>
                 <input
                   type="checkbox"

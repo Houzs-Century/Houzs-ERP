@@ -1,5 +1,3 @@
-/* Pull-to-refresh on the PO, DO, PI, SI and GRN lists refreshed only the root key; the list on screen reads the
-   sibling '<root>-paged' key, so nothing changed. Read from the source: the pages need the whole app to mount. */
 import { describe, expect, test } from "vitest";
 import po from "./PurchaseOrdersListV2.tsx?raw";
 import dO from "./MfgDeliveryOrdersListV2.tsx?raw";

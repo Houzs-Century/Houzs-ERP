@@ -1,10 +1,3 @@
-// Money in's invoice documents as pages (the owner's Claude Design, batch 5
-// step 1): a deposit invoice, an other debtor's bill and a sales invoice, each
-// at its own address with Back, Add task, Print, its facts, the Books line read
-// from its journal, its sections and its trail. The steps the pop-outs had
-// (Post to ledger, Cancel with a reason; Copy, Edit, Cancel bill) are here,
-// asked about inline. The writes are the same hooks as before — the server half
-// is backend/tests/depositInvoices.test.ts and otherDebtors.test.ts.
 
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -13,7 +6,6 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { DepositInvoice } from '../../../vendor/scm/lib/deposit-invoice-queries';
 
-/* ── The ledger: what each document booked ─────────────────────────────── */
 type Je = { id: string; je_no: string; entry_date: string; source_type: string; reversed: boolean; created_at: string; lines: unknown[] };
 const JOURNALS: Record<string, Je[]> = {
   'DI|2990-DI-2609-003': [{
@@ -38,7 +30,6 @@ vi.mock('../../../vendor/scm/lib/authed-fetch', () => ({
   }),
 }));
 
-/* ── Deposit invoices ───────────────────────────────────────────────────── */
 const DI_ROWS: DepositInvoice[] = [
   {
     id: 'd1', company_id: 2, di_number: '2990-DI-2609-001', payment_source: 'SOPAY', payment_id: 'p-1', so_doc_no: '2990-SO-2609-001',
@@ -60,7 +51,6 @@ const DI_ROWS: DepositInvoice[] = [
     status: 'ISSUED', je_no: '2990-JE-2609-0013', credit_note_id: null, cancel_reason: null,
     created_at: '2026-09-08T00:00:00Z', created_by: 'u-1', cancelled_at: null, cancelled_by: null,
   },
-  /* Its journal was refused at birth: Post to ledger. */
   {
     id: 'd4', company_id: 2, di_number: '2990-DI-2609-004', payment_source: 'SOPAY', payment_id: 'p-4', so_doc_no: '2990-SO-2609-004',
     party_code: 'cust-wong', party_name: 'Wong', invoice_date: '2026-09-09', amount_sen: 30000, method: 'transfer',
@@ -85,13 +75,11 @@ vi.mock('../../../vendor/scm/lib/deposit-invoice-queries', async (importOriginal
   usePostDepositInvoice: () => ({ mutate: postMutate, isPending: false }),
 }));
 
-/* ── Debtor bills ───────────────────────────────────────────────────────── */
 const BILLS: Record<string, unknown> = {
   b1: {
     bill: { id: 'b1', bill_number: 'HC-ODB-2609-001', bill_date: '2026-09-05', total_sen: 50000, received_sen: 20000, status: 'POSTED', notes: '转租九月', created_at: '2026-09-05T02:00:00Z',
       lines: [{ id: 'l1', line_no: 1, description: '转租', credit_account_code: '700-0000', amount_sen: 50000 }] },
     debtor: { id: 'd1', name: 'AHMAD BIN ALI', code: '305-A001', phone: '012-345', notes: null, is_active: true, outstanding_sen: 30000, address1: '12 Jalan Satu' },
-    /* What came in on it (read c8): a receipt, and an other debtor's credit note. */
     receipts: [{ id: 'r1', number: 'HC-ODR-2609-004', date: '2026-09-28', status: 'POSTED', submittedAt: '2026-09-28T01:00:00Z', checkedAt: '2026-09-28T02:00:00Z', approvedAt: '2026-09-28T03:00:00Z', amountSen: 20000 }],
     creditNotes: [{ id: 'n1', number: 'HC-OCN-2610-001', date: '2026-10-10', status: 'POSTED', reason: 'Rental discount', amountSen: 3000, appliedSen: 3000 }],
   },
@@ -100,7 +88,6 @@ const BILLS: Record<string, unknown> = {
       lines: [{ id: 'l2', line_no: 1, description: null, credit_account_code: '700-0000', amount_sen: 10000, project_id: 348 }] },
     debtor: { id: 'd2', name: 'OLD DEBTOR', phone: null, notes: null, is_active: true, outstanding_sen: 10000 },
   },
-  /* The copy, once posted. */
   b9: {
     bill: { id: 'b9', bill_number: 'HC-ODB-2611-001', bill_date: '2026-11-03', total_sen: 50000, received_sen: 0, status: 'POSTED', notes: '转租九月',
       lines: [{ id: 'l9', line_no: 1, description: '转租', credit_account_code: '700-0000', amount_sen: 50000 }] },
@@ -140,7 +127,6 @@ vi.mock('../../../vendor/scm/lib/accounting-queries', async (importOriginal) => 
   useDebtorDetail: (id: string | null) => ({ data: id === 'd1' ? DEBTOR_D1 : undefined, isLoading: false, isError: false, error: null }),
   useCreateDebtorReceipt: () => ({ mutate: createDebtorReceipt, isPending: false }),
 }));
-/* The debtor the bill page's New receipt lists (batch 5 step 6). */
 const DEBTOR_D1 = {
   debtor: { id: 'd1', name: 'AHMAD BIN ALI', phone: '012-345', notes: null, is_active: true, outstanding_sen: 30000 },
   bills: [{ id: 'b1', bill_number: 'HC-ODB-2609-001', bill_date: '2026-09-05', total_sen: 50000, received_sen: 20000, status: 'POSTED', notes: '转租九月' }],
@@ -157,7 +143,6 @@ vi.mock('../../../vendor/scm/lib/event-queries', async (importOriginal) => ({
   useEventLabels: () => ({ data: new Map(EVENT_OPTIONS.map((e) => [e.id, e])) }),
 }));
 
-/* ── Sales invoices ─────────────────────────────────────────────────────── */
 const SI_DETAIL = {
   salesInvoice: {
     id: 'si-1', invoice_number: 'HC-SI-2609-001', debtor_name: 'TAN AH KOW', debtor_code: '300-C001', status: 'SENT', currency: 'MYR',
@@ -176,14 +161,12 @@ vi.mock('../../../vendor/scm/lib/sales-invoice-pdf', () => ({
   salesInvoicePdfBlob: (h: unknown, i: unknown) => siBlob(h, i),
 }));
 
-/* Add task opens To do's drawer with this document linked. */
 vi.mock('../PvDocParts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../PvDocParts')>()),
   VoucherTaskDrawer: ({ link }: { link: { type: string; no: string; to: string } }) => <div role="dialog" aria-label="Add task">{`${link.type} ${link.no} → ${link.to}`}</div>,
 }));
 
 beforeAll(() => {
-  /* jsdom has no object URLs; the page as it prints is a blob in an iframe. */
   Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:paper'), revokeObjectURL: vi.fn() });
 });
 beforeEach(() => { vi.clearAllMocks(); });
@@ -350,8 +333,6 @@ describe('an other debtor\'s bill, as a page', () => {
     expect(screen.queryByRole('region', { name: 'Credit notes' })).toBeNull();
   });
 
-  /* Batch 5 step 6: while money is still owed, the Receipts section raises one —
-     Debtor maintenance's receipt form, this bill ticked for what it still owes. */
   test('New receipt opens the debtor receipt form in place, this bill ticked for what it owes; it waits for its four layers', () => {
     openBill('b1');
     fireEvent.click(within(screen.getByRole('region', { name: 'Receipts' })).getByRole('button', { name: /New receipt/ }));
@@ -377,7 +358,6 @@ describe('an other debtor\'s bill, as a page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
     expect(screen.getByRole('heading', { name: 'Edit HC-ODB-2609-001' })).toBeTruthy();
     expect(screen.getByText('Saving re-posts the bill: the old journal gets a contra and a fresh one books what you save.')).toBeTruthy();
-    /* A bill keeps its debtor; money on it says why. */
     expect((screen.getByLabelText('Bill debtor') as HTMLSelectElement).disabled).toBe(true);
     expect(screen.getByText('This bill has money received on it, so the debtor can’t change.')).toBeTruthy();
     expect((screen.getByLabelText('line 1 amount') as HTMLInputElement).value).toBe('500.00');
@@ -391,7 +371,6 @@ describe('an other debtor\'s bill, as a page', () => {
       billId: 'b1',
       body: { billDate: '2026-09-05', notes: '转租九月', lines: [{ description: '转租', creditAccountCode: '700-0000', amountSen: 65000 }] },
     }));
-    /* Saved: back to the bill. */
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'HC-ODB-2609-001' })).toBeTruthy());
   });
 
@@ -408,7 +387,6 @@ describe('an other debtor\'s bill, as a page', () => {
     expect(sent.billDate).not.toBe('2026-09-05');
     expect(sent.notes).toBe('转租九月');
     expect(sent.lines).toEqual([{ description: '转租', creditAccountCode: '700-0000', amountSen: 50000 }]);
-    /* Posted: the new bill's own page opens. */
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'HC-ODB-2611-001' })).toBeTruthy());
   });
 
@@ -444,7 +422,6 @@ describe('a sales invoice, read from Sales', () => {
     expect(fact('Credit notes').textContent).toBe('RM 300.00');
     expect(fact('Paid').textContent).toBe('RM 400.00');
     expect(fact('Outstanding').textContent).toBe('RM 3,500.00');
-    /* Its notes: the close-out says what it closed (the deposit lowered the invoice), the knock-off why. */
     const notes = screen.getByRole('region', { name: 'Credit notes' });
     expect(within(notes).getByText('Closes deposit invoice HC-DI-2609-002')).toBeTruthy();
     expect(within(notes).getByText('Scratched headboard')).toBeTruthy();

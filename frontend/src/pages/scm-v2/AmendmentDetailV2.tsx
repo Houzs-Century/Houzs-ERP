@@ -1,25 +1,3 @@
-// ----------------------------------------------------------------------------
-// AmendmentDetailV2 — the SO-amendment job card. A dedicated read-first detail
-// page for one revision, reachable from the Amendments queue
-// (pages/scm-v2/Amendments.tsx). Until now the queue routed a row straight into
-// the SO / PO inline editor and there was no amendment detail surface at all —
-// so this follows the owner-approved job-card mockup (jobcard-reorg-mockup):
-//
-//   • a revision-status hero (Requested -> Supplier Pending -> SO/PO Approved
-//     -> Sent), tone + label from the canonical resolveStatusPill('soAmendment')
-//   • a main column with the before -> after diff per changed line
-//     (qty / spec / price / add / remove), each line's variants shown on BOTH
-//     sides via the shared buildVariantSummary
-//   • an aside with Requested-by, the permission-gated supplier-confirm /
-//     approve-so gate actions (the same vendored hooks the mobile flow uses),
-//     a hop into the SO / bound-PO editor for the later gates, and a Recent
-//     activity timeline derived from the amendment's own audit timestamps.
-//
-// Shell matches the desktop scm-v2 detail style: Section + DetailGrid /
-// DetailMain / DetailAside (SalesOrderDetailV2), with a local AsideCard clone
-// (AsideCard is not exported from that page). No hand-rolled amendment logic —
-// the diff data, status pill and variant summary are all shared.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -49,7 +27,7 @@ import { useStaffLookup } from "../../hooks/useStaffLookup";
 import {
   resolveStatusPill,
   type StatusTone,
-} from "../../vendor/scm/lib/status-pill";
+} from "../../../../shared/src/vendor/scm/lib/status-pill";
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover, SO_AMENDMENT_LANE_APPROVE_PERM } from "../../vendor/scm/lib/amendment-approver";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -91,20 +69,13 @@ import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/Prin
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn, formatDate } from "../../lib/utils";
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
-/* Read an unknown audit field off the amendment blob as a trimmed string. */
 const asStr = (v: unknown): string | null => {
   if (v == null) return null;
   const s = String(v).trim();
   return s ? s : null;
 };
 
-/* Every failed gate action on this page reports through here. authedFetch hangs
-   the raw status + body off the thrown error, which humanApiError turns into the
-   house plain sentence; anything else falls back to the error's own message.
-   Owner's standing ruling: a save that fails must SAY so — a user who believes
-   it saved and finds out later that it did not is the unacceptable case. */
 const plainError = (e: unknown): string => {
   const err = e as { status?: number; body?: string; message?: string };
   if (typeof err?.status === "number" && typeof err?.body === "string") {
@@ -113,7 +84,6 @@ const plainError = (e: unknown): string => {
   return err?.message ?? "Something went wrong. Please try again.";
 };
 
-// ─── Revision-status stepper (4 stages; SO/PO approved collapse into one) ────
 
 type Stage = { key: string; label: string };
 const STAGES: Stage[] = [
@@ -123,8 +93,6 @@ const STAGES: Stage[] = [
   { key: "SENT", label: "Sent" },
 ];
 
-/* Map a raw amendment status to how far along the 4-stage stepper it has
-   reached (index of the furthest completed stage). REJECTED is off-path. */
 const stageIndexOf = (status: string): number => {
   switch (status) {
     case "REQUESTED": return 0;
@@ -132,13 +100,10 @@ const stageIndexOf = (status: string): number => {
     case "SO_APPROVED":
     case "PO_APPROVED": return 2;
     case "SENT": return 3;
-    default: return -1; // REJECTED / unknown
+    default: return -1;
   }
 };
 
-/* Two-lane rework (2026-07-27): a LANE amendment is ONE signature — its whole
-   life is Requested → Applied (SO_APPROVED as terminal). The legacy 4-stage
-   chain above stays for pre-rework (lane NULL) rows. */
 export type SoAmendmentLaneValue = "LINES" | "DELIVERY" | "PRICE" | "LINE_ADDREMOVE";
 const LANE_STAGES: Stage[] = [
   { key: "REQUESTED", label: "Requested" },
@@ -148,7 +113,7 @@ const laneStageIndexOf = (status: string): number => {
   switch (status) {
     case "REQUESTED": return 0;
     case "SO_APPROVED": return 1;
-    default: return -1; // REJECTED / unknown
+    default: return -1;
   }
 };
 export const LANE_TITLE: Record<SoAmendmentLaneValue, string> = {
@@ -158,8 +123,6 @@ export const LANE_TITLE: Record<SoAmendmentLaneValue, string> = {
   LINE_ADDREMOVE: `Add / cancel line · ${AMENDMENT_APPROVER_LABEL[soAmendmentApprover("LINE_ADDREMOVE")]}`,
 };
 
-/* Hero accent dot per status tone — the dark hero can't use the light-surface
-   tone.fg/bg, so map the canonical tone to a hero-friendly dot class. */
 const HERO_DOT: Record<StatusTone, string> = {
   success: "bg-synced",
   danger: "bg-err",
@@ -169,7 +132,6 @@ const HERO_DOT: Record<StatusTone, string> = {
   neutral: "bg-sidebar-ink-muted",
 };
 
-// ─── Aside card (local clone of SalesOrderDetailV2's private AsideCard) ──────
 
 function AsideCard({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -182,7 +144,6 @@ function AsideCard({ title, children }: { title: string; children: ReactNode }) 
   );
 }
 
-// ─── Revision-status hero ───────────────────────────────────────────────────
 
 function RevisionHero({
   status,
@@ -228,10 +189,6 @@ function RevisionHero({
               ? "This request was withdrawn."
               : "This amendment was rejected — the Sales Order keeps its prior revision."}
           </div>
-          {/* The reason is the whole point of a refusal: without it the requester
-              can only guess and resubmit, which is what produced competing
-              amendment documents on one order. mig 0149 persists it on the row;
-              before that it survived only in the SO's audit note. */}
           {rejectionReason && (
             <div className="mt-1.5 font-normal text-err/90">"{rejectionReason}"</div>
           )}
@@ -240,8 +197,6 @@ function RevisionHero({
           </div>
         </div>
       ) : (
-        // Stage stepper (4 legacy / 2 lane) — reached stages fill accent, the
-        // current stage rings.
         <div className="mt-5 flex items-center">
           {stages.map((s, i) => {
             const isDone = i < reached;
@@ -300,11 +255,6 @@ function RevisionHero({
   );
 }
 
-// ─── Supplier-confirmation modal (REQUESTED -> SUPPLIER_PENDING) ────────────
-// Captures the supplier's acknowledgement (ref required; note / attachment key
-// optional) and advances the gate via the vendored useSupplierConfirm — the
-// same mutation the desktop SupplierConfirmForm + mobile sheet use. The server
-// 403 / 409 stays the real gate (humanised by authed-fetch).
 
 function SupplierConfirmModal({
   amendmentId,
@@ -453,7 +403,6 @@ function ActivityTimeline({ events }: { events: TimelineEvent[] }) {
   );
 }
 
-// ─── Main page ─────────────────────────────────────────────────────────────
 
 export function AmendmentDetailV2() {
   const { id } = useParams<{ id: string }>();
@@ -464,7 +413,6 @@ export function AmendmentDetailV2() {
   const notify = useNotify();
   const { actorNameOf } = useStaffLookup();
 
-  // isPending, NOT isLoading — see the gate below.
   const { data, isPending, error } = useAmendmentDetail(id ?? null);
   const approveSo = useApproveSo();
   const purchaserOk = usePurchaserOk();
@@ -479,14 +427,9 @@ export function AmendmentDetailV2() {
     created_at?: string | null;
     so_doc_no?: string;
   }) | null;
-  /* Lane rework: 'LINES' | 'DELIVERY' | 'PRICE' (2990 price-only) on post-rework
-     rows; NULL keeps the legacy supplier-confirmed two-gate UI below untouched. */
   const lane: SoAmendmentLaneValue | null =
     amendment?.lane === "LINES" || amendment?.lane === "DELIVERY" || amendment?.lane === "PRICE" || amendment?.lane === "LINE_ADDREMOVE"
       ? amendment.lane : null;
-  /* The follow-up PO Amendments this amendment auto-raised when its LINES lane
-     applied (the purchaser's second signature). REJECTED here = "PO not
-     followed up" — the SO changed but the PO deliberately did not. */
   const poFollowUps = ((data as {
     poFollowUps?: Array<{
       id: string; po_number?: string | null; amendment_no?: string | null;
@@ -501,17 +444,10 @@ export function AmendmentDetailV2() {
     () => visibleAmendmentLines((data?.lines ?? []) as AmendmentLine[]),
     [data],
   );
-  /* How many line rows were RECORDED, before the delta filter. When this is
-     non-zero but `lines` is empty, every recorded line is a no-op — say so
-     rather than showing nothing (a legacy pre-fix amendment reads this way). */
   const recordedLineCount = (data?.lines ?? []).length;
   const salesOrder = data?.salesOrder ?? null;
   const boundPo = data?.purchaseOrders?.[0] ?? null;
 
-  /* The HEADER half of the request (mig 0119) — the frozen fields this amendment
-     asks to change, paired with the values they replace. Shared builder so this
-     job card, the desktop SO-detail diff modal and the mobile sheet all render
-     it identically. Empty on a line-only amendment. */
   const headerDiffs = useMemo(
     () => amendmentHeaderDiffRows(
       amendment?.header_changes as SoAmendmentHeaderChanges | null | undefined,
@@ -523,8 +459,6 @@ export function AmendmentDetailV2() {
 
   const changeCount = headerDiffs.length + lines.length;
 
-  /* Every routable atom this amendment moves — lines + header — for the type
-     badge(s) and the department-routing block. */
   const allFieldKinds = useMemo<AmendmentFieldKind[]>(() => {
     const fromLines = lines.flatMap((l) => amendmentLineFieldKinds(l));
     const fromHeader = headerDiffs.map((d) => soHeaderFieldKind(d.key) as AmendmentFieldKind);
@@ -558,10 +492,6 @@ export function AmendmentDetailV2() {
     }));
   }, [auditEntries, amendment]);
 
-  /* Printable amendment document (owner-approved layout). Same client-side
-     mechanism as the SO/PO PDFs — the operator downloads / prints / WhatsApps it.
-     Status label is the SIMPLIFIED Requested / Approved the owner asked for
-     (the multi-step backend states collapse to those two on the document). */
   const deliverPrintPdf = (action: PdfAction) => {
     if (!amendment) return;
     const input = soAmendmentToPdfInput({
@@ -584,23 +514,12 @@ export function AmendmentDetailV2() {
   };
   const print = usePrintPreview(deliverPrintPdf);
 
-  /* Legacy (lane NULL) keys — untouched. */
   const canSupplierConfirm = !lane && can("scm.amendment.supplier_confirm");
   const canApproveSo = !lane && can("scm.amendment.approve_so");
-  /* Lane rework: ONE signature per lane — LINES is purchasing's (approve_lines),
-     DELIVERY is logistics' (approve_delivery), PRICE is Finance's (approve_price,
-     2990 price-only). Super admin passes via the * wildcard. */
   const canApproveLane =
     lane != null && can(SO_AMENDMENT_LANE_APPROVE_PERM[lane]);
-  /* Reject rides the row's own approver gate: the lane key on lane rows, the
-     legacy purchasing gate (approve_po) on pre-rework rows — mirroring the
-     backend exactly so the button cannot appear for someone the server will
-     refuse. */
   const canReject = lane ? canApproveLane : can("scm.amendment.approve_po");
 
-  /* BUG-101 — a Delivery Date brought forward on an order with a live PO waits
-     for a Purchaser's OK before Logistic can approve it. The server decides
-     whether it is needed; the approve route refuses without it. */
   const purchaserOkRequired = data?.purchaserOkRequired === true;
   const purchaserOkAt = asStr(amendment?.purchaser_ok_at);
   const awaitingPurchaserOk = purchaserOkRequired && !purchaserOkAt;
@@ -624,9 +543,6 @@ export function AmendmentDetailV2() {
 
   const handleReject = async () => {
     if (!id || !amendment) return;
-    /* The reason is MANDATORY — the server 400s without one. A refusal that does
-       not say why leaves the requester guessing and resubmitting, which is the
-       competing-documents problem this whole change exists to end. */
     const reason = await askPrompt({
       title: `Reject amendment ${amendmentNo ?? ""}?`.trim(),
       body: "The Sales Order keeps its current revision and nothing is changed. "
@@ -639,7 +555,7 @@ export function AmendmentDetailV2() {
           ? "Give a reason the requester can act on — at least a few words."
           : null,
     });
-    if (reason == null) return; // cancelled
+    if (reason == null) return;
     try {
       await rejectAmendment.mutateAsync({ id, reason: reason.trim() });
       notify({
@@ -674,7 +590,7 @@ export function AmendmentDetailV2() {
       multiline: true,
       confirmLabel: "Withdraw request",
     });
-    if (reason == null) return; // cancelled at the second step
+    if (reason == null) return;
     try {
       await withdrawAmendment.mutateAsync({ id, reason: reason.trim() || undefined });
       notify({
@@ -778,8 +694,6 @@ export function AmendmentDetailV2() {
       return s !== "APPROVED" && s !== "REJECTED";
     }) ?? null;
   const openBoundPo = () => {
-    // Click-time closure — poRevised is declared just below and initialised
-    // long before any click can land.
     if (!poRevised && pendingFollowUp) {
       navigate(`/scm/po-amendments/${pendingFollowUp.id}`);
       return;
@@ -793,19 +707,9 @@ export function AmendmentDetailV2() {
     }
   };
 
-  // Later gates (approve-po / send) live on the bound-PO editor surface, so
-  // once the SO gate has cleared we hand off there rather than duplicating the
-  // received-floor handling here.
   const pastSoGate = status === "SO_APPROVED" || status === "PO_APPROVED" || status === "SENT";
-  /* Whether the bound PO has actually been re-derived yet. approve-so rewrites
-     the SALES ORDER only; the PO is rewritten by the separate approve-po gate
-     (reviseBoundPo). The stepper collapses both into one "Approved" stage, so
-     without this the page called a PO "revised" from the moment the SO was. */
   const poRevised = status === "PO_APPROVED" || status === "SENT";
 
-  // isPending covers pending-but-not-fetching (disabled / offline-paused), which
-  // isLoading reports as false — letting those states fall through to the error
-  // branch and paint "Couldn't load this amendment" before any fetch had run.
   if (isPending) {
     return (
       <div className="animate-fade-in p-8 text-center text-[13px] text-ink-muted">
@@ -835,9 +739,6 @@ export function AmendmentDetailV2() {
 
   return (
     <div className="pb-10">
-      {/* ─── Desktop sticky header ──────────────────────────────────── */}
-      {/* lg:top-[52px] = the single 2b top-chrome bar (see Layout.tsx
-          PageHeader — the lg stickies move together). */}
       <div className="sticky top-12 lg:top-[52px] z-20 -mx-4 border-b border-border bg-bg/95 px-4 py-4 backdrop-blur-sm sm:-mx-6 sm:px-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3 min-w-0">
@@ -864,10 +765,6 @@ export function AmendmentDetailV2() {
               <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-ink-secondary">
                 <span className="font-mono font-semibold text-primary-ink">{soDocNo}</span>
                 <span className="text-ink-muted/50">·</span>
-                {/* The honest total — header fields + genuinely-changed lines.
-                    It used to count every RECORDED line, so an amendment whose
-                    lines were all no-ops advertised "4 changes" and showed four
-                    identical cards. */}
                 <span>
                   {changeCount} change{changeCount === 1 ? "" : "s"}
                 </span>
@@ -910,7 +807,6 @@ export function AmendmentDetailV2() {
         </div>
       </div>
 
-      {/* ─── Body ───────────────────────────────────────────────────── */}
       <div className="py-5">
         <DetailGrid>
           <DetailMain>
@@ -945,12 +841,6 @@ export function AmendmentDetailV2() {
                   {headerDiffs.length > 0
                     ? "No line changes — this amendment only changes the order details above."
                     : recordedLineCount > 0
-                      /* Every recorded line matches the order exactly, and there
-                         is no header delta either — a legacy amendment raised
-                         before the header half existed (mig 0119), whose real
-                         request was a header field that had nowhere to go. Say
-                         so and point at the Reason, which is the only place the
-                         ask survives. */
                       ? "No line changes recorded — every line matches the order exactly. This request predates order-detail tracking, so what was asked for is in the Reason below."
                       : "This amendment has no line changes recorded."}
                 </div>
@@ -1045,8 +935,6 @@ export function AmendmentDetailV2() {
               </Button>
             </AsideCard>
 
-            {/* Two-lane rework — a lane row has ONE signature and, on the LINES
-                lane, the follow-up PO Amendment chips after it applies. */}
             {lane && (status === "REQUESTED" || status === "SO_APPROVED") && (
               <AsideCard title={`${AMENDMENT_APPROVER_LABEL[soAmendmentApprover(lane)]} approval`}>
                 <div className="space-y-2">
@@ -1159,8 +1047,6 @@ export function AmendmentDetailV2() {
                       )}
                     </div>
                   )}
-                  {/* Reject — the lane approver's refusal; REQUESTED only (after
-                      apply there is nothing left to refuse). Reason mandatory. */}
                   <WrongApproverFlagButton
                     amendment={{ id: String(id), amendment_no: amendmentNo, status, lane, lane_flag_note: asStr(amendment.lane_flag_note) }}
                     canSign={canApproveLane}
@@ -1192,10 +1078,6 @@ export function AmendmentDetailV2() {
               </AsideCard>
             )}
 
-            {/* Gate actions — supplier-confirm / approve-so are wired directly
-                (the same vendored hooks the mobile flow uses); the later gates
-                (approve-po / send) hand off to the bound-PO editor. LEGACY
-                (lane NULL) rows only — lane rows use the card above. */}
             {!lane && (status === "REQUESTED" || status === "SUPPLIER_PENDING" || pastSoGate) && (
               <AsideCard title="Gate actions">
                 <div className="space-y-2">
@@ -1222,12 +1104,6 @@ export function AmendmentDetailV2() {
                   )}
                   {pastSoGate && boundPo?.id && (
                     <>
-                      {/* Approving the SO revision does NOT touch the purchase
-                          order. reviseBoundPo runs on the SEPARATE approve-po
-                          gate, and if nobody runs it the SO says one thing and
-                          the supplier is still building another — with no
-                          notification to anyone. Say so where the decision is
-                          made. */}
                       {!poRevised && (
                         <p className="rounded-md border border-warn/40 bg-warn/10 px-2.5 py-2 text-[12px] text-ink">
                           The Sales Order is revised. <strong>{boundPo.po_number}</strong> is
@@ -1264,8 +1140,6 @@ export function AmendmentDetailV2() {
                       Supplier confirmed — awaiting SO revision approval.
                     </p>
                   )}
-                  {/* Reject — available at every pre-approved gate, exactly as the
-                      backend state machine allows. The reason is mandatory. */}
                   {!pastSoGate && canReject && (
                     <Button
                       variant="secondary"
@@ -1277,8 +1151,6 @@ export function AmendmentDetailV2() {
                       {rejectAmendment.isPending ? "Rejecting…" : "Reject amendment"}
                     </Button>
                   )}
-                  {/* Withdraw — the requester's own way out, so a mistaken request
-                      can be closed instead of buried under a second one. */}
                   {canWithdraw && (
                     <Button
                       variant="ghost"

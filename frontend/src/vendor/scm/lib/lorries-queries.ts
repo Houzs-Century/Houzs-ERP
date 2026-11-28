@@ -1,15 +1,7 @@
-// Vendored from apps/backend/src/lib/lorries-queries.ts — Lorries CRUD hooks.
-// TMS fleet master (scm.lorries). is_internal is the In-house / Outsource
-// marker; the list hook accepts a fleet filter (all / internal / outsourced).
-//
-// HOUZS VENDOR NOTE: the source has no `import { supabase } from './supabase'`
-// to drop (it only imports authedFetch + react-query). Everything else is
-// copied verbatim from 2990.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch, API_URL, humanApiError } from './authed-fetch';
-// See authed-fetch.ts's import note: the token may be in sessionStorage, so the
-// read must come from the shared accessor, never an inlined localStorage hit.
+import { todayMY } from '../../../../../shared/src/vendor/shared/format';
 import { readAuthToken } from '../../../lib/authToken';
 import { companyHeader } from '../../../lib/activeCompany';
 import { prepareImageForUpload } from '../../../lib/imagePipeline';
@@ -21,7 +13,6 @@ import {
 } from '../../../lib/requestCorrelation';
 import { writeFailed } from './mutation-error';
 
-// Matches the lorry_type enum in migration 0195 / Houzs scm 0053.
 export const LORRY_TYPES = [
   'LORRY_10FT', 'LORRY_14FT', 'LORRY_17FT', 'LORRY_21FT', 'VAN', 'OUTSOURCE', 'OTHER',
 ] as const;
@@ -41,15 +32,6 @@ export type LorryRow = {
   id: string;
   plate: string;
   type: LorryType;
-  // Migration 0195 — true = in-house fleet, false = outsourced.
-  //
-  // The camel twins below are DEAD and kept only because every vendored SCM
-  // consumer still dual-reads them. The claim that used to sit here ("the pg
-  // driver camelCases result cols") is HOOKKA's rule and is false for Houzs:
-  // pg.ts:5-10 deliberately does not install that transform, and these rows
-  // never touch the pg driver anyway — they come from PostgREST over
-  // /api/scm/lorries, which returns exactly the snake_case names in the route's
-  // COLS. Only the snake half ever resolves. Do not restore the claim.
   is_internal?: boolean;
   isInternal?: boolean;
   warehouse_id?: string | null;
@@ -61,9 +43,6 @@ export type LorryRow = {
   active: boolean;
   notes: string | null;
   created_at: string;
-  // ── Migration 0121: purchase record + compliance expiries ─────────────────
-  // NOT a revival of the old public.lorries columns (mig 0015) — that table was
-  // dropped by mig 0055. These are new columns on scm.lorries.
   model?: string | null;
   purchase_date?: string | null;
   purchase_price_sen?: number | null;
@@ -72,30 +51,18 @@ export type LorryRow = {
   purchase_invoice_name?: string | null;
   purchase_invoice_mime?: string | null;
   purchase_invoice_size?: number | null;
-  /** YYYY-MM-DD, as printed on the document. Renews yearly. */
   road_tax_expiry?: string | null;
-  /** YYYY-MM-DD, as printed on the cover note. Renews yearly. */
   insurance_expiry?: string | null;
-  /** YYYY-MM-DD. Commercial goods vehicles: every 6 months. */
   puspakom_expiry?: string | null;
-  // ── Fleet A1 (mig 0205): per-lorry delivery capacity ceilings ─────────────
-  // NULL max_* => the auto-propose packer uses its config default (10 sets /
-  // RM30k). capacity_layer picks which ceiling(s) bind on a lorry-day.
   max_sets?: number | null;
   max_revenue_sen?: number | null;
   capacity_layer?: CapacityLayer | null;
-  // ── WS3 (mig 0209): cargo-box dimensions (ft). capacity_m3 is derived from
-  // these when all three are set. NUMERIC comes back from PostgREST as a string.
   length_ft?: number | string | null;
   width_ft?: number | string | null;
   height_ft?: number | string | null;
-  // ── WS4a (mig 0210): the 3PL carrier company this lorry belongs to (NULL = own
-  // fleet / not attached).
   threepl_company_id?: string | null;
   threeplCompanyId?: string | null;
-  /** Every warehouse it serves; warehouse_id is its home, always among these. */
   warehouse_ids?: string[] | null;
-  /** Mig 20261107T2000: the crew usually on it (a default; each trip keeps its own). */
   usual_driver_id?: string | null;
   usual_helper_id?: string | null;
 };
@@ -113,7 +80,6 @@ export type NewLorry = {
   type: LorryType;
   isInternal?: boolean;
   warehouseId?: string | null;
-  /** Every warehouse the lorry serves; the first is also written as warehouseId. */
   warehouseIds?: string[];
   capacityM3?: number | null;
   capacityKg?: number | null;
@@ -121,10 +87,6 @@ export type NewLorry = {
   active?: boolean;
   model?: string | null;
   purchaseDate?: string | null;
-  /* Mig 0245 — the lorry's own lifecycle, none of which is purchaseDate:
-     when it was BUILT, when it was REGISTERED with JPJ (what the road-tax /
-     insurance / PUSPAKOM cycles anchor to), and the first day it worked for us
-     (the denominator for cost-per-day). */
   manufactureDate?: string | null;
   registrationDate?: string | null;
   inServiceDate?: string | null;
@@ -136,14 +98,10 @@ export type NewLorry = {
   maxSets?: number | null;
   maxRevenueSen?: number | null;
   capacityLayer?: CapacityLayer;
-  // WS3: box dimensions (ft). Sending all three re-derives capacity_m3 server-side.
   lengthFt?: number | null;
   widthFt?: number | null;
   heightFt?: number | null;
-  // WS4a: the 3PL carrier company this lorry belongs to (null = own fleet).
-  // Setting it forces the row OUTSOURCE server-side (scm/lib/threepl-link.ts).
   threeplCompanyId?: string | null;
-  /** The home warehouse, chosen on its own; the server keeps it in warehouseIds. */
   homeWarehouseId?: string | null;
   usualDriverId?: string | null;
   usualHelperId?: string | null;
@@ -190,10 +148,6 @@ export function useUpdateLorry() {
   });
 }
 
-// ── Service / repair records (migration 0121) ────────────────────────────────
-// HOUZS-AUTHORED, not vendored from 2990 — 2990 has no equivalent. Kept in this
-// file rather than a new one because it is the same master's detail and every
-// consumer already imports from here.
 
 export type LorryServiceRecord = {
   id: string;
@@ -202,8 +156,6 @@ export type LorryServiceRecord = {
   description: string;
   workshop: string | null;
   cost_sen: number;
-  /** Odometer AT THE TIME OF SERVICE. The only mileage source in the system —
-   *  see vendor/shared/lorry-compliance.ts before deriving anything from it. */
   odometer_km: number | null;
   invoice_key: string | null;
   invoice_name: string | null;
@@ -251,8 +203,6 @@ export function useCreateLorryServiceRecord(lorryId: string) {
 export function useLorryServiceRecords(lorryId: string | null) {
   return useQuery({
     queryKey: ['lorry-service-records', lorryId],
-    // OFF, not hide: with no lorry selected the detail is not open, so the
-    // query must not fire at all rather than fetch and discard.
     enabled: !!lorryId,
     queryFn: () =>
       authedFetch<{ records: LorryServiceRecord[] }>(
@@ -296,11 +246,7 @@ export function useDeleteLorryServiceRecord(lorryId: string) {
  *  view-then-navigate callers. */
 export async function fetchServiceInvoiceUrl(recordId: string): Promise<{ url: string; contentType: string }> {
   const token = readAuthToken();
-  /* Surfaces through the caller's `err.message` — a sentence, not the marker
-     `not_authenticated` (same fix as authed-fetch / slip). */
   if (!token) throw new Error('Your session has expired — please sign in again.');
-  // Correlated transport (main); the inline localStorage re-read of
-  // 'houzs.activeCompanyId' is gone — companyHeader() below is the one accessor.
   const res = await correlatedFetch(`${API_URL}/lorry-service-records/${encodeURIComponent(recordId)}/invoice`, {
     headers: {
       authorization: `Bearer ${token}`,
@@ -325,9 +271,6 @@ export function useUploadServiceInvoice(lorryId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, file }: { id: string; file: File }) => {
-      /* WO-7 — workshop invoices are usually phone photos; compress before
-         upload (PDFs pass through untouched). Viewed one-at-a-time, so no
-         thumbnail. */
       const prepared = await prepareImageForUpload(file, { wantThumb: false });
       const fd = new FormData();
       fd.append('file', prepared.file);
@@ -339,7 +282,6 @@ export function useUploadServiceInvoice(lorryId: string) {
   });
 }
 
-/* DEV-42: latest Velocity tracker fix per lorry (last 24 h), as GET /lorries/positions/latest emits it. */
 export type LorryPosition = {
   lorry_id: string;
   plate: string;
@@ -353,9 +295,6 @@ export type LorryPosition = {
   received_at: string;
 };
 
-/* The server stores a fix every 5 min; polling each minute shows it within one cycle. */
-/* Own-lorry running cost for a Malaysia day, as GET /lorries/km-cost emits it.
-   cost_sen is null when the lorry has no RM/km set. */
 export type LorryKmCost = {
   lorry_id: string;
   plate: string;
@@ -372,20 +311,21 @@ export function useLorryKmCost() {
   });
 }
 
-export function useLorryPositions() {
+export function useLorryPositions(enabled: boolean) {
   return useQuery({
     queryKey: ['lorries', 'positions', 'latest'],
+    enabled,
     queryFn: () => authedFetch<{ positions: LorryPosition[] }>('/lorries/positions/latest').then((r) => r.positions),
     refetchInterval: 60_000,
   });
 }
 
-/* One lorry's Velocity fixes for a Malaysia day (GET /lorries/:id/track) — the
-   route it actually drove, in time order. */
 export type LorryTrack = {
   date: string;
   km: number;
   fixes: Array<{ lat: number; lng: number; recorded_at: string; speed_kmh: number | null; street: string | null }>;
+  drops: Array<{ kind: 'do' | 'job'; ref: string; label: string; lat: number | null; lng: number | null; at: string; stopId: string | null }>;
+  dropsError: string | null;
 };
 
 export function useLorryTrack(lorryId: string, date: string) {
@@ -393,6 +333,16 @@ export function useLorryTrack(lorryId: string, date: string) {
     queryKey: ['lorries', 'track', lorryId, date],
     queryFn: () => authedFetch<LorryTrack>(`/lorries/${encodeURIComponent(lorryId)}/track?date=${date}`),
     enabled: !!lorryId,
-    refetchInterval: 5 * 60_000,
+    refetchInterval: date === todayMY() ? 5 * 60_000 : (false as const),
+  });
+}
+
+/** Km per lorry per Malaysia day (GET /lorries/km-daily); null = no fixes that day. odoKm: by the iTrack odometer, null = no readings. */
+export type LorryKmDaily = { days: string[]; lorries: Array<{ id: string; plate: string; km: Array<number | null>; odoKm: Array<number | null> }> };
+
+export function useLorryKmDaily(from: string, to: string) {
+  return useQuery({
+    queryKey: ['lorries', 'km-daily', from, to],
+    queryFn: () => authedFetch<LorryKmDaily>(`/lorries/km-daily?from=${from}&to=${to}`),
   });
 }

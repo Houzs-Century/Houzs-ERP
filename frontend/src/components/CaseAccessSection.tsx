@@ -4,7 +4,6 @@ import { api } from "../api/client";
 import { UserMultiSelect, type UserOptionItem } from "./UserMultiSelect";
 import { PanelSection } from "./Panel";
 
-/** Access rows arrive snake_case from our SQL; the PG driver may camelCase them, so read both. */
 type AccessRow = { user_id?: number; userId?: number; user_name?: string | null; userName?: string | null };
 
 /**
@@ -27,8 +26,6 @@ export function CaseAccessSection({
   onChanged: () => void;
 }) {
   const toast = useToast();
-  // Chips resolve from the access rows themselves (each carries user_name), so a
-  // granted person always displays even if outside the loaded users list.
   const accessIds: number[] = access
     .map((a) => Number(a.user_id ?? a.userId))
     .filter((n: number) => Number.isFinite(n) && n > 0);

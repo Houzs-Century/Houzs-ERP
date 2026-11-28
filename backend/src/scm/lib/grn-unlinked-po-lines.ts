@@ -76,11 +76,8 @@ export async function findUnlinkedPoLines(
   lines: UnlinkedCandidate[],
 ): Promise<UnlinkedScan<UnlinkedPoOffender>> {
   if (!String(purchaseOrderId ?? '').trim()) return { ok: true, offenders: [] };
-  // nothing unlinked — skip the read
   if (!lines.some((l) => !l.soItemId)) return { ok: true, offenders: [] };
 
-  /* The number is fetched only on this path, and only when a line is actually
-     unlinked — a receipt whose lines are all linked pays for neither query. */
   const [codes, fetchedNo] = await Promise.all([
     poMaterialCodesOf(sb, purchaseOrderId),
     String(poNumber ?? '').trim()
@@ -89,8 +86,6 @@ export async function findUnlinkedPoLines(
           .then((r: { data?: { po_number?: string | null } | null }) => r?.data?.po_number ?? ''),
   ]);
   if (!codes.ok) return codes;
-  /* The parent label must be non-empty for the shared predicate to engage; the
-     id is the last resort so a missing PO row never turns into "allowed". */
   const label = String(fetchedNo ?? '').trim() || String(purchaseOrderId);
   return {
     ok: true,

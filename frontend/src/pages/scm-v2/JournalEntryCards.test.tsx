@@ -74,7 +74,6 @@ describe('an entry opened', () => {
     expect(screen.getByText("Salary - Jun'26")).toBeTruthy();
     expect(screen.getByText('Posted')).toBeTruthy();
     expect(screen.getByText('2990-JE-2606-0163')).toBeTruthy();
-    /* The total row adds the lines. */
     expect(screen.getByText('Total').closest('[role="row"]')!.textContent).toContain('19,206.98');
     fireEvent.click(first);
     expect(onOpenAccount).toHaveBeenCalledWith('900-S100', '2026-06-30');
@@ -169,7 +168,6 @@ describe('an entry edited', () => {
       ],
     });
     expect(editSeedFromEntry(JE, PARTY_LINES)).toEqual(seed);
-    /* Copy still drops the party — a new month's salary line names a new person. */
     expect(seedFromEntry(JE, PARTY_LINES).lines[0]).toEqual({ accountCode: '900-S100', debit: '19206.98', credit: '', notes: "Gross Salary - Jun'26" });
     first.unmount();
 
@@ -192,7 +190,6 @@ describe('an entry edited', () => {
     expect(screen.getByText('Edit 2990-JE-2606-0163')).toBeTruthy();
     expect(screen.getByText(/posted — saving reverses it on its own day/)).toBeTruthy();
     expect(screen.queryByText(/check the date, the figures/)).toBeNull();
-    /* A posted entry is saved and posted in one step — there is no draft to keep. */
     expect(screen.queryByText('Save draft')).toBeNull();
     expect((screen.getByLabelText('Line 1 debit') as HTMLInputElement).value).toBe('19206.98');
     fireEvent.change(screen.getByLabelText('Line 1 debit'), { target: { value: '19000.00' } });

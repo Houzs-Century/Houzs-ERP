@@ -1,7 +1,3 @@
-/* The add / edit drawer of Employee Master (from Hookka's employee-drawer.tsx).
- * A salary change asks for the date it takes effect and lands in the salary
- * history, so an older month is never re-priced. Read-only for holders of
- * hr.employees.read alone. */
 import { useMemo, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { api } from "../../api/client";
@@ -11,7 +7,7 @@ import { SearchableSelect, type SearchableSelectOption } from "../../vendor/scm/
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { cn, formatDate } from "../../lib/utils";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 import { MALAYSIAN_BANKS } from "../../vendor/shared/pick-lists";
 import {
   EMPLOYEE_STATUSES,
@@ -114,8 +110,6 @@ export function EmployeeDrawer({ employee, canManage, onClose, onSaved }: { empl
     () => new Set(accounts.filter((a) => a.linkedEmpNo && a.linkedEmpNo !== employee?.empNo).map((a) => a.id)),
     [accounts, employee?.empNo],
   );
-  /* Nico 2026-10-27: too many accounts to scroll, so type to search. Accounts
-     another employee already uses stay listed, under their own heading. */
   const accountOptions = useMemo<SearchableSelectOption[]>(() => {
     const label = (a: (typeof accounts)[number]) => `${a.name ?? a.email}${a.position ? ` · ${a.position}` : ""}`;
     const current = d.userId != null && !accounts.some((a) => a.id === d.userId) ? [{ value: String(d.userId), label: employee?.userName ?? employee?.userEmail ?? `Account #${d.userId}` }] : [];

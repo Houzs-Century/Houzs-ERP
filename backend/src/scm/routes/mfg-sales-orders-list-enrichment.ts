@@ -1,33 +1,3 @@
-// ----------------------------------------------------------------------------
-// mfg-sales-orders-list-enrichment — the DEFERRED half of the Sales Orders list.
-//
-// Opening the SO list used to run a full `computeMrp` on the critical path (see
-// so-list-mrp-enrichment.ts for why that is the dominant cost). The list now
-// returns immediately with stored-status placeholders for the four MRP-derived
-// fields, and the client calls THIS endpoint once, for the page it just
-// rendered, to heal them a beat later:
-//
-//   GET /mfg-sales-orders/list-mrp-enrichment?docNos=A,B,C[&refresh=1]
-//     → { enrichment: { [docNo]: { sourcePoReady, sourcePoAdj, stockRemark,
-//                                  isMainReady, planningState } },
-//         mrp: ListMrpMeta }
-//
-// It reads the SAME company-wide MRP result the list used to compute (the
-// engine is global by design and cannot be narrowed to the requested docs), from
-// the 15-min list snapshot unless that is missing / stale / Refresh was asked
-// (lib/list-mrp-source.ts), and derives only the requested docs' fields through
-// the SAME shared helpers. GET /:docNo/coverage below stays LIVE.
-//
-// Its own thin router, mounted at the same `/mfg-sales-orders` prefix (Hono
-// resolves this static path ahead of the main router's `/:docNo`), because
-// mfg-sales-orders.ts is at its file-size ceiling. Auth + the
-// scm.sales.orders area guard cover it via the shared `/mfg-sales-orders/*`
-// middleware in scm/index.ts, exactly as they cover the list.
-//
-// Fail-soft, exactly like the list: a failed MRP drops to empty READY chips and
-// stored-status readiness; a failed catalog read drops service classification;
-// neither 500s the page (the shipped chips + stored placeholders already show).
-// ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
 import type { Env, Variables } from '../env';
@@ -60,10 +30,6 @@ import { pgrestIn } from '../lib/pgrest-in-list';
 export const mfgSalesOrdersListEnrichment = new Hono<{ Bindings: Env; Variables: Variables }>();
 mfgSalesOrdersListEnrichment.use('*', supabaseAuth);
 
-/* One list page is capped at 100 rows (backend contract), so a well-behaved
-   client asks for at most that many. Bound it defensively — the endpoint is
-   read-only, but computeMrp downstream is company-wide work and there is no
-   reason to fan a giant unbounded list into it. */
 const MAX_DOCS = 200;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- supabase-js builder generics do not survive structural narrowing; every SCM read helper takes the client this way (see companyScope.ts header).
@@ -77,25 +43,11 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
   if (docNos.length === 0) return c.json({ enrichment: {} });
 
   const companyId = activeCompanyId(c) ?? null;
-  /* The list snapshot (or its live fallback) needs nothing read below, so it
-     starts first and overlaps them. Never rejects: a failed live run reads as
-     a null result at step 5, the same fail-soft as before. */
   const listMrp = resolveListMrp(sb, c, wantsListMrpRefresh(c));
   const nonSellingProm = eager(loadNonSellingWarehouses(sb));
-  // Same row-level visibility the list applies (self + downline, or all for a
-  // view-all caller). The docs come from a page the client already received, so
-  // this is defence in depth, not the only gate — the company predicate below
-  // is the tenant boundary.
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
 
-  /* 1. Header inputs (status / manual override / delivery dates) AND the
-     visibility filter, in one read. Only docs that survive company + sales
-     scope are returned, so a spoofed doc_no yields nothing. */
   const headers = new Map<string, EnrichmentHeader>();
-  /* The first promotion gate for the readiness rollup: which of these orders
-     carry a processing date (readinessLinesByDoc suppresses the live-'stock'
-     promotion on the rest — the allocator refuses to allocate to them, so the
-     enrichment must not light them either; HC-SO-013367, 2026-08-30). */
   const processedDocs = new Set<string>();
   {
     const { data, error } = await chunkIn<{
@@ -114,7 +66,6 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
       return scopeToCompany(q, c).order('doc_no').range(from, to);
     });
     if (error) return c.json({ error: 'enrichment_failed', reason: error.message }, 500);
-    // The AutoCount expiry, as the list column shows it: it can decide Overdue (derivePlanningState).
     const acExpiryByDoc = await loadAcExemptionExpiryByDoc(sb, c, data);
     for (const r of data) {
       const override = r.deliveryState ?? r.delivery_state ?? null;
@@ -137,9 +88,6 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
   const visibleDocNos = [...headers.keys()];
   if (visibleDocNos.length === 0) return c.json({ enrichment: {}, mrp: (await listMrp).meta });
 
-  /* 2. The page's SO lines — the exact columns readiness + the chip union read,
-     scoped to the company (the tenant boundary; the list's own items read is
-     already inside a company-scoped doc set). cancelled=false to match the list. */
   const items: EnrichmentItem[] = [];
   const readyItems: Array<EnrichmentItem & { qty: number | null; allocated_batch_no: string | null }> = [];
   {
@@ -156,7 +104,6 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
       return q.order('doc_no').range(from, to);
     });
     if (error) return c.json({ error: 'enrichment_failed', reason: error.message }, 500);
-    // The AutoCount expiry, as the list column shows it: it can decide Overdue (derivePlanningState).
     const acExpiryByDoc = await loadAcExemptionExpiryByDoc(sb, c, data);
     for (const r of data) {
       items.push({ id: r.id, doc_no: r.doc_no, item_group: r.item_group, item_code: r.item_code, stock_status: r.stock_status, cancelled: r.cancelled, warehouse_id: r.warehouse_id });
@@ -164,11 +111,8 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
     }
   }
 
-  /* 3. Delivered/remaining per line, issued now so it overlaps steps 4-5. */
   const deliverableProm = eager(soDeliverableRemaining(sb, visibleDocNos));
 
-  /* 4. Catalog category per code (normalised, the list's exact build) — feeds
-     readiness's SERVICE classification. Bound error → best-effort empty. */
   const categoryByCode = new Map<string, string>();
   {
     const codes = [...new Set(items.map((i) => i.item_code).filter((x): x is string => !!x))];
@@ -179,20 +123,16 @@ mfgSalesOrdersListEnrichment.get('/list-mrp-enrichment', async (c) => {
         pgrestIn(sb.from('mfg_products').select('code, category'), 'code', chunk),
         c,
       );
-      if (error) break; // service classification degrades; readiness still answers from stored status
+      if (error) break;
       for (const p of (data ?? []) as Array<{ code: string; category: string | null }>) {
         if (p.category) categoryByCode.set(p.code, normCategory(p.category));
       }
     }
   }
 
-  // 5. READY-arm source-PO chips (fail-soft internally), once the MRP run lands.
   const { result: mrp, meta: mrpMeta } = await listMrp;
   const readyByItem = await soLineReadySourcePos(sb, companyId, mrp, readyItems);
 
-  /* 6. Delivered/remaining per line → fully-shipped ids (suppress READY chips
-     for them) + per-doc delivered/remaining totals (planning_state input),
-     exactly the list's derivation. */
   const fullyShippedItemIds = new Set<string>();
   const delivered = new Map<string, number>();
   const remaining = new Map<string, number>();
@@ -248,13 +188,7 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
   const sb = c.get('supabase') as Sb;
   const docNo = c.req.param('docNo');
   const [h, i, nonSellingWh] = await Promise.all([
-    // Header read is company-scoped + minimal — exist check, salesperson_id for
-    // the same self-scoped-sales gate, and processing_date for the promotion gate.
     scopeToCompany(sb.from('mfg_sales_orders').select('doc_no, salesperson_id, access_staff_ids, processing_date, open_to_all, updated_at').eq('doc_no', docNo), c).maybeSingle(),
-    // Only the columns the MRP per-line rule needs, in line_no order (nulls last
-    // → pre-0165 fallback to created_at). `warehouse_id` joined the list on
-    // 2026-09-08: the non-selling-warehouse rule decides per line, so the line
-    // has to say where it stands.
     sb.from('mfg_sales_order_items').select('id, item_group, item_code, qty, stock_status, allocated_batch_no, warehouse_id').eq('doc_no', docNo)
       .order('line_no', { ascending: true, nullsFirst: false })
       .order('created_at'),
@@ -266,9 +200,6 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
   ]);
   if (h.error) return c.json({ error: 'load_failed', reason: h.error.message }, 500);
   if (!h.data) return c.json({ error: 'not_found' }, 404);
-  /* Same tiering as the detail (lib/salesScope.ts): view-all roles pass; POS
-     sellers pass only their own; other reps are held to their subtree. An
-     out-of-scope doc_no answers 404 — indistinguishable from a missing one. */
   {
     const d = h.data as { salesperson_id?: number | string | null; access_staff_ids?: string[] | null; open_to_all?: boolean | null };
     if (await soDocOutOfScope(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c), { salespersonId: d.salesperson_id, accessStaffIds: d.access_staff_ids, openToAll: d.open_to_all })) {
@@ -284,7 +215,6 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
      the PO(s) it WILL draw from — sofa via its stored allocated_batch_no, non-sofa
      by projecting the engine's own FIFO consumption order over the bucket's open
      lots. Read-time derivation, no writes. */
-  // An order saved after the shared run started is never answered from it.
   const cov = await soCoverage(c, sb, (h.data as { updated_at?: string | null }).updated_at ?? null);
   const coverageMap = cov.coverage;
   const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, lineRows);
@@ -292,12 +222,6 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
   const coverage = lineRows.map((it) => {
     const lineCov = coverageMap.get(it.id);
     const covered = lineCov?.source === 'po';
-    /* SOFA stock-coverage is decided by the batch-aware allocator (stock_status),
-       NOT the MRP SKU-pool: MRP doesn't know about dye-lot batches, so it would
-       wrongly report a sofa set as "stock" whenever same-SKU units exist in ANY
-       batch — even one that can't cover the whole set. For sofa, trust
-       stock_status (READY only when ONE batch covers the set); keep MRP's PO/ETA
-       if an outstanding PO is on the way. (Wei Siang 2026-06-03) */
     const isSofaLine = String(it.item_group ?? '').toUpperCase().includes('SOFA');
     /* SERVICE lines never enter the MRP allocator (mrp.ts skips them), so `cov`
        is always undefined; a service is inherently available, so surface it as
@@ -312,9 +236,6 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
     return {
       id: it.id,
       stock_state: stockState,
-      // What the PILL renders, decided here so it and the board agree (§0.4).
-      // Gated (2026-08-30): no processing date, or a hard-bound line, and the
-      // live-'stock' promotion is off — the stored engine verdict stands.
       stock_status_effective: effectiveLineStockStatus(
         it.stock_status ?? null,
         stockState as LiveStockState,
@@ -324,9 +245,6 @@ mfgSalesOrdersListEnrichment.get('/:docNo/coverage', async (c) => {
           lineNonSellingWarehouse: lineNonSelling !== null,
         },
       ),
-      /* WHY the line reads PENDING, named — the twin of the field GET /:docNo
-         stamps. A correct refusal that reaches nobody is the "the button does
-         nothing" defect wearing a different hat. */
       non_selling_warehouse: lineNonSelling === null ? null : {
         code: lineNonSelling.code,
         name: lineNonSelling.name,

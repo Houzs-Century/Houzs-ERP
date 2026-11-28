@@ -22,9 +22,9 @@ import { dirname, resolve } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (p: string) => readFileSync(resolve(here, p), 'utf8');
 
-const GEN = read('./purchase-order-pdf.ts');
+const GEN = read('../../../../../shared/src/vendor/scm/lib/purchase-order-pdf-render.ts');
+const BROWSER = read('./purchase-order-pdf.ts');
 
-/** Every file that raises a Purchase Order PDF. */
 const CALLERS = [
   ['V2 detail', '../../../pages/scm-v2/PurchaseOrderDetailV2.tsx'],
   ['edit page', '../../../pages/scm-v2/PurchaseOrderDetail.tsx'],
@@ -34,43 +34,26 @@ const CALLERS = [
 
 describe('one sheet, whichever button raised it', () => {
   test('the GENERATOR loads the artwork itself', () => {
-    expect(GEN).toContain('loadSofaCompartmentArtForPrint');
+    expect(BROWSER).toContain('sofaArt: (codes) => loadSofaCompartmentArtForPrint(codes),');
     /* The lookup ALWAYS runs; a supplied map only overrides per code. "Supplied
        wins outright" let a partial map (the V2 detail page passed only codes
        with a stored imageKey) blank every other piece: HC-PO-2610-007 printed
        1A / Console / 2S as bare boxes (owner 2026-10-03). */
-    expect(GEN).toContain('...await loadSofaCompartmentArtForPrint(');
+    expect(GEN).toContain('...await sources.sofaArt(');
     expect(GEN).toContain('...opts?.sofaPhotos,');
-    expect(GEN).not.toContain('?? await loadSofaCompartmentArtForPrint(');
-    /* KEYED BY THE CODES THIS SHEET NEEDS, not by walking the stored config.
-       The config carries no imageKey for the defaults — Products.tsx seeds
-       those client-side — so a config-only lookup found nothing and drew
-       schematics while the Maintenance list showed pictures. */
+    expect(GEN).not.toContain('?? await sources.sofaArt(');
     expect(GEN).toContain('cells.map((c) => c.moduleId)');
-    /* And the drawing reads the RESOLVED value, not the raw option — passing
-       `opts?.sofaPhotos` straight to the engine is the original bug. */
     expect(GEN).toContain('DIAGRAM_H, sofaArt)');
     expect(GEN).not.toContain('DIAGRAM_H, opts?.sofaPhotos)');
   });
 
   test('an EMPTY config still draws artwork — the code IS the artwork name', () => {
-    /* THE BUG THAT SURVIVED TWO FIXES. The loader used to walk
-       `sofaCompartmentMeta` and use only entries carrying an `imageKey`. The
-       stored config has none: Products.tsx's `seedCompartmentMeta` supplies the
-       default CLIENT-SIDE, so the Maintenance list showed a thumbnail for every
-       compartment while the database held nothing — pictures on screen, drawings
-       on paper, and neither observation wrong.
-
-       The default is now DERIVED from the code, and the config is consulted only
-       for an override. */
     const LOADER = read('./sales-order-queries.ts');
     expect(LOADER).toContain('`sofa-modules/${code}`');
     expect(LOADER).toContain("meta[code]?.imageKey ||");
   });
 
   test('every caller still compiles without knowing about artwork', () => {
-    /* THE POINT: four of these pass nothing and must still produce the same
-       sheet. If a future edit makes the map required, this is where it shows. */
     for (const [name, path] of CALLERS) {
       const src = read(path);
       expect(src, `${name} should raise a PO PDF`).toContain('generatePurchaseOrderPdf');
@@ -78,9 +61,6 @@ describe('one sheet, whichever button raised it', () => {
   });
 
   test('no caller passes its own artwork map', () => {
-    /* Asserted as a COUNT so the test fails when a fifth caller appears, which
-       is the moment somebody should think about this again rather than the
-       moment a supplier gets a different-looking sheet. */
     const passing = CALLERS.filter(([, p]) => read(p).includes('sofaPhotos'));
     expect(passing.map(([n]) => n)).toEqual([]);
   });

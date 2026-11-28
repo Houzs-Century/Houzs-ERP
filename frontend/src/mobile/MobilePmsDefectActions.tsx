@@ -1,13 +1,7 @@
-/* Defect-file action timeline — the phone half of the defect review loop.
- *
- * Lifted out of MobilePMS.tsx so the save path can be rendered and driven by
- * a test on its own; that file is one of the largest in the repo and importing
- * it into a test drags in the whole PMS surface.
- */
 import { createContext, useContext, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { api } from "../api/client";
-import { fmtDateTime } from "../vendor/shared/format";
+import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { parseDefectCaption } from "../pages/projects/defectRemark";
 import {
@@ -18,8 +12,6 @@ import {
   type DefectActionTone,
 } from "../pages/projects/defectReviewer";
 
-// Outline-button + badge colours per action tone, shared by the fresh (reviewer)
-// and escalated (purchaser) rows and the timeline badges below.
 const TONE_STYLE: Record<DefectActionTone | "fresh", { border: string; color: string; activeBg: string }> = {
   done: { border: "#bcdcd7", color: "var(--hz-c-synced)", activeBg: "var(--hz-c-synced-bg)" },
   escalate: { border: "#e6bcbc", color: "#b4362f", activeBg: "#f7e3e3" },
@@ -27,7 +19,6 @@ const TONE_STYLE: Record<DefectActionTone | "fresh", { border: string; color: st
   fresh: { border: "#e6d2a0", color: "var(--hz-c-warning-text)", activeBg: "var(--hz-c-warning-bg)" },
 };
 
-/** The tone a stored status renders in on the timeline badge/dot. */
 function statusTone(status: string): DefectActionTone | "fresh" {
   const stage = defectStage(status);
   if (stage === "resolved") return "done";
@@ -50,8 +41,6 @@ function DefectThumb({ r2Key, contentType }: { r2Key?: string | null; contentTyp
     api
       .fetchBlobUrl(`/api/projects/attachments/${r2Key}`)
       .then((u) => { if (live) { made = u; setUrl(u); } else URL.revokeObjectURL(u); })
-      // Preview only — a failed fetch leaves the hatched placeholder; the
-      // full-size viewer surfaces the real error when the photo is opened.
       .catch(() => { if (live) setUrl(null); });
     return () => { live = false; if (made) URL.revokeObjectURL(made); };
   }, [r2Key, isImage]);
@@ -105,10 +94,6 @@ export function DefectFileActions({
   // and never gated on review/purchase rights.
   const { model, reason } = parseDefectCaption(att.caption);
   const list = ctx.actions.filter((x) => x.attachment_id === att.id);
-  // Latest timeline entry drives the five-state machine (defectStage): a fresh
-  // upload awaits the reviewer (Done Clean / Exchange / Service); an escalated or
-  // in-progress one awaits the purchaser (In Progress / Done); done/done_clean is
-  // resolved. Mirrors desktop TaskAttachmentRow.
   const latest = list.length ? list.reduce((m, a) => (a.id > m.id ? a : m)) : null;
   const stage = defectStage(latest?.status);
   const save = async () => {
@@ -120,13 +105,6 @@ export function DefectFileActions({
       setRemark("");
       ctx.reload();
     } catch (e) {
-      // The draft is still kept for the retry — but the operator is TOLD.
-      // Swallowing this meant someone could stamp a defect photo "Done", have
-      // the server refuse it, watch the spinner stop, and walk away believing
-      // the defect was closed. The buttons that reach here are gated on a
-      // client-side regex over position_name / role_name with no backend
-      // capability behind it, so a refusal is a REACHABLE state here, not a
-      // theoretical one.
       await notify({
         title: "Not saved",
         body: e instanceof Error ? e.message : "Please try again.",
@@ -136,10 +114,7 @@ export function DefectFileActions({
       setSaving(false);
     }
   };
-  // Malaysian clock in the house format; slicing the stored string printed UTC.
   const ts = (v: string) => fmtDateTime(v);
-  // Wide (B2) button styling — big half-width outline buttons under the
-  // full-width photo, per the owner's picked mockup.
   const wideBtn: CSSProperties | undefined = wide
     ? { flex: 1, padding: "9px 0", fontSize: 12.5, borderRadius: 9, textAlign: "center" }
     : undefined;

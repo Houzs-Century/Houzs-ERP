@@ -8,11 +8,6 @@ import { cn, relativeTime } from "../lib/utils";
 import { Avatar } from "./Avatar";
 import { useChatSalesReport } from "./projectChatSalesReport";
 
-// ── Types ────────────────────────────────────────────────────
-// Mirrors the ActivityRow shape that /api/projects/:id/activity
-// returns. Kept in this module so consumers (project detail aside,
-// floating chat widget) don't need to import a project-page-local
-// type.
 
 export interface ActivityRow {
   id: number;
@@ -29,24 +24,13 @@ export interface ActivityRow {
 
 interface ProjectChatProps {
   projectId: number;
-  /** Optional seed history. When omitted the component fetches the
-   *  full activity once on mount. The project detail page passes the
-   *  pre-loaded activity from its detail response so the chat renders
-   *  instantly with no extra round-trip; the floating widget skips it
-   *  and lets the component fetch its own. */
   activity?: ActivityRow[];
   canPost: boolean;
-  /** Called after a successful send so the parent can reload its own
-   *  data (e.g. detail panel rollups). Optional — no parent reload is
-   *  needed in the floating widget. */
   onPosted?: () => void;
   toast: ReturnType<typeof useToast>;
-  /** CSS height value applied to the outer container. Defaults to
-   *  "440px" to match the original project-detail aside dimensions. */
   height?: string;
 }
 
-/** The box grows with what is typed, so a pasted report can be read before sending. */
 function growToFit(el: HTMLTextAreaElement): void {
   el.style.height = "auto";
   el.style.height = `${el.scrollHeight}px`;
@@ -83,10 +67,6 @@ export function ProjectChat({
   const [pending, setPending] = useState<Array<{ id: string; note: string; at: string }>>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Live-merged message list. Starts from the parent-passed `activity`
-  // (or empty when the parent didn't seed) and accrues new rows from
-  // the 3s poller. Using a map keyed on activity.id so duplicates
-  // (server refetch + poll colliding) don't render twice.
   const [liveById, setLiveById] = useState<Map<number, ActivityRow>>(
     () => new Map((activity ?? []).map((a) => [a.id, a]))
   );
@@ -99,8 +79,6 @@ export function ProjectChat({
   const requestGenerationRef = useRef(0);
   const refreshRef = useRef<() => void>(() => {});
 
-  /* A voided message is archived server-side; the poller only fetches rows
-     newer than the newest it holds, so it would never learn this one left. */
   function dropMessage(id: number) {
     const next = new Map(liveByIdRef.current);
     next.delete(id);
@@ -108,10 +86,6 @@ export function ProjectChat({
     setLiveById(next);
   }
 
-  // Re-seed when the parent sends a fresh activity prop (e.g. after
-  // a stage change triggers a full detail reload). New IDs get added;
-  // existing ones replaced; nothing is dropped so locally-polled rows
-  // that haven't made it into parent yet aren't lost.
   useEffect(() => {
     if (projectIdRef.current !== projectId) {
       projectIdRef.current = projectId;
@@ -131,13 +105,10 @@ export function ProjectChat({
     setLoadFailed(false);
   }, [activity, projectId]);
 
-  // "N new ↓" chip state — count of messages that arrived while the
-  // user was scrolled away from the bottom.
   const [newCount, setNewCount] = useState(0);
   const wasAtBottomRef = useRef(true);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Chat UIs read oldest-at-top; stable-sort by created_at then id.
   const messages = useMemo(() => {
     return Array.from(liveById.values()).sort((a, b) => {
       const t = (a.created_at ?? "").localeCompare(b.created_at ?? "");
@@ -145,8 +116,6 @@ export function ProjectChat({
     });
   }, [liveById]);
 
-  // Clear any pending bubble whose text is now in the server-side list — the
-  // poller found it, so the optimistic placeholder is no longer needed.
   useEffect(() => {
     if (pending.length === 0) return;
     const notesSeen = new Set(
@@ -158,9 +127,6 @@ export function ProjectChat({
     if (next.length !== pending.length) setPending(next);
   }, [messages, pending]);
 
-  // POST /read when the chat mounts — marks this project as caught up
-  // so the notification bell clears its dot. Also ping the notifications
-  // context to refetch immediately.
   useEffect(() => {
     (async () => {
       try {
@@ -174,8 +140,6 @@ export function ProjectChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  // Fetch immediately, then poll every 3s while visible. An empty chat has no
-  // cursor, so it retries the full-history endpoint until one exists.
   useEffect(() => {
     let cancelled = false;
     let inFlight = false;
@@ -258,9 +222,6 @@ export function ProjectChat({
     const localId = `local-${Date.now()}`;
     const at = new Date().toISOString();
     setSending(true);
-    // Drop the paste into the list now, as a dashed "Sending…" bubble, so
-    // the sender sees it is on its way. Cleared when the real note with the
-    // same text comes back from the poll.
     setPending((prev) => [...prev, { id: localId, note, at }]);
     setDraft("");
     if (inputRef.current) inputRef.current.style.height = "";
@@ -269,12 +230,9 @@ export function ProjectChat({
       await api.post(`/api/projects/${projectId}/notes`, { note });
       onPosted?.();
       void salesReport.afterSend(note);
-      // Mark as read right away — our own send shouldn't light up our bell.
       api.post(`/api/projects/${projectId}/read`, {}).catch(() => {});
       refreshRef.current();
     } catch (e: any) {
-      // Lift the pending bubble, restore the draft so the sender can retry
-      // without re-typing, and tell the toast what went wrong.
       setPending((prev) => prev.filter((p) => p.id !== localId));
       setDraft((cur) => cur || note);
       toast.error(e?.message || "Failed to send");
@@ -290,29 +248,21 @@ export function ProjectChat({
     setNewCount(0);
   }
 
-  // Auto-scroll to bottom on new messages, but only if the user was
-  // already near the bottom. Keeps reading-history scroll position
-  // intact when bubbles arrive.
   const lastCount = useRef(messages.length);
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    /* Read before this render: a report taller than the margin is already in the
-       box here, so measuring now said "not at the bottom" and left it cut off. */
     const atBottom = wasAtBottomRef.current || el.scrollHeight - el.scrollTop - el.clientHeight < 80;
     wasAtBottomRef.current = atBottom;
     if (messages.length > lastCount.current && atBottom) {
       el.scrollTop = el.scrollHeight;
       setNewCount(0);
     } else if (lastCount.current === 0) {
-      // First render — drop to the newest.
       el.scrollTop = el.scrollHeight;
     }
     lastCount.current = messages.length;
   }, [messages.length]);
 
-  // Track scroll position so the poller's "N new" counter knows whether
-  // the user is reading live or has scrolled up.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -387,9 +337,6 @@ export function ProjectChat({
             <ChatBubble key={a.id} a={a} isMine={isMine} grouped={grouped} footer={salesReport.footerFor(a)} />
           );
         })}
-        {/* Optimistic Sending… rows for this session's un-acked sends. Dashed
-            border + lowered opacity so the sender can see at a glance which
-            bubble is the live one and which one is still in flight. */}
         {pending.map((p) => (
           <PendingChatBubble key={p.id} note={p.note} name={me?.name ?? "Me"} />
         ))}
@@ -424,12 +371,7 @@ export function ProjectChat({
   );
 }
 
-// ── Chat row components ─────────────────────────────────────
 
-/** A "Sending…" bubble shown in the sender's own chat the moment they tap
- *  Send, so they see the paste land instead of the textarea just going
- *  empty. Cleared when the poller brings back a real note with the same
- *  text. */
 function PendingChatBubble({ note, name }: { note: string; name: string }) {
   return (
     <div className="mt-2 flex w-full justify-end gap-2">
@@ -466,10 +408,6 @@ function ChatSystemRow({ a }: { a: ActivityRow }) {
         {a.to_value && !a.from_value && (
           <span className="ml-1 font-mono">{a.to_value}</span>
         )}
-        {/* Removal — from_value with no to_value. Without this branch an
-            unassignment (PIC cleared, rep removed) rendered its label with no
-            subject at all, so the trail recorded that something was removed
-            but never what. */}
         {a.from_value && !a.to_value && (
           <span className="ml-1 font-mono">{a.from_value}</span>
         )}
@@ -494,7 +432,6 @@ function ChatBubble({
   a: ActivityRow;
   isMine: boolean;
   grouped: boolean;
-  /** An action drawn under the bubble — today the Save as sales report button. */
   footer?: ReactNode;
 }) {
   const name = a.user_name || "Unknown";

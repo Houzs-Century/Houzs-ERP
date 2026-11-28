@@ -4,8 +4,6 @@ import { requirePermission } from "../middleware/auth";
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Allow-list of frontend sort keys → SQL expressions. Keeps `sort_by`
-// from injecting arbitrary SQL.
 const SORT_MAP: Record<string, string> = {
   started_at: "started_at",
   ended_at: "ended_at",
@@ -39,8 +37,6 @@ app.get("/", requirePermission("logs.read"), async (c) => {
   const sortDir =
     (c.req.query("sort_dir") || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
   const sortExpr = SORT_MAP[sortBy] || "id";
-  // `id` tiebreaker keeps pagination stable when the sorted column has
-  // duplicates.
   const orderBy = `ORDER BY ${sortExpr} ${sortDir}, id DESC`;
 
   const total = await c.env.DB.prepare(

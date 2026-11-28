@@ -1,8 +1,3 @@
-// GRN post re-entry guard: "already booked" is the NET receipt (IN minus the
-// GRN's own reversing OUTs), not "any IN row exists". A receipt that a cancel or
-// line-delete reversal took back out used to read as booked, so a post of that
-// GRN skipped its stock IN for good. A failed read must refuse, never read as
-// "nothing booked" (that books the stock twice).
 import { describe, expect, it } from 'vitest';
 import { grnReceiptBooked, netReceiptQty } from './grn-receipt-booked';
 

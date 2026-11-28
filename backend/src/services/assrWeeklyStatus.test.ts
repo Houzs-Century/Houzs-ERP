@@ -12,10 +12,7 @@ describe("friendlyStatus", () => {
   });
 
   it("falls back to the shared customer label for an unlisted stage (never a raw slug)", () => {
-    // A retired alias the friendly map doesn't list still reads as words via the
-    // shared customer-status label, not as the database slug.
     expect(friendlyStatus("pending_item_pickup")).toBe("Pending Supplier Pickup");
-    // An empty/absent stage is the one value that becomes "Unknown".
     expect(friendlyStatus(null)).toBe("Unknown");
   });
 });

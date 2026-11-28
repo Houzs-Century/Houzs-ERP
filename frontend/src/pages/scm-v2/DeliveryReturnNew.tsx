@@ -1,22 +1,3 @@
-// ----------------------------------------------------------------------------
-// DeliveryReturnNew — full-page Create Delivery Return at /delivery-returns/new.
-//
-// DO-style editable Create form (clone of DeliveryOrderNew): the same Customer /
-// Return Info / Emergency / Delivery Address cards + SoLineCard list. There is
-// no payments ledger on a return (unlike the DO), so PaymentsTable is omitted.
-//
-// Prefill: when navigated with ?fromDo=<DO id>, it fetches the DO header +
-// items and seeds every field (debtor, salesperson, address, phone, line items
-// with variants + prices/costs) so the operator can review/edit before Saving.
-// Without ?fromDo it is a blank Create-Return form (free-entry lines).
-//
-// On Save: POST /delivery-returns (header + items). The server INCREASES stock
-// on create (idempotent) and lands us on the new return's Detail page.
-//
-// NOTE: the primary "from a DO" path is the dedicated picker
-// (/delivery-returns/from-do). This page is the blank form + the ?fromDo
-// prefill convenience (mirrors DeliveryOrderNew's ?fromSo).
-// ----------------------------------------------------------------------------
 
 import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
@@ -64,20 +45,10 @@ export const DeliveryReturnNew = () => {
   const fromPicks = searchParams.get('fromPicks') === '1';
 
   const create = useCreateDeliveryReturn();
-  /* One key for the one return this page is open to raise (lib/idempotency.ts).
-     Route-level form, navigates to the return detail on success, so the MOUNT is
-     exactly one return. Load-bearing: the create increases stock inline (see
-     useCreateDeliveryReturn), so a re-press after a stalled submit books the
-     goods back IN twice unless it replays. */
   const idemKey = useIdempotencyKey();
   const loc = useLocalities();
 
-  // Prefill source — the DO this return is being issued from (if any).
   const doDetail = useMfgDeliveryOrderDetail(fromDo);
-  /* `include` carries the salesperson already on the SOURCE document this one is
-     being raised from, so someone the onlySales narrowing hides is still named.
-     "(former staff)" below is then only reachable for a row that genuinely is
-     gone. Declared after the source query so the id is in scope. */
   const staffQ = usePickableStaff({
     onlySales: true,
     include: [(doDetail.data?.deliveryOrder as Record<string, unknown> | undefined)?.salesperson_id as string | undefined],
@@ -90,7 +61,6 @@ export const DeliveryReturnNew = () => {
   const buildingTypeOpts = optionsOrFallback('building_type', buildingTypeOptsQ.data);
   const relationshipOpts = optionsOrFallback('relationship', relationshipOptsQ.data);
 
-  // ── Customer ──
   const [debtorCode, setDebtorCode] = useState('');
   const [debtorName, setDebtorName] = useState('');
   const [phone, setPhone] = useState('');
@@ -99,7 +69,6 @@ export const DeliveryReturnNew = () => {
   const [customerType, setCustomerType] = useState('');
   const [customerSoNo, setCustomerSoNo] = useState('');
 
-  // ── Return info ──
   const [buildingType, setBuildingType] = useState('');
   const [venue, setVenue] = useState('');
   const [venueId, setVenueId] = useState('');
@@ -107,7 +76,6 @@ export const DeliveryReturnNew = () => {
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
 
-  // ── Address ──
   const [address1, setAddress1] = useState('');
   const [address2, setAddress2] = useState('');
   const [state, setState] = useState('');
@@ -116,23 +84,14 @@ export const DeliveryReturnNew = () => {
   const [salesLocation, setSalesLocation] = useState('');
   const [branding, setBranding] = useState('');
 
-  // ── Emergency ──
   const [emergencyName, setEmergencyName] = useState('');
   const [emergencyRel, setEmergencyRel] = useState('');
   const [emergencyPhone, setEmergencyPhone] = useState('');
 
-  // ── Source DO snapshot (carried through to the API) ──
   const [doDocNo, setDoDocNo] = useState('');
 
-  // ── Items ──
-  // A Delivery Return line MUST come from a delivered Delivery Order line (the
-  // server rejects free-entry lines with 409 do_link_required). So there is no
-  // blank starter line and no free "Add Line Item" affordance — lines are only
-  // ever seeded from a DO (via ?fromDo prefill or the From-DO picker).
   const [lines, setLines] = useState<DraftLine[]>(() => []);
 
-  /* Prefill from the DO once its detail loads. Guarded so we only seed once
-     (when the form is still pristine) — re-fetches don't clobber edits. */
   const [prefilled, setPrefilled] = useState(false);
   useEffect(() => {
     if (!fromDo || prefilled) return;
@@ -164,11 +123,6 @@ export const DeliveryReturnNew = () => {
     setDoDocNo((dval.do_number as string) ?? '');
     setReason(`Return from DO ${(dval.do_number as string) ?? ''}`);
 
-    // When we arrived from the DO→Return picker (fromPicks) the operator already
-    // chose specific lines, quantities and conditions — build from that stash,
-    // carrying each line's doItemId (the server's remaining-to-return tracking
-    // depends on it) and its condition. Otherwise (plain ?fromDo) seed every DO
-    // line at full quantity, condition NEW.
     type Stash = {
       doItemId: string; itemCode: string; itemGroup: string | null;
       description: string | null; uom: string | null; qty: number; condition: string;
@@ -219,9 +173,6 @@ export const DeliveryReturnNew = () => {
   const staffList = useMemo(() => (staffQ.data ?? []).filter((s) => s.active), [staffQ.data]);
 
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
-  /* Shared address cascade, BOTH directions (address-cascade.ts). Three atoms,
-     so each pick writes all three back — the raw setters keep the value just
-     chosen, which routing through the State picker's handler would clear. */
   const { cities, postcodes } = useAddressCascade(locRows, state, city);
   const applyTriple = (next: { state: string; city: string; postcode: string }) => {
     setState(next.state); setCity(next.city); setPostcode(next.postcode);
@@ -243,8 +194,6 @@ export const DeliveryReturnNew = () => {
   const onSave = () => {
     if (loadingPrefill) { notify({ title: 'Still loading the Delivery Order', body: 'please wait a moment.' }); return; }
     if (!canSave) { notify({ title: 'Customer name is required.', tone: 'error' }); return; }
-    /* A picked line with a blank, 0 or negative quantity is refused with the line
-       named, not silently dropped: the server refuses it too (400 invalid_qty). */
     const badQty = lines.find((l) => l.itemCode.trim() && parseReturnLineQty(l.qty) === null);
     if (badQty) {
       void notify({ title: returnLineQtyMessage(badQty.itemCode, Number.isFinite(badQty.qty) ? badQty.qty : null), tone: 'error' });
@@ -255,9 +204,6 @@ export const DeliveryReturnNew = () => {
       notify({ title: 'Pick the returned items from a delivered Delivery Order.', tone: 'error' });
       return;
     }
-    // Server rule (delivery-returns.ts → 409 do_link_required): every return line
-    // MUST reference a delivered DO line. Block here so free/edited lines that
-    // lost their doItemId can never reach the server as an unsaveable request.
     if (validLines.some((l) => !l.doItemId)) {
       notify({ title: 'Every return line must be picked from a delivered Delivery Order — start from a DO.', tone: 'error' });
       return;
@@ -325,7 +271,6 @@ export const DeliveryReturnNew = () => {
         actions={
           <>
             <div className={styles.actions}>
-              {/* Pull lines from a Delivery Order — mirrors New GRN's "From Purchase Order". */}
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/delivery-returns/from-do')}>
                 <ArrowRightLeft {...ICON} /> {transferFromLabel('do')}
               </Button>
@@ -347,7 +292,6 @@ export const DeliveryReturnNew = () => {
         </div>
       )}
 
-      {/* ── CUSTOMER ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Customer</h2></header>
         <div className={styles.cardBody}>
@@ -397,7 +341,6 @@ export const DeliveryReturnNew = () => {
         </div>
       </section>
 
-      {/* ── RETURN INFO ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Return Info</h2></header>
         <div className={styles.cardBody}>
@@ -435,7 +378,6 @@ export const DeliveryReturnNew = () => {
         </div>
       </section>
 
-      {/* ── EMERGENCY CONTACT ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Emergency Contact</h2>
@@ -468,7 +410,6 @@ export const DeliveryReturnNew = () => {
         </div>
       </section>
 
-      {/* ── DELIVERY ADDRESS ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Delivery Address</h2></header>
         <div className={styles.cardBody}>
@@ -515,7 +456,6 @@ export const DeliveryReturnNew = () => {
         </div>
       </section>
 
-      {/* ── RETURNED ITEMS ── */}
       <section className={styles.card}>
         <header className={styles.cardHeader}><h2 className={styles.cardTitle}>Returned Items ({lines.length})</h2></header>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -527,14 +467,6 @@ export const DeliveryReturnNew = () => {
               onChange={(patch) => updateLine(line.rid, patch)}
               onRemove={() => dropLine(line.rid)}
               canRemove={lines.length > 1}
-              /* Downstream document: the items were already specified on the
-              originating order and their variants ride in with them, so they
-              are NOT re-required here. Same rule DeliveryOrderNewV2 states
-              for the DO. Verified 2026-08-13: this document's server does no
-              variant enforcement at all (findIncompleteVariantLines appears
-              0 times in its route), so the default `= true` was pure
-              client-side invention - a red ring and a ` *` for a field the
-              backend never asked for. */
               variantsRequired={false}
               specLockedReason={null}
               lineDateLocked={false}
@@ -542,8 +474,6 @@ export const DeliveryReturnNew = () => {
               attachOptions={null}
             />
           ))}
-          {/* No free "Add Line Item": a return line must come from a delivered DO
-              (server 409 do_link_required). When empty, steer to the From-DO picker. */}
           {lines.length === 0 && (
             <div style={{
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-3)',

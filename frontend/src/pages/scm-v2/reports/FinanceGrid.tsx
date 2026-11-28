@@ -24,15 +24,11 @@ import { printFrameAs } from '../../../lib/printFrame';
 export type GridKind = 'money' | 'int' | 'pct' | 'text' | 'center';
 export type GridColumn = {
   key: string; label: string;
-  /** A small line under the label (the dates). */
   sub?: string;
-  /** The header over several columns (a month over its regions). */
   group?: string;
   kind: GridKind;
   width: number;
-  /** A Total column: tinted. */
   total?: boolean;
-  /** A rule after it. */
   edge?: boolean;
 };
 /** A list's own cell: what it shows, how it sorts and prints. */
@@ -42,25 +38,18 @@ export type GridRowKind = 'row' | 'group' | 'block' | 'sub' | 'strong' | 'final'
 export type GridRow = {
   id: string;
   label: string;
-  /** The caption beside the name — or under it with capBelow. */
   cap?: string | null;
   capBelow?: boolean;
   kind?: GridRowKind;
   cells: Record<string, GridValue>;
-  /** The % beside each figure. */
   pct?: Record<string, number | null | undefined>;
   int?: boolean;
   isPct?: boolean;
-  /** A zero prints as 0.00, not a dash (a Difference). */
   zeroShows?: boolean;
   kids?: GridRow[];
   totalLabel?: string;
-  /** Closed at first (a fair's cost parts). */
   closedAtFirst?: boolean;
-  /** The label spans the leading columns up to the first one with a cell (a list's subtotal). */
   span?: boolean;
-  /** A figure opens this under the line it is on (a group's title, or its total once
-      open); null = that figure opens nothing. `close` shuts it. */
   detail?: (colKey: string, close: () => void) => ReactNode | null;
 };
 
@@ -84,7 +73,6 @@ export function cellText(v: GridValue, kind: GridKind, row: Pick<GridRow, 'int' 
   return fmtMoney(v);
 }
 
-/* ── The layout a person keeps (localStorage: a personal preference) ── */
 type Layout = { w: Record<string, number>; order: string[]; hidden: string[]; freeze: number };
 const EMPTY: Layout = { w: {}, order: [], hidden: [], freeze: 0 };
 function readLayout(key: string): Layout {
@@ -103,7 +91,6 @@ function writeLayout(key: string, l: Layout) {
   writeGridLayout(key, empty ? null : l);
 }
 
-/** Siblings sorted by a column; rows that close a block (totals, checks) keep their place. */
 function sortRows(rows: GridRow[], key: string, dir: 1 | -1, kindOf: (k: string) => GridKind | 'name'): GridRow[] {
   const movable = (r: GridRow) => r.kind == null || r.kind === 'row' || r.kind === 'group';
   const val = (r: GridRow): number | string => {
@@ -125,19 +112,15 @@ function sortRows(rows: GridRow[], key: string, dir: 1 | -1, kindOf: (k: string)
 type Menu = { x: number; y: number; key: string };
 
 export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = false, title, subtitle, ariaLabel, foot, drillKey }: {
-  /** Whose layout this is — one per view and mode. */
   layoutKey: string;
-  /** The frozen name column of a report; null for a list. */
   nameColumn: { label: string; width: number } | null;
   columns: GridColumn[];
   rows: GridRow[];
   showPct?: boolean;
-  /** What Print puts on top. */
   title: string;
   subtitle?: string;
   ariaLabel: string;
   foot?: ReactNode;
-  /** An open detail closes when this changes. */
   drillKey?: string;
 }) {
   const [layout, setLayout] = useState<Layout>(() => readLayout(layoutKey));
@@ -156,7 +139,6 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
   const [dropAt, setDropAt] = useState<string | null>(null);
   useEffect(() => { setDrill(null); setClosed(new Set()); }, [drillKey]);
   const tableRef = useRef<HTMLTableElement>(null);
-  /* A detail opens as wide as the box shows, wherever it is scrolled — the P&L's lines' own rule. */
   const scrollRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState<number | null>(null);
   useEffect(() => {
@@ -169,12 +151,10 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
   const resizing = useRef(false);
   const dragKey = useRef<string | null>(null);
 
-  /* The columns in the person's order, hidden ones out. */
   const ordered = useMemo(() => {
     const byKey = new Map(columns.map((c) => [c.key, c] as const));
     const known = layout.order.filter((k) => byKey.has(k));
     const rest = columns.map((c) => c.key).filter((k) => !known.includes(k));
-    /* A column the saved order does not know sits where the table puts it. */
     const keys = [...known];
     for (const k of rest) {
       const i = columns.findIndex((c) => c.key === k);
@@ -188,7 +168,6 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
   const kindOf = (key: string): GridKind | 'name' => (key === NAME ? 'name' : columns.find((c) => c.key === key)?.kind ?? 'text');
   const pctOn = showPct;
 
-  /* Frozen: the name column always; then the first n shown columns the person froze. */
   const frozenKeys = shown.slice(0, layout.freeze).map((c) => c.key);
   const leftOf = new Map<string, number>();
   {
@@ -202,7 +181,6 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
     return { cls: `${s.frozen} ${lastFrozen === key ? s.frozenLast : ''}`, style: { left: leftOf.get(key) } };
   };
 
-  /* ── Resize, auto-fit ── */
   const startResize = (key: string, fallback: number, e: ReactPointerEvent<HTMLElement>) => {
     e.preventDefault();
     e.stopPropagation();
@@ -239,7 +217,6 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
     return { ...l, w };
   });
 
-  /* ── Move a column ── */
   const onDragStart = (key: string) => (e: DragEvent<HTMLTableCellElement>) => {
     if (resizing.current) { e.preventDefault(); return; }
     dragKey.current = key;
@@ -262,7 +239,6 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
     save((l) => ({ ...l, order: keys }));
   };
 
-  /* ── Print: the table as shown, on its own page ── */
   const print = () => {
     const t = tableRef.current;
     if (!t) return;
@@ -290,7 +266,6 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
     setTimeout(() => frame.remove(), 1000);
   };
 
-  /* ── The menu ── */
   useEffect(() => {
     if (!menu) return;
     const close = (e: Event) => {
@@ -309,12 +284,10 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
   };
   const act = (f: () => void) => () => { f(); setMenu(null); };
 
-  /* ── Rows ── */
   const tree = useMemo(() => (sort ? sortRows(rows, sort.key, sort.dir, kindOf) : rows), [rows, sort]); // eslint-disable-line react-hooks/exhaustive-deps -- kindOf reads the same columns
   const isOpen = (r: GridRow) => (r.closedAtFirst ? closed.has(r.id) : !closed.has(r.id));
   const toggle = (id: string) => {
     setClosed((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-    /* A group folding or opening moves its figures to the other line: what they opened closes. */
     setDrill((d) => (d?.row === id ? null : d));
   };
   const colCount = shown.length + (nameColumn ? 1 : 0);
@@ -363,7 +336,8 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
       if (isNode(v)) inner = <span className={s.inner} data-fit title={v.title}>{v.node}</span>;
       else {
         const text = withValues ? cellText(v, c.kind, r) : null;
-        const fig = text == null ? <span className={s.dash}>-</span> : text;
+        /* An empty cell stays blank (owner 2026-11-27: the dashes made the tables busy). */
+        const fig = text ?? '';
         const drillable = text != null && r.detail != null && r.detail(c.key, closeDrill) != null;
         const shownFig = drillable ? (
           <button type="button" className={s.figure} aria-pressed={drill?.row === r.id && drill.col === c.key && drill.at === at}
@@ -396,7 +370,6 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
   };
   walk(tree, 0);
 
-  /* ── Header ── */
   const grouped = shown.some((c) => c.group);
   const headCell = (c: GridColumn, rowSpan?: number) => {
     const fz = frozenStyle(c.key);

@@ -25,9 +25,7 @@ export const NO_VENUE = '__none__';
 
 /** What the board and its tiles are narrowed to. */
 export type SalesPlace =
-  /** One event (a PMS project): the orders linked to it. */
   | { kind: 'event'; projectId: number }
-  /** One venue's orders that are linked to no event. NO_VENUE = none recorded. */
   | { kind: 'venue'; venue: string };
 
 const PROJECT_ID = /^[1-9]\d{0,9}$/;
@@ -77,19 +75,14 @@ export function applySalesPlace<Q extends SalesPlaceFilterable<Q>>(query: Q, pla
 export type SalesPlaceEntry =
   | {
       kind: 'venue';
-      /** As stored; null for the orders with no venue recorded. */
       venue: string | null;
       count: number;
     }
   | {
       kind: 'event';
       projectId: number;
-      /** The event's facts, for the POS to label in its own date style — the
-       *  house `MM/DD` here reads as day-first on a Malaysian tablet. All null
-       *  when the project could not be read; its orders still count. */
       venue: string | null;
       organizer: string | null;
-      /** A solo roadshow: no organizer to name (the SO fair picker shows SOLO). */
       solo: boolean;
       brand: string | null;
       startDate: string | null;

@@ -19,7 +19,6 @@ export type ApDocKind = 'INV' | 'DN';
     AP invoice raised here; `kind` says which. */
 export type ApListRow = {
   kind: 'API' | 'PI';
-  /** 'DN' for a supplier's debit note (series {co}SDN-); every other row 'INV'. */
   docKind?: ApDocKind;
   id: string;
   invoiceNumber: string;
@@ -27,7 +26,6 @@ export type ApListRow = {
   supplierCode: string | null;
   supplierName: string | null;
   supplierInvoiceRef: string | null;
-  /** The overall description (the notes column) — shown on the list and printed on the listing. */
   description: string | null;
   invoiceDate: string | null;
   dueDate: string | null;
@@ -36,13 +34,10 @@ export type ApListRow = {
   paidSen: number;
   outstandingSen: number;
   status: string;
-  /** The control the bill sits on, by the supplier code (the server's rule): AP = 400, AP_OTHER = 405. */
   controlRole?: 'AP' | 'AP_OTHER';
   controlCode?: string;
-  /** A purchase invoice held in Procurement — every voucher path refuses it. */
   held?: boolean;
   holdReason?: string | null;
-  /** When Finance plans to pay it (step 7) — beside the due date, never instead of it. */
   plannedOn?: string | null;
 };
 
@@ -53,11 +48,8 @@ export type ApInvoiceHeader = {
   /** 欠正式单 (item 3): booked on a proforma — OWED, RECEIVED (to check), CHECKED. */
   official_doc?: string | null; official_doc_note?: string | null;
   doc_kind?: ApDocKind;
-  /** Who raised and who cancelled it, and when — the bill page's trail. */
   created_at?: string | null; created_by?: string | null; cancelled_at?: string | null; cancelled_by?: string | null;
-  /** The journal its post wrote (the live one when an edit re-posted it); null until posted. */
   je_no?: string | null;
-  /** When Finance plans to pay it (step 7); null = by its due date. */
   planned_on?: string | null;
 };
 
@@ -67,7 +59,6 @@ export type BillPayment = { kind: 'PV' | 'SCN'; id: string; number: string; date
 export type ApInvoiceDetail = {
   invoice: ApInvoiceHeader; lines: ApInvoiceLine[]; supplier: { id: string; code: string; name: string } | null;
   payments?: BillPayment[];
-  /** The control the bill credits, by the supplier code (the server's rule). */
   controlCode?: string;
 };
 /** project_id: the event the line's money is for (owner 2026-09-30, 5a). */
@@ -120,11 +111,8 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['ap-invoices'] });
   void qc.invalidateQueries({ queryKey: ['ap-invoice'] });
   void qc.invalidateQueries({ queryKey: ['ap-aging'] });
-  /* A bill entered, changed or cancelled is (or stops being) another's same bill. */
   void qc.invalidateQueries({ queryKey: ['payment-request-bill-matches'] });
-  /* …and answers (or, cancelled, re-opens) a request on Finance's waiting count. */
   void qc.invalidateQueries({ queryKey: ['payment-requests'] });
-  /* …and moves what To do raises (bills due, drafts). */
   void qc.invalidateQueries({ queryKey: ['finance-todo'] });
 };
 
@@ -135,9 +123,6 @@ export const useCreateApInvoice = () => {
   return useMutation({
     /* paymentRequestId: the 申请付款 this bill answers (owner 2026-09-30, 6.1) —
        the server claims it and copies its files on (requestFilesCopied). */
-    /* `idempotencyKey`: one per opened form, so a double press (or a retry after
-       the upload or post half failed) answers the SAME bill instead of a second
-       one. The route releases the key on every refusal (noWriteUntilMarked). */
     mutationFn: ({ idempotencyKey, ...body }: { idempotencyKey: string | null; supplierId: string; supplierInvoiceRef?: string; invoiceDate: string; dueDate?: string | null; notes?: string; lines: ApInvoiceLineInput[]; paymentRequestId?: string; docKind?: ApDocKind }) =>
       authedFetch<{ ok: boolean; invoice: ApInvoiceHeader; requestFilesCopied?: number }>(`/ap-invoices`, idempotentInit(idempotencyKey ?? undefined, { method: 'POST', body: JSON.stringify(body) })),
     onSuccess: () => invalidate(qc),

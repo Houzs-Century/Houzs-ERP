@@ -1,14 +1,10 @@
-/* POS Admin > Terminals (layout E5): the terminal IDs a device picks once in
- * Device setup. ID, device name, platform, event, printer, prepared, last
- * seen, app version, active; + New terminal; Deactivate. "Prepare" happens
- * on the device itself (P15) — this tab only hands out the ID. */
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { cn, formatDateTime } from "../../lib/utils";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { POS_ADMIN, useAdminEvents, useAdminTerminals, type PosTerminal } from "./posAdminApi";
 import { Empty, Pill, Table, errText, ghostBtn, inputCls, primaryBtn, td, th } from "./posAdminUi";
 

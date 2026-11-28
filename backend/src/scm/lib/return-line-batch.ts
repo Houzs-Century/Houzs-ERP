@@ -1,12 +1,3 @@
-// The batch a returned sofa module re-enters stock under.
-//
-// 2990-0011 (Sim, 2026-10-20): 2990-DR-2610-001 brought back the XAMMAR set
-// that 2990-DO-2607-012 shipped from batch 2990-PO-2606-010, but the SO lines'
-// allocated_batch_no had been cleared after delivery, so both units came back
-// with no batch. MRP's sofa set walk reads batched lots only, so the set showed
-// SHORT and asked purchasing to order it again, while the SO page said READY.
-// The DO's own shipment is the physical answer: the units that come back are
-// the units that left.
 
 import type { BucketTrace } from './source-po-trace';
 

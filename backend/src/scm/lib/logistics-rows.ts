@@ -46,7 +46,6 @@ export function logisticsRowType(row: LogisticsRow): 'EXPENSE' | 'LIABILITY' | '
   return row === 'instalment' ? 'LIABILITY' : 'EXPENSE';
 }
 
-/** The rows our own lorries' cost is made of — the Logistics cost report divides it by our trips. */
 const OWN_LORRY: ReadonlySet<string> = new Set<LogisticsRow>(['petrol', 'upkeep', 'other_lorry']);
 export const ownLorryAccounts = (chart: readonly ChartAccount[]): string[] =>
   chart.filter((a) => OWN_LORRY.has(String(a.logistics_row ?? ''))).map((a) => a.account_code).sort();

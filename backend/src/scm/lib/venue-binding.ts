@@ -38,7 +38,6 @@
 // when it matters most.
 // ----------------------------------------------------------------------------
 
-/** How an SO's venue got there. Persisted in scm.mfg_sales_orders.venue_source. */
 import { canonicalizeVenue } from './canonical-venue';
 
 export type VenueSource = 'PMS' | 'SHOWROOM' | 'MANUAL';
@@ -53,9 +52,7 @@ export type PmsCandidate = {
   projectId: number;
   projectName: string | null;
   venue: string;
-  /** `YYYY-MM-DD`, MYT. A project with no start date cannot contain a date. */
   startDate: string | null;
-  /** `YYYY-MM-DD`, MYT, INCLUSIVE. NULL = open-ended (still running). */
   endDate: string | null;
 };
 
@@ -63,19 +60,14 @@ export type PmsCandidate = {
 export type ShowroomCandidate = {
   warehouseId: string;
   warehouseName: string;
-  /** scm.warehouses.venue_name. NULL/blank = the showroom has no venue yet. */
   venueName: string | null;
 };
 
 export type VenueBinding = {
-  /** The venue TEXT to stamp, or null. NEVER a guess — null means null. */
   venueName: string | null;
-  /** The fair this SO belongs to (mfg_sales_orders.project_id). PMS only. */
   projectId: number | null;
   projectName: string | null;
-  /** Which rule fired. null when nothing resolved. */
   source: VenueSource | null;
-  /** The showroom that supplied the venue, for the FE hint. SHOWROOM only. */
   showroomWarehouseId: string | null;
 };
 
@@ -87,35 +79,11 @@ const NOTHING: VenueBinding = {
   showroomWarehouseId: null,
 };
 
-/** Trimmed non-empty string, or null. No empty-string-as-a-value anywhere. */
 function clean(v: string | null | undefined): string | null {
   const s = typeof v === 'string' ? v.trim() : '';
   return s || null;
 }
 
-/**
- * Does `date` fall inside the project's period?
- *
- * ── MYT ─────────────────────────────────────────────────────────────────────
- * Every value here is a `YYYY-MM-DD` MALAYSIAN CALENDAR DATE, never an instant:
- * `projects.start_date`/`end_date` are TEXT dates entered in the Malaysian
- * office, and the order date is either the user-typed `soDate` or `todayMyt()`
- * (lib/my-time.ts, which shifts +8h BEFORE slicing precisely so a Worker running
- * in UTC does not read yesterday's date all morning). Comparing them as plain
- * lexicographic strings is therefore an exact MYT-to-MYT comparison — there is
- * no timezone left in the values to get wrong.
- *
- * This is why the comparison must NOT be done with `Date` objects: `new
- * Date('2026-07-19')` is UTC midnight, which is 08:00 MYT, and any arithmetic
- * from there re-introduces the off-by-one at midnight that would attribute an
- * order to the wrong exhibition. The CALLER's job is to hand this function MYT
- * date strings; the tests pin that contract at the 16:00Z/00:00-MYT boundary.
- *
- * `end_date` is INCLUSIVE (the last day of the fair is a trading day) and NULL
- * means open-ended — a project that has started and has no declared end is
- * still running. A NULL start_date cannot contain anything: an undated project
- * has no period, and treating it as "always" would make it swallow every order.
- */
 function periodContains(c: PmsCandidate, date: string): boolean {
   if (!c.startDate) return false;
   if (c.startDate > date) return false;
@@ -123,44 +91,14 @@ function periodContains(c: PmsCandidate, date: string): boolean {
   return true;
 }
 
-/**
- * Deterministic ordering among projects that ALL contain the order's date.
- * Returns <0 if `a` should win.
- *
- * ── WHY NOT JUST `ORDER BY start_date DESC LIMIT 1` (the old rule) ──────────
- * That was arbitrary in two ways. It never checked `end_date`, so a fair that
- * ended in March still claimed every order in July — forever, for anyone who was
- * ever a Sales Attending rep on it. And among projects sharing a start_date it
- * picked whatever the planner returned, so the same rep on the same day could
- * get a different venue on two identical orders. Both are fixed here; the
- * end_date fix is the behaviour change worth calling out (an ENDED project no
- * longer resolves — which is what "during that project's period" means).
- *
- * The tie-break chain, most to least significant:
- *   1. LATEST start_date. Of two overlapping periods, the one that started more
- *      recently is the one the rep is at now; the older is the background
- *      campaign they were also assigned to.
- *   2. SHORTEST period. Same start, so specificity decides: a 3-day fair inside
- *      a 3-month regional campaign is where the rep physically is. An
- *      open-ended project (no end_date) is treated as infinitely long and so
- *      always loses this step — which also encodes "a bounded fair beats an
- *      open-ended campaign".
- *   3. LOWEST project id. Not meaningful, and not pretending to be — it is the
- *      final, stable arbiter so that two genuinely indistinguishable projects
- *      always produce the SAME answer rather than a planner-order coin flip. A
- *      documented arbitrary tie-break is auditable; a silent one is not.
- */
 function compareCandidates(a: PmsCandidate, b: PmsCandidate): number {
-  // 1. Latest start wins. (startDate is non-null — periodContains filtered.)
   if (a.startDate !== b.startDate) return (a.startDate ?? '') > (b.startDate ?? '') ? -1 : 1;
-  // 2. Shortest period wins; open-ended (null end) sorts last.
   const aOpen = !a.endDate;
   const bOpen = !b.endDate;
   if (aOpen !== bOpen) return aOpen ? 1 : -1;
   if (!aOpen && !bOpen && a.endDate !== b.endDate) {
     return (a.endDate as string) < (b.endDate as string) ? -1 : 1;
   }
-  // 3. Stable arbitrary: lowest id.
   return a.projectId - b.projectId;
 }
 
@@ -183,7 +121,6 @@ export function resolveVenueBinding(input: {
   const soDate = clean(input.soDate);
   if (!soDate) return NOTHING;
 
-  // ── Rule 1: PMS / exhibition ──────────────────────────────────────────────
   const inPeriod = input.pmsCandidates
     .filter((c) => clean(c.venue) && periodContains(c, soDate))
     .sort(compareCandidates);
@@ -198,10 +135,6 @@ export function resolveVenueBinding(input: {
     };
   }
 
-  // ── Rule 2: showroom ──────────────────────────────────────────────────────
-  // A showroom with no venue_name resolves to NOTHING rather than falling
-  // through to its warehouse NAME — a stock code is not a venue, and inventing
-  // one here would put "KL-WH-02" into exhibition P&L.
   const showroomVenue = clean(input.showroom?.venueName);
   if (input.showroom && showroomVenue) {
     return {
@@ -213,7 +146,6 @@ export function resolveVenueBinding(input: {
     };
   }
 
-  // ── Rule 3: nothing ───────────────────────────────────────────────────────
   return NOTHING;
 }
 
@@ -234,11 +166,6 @@ export function canAutoResolveVenue(venueSource: string | null | undefined): boo
   return venueSource !== 'MANUAL';
 }
 
-// ── SQL loader ───────────────────────────────────────────────────────────────
-// Thin and impure by design: it only FETCHES: every decision lives in the pure
-// function above. Reads the PUBLIC schema (projects, project_sales_attendees,
-// sales_reps) via env.DB — the scm supabase client cannot reach public — and the
-// scm schema (staff, warehouses) via the supabase client.
 
 /** The `DB` binding surface this loader needs (structural, so tests can fake it). */
 export type VenueBindingDb = {
@@ -268,9 +195,7 @@ export type VenueBindingSb = {
 export async function loadVenueBindingInputs(args: {
   db: VenueBindingDb;
   sb: VenueBindingSb | null;
-  /** public.users.id of the salesperson the order is attributed to. */
   userId: number;
-  /** scm.staff.id of that same person, when known. Null skips the showroom half. */
   staffId?: string | null;
 }): Promise<{ pmsCandidates: PmsCandidate[]; showroom: ShowroomCandidate | null }> {
   const pmsCandidates = await loadPmsCandidates(args.db, args.userId);
@@ -282,11 +207,6 @@ export async function loadVenueBindingInputs(args: {
 
 async function loadPmsCandidates(db: VenueBindingDb, userId: number): Promise<PmsCandidate[]> {
   try {
-    /* NO date predicate and NO LIMIT: every project the rep is attached to comes
-       back, and the pure resolver does the period test + tie-break. Pushing that
-       into SQL is what made the old rule untestable and let `ORDER BY start_date
-       DESC LIMIT 1` hide the missing end_date check for a month. The row count is
-       bounded by "projects this one person is assigned to", which is small. */
     const rows = await db
       .prepare(
         /* ARCHIVED AND CANCELLED PROJECTS ARE NOT A VENUE (owner 2026-09-19).
@@ -321,15 +241,11 @@ async function loadPmsCandidates(db: VenueBindingDb, userId: number): Promise<Pm
         projectId: Number(r.id),
         projectName: (r.projectname as string | null) ?? null,
         venue: String(r.venue ?? ''),
-        /* Dual-read snake AND camel: the pg driver camelCases result columns,
-           which is the single most recurring bug in this tree. The aliases above
-           are already lower-cased for the D1 path; these cover the pg path. */
         startDate: ((r.startdate ?? r.startDate ?? r.start_date) as string | null) ?? null,
         endDate: ((r.enddate ?? r.endDate ?? r.end_date) as string | null) ?? null,
       }))
       .filter((c) => Number.isFinite(c.projectId));
   } catch {
-    /* Non-fatal: no candidates -> the showroom rule gets its turn, then empty. */
     return [];
   }
 }
@@ -358,9 +274,6 @@ async function loadShowroom(
       .maybeSingle();
     const wh = whRow as Record<string, unknown> | null;
     if (!wh) return null;
-    /* The flag is re-checked at RESOLVE time, not trusted from the parking row:
-       un-flagging a warehouse as a showroom must immediately stop it supplying
-       venues, without anyone having to unpark the staff parked under it. */
     const isShowroom = (wh.isShowroom ?? wh.is_showroom) as boolean | undefined;
     if (isShowroom !== true) return null;
     return {
@@ -421,12 +334,7 @@ export async function venueNameForHalfWrittenPair(
   const idGiven = typeof venueId === 'string' && !!venueId.trim();
   if (!nameEmpty || !idGiven) return { kind: 'notApplicable' };
   const { data, error } = await sb.from('venues').select('name').eq('id', venueId).maybeSingle();
-  /* BOUND AND BRANCHED. supabase-js does not throw, so an unbound read reports a
-     failed query and an id that matches nothing as the same empty answer. */
   if (error) return { kind: 'unresolved' };
   const name = (data as { name?: string } | null)?.name ?? null;
-  /* An id that matches NO venue is also unresolved rather than "no name": the
-     order carries a venue id the master does not know, and blanking the text is
-     not the repair for that. */
   return name && name.trim() ? { kind: 'resolved', name } : { kind: 'unresolved' };
 }

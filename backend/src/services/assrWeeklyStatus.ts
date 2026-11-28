@@ -33,9 +33,6 @@ import {
   postConnectContact,
 } from "./connect";
 
-/** Customer-facing status line per open stage — warmer than the bare stage
- *  label. A stage not listed falls back to the shared customer label, so a new
- *  or retired stage still reads sensibly rather than as a slug. */
 const FRIENDLY_STATUS: Record<string, string> = {
   pending_review: "Reviewing your request",
   pending_solution: "Preparing the solution",
@@ -52,8 +49,6 @@ export function friendlyStatus(stage: string | null | undefined): string {
 
 type Mode = "off" | "pilot" | "on";
 
-/** The weekly-status source tag on scm.wa_message_log — also the value the
- *  "contacted this week" check excludes so the send never suppresses itself. */
 const SOURCE = "assr-weekly-status";
 
 async function readMode(env: Env): Promise<{ mode: Mode; pilotPhones: Set<string> }> {
@@ -99,7 +94,6 @@ export async function runWeeklyServiceCaseStatus(env: Env): Promise<WeeklyStatus
   result.mode = mode;
   if (mode === "off") return result;
 
-  // Open, non-archived cases that carry a phone.
   const rows = await env.DB.prepare(
     `SELECT id, assr_no, customer_name, phone, stage, company_id
        FROM assr_cases
@@ -112,8 +106,6 @@ export async function runWeeklyServiceCaseStatus(env: Env): Promise<WeeklyStatus
   result.scanned = cases.length;
   if (cases.length === 0) return result;
 
-  // "Contacted this week" = any WhatsApp to that phone in the last 7 days EXCEPT
-  // a prior weekly status (excluding self keeps the update weekly, not fortnightly).
   const phones = [...new Set(cases.map((c) => c.nphone))];
   const contacted = new Set<string>();
   for (let i = 0; i < phones.length; i += 200) {
@@ -148,7 +140,6 @@ export async function runWeeklyServiceCaseStatus(env: Env): Promise<WeeklyStatus
       result.failed++;
       continue;
     }
-    // Visible trail; excluded from the dedup above so it never suppresses itself.
     try {
       await env.DB.prepare(
         `INSERT INTO scm.wa_message_log

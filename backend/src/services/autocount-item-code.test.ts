@@ -1,16 +1,3 @@
-/**
- * D10 — the ERP's item_code is NOT AutoCount's ItemCode.
- *
- * The write-back used to compose details with identityResolver, so "9028-1S"
- * would have been written into the licensed account book as an ItemCode. The
- * book calls that sofa "AMN-SF9028 SOFA" and has never heard of "9028-1S". On a
- * purchase order the resulting line cannot even be deleted afterwards.
- *
- * The contract these tests pin is TOTALITY, not coverage: every line resolves to
- * exactly ONE AutoCount ItemCode, or the whole document is refused with a named
- * reason and the candidates it could not choose between. A silent fallback to
- * item_code is the one behaviour that must be impossible.
- */
 import { describe, expect, it, test } from 'vitest';
 import {
   AC_ITEM_MAP_ROWS,
@@ -30,10 +17,6 @@ import {
   type ErpLine,
 } from './autocount-writeback';
 
-/* `location` is not decoration: a CREATE with none is refused outright, because
-   AutoCount answers FK_SODTL_Location to an empty one. These cases are about
-   the ITEM CODE, so every line carries a real warehouse and gets out of the
-   way. */
 const line = (over: Partial<ErpLine>): ErpLine => ({
   item_code: 'MISC',
   item_group: null,
@@ -53,7 +36,6 @@ describe('the cutover map', () => {
     // 5562 sofa, RC charges).
     expect(AC_ITEM_MAP_ROWS).toBe(1577);
     expect(idx.rows).toBe(AC_ITEM_MAP_ROWS);
-    // one bucket per DISTINCT erp code; several AutoCount items may share one
     expect(idx.byErp.size).toBeGreaterThan(1300);
     expect(idx.byErp.size).toBeLessThan(AC_ITEM_MAP_ROWS);
   });
@@ -66,16 +48,6 @@ describe('the cutover map', () => {
 });
 
 describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
-  /**
-   * The measurement that decides whether "refuse" is honest or merely timid.
-   *
-   * Every corpus row is a line the account book really holds, so the ItemCode it
-   * SHOULD resolve to is known. Three outcomes are possible and only one of them
-   * is a defect:
-   *   resolved to the book's own code — correct.
-   *   refused                        — safe; a human is asked.
-   *   resolved to a DIFFERENT code   — a wrong line in a licensed ledger. Zero.
-   */
   it('never resolves a corpus line to the WRONG AutoCount item', () => {
     let correct = 0;
     const refusedAmbiguous: string[] = [];
@@ -88,11 +60,6 @@ describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
     for (const row of AC_SOFA_CORPUS) {
       if (row.side === 'PO') poLines += 1;
       const r = resolveAcItemCode(row.erpCode, { supplierCode: row.creditorCode });
-      /* A code with a STANDING CHOICE is deliberately divergent for NEW
-         documents — one canonical item instead of the two brand items the
-         cutover collapsed. Counted, not asserted on: what protects these lines
-         is that composeEdit omits a chosen ItemCode for a line AutoCount
-         already owns, which is tested in autocount-writeback.test.ts. */
       if (r.ok && r.via === 'erp-canonical') { byChoice += 1; continue; }
       if (!r.ok) {
         if (row.side === 'PO') poRefused += 1;
@@ -117,10 +84,7 @@ describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
 
     expect(wrong).toEqual([]);
     expect(refusedUnmapped).toEqual([]);
-    /* If this hits zero the exclusion above has quietly stopped meaning
-       anything and the fidelity check is weaker than it reads. */
     expect(byChoice).toBeGreaterThan(0);
-    // A PO names its creditor, so the purchase side must resolve completely.
     expect(poRefused).toBe(0);
     expect(poLines).toBeGreaterThan(100);
   });
@@ -153,10 +117,7 @@ describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
     expect(contested.length).toBeGreaterThan(0);
     for (const [erp, acs] of contested) {
       const r = resolveAcItemCode(erp);
-      if (!r.ok) continue;                                   // refusing is still safe
-      /* Either the book itself settled it (a name match, or the owner's HOK/NB
-         preference) or we fall back to our own code. What must NEVER happen is
-         landing on one of the brand items by luck of ordering. */
+      if (!r.ok) continue;
       if (r.via === 'same-name' || r.via === 'preferred-supplier') continue;
       expect(r.via, `${erp} must not be guessed`).toBe('erp-canonical');
       expect([...acs], `${erp} resolved to one of the brand items it cannot choose between`)
@@ -166,23 +127,12 @@ describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
   });
 
   it('a sofa COMPARTMENT resolves to ITSELF, not to the model', () => {
-    /* Was: a compartment resolved through the model base SKU, because D9 always
-       folded first and AutoCount held one line per build. Since 2026-08-13 the
-       SHAPE is decided before the resolver runs, so a compartment that reaches
-       here is a line of its own and must carry its own code — redirecting it
-       would put the whole build's item on one compartment's line. */
     const base = resolveAcItemCode('5526-1S');
     expect(base.ok).toBe(true);
     const comp = resolveAcItemCode('5526-1A(LHF)');
     expect(comp.ok).toBe(true);
     if (comp.ok) { expect(comp.acItemCode).toBe('5526-1A(LHF)'); expect(comp.via).toBe('erp-canonical'); }
     return;
-    /* IDENTICAL to the base, answer and reason both. A compartment resolves by
-       asking the same question of the model base code, so `via` reports how the
-       BASE was settled rather than a 'sofa-model' of its own — and the two can
-       no longer diverge, which they did: the alias expansion gave a compartment
-       of 9028 an extra HOK candidate the base never saw, and the HOK preference
-       took it. */
     expect(comp).toEqual(base);
   });
 
@@ -202,24 +152,6 @@ describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
   });
 });
 
-/* This block used to be titled "REFUSAL, never a fallback to item_code",
-   and the rule was right for the reason it gave: sending a code the licensed
-   book does not hold would reference a nonexistent item, and on a purchase
-   order the resulting line cannot be deleted.
-
-   The PREMISE changed, not the reasoning. /ensure-masters opens the item before
-   the document that names it is sent (AcSyncService.cs:495-521), so the code no
-   longer arrives at a book that has never heard of it — it arrives at one where
-   it was just opened, properly, with an item group, stock control and a base
-   UOM. And the cost of the old rule turned out to be total: whole product ranges
-   are in no cutover row, so every order containing one was refused outright with
-   no way forward.
-
-   The guard that makes this safe is upstream, in the UI. SoLineCard refuses text
-   matching no catalogue product — "typed text that matches NO catalog product
-   can never become a line" — so the only strings that reach here are codes
-   already opened in the ERP's own product master. A blank code is still refused
-   below, because that is the one input with no answer. */
 describe('an unknown code is OPENED under its own name, not refused', () => {
   it('resolves an ERP code the account book has never heard of', () => {
     const r = resolveAcItemCode('TOTALLY-MADE-UP-SKU');
@@ -233,17 +165,6 @@ describe('an unknown code is OPENED under its own name, not refused', () => {
     expect(!r.ok && r.reason).toBe('unmapped');
   });
 
-  /**
-   * THE ORIGINAL REGRESSION, and it is still a regression. Before D10, toDetails
-   * did `resolve(l.item_code).acItemCode ?? l.item_code` — a SILENT `??`
-   * fallback that fired on every line and put unmapped SKUs into create
-   * payloads without anyone deciding to.
-   *
-   * The ERP code going through is now the DELIBERATE answer, which looks the
-   * same from outside and is not. The difference is /ensure-masters: the item is
-   * opened before the document names it. The assertion that still matters is
-   * that a mapped code NEVER comes through as itself.
-   */
   it('an unmapped line is sent under its own code, and opened', () => {
     const { details } = composeDetails([line({ item_code: 'NOT-IN-AUTOCOUNT' })]);
     expect(details).toHaveLength(1);
@@ -271,10 +192,7 @@ describe('an unknown code is OPENED under its own name, not refused', () => {
       { doc_no: 'SO-9999', customer_name: 'X' } as never,
       [good, line({ item_code: 'NOPE' })],
       'KINGSLEY',
-      /* No outstanding balance — this file is about the ITEM CODE resolver, and
-         the BALANCE UDF is asserted in autocount-writeback.test.ts. */
       null,
-      /* No payment references either, for the same reason. */
       [],
     );
     expect(p.Details.map((d) => d.ItemCode)).toEqual(['Miscellaneous', 'NOPE']);
@@ -282,8 +200,6 @@ describe('an unknown code is OPENED under its own name, not refused', () => {
 });
 
 describe('the supplier is the disambiguator, and only a PO has one', () => {
-  /** A hand-built two-item collision, so the test does not depend on which real
-   *  codes happen to collide this month. */
   const TSV = [
     'AC-FROM-A\tSHARED-CODE\tBEDFRAME\t400-A001',
     'AC-FROM-B\tSHARED-CODE\tBEDFRAME\t400-B002',
@@ -292,9 +208,6 @@ describe('the supplier is the disambiguator, and only a PO has one', () => {
   const index = buildAcItemIndex(TSV);
 
   it('with no supplier and no preference to apply, it falls back to our own code', () => {
-    /* Neither candidate is HOK or NB and neither is named like the ERP code, so
-       the chain runs out and step 5 answers. It must NOT pick one of the two by
-       ordering — that is the coin flip the whole design refuses to make. */
     const r = resolveAcItemCode('SHARED-CODE', { index });
     expect(r.ok).toBe(true);
     if (r.ok) { expect(r.acItemCode).toBe('SHARED-CODE'); expect(r.via).toBe('erp-canonical'); }
@@ -306,9 +219,6 @@ describe('the supplier is the disambiguator, and only a PO has one', () => {
   });
 
   it('a PO whose creditor holds none of the candidates is still REFUSED', () => {
-    /* Deliberately unchanged. On a purchase order the supplier is known, so
-       "this creditor has no such item" is a real contradiction worth stopping
-       for — and a PO line, once written, cannot be deleted from the book. */
     const r = resolveAcItemCode('SHARED-CODE', { index, supplierCode: '400-ZZZZ' });
     expect(r.ok).toBe(false);
     expect(!r.ok && r.detail).toContain('none belongs to supplier');
@@ -322,12 +232,6 @@ describe('the supplier is the disambiguator, and only a PO has one', () => {
     );
     expect(po.Details[0].ItemCode).toBe('AC-FROM-B');
 
-    /* With no creditor there is nothing to choose with, so the line takes our
-       own code. Asserted through composeDetails rather than composeCreatePo,
-       because a purchase order with no creditor code is now REFUSED before it
-       gets this far — CreatePo assigns CreditorCode directly and "" is
-       FK_PO_Creditor (audit 2026-08-14, finding 4). The resolution rule under
-       test is the same one either way. */
     const { details } = composeDetails([line({ item_code: 'SHARED-CODE' })], {
       itemIndex: index, supplierCode: null,
     });
@@ -347,9 +251,6 @@ describe('the supplier is the disambiguator, and only a PO has one', () => {
    composer does with each shape. */
 describe('a sofa CREATE sends one line per compartment', () => {
   it('a corner alone is no longer a refusal — it is simply its own line', () => {
-    /* Was: the collapse refused a lone corner, because a corner is not a build.
-       Nothing is being built now, so there is nothing to refuse; the line goes
-       in as itself and /ensure-masters opens the code. */
     const { details } = composeDetails([
       line({ item_code: '5526-CNR', item_group: 'sofa', description2: '1 + 1 (28")' }),
     ]);
@@ -365,8 +266,6 @@ describe('a sofa CREATE sends one line per compartment', () => {
     ], 'KINGSLEY', null, []);
     expect(so.Details).toHaveLength(2);
     expect(so.Details.map((d) => d.ItemCode)).toEqual(['5526-1A(LHF)', '5526-1A(RHF)']);
-    /* Both carry the same Desc2 and the price sits on the first, which is how
-       the ERP stores a build — the owner has seen this and accepted it. */
     expect(so.Details.map((d) => d.Desc2)).toEqual([d2, d2]);
     expect(so.Details.map((d) => d.UnitPrice)).toEqual([2500, 0]);
   });
@@ -384,11 +283,6 @@ describe('a sofa CREATE sends one line per compartment', () => {
   });
 });
 
-/* The compiled CSV is a SNAPSHOT of the book on 2026-08-05. The binding table
-   is this ERP's own live record of what AutoCount calls each product, and it is
-   the only one of the two that GROWS. Without it every post-cutover SKU was
-   refused - which refused the whole document, which meant /ensure-masters never
-   ran for the very case it exists for. */
 describe('the live supplier binding resolves what the cutover snapshot cannot', () => {
   test('a SKU opened after the cutover resolves through its binding', () => {
     const r = resolveAcItemCode('BRAND-NEW-SKU', {
@@ -405,7 +299,6 @@ describe('the live supplier binding resolves what the cutover snapshot cannot', 
   });
 
   test('the binding WINS over the snapshot — the book can be renamed and the CSV cannot know', () => {
-    /* AERO-Y04 (K) is what the 2026-08-05 CSV holds for Y04-(K). */
     const snapshot = resolveAcItemCode('Y04-(K)', {});
     expect(snapshot.ok).toBe(true);
     if (snapshot.ok) expect(snapshot.acItemCode).toBe('AERO-Y04 (K)');
@@ -435,8 +328,6 @@ describe('the live supplier binding resolves what the cutover snapshot cannot', 
    whole reason the rest of the chain has to be total. */
 describe("the owner's chain for a code no sales order can disambiguate", () => {
   test('3 — a candidate named like the ERP code wins, even over alphabet', () => {
-    /* HB709NL is held under BOTH 'HB709NL' and an unrelated 'NTYR-...' row.
-       Alphabetically NTYR loses, but that is luck; the name match is the reason. */
     const r = resolveAcItemCode('HB709NL', {});
     expect(r.ok).toBe(true);
     if (r.ok) { expect(r.acItemCode).toBe('HB709NL'); expect(r.via).toBe('same-name'); }
@@ -476,8 +367,6 @@ describe("the owner's chain for a code no sales order can disambiguate", () => {
       v.length > 1
       && !v.some((e) => e.ac.toUpperCase().startsWith('HOK-'))
       && v.some((e) => e.ac.toUpperCase().startsWith('NB-')));
-    /* If the map ever stops containing such a code this test is vacuous — fail
-       loudly rather than pass on an empty loop. */
     expect(hits.length).toBeGreaterThan(0);
     for (const [erp] of hits) {
       const r = resolveAcItemCode(erp, {});
@@ -487,9 +376,6 @@ describe("the owner's chain for a code no sales order can disambiguate", () => {
   });
 
   test('5 — neither HOK nor NB: our own code, never a coin flip between brands', () => {
-    /* The four sofa models plus GINA-(SS) and SGABELLO. Measured on 658 real
-       sofa lines, no single brand item is right for more than ~70% of them, so
-       picking one is a silent wrong answer 30% of the time. */
     for (const erp of ['9028-1S', '9058-1S', '5152-1S', '5080-1S', 'GINA-(SS)', 'SGABELLO']) {
       const r = resolveAcItemCode(erp, {});
       expect(r.ok, erp).toBe(true);
@@ -501,8 +387,6 @@ describe("the owner's chain for a code no sales order can disambiguate", () => {
   });
 
   test('5 — a code the book has NEVER held resolves instead of refusing the order', () => {
-    /* Whole product ranges opened after the 2026-08-05 snapshot are in no
-       cutover row. Every order containing one used to be refused outright. */
     const r = resolveAcItemCode('SOME-BRAND-NEW-CODE-9999', {});
     expect(r.ok).toBe(true);
     if (r.ok) { expect(r.acItemCode).toBe('SOME-BRAND-NEW-CODE-9999'); expect(r.via).toBe('erp-canonical'); }
@@ -529,9 +413,6 @@ describe("the owner's chain for a code no sales order can disambiguate", () => {
   });
 
   test('a WRONG binding is ignored, not obeyed and not fatal', () => {
-    /* Production holds exactly this: the main supplier row for 9028-1S names
-       'AMN-SF9028 SOFA 1S', which the book does not have. Sending it would open
-       a phantom item; refusing would block the order. Neither. */
     const r = resolveAcItemCode('9028-1S', { bindings: new Map([['9028-1S', 'AMN-SF9028 SOFA 1S']]) });
     expect(r.ok).toBe(true);
     if (r.ok) { expect(r.acItemCode).toBe('9028-1S'); expect(r.via).toBe('erp-canonical'); }

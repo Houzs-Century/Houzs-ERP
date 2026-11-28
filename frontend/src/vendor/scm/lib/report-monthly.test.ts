@@ -7,7 +7,7 @@ import { describe, expect, test } from 'vitest';
 import type { LaidNode } from './report-layout';
 import {
   balanceSheetLines, mergeColumns, monthBefore, monthColumns, monthEnd, monthLabel, monthlyCsv, monthlyDepth, monthlyLinesAtLevel,
-  monthsBack, performanceLines, pnlLines, rpLines, treeLines, type FlatLine,
+  monthsBack, pnlLines, rpLines, treeLines, type FlatLine,
 } from './report-monthly';
 
 const acc = (code: string, amountSen: number, pct: number | null = null, cells?: Record<string, number>): LaidNode =>
@@ -55,8 +55,6 @@ describe('mergeColumns', () => {
   });
 
   test('a line only a later column has lands right after the line before it in that column', () => {
-    /* 900-A014 booked in August only, reversed in September: the cumulative
-       range nets it to nothing, so the spine lacks it. */
     const merged = mergeColumns([
       { key: 'cumulative', lines: [line('blk', 0, 0, 'block'), line('a', 30), line('c', 5), line('tot', 35, 0, 'total')] },
       { key: '2026-09', lines: [line('blk', 0, 0, 'block'), line('a', 10), line('x', -15), line('c', 5), line('tot', 0, 0, 'total')] },
@@ -125,24 +123,6 @@ describe('each report as lines', () => {
     expect(out).toMatchObject({ label: 'OUT OF BALANCE', amountSen: 500, pct: null });
   });
 
-  test('the Performance P&L: sales, cost and gross profit per group with their totals, then the summary lines by their ids', () => {
-    const r = {
-      groups: [{ key: 'sofa', label: 'Sofa', salesSen: 300_000, cogsSen: 180_000, gpSen: 120_000, gpPct: 40 }, { key: 'service', label: 'Service', salesSen: 20_000, cogsSen: 0, gpSen: 20_000, gpPct: 100 }],
-      totals: { salesSen: 320_000, cogsSen: 180_000, gpSen: 140_000, gpPct: 43.8 },
-    };
-    const summary = [
-      { id: 'sum:gross', kind: 'total' as const, label: 'Gross profit', amountSen: 140_000, pct: 43.8, depth: 0 },
-      { id: 'acc:900-O001', kind: 'row' as const, label: 'Operating expense — 16.00%…', amountSen: 48_000, pct: 15, depth: 1 },
-      { id: 'sum:net', kind: 'net' as const, label: 'NET PERFORMANCE', amountSen: 92_000, pct: 28.8, depth: 0 },
-    ];
-    const lines = performanceLines(r, summary);
-    expect(lines.map((l) => l.id)).toEqual(['blk:sales', 'sales:sofa', 'sales:service', 'tot:sales', 'blk:cogs', 'cogs:sofa', 'cogs:service', 'tot:cogs', 'blk:gp', 'gp:sofa', 'gp:service', 'tot:gp', 'sum:gross', 'acc:900-O001', 'sum:net']);
-    expect(lines.find((l) => l.id === 'sales:sofa')).toMatchObject({ label: 'Sofa', amountSen: 300_000, pct: 93.8, depth: 1 });
-    expect(lines.find((l) => l.id === 'gp:sofa')).toMatchObject({ amountSen: 120_000, pct: 40 });
-    expect(lines.find((l) => l.id === 'tot:gp')).toMatchObject({ amountSen: 140_000, pct: 43.8, kind: 'total' });
-    expect(lines.find((l) => l.id === 'sum:net')).toMatchObject({ kind: 'net', depth: 0 });
-  });
-
   test('the Cash Flow: each top category as a block, its tree, its own subtotal name; a running subtotal; then Cash surplus / (deficit), Balance b/f, Balance c/f', () => {
     const top = (id: string, label: string, flow: 'in' | 'out', totalLabel: string, children: LaidNode[], pct: number | null, kind: LaidNode['kind'] = 'category'): LaidNode =>
       ({ ...cat(id, label, children, pct), kind, flow, totalLabel });
@@ -176,7 +156,6 @@ describe('each report as lines', () => {
     expect(lines.find((l) => l.id === 'net:surplus')).toMatchObject({ label: 'Cash surplus / (deficit)', kind: 'net', amountSen: -20_000, pct: -40 });
     expect(lines.find((l) => l.id === 'bal:opening')).toMatchObject({ label: 'Balance b/f', kind: 'total', amountSen: -10_000 });
     expect(lines.find((l) => l.id === 'bal:closing')).toMatchObject({ label: 'Balance c/f', kind: 'net', amountSen: -30_000, pct: null });
-    /* Nothing split on this tree: no line carries a Settlement / Deposit pair. */
     expect(lines.some((l) => 'sd' in l)).toBe(false);
   });
 
@@ -202,7 +181,6 @@ describe('each report as lines', () => {
     expect(sdAt('tot:cf:in')).toEqual(sdOf(50_000, 40_000));
     expect(sdAt('tot:cf:ops')).toEqual(sdOf(10_000, 20_000));
     expect(sdAt('cf:sub:ops')).toEqual(sdOf(40_000, 20_000));
-    /* Not split: the tax group, its line, the block titles, the surplus and the balances. */
     expect([sdAt('out:acc:910-0000'), sdAt('tot:cf:tax'), sdAt('blk:cf:in'), sdAt('net:surplus'), sdAt('bal:closing')]).toEqual([undefined, undefined, undefined, undefined, undefined]);
     const merged = mergeColumns([{ key: '2026-10', lines }, { key: '2026-09', lines: lines.map((l) => (l.id === 'cf:sub:ops' ? { ...l, amountSen: 1, sd: sdOf(1, 0) } : l)) }]);
     const sub = merged.find((l) => l.id === 'cf:sub:ops')!;

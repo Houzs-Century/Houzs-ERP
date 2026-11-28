@@ -1,19 +1,9 @@
 import { todayMyt } from "../vendor/scm/lib/dates";
-// CSV utilities — Google Sheets / Excel compatible.
-// - UTF-8 with BOM
-// - CRLF line endings
-// - Field quoting per RFC 4180
-// - Formula-injection guard on every cell (rule and reasons in
-//   vendor/shared/csv-guard.ts, shared with the backend's POS summary CSV);
-//   parseCSV undoes it so an export re-imports unchanged.
 
 import { guardFormula, unguardFormula } from "../vendor/shared/csv-guard";
 export { guardFormula };
 
-/* Re-exported at the CSV boundary so a caller has one import for "how a cell
-   leaves". The rule itself lives beside fmtDate — export is the INVERSE of
-   display, and both belong next to each other. */
-export { isoForExport } from "../vendor/shared/format";
+export { isoForExport } from "../../../shared/src/vendor/shared/format";
 
 export interface CSVColumn<T> {
   key: string;
@@ -25,7 +15,6 @@ export interface CSVColumn<T> {
 function escapeField(value: unknown): string {
   if (value === null || value === undefined) return "";
   let s = guardFormula(String(value));
-  // Normalise newlines
   s = s.replace(/\r\n/g, "\n");
   if (/[",\r\n]/.test(s)) {
     s = `"${s.replace(/"/g, '""')}"`;
@@ -42,7 +31,6 @@ export function toCSV<T>(rows: T[], columns: CSVColumn<T>[]): string {
 }
 
 export function downloadCSV(filename: string, content: string) {
-  // BOM so Excel/Sheets detect UTF-8
   const blob = new Blob(["\ufeff" + content], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -80,9 +68,7 @@ export async function downloadAllPagesCSV<T>(
   downloadCSV(`${name}-${todayMyt()}.csv`, toCSV(rows, columns));
 }
 
-// Parses RFC4180-style CSV. Supports quoted fields, doubled quotes, CRLF/LF.
 export function parseCSV(text: string): string[][] {
-  // Strip BOM
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
   const rows: string[][] = [];
   let row: string[] = [];
@@ -109,7 +95,6 @@ export function parseCSV(text: string): string[][] {
       continue;
     }
 
-    // A quote opens a quoted field only at its start; mid-field it is an inch mark.
     if (ch === '"' && field === "") {
       inQuotes = true;
       i++;
@@ -122,7 +107,6 @@ export function parseCSV(text: string): string[][] {
       continue;
     }
     if (ch === "\r") {
-      // handle CRLF
       if (text[i + 1] === "\n") i++;
       row.push(unguardFormula(field));
       rows.push(row);
@@ -143,13 +127,11 @@ export function parseCSV(text: string): string[][] {
     i++;
   }
 
-  // Flush trailing field/row (if any non-empty content)
   if (field.length > 0 || row.length > 0) {
     row.push(unguardFormula(field));
     rows.push(row);
   }
 
-  // Drop trailing empty rows (e.g. from trailing newline)
   while (rows.length > 0) {
     const last = rows[rows.length - 1];
     if (last.length === 1 && last[0] === "") rows.pop();

@@ -1,5 +1,3 @@
-// Mail Center per-person read state and "needs acknowledgement" (DEV-03 P2).
-// Shared by the desktop thread, the inbox sidebar and the phone.
 import { useState } from "react";
 import { CheckCheck, Eye, Loader2, MailCheck } from "lucide-react";
 import { api } from "../../api/client";
@@ -7,7 +5,7 @@ import { buildQueryKey, useQuery } from "../../hooks/useQuery";
 import { queryClient } from "../../lib/queryClient";
 import { useToast } from "../../hooks/useToast";
 import { cn } from "../../lib/utils";
-import { fmtDateTime } from "../../vendor/shared/format";
+import { fmtDateTime } from "../../../../shared/src/vendor/shared/format";
 
 export type MailReader = { userId: number; name: string; readAt: string | null };
 export type ThreadReaders = { members: MailReader[]; others: MailReader[] };

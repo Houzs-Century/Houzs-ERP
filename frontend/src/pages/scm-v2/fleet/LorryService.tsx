@@ -1,9 +1,6 @@
-// A lorry's service and workshop visits, inside the lorry drawer: add, edit and delete a
-// record (with the next service due and notes), and upload or view its invoice. The same
-// fields the old LorryDetail page carried, so nothing it could do is lost.
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { fmtDate, fmtSen } from "../../../vendor/shared/format";
+import { fmtDate, fmtSen } from "../../../../../shared/src/vendor/shared/format";
 import { DateField } from "../../../vendor/scm/components/DateField";
 import { useConfirm } from "../../../vendor/scm/components/ConfirmDialog";
 import { writeFailedAs } from "../../../vendor/scm/lib/mutation-error";

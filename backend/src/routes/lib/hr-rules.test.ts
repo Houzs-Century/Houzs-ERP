@@ -1,5 +1,3 @@
-// routes/hr.ts pure pieces: salary in force on a date, the columns written
-// (salary never written directly), and the audit diff hiding personal numbers.
 import { describe, expect, test } from "vitest";
 import { emptyEmployeeInput, type EmployeeInput } from "../../scm/shared/hr-employee";
 import { employeeColumns, employeeDiff, employeeUpdateColumns, planBulkImport, planBulkLink, salaryAsOf, type BulkAccount, type ImportRowIn } from "./hr-rules";
@@ -69,7 +67,6 @@ describe("planBulkLink", () => {
     );
     expect(plan.create.map((r) => r.input.empNo)).toEqual(["EMP-004", "EMP-005"]);
     expect(plan.create[0].input).toMatchObject({ empNo: "EMP-004", name: "Ali", userId: 1, phone: "012", departmentId: 5, position: "Driver", payMode: "MONTHLY", basicSalarySen: 180000, isOutsource: false });
-    // a null account name falls back to the email, so the row is still usable
     expect(plan.create[1].input).toMatchObject({ empNo: "EMP-005", name: "bob@x.com", userId: 2, phone: "", departmentId: null, position: "" });
     expect(plan.skipped).toEqual([
       { userId: 3, name: "Already", reason: "already has an employee record" },
@@ -96,11 +93,11 @@ describe("planBulkImport", () => {
   test("auto-numbers blanks gaplessly, refuses a within-file dup number and bad rows", () => {
     const plan = planBulkImport(
       [
-        row({ name: "A", empNo: "" }),                                  // 0 -> EMP-011 (existing EMP-010)
-        row({ name: "B", empNo: "EMP-011" }),                           // 1 -> collides with row 0's new number
-        row({ name: "", empNo: "" }),                                   // 2 -> no name (consumes no number)
-        row({ name: "C", empNo: "" }, { accountEmail: "ali@x.com" }),   // 3 -> EMP-012, linked to user 1
-        row({ name: "E", empNo: "" }, { accountEmail: "ghost@x.com" }), // 4 -> no such account
+        row({ name: "A", empNo: "" }),
+        row({ name: "B", empNo: "EMP-011" }),
+        row({ name: "", empNo: "" }),
+        row({ name: "C", empNo: "" }, { accountEmail: "ali@x.com" }),
+        row({ name: "E", empNo: "" }, { accountEmail: "ghost@x.com" }),
       ],
       {
         existing: [{ id: 50, empNo: "EMP-010", userId: 99 }],
@@ -126,11 +123,11 @@ describe("planBulkImport", () => {
         row(
           { name: "Khalid", empNo: "HC0009", icNumber: "660120-08-5365", bankName: "Maybank", bankAccount: "164", epfEnabled: true },
           { accountEmail: "khalid@x.com", provided: ["name", "icNumber", "bankName", "bankAccount", "epfEnabled"] },
-        ), // by account -> EMP-001, HC0009 ignored
+        ),
         row(
           { name: "Sagor", empNo: "EMP-002", passportNumber: "B00381966", nationality: "Bangladeshi" },
           { provided: ["name", "passportNumber", "nationality"] },
-        ), // by Emp No -> EMP-002
+        ),
       ],
       {
         existing: [

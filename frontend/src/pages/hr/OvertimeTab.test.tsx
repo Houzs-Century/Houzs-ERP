@@ -33,10 +33,10 @@ const show = () => render(<MemoryRouter initialEntries={["/?period=2026-11"]}><O
 describe("Overtime desktop tab", () => {
   it("lists the month's reported overtime with its status", () => {
     show();
-    expect(screen.getByText("rushed an order")).toBeTruthy(); // the pending claim
-    expect(screen.getByText("Rahim")).toBeTruthy(); // the confirmed claim's worker
-    expect(screen.getByText("20:30-21:30")).toBeTruthy(); // window label
-    expect(screen.getByText(/1 waiting/)).toBeTruthy(); // summary
+    expect(screen.getByText("rushed an order")).toBeTruthy();
+    expect(screen.getByText("Rahim")).toBeTruthy();
+    expect(screen.getByText("20:30-21:30")).toBeTruthy();
+    expect(screen.getByText(/1 waiting/)).toBeTruthy();
   });
 
   it("confirms a waiting claim", async () => {

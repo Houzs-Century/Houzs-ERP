@@ -120,7 +120,6 @@ import { SI_TRANSFERABLE_DO_STATES, type DoStatus } from '../../shared/do-shippe
 export const SI_TRANSFERABLE_DO_STATUSES =
   SI_TRANSFERABLE_DO_STATES.map((s) => s.toLowerCase()) as readonly string[];
 
-/** Normalise a raw status off a row into the lower-case token used here. */
 function norm(status: string | null | undefined): string {
   return String(status ?? '').trim().toLowerCase();
 }
@@ -156,15 +155,6 @@ export function siTransferBlockReason(status: string | null | undefined): string
   if (s === 'draft') {
     return 'This delivery order is still a draft — confirm it before raising a Sales Invoice.';
   }
-  /* INVOICED deliberately falls through to the generic sentence rather than
-     getting an "already invoiced" one. routes/unbilled-deliveries.ts:13 records
-     the measurement: NOTHING in the codebase ever writes
-     delivery_orders.status='INVOICED' — creating a Sales Invoice from a DO does
-     not advance the DO — so the label means "somebody clicked it", not "this was
-     billed", and it is unreliable in both directions. Saying "already invoiced"
-     here would state as fact the exact thing that file proves the flag cannot
-     tell us. The generic sentence states the gate, which is true. An unrecognised
-     status also lands here rather than a guess (COMPLETED once did — see header). */
   return 'A Sales Invoice can only be raised from a confirmed delivery order.';
 }
 
@@ -203,9 +193,7 @@ export function siTransferBlockReason(status: string | null | undefined): string
  * Invoice, not a bare status button — and doAdvanceBlockReason says exactly that.
  */
 export type DoAdvanceStep = {
-  /** Target delivery_orders.status to PATCH. */
   status: 'LOADED';
-  /** The words on the button. */
   label: string;
 };
 
@@ -229,15 +217,9 @@ export function doAdvanceBlockReason(status: string | null | undefined): string 
   if (doAdvanceStep(status)) return null;
   const s = norm(status);
   if (s === 'cancelled') {
-    /* The backend's own words, from the `do_cancelled_final` refusal at
-       delivery-orders-mfg.ts:5403. This is why no surface should offer a
-       "Reopen" here: the write is refused every time. */
     return 'A cancelled delivery order cannot be reactivated — its stock was already returned. Raise a new delivery order to deliver again.';
   }
   if (s === 'loaded' || s === 'dispatched' || s === 'in_transit') {
-    /* On its way, not yet closed. Since 2026-08-21 there is no "Mark signed" step
-       on these surfaces; the delivery is closed by the driver's Proof-of-Delivery
-       screen, and the office's next action is the Sales Invoice. */
     return 'This delivery order is on its way. The next step is to raise its Sales Invoice.';
   }
   if (s === 'signed' || s === 'delivered') {
@@ -249,21 +231,6 @@ export function doAdvanceBlockReason(status: string | null | undefined): string 
   return 'This delivery order is in an unexpected state, so no next step can be offered. Please check with the office.';
 }
 
-// ── THE SCAN LADDER — MOVED, NOT COPIED (2026-08-26) ────────────────────────
-//
-// `doScanStep` / `doScanBlockReason` / `doScanConfirmation` /
-// `DO_SCAN_DELIVERED_EVIDENCE_NOTE` were DECLARED here until the driver's scan
-// had to work without a login. The public endpoint decides the target status on
-// the SERVER — a rung named in a request body is a rung an attacker picks — so
-// the server needs the same ladder, and a second copy of it in backend/ is the
-// duplicated-decision class this repo gates on.
-//
-// The declaration therefore moved to the mirrored rule module
-// `vendor/shared/do-scan-ladder.ts` (original: backend/src/scm/shared/), held
-// byte-identical by check-shared-mirrors --strict. It is re-exported from here
-// so every existing import of the ladder from this module still resolves — the
-// SCAN question is still answered next to the office's ADVANCE question, which
-// is what the header above promises a reader.
 export {
   doScanStep,
   doScanBlockReason,

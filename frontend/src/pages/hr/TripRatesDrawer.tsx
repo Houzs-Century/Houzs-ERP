@@ -1,8 +1,3 @@
-/* Trip Pay > Rates: every amount trip pay uses, as an effective-dated version
- * like the pay rules. 1 Commission, 2 Allowance per job, 3 Outstation,
- * 4 Overnight. A version may start on a past date but never inside a payroll
- * month that is already approved. A version saved before the 2026-11-17
- * redesign is shown in the new shape; saving makes a new version. */
 import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
@@ -11,7 +6,7 @@ import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
 import { clock12 } from "../../lib/clock12";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import {
   TRIP_EVENT_LABEL,
@@ -44,7 +39,6 @@ type Draft = {
 
 const pctText = (bps: number) => String(bps / 100);
 const bpsOf = (pct: string) => Math.round(Number(pct) * 100);
-/* 22:00 to 04:00, half-hourly: the clock-outs a tier can start at. */
 const NIGHT_TIMES = Array.from({ length: 13 }, (_, i) => {
   const m = (22 * 60 + i * 30) % 1440;
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;

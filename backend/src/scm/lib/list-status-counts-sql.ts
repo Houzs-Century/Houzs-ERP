@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// list-status-counts-sql — a list's filter pills in ONE grouped statement.
-//
-// The bucket lists (Purchase Invoices today) ran one `count: 'exact', head: true`
-// query per pill — seven for the PI list — each a full scan of the scoped set.
-// Here the scoped set is grouped by status once, and each pill is summed from
-// the groups:
-//   - 'all'      every row (as the unfiltered head count),
-//   - string[]   rows whose status is EXACTLY one of these (as `.in('status')`;
-//                a NULL status matches none, as it never matched `.in`),
-//   - 'held'     rows matching HELD_OR_TERM (as `.or(HELD_OR_TERM)`), counted
-//                with FILTER in the same statement because it is a column, not
-//                a status.
-// The result has the same keys in the same order as readStatusCounts'.
-// Null = the caller runs its per-pill head counts as before (list-sql.ts).
-// ----------------------------------------------------------------------------
 
 import { HELD_OR_TERM } from './document-hold';
 import { FRESH_READ, SqlParams, sqlIdent, whereOf, type SqlFilterRecorder } from './pgrest-sql';

@@ -29,6 +29,7 @@ import type { Env, Variables } from '../env';
 import { hasHouzsPerm } from '../lib/houzs-perms';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { paginateAll } from '../lib/paginate-all';
+import { chargeSharesOf } from '../../acc/settlement-sold-by';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 const requirePerm = (c: Ctx): boolean => hasHouzsPerm(c, 'scm.payment_voucher.post');
@@ -38,15 +39,11 @@ const MONTH = /^\d{4}-\d{2}$/;
 /** The two channels no merchant carries, as the rows name them. */
 export const CASH_CHANNEL = 'CASH';
 export const ONLINE_CHANNEL = 'ONLINE';
-/** Payment methods behind each channel — `transfer` is every online kind
-    (DuitNow, TNG, bank transfer …); `merchant` and `installment` ride the
-    acquirers' reports and are never counted here. */
 const CHANNEL_METHODS: Record<string, string> = { cash: CASH_CHANNEL, transfer: ONLINE_CHANNEL };
-/** Acquirers first, alphabetically; then cash, then online. */
 const channelRank = (acquirer: string): number => (acquirer === CASH_CHANNEL ? 1 : acquirer === ONLINE_CHANNEL ? 2 : 0);
 
-type LineRow = { batch_id: number | null; acquirer_code: string | null; txn_date: string; gross_sen: number | null; fee_sen: number | null; net_sen: number | null; confirmed_at: string | null };
-type BatchRow = { id: number; acquirer_code: string | null; file_name: string | null; period_from: string | null; period_to: string | null };
+type LineRow = { id: number; batch_id: number | null; acquirer_code: string | null; txn_date: string; gross_sen: number | null; fee_sen: number | null; net_sen: number | null; confirmed_at: string | null };
+type BatchRow = { id: number; acquirer_code: string | null; file_name: string | null; period_from: string | null; period_to: string | null; adjustment_sen: number | null };
 type PayoutRow = { batch_id: number | null; settled_on: string; charge_sen: number | null };
 type KeptRow = { batch_id: number | null; charge_sen: number | null };
 type PaymentRow = { id: string; so_doc_no: string; paid_at: string; method: string; online_type: string | null; amount_sen: number | null };
@@ -74,10 +71,10 @@ const finish = <T extends ChargeFigures>(f: T): T => {
   f.chargePct = pct(f.chargeSen, f.grossSen);
   return f;
 };
-const addLine = (f: ChargeFigures, l: LineRow) => {
-  f.lines += 1; f.grossSen += Number(l.gross_sen ?? 0); f.feeSen += Number(l.fee_sen ?? 0); f.netSen += Number(l.net_sen ?? 0);
+/** A line with its share of its report's statement charge in its fee (owner 2026-11-28). */
+const addLine = (f: ChargeFigures, l: LineRow, shareSen: number) => {
+  f.lines += 1; f.grossSen += Number(l.gross_sen ?? 0); f.feeSen += Number(l.fee_sen ?? 0) + shareSen; f.netSen += Number(l.net_sen ?? 0) - shareSen;
 };
-/** A keyed payment costs nothing: gross and net are the amount, no fee. */
 const addPayment = (f: ChargeFigures, p: ChargePayment) => {
   f.lines += 1; f.grossSen += p.amountSen; f.netSen += p.amountSen;
 };
@@ -102,7 +99,7 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
 
   const lines = await paginateAll<LineRow>((f, t) =>
     sb.from('acc_settlement_rows')
-      .select('batch_id, acquirer_code, txn_date, gross_sen, fee_sen, net_sen, confirmed_at')
+      .select('id, batch_id, acquirer_code, txn_date, gross_sen, fee_sen, net_sen, confirmed_at')
       .eq('company_id', companyId).gte('txn_date', fromDay).lte('txn_date', toDay)
       .order('txn_date').order('id').range(f, t));
   if (lines.error) return failed('lines', lines.error);
@@ -110,7 +107,6 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
     .filter((l) => !confirmedOnly || l.confirmed_at != null)
     .filter((l) => onlyAcquirer == null || String(l.acquirer_code ?? '').toUpperCase() === onlyAcquirer);
 
-  /* The bank's own charge on a payout day, by the day the payout landed. */
   const payouts = await paginateAll<PayoutRow>((f, t) =>
     sb.from('acc_settlement_payout_batches')
       .select('batch_id, settled_on, charge_sen')
@@ -119,10 +115,6 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
   if (payouts.error) return failed('payouts', payouts.error);
   const charged = ((payouts.data ?? []) as PayoutRow[]).filter((p) => Number(p.charge_sen ?? 0) !== 0 && p.batch_id != null);
 
-  /* …and what an acquirer kept off a CREDIT when it sends no advice (owner
-     2026-09-30, GHL's RM 54) — carried on the receipt, and dated, as its entry
-     is, by the report's settlement day (filtered to the range once the reports
-     are read below). */
   const keptOff = await paginateAll<KeptRow>((f, t) =>
     sb.from('acc_settlement_receipts')
       .select('batch_id, charge_sen')
@@ -135,10 +127,35 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
   const batches = new Map<number, BatchRow>();
   for (let i = 0; i < batchIds.length; i += 150) {
     const { data, error } = await sb.from('acc_settlement_batches')
-      .select('id, acquirer_code, file_name, period_from, period_to')
+      .select('id, acquirer_code, file_name, period_from, period_to, adjustment_sen')
       .eq('company_id', companyId).in('id', batchIds.slice(i, i + 150));
     if (error) return failed('reports', error);
     for (const b of (Array.isArray(data) ? data : []) as BatchRow[]) batches.set(Number(b.id), b);
+  }
+
+  /* A STATEMENT CHARGE IS IN ITS LINES' FEES (owner 2026-11-28: Pine Labs 手续费对的，你帮我
+     更改，把它加去每一笔的费用里面，根据那时候说的算法去算). AEON prints its subvention fee
+     once, at the bottom of a report; each line takes its share by gross, the way 2990's
+     lines on Houzs's AEON already do (acc/settlement-sold-by chargeSharesOf), so the
+     fee % is what the machine really cost — about 5%, not the 1.2% on the line. The
+     books are unchanged: SETTLEADJ already booked the whole charge to Merchant charges. */
+  const shareOf = new Map<number, number>();
+  const statementCharged = [...batches.values()].filter((b) => Number(b.adjustment_sen ?? 0) !== 0).map((b) => Number(b.id));
+  for (let i = 0; i < statementCharged.length; i += 150) {
+    const ids = statementCharged.slice(i, i + 150);
+    const siblings = await paginateAll<{ id: number; batch_id: number; gross_sen: number | null }>((f, t) =>
+      sb.from('acc_settlement_rows').select('id, batch_id, gross_sen')
+        .eq('company_id', companyId).in('batch_id', ids).order('id').range(f, t));
+    if (siblings.error) return failed('report lines', siblings.error);
+    const byBatch = new Map<number, Array<{ id: number; grossSen: number }>>();
+    for (const r of (siblings.data ?? []) as Array<{ id: number; batch_id: number; gross_sen: number | null }>) {
+      const list = byBatch.get(Number(r.batch_id)) ?? [];
+      list.push({ id: Number(r.id), grossSen: Number(r.gross_sen ?? 0) });
+      byBatch.set(Number(r.batch_id), list);
+    }
+    for (const [batchId, list] of byBatch) {
+      for (const [rowId, sen] of chargeSharesOf(Number(batches.get(batchId)?.adjustment_sen ?? 0), list)) shareOf.set(rowId, sen);
+    }
   }
 
   /* The channels no merchant carries: the payments keyed on sales orders, by
@@ -172,7 +189,6 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
     keyed = keyed.filter((p) => !cancelled.has(p.so_doc_no));
   }
 
-  /* month → acquirer → report. */
   const months = new Map<string, Map<string, Map<number, ChargeReport>>>();
   const at = (month: string, acquirer: string, batchId: number): ChargeReport => {
     const byAcq = months.get(month) ?? new Map<string, Map<number, ChargeReport>>();
@@ -188,7 +204,7 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
   };
   for (const l of kept) {
     if (l.batch_id == null) continue;
-    addLine(at(String(l.txn_date).slice(0, 7), String(l.acquirer_code ?? batches.get(l.batch_id)?.acquirer_code ?? '?').toUpperCase(), l.batch_id), l);
+    addLine(at(String(l.txn_date).slice(0, 7), String(l.acquirer_code ?? batches.get(l.batch_id)?.acquirer_code ?? '?').toUpperCase(), l.batch_id), l, shareOf.get(Number(l.id)) ?? 0);
   }
   for (const p of charged) {
     const acquirer = String(batches.get(Number(p.batch_id))?.acquirer_code ?? '?').toUpperCase();
@@ -204,7 +220,6 @@ export const merchantChargesReport = async (c: Ctx): Promise<Response> => {
     at(day.slice(0, 7), acquirer, Number(k.batch_id)).bankChargeSen += Number(k.charge_sen ?? 0);
   }
 
-  /* month → channel → the payments. */
   const channels = new Map<string, Map<string, ChargePayment[]>>();
   for (const p of keyed) {
     const channel = CHANNEL_METHODS[String(p.method)];

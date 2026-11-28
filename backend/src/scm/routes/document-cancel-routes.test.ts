@@ -9,7 +9,6 @@
  * signatures are on the row, and that the PO and DO cancels are refused until
  * somebody has said why. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-/* `?raw`, not node:fs — backend/tsconfig.json types Workers only. */
 import rawScmIndex from '../index.ts?raw';
 import { Hono } from 'hono';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
@@ -49,8 +48,6 @@ const L2: Who = { id: 31, name: 'MD Cara', perms: ['*'] };
 const BOTH: Who = { id: 41, name: 'IT Dan', perms: ['*'] };
 const NOBODY: Who = { id: 51, name: 'Eve', perms: ['scm.access', 'scm.so.view_all'] };
 
-/** A handler standing in for the real cancel routes: it answers 200 when
- *  reached, so the test can tell "the guard let it through" from "refused". */
 const reached = vi.fn();
 
 function app(who: Who) {
@@ -67,12 +64,8 @@ function app(who: Who) {
   a.use('/delivery-orders-mfg/:id/status', cancelApprovalGuard('DO'));
   a.route('/mfg-sales-orders', soCancelRequests);
   a.route('/mfg-purchase-orders', poCancelRequests);
-  /* The stand-ins echo the flag the real area guard's writeBypass reads, so a
-     test can see whether the guard admitted THIS write for an approver. */
   a.patch('/mfg-sales-orders/:docNo/status', async (c) => { reached((await c.req.json()).status); return c.json({ ok: true, admitted: c.get('cancelExecutionAdmitted') === true }); });
   a.patch('/mfg-purchase-orders/:id/cancel', (c) => { reached('po'); return c.json({ ok: true, admitted: c.get('cancelExecutionAdmitted') === true }); });
-  /* Like the real DO status handler, this answers 200 for an already-cancelled
-     delivery order too ("Already cancelled → echo back"). */
   a.patch('/delivery-orders-mfg/:id/status', async (c) => { reached(`do:${(await c.req.json()).status}`); return c.json({ ok: true }); });
   a.route('/cancel-requests', cancelRequestsInbox);
   return a;
@@ -184,7 +177,6 @@ describe('the two signatures', () => {
     expect(await l2.json()).toMatchObject({ execute: true, request: { status: 'APPROVED', l2_by: 31, l2_by_name: 'MD Cara' } });
     expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'approved', expect.objectContaining({ requesterUserId: 11, actorUserId: 31 }));
     expect(soAudit).toHaveBeenCalledTimes(3);
-    /* No body at all — a tab loaded before DEV-17 — still signs, with no remark. */
     expect(rows()[0]).toMatchObject({ l1_remark: null, l2_remark: null });
   });
 
@@ -228,7 +220,6 @@ describe('the two signatures', () => {
     expect(res.status).toBe(200);
     expect((await body(res)).request).toMatchObject({ status: 'REJECTED', rejected_by: 21, reject_reason: 'Production already started' });
     expect(notify).toHaveBeenLastCalledWith(expect.anything(), 'rejected', expect.objectContaining({ requesterUserId: 11, reason: 'Production already started' }));
-    /* Closed — a fresh request may now be raised. */
     expect((await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request', { reason: 'Customer insists on cancelling' })).status).toBe(201);
   });
 
@@ -246,9 +237,6 @@ describe('the two signatures', () => {
     expect(detail.open).toMatchObject({ status: 'REQUESTED' });
     expect(detail.history).toHaveLength(1);
     expect(detail.needsApproval).toBe(true);
-    /* A cancelled PO lands in the same inbox as an EXECUTED row — that is
-       where "why was this purchase order cancelled" is answered — but it is
-       never OPEN, so the default scope does not carry it. */
     await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel', { reason: 'Supplier cannot deliver' });
     const inbox = await body(await get(NOBODY, '/cancel-requests'));
     expect(inbox.requests.map((r: { doc_number: string }) => r.doc_number)).toEqual(['SO-1']);
@@ -268,7 +256,6 @@ describe('the two signatures', () => {
     const { requests } = await body(await get(NOBODY, '/cancel-requests?scope=all'));
     const byDoc = Object.fromEntries(requests.map((r: { doc_number: string }) => [r.doc_number, r]));
     expect(byDoc['SO-1']).toMatchObject({ doc_ref: 'MR TAN / SUNWAY', doc_customer_so_no: null });
-    // A purchase order has no such field — null, never another document's ref.
     expect(byDoc['PO-1']).toMatchObject({ doc_ref: null, doc_customer_so_no: null });
   });
 
@@ -293,15 +280,10 @@ describe('the area-guard bypass for approvers', () => {
     expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/approve', ['scm.so_cancel.approve_l2']))).toBe(true);
     expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/reject', ['scm.so_cancel.approve_l1']))).toBe(true);
     expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/withdraw', ['scm.so_cancel.approve_l1']))).toBe(true);
-    /* Raising a request is NOT admitted by the key — that still needs the area's edit. */
     expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request', ['scm.so_cancel.approve_l1']))).toBe(false);
-    /* The other document's key does not open this prefix. */
     expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/approve', ['scm.po_cancel.approve']))).toBe(false);
-    /* Any other write on the prefix stays behind the area. */
     expect(so(ctx('PATCH', '/api/scm/mfg-sales-orders/SO-1/status', ['scm.so_cancel.approve_l2']))).toBe(false);
     expect(so(ctx('POST', '/api/scm/mfg-sales-orders/SO-1/cancel-request/approve', ['scm.access']))).toBe(false);
-    /* The Purchase Order has no approve key at all since 2026-09-09, so its
-       bypass admits nobody — not even the wildcard. */
     expect(cancelApproverWriteBypass('PO')(ctx('POST', '/api/scm/mfg-purchase-orders/po-1/cancel-request/approve', ['*']))).toBe(false);
     expect(CANCEL_REQUEST_OPEN_READ_PATH).toBe('/cancel-request');
   });
@@ -326,10 +308,6 @@ describe('the guard in front of the cancel', () => {
     expect(reached).not.toHaveBeenCalled();
   });
 
-  /* patchMfgSalesOrderStatusHandler reads `String(body.status).trim().toUpperCase()`,
-     so "CANCELLED " IS a cancel there. A guard that only upper-cased waved it
-     through as "some other transition" and the order was cancelled with no
-     signature at all. */
   it('reads the status the way the handler does — whitespace does not dodge the approvals', async () => {
     for (const status of ['CANCELLED ', ' cancelled', '\tCancelled\n', ['CANCELLED']]) {
       const res = await patch(L2, '/mfg-sales-orders/SO-1/status', { status });
@@ -347,12 +325,9 @@ describe('the guard in front of the cancel', () => {
     expect(res.status).toBe(200);
     expect(reached).toHaveBeenCalledWith('CANCELLED');
     expect(rows()[0]).toMatchObject({ status: 'EXECUTED', executed_by: 31 });
-    /* The row is spent: a second cancel call is refused again. */
     expect((await patch(L2, '/mfg-sales-orders/SO-1/status', { status: 'CANCELLED' })).status).toBe(403);
   });
 
-  /* THE 2026-09-09 RULE. No approval, no request, no second person — and no
-     silent cancel either: without a reason the PO is never reached. */
   it('a purchase order cancels on its reason alone, and not without one', async () => {
     const bare = await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel');
     expect(bare.status).toBe(400);
@@ -360,15 +335,12 @@ describe('the guard in front of the cancel', () => {
     expect(reached).not.toHaveBeenCalled();
     expect(rows()).toHaveLength(0);
 
-    /* Too short is the same refusal — 'no' is not a remark. */
     expect((await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel', { reason: 'no' })).status).toBe(400);
     expect(reached).not.toHaveBeenCalled();
 
     const ok = await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel', { reason: '  Supplier   cannot deliver  ' });
     expect(ok.status).toBe(200);
     expect(reached).toHaveBeenCalledWith('po');
-    /* The ledger row is written by the guard, already EXECUTED: whitespace
-       collapsed, the real caller on both the request and the execution. */
     expect(rows()).toHaveLength(1);
     expect(rows()[0]).toMatchObject({
       doc_type: 'PO', doc_key: 'po-1', doc_number: 'PO-1', status: 'EXECUTED',
@@ -377,10 +349,7 @@ describe('the guard in front of the cancel', () => {
     });
     expect(rows()[0]?.l1_by ?? null).toBeNull();
     expect(rows()[0]?.l2_by ?? null).toBeNull();
-    /* Nobody was asked to approve anything. */
     expect(notify).not.toHaveBeenCalled();
-    /* The history row carries the reason and NOT the status change: the PO's
-       own cancel handler writes that row itself. */
     expect(poAudit).toHaveBeenCalledTimes(1);
     const hist = poAudit.mock.calls[0]![1] as Record<string, unknown>;
     expect(hist).toMatchObject({ entityType: 'PURCHASE_ORDER', entityId: 'po-1', action: 'CANCEL', note: 'Cancellation: Supplier cannot deliver', statusSnapshot: 'SUBMITTED' });
@@ -393,10 +362,6 @@ describe('the guard in front of the cancel', () => {
     expect(rows()[0]).toMatchObject({ doc_key: 'po-draft', status: 'EXECUTED', doc_status_at_request: 'DRAFT' });
   });
 
-  /* The real PO cancel handler does not refuse an already-cancelled PO — it
-     answers 200 and echoes the cancelled state (cancelPurchaseOrderHandler,
-     `if (curStatus === 'CANCELLED') return c.json(...)`), which is what the
-     stand-in answers too. Nothing was cancelled by that call. */
   it('a purchase order that is ALREADY cancelled records no second cancellation', async () => {
     tables.purchase_orders[0]!.status = 'CANCELLED';
     const res = await patch(NOBODY, '/mfg-purchase-orders/po-1/cancel', { reason: 'Second tab, same click' });
@@ -407,8 +372,6 @@ describe('the guard in front of the cancel', () => {
 
   it('a cancel the handler REFUSED writes no ledger row claiming it happened', async () => {
     const a = app(NOBODY);
-    /* Stand in for the real handler refusing (a GRN on the PO, a drop-ship DO,
-       an already-received order): the guard must not record a cancellation. */
     const refusing = new Hono<{ Bindings: Env; Variables: Variables }>();
     refusing.use('*', async (c, next) => {
       c.set('user', CALLER); c.set('companyId', CO);
@@ -425,25 +388,20 @@ describe('the guard in front of the cancel', () => {
   });
 
   it('admits the cancel write for an approver who lacks the area, and only then', async () => {
-    /* A level-2 desk whose position has Sales Orders at `view` (prod: the Purchaser). */
     const L2_ONLY: Who = { id: 61, name: 'Purchaser Fay', perms: ['scm.access', 'scm.so.view_all', 'scm.so_cancel.approve_l2'] };
     await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request', { reason: 'Customer cancelled the order' });
-    /* Before the request is APPROVED nothing is admitted — the refusal comes first. */
     expect((await patch(L2_ONLY, '/mfg-sales-orders/SO-1/status', { status: 'CANCELLED' })).status).toBe(403);
     await post(L1, '/mfg-sales-orders/SO-1/cancel-request/approve');
     await post(L2_ONLY, '/mfg-sales-orders/SO-1/cancel-request/approve');
-    /* A caller with NO approve key is not admitted (the area guard decides for them). */
     const stranger = await patch(NOBODY, '/mfg-sales-orders/SO-1/status', { status: 'CANCELLED' });
     expect(await body(stranger)).toMatchObject({ ok: true, admitted: false });
     expect(rows()[0]).toMatchObject({ status: 'EXECUTED' });
-    /* Fresh request, same dance, now the approver executes: admitted. */
     tables.mfg_sales_orders[0]!.status = 'CONFIRMED';
     await post(REQUESTER, '/mfg-sales-orders/SO-1/cancel-request', { reason: 'Customer cancelled the order again' });
     await post(L1, '/mfg-sales-orders/SO-1/cancel-request/approve');
     await post(L2_ONLY, '/mfg-sales-orders/SO-1/cancel-request/approve');
     const res = await patch(L2_ONLY, '/mfg-sales-orders/SO-1/status', { status: 'CANCELLED' });
     expect(await body(res)).toMatchObject({ ok: true, admitted: true });
-    /* And a non-cancel transition by the same approver is never admitted. */
     const other = await patch(L2_ONLY, '/mfg-sales-orders/SO-1/status', { status: 'IN_PRODUCTION' });
     expect(await body(other)).toMatchObject({ ok: true, admitted: false });
   });
@@ -468,9 +426,6 @@ describe('the guard in front of the cancel', () => {
   });
 });
 
-/* THE 2026-09-14 RULE — 「DO cancel need pop out window for reason」. The
- * Purchase Order's shape on the delivery order's STATUS route: every other
- * transition rides the same PATCH and must not be asked anything. */
 describe('the guard in front of a delivery order cancel', () => {
   it('cancels on its reason alone, and not without one', async () => {
     const bare = await patch(NOBODY, '/delivery-orders-mfg/do-1/status', { status: 'CANCELLED' });
@@ -493,8 +448,6 @@ describe('the guard in front of a delivery order cancel', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  /* The DO status handler writes NO history of its own, so the guard's row is
-     the whole record of the cancel: who, why, and the status it left. */
   it('writes the delivery order\'s history row with the reason AND the status change', async () => {
     await patch(NOBODY, '/delivery-orders-mfg/do-1/status', { status: 'CANCELLED', reason: 'Customer postponed the delivery' });
     expect(poAudit).toHaveBeenCalledTimes(1);
@@ -560,10 +513,6 @@ describe('the guard in front of a delivery order cancel', () => {
     expect(poAudit).not.toHaveBeenCalled();
   });
 
-  /* Every test above mounts the guard itself. The rule only exists in
-     production if scm/index.ts mounts it too — after the DO area guard, and
-     before the router it guards (Hono runs handlers in registration order, so
-     a guard registered after the router would never see the request). */
   it('is mounted on the real DO status route, between the area guard and the router', () => {
     const src = rawScmIndex;
     const area = src.search(/scm\.use\(\s*"\/delivery-orders-mfg\/\*",\s*scmAreaGuard\(/);
@@ -613,8 +562,6 @@ describe('the guard in front of a delivery order cancel', () => {
  * being the Houzs shape — a numeric public.users.id — which is only true BEFORE
  * the bridge runs. The last test pins that. */
 describe('the guard runs before supabaseAuth: identify the caller from `user` too', () => {
-  /** Production's shape at the guard's mount point: the Houzs session user is in
-   *  `user` (numeric public.users.id) and `houzsUser` does not exist yet. */
   function appPreBridge(who: Who) {
     const a = new Hono<{ Bindings: Env; Variables: Variables }>();
     a.use('*', async (c, next) => {
@@ -638,12 +585,9 @@ describe('the guard runs before supabaseAuth: identify the caller from `user` to
   });
 
   it('the pinned scm.staff identity is still refused — it names nobody', async () => {
-    /* AFTER the bridge `user.id` is the system staff uuid. Reading it as the
-       actor is the bug the module header forbids (one actor on every row), so a
-       context carrying ONLY that must still be caller_unknown. */
     const a = new Hono<{ Bindings: Env; Variables: Variables }>();
     a.use('*', async (c, next) => {
-      c.set('user', CALLER);                    // id: 'staff-uuid'
+      c.set('user', CALLER);
       c.set('companyId', CO);
       c.set('supabase', sb as unknown as SupabaseClient);
       await next();
@@ -697,7 +641,6 @@ describe('the inbox, for a scoped salesperson', () => {
       { id: 'staff-mgr', user_id: MANAGER.id },
     ];
     tables.mfg_sales_orders.push(
-      // Rep A's own order, an imported OPEN order sold by rep B, and one shared with rep A.
       { doc_no: 'SO-A', status: 'CONFIRMED', company_id: CO, salesperson_id: 'staff-a', access_staff_ids: ['staff-a'] },
       { doc_no: 'SO-OPEN', status: 'CONFIRMED', company_id: CO, salesperson_id: 'staff-b', access_staff_ids: ['staff-b'], open_to_all: true },
       { doc_no: 'SO-SHARED', status: 'CONFIRMED', company_id: CO, salesperson_id: 'staff-b', access_staff_ids: ['staff-b', 'staff-a'] },

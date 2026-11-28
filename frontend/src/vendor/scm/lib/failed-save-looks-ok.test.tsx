@@ -1,7 +1,3 @@
-/* A save that half-failed must not read as a clean success (fix/failed-save-looks-ok).
-   1. DO status: `movementErrors` on a 200 from PATCH /delivery-orders-mfg/:id/status.
-   2. GRN: `recountError` on POST /grns and PATCH /grns/:id/post.
-   5. SO edit-lock Override: unlocks only when the server kept the typed reason. */
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, test, vi } from "vitest";

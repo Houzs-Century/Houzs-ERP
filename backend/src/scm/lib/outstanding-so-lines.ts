@@ -62,8 +62,6 @@ type QueryError = { message: string; code?: string } | null;
  * caller's existing error handling is unchanged.
  */
 export async function loadOutstandingSoLines<T = Record<string, unknown>>(
-  // The SCM routes carry an untyped supabase-js client; matching that here
-  // rather than importing a generated type keeps this usable from the route.
   sb: any, // eslint-disable-line @typescript-eslint/no-explicit-any
   scopeQuery: (q: any) => any, // eslint-disable-line @typescript-eslint/no-explicit-any
 ): Promise<{ data: T[] | null; error: QueryError }> {

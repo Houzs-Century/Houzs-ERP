@@ -14,13 +14,10 @@
 // ----------------------------------------------------------------------------
 
 export interface ReopenStageOption {
-  /** Stage slug — must be a member of the backend REOPEN_STAGES set. */
   value: string;
   label: string;
 }
 
-// Ordered as the operator meets them going backwards from "done": re-inspect,
-// re-decide the fix, or start the whole assessment over.
 export const REOPEN_STAGE_OPTIONS: readonly ReopenStageOption[] = [
   { value: "under_verification", label: "Verify (inspect the new problem)" },
   { value: "pending_solution", label: "Solution (decide the fix)" },

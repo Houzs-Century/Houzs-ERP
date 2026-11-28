@@ -25,7 +25,7 @@
 import { useMemo, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { monthEnd, monthStart } from '../../lib/dateRangePresets';
-import { fmtDateOrDash, fmtDayMonthRange } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtDayMonthRange } from '../../../../shared/src/vendor/shared/format';
 import { useLogisticsPnl, type LogisticsMonth, type LogisticsPnl, type PnlRegion } from '../../vendor/scm/lib/logistics-queries';
 import { FinanceGrid, fmtMoney, type GridRow } from './reports/FinanceGrid';
 import { FinanceDateRange } from './reports/FinanceDateRange';
@@ -61,12 +61,10 @@ const MODES: ReadonlyArray<{ value: Mode; label: string }> = [{ value: 'single',
 export type ViewProps = { p: LogisticsPnl; mode: Mode; split: boolean; showPct: boolean; period: string; months: string[] };
 
 export const LogisticsCostTab = ({ departmentPicker }: {
-  /** A picker the page lends, drawn after the dates (the Department P&L's departments); null on its own. */
   departmentPicker: ReactNode;
 }) => {
   const r = useReportRange();
   const [params, setParams] = useSearchParams();
-  /* `repairs` is the address of the repairs-only view this one replaced. */
   const lv = params.get('lv') === 'repairs' ? 'lorries' : params.get('lv');
   const view = (VIEWS.find((v) => v.value === lv)?.value ?? 'pnl');
   const mode: Mode = params.get('dm') === 'months' ? 'months' : 'single';
@@ -78,7 +76,6 @@ export const LogisticsCostTab = ({ departmentPicker }: {
     return n;
   }, { replace: true });
 
-  /* Whole months: the range widens to its months' first and last days. */
   const from = r.usable ? monthStart(r.from) : monthStart(r.today);
   const to = r.usable ? monthEnd(r.to) : monthEnd(r.today);
   const period = from.slice(0, 7) === to.slice(0, 7) ? monthName(from) : `${monthName(from)} – ${monthName(to)}`;
@@ -116,7 +113,6 @@ const byMonthOf = (p: LogisticsPnl) => new Map(p.perMonth.map((m) => [m.month, m
 const sumR = (x: Record<PnlRegion, number>) => x.PG + x.KL + x.EM + x.SG;
 const totalOf = (p: LogisticsPnl, f: (m: LogisticsMonth) => number) => p.perMonth.reduce((t, m) => t + f(m), 0);
 
-/* ── What could not be counted ─────────────────────────────────────────────── */
 function NotCounted({ lines }: { lines: string[] }) {
   if (lines.length === 0) return null;
   return (
@@ -128,14 +124,12 @@ function NotCounted({ lines }: { lines: string[] }) {
 }
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 
-/* ── By region & trip ──────────────────────────────────────────────────────── */
 function RegionView({ p, mode, split, period, months }: ViewProps) {
   const byMonth = useMemo(() => byMonthOf(p), [p]);
   const { columns, scopes } = useMemo(() => logisticsColumns(months, mode, split, 120), [months, mode, split]);
   const single = mode === 'single';
 
   const rows = useMemo<GridRow[]>(() => {
-    /* One line per lorry and per carrier over the months shown. */
     const plates = [...new Set(p.perMonth.flatMap((m) => m.cost.lorries.map((l) => l.plate)))].sort();
     const carriers = [...new Set(p.perMonth.flatMap((m) => m.cost.carriers.map((c) => c.name)))];
     const lorryOf = (m: LogisticsMonth, plate: string) => m.cost.lorries.find((l) => l.plate === plate);
@@ -257,7 +251,6 @@ function RegionView({ p, mode, split, period, months }: ViewProps) {
   );
 }
 
-/* ── Setup & Dismantle ─────────────────────────────────────────────────────── */
 function EventsView({ p, mode, split, showPct, period, months }: ViewProps) {
   const byMonth = useMemo(() => byMonthOf(p), [p]);
   const { columns, scopes } = useMemo(() => logisticsColumns(months, mode, split, showPct ? 172 : 120), [months, mode, split, showPct]);

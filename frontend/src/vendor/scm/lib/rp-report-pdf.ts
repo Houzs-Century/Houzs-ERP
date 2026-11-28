@@ -7,7 +7,7 @@
 // disagree (owner 2026-09-19: 我这页显示什么就要 export 什么).
 // ----------------------------------------------------------------------------
 
-import { fmtDate, fmtSenPlain } from '../../shared/format';
+import { fmtDate, fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
 import type { PdfAction } from './pdf-common';
 import type { RpReport } from './rp-report-queries';
 import { cashFlowTable, type CashFlowSheetOptions, type ReportSheet } from './report-sheet';
@@ -18,7 +18,7 @@ import { downloadReportXlsx } from './report-sheet-xlsx';
 export const fmtRp = (sen: number): string => fmtSenPlain(sen);
 
 /** The Cash Flow as the screen shows it, ready for paper or Excel. */
-export function cashFlowSheet(r: RpReport, opts: CashFlowSheetOptions = {}): ReportSheet {
+export function cashFlowSheet(r: RpReport, opts: CashFlowSheetOptions): ReportSheet {
   const period = `${fmtDate(r.from)} – ${fmtDate(r.to)}`;
   const rows = r.byParty ? 'By debtor / creditor' : "By the owner's accounts";
   return {
@@ -36,8 +36,8 @@ export function cashFlowSheet(r: RpReport, opts: CashFlowSheetOptions = {}): Rep
 
 const fileBase = (r: RpReport): string => `cash-flow-${r.from}-to-${r.to}`;
 
-export const generateRpPdf = (r: RpReport, opts: CashFlowSheetOptions & { action?: PdfAction } = {}): Promise<void> =>
+export const generateRpPdf = (r: RpReport, opts: CashFlowSheetOptions & { action?: PdfAction }): Promise<void> =>
   generateReportPdf(cashFlowSheet(r, opts), { fileName: `${fileBase(r)}.pdf`, action: opts.action });
 
-export const downloadRpXlsx = (r: RpReport, opts: CashFlowSheetOptions = {}): Promise<void> =>
+export const downloadRpXlsx = (r: RpReport, opts: CashFlowSheetOptions): Promise<void> =>
   downloadReportXlsx(cashFlowSheet(r, opts), `${fileBase(r)}.xlsx`);

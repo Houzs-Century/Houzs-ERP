@@ -27,7 +27,7 @@ import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { useLorries } from "../vendor/scm/lib/lorries-queries";
-import { fmtDate, fmtSen, todayMY } from "../vendor/shared/format";
+import { fmtDate, fmtSen, todayMY } from "../../../shared/src/vendor/shared/format";
 import { CapacityCard, PurchaseCard } from "./fleet/LorryVehicle";
 import { LorryTodayRoute } from "./fleet/LorryTodayRoute";
 import { RepairSpend, repairSpendOf } from "./fleet/RepairSpend";
@@ -109,7 +109,6 @@ export function LorryRecord() {
 
   const v = detail.data?.vehicle;
   const compliance = detail.data?.compliance;
-  // The lorry master row: the vehicle-details editor writes it (PATCH /lorries/:id).
   const lorries = useLorries({ includeInactive: true, fleet: "all" });
   const lorryRow = (lorries.data ?? []).find((l) => l.id === lorryId) ?? null;
 
@@ -161,7 +160,6 @@ export function LorryRecord() {
 
       <section className="flex flex-wrap items-stretch gap-5 rounded-2xl border border-border bg-surface p-3.5 sm:p-[18px]">
         <div className="min-w-0 max-w-full flex-[1_1_420px]">
-          {/* Drawn to the lorry's own container size; drag to turn it. */}
           <Lorry3D box={lorryBox(v)} height={220} />
         </div>
         <div className="flex min-w-0 flex-[1_1_340px] flex-col gap-3">
@@ -214,7 +212,7 @@ export function LorryRecord() {
 
       {tab === "overview" && (
         <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.5fr_1fr]">
-          <Section title="Where it is today"><LorryTodayRoute lorryId={v.id} /></Section>
+          <Section title="Where it is and where it went"><LorryTodayRoute lorryId={v.id} /></Section>
           <Section title="Needs attention">
             {attention.length === 0 ? <p className={EMPTY}>Nothing needs attention.</p> : (
               <ul className="-mx-1 flex flex-col">

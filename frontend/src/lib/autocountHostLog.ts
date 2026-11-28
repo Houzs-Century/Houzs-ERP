@@ -1,34 +1,10 @@
-// ----------------------------------------------------------------------------
-// THE OFFICE MACHINE'S OWN LOG, ON THE SCREEN THAT SHOWS THE FAILURES.
-//
-// `GET /api/scm/autocount-outbox/host-log` has existed since the day the outbox
-// page did, and NOTHING has ever called it. That is not a tidiness problem: the
-// AutoCount service asks the vendor's own validator which of the line keys it
-// will accept before every partial transfer, and writes the answer to a text
-// file on the shop-floor PC. Ten delivery orders spent six attempts each being
-// refused with the eleven words `Invalid transfer item.`, while the sentence
-// naming the offending line was produced sixty times and read none of them —
-// because reading it meant a remote-desktop session onto that machine.
-//
-// This module is the client for that route plus the reading of it: the log is a
-// wall of text and the two or three lines that answer the question are in the
-// middle of it, so `acHostLogFindings` lifts those out and says what each one
-// means. The classifier never invents a verdict — an unrecognised line is left
-// alone and shown as itself.
-//
-// WHAT IT IS NOT: a fix. The durable answer is the verdict riding in the error
-// the ERP stores, which is a change to AcSyncService.cs and reaches the host
-// only when somebody rebuilds it. Until then this reads what is already there.
-// ----------------------------------------------------------------------------
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";
 
 /** What `GET /autocount-outbox/host-log` answers with. */
 export interface AcHostLogResponse {
   ok: boolean;
-  /** The file the host read, as the host names it. Null when it could not say. */
   path: string | null;
-  /** False when the host answered but the log file is not there. */
   exists: boolean | null;
   lines: string[];
 }
@@ -68,17 +44,11 @@ export function useAcHostLog(lines: number, onlyErrors: boolean, enabled: boolea
 export type AcHostLogTone = "answer" | "bad" | "note";
 
 export interface AcHostLogFinding {
-  /** The log line, verbatim. Never rewritten — it is the machine's own words. */
   line: string;
   tone: AcHostLogTone;
-  /** What it means, in the operator's terms. */
   meaning: string;
 }
 
-/* Each rule is a substring the host writes and the sentence it stands for. The
-   substrings are copied from AcSyncService.cs; if one is renamed there this
-   classifier silently stops matching, which is why the panel always shows the
-   raw tail as well and never claims "nothing found" as a verdict. */
 const RULES: ReadonlyArray<{ needle: string; tone: AcHostLogTone; meaning: string }> = [
   {
     needle: "valid-transfer-item check: AutoCount kept FEWER rows",

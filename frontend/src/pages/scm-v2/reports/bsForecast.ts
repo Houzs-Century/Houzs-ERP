@@ -8,7 +8,7 @@
 // ----------------------------------------------------------------------------
 
 import { monthEnd } from '../../../lib/dateRangePresets';
-import { fmtSenPlain } from '../../../vendor/shared/format';
+import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
 import type { BsForecast } from '../../../vendor/scm/lib/bs-forecast-queries';
 import { monthName, type StatementColumn } from './statementColumns';
 

@@ -1,25 +1,12 @@
-// ----------------------------------------------------------------------------
-// LiveTripMap — the dispatcher's LIVE driver map for TMS Phase 4. Same maps
-// layer as ScheduleRouteMap (@vis.gl/react-google-maps, imperative markers via
-// useMap() so no cloud mapId is needed), but instead of a planned route it draws
-// one pulsing marker per driver at their LATEST polled position, with a "last
-// seen" staleness tint (fresh = blue, stale = amber).
-//
-// KEY: reads the BROWSER key from import.meta.env.VITE_GOOGLE_MAPS_API_KEY. Unset
-// → this component is not mounted (the caller shows a "map key not configured"
-// note). A runtime load failure degrades in-place. No pings yet → an empty map
-// centred on KL with an "waiting for the driver's first location" caption.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from 'react';
 import { APIProvider, Map, useMap } from '@vis.gl/react-google-maps';
 import type { TripLocation } from '../lib/trip-locations-queries';
 
-/* A driver marker enriched with the presentation the map needs. */
 export type LiveMarker = {
   location: TripLocation;
-  label: string;      // driver name / trip no — the pin's tooltip + badge
-  stale: boolean;     // last-seen older than the staleness threshold
+  label: string;
+  stale: boolean;
 };
 
 /* A lorry's driven path today, drawn under its pin (owner 2026-11-10). */
@@ -62,7 +49,6 @@ function MarkersOverlay({ markers }: { markers: LiveMarker[] }) {
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
           scale: 12,
-          // Fresh = blue, stale = amber (the marker is old, not gone).
           fillColor: m.stale ? '#d97706' : '#2563eb',
           fillOpacity: 1,
           strokeColor: '#ffffff',
@@ -71,7 +57,6 @@ function MarkersOverlay({ markers }: { markers: LiveMarker[] }) {
       });
       objectsRef.current.push(marker);
 
-      // Accuracy halo (metres → a translucent circle), when reported.
       if (m.location.accuracyM && m.location.accuracyM > 0) {
         const circle = new google.maps.Circle({
           map,
@@ -87,8 +72,6 @@ function MarkersOverlay({ markers }: { markers: LiveMarker[] }) {
       }
     }
 
-    // Fit once on first markers so a live update does not yank the viewport away
-    // from a dispatcher who has panned/zoomed to watch one driver.
     if (!bounds.isEmpty() && !fittedRef.current) {
       map.fitBounds(bounds, 64);
       if (n <= 1) map.setZoom(14);

@@ -1,13 +1,3 @@
-/* The Consignment Order is the paper a customer signs for a TEMPORARY
- * PROVISION — goods lent while their own order is corrected. It replaced the
- * "Temporary provision" letter (HC-SL0047) on 2026-10-05. The CO prints
- * through the Sales Order template, which used to carry the POS receipt terms
- * (tax invoice, balance due, surcharges) with only the noun swapped — wording
- * that is simply false for a loan.
- *
- * Asserted on what the generator DREW (`doc.text`), the technique
- * sales-order-pdf-category-heading.test.ts uses, so a caller that drops the
- * shared opts and goes back to the receipt terms fails here. */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
@@ -57,7 +47,6 @@ async function printedText(
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const drawn = captureText(doc);
   await renderSalesOrderInto(doc, autoTable, { ...HEADER, ...header }, ITEMS, [], [], opts);
-  /* Terms wrap through splitTextToSize, so a phrase can straddle two drawn lines. */
   return drawn.join(' ').replace(/\s+/g, ' ');
 }
 

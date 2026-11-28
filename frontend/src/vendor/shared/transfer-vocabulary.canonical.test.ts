@@ -15,18 +15,6 @@ import {
 import { parsePoNoteSos } from '../../pages/scm-v2/po-relationship-map';
 import { TRANSFER_DOC, transferFromLabel as ruleFromLabel, transferToLabel as ruleToLabel } from '../../lib/convertScope';
 
-// ---------------------------------------------------------------------------
-// The frontend half of the provenance-note referee.
-//
-// It is held to the SAME corpus file the backend test reads — one file, not two
-// lists that look alike. That is the whole point: the note in
-// `purchase_orders.notes` is a STORED DATA CONTRACT, the only record of which
-// Sales Orders an MRP-raised PO was bought for (those POs carry no per-line
-// so_item_id), and it is parsed on BOTH sides of the wire. A frontend parser
-// that learned the new label and forgot the old one would not throw — the PO
-// Relationship Map's Sales Order node and the printed PO's "Your Ref No." would
-// simply be blank for every PO raised before the rename.
-// ---------------------------------------------------------------------------
 
 type Case = { name: string; note: string; expect: string[] };
 const CORPUS: Case[] = JSON.parse(
@@ -37,8 +25,6 @@ const CORPUS: Case[] = JSON.parse(
 ).cases;
 
 test('the corpus is the backend\'s, not a copy of it', () => {
-  // If this ever reads a file inside frontend/, the two suites have stopped
-  // refereeing each other and each is only checking itself.
   expect(CORPUS.length).toBeGreaterThanOrEqual(15);
   expect(CORPUS.some((c) => /transfer from sales order/i.test(c.note))).toBe(true);
   expect(CORPUS.some((c) => /^from sos?:/i.test(c.note))).toBe(true);
@@ -59,13 +45,9 @@ describe('every frontend reader extracts the same set from the same corpus', () 
   }
 });
 
-// The backend and the frontend each carry a copy of this module, exactly like
-// phone.ts — and phone.ts is in this tree with its own byte-identity test
-// because the two copies HAD silently drifted once. This module is worse to
-// drift: phone.ts renders a number wrong, this one loses a document's lineage.
 describe('the two copies of this module are the same file', () => {
   test('backend/src/scm/shared/transfer-vocabulary.ts is byte-identical to this one', () => {
-    const here = resolve(process.cwd(), 'src/vendor/shared/transfer-vocabulary.ts');
+    const here = resolve(process.cwd(), '../shared/src/vendor/shared/transfer-vocabulary.ts');
     const there = resolve(process.cwd(), '../backend/src/scm/shared/transfer-vocabulary.ts');
     const norm = (p: string) => readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
     expect(norm(there)).toBe(norm(here));
@@ -86,17 +68,11 @@ describe('convertScope still speaks the one vocabulary, it does not own a second
   });
 
   test('the words themselves are one object, not two that agree today', () => {
-    // Identity, not equality: a copied table passes a deep-equal check on the
-    // day it is copied and drifts the day after. `toBe` is the only assertion
-    // here that a re-export passes and a re-declaration fails.
     expect(TRANSFER_DOC).toBe(SHARED_TRANSFER_DOC);
   });
 });
 
 describe('the printed PO and the map agree about what the note says', () => {
-  // purchase-order-pdf.ts used to carry its own regex WITHOUT the `m` flag, so
-  // a note whose label sat on a later line printed no source SO while the
-  // relationship map beside it showed one. Same parser now; same answer.
   test('a label on a later line is read by both', () => {
     const note = 'Supplier confirmed the ETA by phone.\nTransfer from Sales Order: SO-2699-001';
     expect(parseProvenanceNote(note)).toEqual(['SO-2699-001']);
@@ -104,7 +80,6 @@ describe('the printed PO and the map agree about what the note says', () => {
   });
 
   test('a trailing comma does not make a single-source PO look multi-source', () => {
-    // The PDF decided single-vs-multi by `.includes(',')` on the raw list.
     expect(parseProvenanceNote('Transfer from Sales Order: SO-2699-001,')).toEqual(['SO-2699-001']);
   });
 });
@@ -134,8 +109,6 @@ describe('the lineage column header is generated, and it is short', () => {
   });
 
   test('a header stays narrow enough for the column it heads', () => {
-    // These sit in 110-160px grid columns. The full sentence does not fit, and
-    // that gap is exactly why fifteen of them were hand-written.
     for (const key of Object.keys(TRANSFER_DOC) as Array<keyof typeof TRANSFER_DOC>) {
       expect(transferFromColumnLabel(key).length).toBeLessThanOrEqual(24);
     }

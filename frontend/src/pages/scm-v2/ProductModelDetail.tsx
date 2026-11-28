@@ -1,22 +1,3 @@
-// ----------------------------------------------------------------------------
-// ProductModelDetail — full-page route at /product-models/:id (PR #49).
-//
-// Second-layer template entity. Each Model groups many SKU rows on
-// mfg_products (folded under base_model + the new model_id FK). Stock,
-// cost, pricing all stay per-SKU — Model only owns the allowed-options
-// pool + photo + name template.
-//
-// Sections:
-//   1. Header — back link, Layers icon, model code · name · category pill ·
-//      active toggle, action buttons (Save / Deactivate / Delete)
-//   2. Model info card — editable name + description (model_code + category
-//      read-only after creation)
-//   3. Allowed options panel — per-category chip toggles persisted as JSONB
-//   4. SKU variants list — read-only, links to per-SKU page for pricing edits
-//
-// PR #50 will add the "Generate SKU variants" button that uses
-// allowed_options to bulk-INSERT mfg_products rows.
-// ----------------------------------------------------------------------------
 
 import { lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
@@ -34,7 +15,7 @@ import {
 } from '../../vendor/scm/lib/product-models-queries';
 import { DataTable } from '../../components/DataTable';
 import { useMaintenanceConfig, useUpdateMfgProductStatus, useSpecialAddons, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
-import { isSingleSkuCategory } from '../../vendor/shared/product-categories';
+import { isSingleSkuCategory } from '../../vendor/scm/lib/product-categories-store';
 import { useFabricLibrary } from '../../vendor/scm/lib/queries';
 import { CategorySwapSelect } from '../../vendor/scm/components/CategorySwapSelect';
 import { useAuth } from '../../auth/AuthContext';
@@ -49,41 +30,21 @@ import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { MODEL_DEFAULT_AXES, pickDefaultVariants } from '../../vendor/shared/model-default-variants';
 import { PhotoGallery as ProductModelPhotoGallery } from '../../components/scm-v2/PhotoGallery';
 
-// Staff #5 — reuse the proven multi-supplier assign dialog from the Models list,
-// scoped to this single model, so an operator can bind suppliers to an EXISTING
-// model's SKUs from the edit page. Lazy-imported to break the ProductModels ⇄
-// ProductModelDetail circular import (ProductModels renders this page as a drawer).
 const AssignSupplierDialog = lazy(() =>
   import('./ProductModels').then((m) => ({ default: m.ModularAssignSupplierDialog })));
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-/* Section card — replaces the bespoke .card, whose white/hairline/shadow
-   only resolved through the removed .page token cascade. Same slab the
-   Inventory / WarehouseRacks reskin uses. */
 const CARD = 'flex flex-col gap-4 rounded-lg border border-border bg-surface p-5 shadow-stone';
 
-/* Error banners — err tokens (were the bespoke .errorBanner / .photoError,
-   which painted --c-festive-b on a raw rgba tint). */
 const BANNER_ERR =
   'rounded-lg border border-err/40 bg-err/10 px-4 py-3 text-[14px] text-err';
 const BANNER_ERR_SM =
   'rounded-lg border border-err/40 bg-err/10 px-3 py-2 text-[12px] text-err';
 
-/* Back link / Close — the detail page's escape hatch. Same compact
-   secondary-button recipe PageHeader gives its own secondaryActions (and
-   the shape WarehouseRacks' "← Warehouses" link uses), so the link reads as
-   part of the action rail instead of floating above the title. */
 const BACK_LINK =
   'inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary';
 
-/* Resolve a Model photo URL for <img src>. Two upload paths coexist:
-   · bulk / API upload (POST /product-models/:id/photo) → R2 proxy path,
-     stored as a RELATIVE url "/product-models/{id}/photo/{key}" → must be
-     prefixed with VITE_API_URL to hit the Worker, not the backend origin.
-   · legacy Supabase-Storage upload → a full https:// public URL → use as-is.
-   (Commander 2026-05-28: Model photo rendered as a broken image because the
-   relative R2 path resolved against the backend origin → 404.) */
 const API_URL =
   ((import.meta.env.VITE_API_URL ||
     (import.meta.env.PROD ? '' : 'https://autocount-sync-api.houzs-erp.workers.dev')) as string) +
@@ -94,12 +55,6 @@ const resolveModelPhotoUrl = (u: string | null | undefined): string | undefined 
   return API_URL ? `${API_URL}${u.startsWith('/') ? '' : '/'}${u}` : u;
 };
 
-// Fallback pools used only when the global Maintenance config doesn't have the
-// pool keys yet (older deployments). Commander manages the real lists from
-// the Maintenance page → Bedframe Sizes / Sofa Compartments / Mattress Sizes
-// sub-tabs (PR #50). These constants exist so the UI never renders blank.
-// Canonical parens form — byte-identical to the codes the Maintenance master
-// pool stores (2026-06-04 unification: ONE compartment vocabulary everywhere).
 const FALLBACK_SOFA_COMPARTMENTS = [
   '1A(LHF)', '1A(RHF)', '1B(LHF)', '1B(RHF)', '1NA', '1S',
   '2A(LHF)', '2A(RHF)', '2B(LHF)', '2B(RHF)', '2NA', '2S',
@@ -142,26 +97,14 @@ export const ProductModelDetail = ({
   const generateMut = useGenerateModelSkus();
   const statusMut = useUpdateMfgProductStatus();
   const activateOneShotMut = useActivateOneShot();
-  // HOUZS VENDOR — the source uploaded the model photo client-side via
-  // supabase.storage; here it routes through the Worker R2 path instead.
   const uploadPhotoMut = useUploadProductModelPhoto();
   const maintenance = useMaintenanceConfig('master');
   const askConfirm = useConfirm();
   const notify = useNotify();
-  // Staff #5 — supplier-assign dialog (reuses ModularAssignSupplierDialog).
   const [assigning, setAssigning] = useState(false);
-  // Branding datalist — maintenance Brandings pool first, DISTINCT fallback.
   const brandingPool = useBrandingPool();
-  // Fabric library — pool of active fabric slugs displayed in the FABRICS
-  // option group for SOFA Models.
   const fabricLibQ = useFabricLibrary();
 
-  // Specials pool now comes from the Special Add-ons table (special_addons),
-  // not the legacy maintenance_config specials/sofaSpecials (Loo 2026-06-08 —
-  // Backend↔POS parity). The add-on `code` shares the same string namespace
-  // as the old maintenance values, so a Model's saved allowed_options.specials
-  // keep matching with no data migration. Filter by the Model's category +
-  // active, ordered like the Special Add-ons tab.
   const specialAddonsQ = useSpecialAddons();
   const specialsByCategory = useMemo(() => {
     const rows = (specialAddonsQ.data ?? [])
@@ -212,8 +155,6 @@ export const ProductModelDetail = ({
         (next as Record<string, unknown>)[key] = [...pool];
       }
     };
-    // Pull global pools the same way the panels do below so the auto-fill
-    // matches what commander sees.
     const sofaComps = maintActiveValues(cfg?.sofaCompartments ?? FALLBACK_SOFA_COMPARTMENTS);
     const sofaSizes = maintActiveValues(cfg?.sofaSizes ?? ['24', '26', '28', '30', '32', '35']);
     const sofaLegs  = (cfg?.sofaLegHeights ?? []).map((o) => o.value);
@@ -254,15 +195,10 @@ export const ProductModelDetail = ({
   if (error) {
     return (
       <div className={BANNER_ERR}>
-        {/* authedFetch already ran this through humanApiError, so `message` is a
-            plain sentence. String(error) is the non-Error fallback only. */}
         Failed to load model. {error instanceof Error ? error.message : 'Something went wrong.'}
       </div>
     );
   }
-  /* Reached only once the query has SETTLED and did not error, so this now means
-     "the server answered and there is no such model" — never "we haven't asked
-     yet". */
   if (!data?.model) return <div className="p-6 text-[14px] text-ink-secondary">Model not found.</div>;
 
   const model = data.model;
@@ -281,7 +217,6 @@ export const ProductModelDetail = ({
       name,
       description: description.trim() || null,
       allowedOptions: allowed,
-      // Drops a default whose option was just unticked, so the save is not refused.
       defaultVariants: pickDefaultVariants(model.category, defaults, allowed),
     }, {
       onSuccess: (res) => {
@@ -319,18 +254,12 @@ export const ProductModelDetail = ({
     }))) return;
     deleteMut.mutate(id, {
       onSuccess: () => {
-        // Embedded mode: close the drawer + let the parent invalidate the
-        // Modular list. Direct-route mode: bounce back to the vendored list.
         if (embedded && onClose) onClose();
         else navigate('/scm/product-models');
       },
     });
   };
 
-  /** Validate + upload to Supabase Storage, then PATCH the Model with the
-   *  public URL. Bucket policies (migration 0066) grant authenticated INSERT
-   *  on `model-photos`; the bucket is `public: true` so the getPublicUrl
-   *  result is a directly-loadable <img src=…>. */
   const onPhotoFile = async (rawFile: File) => {
     if (!id) return;
     setPhotoError(null);
@@ -340,19 +269,12 @@ export const ProductModelDetail = ({
     }
     setPhotoUploading(true);
     try {
-      /* WO-7 — the backend caps this endpoint at 2 MB, so raw phone photos
-         used to bounce. Compress to the same 1600px budget the ProductModels
-         list cell already uses; a still-oversized result gets the clear
-         client-side error instead of a server 400. */
       const { file } = await prepareImageForUpload(rawFile, { maxDimension: 1600, wantThumb: false });
       if (file.size > 2 * 1024 * 1024) {
         setPhotoError('Still over 2 MB after compression - use a smaller image.');
         setPhotoUploading(false);
         return;
       }
-      // HOUZS VENDOR — multipart POST to the Worker, which uploads to R2 and
-      // patches product_models.photo_url itself (replaces the supabase.storage
-      // client-side upload the source page used).
       await uploadPhotoMut.mutateAsync({ id, file });
     } catch (e) {
       setPhotoError(e instanceof Error ? e.message : 'Something went wrong.');
@@ -374,9 +296,6 @@ export const ProductModelDetail = ({
 
   return (
     <div className="space-y-4">
-      {/* Header --------------------------------------------------------- */}
-      {/* Bare `back` is history-back, which from the list's drawer (no URL
-          change on open) left Product Models entirely. */}
       <PageHeader
         back="/scm/product-models"
         beforeBack={onClose ? () => { onClose(); return false; } : undefined}
@@ -384,10 +303,6 @@ export const ProductModelDetail = ({
         title={model.model_code}
         description={model.name}
         actions={
-          /* Category + ACTIVE/INACTIVE pills — the old .titleRow chrome,
-             reseated in the header's always-rendered actions slot. (The
-             decorative <Layers> glyph went away with the bespoke title row;
-             PageHeader's eyebrow rail carries that job now.) */
           <div className="flex flex-wrap items-center gap-2">
             <span className={styles.catPill}>{mfgCategoryLabel(model.category)}</span>
             <span className={`${styles.statusPill} ${model.active ? styles.active : styles.inactive}`}>
@@ -396,10 +311,6 @@ export const ProductModelDetail = ({
           </div>
         }
         primaryAction={
-          /* Every control stays an inline Button/Link rather than
-             `secondaryActions`: MenuItem has no `disabled`, and Save changes
-             must keep its `disabled={updateMut.isPending}` guard — moving it
-             to a MenuItem would silently drop the in-flight lock. */
           <div className="flex flex-wrap items-stretch gap-2">
             {embedded ? (
               <button type="button" className={BACK_LINK} onClick={onClose}>
@@ -426,10 +337,6 @@ export const ProductModelDetail = ({
         }
       />
 
-      {/* Scoped, not bare. This dialog opens OVER a live edit form, so a failed
-          chunk here used to bubble past every boundary in between to main.tsx's
-          unkeyed top-level one and take the form down with it. Keyed on the
-          model so closing/reopening or moving model clears it. */}
       {assigning && id && (
         <LazySlot resetKey={`assign-supplier:${id}`} fallback={null}>
           <AssignSupplierDialog
@@ -446,7 +353,6 @@ export const ProductModelDetail = ({
         </div>
       )}
 
-      {/* Info card ------------------------------------------------------ */}
       <section className={CARD}>
         <h2 className={styles.cardTitle}>Model info</h2>
         <div className={styles.fieldGrid}>
@@ -465,11 +371,6 @@ export const ProductModelDetail = ({
             />
           </label>
           <div className={styles.field}>
-            {/* Editable per the approved Modular mockup — a model's category
-                lives here. CategorySwapSelect (kind="model") carries its own
-                "Category" label and runs the same move-the-whole-model-and-its-
-                SKUs confirmation the SKU drawer uses; the server moves the SKUs
-                with the model. */}
             {id ? (
               <>
                 <CategorySwapSelect kind="model" id={id} category={model.category} />
@@ -527,7 +428,6 @@ export const ProductModelDetail = ({
         </div>
       </section>
 
-      {/* Photo card (PR #97) ------------------------------------------- */}
       <section className={CARD}>
         <div className={styles.photoRow}>
           {model.photo_url ? (
@@ -585,17 +485,12 @@ export const ProductModelDetail = ({
         </div>
       </section>
 
-      {/* Photo gallery (multi-photo) — wires to the EXPECTED gallery endpoint
-          (POST/GET/DELETE/PATCH /product-models/:id/photos). Renders the
-          "Not yet wired · Setup notes" state until BACKEND-CHECKLIST A1 lands.
-          The legacy single photo above is unaffected. */}
       {id && (
         <section className={CARD} style={{ padding: 0 }}>
           <ProductModelPhotoGallery modelId={id} modelName={model.name} />
         </section>
       )}
 
-      {/* Allowed options ------------------------------------------------ */}
       <section className={CARD}>
         <h2 className={styles.cardTitle}>Allowed options</h2>
         <p className={styles.cardSub}>
@@ -638,8 +533,6 @@ export const ProductModelDetail = ({
           />
         )}
 
-        {/* PR #66 — Mattress-only thickness input. Feeds the (HxWx{thickness}CM)
-            dimensions in the SKU name template. Stored on allowed_options. */}
         {model.category === 'MATTRESS' && (
           <div className={styles.optGroup}>
             <div className={styles.optHead}>
@@ -663,10 +556,6 @@ export const ProductModelDetail = ({
                 setAllowed(next);
               }}
               placeholder="e.g. 31 (for AKKA-FIRM)"
-              /* Hex-pinned: --line-strong / --c-paper only resolved through
-                 the removed .page cascade (:root has them as
-                 rgba(34,31,32,.28) / #f4f6f3 — this input would have gained a
-                 dark border on a grey fill). Now border + surface tokens. */
               style={{
                 fontFamily: 'var(--font-mono)',
                 fontSize: 'var(--fs-14)',
@@ -691,7 +580,6 @@ export const ProductModelDetail = ({
         )}
       </section>
 
-      {/* SKU variants list --------------------------------------------- */}
       <section className={CARD}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className={styles.cardTitle}>SKU variants ({data.skus.length})</h2>
@@ -769,9 +657,6 @@ export const ProductModelDetail = ({
               { key: 'size', label: 'Size', render: (sku) => sku.size_label ?? sku.size_code ?? '—', getValue: (sku) => sku.size_label ?? sku.size_code ?? '' },
               {
                 key: 'status', label: 'Status', getValue: (sku) => sku.status,
-                /* PR #87 — the pill is a button: one click flips ACTIVE<->INACTIVE
-                   via PATCH /mfg-products/:id, disabled while a bulk toggle runs so
-                   the per-row mutation never races the fan-out. */
                 render: (sku) => (
                   <button
                     type="button"
@@ -790,8 +675,6 @@ export const ProductModelDetail = ({
               {
                 key: 'pos', label: 'POS',
                 getValue: (sku) => (sku.one_shot ? (sku.pos_active === false ? 'Not in POS' : 'Active in POS') : ''),
-                /* One-shot SKUs start with pos_active=false and need an explicit
-                   Activate to surface in the POS catalog. */
                 render: (sku) => (sku.one_shot ? (
                   sku.pos_active === false ? (
                     <button
@@ -826,7 +709,6 @@ export const ProductModelDetail = ({
           />
         )}
       </section>
-      {/* + Add codes picker modal ------------------------------------- */}
       {addCodesOpen && id && (
         <AddCodesModal
           modelId={id}
@@ -857,23 +739,10 @@ export const ProductModelDetail = ({
   );
 };
 
-/* ────────────────────────── + Add codes picker modal ───────────────────────
-   Lists every combination that comes out of the Model's allowed_options as
-   a checkbox row. Codes that already exist on mfg_products are pre-disabled
-   so commander can see what's there and can't double-insert.
-   ────────────────────────────────────────────────────────────────────────── */
 
-// SIZE_INFO now lives in ../lib/size-info (imported at top of file) so the
-// New Model dialog + Maintenance pool list can read from the same source of
-// truth. The api copy in apps/api/src/routes/product-models.ts §SIZE_INFO
-// still has to be kept manually in sync (different runtime / package).
 
-/** Candidate row carries the same fields the API's `rows` payload accepts so
-    the modal can send them straight through without re-deriving server-side. */
 type Candidate = { code: string; name: string; size_code: string | null; size_label: string | null };
 
-/** PR #72 — per-category code/name format. Client substitutes placeholders
-    using the row's local values, server just INSERTs verbatim. */
 type FormatTemplates = {
   bedframeCode?: string; bedframeName?: string;
   sofaCode?:     string; sofaName?:     string;
@@ -882,19 +751,8 @@ type FormatTemplates = {
 
 const DEFAULT_FORMATS = {
   bedframeCode: '{model_code}-({size})',
-  // PR #100 — Commander 2026-05-26: match the mattress convention by
-  // inserting {model_name} so generated descriptions read "TRION BEDFRAME
-  // (6FT) (183X190CM)" instead of just "BEDFRAME (6FT) (…)". applyFormat
-  // collapses empty {} pairs so a missing branding or model_name still
-  // produces a clean string. Mirrors apps/api/src/routes/product-models.ts
-  // §BEDFRAME.
   bedframeName: '{branding} {model_name} BEDFRAME ({size_label}) ({dimensions})',
   sofaCode:     '{model_code}-{compartment}',
-  // PR #81 — Match commander's legacy sample "SOFA 5530 1A(LHF)". The old
-  // template ('{model_name} {compartment}') worked only when commander
-  // typed "SOFA 5530" into model.name; for new Models like "ADDA" it
-  // produced "ADDA 1A(LHF)" (no "SOFA" word). Now inserts "SOFA" literal
-  // (no branding: it lives in its own column). Mirrors API §SOFA branch.
   sofaName:     'SOFA {model_name} {compartment}',
   // PR #88 — Drop the "-NF" suffix per Commander ("NF 不需要"). Was
   // '{branding_nf}{model_code} MATT ({size})' producing "HAPPI.S-NF
@@ -903,19 +761,10 @@ const DEFAULT_FORMATS = {
   // when branding is blank so the empty-branding case still produces
   // a clean "{model_code} MATT (size)".
   mattressCode: '{branding} {model_code} MATT ({size})',
-  // PR #81 — Match 2990 sample. Was '{model_name} ({width}x...)' which
-  // produced "GridCool (183x190x25CM)"; now produces
-  // "Happi.S GridCool MATTRESS (183x190x25CM)". applyFormat() handles the
-  // missing-branding case (empty string + trim() collapses the leading
-  // space). Mirrors apps/api/src/routes/product-models.ts §MATTRESS.
   mattressName: '{branding} {model_name} MATTRESS ({width}x{length}x{thickness}CM)',
 } as const;
 
 function applyFormat(tpl: string, vars: Record<string, string>): string {
-  // PR #85 — Commander 2026-05-26: all generated SKU code + name are
-  // uppercased (server mirrors this in routes/product-models.ts
-  // §generate-skus). Uppercasing here keeps the "+ Add Codes" picker
-  // preview honest — what you see is exactly what the server will write.
   return tpl.replace(/\{(\w+)\}/g, (_m, k) => vars[k] ?? '').trim().toUpperCase();
 }
 
@@ -927,9 +776,6 @@ function computeCandidates(
   allowed: AOpts,
   mattressThicknessCm: number | null,
   fmt: FormatTemplates,
-  /** PR #92 — Maintenance overrides (sizeLabels map). Threaded in so the
-      Add codes preview reflects commander's relabel ("K → Super K") instead
-      of staying stuck on the static SIZE_INFO. */
   cfg?: { sizeLabels?: Record<string, { label?: string; dimensions?: string } | undefined> } | null,
 ): Candidate[] {
   if (category === 'SOFA') {
@@ -967,10 +813,6 @@ function computeCandidates(
   if (category === 'MATTRESS') {
     const codeFmt = fmt.mattressCode?.trim() || DEFAULT_FORMATS.mattressCode;
     const nameFmt = fmt.mattressName?.trim() || DEFAULT_FORMATS.mattressName;
-    // PR #86 — `branding_nf` is the derived "{branding}-NF " (or "") used by
-    // the mattress code template. Built here so the template stays a plain
-    // string substitution and the empty-branding case doesn't leave a
-    // dangling "-NF " in the output.
     const brandingNf = branding.trim() ? `${branding.trim()}-NF ` : '';
     return (allowed.sizes ?? []).map((sz) => {
       const info  = resolveSizeInfo(sz, cfg);
@@ -991,8 +833,6 @@ function computeCandidates(
       };
     });
   }
-  /* The one SKU a single-SKU Model carries, exactly as the server's own branch
-     writes it — so a Model left with none (BUG-85) can be given its SKU here. */
   if (isSingleSkuCategory(category)) {
     const prefix = branding.trim() ? `${branding.trim()} ` : '';
     return [{
@@ -1016,8 +856,6 @@ function AddCodesModal({
   allowed: AOpts;
   mattressThicknessCm: number | null;
   formats: FormatTemplates;
-  /** PR #92 — Maintenance sizeLabels override threaded in so the candidate
-      preview reflects commander's relabel before generating SKUs. */
   sizeLabels?: Record<string, { label?: string; dimensions?: string } | undefined>;
   existingCodes: string[];
   onClose: () => void;
@@ -1029,7 +867,6 @@ function AddCodesModal({
     () => computeCandidates(category, modelCode, modelName, branding, allowed, mattressThicknessCm, formats, { sizeLabels }),
     [category, modelCode, modelName, branding, allowed, mattressThicknessCm, formats, sizeLabels],
   );
-  // Default: tick every NEW code (existing ones can't be ticked anyway).
   const [picked, setPicked] = useState<Set<string>>(
     () => new Set(candidates.filter((c) => !existingSet.has(c.code)).map((c) => c.code)),
   );
@@ -1051,10 +888,6 @@ function AddCodesModal({
       notify({ title: 'Pick at least one code to add.', tone: 'error' });
       return;
     }
-    // PR #69 — send the FULL rows the modal computed locally so the API
-    // doesn't need the saved allowed_options. Commander used to hit
-    // `no_sizes` when she ticked sizes but didn't click Save Changes
-    // before clicking Add codes.
     const rows = candidates
       .filter((c) => picked.has(c.code) && !existingSet.has(c.code))
       .map((c) => ({
@@ -1081,10 +914,6 @@ function AddCodesModal({
   };
 
   return (
-    /* Modal chrome is Tailwind token markup now (was .modalBackdrop /
-       .modal / .modalHead / .modalTitle / .modalClose) — same recipe as the
-       Inventory drawer header. The list rows below stay in the module.css
-       as repeated content primitives. */
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
       onClick={onClose}
@@ -1162,14 +991,11 @@ function AddCodesModal({
   );
 }
 
-/* ────────────────────────── Per-category allowed-option panels ────── */
 
 const DEFAULT_LABELS: Record<string, string> = {
   seatHeight: 'Seat size', legHeight: 'Leg height', divanHeight: 'Divan height', gap: 'Gap',
 };
 
-/** Default variant per option: what a new SO line starts with when this
-    Model's SKU is picked. Choices are the ticked allowed options only. */
 function ModelDefaultVariants({
   category, allowed, value, onChange,
 }: {
@@ -1232,9 +1058,6 @@ function ChipToggle({
   );
 }
 
-/** PR #87 — Bulk-toggle pair injected into each OptionGroup header. Commander
-    wants every chip group to default to all-on and offer one-click All / None
-    so a Model with 20 sizes doesn't need 20 individual taps to set up. */
 function BulkChipToggle({
   options, selected, onChange,
 }: { options: string[]; selected: string[]; onChange: (next: string[]) => void }) {
@@ -1269,7 +1092,6 @@ function SofaAllowedOptions({
   allowed: AllowedOptions; onChange: (next: AllowedOptions) => void;
   sofaCompartments: string[]; sofaSizes: string[];
   sofaLegHeights: string[]; sofaSpecials: string[];
-  /** Active fabric_library.id slugs available to tick for this sofa Model. */
   sofaFabrics: string[];
 }) {
   return (
@@ -1519,9 +1341,6 @@ function OptionGroup({
   label:    string;
   hint?:    string;
   children: React.ReactNode;
-  /** PR #87 — Optional bulk-toggle slot rendered at the right edge of the
-      header row. Each chip-group panel passes a <BulkChipToggle> here so
-      All / None sit inline with the eyebrow label. */
   bulk?:    React.ReactNode;
 }) {
   return (

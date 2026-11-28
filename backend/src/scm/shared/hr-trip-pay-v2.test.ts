@@ -1,7 +1,3 @@
-// Trip pay under the 2026-11-17 rules: job allowance by DP job type and event
-// type with the automatic 2nd trip, outstation once a day for the farthest
-// group, overnight tiers, commission on Delivery orders only, and old rates
-// versions still paying what they paid.
 import { describe, expect, test } from "vitest";
 import {
   DEFAULT_TRIP_RATES,
@@ -30,6 +26,7 @@ const row = (o: Partial<TripRow>): TripRow => ({
   jobType: "SETUP",
   eventType: "EXHIBITION",
   localTotalSen: 0,
+  allowanceOverrideSen: null,
   state: "Selangor",
   postcode: "",
   lorryPlate: "VPC 9058",
@@ -95,6 +92,50 @@ describe("2nd trip, automatic", () => {
   });
 });
 
+describe("transfer item, once per driver per day", () => {
+  test("a driver's extra transfer stops that day pay the flat RM15 only once", () => {
+    const r = run([
+      row({ jobType: "TRANSFER", eventType: null, docNo: "HC-SO-1" }),
+      row({ jobType: "TRANSFER", eventType: null, docNo: "HC-SO-2", venueKey: "P2" }),
+    ]);
+    expect(r.rows.map((x) => [x.sameJob, x.allowanceSen])).toEqual([
+      [false, 1500],
+      [true, 0],
+    ]);
+    expect(r.pay.get(1)!.jobAllowanceSen).toBe(1500);
+  });
+
+  test("another driver, or another day, is its own transfer again", () => {
+    const r = run([
+      row({ jobType: "TRANSFER", eventType: null }),
+      row({ jobType: "TRANSFER", eventType: null, drivers: [{ name: "ALI", employeeId: 3 }], venueKey: "P2" }),
+      row({ jobType: "TRANSFER", eventType: null, tripDate: "2026-11-04", venueKey: "P3" }),
+    ]);
+    expect(r.rows.map((x) => x.allowanceSen)).toEqual([1500, 1500, 1500]);
+  });
+});
+
+describe("hand-set allowance override (owner 2026-11-27)", () => {
+  test("a filled override is the row's job allowance, not the rate card", () => {
+    const r = run([row({ allowanceOverrideSen: 25000 })]);
+    expect(r.rows[0].allowanceSen).toBe(25000);
+    expect(r.pay.get(1)!.jobAllowanceSen).toBe(25000);
+  });
+  test("override pays even for a job type with no rate-card allowance", () => {
+    const r = run([row({ jobType: "LORRY_SERVICE", eventType: null, allowanceOverrideSen: 8000 })]);
+    expect(r.rows[0].allowanceSen).toBe(8000);
+  });
+  test("override of 0 pays nothing; null falls back to the rate card", () => {
+    expect(run([row({ allowanceOverrideSen: 0 })]).rows[0].allowanceSen).toBe(0);
+    expect(run([row({ allowanceOverrideSen: null })]).rows[0].allowanceSen).toBe(10000);
+  });
+  test("an override on a Delivery order is ignored (it pays by commission, not a flat allowance)", () => {
+    const p = run([row({ jobType: "DELIVERY_ORDER", eventType: null, localTotalSen: 1000000, allowanceOverrideSen: 25000 })]).pay.get(1)!;
+    expect(p.jobAllowanceSen).toBe(0);
+    expect(p.commission.lines).toEqual([{ crew: 2, baseSen: 1000000, rateBps: 50, amountSen: 5000 }]);
+  });
+});
+
 describe("commission", () => {
   test("Delivery orders only, by crew size; a charged service case does not count", () => {
     const p = run([
@@ -152,16 +193,15 @@ describe("overnight", () => {
         ...o,
       },
     });
-  /* Clock in 10:00 MYT on the 3rd, clock out at an MYT time that night. */
   const punch = (outIso: string): TripPunch => ({ workDate: "2026-11-03", inAt: "2026-11-03T02:00:00.000Z", outAt: outIso });
   const out = (rates: TripRates, punches: TripPunch[], rows = [row({})]) => run(rows, rates, new Map([[1, punches]])).pay.get(1)?.overnightSen ?? 0;
 
   test("the highest tier reached pays, once per night", () => {
     const r = tiers({});
-    expect(out(r, [punch("2026-11-03T12:30:00.000Z")])).toBe(0); // 20:30
-    expect(out(r, [punch("2026-11-03T14:30:00.000Z")])).toBe(3000); // 22:30
-    expect(out(r, [punch("2026-11-03T17:30:00.000Z")])).toBe(5000); // 01:30
-    expect(out(r, [punch("2026-11-03T19:00:00.000Z")])).toBe(8000); // 03:00
+    expect(out(r, [punch("2026-11-03T12:30:00.000Z")])).toBe(0);
+    expect(out(r, [punch("2026-11-03T14:30:00.000Z")])).toBe(3000);
+    expect(out(r, [punch("2026-11-03T17:30:00.000Z")])).toBe(5000);
+    expect(out(r, [punch("2026-11-03T19:00:00.000Z")])).toBe(8000);
     expect(out(r, [punch("2026-11-03T15:00:00.000Z"), punch("2026-11-03T19:00:00.000Z")])).toBe(8000);
   });
 
@@ -174,15 +214,27 @@ describe("overnight", () => {
     const r = tiers({ jobTypes: ["SETUP", "DISMANTLE"] });
     expect(out(r, [punch("2026-11-03T17:30:00.000Z")], [row({ jobType: "DELIVERY_ORDER", eventType: null })])).toBe(0);
     expect(out(r, [punch("2026-11-03T17:30:00.000Z")], [row({})])).toBe(5000);
-    /* Nothing ticked: every night counts, trip or not; with no trip at all the person is paid as a helper. */
     expect(out(tiers({}), [punch("2026-11-03T17:30:00.000Z")], [])).toBe(4000);
   });
 
   test("only if the shift lasted over N hours; 0 = no condition", () => {
-    const shortShift: TripPunch = { workDate: "2026-11-03", inAt: "2026-11-03T09:00:00.000Z", outAt: "2026-11-03T17:30:00.000Z" }; // 17:00 to 01:30
+    const shortShift: TripPunch = { workDate: "2026-11-03", inAt: "2026-11-03T09:00:00.000Z", outAt: "2026-11-03T17:30:00.000Z" };
     expect(out(tiers({ minHours: 10 }), [shortShift])).toBe(0);
     expect(out(tiers({ minHours: 8 }), [shortShift])).toBe(5000);
     expect(out(tiers({ minHours: 0 }), [shortShift])).toBe(5000);
+  });
+});
+
+describe("Supplier (Hookka)", () => {
+  test("a Supplier (Hookka) pickup pays the driver the RM30 default; the helper earns no job allowance", () => {
+    const r = run([row({ jobType: "SUPPLIER_HOOKKA", eventType: null })]);
+    expect(r.pay.get(1)!.jobAllowanceSen).toBe(3000);
+    expect(r.pay.get(2)!.jobAllowanceSen).toBe(0);
+  });
+
+  test("with no Supplier (Hookka) rate of its own it falls back to the generic Supplier rate", () => {
+    const rates: TripRates = { ...DEFAULT_TRIP_RATES, jobAllowances: DEFAULT_TRIP_RATES.jobAllowances.filter((a) => a.jobType !== "SUPPLIER_HOOKKA") };
+    expect(run([row({ jobType: "SUPPLIER_HOOKKA", eventType: null })], rates).pay.get(1)!.jobAllowanceSen).toBe(1500);
   });
 });
 

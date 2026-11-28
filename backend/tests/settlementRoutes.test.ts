@@ -20,7 +20,7 @@ import {
   settlementConfirmRow, settlementConfirmGroup, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist, settlementFindPayments,
   settlementBatchReceived, settlementInTransit, settlementRowUnconfirm,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
-  settlementReleaseRow, settlementRematch,
+  settlementReleaseRow, settlementRematch, settlementExport,
 } from '../src/scm/routes/accounting-settlement';
 import { postBatchReceipt } from '../src/acc/settlement';
 
@@ -86,6 +86,7 @@ function harness(tables: Record<string, Row[]>, perms: readonly string[] = [GL_P
   app.post('/settlement/batches', settlementUpload as never);
   app.get('/settlement/batches', settlementBatches as never);
   app.get('/settlement/batches/:id', settlementBatchDetail as never);
+  app.get('/settlement/batches/:id/export', settlementExport as never);
   app.post('/settlement/batches/:id/confirm-matched', settlementConfirmMatched as never);
   app.post('/settlement/rows/:id/confirm', settlementConfirmRow as never);
   app.post('/settlement/rows/confirm-together', settlementConfirmGroup as never);
@@ -460,6 +461,27 @@ describe('confirming is the moment of posting', () => {
     const adjLines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === adj!.id);
     expect(adjLines.find((l) => l.account_code === '930-0000')).toMatchObject({ debit_sen: 25416 });
     expect(adjLines.find((l) => l.account_code === '326-0000')).toMatchObject({ credit_sen: 25416 });
+  });
+
+  /* Owner 2026-11-28: 把它加去每一笔的费用里面，根据那时候说的算法去算 — each line reads
+     its share of the statement charge, by gross, largest remainder (chargeSharesOf). */
+  test('each line of a report carries its share of the statement charge by gross; the shares add up to it; the CSV fee carries it', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    sb.tables.acc_settlement_batches[0].adjustment_sen = 25416;
+    const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { rows: Array<{ line_no: number; gross_sen: number; fee_sen: number; charge_share_sen: number }> };
+    const byGross = Object.fromEntries(body.rows.map((r) => [r.gross_sen, r]));
+    /* 25,416 over 1,000.00 + 777.00: 14,302.76 and 11,113.24, the sen left over to the larger remainder. */
+    expect(byGross[100000]).toMatchObject({ fee_sen: 1500, charge_share_sen: 14303 });
+    expect(byGross[77700]).toMatchObject({ fee_sen: 1100, charge_share_sen: 11113 });
+    expect(body.rows.reduce((t, r) => t + r.charge_share_sen, 0)).toBe(25416);
+    const csv = await (await app.request(`/settlement/batches/${up.batchId}/export`)).text();
+    expect(csv).toContain(',1000.00,158.03,841.97,');
+    expect(csv).toContain(',777.00,122.13,654.87,');
+    /* A report with no statement charge: every share is 0, the fee as printed. */
+    sb.tables.acc_settlement_batches[0].adjustment_sen = 0;
+    const plain = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { rows: Array<{ charge_share_sen: number }> };
+    expect(plain.rows.map((r) => r.charge_share_sen)).toEqual([0, 0]);
   });
 
   /* The RM 1,000.00 payment against the RM 777.00 line — and the screen's own
@@ -1485,5 +1507,32 @@ describe('the merchant fee account is chosen, not assumed', () => {
     const res = await patch(app, '/settlement/maintenance/merchant', { companyId: CO, code: 'MBB', feeAccountCode: '999-9999' });
     expect(res.status).toBe(400);
     expect(String(((await res.json()) as Row).message)).toMatch(/not in this company/);
+  });
+});
+
+/* Owner 2026-11-27 (我上传的merchant report 应该是有terminal id 的 → 往后上传后都要
+   保存起来): each line keeps the card terminal its report names. */
+describe('the card terminal each report line names is kept', () => {
+  test('the upload stores each line\'s terminal and opening the report hands it back', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const res = await upload(app, {
+      acquirerCode: 'MBB', fileName: 'with-terminals.csv', content: [
+        'TERMINAL ID:,10000009',
+        'Txn Date,Approval Code,Gross,MDR,TID',
+        '01/08/2026,A1,1000.00,15.00,10000008',
+        '01/08/2026,ZZ9,777.00,11.00,',
+      ].join('\n'),
+    });
+    expect(res.status).toBe(200);
+    expect(sb.tables.acc_settlement_rows.map((r) => [r.ref, r.terminal_id])).toEqual([['A1', '10000008'], ['ZZ9', '10000009']]);
+    const { batchId } = await res.json() as { batchId: number };
+    const detail = await (await app.request(`/settlement/batches/${batchId}`)).json() as { rows: Array<{ ref: string; terminal_id: string | null }> };
+    expect(detail.rows.map((r) => [r.ref, r.terminal_id])).toEqual([['A1', '10000008'], ['ZZ9', '10000009']]);
+  });
+
+  test('a report that names no terminal stores none', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    expect((await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).status).toBe(200);
+    expect(sb.tables.acc_settlement_rows.map((r) => r.terminal_id)).toEqual([null, null]);
   });
 });

@@ -1,17 +1,3 @@
-// ---------------------------------------------------------------------------
-// scan-pi — the supplier-INVOICE scanner's HTTP surface: photo/scan an invoice,
-// land a DRAFT Purchase Invoice by converting the matching Goods Receipt(s).
-// The PI MIRROR of scan-gr.ts (the DO->GRN scanner): a PI scan is a scan_jobs
-// row stamped document_type='PI' on the SAME SCAN_QUEUE; scan-so's
-// processScanQueueMessage delegates PI-typed jobs to processPiScanQueueMessage
-// here (one-way: scan-pi never imports scan-so, so no cycle), and this module
-// owns its own stale-job reaper scoped to document_type='PI'.
-//
-// SAFETY: enqueue only persists photos + a job row; it creates NO document. The
-// DRAFT PI (or the needs-review outcome) is decided in the background by
-// runPiScanJob, which converts from the GRN and never fabricates a standalone
-// invoice. See tasks/PLAN-ocr-scan-gr-pi.md.
-// ---------------------------------------------------------------------------
 
 import { Hono } from 'hono';
 import type { SupabaseClient as SupabaseClientGeneric } from '@supabase/supabase-js';
@@ -34,8 +20,6 @@ function serviceClient(env: Env): SupabaseClient {
 }
 
 const SCAN_JOBS_MISSING_MSG = 'Scanning is not set up on the server yet. Please enter this invoice manually.';
-// A job still queued/running past 3 minutes is a deploy/isolate zombie (mirror
-// of the SO/GR reaper constant).
 const SCAN_JOB_STALE_MINUTES = 3;
 const STALE_JOB_ERROR = 'The scan took too long and was stopped. Please scan this invoice again.';
 
@@ -46,8 +30,6 @@ function isMissingTable(err: { code?: string; message?: string } | null): boolea
   return code === '42P01' || /relation .* does not exist|could not find the table/i.test(msg);
 }
 
-// GET /scan-pi/slip-image?key=scan-slips/... — serve the stored invoice image.
-// Same key namespace + policy as scan-so/scan-gr's slip-image (mig 0033).
 scanPi.get('/slip-image', async (c) => {
   const key = c.req.query('key') ?? '';
   if (!key.startsWith('scan-slips/')) {
@@ -65,9 +47,6 @@ scanPi.get('/slip-image', async (c) => {
   });
 });
 
-// POST /scan-pi/enqueue — persist photos + a document_type='PI' job row, respond
-// FAST (202), run the pipeline off the queue (waitUntil fallback when unbound).
-// Same multipart contract as /scan-so/enqueue and /scan-gr/enqueue.
 scanPi.post('/enqueue', async (c) => {
   /* company-scope: the scan_jobs row is stamped with the active company on
      INSERT (company_id: activeCompanyId(c)); the only by-id writes here (the
@@ -95,10 +74,6 @@ scanPi.post('/enqueue', async (c) => {
   const companyId = activeCompanyId(c) ?? null;
   const svc = serviceClient(c.env);
 
-  // 1) Durable job row first. salesperson_id carries the scm.staff identity the
-  //    headless create stamps as created_by; user.id (the SCM bridge id) is a
-  //    valid, replayable staff UUID, so the queue consumer / reaper can always
-  //    re-run this job. document_type='PI' is what routes it to runPiScanJob.
   const { data: jobRow, error: jobErr } = await svc
     .from('scan_jobs')
     .insert({
@@ -122,7 +97,6 @@ scanPi.post('/enqueue', async (c) => {
     return c.json({ error: 'enqueue_failed', reason: 'Could not queue the scan. Please try again.' }, 500);
   }
 
-  // 2) Persist photos to R2 (durability) BEFORE responding. Best-effort.
   const imageKeys: string[] = [];
   const bucket = c.env.SO_ITEM_PHOTOS as R2Bucket | undefined;
   if (bucket) {
@@ -140,8 +114,6 @@ scanPi.post('/enqueue', async (c) => {
     }
   }
 
-  // 3) Hand off to the Cloudflare Queue (the consumer rebuilds everything from
-  //    the row + R2). Fallback: run in waitUntil when SCAN_QUEUE is unbound.
   if (c.env.SCAN_QUEUE) {
     try {
       await c.env.SCAN_QUEUE.send({ jobId });
@@ -163,15 +135,12 @@ scanPi.post('/enqueue', async (c) => {
     try {
       c.executionCtx.waitUntil(pipeline);
     } catch {
-      /* non-Workers runtime (tests) — let the floating promise run */
     }
   }
 
   return c.json({ job_id: jobId, status: 'queued' }, 202);
 });
 
-// Rebuild the reaper/queue file inputs, run the PI pipeline. Shared by the queue
-// consumer and the stale-job reaper.
 export async function runPiJobFromRow(
   env: Env,
   id: string,
@@ -195,11 +164,6 @@ export async function runPiJobFromRow(
   return 'ran';
 }
 
-// ---------------------------------------------------------------------------
-// Cloudflare Queue consumer for PI jobs — called from scan-so's
-// processScanQueueMessage when it reads document_type='PI'. Idempotent: a 'done'
-// row acks without re-running (a redelivery must not create a 2nd PI).
-// ---------------------------------------------------------------------------
 export async function processPiScanQueueMessage(env: Env, jobId: string): Promise<void> {
   const id = jobId;
   if (!id) return;
@@ -224,9 +188,6 @@ export async function processPiScanQueueMessage(env: Env, jobId: string): Promis
   }
 }
 
-// Stale-job reaper for PI jobs, scoped to document_type='PI' so it and the SO/GR
-// reapers never touch each other's rows. One automatic re-run (retry_count
-// 0->1), then terminal error — same policy as the SO/GR reapers.
 export async function reapStalePiScanJobs(
   env: Env,
   svc: SupabaseClient,
@@ -278,10 +239,9 @@ export async function reapStalePiScanJobs(
 
 const JOB_SELECT = 'id, status, salesperson, so_doc_no, linked_doc_no, document_type, error, sample_id, duplicate_of, image_keys, created_at, updated_at';
 
-// GET /scan-pi/jobs — latest 20 PI jobs for the active company.
 scanPi.get('/jobs', async (c) => {
   const svc = serviceClient(c.env);
-  await reapStalePiScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { /* tests */ } });
+  await reapStalePiScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { } });
   const { data, error } = await svc
     .from('scan_jobs')
     .select(JOB_SELECT)
@@ -297,12 +257,11 @@ scanPi.get('/jobs', async (c) => {
   return c.json({ success: true, data: { jobs } });
 });
 
-// GET /scan-pi/jobs/:id — poll one PI job.
 scanPi.get('/jobs/:id', async (c) => {
   const id = (c.req.param('id') as string | undefined ?? '').trim();
   if (!id) return c.json({ error: 'bad_request', reason: 'Missing job id.' }, 400);
   const svc = serviceClient(c.env);
-  await reapStalePiScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { /* tests */ } });
+  await reapStalePiScanJobs(c.env, svc, (p) => { try { c.executionCtx.waitUntil(p); } catch { } });
   // company-scope: by-id read scoped to the caller's active company, so one
   // company cannot poll another's scan job. scan_jobs.company_id is NOT NULL
   // (mig 0083, HOUZS default 0091).
@@ -317,7 +276,6 @@ scanPi.get('/jobs/:id', async (c) => {
   return c.json({ success: true, data: { job: jobToJson(data as Record<string, unknown>) } });
 });
 
-// POST /scan-pi/jobs/clear-failed — delete this company's terminal error PI rows.
 scanPi.post('/jobs/clear-failed', async (c) => {
   const svc = serviceClient(c.env);
   const { error } = await svc

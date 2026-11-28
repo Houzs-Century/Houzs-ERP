@@ -54,59 +54,22 @@ import {
   type AccessLevel,
   type PageAccessMeta,
 } from "./pageAccess";
-// The Sales JD's SCM leaf levels + cohort detection live in salesJdAccess and are
-// IMPORTED here rather than restated: this module folds those SAME levels into the
-// sales cohort's page-access rows, so there is ONE definition of "what a Sales
-// position may do on the SCM sales chain" (orders/delivery/invoices/returns) and
-// ONE Sales-cohort detection rule. salesJdAccess does not import this module, so
-// there is no cycle.
 import { SALES_JD, isSalesCohort } from "./salesJdAccess";
 import type { PositionPolicyRow, RestrictedProfile } from "./positionPolicyRows";
 
-/** A code-defined explicit access row — same shape resolvePositionAccessFromRows
- *  reads from the DB, so the restricted whitelists resolve through the identical
- *  inherit/cascade + isValidPageKey filter as a real position_page_access row. */
 interface PolicyRow {
   page_key: string;
   level: AccessLevel;
 }
 
-/** Lower-case + collapse internal whitespace + trim. Tolerant to casing/spacing
- *  drift only — NOT to substring matching (a `\b(...)`-style match would let an
- *  unrelated rename inject a restriction; see the operationJdAccess hazard note
- *  this repo carried). */
 function normalisePosition(name: string): string {
   return name.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-// ── Enforcement flags — the shape the CONVERGED policy carries for every
-//    position, so the follow-up folds sales in without a second structure ─────
-//
-// These describe the non-page-access dimensions of a position's authority. They
-// are DECLARATIVE — no live gate reads them yet; each cohort's behaviour is
-// enforced by its page-access map plus the existing mechanisms. For SALES they
-// RECORD what salesScope (own+downline) / canViewScmFinance (margin) / pmsAccess
-// (director) / enforceSalesDirectorScope (dept announcements) enforce from the
-// SAME org fields this policy classifies on, and positionPolicy.test.ts pins that
-// the flags AGREE with those helpers caller-for-caller. So the policy is the one
-// authority for "who is this position and what may they do", the mechanisms are
-// its hands, and a test proves they have not drifted — rather than rewiring every
-// mechanism through the flags in one risky step (canViewAllSales, for one, is
-// director-narrow and would leak sales visibility to every full-cohort position if
-// naively pointed at orderScope==='all').
 export interface PositionAccessFlags {
-  /** Row-scope for order-bearing documents (SO/DO/SI/PO...). Sales reps see
-   *  their own + downline; everyone else sees all. Enforced today by
-   *  lib/salesScope for the sales cohort. */
   orderScope: "own_downline" | "all";
-  /** May see cost / margin columns. Hidden from the sales cohort today
-   *  (canViewScmFinance / pmsAccess). */
   canSeeMargin: boolean;
-  /** May see commission figures across the downline. */
   canSeeCommission: boolean;
-  /** Announcement visibility. Sales is dept-scoped; management/ops see all.
-   *  (Announcements are permission-gated today — announcements.read — so this is
-   *  the flag the converged policy will drive, not a live gate this PR.) */
   announcementScope: "dept" | "all";
   /** May MOVE MONEY — post a journal entry to the GL, or raise/post/cancel a
    *  payment voucher (cash-out). Owner 2026-07-18: his "暂时都可以看到系统里的
@@ -129,61 +92,38 @@ export interface PositionAccessFlags {
   canWriteConfig: boolean;
 }
 
-/** The unrestricted / management default — SEE everything, but do NOT move money. */
 const FLAGS_FULL: PositionAccessFlags = {
   orderScope: "all",
   canSeeMargin: true,
   canSeeCommission: true,
   announcementScope: "all",
   canMoveMoney: false,
-  // Default OFF even for the full cohort — only the named CONFIG_WRITE_POSITIONS
-  // get it, layered on in resolvePositionPolicy (mirrors how canMoveMoney is set).
   canWriteConfig: false,
 };
 
-/** Finance authority — full, INCLUDING the money-moving writes. */
 const FLAGS_FULL_MONEY: PositionAccessFlags = {
   ...FLAGS_FULL,
   canMoveMoney: true,
 };
 
-/** Restricted labour cohort — they do not operate order documents, and must not
- *  see money. Conservative by construction (their page-access map already denies
- *  the surfaces these would gate). */
 const FLAGS_RESTRICTED: PositionAccessFlags = {
-  orderScope: "all", // they reach no order-bearing page, so scope is moot
+  orderScope: "all",
   canSeeMargin: false,
   canSeeCommission: false,
   announcementScope: "dept",
   canMoveMoney: false,
-  // Storekeeper / Driver / Helper are view-only — every config/master write 403s.
   canWriteConfig: false,
 };
 
-/** Ordinary Sales (Sales Manager / Executive / Person) — RECORDS the enforcement
- *  the live mechanisms apply to a non-director rep: own+downline row scope
- *  (salesScope, because they are not isDirectorUser and hold no scm.so.view_all),
- *  margin hidden (canViewScmFinance false — they resolve to pmsAccess SALES, not
- *  DIRECTOR), commission hidden, dept-scoped announcements. A test pins that these
- *  match the live helpers caller-for-caller. */
 const FLAGS_SALES: PositionAccessFlags = {
   orderScope: "own_downline",
   canSeeMargin: false,
   canSeeCommission: false,
   announcementScope: "dept",
   canMoveMoney: false,
-  // Sales does not manage SCM master data.
   canWriteConfig: false,
 };
 
-/** Sales DIRECTOR — the director tier WITHIN sales. Differs from the ordinary rep
- *  on exactly the two dimensions the live helpers already treat him differently:
- *  order scope is ALL (pmsAccess.isDirectorUser("Sales Director") → canViewAllSales
- *  true) and margin is VISIBLE (isFinanceViewer → DIRECTOR → canViewScmFinance
- *  true). Announcements stay dept-scoped (his announcements are scoped to the Sales
- *  Department — isSalesDirectorUser / enforceSalesDirectorScope). Commission stays
- *  hidden here (no live reader today; declarative — see the flags interface). He
- *  still may NOT move money. */
 const FLAGS_SALES_DIRECTOR: PositionAccessFlags = {
   orderScope: "all",
   canSeeMargin: true,
@@ -212,40 +152,8 @@ const FLAGS_SALES_DIRECTOR: PositionAccessFlags = {
   canWriteConfig: true,
 };
 
-// ── The restricted whitelists — the owner's manual, per position ─────────────
-//
-// Anything NOT listed for a restricted position resolves to "none" (via the
-// resolver's pass-1 default), which is what "EVERYTHING ELSE: none" means. Only
-// real PAGES[] keys appear here; the resolver's isValidPageKey filter drops any
-// key that later leaves the registry.
-//
-// WHY THE L1 AREA KEYS APPEAR HERE. The nav is filtered by navFilter.ts: a node
-// shows only if it passes its OWN visibility gate AND (for a group) has a
-// surviving child. The top-level "Supply Chain" umbrella's gate is its `anyAccess`
-// = the L1 area keys ONLY (`scm.warehouse`, `scm.transportation`, …), and for an
-// scm_l2_configured user the `scm.access` permission is STRIPPED from the nav perm
-// check — so an L2-only grant (e.g. `scm.warehouse.inventory` alone) leaves the
-// umbrella's gate failing and the WHOLE SCM tree is dropped before the leaf is
-// reached. So a restricted whitelist must carry the L1 parent of each area it
-// grants, at `view`, and then explicitly DENY the sibling children it must not
-// open (an explicit `none` overrides the parent's inherited `view`). L1 area keys
-// gate NO backend route (routes gate on the L2 keys — verified in scm/index.ts),
-// so granting the L1 opens nav visibility WITHOUT opening any write.
-//
-// Delivery Planning is gated — nav, route, AND every /delivery-planning, /trips,
-// /dp-orders, /fleet, /lorry-* backend mount — on `scm.transportation.drivers`
-// (verified against scm/index.ts + Sidebar.tsx + App.tsx). Granting the L1
-// `scm.transportation` = view inherits `scm.transportation.drivers` = view, which
-// shows the board and satisfies the GET reads (it also shows Fleet / Lorry /
-// Regions — they ride the SAME key, unchanged from today's Driver/Helper). The
-// driver's own POD / delivery-step SUBMIT is a WRITE on that same key and stays a
-// follow-up (owner: page-level view now; the "only MY assigned jobs" row-scope +
-// step submit is a separate build). Announcements is NOT a page-access key — it
-// is gated on the `announcements.read` PERMISSION (routes/announcements.ts) — so
-// it is unaffected by this map and stays open exactly as today; absent here.
 
 const DRIVER_HELPER_ROWS: readonly PolicyRow[] = [
-  // Delivery Planning board — view only. L1 grant; drivers inherits view.
   { page_key: "scm.transportation", level: "view" },
   // Projects / PMS — view (owner 2026-07-21: drivers & helpers "open all
   // events", editing stays limited to their own role-badged checklist tasks,
@@ -263,7 +171,6 @@ const DRIVER_HELPER_ROWS: readonly PolicyRow[] = [
 ];
 
 const STOREKEEPER_ROWS: readonly PolicyRow[] = [
-  // Everything Driver/Helper get.
   { page_key: "scm.transportation", level: "view" },
   // Projects / PMS — view, same rows as Driver/Helper (owner 2026-07-21:
   // storekeepers work events alongside the crew; the projects endpoints
@@ -272,13 +179,6 @@ const STOREKEEPER_ROWS: readonly PolicyRow[] = [
   { page_key: "projects", level: "view" },
   { page_key: "projects.finances", level: "none" },
   { page_key: "projects.maintenance", level: "none" },
-  // Warehouse RACKING + rack/bin inventory VIEW. Racking/bin live under the
-  // Inventory + Warehouses pages, both gated on scm.warehouse.inventory (there
-  // is no finer racking key). The L1 `scm.warehouse` = view opens the Warehouse
-  // nav group; inventory = view shows the stock listing / racks. Stock Transfer /
-  // Stock Take / Stock Adjustment are explicitly DENIED so they do not inherit
-  // the parent's view: a Storekeeper VIEWS inventory but every stock-mutating
-  // write 403s (adjustments is now its own separately-guarded write).
   { page_key: "scm.warehouse", level: "view" },
   { page_key: "scm.warehouse.inventory", level: "view" },
   { page_key: "scm.warehouse.transfers", level: "none" },
@@ -292,7 +192,6 @@ const STOREKEEPER_ROWS: readonly PolicyRow[] = [
 ];
 
 const STOREKEEPER_SUPERVISOR_ROWS: readonly PolicyRow[] = [
-  // Everything Storekeeper gets.
   { page_key: "scm.transportation", level: "view" },
   { page_key: "projects", level: "view" },
   { page_key: "projects.finances", level: "none" },
@@ -302,13 +201,6 @@ const STOREKEEPER_SUPERVISOR_ROWS: readonly PolicyRow[] = [
   { page_key: "scm.warehouse.transfers", level: "none" },
   { page_key: "scm.warehouse.stock_take", level: "none" },
   { page_key: "scm.warehouse.adjustments", level: "none" },
-  // Goods Receipt — edit, so the supervisor can RECEIVE goods (raise a GRN is a
-  // write; confirming it also needs scm.grn.post). This grant alone keeps the Procurement nav GROUP alive (the
-  // group survives on the grn child), so the L1 `scm.procurement` is deliberately
-  // NOT granted — granting it would cascade `view` onto Purchase Order / Purchase
-  // Invoice / Products / Suppliers / MRP / Purchase Returns, which the manual
-  // denies. So `scm.procurement` stays none (po / pi / … inherit none), and only
-  // Goods Receipt opens.
   { page_key: "scm.procurement.grn", level: "edit" },
 ];
 
@@ -339,15 +231,6 @@ const CALENDAR_VIEWER_ROWS: readonly PolicyRow[] = [
   { page_key: "scm", level: "none" },
 ];
 
-/**
- * The restricted cohort, keyed by normalised position name. Each entry is the
- * WHOLE of that position's page access (default-none for everything unlisted).
- *
- * Aliases: the map is the single place a future documented rename is added, so a
- * partial revert never silently drops a restriction — none of the renames the
- * repo has seen ("Purchasing"->"Procurement/Purchasing", "Logistic"->"Logistic
- * Admin") touch these names, so no alias is needed today.
- */
 const RESTRICTED_ROWS: ReadonlyMap<string, readonly PolicyRow[]> = new Map(
   [
     ["Driver", DRIVER_HELPER_ROWS],
@@ -383,9 +266,6 @@ export function isWarehouseCrewPosition(positionName: string | null | undefined)
   return normalisePosition(positionName ?? "").startsWith("warehouse crew");
 }
 
-/** The restricted whitelists by PROFILE name — what a `position_policy` row
- *  points at. The rows are the same constants the name rule uses, so a Title
- *  moved onto a profile resolves exactly as the named Title always did. */
 const PROFILE_ROWS: Readonly<Record<RestrictedProfile, readonly PolicyRow[]>> = {
   driver_helper: DRIVER_HELPER_ROWS,
   storekeeper: STOREKEEPER_ROWS,
@@ -393,40 +273,10 @@ const PROFILE_ROWS: Readonly<Record<RestrictedProfile, readonly PolicyRow[]>> = 
   calendar_viewer: CALENDAR_VIEWER_ROWS,
 };
 
-// ── The Sales cohort's page access — folded IN, no longer deferred ───────────
-//
-// Each sales position's whitelist is its PROD ROWS (positionAccessSnapshot, the
-// owner's live photograph) PLUS the imported SALES_JD leaf levels. Feeding both
-// through resolvePositionAccessFromRows below reproduces EXACTLY the pre-fold
-// resolution — which was loadPageAccessForPosition(prod rows) THEN
-// applySalesJdOverride(SALES_JD) — because SALES_JD's keys are all leaves of
-// scm.sales: setting a leaf as an explicit row is identical to overriding it after
-// the parent's inheritance cascaded (proven in positionPolicy.test.ts, before/after
-// over the snapshot). The `scm.sales` parent row makes explicitScm true, so the
-// cohort is scm_l2_configured exactly as it is today — which is what keeps the
-// area-guard ENFORCING the delivery/invoices `view` caps for a real sales position.
-//
-// SALES_JD is the SINGLE definition of those four leaf levels; it is imported, not
-// restated, so the map here and the applySalesJdOverride fallback (positionless
-// Sales-department users) can never drift.
 const SALES_JD_ROWS: readonly PolicyRow[] = Object.entries(SALES_JD).map(
   ([page_key, level]) => ({ page_key, level }),
 );
 
-// Sales Director (prod row scm.sales=full + the projects.calendar view his row
-// carries). Director tier: scm.sales=full, view-all scope, margin visible, and
-// — since 2026-09-01 — the Products & Maintenance area at `edit`.
-//
-// WHY THE PRODUCTS ROW IS HERE AND NOT IN Team > Positions. For the sales cohort
-// this array IS the page access: resolvePositionPolicy feeds it to the resolver
-// and the position_page_access rows in the DB are not read at all (the audit
-// prints them under "NO LONGER READ for a positioned user"). So the owner cannot
-// grant this from the Positions screen — the grant has to land here.
-//
-// `edit`, not `full`: every scmAreaGuard in the Products area defaults to
-// writeLevel "edit" and none asks for "full", so `edit` is exactly what the
-// price / combo / model writes need. The gap is deliberate — anything a later
-// route marks full-only stays out until someone decides it belongs here.
 const SALES_DIRECTOR_ROWS: readonly PolicyRow[] = [
   { page_key: "projects", level: "view" },
   { page_key: "projects.calendar", level: "view" },
@@ -437,7 +287,6 @@ const SALES_DIRECTOR_ROWS: readonly PolicyRow[] = [
   ...SALES_JD_ROWS,
 ];
 
-// Sales Manager / Executive / Person — the ordinary rep row (prod scm.sales=view).
 const SALES_ORDINARY_ROWS: readonly PolicyRow[] = [
   { page_key: "projects", level: "view" },
   { page_key: "sales", level: "none" },
@@ -446,11 +295,6 @@ const SALES_ORDINARY_ROWS: readonly PolicyRow[] = [
   ...SALES_JD_ROWS,
 ];
 
-// The Sales-DIRECTOR split within the cohort. Matched with `\b` (word boundary),
-// the SAME rule pmsAccess.isSalesDirectorUser / DIRECTOR_POSITIONS use — so the
-// policy's director classification agrees with the live director helpers
-// (canViewAllSales / canViewScmFinance) that actually enforce the scope + margin
-// tier. A cohort member who is NOT a Sales Director gets the ordinary rep rows.
 const SALES_DIRECTOR_NAME = /\bSales Director\b/i;
 
 // ── The MONEY-MOVING WRITE carve-out ─────────────────────────────────────────
@@ -492,13 +336,6 @@ const MONEY_WRITE_AREAS: ReadonlySet<string> = new Set([
   "scm.finance.outstanding",
 ]);
 
-/**
- * Positions that MAY move money. Finance Manager because it is his job; Super
- * Admin because the owner named it alongside `*` — a Super Admin whose ROLE lacks
- * the `*` wildcard would otherwise reach this policy and be stripped of a
- * capability it has today. The `*` wildcard itself never reaches this module
- * (auth.ts short-circuits to fullAccessMap) and is exempt inside the denial too.
- */
 const MONEY_WRITE_POSITIONS: ReadonlySet<string> = new Set(
   ["Finance Manager", "Super Admin"].map(normalisePosition),
 );
@@ -544,10 +381,6 @@ const CONFIG_WRITE_POSITIONS: ReadonlySet<string> = new Set(
   ].map(normalisePosition),
 );
 
-/** True when this position may WRITE SCM master data / config by virtue of the
- *  position alone (the flat `scm.config.write` perm is checked separately and
- *  OR-ed in by scm/lib/houzs-perms.canWriteScmConfig — this is never the only
- *  gate). Exact normalised-name membership; unknown/empty → false. */
 function positionCanWriteConfig(positionName: string | null): boolean {
   const name = normalisePosition(positionName ?? "");
   return name ? CONFIG_WRITE_POSITIONS.has(name) : false;
@@ -589,11 +422,6 @@ export function positionGrantsWildcard(
   return name ? GOD_POSITIONS.has(name) : false;
 }
 
-// FLEET PERSONNEL — the restricted positions who drive/ride a run sheet and so
-// must see ONLY their own delivery jobs. The wider restricted cohort also holds
-// Storekeeper / Storekeeper Supervisor, who are NOT fleet: the delivery board
-// is a coordination surface for them, not a per-person run sheet, so they are
-// not fail-closed by resolveDeliveryScope. Exact normalised-name membership.
 const FLEET_POSITIONS: ReadonlySet<string> = new Set(
   ["Driver", "Helper"].map(normalisePosition),
 );
@@ -610,7 +438,6 @@ export function isFleetPosition(
   return name ? FLEET_POSITIONS.has(name) : false;
 }
 
-/** Plain-language reason for the 403 body — a sentence a person can act on. */
 const MONEY_DENY_REASON =
   "Posting journal entries and payment vouchers is handled by Finance. You can view this page, but ask Finance to post it.";
 
@@ -623,9 +450,6 @@ export interface MoneyWriteCaller {
   permissions?: ReadonlyArray<string> | ReadonlySet<string>;
   permissions_set?: ReadonlySet<string>;
   position_name?: string | null;
-  /** The Title's stored policy row (hydrated onto AuthUser / houzsUser). When
-   *  present it decides; the name sets below are the fallback for a Title
-   *  with no row. */
   position_policy?: PositionPolicyRow | null;
 }
 
@@ -665,26 +489,20 @@ export function moneyWriteDenial(
   method: string,
 ): string | null {
   if (!user) return null;
-  // Reads are always allowed — "SEE everything" is the whole point.
   if (!isWriteMethod(method)) return null;
   if (!MONEY_WRITE_AREAS.has(area)) return null;
-  // The owner / IT wildcard is never narrowed.
   if (hasWildcard(user)) return null;
   if (user.position_policy) {
     return user.position_policy.cohort === "god" || user.position_policy.can_move_money
       ? null
       : MONEY_DENY_REASON;
   }
-  // Unidentifiable caller (no position) → not denied; see docstring.
   const pos = user.position_name;
   if (!pos) return null;
   if (canMoveMoney(pos)) return null;
   return MONEY_DENY_REASON;
 }
 
-/** Lower the money-moving areas to `view` on an otherwise-full map. Reads stay
- *  (view satisfies every GET gate + every nav `!== "none"` check — verified: no
- *  finance nav entry or route uses `pageAccessFull`), writes lose `edit`. */
 function withMoneyWriteRemoved(
   map: Record<string, AccessLevel>,
 ): Record<string, AccessLevel> {
@@ -742,19 +560,12 @@ export function resolvePositionPolicy(
   input: PositionPolicyInput,
   row?: PositionPolicyRow | null,
 ): PositionPolicy {
-  // A stored `position_policy` row decides first (Roles & Permissions › Titles,
-  // keyed by position_id). The name rule below is the fallback for a Title with
-  // no row, so a Title created after the seed still lands on the same
-  // fail-open default it always did.
   if (row) {
     const fromRow = policyFromRow(row);
     if (fromRow) return fromRow;
   }
   const name = normalisePosition(input.position_name ?? "");
 
-  // Restricted whitelist wins first — an exact-name cohort, so a Sales position
-  // can never fall in here. Regional warehouse-crew names fall back to the
-  // Warehouse Crew whitelist by prefix (see RESTRICTED_ROWS note).
   const rows = name
     ? RESTRICTED_ROWS.get(name) ??
       (isWarehouseCrewPosition(name) ? RESTRICTED_ROWS.get(normalisePosition("Warehouse Crew KL")) : undefined)
@@ -770,12 +581,6 @@ export function resolvePositionPolicy(
     };
   }
 
-  // Sales — now RESOLVED here (no longer deferred). The whitelist is the prod row
-  // + the SALES_JD leaves, run through the SAME resolver; the scm.sales row flips
-  // explicitScm true so the cohort stays scm_l2_configured exactly as today. The
-  // Sales Director gets the director row (scm.sales=full) + director flags; every
-  // other cohort member gets the ordinary rep row + rep flags. Matched on the org
-  // fields, not the matrix.
   if (isSalesCohort(input)) {
     const isDirector = SALES_DIRECTOR_NAME.test((input.position_name ?? "").trim());
     const meta: PageAccessMeta = { explicitScm: false };
@@ -791,22 +596,6 @@ export function resolvePositionPolicy(
     };
   }
 
-  // Everyone else — and anything unclassified — is FULL (owner-approved interim,
-  // fail-open). `scmConfigured` FALSE, same as `*`: a full map needs no per-area
-  // enforcement.
-  //
-  // The MONEY-MOVING WRITE carve-out rides on top: Finance Manager / Super Admin
-  // keep the finance areas at `full`; every other full position (and every
-  // unclassified position that fails open to full) has them lowered to `view` —
-  // it SEES all the finance data and the write 403s (moneyWriteDenial). Nothing
-  // else in the map moves, and no read is lowered anywhere.
-  //
-  // The SCM MASTER-DATA WRITE flag rides on top too, independently: the named
-  // CONFIG_WRITE_POSITIONS (operation/purchasing) get `canWriteConfig: true` so
-  // scm/lib/houzs-perms.canWriteScmConfig lets them DO the master-data writes
-  // they can SEE, without a role grant. Every other full/unclassified position
-  // keeps it false. This only ever GRANTS a write — page access and money are
-  // untouched.
   const money = canMoveMoney(input.position_name);
   const config = positionCanWriteConfig(input.position_name);
   const baseFlags = money ? FLAGS_FULL_MONEY : FLAGS_FULL;
@@ -852,8 +641,6 @@ export function policyFromRow(row: PositionPolicyRow): PositionPolicy | null {
       };
     }
     case "god": {
-      // The wildcard itself is injected at hydration (positionGrantsWildcard);
-      // a direct resolver call for a god row answers the unrestricted map.
       return {
         cohort: "full",
         pageAccess: fullAccessMap(),

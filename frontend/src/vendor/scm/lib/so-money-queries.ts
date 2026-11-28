@@ -23,12 +23,15 @@ export type MoneyPayment = {
 };
 export type MoneyRefund = { id: string; pvNumber: string; status: string; voucherDate: string; totalSen: number };
 /** A refund asked of Finance as a payment request (owner 2026-10-14; server:
-    lib/refund-request.ts). WAITING holds its money; ANSWERED — a refund voucher
-    answers it (pvNumber); RETURNED — Finance said no, with why (financeNote). */
+    lib/refund-request.ts). WAITING holds its money — first for its one approval
+    (owner 2026-11-27), then, once approvedBy names who signed, for Finance;
+    ANSWERED — a refund voucher answers it (pvNumber); RETURNED — refused, with
+    why (financeNote). approvedBy is optional for the minute a newer screen reads an older server. */
 export type MoneyRefundRequest = {
   id: string; requestNo: string; amountSen: number;
   state: 'WAITING' | 'ANSWERED' | 'RETURNED' | 'WITHDRAWN';
   reason: string; financeNote: string | null; requestedBy: string | null; requestedOn: string; pvNumber: string | null;
+  approvedBy?: string | null; approvedOn?: string | null;
 };
 export type MoneyConversion = { paymentId: string; toDocNo: string; amountSen: number; paidOn: string; convertedOn: string };
 export type OrderMoney = {
@@ -37,19 +40,15 @@ export type OrderMoney = {
   cancelled: boolean;
   customer: { name: string | null; phone: string | null; customerId: string | null; debtorCode: string | null };
   payments: MoneyPayment[];
-  /** The money in the pool: booked here plus brought over from AutoCount. */
   bookedSen: number;
-  /** The part of it brought over from AutoCount (optional against an older server). */
   importedSen?: number;
   refunds: MoneyRefund[];
   refundedSen: number;
-  /** The refund requests on the order, and what the waiting ones hold (optional against an older server). */
   refundRequests?: MoneyRefundRequest[];
   requestedSen?: number;
   conversions: MoneyConversion[];
   convertedSen: number;
   remainingSen: number;
-  /** The order's total; the fraction a live order keeps (0 once cancelled); what must stay; what may move. */
   totalSen: number;
   keepFraction: number;
   keepSen: number;
@@ -60,7 +59,6 @@ export type OrderMoney = {
 export type ConvertSource = {
   docNo: string; customer: string | null; status: string | null; cancelledOn: string | null;
   remainingSen: number; bookedSen: number;
-  /** What may move to another order: the remaining, less the floor a live order keeps. */
   movableSen: number; keepSen: number;
 };
 
@@ -123,8 +121,6 @@ const trimAsk = (a: RefundAsk): RefundAsk => ({
 });
 type Raised = { id: string; requestNo: string };
 
-/** What a raised refund request makes stale: the order's money, the lists of
-    orders with money, the refund source PV New reads, and the requests. */
 const afterRefundAsked = (qc: ReturnType<typeof useQueryClient>, docNos: string[]) => {
   for (const d of docNos) void qc.invalidateQueries({ queryKey: ORDER_MONEY_KEY(d) });
   void qc.invalidateQueries({ queryKey: ['pv-refund-source'] });
@@ -184,7 +180,6 @@ export const useRequestRefund = (docNo: string) => {
   });
 };
 
-/* ── The converted row's vocabulary on the desktop ─────────────────────── */
 
 /** A picker that lists the customer's own orders takes another order by
     number — any customer's (owner 2026-09-16: 可能多张、不同顾客). The listed

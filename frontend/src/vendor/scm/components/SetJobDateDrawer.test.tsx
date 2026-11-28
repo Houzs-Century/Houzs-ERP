@@ -17,6 +17,10 @@ vi.mock('../lib/delivery-planning-queries', async (importActual) => {
   };
 });
 vi.mock('./NotifyDialog', () => ({ useNotify: () => notify }));
+vi.mock('../lib/delivery-amend-reasons-queries', async () => {
+  const actual = await import('../lib/delivery-planning-queries');
+  return { useAmendReasonOptions: () => actual.AMEND_REASONS };
+});
 
 import { SetJobDateDrawer } from './SetJobDateDrawer';
 import { AMEND_REASONS, type PlanningOrder } from '../lib/delivery-planning-queries';
@@ -50,7 +54,6 @@ describe('SetJobDateDrawer — amend reason', () => {
   });
 
   test('a date-only change writes the schedule date, not the reason', () => {
-    // Opens on the requested date with no confirmed date yet -> the date is dirty.
     render(<SetJobDateDrawer order={leg({ amended_delivery_date: null, customer_delivery_date: '2026-11-20' })} onClose={vi.fn()} />);
     fireEvent.click(screen.getByText('Save'));
     expect(schedMutate).toHaveBeenCalledTimes(1);

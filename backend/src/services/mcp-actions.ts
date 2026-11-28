@@ -27,7 +27,6 @@ export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export type ActionKind = "meeting" | "email";
 export type Proposal = { ok: true; kind: ActionKind; payload: Obj; summary: string; logLine: string } | { ok: false; error: string };
 
-// ── Malaysia time ───────────────────────────────────────────────────────────
 
 const MY_OFFSET_MS = 8 * 3600_000;
 
@@ -53,7 +52,6 @@ export function myRange(start: number, end: number): string {
   return a.slice(0, 10) === b.slice(0, 10) ? `${a} to ${b.slice(11)}` : `${a} to ${b}`;
 }
 
-// ── meeting ─────────────────────────────────────────────────────────────────
 
 export type MeetingPerson = { key: string; name: string; email: string | null };
 export type MeetingRoom = { id: number; name: string; active: boolean };
@@ -162,7 +160,6 @@ export function proposeMeeting(args: Obj, boot: MeetingBootstrap, now: number): 
   return { ok: true, kind: "meeting", payload, summary: lines.join("\n"), logLine };
 }
 
-// ── email ───────────────────────────────────────────────────────────────────
 
 export const MAX_RECIPIENTS = 20;
 export const MAX_BODY_CHARS = 20_000;
@@ -198,7 +195,6 @@ export function proposeEmail(args: Obj, senders: string[]): Proposal {
   const lines = [`Send an email (it leaves the company)`, `From: ${from}`, `To: ${to.join(", ")}`];
   if (cc.length) lines.push(`Cc: ${cc.join(", ")}`);
   lines.push(`Subject: ${subject}`, "", preview);
-  // The log line names the recipients and subject, never the body.
   const logLine = `email to ${to[0]}${to.length + cc.length > 1 ? ` +${to.length + cc.length - 1}` : ""}: "${subject.slice(0, 80)}"`;
   return { ok: true, kind: "email", payload, summary: lines.join("\n"), logLine };
 }
@@ -221,7 +217,6 @@ export function actionOutcome(kind: ActionKind, status: number, body: unknown): 
   return { ok: false, text: `Not done: the ERP answered ${status}${err ? ` (${err})` : ""}.` };
 }
 
-// ── document flow ───────────────────────────────────────────────────────────
 
 /** Relationship-map node types (scm/routes/document-flow.ts) → words, detail endpoint and ERP page. */
 export const FLOW_TYPES: Record<string, { word: string; fetch: string | null; page: ((id: string) => string) | null }> = {
@@ -345,28 +340,34 @@ export function shapeFlow(body: unknown, origin: string, extra: Map<string, { da
   return { links, steps, incomplete };
 }
 
-// ── print / PDF ─────────────────────────────────────────────────────────────
 
 export const EXPORT_TTL_MS = 15 * 60 * 1000;
 export const EXPORT_PREFIX = "mcp-exports/";
 export const EXPORT_KEY_RE = /^[A-Za-z0-9_-]{40,64}$/;
 
-/** Documents get_pdf knows. `print` = the ERP's own server-side print route; otherwise the PDF is made in the browser. */
-export const PDF_KINDS: Record<string, { print: ((id: string) => string) | null; financeOnly: boolean }> = {
-  sales_order: { print: null, financeOnly: false },
-  delivery_order: { print: null, financeOnly: false },
-  sales_invoice: { print: null, financeOnly: false },
-  purchase_order: { print: null, financeOnly: false },
-  grn: { print: null, financeOnly: false },
-  purchase_invoice: { print: null, financeOnly: false },
-  credit_note: { print: null, financeOnly: false },
-  delivery_return: { print: null, financeOnly: false },
-  payment_voucher: { print: null, financeOnly: false },
-  // The customer copy: the variant a customer is handed, so no supplier or office-only sections.
-  assr_case: { print: (id) => `/api/assr-print/${encodeURIComponent(id)}?variant=customer`, financeOnly: false },
-  // The debrief carries project cost and profit, which the connector shows only to the finance cohort.
-  project: { print: (id) => `/api/projects-print/${encodeURIComponent(id)}`, financeOnly: true },
+/** Documents get_pdf knows.
+ *  `server` = drawn on the Worker as a finished PDF by the browser's own generator (services/mcp-pdf.ts);
+ *  `print` = the ERP's own server-side print route (HTML); neither = the PDF is made in the browser only. */
+export const PDF_KINDS: Record<string, { server: "so" | "po" | "si" | "grn" | null; print: ((id: string) => string) | null; financeOnly: boolean }> = {
+  sales_order: { server: "so", print: null, financeOnly: false },
+  delivery_order: { server: null, print: null, financeOnly: false },
+  sales_invoice: { server: "si", print: null, financeOnly: false },
+  purchase_order: { server: "po", print: null, financeOnly: false },
+  grn: { server: "grn", print: null, financeOnly: false },
+  purchase_invoice: { server: null, print: null, financeOnly: false },
+  credit_note: { server: null, print: null, financeOnly: false },
+  delivery_return: { server: null, print: null, financeOnly: false },
+  payment_voucher: { server: null, print: null, financeOnly: false },
+  assr_case: { server: null, print: (id) => `/api/assr-print/${encodeURIComponent(id)}?variant=customer`, financeOnly: false },
+  project: { server: null, print: (id) => `/api/projects-print/${encodeURIComponent(id)}`, financeOnly: true },
 };
+
+/** A server PDF's download name for the Content-Disposition header: an ASCII fallback plus the UTF-8 original. */
+export function pdfDisposition(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  const utf8 = encodeURIComponent(filename).replace(/['()*]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8}`;
+}
 
 export const pdfKind = (t: string) => (Object.prototype.hasOwnProperty.call(PDF_KINDS, t) ? PDF_KINDS[t] : null);
 

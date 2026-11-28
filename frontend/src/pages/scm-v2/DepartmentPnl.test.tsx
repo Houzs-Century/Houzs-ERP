@@ -38,7 +38,6 @@ vi.mock('../../vendor/scm/lib/authed-fetch', () => ({
 import { DepartmentPnlTab, departmentChoices } from './DepartmentPnl';
 import type { DepartmentPlan } from '../../vendor/scm/lib/department-queries';
 
-/* What a figure of All, Exhibition or G&A reads when opened: made-up lines. */
 const LINES = {
   lines: [
     { id: 'g1', month: '2026-09', day: '2026-09-30', accountCode: '900-S100', accountName: 'STAFF SALARIES & OVERTIME', ref: 'JE-1', text: 'FINANCE - SALARY - SEP2026', dept: 'ga', team: 'FINANCE', sen: 820_000, source: 'ledger' },
@@ -46,7 +45,6 @@ const LINES = {
   ],
   totalSen: 1_640_000,
 };
-/* The Exhibition's commission: its bill, in the month it pays for, beside what else is booked on the account. */
 const BILL_LINES = {
   lines: [
     { id: 'bill:2026-09:HC-API-8:0', month: '2026-09', day: '2026-10-15', accountCode: '360-0050', accountName: 'PREPAYMENT COMMISSION', ref: 'HC-API-8', text: "REVENUE TEAM PAYROLL TO COLLECT BACK - SEP'26", dept: 'exhibition', team: null, sen: 280_000_00, source: 'bill' },
@@ -88,7 +86,7 @@ describe('All departments', () => {
       expect(within(table).getAllByText(sub).length).toBeGreaterThan(0);
     }
     expect(rowText(table, 'Income')).toBe('Income4,300,000.00317,500.00141,000.0042,000.00336,000.005,136,500.00');
-    expect(rowText(table, 'Paid to other departments')).toBe('Paid to other departments672,000.00126,000.00---798,000.00');
+    expect(rowText(table, 'Paid to other departments')).toBe('Paid to other departments672,000.00126,000.00798,000.00');
     expect(rowText(table, 'PROFIT / (LOSS)')).toBe('PROFIT / (LOSS)4,000.00(7,131.90)6,000.009,000.0082,885.8494,753.94');
     expect(within(table).queryByText('Other income')).toBeNull();
     expect(screen.getByText('Exhibition profit')).toBeTruthy();
@@ -143,7 +141,6 @@ describe('Exhibition', () => {
     expect(rowText(table, 'Total paid to other departments')).toContain('672,000.00');
     expect(rowText(table, 'EXHIBITION PROFIT / (LOSS)')).toContain('4,000.00');
     expect(screen.getByText('40 orders by SO date')).toBeTruthy();
-    /* The orders' figures are the Performance P&L's: no ledger line behind them. */
     expect(within(rowOf(table, 'Bedframe')).queryAllByRole('button')).toHaveLength(0);
     expect(within(rowOf(table, 'Total sales')).queryAllByRole('button')).toHaveLength(0);
   });
@@ -185,7 +182,6 @@ describe('Operation, Logistics, Setup & dismantle', () => {
     expect(rowText(table, 'From Operation (3% of sales excluding service)')).toContain('126,000.00');
     expect(rowText(table, 'Outsource (3PL)')).toContain('85,000.00');
     expect(rowText(table, 'LOGISTICS PROFIT / (LOSS)')).toContain('6,000.00');
-    /* A cost row is the Logistics cost report's: it opens nothing here. */
     expect(within(rowOf(table, 'Outsource (3PL)')).queryAllByRole('button')).toHaveLength(0);
   });
 
@@ -267,7 +263,6 @@ describe('A figure opens the lines behind it', () => {
   test("the sheet: a row's figure opens its lines in that column, totalled to the figure; the results open nothing", async () => {
     draw('&dv=operation&dop=sheet');
     const table = await screen.findByRole('table', { name: 'Operation sheet, by DO and region' });
-    /* Rental Warehouse in KL over Sep and Oct: two ledger lines of 27,500.00. */
     fireEvent.click(within(rowOf(table, 'Rental Warehouse')).getByRole('button', { name: '55,000.00' }));
     const rental = await screen.findByRole('region', { name: 'Lines of Rental Warehouse' });
     expect(within(rental).getByText(/Sep 2026 – Oct 2026 · KL · 2 lines/)).toBeTruthy();
@@ -276,7 +271,6 @@ describe('A figure opens the lines behind it', () => {
     expect(within(rental).getByRole('link', { name: /Open in General ledger/ }).getAttribute('href')).toContain('accounts=900-R005');
     fireEvent.click(within(rental).getByRole('button', { name: 'Close the lines' }));
     expect(screen.queryByRole('region', { name: 'Lines of Rental Warehouse' })).toBeNull();
-    /* A salary line naming no region: its KL share, the whole line said. */
     fireEvent.click(within(rowOf(table, 'Warehouse Manpower - Logistic')).getByRole('button', { name: '14,534.17' }));
     const pay = await screen.findByRole('region', { name: 'Lines of Warehouse Manpower - Logistic' });
     expect(within(pay).getAllByText('DO-value share of the line 10,000.00')).toHaveLength(2);
@@ -315,10 +309,9 @@ describe('A figure opens the lines behind it', () => {
   test("Exhibition: a figure reads the department's lines on the page's basis", async () => {
     draw('&dv=exhibition');
     const table = await screen.findByRole('table', { name: 'Department P&L, Exhibition' });
-    fireEvent.click(within(rowOf(table, '900-R032 · RENTAL - EXHIBITION')).getByRole('button', { name: '990,000.00' }));
+    fireEvent.click(within(rowOf(table, 'RENTAL - EXHIBITION')).getByRole('button', { name: '990,000.00' }));
     await screen.findByRole('region', { name: 'Lines of 900-R032 · RENTAL - EXHIBITION' });
     expect(linesAsked().at(-1)).toEqual({ view: 'dept', dbasis: 'performance', from: '2026-09-01', to: '2026-10-31', block: 'expenses', d: 'exhibition', keys: '900-R032' });
-    /* The commission opens its bill, said as such. */
     const label = '900-C003 COMMISSION ( EVENT ) — the commission bills for Sep 2026, Oct 2026, in place of the monthly release';
     fireEvent.click(within(rowOf(table, label)).getByRole('button', { name: '602,000.00' }));
     const bill = await screen.findByRole('region', { name: `Lines of ${label}` });

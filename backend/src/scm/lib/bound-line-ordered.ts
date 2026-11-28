@@ -54,8 +54,6 @@ export async function loadBoundOrderedQty(
       .order('id')
       .range(from, to),
   );
-  /* A failed read must not read as "nothing ordered" — that is the permissive
-     direction, and it is exactly the double order this guard exists to stop. */
   if (error) throw new Error(`bound_ordered_read_failed: ${error.message}`);
   for (const r of data) {
     const status = String(r.po?.status ?? '').toUpperCase();

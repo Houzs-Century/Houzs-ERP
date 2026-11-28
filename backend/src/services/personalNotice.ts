@@ -22,7 +22,6 @@
 import type { Env } from "../types";
 import { bustBannerForUser } from "./configCache";
 
-// The announcements category CHECK constraint (mig 0058) allows only these.
 export type PersonalNoticeCategory = "GENERAL" | "WARNING" | "SOP" | "LEARNING";
 
 /**
@@ -42,13 +41,10 @@ export async function postPersonalNotice(
     title: string;
     body: string;
     source: string;
-    /** Banner self-clears after this many days. Defaults to 14. */
     expiresDays?: number;
   },
 ): Promise<void> {
   try {
-    // Sorted so target_user_ids is a CANONICAL string — the same target set
-    // always serializes identically, which the idempotency probe below matches on.
     const ids = Array.from(
       new Set(
         (opts.userIds ?? [])
@@ -56,7 +52,7 @@ export async function postPersonalNotice(
           .filter((n) => Number.isFinite(n) && n > 0),
       ),
     ).sort((a, b) => a - b);
-    if (ids.length === 0) return; // no target → nothing to deliver
+    if (ids.length === 0) return;
     const targetJson = JSON.stringify(ids);
 
     // Idempotency (owner 2026-07-20): the same event can fire this insert twice
@@ -81,7 +77,7 @@ export async function postPersonalNotice(
       )
         .bind(opts.source, opts.title, targetJson, new Date().toISOString())
         .first<{ id: string }>();
-      if (dup) return; // identical still-unread notice already delivered
+      if (dup) return;
     } catch (e) {
       console.error(
         `[personal-notice] dedupe probe failed (source=${opts.source}); inserting anyway:`,
@@ -112,8 +108,6 @@ export async function postPersonalNotice(
         opts.source,
       )
       .run();
-    // A private notice only changes its TARGETED users' banners — bust just
-    // those snapshots (usually one), not the whole family version.
     for (const uid of ids) {
       await bustBannerForUser(env, uid);
     }

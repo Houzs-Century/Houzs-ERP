@@ -1,14 +1,3 @@
-/* The Forecast Balance Sheet, the rules (step 6 of the forecast port; the door
-   is backend/tests/cashFlowForecast.test.ts). Pinned: every month's entries
-   add up to zero; sales owed by customers, purchases owed to suppliers,
-   salaries owed and paid the month after, depreciation beside the
-   accumulated depreciation; money moved in and out against its account; the
-   bills owed at the start paid when due (past due in the first month), the
-   salaries owed at the start in the first month; customers' money to come
-   never beyond the start's debtors, the earliest dropped first; a month's
-   sheet moved from the start's — an asset by a debit, a liability by a
-   credit, a new account from the chart, the forecast cash and depreciation
-   on their own lines, the profit on the earnings. Made-up figures. */
 import { describe, expect, test } from 'vitest';
 import { FC_CASH, FC_DEPN, FC_PROFIT, bsDeltas, capReceipts, cumulate, forecastSheet, type StartSheet } from './forecast-balance-sheet';
 
@@ -35,7 +24,6 @@ describe('the movements', () => {
       '300-0000': 1_000 - 600 - 25, [FC_PROFIT]: -1_000 + 400 + 200 + 30, '400-0000': -400 + 70, '410-0010': -200 + 150,
       [FC_CASH]: 600 + 25 - 70 - 150, [FC_DEPN]: -30,
     });
-    /* December: its sales and the salary it owes; November's salary paid (the accrual nets to nothing and drops out); a purchase paid, a cost paid, a bill due. */
     expect(d['2026-12']).toEqual({ '300-0000': 500, [FC_PROFIT]: -500 + 200 + 50, '400-0000': 400 + 80, [FC_CASH]: -200 - 400 - 50 - 80 });
   });
 
@@ -86,7 +74,6 @@ describe("a month's sheet", () => {
       { code: '460-0009', name: 'TRADE FINANCE - SAMPLE BANK', section: 'LONG TERM LIABILITIES', amountSen: 900 },
     ]);
     expect(f.earningsSen).toBe(1_670);
-    /* Still balanced: assets − liabilities − equity − earnings, as at the start. */
     const total = (ls: Array<{ amountSen: number }>) => ls.reduce((s, l) => s + l.amountSen, 0);
     expect(total(f.assets) - total(f.liabilities) - total(f.equity) - f.earningsSen).toBe(total(start.assets) - total(start.liabilities) - total(start.equity) - start.earningsSen);
   });

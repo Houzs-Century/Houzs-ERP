@@ -107,7 +107,7 @@ describe("with the super-admin lines permission", () => {
     const c = bedCard()!;
     expect(c.getAttribute("data-editing")).toBe("true");
     expect(c.getAttribute("data-charge")).toBe("false");
-    expect(c.getAttribute("data-removable")).toBe("true"); // super admin can also remove the delivered product line
+    expect(c.getAttribute("data-removable")).toBe("true");
   });
 
   it("still editable when the DO already has an invoice — the invoice follows", () => {

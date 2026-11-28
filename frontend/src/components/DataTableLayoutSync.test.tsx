@@ -121,7 +121,6 @@ describe("DataTable with server layouts", () => {
     await hydrateTableLayouts();
 
     const { container } = renderTable("saved");
-    // The seed for 2990 is ["b","c"]; the saved default wins outright.
     expect(headerLabels(container)).toEqual(["Delta", "Alpha"]);
   });
 
@@ -133,14 +132,11 @@ describe("DataTable with server layouts", () => {
     fireEvent.click(screen.getByTitle(/^Columns —/));
     fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
 
-    // 2990 has no saved default yet, so its SEED fills the slot — but the row
-    // is still that company's, labelled and marked as this window's default.
     const houzs = screen.getByRole("option", { name: /Houzs Century Layout/ });
     const home = screen.getByRole("option", { name: /2990's Home Layout/ });
     expect(houzs).toBeTruthy();
     expect(home.textContent).toContain("Default");
 
-    // Taking the other company's layout is one click, and it sticks.
     fireEvent.click(houzs);
     expect(JSON.parse(localStorage.getItem("dt:order:both")!)).toEqual(["a", "b", "c", "d"]);
   });
@@ -153,7 +149,6 @@ describe("DataTable with server layouts", () => {
     await hydrateTableLayouts();
 
     const { container } = renderTable("mine");
-    // Their own choice stands; the company default is not imposed over it.
     expect(headerLabels(container)).toEqual(["Alpha", "Bravo"]);
   });
 
@@ -167,12 +162,6 @@ describe("DataTable with server layouts", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Hide column" })[0]!);
     await vi.runAllTimersAsync();
 
-    /* The FULL arrangement goes up, not just the one column touched. The first
-       stored pref of any kind ends the baseline for good, so a lone `hidden:
-       ["b"]` would be read back as "hid Bravo, arranged nothing else" — and
-       Alpha and Delta, hidden only by the 2990 default, would reappear the next
-       time the table mounted. Hiding one column is not a request to unhide two.
-       Same reason applyPreset writes the hidden list in full. */
     expect(mockApi.put).toHaveBeenCalledWith(
       "/api/table-layouts/push",
       expect.objectContaining({
@@ -209,8 +198,6 @@ describe("DataTable with server layouts", () => {
     );
     fireEvent.click(screen.getByTitle(/^Columns —/));
 
-    // The overflow menu names the company the save publishes to — the admin
-    // sets 2990's default from a 2990 window and Houzs's from a Houzs one.
     fireEvent.click(screen.getByRole("button", { name: "More column actions" }));
     expect(screen.getByRole("button", { name: /Save as 2990's Home default/ })).toBeTruthy();
     fireEvent.keyDown(window, { key: "Escape" });
@@ -223,7 +210,6 @@ describe("DataTable with server layouts", () => {
         expect.anything(),
       ),
     );
-    // Saved → the company now HAS a layout to offer, so the picker appears.
     fireEvent.click(await screen.findByRole("button", { name: /^Layout/ }));
     expect(screen.getByRole("option", { name: /2990's Home Layout/ })).toBeTruthy();
   });
@@ -251,19 +237,10 @@ describe("DataTable with server layouts", () => {
         expect.anything(),
       ),
     );
-    /* The redesign demoted the confirmation from a card of body copy to a
-       toast (handoff 2026-08-01), so what is asserted here is the WRITE, not
-       the wording — the toast host does not exist in a bare test render. */
     expect(mockApi.put.mock.calls[0]![0]).toContain("/default");
   });
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
-   NAMED layouts (mig 0239). A saved column set, offered in the picker next to
-   the company defaults. Switching COPIES it into the live arrangement, which is
-   why saving one must not disturb what is on screen — and why a company row can
-   be duplicated into one of your own.
-   ──────────────────────────────────────────────────────────────────────────── */
 describe("DataTable with saved layouts", () => {
   const savedLayout = (over: Record<string, unknown> = {}) => ({
     order: ["a", "b"],
@@ -305,9 +282,6 @@ describe("DataTable with saved layouts", () => {
     fireEvent.click(screen.getByTitle(/^Columns —/));
     fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
 
-    // Without a dialog host the naming step cannot run, so the control is
-    // present but the write is not attempted — which is the same contract the
-    // toast has: no host, no crash.
     expect(screen.getByRole("button", { name: /New layout from current columns/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /New layout from current columns/ }));
     await waitFor(() => expect(mockApi.post).not.toHaveBeenCalled());
@@ -325,10 +299,6 @@ describe("DataTable with saved layouts", () => {
     fireEvent.click(screen.getByTitle(/^Columns —/));
     fireEvent.click(screen.getByRole("button", { name: /^Layout/ }));
 
-    /* The company row can be renamed (the whole company inherits that name)
-       and duplicated (start from 2990's view and tweak it) — but not deleted.
-       Deleting the arrangement everyone inherits is the Clear control in the
-       admin block, not a menu item next to the user's own layouts. */
     fireEvent.click(screen.getByRole("button", { name: /Actions for 2990's Home Layout/ }));
     expect(screen.getByRole("button", { name: /^Rename/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Duplicate/ })).toBeTruthy();
@@ -369,10 +339,6 @@ describe("DataTable with saved layouts", () => {
 
 describe("layout picker selection", () => {
   it("ticks exactly one row when two layouts hold the same columns", async () => {
-    /* Seen on prod's Delivery Planning (2026-08-02): both company layouts
-       ticked at once, because a company had copied the other's view and
-       "matches what is on screen" was true of both. Two filled radios is a
-       picker nobody can read. */
     const same = { order: ["a", "b"], hidden: ["c", "d"], shown: [], widths: {}, pinned: [], groupBy: [] };
     respond({ defaults: { "1": { twins: same }, "2": { twins: same } } });
     await hydrateTableLayouts();
@@ -385,7 +351,6 @@ describe("layout picker selection", () => {
       .getAllByRole("option")
       .filter((row) => row.getAttribute("aria-selected") === "true");
     expect(selected).toHaveLength(1);
-    // The tie goes to THIS company's default — the one the table is actually on.
     expect(selected[0]!.textContent).toContain("2990's Home Layout");
   });
 });

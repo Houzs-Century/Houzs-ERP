@@ -42,12 +42,8 @@ import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont,
   fmtDocDate, fmtDocStamp, fmtRm, safeName, type PdfAction,
 } from './pdf-common';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
-/* ── What the month endpoint hands over, structurally ──────────────────────
-   Named here rather than imported from the page's query module: this file is
-   the report, and a report that cannot be built without a React screen cannot
-   be tested without one either. */
 
 export type ReconInput = {
   periodFrom: string;
@@ -77,7 +73,6 @@ export type FigureSource = {
   fileName: string | null;
   on: string;
   typed?: { month: string; by: string | null; at: string; note: string | null };
-  /** An opening carried from the previous month's printed closing: the month that closed there. */
   carried?: { month: string };
 };
 
@@ -127,23 +122,17 @@ export type ReconReportInput = {
   unmatchedEntries: ReconLedgerEntry[];
 };
 
-/* ── The report ───────────────────────────────────────────────────────────── */
 
 /** One step of the walk from the bank's balance to the books'. */
 export type StatementStep = {
   label: string;
-  /** Signed as it acts on the running figure, so the column adds up as read. */
   sen: number;
-  /** A sub-total or the final figure rather than a movement. */
   rule?: 'total' | 'grand';
-  /** How many items are behind it, where it stands for a list below. */
   count?: number;
 };
 
 export type ReconSection = {
   title: string;
-  /** Said under the title when the section is empty, or when it needs a
-      sentence of its own. Never a bare empty table. */
   note?: string;
   head: string[];
   body: string[][];
@@ -154,23 +143,14 @@ export type ReconReport = {
   month: string;
   periodFrom: string;
   periodTo: string;
-  /** Sentences that must be read BEFORE the figures. Empty means the month is
-      whole and the numbers account for themselves. */
   warnings: string[];
-  /** The walk. Empty when it cannot honestly be drawn — `warnings` then says
-      why, and there is no statement to file. */
   steps: StatementStep[];
-  /** Where each end of the walk came from, for a reader who wants to check. */
   provenance: string[];
-  /** True only when the walk arrives at the ledger balance AND the month is
-      whole AND the server's own consistency check held. */
   filable: boolean;
   sections: ReconSection[];
 };
 
 const money = (sen: number): string => fmtRm(sen);
-/** A deduction reads as a bracket, the way every other statement in this
-    system prints one. */
 const signed = (sen: number): string => (sen < 0 ? `(${fmtRm(-sen)})` : fmtRm(sen));
 
 const sourceOf = (e: ReconLedgerEntry): string =>
@@ -180,10 +160,6 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
   const { accountCode, month, assembly, reconciliation: r, lines, unmatchedEntries } = input;
 
   const warnings: string[] = [];
-  /* ORDER MATTERS. The month being incomplete comes first: it makes every
-     figure below about a different month, which no arithmetic check can
-     detect. The server's own inconsistency comes second, because it means the
-     figures disagree with each other. */
   if (!assembly.complete) {
     warnings.push(
       'This month is not covered end to end by the statements uploaded, so the figures below'
@@ -193,9 +169,6 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
   }
   if (!r.consistent && r.inconsistency) warnings.push(r.inconsistency);
 
-  /* A figure nobody's file printed is named as TYPED, with who and when: on
-     paper an auditor relies on, a number with no author is a number nobody
-     can check. */
   const sourceOfFigure = (what: 'Opening' | 'Closing', sen: number | null, src: FigureSource): string => (src.typed
     ? `${what} ${money(sen ?? 0)} as typed for the end of ${src.typed.month} by ${src.typed.by ?? 'somebody'}`
       + ` on ${fmtDocDate(src.typed.at.slice(0, 10))}${src.typed.note ? ` (“${src.typed.note}”)` : ''}`
@@ -221,9 +194,6 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
       + ' reconcile from. The movements are listed below; the statement itself cannot be drawn.',
     );
   } else if (!r.consistent) {
-    /* The server already refused to stand behind the figures. Drawing a tidy
-       walk over figures that do not satisfy the identity would launder exactly
-       the error it caught. */
   } else {
     const pays = -r.outstandingPayments.sen;
     const rcts = -r.outstandingReceipts.sen;
@@ -244,11 +214,6 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
     }
     steps.push({ label: 'Balance per bank statement', sen: arrived + unexplained, rule: 'grand' });
 
-    /* THE CHECK. The walk is arithmetic on the ledger balance and three lists;
-       the server's own figure for the same walk is a fifth number. If they
-       part company, something upstream is wrong and this is not a document
-       anybody should file. And a walk that needs an "unexplained" step to
-       reach the bank does not tally, whatever else is true. */
     if (arrived !== r.computedClosingSen) {
       warnings.push(
         `The statement walks to ${money(arrived)} from the books and the bank statement says ${money(r.closingStatementSen)}.`
@@ -266,9 +231,6 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
     }
   }
 
-  /* ── The items behind each step ─────────────────────────────────────────
-     Every line of the walk that is not a total stands for a list, and the list
-     is here. A figure with no list behind it is a number nobody can chase. */
 
   const open = lines.filter((l) => l.state === 'OPEN');
   const ignored = lines.filter((l) => l.state === 'IGNORED');
@@ -300,9 +262,6 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
       ]),
     },
     {
-      /* THE AUDIT SECTION. An ignored movement leaves the difference for ever,
-         and the sentence beside it is the only account anybody will ever have
-         of why. It is printed whether or not the month reconciles. */
       title: `Left out of the reconciliation (${ignored.length})`,
       note: ignored.length === 0
         ? 'Nothing has been left out.'
@@ -340,9 +299,7 @@ export function reconciliationStatement(input: ReconReportInput): ReconReport {
   };
 }
 
-/* ── Drawing it ───────────────────────────────────────────────────────────── */
 
-/** 2026-09 → 09/2026, the same numeric month the screen shows. */
 const monthText = (month: string): string => {
   const m = /^(\d{4})-(\d{2})$/.exec(month);
   return m ? `${m[2]}/${m[1]}` : month;
@@ -365,9 +322,6 @@ export async function generateBankReconciliationPdf(
     ],
   });
 
-  /* Warnings FIRST, and in red, because everything under them is conditional
-     on them. A reader who takes the figures and misses the sentence has been
-     misled by the layout, not by the numbers. */
   if (report.warnings.length > 0) {
     doc.setFontSize(9);
     doc.setTextColor(170, 30, 30);
@@ -391,9 +345,6 @@ export async function generateBankReconciliationPdf(
       styles: { ...DOC_TABLE_STYLES, fontSize: 10 },
       columnStyles: { 0: { cellWidth: 130 }, 1: { halign: 'right' } },
       didParseCell: (data) => {
-        /* BODY ONLY. autoTable fires this for head and foot rows too, and their
-           row index starts at 0 as well — without this gate a head row would be
-           dressed as whichever step happens to sit first in the walk. */
         if (data.section !== 'body') return;
         const step = report.steps[data.row.index];
         if (step.rule === 'grand') {
@@ -420,8 +371,6 @@ export async function generateBankReconciliationPdf(
   for (const section of report.sections) {
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
-    /* A section title that would land at the foot of a page takes the next one
-       with its table, rather than heading an empty strip of paper. */
     if (y > 250) { doc.addPage(); y = 20; }
     doc.text(section.title, 15, y + 8);
     doc.setFont('helvetica', 'normal');

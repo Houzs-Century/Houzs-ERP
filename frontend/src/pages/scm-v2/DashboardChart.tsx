@@ -1,58 +1,31 @@
-// ----------------------------------------------------------------------------
-// DashboardChart — the one chart the Financial Dashboard's cards draw with:
-// bars per period (one series, or several stacked or side by side) and up to
-// two lines over them, drawn by hand as inline SVG. The trading ERP carries
-// no chart library and its bundle-size gate would refuse one; the ~200 lines
-// here do the job and read the theme's tokens for light and dark.
-//
-// The rules the Porting Guide learned the hard way, kept here: a period with
-// no value is NULL, never 0 — a bar is not drawn and a line BREAKS there
-// (the forecast's dashed line stops where no month carries a row); every
-// bar and point carries a tooltip with the figure AND its share; a partial
-// period's label already wears its " *" when the card hands it in.
-// ----------------------------------------------------------------------------
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 
 export type ChartSeries = {
   key: string;
   label: string;
   color: string;
-  /** One value per period, in sen (or a % when the chart's unit is 'pct'); null = nothing to draw. */
   values: Array<number | null>;
-  /** The tooltip per period, when the figure alone is not enough (the % share rides here). */
   tips?: Array<string | null>;
-  /** Series naming the same stack pile up in one column; one without a stack stands in its own (the Performance card: an actual bar beside the groups' stack). */
   stack?: string;
-  /** Per period, a bar drawn faded: a forecast figure, not an actual. */
   faded?: Array<boolean>;
 };
 export type ChartLine = ChartSeries & {
   dashed?: boolean;
-  /** 'right' draws the line on a second, % axis. */
   axis?: 'left' | 'right';
 };
 export type DashboardChartProps = {
   labels: string[];
   bars: ChartSeries[];
-  /** Every bar series stacks in one column (the cost structure); otherwise each series stands in its own column unless it names a `stack`. */
   stacked?: boolean;
   lines?: ChartLine[];
-  /** What the left axis counts: sen (RM), a % or a plain ratio. */
   unit?: 'sen' | 'pct' | 'ratio';
   height?: number;
   ariaLabel: string;
-  /* ── The report charts (the owner's Claude Design, batch 6 §4.1) ── */
-  /** Periods inside the chosen range: shaded behind their bars, labels petrol and bold. */
   shaded?: boolean[];
-  /** A press on a period's column (the reports open that month). */
   onPick?: (i: number) => void;
-  /** The card a pointed column shows beside it — never over its bars. */
   hoverCard?: (i: number) => ReactNode;
-  /** A line under each period's label (the net under the bars); a loss reads red. */
   notes?: Array<{ text: string; loss?: boolean } | null>;
-  /** The words a column's button reads for a screen reader. */
   pickLabel?: (i: number) => string;
-  /** The legend under the chart; a report chart draws its own above it. */
   legend?: boolean;
 };
 
@@ -68,7 +41,6 @@ export const fmtAxis = (v: number, unit: 'sen' | 'pct' | 'ratio'): string => {
   return `${sign}${abs.toLocaleString('en-MY', { maximumFractionDigits: 0 })}`;
 };
 
-/** A "nice" step for about five ticks between lo and hi. */
 const niceStep = (span: number): number => {
   if (span <= 0) return 1;
   const raw = span / 5;
@@ -92,9 +64,7 @@ export const scaleOf = (values: Array<number | null>): Scale => {
   return { lo, hi: hi === lo ? lo + step : hi, ticks };
 };
 
-/** Before the card is measured (and under jsdom, which has no ResizeObserver). */
 const DEFAULT_W = 760;
-/** The narrowest canvas: under it the figure scrolls sideways rather than shrinking its text (the finance pages are desktop pages). */
 const MIN_W = 700;
 const PAD = { top: 14, right: 16, bottom: 34, left: 60 };
 
@@ -102,7 +72,6 @@ export const DashboardChart = ({
   labels, bars, stacked = false, lines = [], unit = 'sen', height = 260, ariaLabel, shaded, onPick, hoverCard, notes, pickLabel, legend = true,
 }: DashboardChartProps) => {
   const n = labels.length;
-  /* The column a pointer rests on (report charts): tinted, with its card beside it. */
   const [hover, setHover] = useState<number | null>(null);
   const picking = Boolean(onPick || hoverCard);
   const hasNotes = Boolean(notes?.some((x) => x));
@@ -125,17 +94,14 @@ export const DashboardChart = ({
   const rightLines = lines.filter((l) => l.axis === 'right');
   const leftLines = lines.filter((l) => l.axis !== 'right');
   const padRight = rightLines.length > 0 ? 48 : PAD.right;
-  /* A second line under the labels needs its own room. */
   const padBottom = hasNotes ? PAD.bottom + 16 : PAD.bottom;
   const plotW = W - PAD.left - padRight;
   const plotH = height - PAD.top - padBottom;
-  /* The columns a period draws: one pile of every series, or a pile per named stack and a column per loose series, in first appearance. */
   const columns: ChartSeries[][] = stacked ? [bars] : (() => {
     const piles = new Map<string, ChartSeries[]>();
     for (const s of bars) { const k = s.stack ?? `solo:${s.key}`; piles.set(k, [...(piles.get(k) ?? []), s]); }
     return [...piles.values()];
   })();
-  /* The left axis spans every column's piled totals and every left line. */
   const stackTops = labels.flatMap((_, i) => columns.flatMap((col) => {
     let up = 0; let down = 0;
     for (const s of col) { const v = s.values[i]; if (v == null) continue; if (v >= 0) up += v; else down += v; }
@@ -166,7 +132,6 @@ export const DashboardChart = ({
     });
   });
 
-  /** A line's segments: consecutive present points join; a null breaks the line. */
   const segmentsOf = (l: ChartLine): string[] => {
     const s = l.axis === 'right' ? right : left;
     const out: string[] = [];
@@ -181,15 +146,12 @@ export const DashboardChart = ({
 
   const axisColor = 'var(--c-line, rgba(34,31,32,0.25))';
   const textStyle = { fontSize: 12, fill: 'currentColor', opacity: 0.75 } as const;
-  /* Report charts: the shaded period's labels in petrol, bold. */
   const labelStyle = (i: number) => (shaded?.[i] ? { ...textStyle, fill: 'var(--fin-petrol, #16695f)', opacity: 1, fontWeight: 700 } : textStyle);
   const colX = (i: number): number => PAD.left + slot * i;
-  /* The card sits beside the pointed column, on the side with room, never over its bars. */
   const cardPos = (i: number) => (i < n / 2 ? { left: colX(i) + slot + 6 } : { right: W - colX(i) + 6 });
   return (
     <figure ref={holder} style={{ margin: 0, overflowX: 'auto', position: 'relative' }}>
       <svg viewBox={`0 0 ${W} ${height}`} width={W} height={height} role="img" aria-label={ariaLabel} style={{ display: 'block', color: 'inherit', maxWidth: 'none' }}>
-        {/* The chosen period, shaded behind its columns; the pointed column tinted, underlined. */}
         {shaded?.map((on, i) => (on ? (
           <rect key={`s${i}`} x={colX(i) + 2} y={PAD.top} width={Math.max(slot - 4, 1)} height={plotH} rx={5} style={{ fill: 'var(--fin-info-bg, #eaf3f1)' }} data-shade={i} />
         ) : null))}
@@ -199,7 +161,6 @@ export const DashboardChart = ({
             <line x1={colX(hover) + 2} x2={colX(hover) + slot - 2} y1={PAD.top + plotH} y2={PAD.top + plotH} style={{ stroke: 'var(--fin-petrol, var(--hz-c-primary))' }} strokeWidth={2} />
           </g>
         )}
-        {/* The left axis' ticks and grid. */}
         {left.ticks.map((t) => (
           <Fragment key={`l${t}`}>
             <line x1={PAD.left} x2={W - padRight} y1={yOf(t, left)} y2={yOf(t, left)} stroke={axisColor} strokeWidth={t === 0 ? 1.2 : 0.6} strokeDasharray={t === 0 ? undefined : '2 3'} />
@@ -209,7 +170,6 @@ export const DashboardChart = ({
         {rightLines.length > 0 && right.ticks.map((t) => (
           <text key={`r${t}`} x={W - padRight + 6} y={yOf(t, right) + 4} textAnchor="start" style={textStyle}>{fmtAxis(t, 'pct')}</text>
         ))}
-        {/* The periods, and the line under each where the chart has one. */}
         {labels.map((label, i) => (
           <text key={`x${i}`} x={xCenter(i)} y={height - padBottom + 16} textAnchor="middle" style={labelStyle(i)}>{label}</text>
         ))}
@@ -219,13 +179,11 @@ export const DashboardChart = ({
             {note.text}
           </text>
         ) : null))}
-        {/* The bars. */}
         {barRects.map((r) => (
           <rect key={r.key} x={r.x} y={r.y} width={r.w} height={Math.max(r.h, r.h === 0 ? 0 : 1)} fill={r.color} rx={1.5} opacity={r.faded ? 0.45 : undefined} data-group={r.group} data-period={r.period} data-faded={r.faded ? 'true' : undefined}>
             <title>{r.tip}</title>
           </rect>
         ))}
-        {/* The lines: a null breaks them. */}
         {lines.map((l) => (
           <g key={l.key} data-line={l.key}>
             {segmentsOf(l).map((d, k) => (
@@ -238,7 +196,6 @@ export const DashboardChart = ({
             ))}
           </g>
         ))}
-        {/* Report charts: a column is one target — pointed, it shows its card; pressed, it opens. */}
         {picking && labels.map((label, i) => (
           <rect
             key={`h${i}`}

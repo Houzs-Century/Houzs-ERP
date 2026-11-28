@@ -1,28 +1,3 @@
-// ----------------------------------------------------------------------------
-// WarehouseRacks — desktop Warehouse (Rack/REC) experience.
-//
-// Phase 1 of porting the owner's HOOKKA warehouse module into Houzs. Started
-// life as a plain DataGrid of racks (the create surface the GRN per-line Rack
-// picker was missing); this is the rich three-tab experience that mirrors the
-// HOOKKA desktop Warehouse page, restyled to Houzs scm-v2 (Ink & Petrol tokens),
-// and adapted for a RETAILER — there is no production-order / packing / piece-QR
-// layer here (Houzs stocks in against product codes + documents).
-//
-//   Tab 1 · Rack Overview   — KPI tiles, warehouse selector, legend, a visual
-//                             grid of colour-coded rack cards (occupied / empty
-//                             / reserved), client-side search across every
-//                             item's doc no / customer / product, and a rack
-//                             detail popup. Keeps New rack + Seed racks.
-//   Tab 2 · Stock In / Out  — stock-in form (rack + product code + qty + …) and
-//                             stock-out form (occupied rack → item → reason),
-//                             plus a recent-movements table.
-//   Tab 3 · Movement History — type / from / to filters over the ledger.
-//
-// URL is state: ?warehouseId=… and ?tab=… (shareable / reload-stable).
-//
-// Print labels renders one QR sticker per rack (vendor/scm/lib/rack-label-pdf).
-// DEFERRED: item-QR, and the storekeeper's scan-the-shelf put-away on the GRN.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -60,8 +35,6 @@ import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/* Breakpoint from the design handoff: at/above it the floor plan always shows;
-   below it the operator gets a Floor plan / List switch. */
 const WIDE_BP = 1180;
 
 type TabKey = 'overview' | 'stockio' | 'history' | 'crosscompany';
@@ -72,28 +45,20 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'crosscompany', label: 'All Companies' },
 ];
 
-/* The collapsed header stat strip — value colour per the design token table. */
 const STAT_INK: Record<'ink' | 'primary' | 'warn' | 'primaryInk', string> = {
   ink: '#11140f', primary: '#16695f', warn: '#6e4d12', primaryInk: '#0c3f39',
 };
 
-/* ── Rack scope (shared across warehouses) ────────────────────────────────
-   A rack can be created into just this warehouse, ALL warehouses, or a chosen
-   set. The backend fans the label out to one rack row per target warehouse, so
-   split warehouse records that share rack numbers (Display / KL goods / …) can
-   be provisioned in one action. */
 type ScopeMode = 'this' | 'all' | 'choose';
 
 type WarehouseLite = { id: string; code: string; name: string };
 
-/* Translate the picker state into the create-body scope keys. */
 function scopeBody(
   mode: ScopeMode, currentWarehouseId: string, chosen: string[], siblings: boolean,
 ): RackScope {
   const also = siblings ? { alsoSiblingCompanies: true as const } : {};
   if (mode === 'all') return { allWarehouses: true, ...also };
   if (mode === 'choose') {
-    // Always include the current warehouse so "choose" never ships an empty set.
     const set = new Set(chosen.length > 0 ? chosen : [currentWarehouseId]);
     set.add(currentWarehouseId);
     return { warehouseIds: [...set], ...also };
@@ -110,9 +75,6 @@ function RackScopeField({
   setMode: (m: ScopeMode) => void;
   chosen: string[];
   setChosen: (ids: string[]) => void;
-  /* The other companies' records of the same building (same warehouse code)
-     get the label too — the owner's KL WAREHOUSE is one shed under HOUZS and
-     under 2990, and a shelf created for one is a shelf the other receives on. */
   siblings: boolean;
   setSiblings: (v: boolean) => void;
 }) {
@@ -167,7 +129,6 @@ export const WarehouseRacks = () => {
   const warehouseId = params.get('warehouseId') ?? '';
   const tab = (params.get('tab') as TabKey) || 'overview';
 
-  // Default to the first warehouse once the list loads (keeps the URL as state).
   useEffect(() => {
     if (!warehouseId && (warehouses.data?.length ?? 0) > 0) {
       const first = warehouses.data![0];
@@ -188,8 +149,6 @@ export const WarehouseRacks = () => {
     setParams(p, { replace: true });
   };
 
-  // Narrow-screen view is URL state ('plan' is the default, so it stays out of
-  // the URL); the switch only appears below the design breakpoint.
   const view: 'plan' | 'list' = params.get('view') === 'list' ? 'list' : 'plan';
   const selectView = (v: 'plan' | 'list') => {
     const p = new URLSearchParams(params);
@@ -209,9 +168,7 @@ export const WarehouseRacks = () => {
   const summary = racks.data?.summary ?? { total: 0, occupied: 0, empty: 0, reserved: 0, occupancyRate: 0 };
 
   const [editing, setEditing] = useState<Rack | null>(null);
-  // Which create surface is open: the single-rack drawer, the seed modal, or none.
   const [creatingMode, setCreatingMode] = useState<'single' | 'seed' | null>(null);
-  // Preselect a rack when jumping from the detail popup into the stock-in form.
   const [stockInRackId, setStockInRackId] = useState<string>('');
 
   const warehouseCode = warehouses.data?.find((w) => w.id === warehouseId)?.code ?? '';
@@ -234,11 +191,6 @@ export const WarehouseRacks = () => {
         title="Warehouse"
         description="Rack overview, stock in / out and the full movement ledger for the selected warehouse."
         actions={
-          /* Right column of the header: action row on top, the collapsed stat
-             strip below (was a five-tile grid that pushed the plan down). All
-             three actions stay inline Buttons/Link rather than
-             `secondaryActions`: MenuItem has no `disabled`, and Seed racks / New
-             rack must keep their `disabled={!warehouseId}` guard. */
           <div className="flex flex-col items-end gap-3">
             <div className="flex items-stretch gap-2">
               <Link
@@ -291,31 +243,24 @@ export const WarehouseRacks = () => {
       />
 
       <div className="space-y-4">
-        {/* Warehouse selector — Houzs racks are per-warehouse, so it's required.
-            Styled as the design's picker pill; stays a native select. Hidden on
-            the All Companies tab, which spans companies and picks by code. */}
         {tab !== 'crosscompany' && (
         <div className="flex flex-wrap items-center gap-3">
           <span className="inline-flex items-center gap-2 rounded-full border border-border-subtle bg-surface py-1.5 pl-3 pr-2">
             <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">WH</span>
-            <span className="relative inline-flex items-center">
-              <select
-                className="appearance-none border-none bg-transparent pr-5 text-[13px] font-semibold text-ink outline-none"
-                value={warehouseId}
-                onChange={(e) => selectWarehouse(e.target.value)}
-                aria-label="Warehouse"
-              >
-                {(warehouses.data ?? []).map((w) => (
-                  <option key={w.id} value={w.id}>{w.code}</option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-0 text-ink-muted" size={12} strokeWidth={2} />
-            </span>
+            <select
+              className="appearance-none border-none bg-transparent text-[13px] font-semibold text-ink outline-none"
+              value={warehouseId}
+              onChange={(e) => selectWarehouse(e.target.value)}
+              aria-label="Warehouse"
+            >
+              {(warehouses.data ?? []).map((w) => (
+                <option key={w.id} value={w.id}>{w.code}</option>
+              ))}
+            </select>
           </span>
         </div>
         )}
 
-        {/* Tabs + narrow-screen Floor plan / List switch */}
         <div className="flex flex-wrap items-center gap-3">
           <nav
             className="inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-surface p-1 shadow-stone"
@@ -407,9 +352,6 @@ export const WarehouseRacks = () => {
   );
 };
 
-/* Collapsed header stat strip — five compact cells replacing the old five-tile
-   grid, so the floor plan starts higher. Value colours per the design table:
-   occupied petrol, reserved brass-ink, occupancy dark petrol. */
 function HeaderStatStrip({
   summary,
 }: {
@@ -434,9 +376,6 @@ function HeaderStatStrip({
   );
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   Tab 2 — Stock In / Out.
-   ════════════════════════════════════════════════════════════════════════ */
 function StockIoTab({
   racks, warehouseId, initialRackId, onConsumeInitialRack,
 }: {
@@ -450,7 +389,6 @@ function StockIoTab({
   const stockOut = useStockOut();
   const recent = useMovements(warehouseId ? { warehouseId } : undefined);
 
-  // Stock-in form.
   const [siRack, setSiRack] = useState('');
   const [siCode, setSiCode] = useState('');
   const [siName, setSiName] = useState('');
@@ -459,7 +397,6 @@ function StockIoTab({
   const [siQty, setSiQty] = useState(1);
   const [siNotes, setSiNotes] = useState('');
 
-  // Preselect the rack when the operator jumped here from the detail popup.
   useEffect(() => {
     if (initialRackId) {
       setSiRack(initialRackId);
@@ -467,7 +404,6 @@ function StockIoTab({
     }
   }, [initialRackId, onConsumeInitialRack]);
 
-  // Stock-out form.
   const [soRack, setSoRack] = useState('');
   const [soItem, setSoItem] = useState('');
   const [soReason, setSoReason] = useState('');
@@ -521,7 +457,6 @@ function StockIoTab({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
       <div className={styles.stockGrid}>
-        {/* Stock In */}
         <div className={styles.panel}>
           <h3 className={styles.panelTitle}><ArrowDownToLine {...ICON} /> Stock In</h3>
           <label className={styles.field}>
@@ -571,7 +506,6 @@ function StockIoTab({
           </Button>
         </div>
 
-        {/* Stock Out */}
         <div className={styles.panel}>
           <h3 className={styles.panelTitle}><ArrowUpFromLine {...ICON} /> Stock Out</h3>
           <label className={styles.field}>
@@ -624,7 +558,6 @@ function StockIoTab({
         </div>
       </div>
 
-      {/* Recent movements */}
       <div className={styles.panel}>
         <h3 className={styles.panelTitle}><History {...ICON} /> Recent Movements</h3>
         <MovementTable movements={(recent.data ?? []).slice(0, 20)} isLoading={recent.isLoading} />
@@ -633,9 +566,6 @@ function StockIoTab({
   );
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   Tab 3 — Movement History with type / from / to filters.
-   ════════════════════════════════════════════════════════════════════════ */
 function HistoryTab({ warehouseId }: { warehouseId: string }) {
   const [type, setType] = useState<RackMovementType | ''>('');
   const [from, setFrom] = useState('');
@@ -674,17 +604,12 @@ function HistoryTab({ warehouseId }: { warehouseId: string }) {
   );
 }
 
-/* ── Shared movement table + pill ──────────────────────────────────────── */
 function MovementPill({ type }: { type: RackMovementType }) {
   const cls = type === 'STOCK_IN' ? styles.movementIn : type === 'STOCK_OUT' ? styles.movementOut : styles.movementTransfer;
   const label = type === 'STOCK_IN' ? 'IN' : type === 'STOCK_OUT' ? 'OUT' : 'TRANSFER';
   return <span className={`${styles.movementPill} ${cls}`}>{label}</span>;
 }
 
-/* Batch 4: the shared movement ledger renders through DataTable — one
-   conversion covers both consumers (Stock In/Out's recent list + the full
-   Movement History tab). Server order (newest first) is the default; the
-   date column's getValue keeps re-sorts honest. */
 function MovementTable({ movements, isLoading }: { movements: RackMovement[]; isLoading: boolean }) {
   return (
     <DataTable<RackMovement>
@@ -717,7 +642,6 @@ function MovementTable({ movements, isLoading }: { movements: RackMovement[]; is
   );
 }
 
-/* ── Single-rack create / edit drawer — mirrors the mobile "Rack" form ──── */
 function RackFormDrawer({
   warehouseId, warehouses, editing, allRacks, onClose,
 }: {
@@ -737,7 +661,6 @@ function RackFormDrawer({
     notes: editing?.notes ?? '',
     reserved: editing?.reserved ?? false,
   });
-  // Scope — create only. Editing touches a single warehouse's rack row.
   const [scopeMode, setScopeMode] = useState<ScopeMode>('this');
   const [scopeChosen, setScopeChosen] = useState<string[]>([]);
   const [scopeSiblings, setScopeSiblings] = useState(false);
@@ -748,11 +671,8 @@ function RackFormDrawer({
       return;
     }
     const onError = (e: unknown) => notify({ title: 'Could not save rack', body: (e as Error).message, tone: 'error' });
-    // A rack's zone belongs to the whole column; '' clears the override (auto).
     const zone = form.zone || null;
     if (editing) {
-      // Keep both levels of the rack in one zone: write the edited row, then
-      // sweep the zone onto any sibling level sharing the rack column.
       const siblings = allRacks.filter((r) => r.id !== editing.id && rackKeyOf(r.rack) === rackKeyOf(editing.rack));
       void (async () => {
         try {
@@ -848,7 +768,6 @@ function RackFormDrawer({
   );
 }
 
-/* ── Seed N racks quick-add (desktop-only) — POST { warehouseId, count, prefix } */
 function SeedRacksModal({
   warehouseId, warehouses, onClose,
 }: {
@@ -866,8 +785,6 @@ function SeedRacksModal({
   const [scopeChosen, setScopeChosen] = useState<string[]>([]);
   const [scopeSiblings, setScopeSiblings] = useState(false);
 
-  /* The labels the server WILL write, from the shared generator — the preview
-     must not be a second guess at the rule (shared/rack-labels.ts). */
   const preview = buildSeedRackLabels({
     prefix: prefix.trim() || 'Rack', series, count: Number(count), levels: Number(levels),
   });

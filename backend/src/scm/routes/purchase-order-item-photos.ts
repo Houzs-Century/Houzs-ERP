@@ -42,7 +42,7 @@ purchaseOrderItemPhotos.use('*', supabaseAuth);
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
-const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // 10 MB — same ceiling as the SO route
+const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 
 /** PO-owned keys live under this prefix; everything else in photo_urls is a
  *  carried SO key (or a future producer) and is not this route's to delete. */
@@ -53,8 +53,6 @@ export const isPoOwnedPhotoKey = (key: string): boolean => key.startsWith(PO_PHO
 export const poItemPhotoKey = (poId: string, itemId: string, photoId: string, ext: string): string =>
   `${PO_PHOTO_KEY_PREFIX}${poId}/${itemId}/${photoId}.${ext}`;
 
-/* Same conservative whitelist as the SO upload route — the key suffix is
-   cosmetic (Content-Type lives in R2 metadata). */
 const extFromMime = (mime: string): string => {
   const m = mime.toLowerCase();
   if (m === 'image/jpeg' || m === 'image/jpg') return 'jpg';
@@ -71,9 +69,6 @@ const extFromMime = (mime: string): string => {
 type PoRow = { id: string; po_number: string; status: string };
 type PoItemRow = { id: string; purchase_order_id: string; item_code: string; photo_urls: string[] | null };
 
-/* One membership check for both routes: company-scoped PO, then the line, then
-   the parent match. `maybeSingle` — the company predicate can legitimately
-   match zero rows and that honest 404 must not surface as a 500. */
 async function loadOwned(c: Ctx, poId: string, itemId: string): Promise<
   { ok: true; po: PoRow; item: PoItemRow } | { ok: false; res: Response }
 > {
@@ -148,20 +143,12 @@ purchaseOrderItemPhotos.post('/:id/items/:itemId/photos', async (c) => {
     return c.json({ error: 'r2_put_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
   }
 
-  /* Client-generated thumbnail from the same multipart body, stored at
-     `<photoKey>.thumb`. Best-effort — but it is what the PO PDF prints
-     (pdf-item-photos fetches thumbs only), so the client should always send
-     one (prepareImageForUpload does). */
   await putOptionalThumb(c.env.SO_ITEM_PHOTOS, form.thumb, photoKey, {
     poNumber: owned.po.po_number,
     itemId,
     uploadedBy: user.id,
   });
 
-  /* Append on the WRITE with the parent predicate re-stated AND the company
-     predicate on the statement itself — nothing re-checks between two
-     PostgREST round trips (CLAUDE.md company-scope rules a+b; the line table
-     carries company_id, stamped on every insert). */
   const co = requireActiveCompanyId(c);
   if (!co.ok) {
     await c.env.SO_ITEM_PHOTOS.delete(photoKey).catch((e: unknown) =>
@@ -196,9 +183,6 @@ purchaseOrderItemPhotos.delete('/:id/items/:itemId/photos/:photoKey', async (c) 
   if (!(owned.item.photo_urls ?? []).includes(photoKey)) {
     return c.json({ error: 'photo_not_in_item' }, 404);
   }
-  /* The ownership split. A carried SO key is the SAME R2 object the SO line
-     lists — deleting it here would blank the Sales Order's own photo. Refuse
-     with the reason named; the SO detail is where that photo is managed. */
   if (!isPoOwnedPhotoKey(photoKey)) {
     return c.json({ error: 'carried_photo_readonly', manageOn: 'sales_order' }, 403);
   }
@@ -214,8 +198,6 @@ purchaseOrderItemPhotos.delete('/:id/items/:itemId/photos/:photoKey', async (c) 
     .eq('purchase_order_id', poId), co.companyId);
   if (updErr) return c.json({ error: 'db_update_failed', reason: updErr.message }, 500);
 
-  /* R2 cleanup AFTER the row no longer lists the key — a failed delete leaves
-     an orphan blob (harmless), never a listed key with no object. */
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- same runtime-absent-binding guard as the upload route
   if (c.env.SO_ITEM_PHOTOS) {
     await c.env.SO_ITEM_PHOTOS.delete(photoKey).catch((e: unknown) =>

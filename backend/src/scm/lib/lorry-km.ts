@@ -1,14 +1,8 @@
-// Own-lorry running cost: km driven from the Velocity fixes (scm.lorry_positions)
-// x the lorry's cost_per_km_sen. Pure, so the light test project covers it.
 
 export type Fix = { lat: number; lng: number; recorded_at: string };
 
 const EARTH_KM = 6371;
-// ponytail: a hop faster than this is treated as a GPS jump and skipped; a
-// road-snapped distance (map-matching API) if straight-line km proves too low.
 export const MAX_KMH = 150;
-// ponytail: a hop under this is parked-GPS drift (288 fixes/day x a few metres
-// adds phantom km); an ignition-aware filter if crawling traffic gets lost.
 export const MIN_HOP_KM = 0.05;
 
 export function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -34,6 +28,22 @@ export function kmFromFixes(fixes: Fix[]): number {
   return Math.round(km * 10) / 10;
 }
 
+/** One lorry-day's km by the tracker's own odometer: the sum of forward steps between
+ *  readings of one device (the one with most readings). A step back (odometer reset)
+ *  or faster than MAX_KMH is skipped. null with fewer than two readings. */
+export function odometerKm(fixes: Array<{ device_id: string | null; recorded_at: string; odometer_m: number | null }>): number | null {
+  const read = oneTracker(fixes.filter((f) => f.odometer_m != null))
+    .sort((a, b) => Date.parse(a.recorded_at) - Date.parse(b.recorded_at));
+  if (read.length < 2) return null;
+  let m = 0;
+  for (let i = 1; i < read.length; i++) {
+    const step = read[i]!.odometer_m! - read[i - 1]!.odometer_m!;
+    const hours = (Date.parse(read[i]!.recorded_at) - Date.parse(read[i - 1]!.recorded_at)) / 3_600_000;
+    if (step > 0 && hours > 0 && step / 1000 / hours <= MAX_KMH) m += step;
+  }
+  return Math.round(m / 100) / 10;
+}
+
 /** null when the lorry has no rate set: unknown cost is not zero cost. */
 export function costSen(km: number, costPerKmSen: number | null): number | null {
   return costPerKmSen == null ? null : Math.round(km * costPerKmSen);
@@ -46,4 +56,23 @@ export function myDayWindow(date: string): { from: string; to: string } | null {
   const start = Date.parse(`${date}T00:00:00+08:00`);
   if (Number.isNaN(start) || new Date(start + 8 * 3_600_000).toISOString().slice(0, 10) !== date) return null;
   return { from: new Date(start).toISOString(), to: new Date(start + 86_400_000).toISOString() };
+}
+
+/** One lorry-day's fixes from ONE tracker. A lorry fed by two trackers (Velocity +
+ *  iTrack) has interleaved fixes that zig-zag the path and inflate km, so keep the
+ *  device with the most fixes (tie: the one whose newest fix is latest). A null
+ *  device_id counts as its own device. Input order is kept. */
+export function oneTracker<T extends { device_id: string | null; recorded_at: string }>(fixes: T[]): T[] {
+  const stat = new Map<string | null, { n: number; last: number }>();
+  for (const f of fixes) {
+    const s = stat.get(f.device_id) ?? { n: 0, last: -Infinity };
+    s.n++;
+    s.last = Math.max(s.last, Date.parse(f.recorded_at) || 0);
+    stat.set(f.device_id, s);
+  }
+  if (stat.size < 2) return fixes;
+  let best: string | null = null;
+  let bs = { n: -1, last: -Infinity };
+  for (const [id, s] of stat) if (s.n > bs.n || (s.n === bs.n && s.last > bs.last)) { best = id; bs = s; }
+  return fixes.filter((f) => f.device_id === best);
 }

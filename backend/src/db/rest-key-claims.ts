@@ -15,9 +15,7 @@
    project (`ref` is in every REST URL). */
 
 export type RestKeyClaims = {
-  /** `service_role`, `anon`, `authenticated`, … or null when the key is not a readable JWT. */
   role: string | null;
-  /** Supabase project ref the key was minted for, or null. */
   ref: string | null;
 };
 

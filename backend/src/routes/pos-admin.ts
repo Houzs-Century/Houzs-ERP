@@ -1,28 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-admin — the ERP's POS Admin menu for the Houzs POS booth app (layouts
-// E1 POS Items, E1b Barcode labels, E2 Cashiers, E3 Events, E4 SST & Receipt,
-// E5 Terminals / Printer & Scanner / General). Owner / admin only: every route
-// sits behind `pos.manage` (Owner + IT Admin hold it via "*").
-//
-//   GET  /settings                      PUT  /settings/:group
-//   GET  /items  POST /items  PATCH /items/:id  DELETE /items/:id (deactivate)
-//   POST /items/:id/barcodes  DELETE /items/:id/barcodes/:bid  POST /items/import
-//   GET  /inventory/search?q=           the SKU picker behind "+ Add from Inventory"
-//   GET  /labels?search=&missing=1&ids= POST /labels/generate {product_ids}
-//   GET  /cashiers  POST /cashiers  PATCH /cashiers/:id  POST /cashiers/:id/pin
-//   GET  /events  GET /events/candidates?q=  PUT /events/:projectId
-//   POST /events/:projectId/push  DELETE /events/:projectId
-//   GET  /terminals  POST /terminals  PATCH /terminals/:id
-//
-// Its own prefix, NOT /api/pos: that router is the older 2990 tablet-POS auth
-// (pre-auth mount). Drizzle throughout; the furniture SKU master
-// (scm.mfg_products) and stock (scm.inventory_balances) are read through
-// db.execute in their own helpers, never mixed into a builder query.
-//
-// COMPANY SCOPE: every table here carries company_id and every read and write
-// requires the active company (409 company_unresolved otherwise) — the POS
-// masters of one company must never show in, or be edited from, the other.
-// ----------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
@@ -45,7 +20,7 @@ import {
 import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { hashPassword } from "../services/auth";
 import { internalEan13 } from "../scm/shared/ean13";
-import { POS_SETTINGS_GROUPS, normalizePosSettings, normalizePosSettingsGroup, type PosSettingsGroup } from "../scm/shared/pos-settings";
+import { POS_SETTINGS_GROUPS, normalizePosSettings, normalizePosSettingsGroup, receiptNoFormatProblem, type PosSettingsGroup } from "../scm/shared/pos-settings";
 import { skuByCodes, skuFactsByIds, skuSearch } from "./lib/pos-sku";
 import { deviceTokenHash, mintDeviceToken } from "./lib/pos-bundle";
 import { loadPosBundle } from "./lib/pos-bundle-load";
@@ -104,7 +79,6 @@ async function audit(db: Db, companyId: number, c: Ctx, entity: string, entityId
   });
 }
 
-/* ── SKU master facts (scm schema) live in ./lib/pos-sku.ts ──────────────── */
 
 type LabelRow = { product_id: string; code: string; name: string; category: string | null; factory_barcode: string | null; sell_price_sen: number | null; total: number };
 
@@ -125,8 +99,6 @@ async function labelRows(db: Db, companyId: number, opts: { search: string; miss
      LIMIT ${opts.pageSize} OFFSET ${offset}`);
 }
 
-/** Write a generated own barcode onto the SKU's own barcode field when it has
- *  none, so the ERP's other screens scan it too (layout E1b). */
 async function stampSkuBarcodeIfEmpty(db: Db, companyId: number, productId: string, barcode: string): Promise<void> {
   await db.execute(sql`UPDATE scm.mfg_products SET barcode = ${barcode} WHERE company_id = ${companyId} AND id = ${productId} AND barcode IS NULL`);
 }
@@ -136,7 +108,6 @@ async function nextEan13(db: Db): Promise<string> {
   return internalEan13(rows.length ? Number(rows[0].n) : NaN);
 }
 
-/* ── settings ──────────────────────────────────────────────────────────── */
 
 posAdmin.get("/settings", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -154,6 +125,9 @@ posAdmin.put("/settings/:group", async (c) => {
   const group = c.req.param("group") as PosSettingsGroup;
   if (!POS_SETTINGS_GROUPS.includes(group)) return c.json({ error: "unknown_group" }, 400);
   const body = await c.req.json<{ value?: unknown }>().catch(() => ({} as { value?: unknown }));
+  const fmt = group === "general" ? (body.value as { receipt_no_format?: unknown } | undefined)?.receipt_no_format : undefined;
+  const fmtProblem = typeof fmt === "string" ? receiptNoFormatProblem(fmt) : null;
+  if (fmtProblem) return c.json({ error: "receipt_no_format_invalid", message: fmtProblem }, 400);
   const value = normalizePosSettingsGroup(group, body.value);
   const db = getDb(c.env);
   await db
@@ -164,7 +138,6 @@ posAdmin.put("/settings/:group", async (c) => {
   return c.json({ ok: true, value });
 });
 
-/* ── POS items ─────────────────────────────────────────────────────────── */
 
 type ItemOut = {
   id: number; product_id: string; item_code: string; name: string; category: string | null; uom: string;
@@ -328,8 +301,6 @@ posAdmin.delete("/items/:id/barcodes/:bid", async (c) => {
   return c.json({ ok: true });
 });
 
-/** Excel import (layout E1): one row per item code; an unknown code is
- *  skipped with its reason, a known one is created or updated. */
 posAdmin.post("/items/import", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -366,7 +337,6 @@ posAdmin.post("/items/import", async (c) => {
   return c.json(result);
 });
 
-/* ── barcode labels (E1b) ──────────────────────────────────────────────── */
 
 posAdmin.get("/labels", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -410,7 +380,6 @@ posAdmin.post("/labels/generate", async (c) => {
   return c.json({ generated, already: ids.filter((id) => have.has(id)).length, unknown: ids.filter((id) => !facts.has(id)).length });
 });
 
-/* ── cashiers (E2) ─────────────────────────────────────────────────────── */
 
 type CashierBody = { code?: string; name?: string; phone?: string | null; pin?: string; role?: string; max_discount_pct?: number; working_hours_note?: string | null; bank_note?: string | null; event_ids?: number[]; active?: boolean };
 
@@ -508,13 +477,9 @@ posAdmin.post("/cashiers/:id/pin", async (c) => {
   return c.json({ ok: true });
 });
 
-/* ── events (E3) ───────────────────────────────────────────────────────── */
 
 type EventProjectRow = { id: number; code: string | null; name: string; start_date: string | null; end_date: string | null; event_type_slug: string | null; event_type_name: string | null; venue: string | null };
 
-/** Every fair that matters to the booth, on its own: Cash & Carry projects, the
- *  projects of the booth brands (General > booth_brands, e.g. AKEMI Cash & Carry,
- *  AKEMI FRAGRANCE) and whatever is linked; anything else through the search. */
 async function eventProjects(db: Db, companyId: number, opts: { linkedProjectIds: number[]; search: string | null; limit: number; brands: string[] }): Promise<EventProjectRow[]> {
   const like = opts.search ? `%${opts.search.replace(/[%_]/g, "")}%` : null;
   return db.execute<EventProjectRow>(sql`
@@ -657,7 +622,6 @@ posAdmin.delete("/events/:projectId", async (c) => {
   return c.json({ ok: true });
 });
 
-/* ── terminals (E5) ────────────────────────────────────────────────────── */
 
 type TerminalBody = { code?: string; device_name?: string | null; platform?: string | null; project_id?: number | null; active?: boolean };
 
@@ -710,12 +674,7 @@ posAdmin.patch("/terminals/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-/* ── device registration (layout P15 "Prepare device") ─────────────────── */
 
-/** An admin signed in on the device picks a terminal + event: the terminal is
- *  bound to the event, a fresh device token is minted (its hash stored; the
- *  token itself shown to the device once) and the bundle comes back with it.
- *  Re-preparing a terminal rotates its token, so a lost device stops talking. */
 posAdmin.post("/device/register", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -731,7 +690,6 @@ posAdmin.post("/device/register", async (c) => {
   const now = nowIso();
   const res = await db
     .update(pos_terminals)
-    /* The outgoing hash is kept so the device that held this terminal can ask for it back (lib/pos-reconnect.ts). */
     .set({ project_id: projectId, token_hash: await deviceTokenHash(token), prev_token_hash: sql`${pos_terminals.token_hash}`, reconnect_requested_at: null, reconnect_device_name: null, reconnect_approved_at: null, reconnect_approved_by: null, prepared_at: now, last_seen_at: now, status: "PREPARED", device_name: str(body.device_name) ?? undefined, platform: str(body.platform) ?? undefined, updated_at: now })
     .where(and(eq(pos_terminals.id, terminalId), eq(pos_terminals.company_id, co.companyId), eq(pos_terminals.active, true)))
     .returning({ id: pos_terminals.id, code: pos_terminals.code });
@@ -743,7 +701,6 @@ posAdmin.post("/device/register", async (c) => {
 });
 
 
-/* ── Sync Status (layout E7) ───────────────────────────────────────────── */
 
 posAdmin.get("/status", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -781,9 +738,6 @@ posAdmin.get("/status", async (c) => {
   });
 });
 
-/** Acknowledge an alert by hand: the bills were recovered (Import backup) or
- *  the device is written off. The terminal's pending figures and the
- *  data-lost mark are cleared, so the watchdog does not reopen it. */
 posAdmin.post("/alerts/:id/acknowledge", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -802,12 +756,9 @@ posAdmin.post("/alerts/:id/acknowledge", async (c) => {
   return c.json({ ok: true });
 });
 
-/* ── Import backup (layout E8) ─────────────────────────────────────────── */
 
 type BackupRow = { uuid: string; receipt_no: string; type: string; status: string; sold_at: string; total_sen: number; cashier_name: string; kind: PreviewKind | "INVALID"; reason?: string };
 
-/** Open the dropped file with the terminal's stored token hash and classify
- *  every receipt; shared by the preview and the import. */
 async function openBackup(db: Db, companyId: number, raw: unknown): Promise<{ ok: true; terminal: typeof pos_terminals.$inferSelect; file: PosBackupFile; sales: IncomingSale[]; rows: BackupRow[] } | { ok: false; error: string; reason: string }> {
   if (!isPosBackupFile(raw)) return { ok: false, error: "not_a_backup", reason: "This is not a Houzs POS backup file (houzs_pos_T0x_backup.json)." };
   const found = await db.select().from(pos_terminals).where(and(eq(pos_terminals.company_id, companyId), eq(pos_terminals.code, raw.terminal))).limit(1);
@@ -858,9 +809,6 @@ posAdmin.post("/backup/preview", async (c) => {
   });
 });
 
-/** Import: every NEW and UPDATE receipt goes through the same ingest as the
- *  device sync (stock booked, audit written); DUPLICATE, CONFLICT and INVALID
- *  rows are left alone and reported. `uuids` narrows it to a selection. */
 posAdmin.post("/backup/import", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -889,11 +837,7 @@ posAdmin.post("/backup/import", async (c) => {
 });
 
 
-/* ── Sales Report (layout E6) ──────────────────────────────────────────── */
 
-/** The report over one event: filters date range (Malaysia days), terminal,
- *  salesman, status; the shared aggregation; and the stock left per item at
- *  the event's stock location (else the POS store). */
 posAdmin.get("/report", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -933,10 +877,7 @@ posAdmin.get("/report", async (c) => {
 });
 
 
-/* ── reconnect by approval, answered from the ERP (lib/pos-reconnect.ts) ── */
 
-/** A device that lost this terminal asked for it back; whoever manages POS
- *  approves here, and the device collects its new token by itself. */
 posAdmin.post("/terminals/:id/reconnect-approve", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -953,11 +894,7 @@ posAdmin.post("/terminals/:id/reconnect-approve", async (c) => {
   return c.json({ ok: true, terminal: rows[0].code });
 });
 
-/* ── pairing a device from the ERP (POS Admin > Terminals > Pair device) ── */
 
-/** Hand out a one-time pairing code for a terminal whose event is set. The
- *  device redeems it at POST /api/pos-device/pair (no ERP sign-in on the
- *  device); the code lives PAIRING_MINUTES and is stored only as a hash. */
 posAdmin.post("/terminals/:id/pairing", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -975,17 +912,12 @@ posAdmin.post("/terminals/:id/pairing", async (c) => {
   const expires = new Date(Date.now() + PAIRING_MINUTES * 60_000).toISOString();
   await db.update(pos_terminals).set({ pairing_code_hash: await pairingCodeHash(code), pairing_expires_at: expires, updated_at: nowIso() }).where(eq(pos_terminals.id, id));
   await audit(db, co.companyId, c, "pos_terminal", id, "pairing_code_issued", null, expires);
-  /* The custom domain is not attached yet; the Pages address always works. */
   const origin = (c.env.POS_APP_ORIGIN ?? "https://houzs-pos.pages.dev").replace(/\/$/, "");
   return c.json({ code: formatPairingCode(code), expires_at: expires, url: `${origin}/?pair=${code}`, terminal: t.code });
 });
 
 
-/* ── the manager sign-in on the POS front (owner / admin with pos.manage) ── */
 
-/** What an ERP account signed in on the POS needs before the device is set
- *  up: who they are, the company block for the receipt header, the settings.
- *  The mount already requires pos.manage, so a plain staff account gets 403. */
 posAdmin.get("/device/context", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -998,11 +930,9 @@ posAdmin.get("/device/context", async (c) => {
 });
 
 
-/* ── POS Items > Add by category ─────────────────────────────────────────── */
 
 type CategoryProduct = CategoryProductRow & { product_id: string; code: string; name: string; cost_price_sen: number | string | null };
 
-/** Every ACTIVE inventory product with its POS state (null = not a POS item). */
 const categoryProducts = (db: Db, companyId: number) => db.execute<CategoryProduct>(sql`
     SELECT p.id AS product_id, p.code, p.name, p.category::text AS category,
            COALESCE(p.sell_price_sen, p.price1_sen, p.base_price_sen) AS sell_price_sen, p.cost_price_sen,
@@ -1045,8 +975,6 @@ posAdmin.post("/items/add-all", async (c) => {
   return c.json({ ok: true, added, turned_on: on.length, categories });
 });
 
-/** Switch off the named POS items in one go (the trash on a row, many at
- *  once). Ids outside the company are ignored, not reported. */
 posAdmin.post("/items/remove", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -1059,10 +987,6 @@ posAdmin.post("/items/remove", async (c) => {
   return c.json({ ok: true, removed: res.length });
 });
 
-/** Keep only the named categories: every POS item whose inventory product is
- *  in another category (or has none) is switched off, the same as the trash on
- *  its row. Bills already sold keep their lines; Add from Inventory turns an
- *  item back on. */
 posAdmin.post("/items/keep-categories", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);

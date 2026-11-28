@@ -1,15 +1,3 @@
-// ---------------------------------------------------------------------------
-// mcp-access.ts — what the AI Connector may read (routes/mcp.ts).
-//
-// The boundary is the ERP itself: every tool call re-enters the app as a GET
-// carrying the person's own identity, so each route's own requirePermission /
-// requirePageAccess / company scope decides — exactly what that person's ERP
-// login sees. This file adds three things on top:
-//   1. paths the connector never reads (sign-in, credentials, private mail,
-//      machine-to-machine sync, the connector itself);
-//   2. credential-shaped fields removed from every reply, whoever asks;
-//   3. the module list (from the app's own GET routes) for list_modules.
-// ---------------------------------------------------------------------------
 
 /** Never readable through the connector, whatever the person's role. */
 export const MCP_BLOCKED_PREFIXES = [
@@ -78,18 +66,6 @@ export function redactSecrets(v: unknown): { value: unknown; removed: Set<string
   return { value: walk(v, 0), removed };
 }
 
-// ── money fields (cost / margin / profit) ───────────────────────────────────
-// The leak check (2026-11-25, account: a Sales Executive) found cost reaching a
-// non-finance person through the ERP's own replies even where the screens hide
-// it: unitCostSen on deliverable DO lines and invoiceable lines, costPriceSen on
-// special add-ons, contractor_cost / fin_total_cost on projects, cost_notes on
-// service cases. The connector now strips them by the ERP's OWN cohorts:
-//   margin / profit / any other cost  → isFinanceViewer (the PMS director cohort,
-//                                        or projects.finance.view), same as
-//                                        scm/lib/houzs-perms canViewScmFinance;
-//   product / line unit cost          → isProductCostViewer (finance cohort OR
-//                                        Purchasing), same as canViewScmProductCost.
-// Unknown caller → strip all of them (fail closed).
 export const PROFIT_KEY = /(margin|profit|gross_?pct|gp_?pct|markup)/i;
 export const PRODUCT_COST_KEY = /(unit_?cost|cost_?price|landed_?cost|avg_?cost|average_?cost|cost_?per_?unit)/i;
 export const ANY_COST_KEY = /cost/i;
@@ -149,7 +125,7 @@ export function readablePaths(routes: RouteInfo[], prefix: string | null): strin
 export function moduleCatalog(routes: RouteInfo[]): { prefix: string; endpoints: number }[] {
   const counts = new Map<string, number>();
   for (const p of readablePaths(routes, null)) {
-    const seg = p.split("/").filter(Boolean); // ["api", "scm", "sales-orders", ...]
+    const seg = p.split("/").filter(Boolean);
     const prefix = seg[1] === "scm" && seg[2] && !seg[2].startsWith(":") ? `/api/scm/${seg[2]}` : `/api/${seg[1]}`;
     counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
   }

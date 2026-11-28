@@ -1,5 +1,3 @@
-/* Logistics pickers on the project detail page: the split date + time field and
- * the Grab two-helper box. */
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { GrabHelperBox, LogisticsDateTimeField, type CrewMember } from "./logisticsParts";
@@ -39,7 +37,6 @@ describe("GrabHelperBox", () => {
     fireEvent.click(add);
     expect(onAdd).not.toHaveBeenCalled();
 
-    // Each select is re-created on every render, so query it again after a change.
     fireEvent.change(screen.getAllByRole("combobox")[0], { target: { value: "Ali" } });
     fireEvent.change(screen.getAllByRole("combobox")[1], { target: { value: "Muthu" } });
     fireEvent.click(add);

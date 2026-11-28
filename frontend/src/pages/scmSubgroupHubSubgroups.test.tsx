@@ -3,9 +3,6 @@ import { render, screen, cleanup } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import type { AccessLevel } from "../types";
 
-/* B29 (sister: Conts #761): Finance's pages sit inside sub-groups. A clerk whose
-   only grant is Money in was told "You don't have access to any finance modules
-   yet", because the hub kept only direct children that have a page. */
 let access: Record<string, AccessLevel> = {};
 
 vi.mock("../auth/AuthContext", () => ({

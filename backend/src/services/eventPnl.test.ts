@@ -16,12 +16,10 @@ describe('BY TOTAL SALES — the fair as the owner keys it', () => {
   it('COGS is the orders\' cost ratio on Total Sales; the % rows are the rate card on Total Sales', () => {
     const { by_sales: c } = run();
     expect(c).toMatchObject({ sales: 114240, salesFrom: 'box' });
-    /* 17,780 / 46,352 = 38.36% of 114,240 */
     expect(c.cogs.from).toBe('so_ratio');
     expect(c.cogs.total).toBeCloseTo(43821.25, 0);
     expect(c.transportFee).toEqual({ amount: 5712, from: 'rate', pct: 5, serviceCost: 0 });
     expect(c.merchandise).toEqual({ amount: 2284.8, from: 'rate', pct: 2 });
-    /* GP 61.6% ≥ 45: the boost tier */
     expect(c.commission).toMatchObject({ amount: 17136, from: 'rate', pct: 15, boost: true });
     expect(c.rental).toBe(9800);
     expect(c.totalCost).toBeCloseTo(c.cogs.total + 9800 + 5712 + 2284.8 + 17136, 2);
@@ -59,16 +57,12 @@ describe('BY SALES ORDERS — the fair as its orders say', () => {
     expect(c!).toMatchObject({ sales: 46352, salesFrom: 'so' });
     expect(c!.cogs).toEqual({ mattSofa: 15000, bedframe: 0, accessories: 2780, other: 0, total: 17780, from: 'so' });
     expect(c!.transportFee.amount).toBeCloseTo(2317.6, 2);
-    /* GP 61.6% here too → boost */
     expect(c!.commission).toMatchObject({ pct: 15, boost: true });
-    /* a typed COGS never enters the orders' P&L */
     const typed = run({ lines: [RENTAL, { kind: 'cost', category: 'cogs_matt_sofa', amount: 40000 }] }).by_so!;
     expect(typed.cogs.total).toBe(17780);
   });
 
   it('the two columns can land on different commission tiers', () => {
-    /* Orders costing 60%: GP 40% < 45 → normal tier, while the box (no typed
-       COGS, same ratio) is also 40% — make the box column pass with typed COGS. */
     const p = run({ so: { ...SO_2214, costRm: { mattSofa: 27811.2, bedframe: 0, accessories: 0, others: 0 } }, lines: [RENTAL, { kind: 'cost', category: 'cogs', amount: 30000 }] });
     expect(p.by_sales.commission).toMatchObject({ pct: 15, boost: true });
     expect(p.by_so!.commission).toMatchObject({ pct: 13, boost: false });
@@ -104,7 +98,6 @@ describe('rows both P&Ls share, and who wins a % row', () => {
 
 describe('service lines are wiped from the Event P&L (HC-0134, owner 2026-10-27)', () => {
   it('By Sales Orders: Sales is the goods; no Service revenue and no service cost in Transport Fee', () => {
-    /* 8 orders, RM 48,352 in all of which RM 2,000 is a delivery / service charge costing RM 600. */
     const { by_so: c } = run({ so: { ...SO_2214, salesRm: 46352, serviceRm: 2000, serviceCostRm: 600 } });
     expect(c).toMatchObject({ sales: 46352, serviceRevenue: 0 });
     expect(c!.transportFee).toEqual({ amount: 2317.6, from: 'rate', pct: 5, serviceCost: 0 });

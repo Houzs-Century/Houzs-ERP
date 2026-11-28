@@ -1,25 +1,3 @@
-// ----------------------------------------------------------------------------
-// /warehouse — rack/bin management (ported from Hookka ERP).
-//
-// A physical-location layer on top of the trading-company warehouses table:
-// each warehouse is split into racks, each rack holds zero-to-many stored
-// items, and every stock-in / stock-out / transfer is recorded as a rack
-// movement for an audit trail (Movement History tab).
-//
-// Rack status (OCCUPIED / RESERVED / EMPTY) is derived from items + the
-// reserved flag and re-persisted on every write so the rack-grid list query
-// stays a single SELECT.
-//
-// Endpoints:
-//   GET   /warehouse                 — rack list (with items) + KPI summary
-//                                       ?warehouseId=… narrows to one warehouse
-//   POST  /warehouse/racks           — create a rack (or seed N racks)
-//   PATCH /warehouse/racks/:id       — toggle reserved / edit label/notes
-//   DELETE /warehouse/racks/:id      — delete an empty rack
-//   POST  /warehouse/stock-in        — add an item to a rack + log STOCK_IN
-//   POST  /warehouse/stock-out       — remove an item from a rack + log STOCK_OUT
-//   GET   /warehouse/movements       — movement ledger (filter type/from/to)
-// ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -58,17 +36,12 @@ const ITEM_COLS =
 const MOVE_COLS =
   'id, movement_type, rack_id, rack_label, to_rack_id, to_rack_label, warehouse_id, item_code, variant_key, product_name, source_doc_no, quantity, reason, performed_by, created_at';
 
-// Derive rack status from its items + reserved flag. Items always win:
-// a reserved rack that has items is still OCCUPIED (matches the source system).
 function deriveStatus(itemCount: number, reserved: boolean): RackStatus {
   if (itemCount > 0) return 'OCCUPIED';
   if (reserved) return 'RESERVED';
   return 'EMPTY';
 }
 
-// Recompute + persist a rack's status from its current item rows.
-// `sb` is the request-scoped Supabase client (same `any` shape used across the
-// other inventory routes — see stock-transfers.ts nextTransferNo()).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function refreshRackStatus(sb: any, rackId: string): Promise<RackStatus> {
   const { data: rack } = await sb
@@ -88,17 +61,14 @@ async function refreshRackStatus(sb: any, rackId: string): Promise<RackStatus> {
   return status;
 }
 
-// ── GET /warehouse — rack grid + KPI summary ───────────────────────────────
 warehouse.get('/', async (c) => {
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
 
-  // Page through so PostgREST's default 1000-row cap can't silently truncate the
-  // rack grid (a large warehouse can exceed 1000 racks).
   const { data: racks, error: rackErr } = await paginateAll<{ id: string; warehouse_id: string; rack: string; position: string | null; zone: string | null; reserved: boolean; notes: string | null }>((from, to) => {
     let rackQ = sb.from('warehouse_racks').select(RACK_COLS).order('rack');
     if (warehouseId) rackQ = rackQ.eq('warehouse_id', warehouseId);
-    rackQ = scopeToCompany(rackQ, c); // multi-company: isolate to the active company
+    rackQ = scopeToCompany(rackQ, c);
     return rackQ.range(from, to);
   });
   if (rackErr) {
@@ -111,9 +81,6 @@ warehouse.get('/', async (c) => {
   const rackIds = (racks ?? []).map((r: { id: string }) => r.id);
   let items: RackItemRow[] = [];
   if (rackIds.length > 0) {
-    // chunkIn — rackIds can exceed 1000 (un-truncated grid) and rack items
-    // across all racks can exceed the 1000-row cap; batch + page so no stock
-    // sitting on racks is hidden by truncation.
     const { data: itemRows, error: itemErr } = await chunkIn<RackItemRow>(rackIds, (batch, from, to) => sb
       .from('warehouse_rack_items')
       .select(ITEM_COLS)
@@ -124,7 +91,6 @@ warehouse.get('/', async (c) => {
     items = (itemRows ?? []) as RackItemRow[];
   }
 
-  // Group items under their rack so the grid renders without N round-trips.
   const itemsByRack = new Map<string, RackItemRow[]>();
   for (const it of items) {
     const arr = itemsByRack.get(it.rack_id) ?? [];
@@ -139,7 +105,6 @@ warehouse.get('/', async (c) => {
     const rackItems = itemsByRack.get(r.id) ?? [];
     return {
       ...r,
-      // Re-derive status on read so a stale persisted value never lies to the UI.
       status: deriveStatus(rackItems.length, r.reserved),
       items: rackItems,
     };
@@ -151,7 +116,6 @@ warehouse.get('/', async (c) => {
   const reserved = data.filter((r: { status: RackStatus }) => r.status === 'RESERVED').length;
   const occupancyRate = total > 0 ? Math.round((occupied / total) * 100) : 0;
 
-  // Warehouse picker options (mirrors /inventory's pattern).
   const { data: warehouses } = await scopeToCompany(
     sb.from('warehouses').select('id, code, name'),
     c,
@@ -166,16 +130,9 @@ warehouse.get('/', async (c) => {
   });
 });
 
-// ── GET /warehouse/cross-company — READ-ONLY view across every company the
-// caller may see. The same physical warehouse exists as one record per company
-// (same `code`), so this WIDENS to the caller's allowed companies
-// (scopeToAllowedCompanies, not scopeToCompany) and tags each rack with its
-// company + its warehouse code, letting the UI show one combined list with a
-// company column. No writes here — edits/stock/zone stay per-company.
 warehouse.get('/cross-company', async (c) => {
   const sb = c.get('supabase');
 
-  // Racks across the allowed companies (company_id carried so we can tag them).
   type CcRackRow = {
     id: string; warehouse_id: string; rack: string; position: string | null;
     zone: string | null; reserved: boolean; notes: string | null; company_id: number | null;
@@ -188,7 +145,6 @@ warehouse.get('/cross-company', async (c) => {
   );
   if (rackErr) return c.json({ error: 'load_failed', reason: rackErr.message }, 500);
 
-  // Warehouse code/name per warehouse_id, across the allowed companies.
   const { data: whRows, error: whErr } = await scopeToAllowedCompanies(
     sb.from('warehouses').select('id, code, name, company_id'),
     c,
@@ -198,7 +154,6 @@ warehouse.get('/cross-company', async (c) => {
     (whRows ?? []).map((w: { id: string; code: string; name: string }) => [w.id, { code: w.code, name: w.name }]),
   );
 
-  // Items, grouped under their rack (same two-step fetch the per-company grid uses).
   const rackIds = (racks ?? []).map((r) => r.id);
   let items: RackItemRow[] = [];
   if (rackIds.length > 0) {
@@ -238,8 +193,6 @@ warehouse.get('/cross-company', async (c) => {
   const reserved = data.filter((r) => r.status === 'RESERVED').length;
   const occupancyRate = total > 0 ? Math.round((occupied / total) * 100) : 0;
 
-  // The physical-warehouse picker (distinct code among racks) and the companies
-  // present — both derived from what actually came back, so empty ones drop out.
   const warehouseByCode = new Map<string, string>();
   for (const r of data) if (r.warehouse_code && !warehouseByCode.has(r.warehouse_code)) warehouseByCode.set(r.warehouse_code, r.warehouse_name ?? r.warehouse_code);
   const warehouses = [...warehouseByCode.entries()]
@@ -259,16 +212,6 @@ warehouse.get('/cross-company', async (c) => {
   });
 });
 
-// ── Resolve the SCOPE of a rack create: which warehouse RECORDS the rack(s)
-// should be created into. A rack "shared across warehouses" is materialised as
-// one rack row per target warehouse (fan-out on create) — this keeps every
-// downstream consumer (GRN placement, DO stock-out, stock-in) keyed on the
-// existing per-warehouse warehouse_id with ZERO query changes. Owner's split
-// warehouse RECORDS (Display / KL goods / ice-city) that share rack numbers
-// simply get the same label created into each.
-//   body.allWarehouses === true      → every active warehouse in the company
-//   body.warehouseIds: string[]      → those warehouses (multi-select)
-//   body.warehouseId: string         → single warehouse (back-compat)
 async function resolveRackTargets(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any, c: Parameters<typeof activeCompanyId>[0], body: Record<string, unknown>,
@@ -279,13 +222,6 @@ async function resolveRackTargets(
     const ids = ((data ?? []) as Array<{ id: string }>).map((w) => w.id);
     return [...new Set(ids)];
   }
-  /* Explicit warehouse ids — VALIDATE against the active company. The SCM client
-     is service-role (RLS bypassed), so a caller-supplied warehouse uuid was
-     trusted verbatim: the racks below stamp company_id = active, but pointed
-     warehouse_id at ANOTHER company's warehouse. Intersect the requested ids
-     with the company's own warehouses so a foreign uuid resolves to nothing
-     (same "foreign uuid resolves to nothing" rule as the by-id reads elsewhere).
-     Legitimate in-company ids in a mixed request still create. */
   let requested: string[];
   if (Array.isArray(body.warehouseIds)) {
     requested = [...new Set(
@@ -298,29 +234,19 @@ async function resolveRackTargets(
   if (requested.length === 0) return [];
   const { data, error } = await scopeToCompany(sb.from('warehouses').select('id'), c)
     .in('id', requested);
-  if (error) return []; // read failed -> no VERIFIED target -> caller 400s (fail closed, never trust an unverified warehouse)
+  if (error) return [];
   const inCompany = new Set(((data ?? []) as Array<{ id: string }>).map((w) => w.id));
   return requested.filter((id) => inCompany.has(id));
 }
 
-// A rack row and the company it is stamped with. The active company's own
-// targets carry the active id; a sibling (another company's record of the same
-// building, see rack-sibling-warehouses.ts) carries THAT company's id, or the
-// row would read as ours while sitting in their warehouse.
 type RackTarget = { warehouseId: string; companyId: number | undefined };
 
-//   body.alsoSiblingCompanies === true → ALSO every other allowed company's
-//   active warehouse whose code matches a chosen target (KL WAREHOUSE under
-//   both HOUZS and 2990 is one building; the label goes under each record).
 async function resolveSiblingTargets(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any, c: Parameters<typeof activeCompanyId>[0], ownIds: string[],
 ): Promise<{ targets: RackTarget[] } | { error: string }> {
   const active = activeCompanyId(c);
   if (active == null || ownIds.length === 0) return { targets: [] };
-  // A failed read must NOT quietly become "no siblings": the caller asked for
-  // the fan-out, and creating the label under one record only is the drift
-  // this flag exists to prevent.
   const { data: own, error: ownErr } = await scopeToCompany(sb.from('warehouses').select('id, code, company_id'), c)
     .in('id', ownIds);
   if (ownErr) return { error: ownErr.message };
@@ -333,12 +259,6 @@ async function resolveSiblingTargets(
   };
 }
 
-// ── POST /warehouse/racks — create one rack, or seed `count` racks ─────────
-// Scope may be a single warehouse (back-compat), a chosen set (warehouseIds),
-// or every warehouse (allWarehouses). Fan-out inserts the label into each
-// target, skipping any warehouse where it already exists so one collision never
-// aborts the whole batch (the unique (warehouse_id, rack) still guards dupes).
-// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
 export const createWarehouseRacksHandler = async (c: any) => {
   const sb = c.get('supabase');
   let body: Record<string, unknown>;
@@ -355,15 +275,6 @@ export const createWarehouseRacksHandler = async (c: any) => {
   const targetIds = targets.map((t) => t.warehouseId);
   const multi = targets.length > 1;
 
-  /* Seed mode: { count, prefix } creates "Rack 1".."Rack N" in every target,
-     skipping labels that already exist (unique (warehouse_id, rack)).
-
-     With { series, levels } it creates an AISLE.LEVEL grid instead —
-     series "L", count 21, levels 2 gives "Rack L1.1" … "Rack L21.2" (owner
-     2026-09-09, KL WAREHOUSE's real numbering). The label shapes live in
-     shared/rack-labels.ts, mirrored to the browser, so the modal's preview and
-     this insert cannot disagree; `levels: 1` reproduces the flat shape exactly,
-     which is the back-compat contract every earlier seed run relies on. */
   const count = Number(body.count ?? 0);
   if (Number.isFinite(count) && count > 0) {
     const prefix = String(body.prefix ?? 'Rack').trim() || 'Rack';
@@ -379,7 +290,6 @@ export const createWarehouseRacksHandler = async (c: any) => {
         .from('warehouse_racks').select('rack').eq('warehouse_id', warehouseId);
       const taken = new Set((existing ?? []).map((r: { rack: string }) => r.rack));
       for (const label of labels) {
-        // multi-company: stamp the target's company on every seeded rack
         if (!taken.has(label)) rows.push({ company_id: companyId, warehouse_id: warehouseId, rack: label, status: 'EMPTY' });
       }
     }
@@ -389,19 +299,16 @@ export const createWarehouseRacksHandler = async (c: any) => {
     return c.json({ racks: data ?? [], created: data?.length ?? 0 }, 201);
   }
 
-  // Single-rack mode (one label, fanned out to every target warehouse).
   const rack = String(body.rack ?? '').trim();
   if (!rack) return c.json({ error: 'rack_required' }, 400);
 
-  // Skip targets that already carry this label so a partial collision doesn't
-  // 23505 the whole fan-out — only genuinely-new (warehouse, label) pairs insert.
   const { data: existing } = await sb
     .from('warehouse_racks').select('warehouse_id').eq('rack', rack).in('warehouse_id', targetIds);
   const alreadyHas = new Set((existing ?? []).map((r: { warehouse_id: string }) => r.warehouse_id));
   const rows = targets
     .filter(({ warehouseId }) => !alreadyHas.has(warehouseId))
     .map(({ warehouseId, companyId }) => ({
-      company_id: companyId, // multi-company: stamp the target's company
+      company_id: companyId,
       warehouse_id: warehouseId,
       rack,
       position: (body.position as string) ?? null,
@@ -411,7 +318,6 @@ export const createWarehouseRacksHandler = async (c: any) => {
       notes: (body.notes as string) ?? null,
     }));
 
-  // Single warehouse that already had the label → the old duplicate_rack 409.
   if (rows.length === 0) {
     if (!multi) return c.json({ error: 'duplicate_rack' }, 409);
     return c.json({ racks: [], created: 0 });
@@ -422,13 +328,11 @@ export const createWarehouseRacksHandler = async (c: any) => {
     if (error.code === '23505') return c.json({ error: 'duplicate_rack' }, 409);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
-  // Back-compat: a single-warehouse single-rack create still returns { rack }.
   if (!multi) return c.json({ rack: (data ?? [])[0] ?? null }, 201);
   return c.json({ racks: data ?? [], created: data?.length ?? 0 }, 201);
 };
 warehouse.post('/racks', createWarehouseRacksHandler);
 
-// ── PATCH /warehouse/racks/:id — toggle reserved / edit label/notes ────────
 warehouse.patch('/racks/:id', async (c) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
@@ -440,12 +344,8 @@ warehouse.patch('/racks/:id', async (c) => {
   if (typeof body.position === 'string') updates.position = body.position;
   if (typeof body.notes === 'string')    updates.notes = body.notes;
   if (typeof body.reserved === 'boolean') updates.reserved = body.reserved;
-  // zone: an explicit null / "" clears the manual override (back to the
-  // number-range rule), so key the write on PRESENCE, not on a string value.
   if ('zone' in body) updates.zone = typeof body.zone === 'string' && body.zone.trim() ? body.zone.trim() : null;
 
-  // Multi-company: scope the write (and the read-back) to the active company so
-  // a blind rack id from another company matches nothing.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: updated, error } = await scopeToCompanyId(sb.from('warehouse_racks').update(updates).eq('id', id), co.companyId).select('id').maybeSingle();
@@ -455,18 +355,14 @@ warehouse.patch('/racks/:id', async (c) => {
   }
   if (!updated) return c.json(NOT_THIS_COMPANY, 404);
 
-  // reserved flag affects derived status — recompute.
   const status = await refreshRackStatus(sb, id);
   const { data } = await scopeToCompanyId(sb.from('warehouse_racks').select(RACK_COLS).eq('id', id), co.companyId).single();
   return c.json({ rack: data, status });
 });
 
-// ── DELETE /warehouse/racks/:id — only when empty ──────────────────────────
 warehouse.delete('/racks/:id', async (c) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
-  // Multi-company: confirm the rack is THIS company's before the empty-check
-  // (so another company's rack can't even be probed) and scope the delete.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: rackRow } = await scopeToCompanyId(sb.from('warehouse_racks').select('id').eq('id', id), co.companyId).maybeSingle();
@@ -481,7 +377,6 @@ warehouse.delete('/racks/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-// ── POST /warehouse/stock-in — add an item to a rack + log the movement ────
 warehouse.post('/stock-in', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
@@ -494,14 +389,9 @@ warehouse.post('/stock-in', async (c) => {
   if (!itemCode) return c.json({ error: 'item_code_required' }, 400);
   const qty = Math.max(1, Number(body.qty ?? 1) || 1);
 
-  // Multi-company: resolve strictly, then scope the rack load so stock can only
-  // be placed onto THIS company's rack (a blind rack id from another company is
-  // not found).
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  // Verify the rack exists (and grab its label + warehouse for the movement
-  // snapshot). A reserved rack can still be stocked into — items win.
   const { data: rack, error: rackErr } = await scopeToCompanyId(sb
     .from('warehouse_racks')
     .select('id, rack, warehouse_id')
@@ -516,7 +406,7 @@ warehouse.post('/stock-in', async (c) => {
   const notes = (body.notes as string) ?? null;
 
   const { data: item, error: itemErr } = await sb.from('warehouse_rack_items').insert({
-    company_id: activeCompanyId(c), // multi-company: stamp the active company
+    company_id: activeCompanyId(c),
     rack_id: rackId,
     item_code: itemCode,
     product_name: productName,
@@ -532,7 +422,7 @@ warehouse.post('/stock-in', async (c) => {
   const status = await refreshRackStatus(sb, rackId);
 
   await sb.from('warehouse_rack_movements').insert({
-    company_id: activeCompanyId(c), // multi-company: stamp the active company
+    company_id: activeCompanyId(c),
     movement_type: 'STOCK_IN',
     rack_id: rackId,
     rack_label: rack.rack,
@@ -548,7 +438,6 @@ warehouse.post('/stock-in', async (c) => {
   return c.json({ item, status }, 201);
 });
 
-// ── POST /warehouse/stock-out — remove an item from a rack + log it ────────
 warehouse.post('/stock-out', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
@@ -558,13 +447,9 @@ warehouse.post('/stock-out', async (c) => {
   const itemId = String(body.itemId ?? '').trim();
   if (!itemId) return c.json({ error: 'item_required' }, 400);
 
-  // Multi-company: resolve strictly and scope the load + delete so a blind rack
-  // item id from another company can't be stocked out.
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  // Load the item (and its rack snapshot) before we delete it so the movement
-  // record captures what left.
   const { data: item, error: itemErr } = await scopeToCompanyId(sb
     .from('warehouse_rack_items')
     .select(`${ITEM_COLS}, rack:warehouse_racks(id, rack, warehouse_id)`)
@@ -572,8 +457,6 @@ warehouse.post('/stock-out', async (c) => {
     .single();
   if (itemErr || !item) return c.json({ error: 'item_not_found' }, 404);
 
-  // PostgREST embeds a to-one relation as either an object or a single-element
-  // array depending on FK introspection — normalize to a plain object|null.
   const itemRow = item as unknown as RackItemRow & {
     rack: { id: string; rack: string; warehouse_id: string }
       | { id: string; rack: string; warehouse_id: string }[]
@@ -591,7 +474,7 @@ warehouse.post('/stock-out', async (c) => {
   if (rack) status = await refreshRackStatus(sb, rack.id);
 
   await sb.from('warehouse_rack_movements').insert({
-    company_id: activeCompanyId(c), // multi-company: stamp the active company
+    company_id: activeCompanyId(c),
     movement_type: 'STOCK_OUT',
     rack_id: rack?.id ?? null,
     rack_label: rack?.rack ?? null,
@@ -607,10 +490,6 @@ warehouse.post('/stock-out', async (c) => {
   return c.json({ ok: true, status });
 });
 
-// ── POST /warehouse/transfer — move qty from one rack to another ───────────
-// Same-warehouse Rack → Rack move (commander 2026-05-28). Inventory totals do
-// NOT change — this only relocates physical placement. Body:
-//   { fromItemId, toRackId, qty? }   (qty defaults to the whole item)
 warehouse.post('/transfer', async (c) => {
   const sb = c.get('supabase');
   const user = c.get('user');
@@ -622,13 +501,9 @@ warehouse.post('/transfer', async (c) => {
   if (!fromItemId) return c.json({ error: 'from_item_required' }, 400);
   if (!toRackId) return c.json({ error: 'to_rack_required' }, 400);
 
-  // Multi-company: every load AND write below is scoped to the active company so
-  // a physical relocation can never move another company's stock (both the
-  // source item and the destination rack must be this company's).
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  // Source item + its rack (for warehouse match + label snapshot).
   const { data: item, error: itemErr } = await scopeToCompanyId(sb
     .from('warehouse_rack_items')
     .select(`${ITEM_COLS}, rack:warehouse_racks(id, rack, warehouse_id)`)
@@ -642,7 +517,6 @@ warehouse.post('/transfer', async (c) => {
   if (!fromRack) return c.json({ error: 'source_rack_not_found' }, 404);
   if (fromRack.id === toRackId) return c.json({ error: 'same_rack' }, 400);
 
-  // Destination rack must exist AND be in the same warehouse.
   const { data: toRack, error: toErr } = await scopeToCompanyId(sb
     .from('warehouse_racks').select('id, rack, warehouse_id').eq('id', toRackId), co.companyId).single();
   if (toErr || !toRack) return c.json({ error: 'to_rack_not_found' }, 404);
@@ -653,15 +527,12 @@ warehouse.post('/transfer', async (c) => {
   const moveQty = Math.min(Math.max(1, Number(body.qty ?? itemRow.qty) || itemRow.qty), itemRow.qty);
   const vk = itemRow.variant_key ?? '';
 
-  // Decrement (or delete) the source item.
   if (moveQty >= itemRow.qty) {
     await scopeToCompanyId(sb.from('warehouse_rack_items').delete().eq('id', fromItemId), co.companyId);
   } else {
     await scopeToCompanyId(sb.from('warehouse_rack_items').update({ qty: itemRow.qty - moveQty }).eq('id', fromItemId), co.companyId);
   }
 
-  // Merge into an existing same (product, variant) item on the destination
-  // rack, else create a new placement row there.
   const { data: dstExisting } = await scopeToCompanyId(sb.from('warehouse_rack_items')
     .select('id, qty')
     .eq('rack_id', toRackId)
@@ -675,7 +546,7 @@ warehouse.post('/transfer', async (c) => {
       .eq('id', (dstExisting as { id: string }).id), co.companyId);
   } else {
     await sb.from('warehouse_rack_items').insert({
-      company_id: activeCompanyId(c), // multi-company: stamp the active company
+      company_id: activeCompanyId(c),
       rack_id: toRackId,
       item_code: itemRow.item_code,
       variant_key: vk,
@@ -692,7 +563,7 @@ warehouse.post('/transfer', async (c) => {
   const toStatus = await refreshRackStatus(sb, toRackId);
 
   await sb.from('warehouse_rack_movements').insert({
-    company_id: activeCompanyId(c), // multi-company: stamp the active company
+    company_id: activeCompanyId(c),
     movement_type: 'TRANSFER',
     rack_id: fromRack.id,
     rack_label: fromRack.rack,
@@ -711,7 +582,6 @@ warehouse.post('/transfer', async (c) => {
   return c.json({ ok: true, fromStatus, toStatus });
 });
 
-// ── GET /warehouse/movements — append-only ledger ──────────────────────────
 warehouse.get('/movements', async (c) => {
   const sb = c.get('supabase');
   const type = c.req.query('type');

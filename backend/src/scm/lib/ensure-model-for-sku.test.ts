@@ -63,7 +63,6 @@ describe('ensureModelForSku — find-or-create', () => {
     expect(first.modelId).toBe('model-existing');
     expect(tables.product_models).toHaveLength(1);
 
-    // A SECOND SKU of the same base_model links to the SAME model — no dup.
     const second = await ensureModelForSku(sb as never, {
       companyId: 1, code: '5530-2S(RHF)', name: 'SOFA 5530', category: 'SOFA', baseModel: '5530',
     });
@@ -110,9 +109,6 @@ describe('ensureModelForSku — find-or-create', () => {
 
   it('a read error FAILS CLOSED — no insert', async () => {
     const tables: Record<string, Row[]> = { product_models: [] };
-    // `missing` makes selecting product_models.id fail with 42703, the way a
-    // real read error arrives. The helper must abort, not treat it as "no model"
-    // and insert a duplicate.
     const sb = fakeSb(tables, { product_models: ['id'] });
     const r = await ensureModelForSku(sb as never, {
       companyId: 1, code: 'ACC-PILLOW-01', name: 'DECOR PILLOW', category: 'ACCESSORY', baseModel: null,

@@ -1,17 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-/* MobileSearch — the phone's global search palette.
- *
- * The rule these tests pin: EVERY hit the server returns is accounted for on
- * screen. The phone lists only the five record types it has a screen for
- * (TYPE_ORDER); the five SCM documents — purchase order, GRN, delivery order,
- * sales invoice, purchase invoice — are desktop-only and used to be dropped
- * silently. Dropped silently is the defect: the "No matches" line is gated on
- * the RAW hit count, so a search for a DO number returned hits, suppressed the
- * empty state, filtered every hit out, and rendered a BLANK screen. */
 
-/** The slice of a SearchHit these tests build. */
 type Hit = {
   type: string;
   id: string;
@@ -52,8 +42,6 @@ function show(hits: Hit[], term = "DO-2607") {
   render(<MobileSearch onBack={() => {}} onNavigate={() => {}} />);
 }
 
-/* HighlightedText wraps the matched keyword in its own <mark>, so a doc number
-   is split across nodes. Match on the whole title element's textContent. */
 function title(docNo: string): HTMLElement {
   return screen.getByText((_t, el) => {
     if (!el || el.tagName !== "SPAN") return false;
@@ -74,11 +62,8 @@ describe("MobileSearch accounts for every hit", () => {
       hit("grn", "GRN-2607-001", "GRN-2607-001"),
     ]);
 
-    // The information must reach the screen: the operator searched a DO number
-    // and it exists.
     expect(title("DO-2607-005")).toBeTruthy();
     expect(title("GRN-2607-001")).toBeTruthy();
-    // And it must say why it cannot be opened here, rather than look broken.
     expect(screen.getAllByText(/desktop/i).length).toBeGreaterThan(0);
   });
 
@@ -86,7 +71,6 @@ describe("MobileSearch accounts for every hit", () => {
     show([hit("sales_invoice", "SI-2608-011", "SI-2608-011")]);
 
     const body = String(document.body.textContent);
-    // Either the hit renders or an explanation does — silence is the bug.
     expect(body).toContain("SI-2608-011");
     expect(body.trim().length).toBeGreaterThan(0);
   });

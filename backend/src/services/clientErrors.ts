@@ -1,25 +1,9 @@
 import type { Env } from "../types";
 import { sendEmail, publicUrl } from "./email";
 
-// ---------------------------------------------------------------------------
-// Daily client-error digest -- the "visible within a day" half of the
-// self-hosted error reporting (routes/clientErrors.ts is the intake half).
-//
-// Runs in the existing 0 2 * * * cron slot (index.ts). If ANY client_errors
-// row was seen in the last 24h, ONE summary email goes to IT with the top 10
-// errors by occurrence count; zero errors sends nothing -- an empty digest
-// trains people to delete digests.
-//
-// Recipient is the shared IT/ops mailbox, deliberately hardcoded rather than
-// role-derived: this mail is infrastructure telemetry, not a business
-// notification, and must keep arriving even mid permission-model surgery.
-// ---------------------------------------------------------------------------
 
 const DIGEST_TO = "hello@houzscentury.com";
 
-// Rows older than this are purged by the same daily run. The dedup collapse
-// keeps the table small per day; this bounds it over time. 90 days comfortably
-// covers "did this error exist before the last few deploys" archaeology.
 const RETENTION_DAYS = 90;
 
 interface DigestRow {
@@ -114,8 +98,6 @@ export async function runClientErrorDigest(
     last_seen_at: String(r.last_seen_at ?? ""),
   }));
 
-  // Retention sweep rides the same daily slot (idempotency-sweep precedent).
-  // Best-effort: a purge failure must never block the digest.
   let purged = 0;
   try {
     const keep = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -127,11 +109,8 @@ export async function runClientErrorDigest(
     console.error("[client-errors] retention sweep failed", e);
   }
 
-  // Zero errors = no email. The digest's whole value is that its arrival MEANS
-  // something broke.
   if (rows.length === 0) return { sent: 0, errors: 0, occurrences: 0, purged };
 
-  // True window totals -- the table caps at 10, the subject must not.
   let errors = rows.length;
   let occurrences = rows.reduce((s, r) => s + r.n, 0);
   try {
@@ -146,7 +125,6 @@ export async function runClientErrorDigest(
       occurrences = Number(tot.o) || occurrences;
     }
   } catch {
-    // Top-10 sums are a fine floor if the totals query hiccups.
   }
 
   const subject = `[Houzs ERP] Client errors -- ${errors} distinct, ${occurrences} occurrence(s) in 24h`;

@@ -68,7 +68,6 @@ const report: RpReport = {
   },
 };
 const lastRead = { value: '' };
-/* A test that needs another report puts it here, and puts it back. */
 const shownReport = { value: null as RpReport | null };
 
 vi.mock('../../vendor/scm/lib/rp-report-queries', async (importOriginal) => ({
@@ -78,9 +77,7 @@ vi.mock('../../vendor/scm/lib/rp-report-queries', async (importOriginal) => ({
     return from ? { data: shownReport.value ?? report, isLoading: false, isError: false } : { data: undefined, isLoading: false, isError: false };
   },
 }));
-/* By month: each column one read of the same endpoint. */
 const columnPaths = vi.hoisted(() => [] as string[]);
-/* The P&L forecast's one read, when a test sets it. */
 const forecastAnswer = vi.hoisted(() => ({ value: null as unknown }));
 vi.mock('../../vendor/scm/lib/authed-fetch', () => ({
   authedFetch: async (path: string) => {
@@ -134,6 +131,7 @@ const pick = (code: string) => {
 type Sheet = { title: string; tables: Array<{ columns: Array<{ label: string }>; rows: Array<{ label: string }> }> };
 
 beforeEach(() => {
+  window.localStorage.removeItem('fin-statement-codes');
   columnPaths.length = 0;
   xlsx.mockClear();
   pdf.mockClear();
@@ -171,11 +169,12 @@ describe('the Cash Flow tab', () => {
     const purchases = screen.getByText('Purchases').closest('tr')!;
     expect(purchases.getAttribute('data-kind')).toBe('category');
     expect(purchases.textContent).not.toContain('400.00');
-    const purchasesTotal = screen.getByText('Total Purchases').closest('tr')!;
-    expect(purchasesTotal.textContent).toContain('400.00');
-    expect(purchasesTotal.textContent).toContain('52.6%');
+    /* Its one line prints the same figures, so no Total line repeats them (owner 2026-11-27). */
+    expect(screen.queryByText('Total Purchases')).toBeNull();
     const sofa = screen.getByText('PURCHASE OF SOFA').closest('tr')!;
-    expect(within(sofa).getByText('601-0003')).toBeTruthy();
+    expect(sofa.textContent).toContain('400.00');
+    expect(sofa.textContent).toContain('52.6%');
+    expect(within(sofa).queryByText('601-0003')).toBeNull();
     expect(sofa.getAttribute('data-depth')).toBe('2');
     expect(screen.getByText('Supplier advances (预付)').closest('tr')!.textContent).toContain('39.5%');
     expect(screen.getByText('Total payments').closest('tr')!.textContent).toContain('60.5%');
@@ -189,12 +188,11 @@ describe('the Cash Flow tab', () => {
     expect(sofa.textContent).toContain('310-0010 · 1 entry');
     expect(within(sofa).getByText('FOSHAN CHAIRS')).toBeTruthy();
     expect(within(sofa).getByText(/Payment voucher PV-3/)).toBeTruthy();
-    /* The category's total: the sofa row's entry, and it alone here. */
-    fireEvent.click(screen.getByRole('button', { name: /^Total Purchases · Total/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Purchases' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Purchases · Total/ }));
     expect(screen.getByRole('region', { name: 'Entries of Purchases' }).textContent).toContain('Total · 1 entry');
     fireEvent.click(within(screen.getByRole('group', { name: 'Show debtor and creditor names' })).getByRole('button', { name: 'By debtor / creditor' }));
     expect(lastRead.value.endsWith('|true')).toBe(true);
-    /* A tick shows a column; the read itself still covers every account. */
     pick('320-0000');
     expect(heads()).toContain('320-0000CASH IN HAND');
     expect(lastRead.value).not.toContain('320-0000');
@@ -250,7 +248,6 @@ describe('the Cash Flow tab', () => {
     fireEvent.click(within(screen.getByRole('group', { name: 'Levels' })).getByRole('button', { name: 'L1' }));
     expect(screen.queryByText('PURCHASE OF SOFA')).toBeNull();
     expect(screen.getByText('Purchases').closest('tr')!.textContent).toContain('400.00');
-    /* A row at the top level stays. */
     expect(screen.getByText('UTILITIES')).toBeTruthy();
     fireEvent.click(within(screen.getByRole('group', { name: 'Levels' })).getByRole('button', { name: 'All' }));
     expect(screen.getByText('PURCHASE OF SOFA')).toBeTruthy();
@@ -300,7 +297,6 @@ describe('Settlement / Deposit on the Cash Flow', () => {
        the one report.) */
     expect(cells('ACCOUNT RECEIVEABLE')).toEqual([['500.0071.4%', null], ...Array(3).fill(['', null]).flatMap((empty) => [empty, ['500.00', null]])]);
     expect(cells('UTILITIES').slice(1, 3)).toEqual([['20.00', null], ['40.00', null]]);
-    /* Not split: one figure across each month, centred. */
     expect(cells('Supplier advances (预付)')).toEqual([['300.0039.5%', null], ['300.00', '2'], ['300.00', '2'], ['300.00', '2']]);
   });
 
@@ -394,7 +390,6 @@ describe('AutoCount money on the Cash Flow', () => {
     const [sheet] = pdf.mock.calls[0]! as [Sheet];
     const rows = sheet.tables[0]!.rows as Array<{ label: string; depth: number; kind: string }>;
     const idx = rows.findIndex((x) => x.label === memoText);
-    /* Right after the customer receipts, at their category's depth: paper prints that category's Total above it. */
     expect(rows[idx - 1]!.label).toBe('Balance · Transfer / cash');
     expect(rows[idx]).toMatchObject({ kind: 'memo', depth: rows.find((x) => x.label === 'DEPOSIT RECEIVED')!.depth });
     shownReport.value = null;
@@ -415,11 +410,6 @@ describe('AutoCount money on the Cash Flow', () => {
   });
 });
 
-/* The P&L forecast (step 2 of the forecast port, 2026-11-24): By month with the
-   switch on — each month Actual | P&L forecast under its name, the months after
-   this one the forecast alone; the forecast's own lines merge with the actual by
-   id; Balance b/f and c/f run on from the actual; a forecast figure opens where
-   it came from and how it was timed. Made-up figures. */
 describe('the P&L forecast', () => {
   const fc = (month: string, tree: LaidNode[], inSen: number, outSen: number, entries: RpReport['entries'] = []): { month: string; future: boolean; report: RpReport } => ({
     month, future: month > '2026-07',
@@ -476,15 +466,12 @@ describe('the P&L forecast', () => {
   test('each month Actual | P&L forecast, the later month the forecast alone; one read of the forecast for the months shown', async () => {
     await open();
     expect(columnPaths.filter((p) => p.includes('/cash-flow-forecast'))).toEqual(['/accounting/reports/cash-flow-forecast?from=2026-05&to=2026-07']);
-    /* The sofa purchases: Total (actual), Aug forecast, then Jul / Jun / May actual | forecast. */
     expect(cells('PURCHASE OF SOFA').slice(1)).toEqual(['50.00', '400.00', '250.00', '400.00', '', '400.00', '']);
-    /* A line only the forecast has merges in where it belongs. */
     expect(cells('Forecast sales').slice(1)).toEqual(['100.00', '', '300.00', '', '', '', '']);
   });
 
   test('Balance b/f and c/f run on: a month from its own actual b/f, the later month from the forecast c/f before it', async () => {
     await open();
-    /* Every month's actual b/f is (100.00) here; July's forecast nets +50.00, August's +50.00. */
     expect(cells('Balance b/f').slice(1)).toEqual(['(50.00)', '(100.00)', '(100.00)', '(100.00)', '(100.00)', '(100.00)', '(100.00)']);
     expect(cells('Balance c/f').slice(1)).toEqual(['0.00', '(160.00)', '(50.00)', '(160.00)', '(100.00)', '(160.00)', '(100.00)']);
   });
@@ -509,7 +496,6 @@ describe('the P&L forecast', () => {
     expect(within(dialog).getByLabelText('2026-07 202-1000 amount')).toBeTruthy();
   });
 
-  /* Step 4 (2026-11-24): Orders & bills from the current month on, between the actual and the P&L forecast. */
   const docsTree = (inSen: number): LaidNode[] => [
     { kind: 'category', id: 'side:in', label: 'RECEIPTS', flow: 'in', totalLabel: 'Total receipts', amountSen: inSen, pct: 100, cells: { FORECAST: inSen }, children: [
       { kind: 'category', id: 'in:sec:CURRENT ASSETS', label: 'CURRENT ASSETS', amountSen: inSen, pct: 100, cells: { FORECAST: inSen }, children: [
@@ -543,7 +529,6 @@ describe('the P&L forecast', () => {
       'Account', 'Total3 months%', 'Aug 2026Forecast only', 'Jul 2026', 'Jun 2026', 'May 2026',
       'Orders & bills', 'P&L forecast', 'Actual', 'Orders & bills', 'P&L forecast', 'Actual', 'P&L forecast', 'Actual', 'P&L forecast',
     ]));
-    /* Aug: Orders & bills | P&L forecast, then Jul: Actual | Orders & bills | P&L forecast, Jun and May Actual | P&L forecast. */
     expect(cells('Open orders (balance on delivery)').slice(1)).toEqual(['50.00', '', '', '200.00', '', '', '', '', '']);
     fireEvent.click(screen.getByRole('button', { name: 'Open orders (balance on delivery) · Jul 2026 Orders & bills' }));
     const region = screen.getByRole('region', { name: 'Entries of Open orders (balance on delivery)' });

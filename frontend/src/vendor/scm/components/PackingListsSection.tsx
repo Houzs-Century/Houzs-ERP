@@ -27,8 +27,8 @@ import { Badge } from '../../../components/Badge';
 import { DataTable, type Column } from '../../../components/DataTable';
 import { usePackingLists, type PackingListRow } from '../lib/packing-list-queries';
 import { rollupDeliveryStatus, rollupLabel, fmtM3 } from '../lib/packing-list-model';
-import { generatePackingListPdf, packingRunUrl } from '../lib/packing-list-pdf';
-import { fmtDate } from '../../shared/format';
+import { usePackingPrint } from './usePackingPrint';
+import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
 
 const TONE_FOR: Record<string, 'neutral' | 'warning' | 'success'> = {
   Draft: 'neutral',
@@ -43,6 +43,7 @@ export function PackingListsSection(props: { date: string; warehouseId: string |
   const query = usePackingLists({ date, warehouseId });
   const [qrOpen, setQrOpen] = useState<Set<string>>(new Set());
   const lists = query.data?.lists ?? [];
+  const print = usePackingPrint(date);
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const toggleQr = (tripId: string) =>
@@ -83,12 +84,14 @@ export function PackingListsSection(props: { date: string; warehouseId: string |
       key: 'actions', label: 'Actions', align: 'right',
       render: (l) => (
         <>
-          <Button variant="ghost" icon={<Printer size={13} />} onClick={() => void generatePackingListPdf(l, { date, action: 'print' })}>
+          <Button variant="ghost" icon={<Printer size={13} />} disabled={print.busy} onClick={() => print.one(l, 'print')}>
             Print
           </Button>
-          <Button variant="ghost" icon={<QrCode size={13} />} onClick={() => toggleQr(l.trip_id)}>
-            QR
-          </Button>
+          {l.source === 'trip' && (
+            <Button variant="ghost" icon={<QrCode size={13} />} onClick={() => toggleQr(l.trip_id)}>
+              QR
+            </Button>
+          )}
         </>
       ),
     },
@@ -100,9 +103,19 @@ export function PackingListsSection(props: { date: string; warehouseId: string |
         <PackageCheck size={14} strokeWidth={1.75} />
         <span className="text-[13px] font-semibold text-ink">Packing lists</span>
         <span className="text-[11.5px] text-ink-muted">
-          One per lorry per day. The printed sheet runs in LOADING order — the last delivery goes in first.
+          One per lorry per day. Part A picks by category; Part B loads the last customer first.
         </span>
+        <span className="flex-1" />
+        <Button
+          variant="primary"
+          icon={<Printer size={13} />}
+          disabled={print.busy || lists.length === 0}
+          onClick={() => print.all(lists, 'print')}
+        >
+          {print.busy ? 'Preparing…' : `Print all for ${fmtDate(date)}`}
+        </Button>
       </div>
+      {print.error && <p role="alert" className="text-[12px] text-err">{print.error}</p>}
 
       <DataTable<PackingListRow>
         tableId="packing-lists"
@@ -112,7 +125,7 @@ export function PackingListsSection(props: { date: string; warehouseId: string |
         rows={query.error ? null : query.data ? lists : null}
         loading={query.isLoading}
         error={query.error ? `Could not load the packing lists for this day. ${query.error instanceof Error ? query.error.message : ''}` : null}
-        emptyLabel="This day has no trips. A packing list is a trip, so one appears here for every lorry once Delivery Time Arrangement has sequenced the day."
+        emptyLabel="No lorry has delivery orders on this day yet. A packing list appears for every lorry once Delivery Planning puts a lorry on its delivery orders."
         getRowKey={(list) => list.trip_id}
         expandable={{
           render: () => <QrNote origin={origin} />,
@@ -125,9 +138,6 @@ export function PackingListsSection(props: { date: string; warehouseId: string |
   );
 }
 
-/* Explains the code WITHOUT minting one: minting is a write, and opening a
-   disclosure panel must not create a public credential. The sheet itself arms
-   the token when it is printed. */
 function QrNote({ origin }: { origin: string }) {
   const runOrigin = origin ? `${origin.replace(/\/+$/, '')}/d/…` : '';
   return (

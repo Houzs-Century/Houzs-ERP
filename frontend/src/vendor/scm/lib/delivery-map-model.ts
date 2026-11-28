@@ -34,7 +34,6 @@ export type MapPin = {
     revenueSen: number;
     address: string | null;
     zone: string | null;
-    /** Pinned at the postcode area, not the address. */
     approximate?: boolean;
   };
 };
@@ -49,11 +48,7 @@ export type MapRouteStop = {
   order: number;
   label: string;
   windowLabel: string | null;
-  /** Pinned at the postcode area, not the address (Last Mile). */
   approximate?: boolean;
-  /** Same-spot stops of one route share ONE pin (mergeSameSpotStops): the first
-   *  carries the combined label ("6, 7") and every ref at the spot in `spotRefs`;
-   *  the others are `covered` and draw no marker of their own. */
   pinLabel?: string | null;
   spotRefs?: string[];
   covered?: boolean;
@@ -71,23 +66,16 @@ export type MapRoute = {
   depot: MapLatLng | null;
   stops: MapRouteStop[];
   allRefs: string[];
-  /** Last Mile per-lorry routes: the run's delivered / total drop counts, shown
-   *  in the legend as "VQE9058 5/8". Absent on the Date/Time proposal routes. */
   delivered?: number | null;
   total?: number | null;
-  /** Last Mile: the run by road, home and back ("86.4 km · 3 h 10 min"); absent elsewhere. */
   roadLabel?: string | null;
+  roadPath?: MapLatLng[] | null;
 };
 
 /** Trip focus (owner rule: click a trip card / polyline → dim the others, zoom
  *  to it, filter the board to its stops; click again → unfocus). */
 export type MapFocus = { routeId: string; refs: string[] };
 
-/* ── Zone colours ─────────────────────────────────────────────────────────────
-   Deterministic per zone NAME so the same zone reads the same colour on every
-   page and every day (assignRouteColors keys off load order, which shuffles
-   between days — wrong tool here). The 14 canonical zones get hand-spread
-   palette slots; an owner-added zone (open string) hashes into the palette. */
 const ZONE_COLOR_INDEX: Record<string, number> = {
   KL: 0, PJ: 1, KLANG: 2, KAJANG: 3, RAWANG: 4, PUCHONG: 5,
   NS: 6, MELAKA: 7, JOHOR: 8, PENANG: 9, KEDAH: 0, PERAK: 3,
@@ -95,7 +83,7 @@ const ZONE_COLOR_INDEX: Record<string, number> = {
   /* East Malaysia: zones for the 3PL rate cards (owner 2026-11-11). */
   SABAH: 1, SARAWAK: 4, LABUAN: 7,
 };
-const FALLBACK_PIN_COLOR = '#64748b'; // slate — no zone AND no region resolved
+const FALLBACK_PIN_COLOR = '#64748b';
 
 export function zoneColorFor(zone: string | null | undefined, region?: string | null): string {
   const key = (zone ?? '').trim().toUpperCase() || (region ?? '').trim().toUpperCase();
@@ -269,18 +257,13 @@ export function toggleFocus(current: MapFocus | null, next: MapFocus): MapFocus 
 
 export type MapCluster = {
   key: string;
-  /** Centroid of the member pins. */
   lat: number;
   lng: number;
   count: number;
-  /** The dominant member colour (most-frequent zone colour; first-seen wins a
-   *  tie) — the bubble stays an honest majority statement, never a new hue. */
   color: string;
   refs: string[];
 };
 
-/** Cluster bubble target size on screen, in pixels — two pins whose screen
- *  distance at the current zoom is under this fold into one bubble. */
 const CLUSTER_GRID_PX = 64;
 /** At/above this zoom pins never cluster (the owner zooms IN to read singles;
  *  street level must always show the real pins). */
@@ -296,7 +279,6 @@ export function clusterPins(
 ): { clusters: MapCluster[]; singles: MapPin[] } {
   const z = Math.floor(Number.isFinite(zoom) ? zoom : 0);
   if (z >= CLUSTER_OFF_ZOOM) return { clusters: [], singles: [...pins] };
-  /* Web-mercator world = 256 * 2^zoom px across 360 degrees of longitude. */
   const cellDeg = (CLUSTER_GRID_PX * 360) / (256 * 2 ** Math.max(0, z));
   const cells = new Map<string, MapPin[]>();
   for (const p of pins) {
@@ -329,7 +311,6 @@ export function clusterPins(
       refs: members.map((m) => m.ref),
     });
   }
-  /* Deterministic output order regardless of Map iteration quirks. */
   clusters.sort((a, b) => a.key.localeCompare(b.key));
   singles.sort((a, b) => a.ref.localeCompare(b.ref));
   return { clusters, singles };
@@ -352,18 +333,14 @@ export const SINGLE_PIN_ZOOM = 14;
  *  post-fit zoom to this. */
 export const FIT_MAX_ZOOM = 15;
 
-/* Approximate geographic extents per region bucket (customer-state
-   classification, delivery-planning region keys). Static, display-only — a
-   zero-pin region still flies somewhere sensible. */
 const REGION_EXTENTS: Record<string, MapBounds> = {
-  KL:         { north: 3.9,  south: 2.55, east: 102.05, west: 100.75 }, // KL + Selangor
-  NORTHERN:   { north: 6.75, south: 3.7,  east: 101.9,  west: 99.6 },   // Perlis/Kedah/Penang/Perak
-  SOUTHERN:   { north: 3.3,  south: 1.2,  east: 104.45, west: 101.75 }, // NS/Melaka/Johor
-  EAST_COAST: { north: 6.35, south: 2.45, east: 103.65, west: 101.3 },  // Kelantan/Terengganu/Pahang
-  EM:         { north: 7.5,  south: 0.8,  east: 119.3,  west: 109.5 },  // Sabah/Sarawak/Labuan
+  KL:         { north: 3.9,  south: 2.55, east: 102.05, west: 100.75 },
+  NORTHERN:   { north: 6.75, south: 3.7,  east: 101.9,  west: 99.6 },
+  SOUTHERN:   { north: 3.3,  south: 1.2,  east: 104.45, west: 101.75 },
+  EAST_COAST: { north: 6.35, south: 2.45, east: 103.65, west: 101.3 },
+  EM:         { north: 7.5,  south: 0.8,  east: 119.3,  west: 109.5 },
   SG:         { north: 1.48, south: 1.2,  east: 104.1,  west: 103.6 },
 };
-/** The whole-country fallback ('ALL', or an owner-added region with no extent). */
 const MALAYSIA_EXTENT: MapBounds = { north: 7.5, south: 0.8, east: 119.3, west: 99.6 };
 
 export function regionExtent(regionKey: string | null | undefined): MapBounds {
@@ -428,9 +405,6 @@ export function refsInZone(
 export type ZoneSummaryEntry = { key: string; label: string; count: number };
 export type ZoneSummary = {
   entries: ZoneSummaryEntry[];
-  /** How many region buckets have ZERO orders (collapsed to one "rest 0" chip).
-   *  Always 0 under a region filter — the fetch only carries that region, so
-   *  claiming the others are empty would be a lie. */
   zeroCount: number;
 };
 
@@ -479,21 +453,14 @@ export type MapLegendRow = {
   color: string;
   title: string;
   crewLabel: string | null;
-  /** EVERY order on the trip (allRefs — an unpinned stop still counts). */
   stopCount: number;
-  /** Delivered / total drop counts for a per-lorry route ("5/8"); null when the
-   *  route does not carry them (Date/Time proposal routes). */
   delivered: number | null;
   total: number | null;
   roadLabel: string | null;
-  /** First window's start → last window's end ("09:40 → 12:55"; ETA offsets
-   *  read "+30m → +2h 5m"). Null when no stop carries a window — never a
-   *  fabricated clock. */
   timeRange: string | null;
   stops: MapLegendStop[];
 };
 
-/** "09:40–10:25" → its start/end pieces; a dash-less label ("+30m") is both. */
 const windowPieces = (label: string): { start: string; end: string } => {
   const parts = label.split('–');
   return { start: parts[0], end: parts[parts.length - 1] };
@@ -548,8 +515,6 @@ export function roadmapDeclutterStyles(labelsOn: boolean): MapStyleRule[] {
   const base: MapStyleRule[] = [
     { featureType: 'poi', stylers: [{ visibility: 'off' }] },
     { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-    /* Road-shield badges (E19 / AH2 / …) are the road labels' ICON element;
-       the road-name TEXT stays (it is orientation, not clutter). */
     { featureType: 'road', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
   ];
   if (!labelsOn) base.push({ elementType: 'labels', stylers: [{ visibility: 'off' }] });

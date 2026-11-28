@@ -17,7 +17,6 @@ import { soRowStatus, type SoRowStatusFields } from "./so-list-status";
 
 export function SoListStatusCell({ row }: { row: SoRowStatusFields & HoldFields }) {
   const st = soRowStatus(row, soStatusDisplay);
-  /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
   return (
     <span className="inline-flex items-center gap-1">
       <StatusWithHold tone={st.tone} label={st.label} row={row} />

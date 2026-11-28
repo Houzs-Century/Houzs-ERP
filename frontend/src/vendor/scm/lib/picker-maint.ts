@@ -1,17 +1,3 @@
-// Variant-picker pools for a purchasing document (PO / PI / Purchase
-// Consignment Order).
-//
-// A supplier-scope maintenance config is a COST overlay: it records what that
-// supplier charges per option. It is resolved as a whole snapshot (no merge with
-// master), so reading the dropdown options from it froze them at whatever master
-// held the day the overlay was saved. BUG-60 (Sim 2026-10-06): 2990's Home's
-// HOOKKA INDUSTRIES overlay dates from 2026-05-29 with sizes 24-35 and legs
-// No Leg/4"/6"/1", so the DEFAULT size + leg added to master on 2026-10-05 could
-// not be picked on a Purchase Consignment Order.
-//
-// Which options EXIST is master's call; the overlay only prices them. So the
-// picker pools are master's (active flags included) plus any value only the
-// overlay lists, and cost lookups keep reading the overlay itself.
 
 import { normaliseTypographicQuotes } from '@2990s/shared/mfg-pricing';
 import type { MaintenanceConfig } from './mfg-products-queries';

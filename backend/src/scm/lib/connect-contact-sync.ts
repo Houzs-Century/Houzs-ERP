@@ -36,8 +36,6 @@ import {
 } from '../../services/connect';
 import { todayMyt } from './my-time';
 
-/* The SCM PostgREST client is untyped at every call site in this tree (see
-   venture-portal-outbox.ts); one named alias keeps the `any` in one place. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
 type ScmClient = SupabaseClient<any, any, any>;
 
@@ -147,8 +145,6 @@ export async function runScheduledConnectSync(
   if (curErr) return { skipped: 'cursor_read_failed', ...zero };
   const cursor = String((curRow as { value?: string | null } | null)?.value ?? '').trim();
 
-  // Every company id — the sync covers them all (Houzs + 2990 + ...). The explicit
-  // list also keeps the order read company-scoped rather than an unbounded scan.
   const { data: coRows, error: coErr } = await sb.schema('public').from('companies').select('id, code');
   if (coErr) return { skipped: 'companies_read_failed', ...zero, cursorFrom: cursor };
   const companies = (coRows as { id: number; code: string | null }[] | null) ?? [];
@@ -158,7 +154,6 @@ export async function runScheduledConnectSync(
   );
   if (!companyIds.length) return { skipped: 'no_companies', ...zero, cursorFrom: cursor };
 
-  // The next batch of in-window orders after the cursor, by doc_no.
   const floor = todayMyt(-CONNECT_SYNC_WINDOW_DAYS);
   const { data: rowsRaw, error: readErr } = await sb
     .from('mfg_sales_orders')
@@ -172,7 +167,6 @@ export async function runScheduledConnectSync(
   if (readErr) return { skipped: 'orders_read_failed', ...zero, cursorFrom: cursor };
   const rows = (rowsRaw ?? []) as Array<Record<string, unknown>>;
   if (!rows.length) {
-    // Window exhausted — wrap so the next run refreshes from the top.
     if (cursor) await writeCursor(sb, '');
     return { ...zero, cursorFrom: cursor, cursorTo: '' };
   }
@@ -186,7 +180,6 @@ export async function runScheduledConnectSync(
   if (profErr) return { skipped: 'profile_read_failed', ...zero, cursorFrom: cursor };
   const profilesById = parseConnectCompanyProfiles((profRow as { value?: string | null } | null)?.value ?? null);
 
-  // Live balance + gross total for the batch (the SO list's own view).
   const docNos = rows.map((r) => String(r.doc_no));
   const { data: balRaw, error: balErr } = await sb
     .from('mfg_sales_orders_with_payment_totals')
@@ -201,7 +194,6 @@ export async function runScheduledConnectSync(
     if (b.local_total_sen != null) totalByDoc.set(String(b.doc_no), Number(b.local_total_sen));
   }
 
-  // Group by (phone, company) — one Connect upsert per group, like the sender.
   const groups = new Map<string, { phone: string; companyId: number | null; rows: Array<Record<string, unknown>> }>();
   for (const r of rows) {
     const phone = normalizePhone(r.phone == null ? null : String(r.phone));
@@ -227,7 +219,6 @@ export async function runScheduledConnectSync(
       callbackUrl,
     });
     const result = await postConnectContact(env, contact, { expectTrigger: false });
-    // Logged like a send (per doc, shared batch_id) but source 'connect-sync-cron'.
     const batchId = crypto.randomUUID();
     const groupDocs = groupRows.map((r) => String(r.doc_no));
     try {

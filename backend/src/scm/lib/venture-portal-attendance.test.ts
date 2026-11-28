@@ -1,19 +1,6 @@
-// THE VENTURE PORTAL SALES ATTENDING PUSH: when the list is sent, where, and
-// what the portal's answer does to the record of what it holds.
-//
-// The body itself is SQL (tests-pg/vpSalesAttending.pg.test.ts runs it). What
-// is here is what a wrong line of TypeScript would break silently:
-//
-//   • an unchanged list must cost one md5, not a post;
-//   • a list the portal REFUSED must not be re-sent every five minutes, and one
-//     it may or may not have applied must not be trusted as delivered;
-//   • a vp.url of the wrong shape must stop the push, not be guessed at;
-//   • the kick must send when Sales Attending changed and cost nothing when not.
 import { describe, expect, test, beforeEach, vi } from 'vitest';
 import type { Env } from '../env';
 
-/* The module reads its client through getSupabaseService(env), like the
-   catalogue's sender; the same seam. */
 let currentSb: ReturnType<typeof import('./fake-postgrest').fakeSb>;
 vi.mock('../../db/supabase', () => ({ getSupabaseService: () => currentSb }));
 
@@ -34,7 +21,6 @@ const ATTENDING_URL = 'https://venture-portal-chi.vercel.app/api/erp/v1/sales-at
 const URL_ROW = { k: 'vp.url', v: ORDERS_URL };
 const SECRET_ROW = { k: 'vp.secret', v: 's'.repeat(48) };
 
-/** A small body, in scm.vp_attendance_snapshot's shape (snapshotAt added by the SQL). */
 const list = (companyId: number): Body => ({
   companyId,
   since: '2026-04-01',
@@ -53,11 +39,6 @@ const list = (companyId: number): Body => ({
   ],
 });
 
-/**
- * A database with the feed wired up and the two Sales Attending functions
- * answering. `digests` is what scm.vp_attendance_digest returns per company;
- * the snapshot answers the same digest unless `snapshotDigests` says otherwise.
- */
 function db(opts: {
   flag: string | null;
   config?: Row[];
@@ -98,7 +79,6 @@ const delivered = (d: string) => ({ delivered_digest: d, last_digest: d, last_ou
 const res = (status: number, body: unknown = { ok: true, outcome: 'applied', booths: 2 }) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-/** A fetch that answers `statuses` in turn and records every call. */
 function portal(...statuses: Array<number | Error>) {
   const calls: Array<{ url: string; init: RequestInit; body: Body }> = [];
   let i = 0;
@@ -111,7 +91,6 @@ function portal(...statuses: Array<number | Error>) {
   return { fetchImpl: fetchImpl as unknown as typeof fetch, calls };
 }
 
-/* Only ever handed to the mocked getSupabaseService above. */
 const env = {} as Env;
 
 beforeEach(() => {

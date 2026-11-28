@@ -8,7 +8,6 @@ describe("soListSearchParams — server-filterable funnels", () => {
       debtorNames: ["ALICE, INC", "BOB"],
       currencies: ["MYR", "USD"],
     });
-    // JSON, not comma-join — a customer name may itself contain a comma.
     expect(usp.get("debtorNames")).toBe(JSON.stringify(["ALICE, INC", "BOB"]));
     expect(usp.get("currencies")).toBe(JSON.stringify(["MYR", "USD"]));
   });

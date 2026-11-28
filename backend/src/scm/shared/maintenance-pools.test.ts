@@ -1,13 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { normalizeInchValue, normalizeConfigInchPools } from './maintenance-pools';
 
-// The quote-doubling mint guard (2026-08-01): a hand-keyed `1""` in a height
-// pool is the only in-repo door the doubled-inch-mark class can enter through
-// (every height editor is a pool-fed select; no code path appends a quote).
-// These tests pin the save-side hygiene: option values in the inch-bearing
-// pools collapse doubled marks, everything else in the config is untouched,
-// and an already-clean config comes back REFERENCE-identical so untouched
-// saves stay byte-identical.
 
 describe('normalizeInchValue', () => {
   test('THE MINT: `1""` collapses to `1"`; runs collapse; trailing whitespace drops', () => {
@@ -33,7 +26,7 @@ describe('normalizeConfigInchPools', () => {
       divanHeights: [{ value: '10""', priceSen: 0 }],
       totalHeights: [{ value: '28"', priceSen: 0 }],
       sofaSizes: ['28', '30""'],
-      brandings: ['Keep ""me""'], // NOT an inch pool — never walked
+      brandings: ['Keep ""me""'],
       notes: 'he wrote "" on purpose',
     };
     const out = normalizeConfigInchPools(config);
@@ -43,7 +36,6 @@ describe('normalizeConfigInchPools', () => {
     expect(out.divanHeights).toEqual([{ value: '10"', priceSen: 0 }]);
     expect(out.totalHeights).toEqual([{ value: '28"', priceSen: 0 }]);
     expect(out.sofaSizes).toEqual(['28', '30"']);
-    // Non-inch pools and prose are untouched, verbatim.
     expect(out.brandings).toEqual(['Keep ""me""']);
     expect(out.notes).toBe('he wrote "" on purpose');
   });

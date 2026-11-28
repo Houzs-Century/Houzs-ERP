@@ -1,7 +1,3 @@
-/* Conts-ERP #717: the printed GRN names the warehouse the goods were received
-   into, read off the GRN detail GET's warehouse_name (code as the fallback). A
-   GRN that recorded none prints no Warehouse row rather than a dash. Asserted on
-   what the generator DREW, like pdf-status-label.test.ts. */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
@@ -36,7 +32,6 @@ async function renderGrn(extra: Record<string, unknown>): Promise<TextDraw[]> {
   return draws;
 }
 
-/* The value drawn on the "Warehouse" label's baseline, to its right. */
 function warehouseValue(draws: TextDraw[]): string | null {
   const label = draws.find((d) => d.text === 'Warehouse');
   if (!label) return null;

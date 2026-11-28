@@ -24,9 +24,6 @@ const CANONICAL_STATES: ReadonlySet<string> = new Set([
   'Putrajaya', 'Sabah', 'Sarawak', 'Selangor', 'Terengganu',
 ]);
 
-/** Every historical / alternate spelling → its canonical form.
- *  Keys are already normalised (upper, whitespace collapsed, dots stripped)
- *  so the lookup is a single map hit after normalisation. */
 const ALIAS_MAP: ReadonlyMap<string, string> = new Map([
   ['JOHOR', 'Johor'],
   ['KEDAH', 'Kedah'],
@@ -61,9 +58,6 @@ const ALIAS_MAP: ReadonlyMap<string, string> = new Map([
   ['TRENGGANU', 'Terengganu'],
 ]);
 
-/** Normalise a raw string for alias lookup: upper, then REPLACE dots with a
- *  space (not just drop them) so `P.PINANG`, `P. PINANG` and `P PINANG` all
- *  collapse to the same key. Then collapse whitespace, trim. */
 function probeKey(raw: string): string {
   return raw.trim().toUpperCase().replace(/\./g, ' ').replace(/\s+/g, ' ').trim();
 }

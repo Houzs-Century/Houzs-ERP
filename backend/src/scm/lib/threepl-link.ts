@@ -1,34 +1,14 @@
-// ---------------------------------------------------------------------------
-// threepl-link.ts — the one rule that decides the OUTSOURCE flag when a fleet
-// row is attached to (or detached from) a 3PL carrier company.
-//
-// WHY THIS IS SHARED. Drivers, helpers and lorries are three tables with three
-// differently-named "ours" flags (drivers.in_house, helpers.in_house,
-// lorries.is_internal) and three separate routes. Owner's rule is one sentence:
-// a row that belongs to a 3PL company is OUTSOURCE, always. Restating that in
-// three handlers is how two of them end up disagreeing — so it lives here, pure
-// and tested, and each route only supplies its own column name.
-//
-// It writes nothing and knows no column names. Callers map the result.
-// ---------------------------------------------------------------------------
 
 /** What the caller sent. `undefined` means "field absent from the request". */
 export interface CarrierLinkInput {
-  /** The 3PL company id: a uuid to attach, null to detach, undefined to leave. */
   threeplCompanyId?: string | null;
-  /** The caller's own-fleet flag (in_house / is_internal), if they sent one. */
   ownFlag?: boolean;
-  /** The carrier this row is ALREADY linked to, as read from the DB. Only a
-   *  PATCH can supply it; a create has no current row. Without it the rule
-   *  below cannot fire, which is exactly how the Fleet grid's tick-box got
-   *  round it — see the conflict note. */
   currentCarrierId?: string | null;
 }
 
 /** What to write. A key absent from the result must not be written at all. */
 export interface CarrierLinkPatch {
   carrierId?: string | null;
-  /** The own-fleet flag to write — false whenever a carrier is attached. */
   ownFlag?: boolean;
   /**
    * Set when the request would leave the row marked OURS while it is still
@@ -71,9 +51,6 @@ export function resolveCarrierLink(input: CarrierLinkInput): CarrierLinkPatch {
 
   if (threeplCompanyId === undefined) {
     if (ownFlag === undefined) return {};
-    /* Marking it ours while a carrier still owns it is the contradiction the
-       DB cannot express (mig 0237 deliberately wrote no CHECK). Detaching is
-       an explicit `threeplCompanyId: null`, which lands in the branch below. */
     if (ownFlag === true && currentCarrierId) return { conflict: 'own_flag_while_linked' };
     return { ownFlag };
   }

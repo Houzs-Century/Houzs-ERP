@@ -1,11 +1,3 @@
-// DocumentFlowModal — the SAP-Business-One-style "Relationship Map" popup.
-//
-// Given an anchor document it asks the backend for the whole family graph and
-// lays it out in fixed stage-columns (no graph library): the sales chain runs
-// along the top band (SO ▶ DO ▶ Invoice ▶ AR Payment) and the purchase chain
-// along the bottom (SO ▶ PO ▶ GRN ▶ Purchase Invoice), with the Sales Order
-// shared at the left. Connector lines are coloured by transfer kind. Clicking
-// any node jumps to that document's detail page.
 
 import { useOpenDocInTab } from '../../../lib/openDocInTab';
 import {
@@ -16,7 +8,7 @@ import {
   type FlowNodeType,
   type FlowEdgeKind,
 } from '../lib/flow-queries';
-import { statusLabel, humaniseStatusKey, simplifiedAmendmentPill, STATUS_TONES, type StatusDocType } from '../lib/status-pill';
+import { statusLabel, humaniseStatusKey, simplifiedAmendmentPill, STATUS_TONES, type StatusDocType } from '../../../../../shared/src/vendor/scm/lib/status-pill';
 
 type Props = { type: FlowNodeType; id: string; open: boolean; onClose: () => void };
 
@@ -53,14 +45,8 @@ const TYPE_META: Record<
   po:      { col: 1, band: 'bottom', title: 'Purchase Order',   route: (id) => `/scm/purchase-orders/${id}`, bg: '#faf5ff', accent: '#9333ea' },
   grn:     { col: 2, band: 'bottom', title: 'Goods Receive',    route: (id) => `/scm/grns/${id}`,                bg: '#f0f9ff', accent: '#0284c7' },
   pi:      { col: 3, band: 'bottom', title: 'Purchase Invoice', route: (id) => `/scm/purchase-invoices/${id}`,   bg: '#fefce8', accent: '#ca8a04' },
-  // Returns reverse goods. A Delivery Return hangs off its DO (sales/top band),
-  // a Purchase Return off its GRN (purchase/bottom band). Both sit one column
-  // right of their parent and share a warm red accent to read as "sent back".
   dr:      { col: 2, band: 'top',    title: 'Delivery Return',  route: (id) => `/scm/delivery-returns/${id}`,    bg: '#fef2f2', accent: '#b91c1c' },
   pr:      { col: 3, band: 'bottom', title: 'Purchase Return',  route: (id) => `/scm/purchase-returns/${id}`,    bg: '#fef2f2', accent: '#b91c1c' },
-  // Consignment family — its own self-contained map (sales OR purchase chain,
-  // never both at once). cso/pco are the roots (mid), notes/receipts and their
-  // returns fan out to the right exactly like the SO→DO→DR / PO→GRN→PR layout.
   cso:     { col: 0, band: 'mid',    title: 'Consignment Order',  route: (id) => `/scm/consignment-orders/${encodeURIComponent(id)}`,                  bg: '#eef2ff', accent: '#4f46e5' },
   cdo:     { col: 1, band: 'top',    title: 'Consignment Note',   route: (id) => `/scm/consignment-notes/${id}`,             bg: '#ecfeff', accent: '#0891b2' },
   cdr:     { col: 2, band: 'top',    title: 'Consignment Return', route: (id) => `/scm/consignment-returns/${id}`,           bg: '#fef2f2', accent: '#b91c1c' },
@@ -75,15 +61,6 @@ const EDGE_COLOR: Record<FlowEdgeKind, string> = {
   value: '#ea580c',
   payment: '#16a34a',
 };
-/* "Soft until DO, hard from DO" edge classes (2026-08-07):
-   · chain (execution FKs) keep the solid kind colours above — anchored history.
-   · provenance — the stored SO ▶ PO raise-link ("bought for"). Muted: it
-     records why we bought and binds no execution. Every 'value' edge IS the
-     raise-link, so kind 'value' falls back to this when an older cached
-     response carries no `linkage`.
-   · floating — the live pre-DO MRP pairing, assembled CLIENT-SIDE from the
-     po-so-coverage the opening page already fetched (zero added backend
-     load). Dashed + pulsing: recomputed on every view, may change. */
 const PROVENANCE_COLOR = '#94a3b8';
 const FLOATING_COLOR = '#7c3aed';
 const PROVENANCE_TITLE = 'Bought for — procurement provenance';
@@ -101,11 +78,6 @@ const colX = (col: number) => PAD + col * (NODE_W + COL_GAP);
 export function DocumentFlowModal({ type, id, open, onClose }: Props) {
   const openDoc = useOpenDocInTab();
   const { data, isLoading, isError } = useDocumentFlow(open ? type : null, open ? id : null);
-  /* Floating pre-DO pairing for a PURCHASE anchor — read from the SAME
-     usePoSoCoverage query key the detail pages / list drill-downs use, so the
-     common path is a react-query cache hit (and the backend path-cache dedupes
-     a cold one). NEVER a new endpoint; a failed/absent read just renders no
-     overlay. */
   const covType = type === 'po' || type === 'grn' || type === 'pi' ? type : null;
   const cov = usePoSoCoverage(open ? covType : null, open && covType ? id : null);
 
@@ -114,8 +86,6 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
   const overlay = buildFloatingOverlay(data, cov.data);
   const nodes = [...(data?.nodes ?? []), ...overlay.nodes];
   const edges = data?.edges ?? [];
-  // Nodes that exist ONLY through the floating pairing (nothing stored) render
-  // dashed, matching their edge — they can move or vanish on the next view.
   const floatingNodeKeys = new Set(overlay.nodes.map((n) => n.key));
   // PO amendments (mig 0192) branch off the Purchase Order — rendered as a
   // clickable chip row below the map, the same idiom #1229 used for SO
@@ -127,7 +97,6 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
     openDoc(`/scm/po-amendments/${amendmentId}`);
   };
 
-  // ── Layout: assign every node an (x, y) ─────────────────────────────────
   const pos = new Map<string, { x: number; y: number }>();
   const byColBand = (band: 'top' | 'bottom') => {
     const cols = new Map<number, FlowNode[]>();
@@ -151,11 +120,6 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
   const bottomBandH = bottomMax > 0 ? bottomMax * (NODE_H + ROW_GAP) - ROW_GAP : 0;
   const bandsBottom = bottomMax > 0 ? bottomTop + bottomBandH : PAD + topBandH;
 
-  // The SO column is vertically centred across both bands. The canvas must fit
-  // whichever is taller — the bands OR the SO block — otherwise a document with
-  // no downstream rows (a lone SO node) gets clipped at the bottom.
-  // The mid column holds the chain root — an SO, or a consignment root
-  // (cso / pco), all of which use band 'mid'.
   const soNodes = nodes.filter((n) => TYPE_META[n.type].band === 'mid').sort((a, b) => (a.label ?? '').localeCompare(b.label ?? ''));
   const soBlockH = soNodes.length > 0 ? soNodes.length * (NODE_H + ROW_GAP) - ROW_GAP : 0;
   const contentBottom = Math.max(bandsBottom, PAD + soBlockH);
@@ -222,8 +186,6 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
                   const x1 = p.x + NODE_W, y1 = p.y + NODE_H / 2;
                   const x2 = ch.x, y2 = ch.y + NODE_H / 2;
                   const mx = (x1 + x2) / 2;
-                  /* 'value' fallback: every value edge IS the SO ▶ PO raise-link,
-                     so an older cached response (no linkage) still reads muted. */
                   const provenance = e.linkage === 'provenance' || (e.linkage == null && e.kind === 'value');
                   return (
                     <path
@@ -237,9 +199,6 @@ export function DocumentFlowModal({ type, id, open, onClose }: Props) {
                     </path>
                   );
                 })}
-                {/* Floating pre-DO MRP pairing — client-assembled overlay.
-                    Dashed + pulsing (existing utility class; no bespoke
-                    animation system): the pairing is recomputed per view. */}
                 {overlay.edges.map((e, i) => {
                   const p = pos.get(e.from); const ch = pos.get(e.to);
                   if (!p || !ch) return null;

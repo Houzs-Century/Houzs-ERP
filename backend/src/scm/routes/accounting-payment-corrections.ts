@@ -45,15 +45,10 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 type Row = Record<string, unknown>;
 
 const CORRECTION_ACTIONS = ['ADD_PAYMENT', 'UPDATE_PAYMENT', 'DELETE_PAYMENT'];
-/** The source a row carries when nothing marked it — what every payment action
-    wrote before the rule, and what a role without the key still writes. */
 const DEFAULT_SOURCE = 'web';
 const AUDIT_COLS = 'id, so_doc_no, action, actor_name_snapshot, field_changes, note, created_at, payment_id, source';
 const CHUNK = 200;
 
-/** The month as Malaysian-midnight instants for the timestamptz filter: a bare
-    `YYYY-MM-01` is read as UTC midnight, so a correction made before 08:00 on
-    the 1st was reviewed under the previous month. */
 const monthInstants = (month: string): { from: string; to: string } => {
   const [y, m] = month.split('-').map(Number);
   const b = monthBoundsMy(y, m - 1);
@@ -80,10 +75,6 @@ const chunks = <T,>(xs: T[]): T[][] => {
   return out;
 };
 
-/** The names of the people whose ROLE grants the key literally, in this
-    company — the audit log knows its actors by name only. Throws on a read
-    that fails; the caller refuses the whole report rather than listing a
-    month with the before-the-rule rows silently missing. */
 async function literalHolderNames(c: Ctx, companyId: number): Promise<string[]> {
   const ids = await usersHoldingPermission(c.env, SO_PAYMENT_AMEND, { companyId });
   if (ids.length === 0) return [];
@@ -103,7 +94,6 @@ export const paymentCorrections = async (c: Ctx) => {
   const sb = c.get('supabase');
   const fail = (what: string, reason: string) => c.json({ error: 'load_failed', reason: `${what}: ${reason}` }, 500);
 
-  /* The month's actions made on the right. */
   const { data: auditRaw, error: auditErr } = await sb.from('mfg_so_audit_log')
     .select(AUDIT_COLS)
     .eq('company_id', co.companyId)
@@ -115,7 +105,6 @@ export const paymentCorrections = async (c: Ctx) => {
   if (auditErr) return fail('audit', auditErr.message);
   const audits = ((auditRaw ?? []) as Row[]).map(toAudit);
 
-  /* …and the ones a holder of the key wrote before the rule asked them why. */
   let holders: string[];
   try {
     holders = await literalHolderNames(c, co.companyId);
@@ -135,10 +124,6 @@ export const paymentCorrections = async (c: Ctx) => {
     audits.push(...((earlyRaw ?? []) as Row[]).map(toAudit));
   }
 
-  /* The customer, off the order — read in one go for the month's orders. An
-     order that cannot be read shows no name rather than a wrong one; a read
-     that FAILS is a refusal, because a report with every customer blank is a
-     different document from the one asked for. */
   const customerByDoc = new Map<string, string | null>();
   const docs = [...new Set(audits.map((a) => a.so_doc_no).filter(Boolean))];
   for (const part of chunks(docs)) {
@@ -150,8 +135,6 @@ export const paymentCorrections = async (c: Ctx) => {
     for (const r of (soRaw ?? []) as Row[]) customerByDoc.set(String(r.doc_no ?? ''), str(r.debtor_name));
   }
 
-  /* Who first recorded each payment — the same rule as the customer: read
-     what can be read, refuse when a read fails. */
   const addsByPayment = new Map<string, PaymentRecorder>();
   const paymentsById = new Map<string, PaymentRecorder>();
   const paymentIds = [...new Set(audits.map((a) => a.payment_id).filter((v): v is string => !!v))];
@@ -188,8 +171,6 @@ export const paymentCorrections = async (c: Ctx) => {
     }
   }
 
-  /* The untagged corrections — written before payments were tagged — are
-     answered from their order's own ADD rows. */
   const addsByDoc = new Map<string, Array<PaymentRecorder & { amountSen: number | null }>>();
   const untaggedDocs = [...new Set(audits.filter((a) => !a.payment_id && a.action !== 'ADD_PAYMENT').map((a) => a.so_doc_no))];
   for (const part of chunks(untaggedDocs)) {

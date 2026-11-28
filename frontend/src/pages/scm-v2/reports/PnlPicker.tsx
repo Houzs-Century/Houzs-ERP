@@ -1,15 +1,17 @@
 // ----------------------------------------------------------------------------
-// PnlPicker — a P&L's three views (owner 2026-11-25: 入口可以改成根据overall
-// P&L, Department P&L 每个P&L 有三个view): across the top of each view of the
+// PnlPicker — a P&L's views (owner 2026-11-25: 入口可以改成根据overall P&L,
+// Department P&L 每个P&L 有三个view): across the top of each view of the
 // Overall P&L or the Department P&L, in a white bar of its own, the P&L's name
-// and its views — Actual (by sales invoice) | Performance (by sales order) |
-// Forecast (reports-catalog PNL_CHOICES). Only the views the reader may open
+// and its views (reports-catalog PNL_FAMILY_VIEWS, PNL_CHOICES) — the Overall
+// P&L's Actual (by sales invoice) | Forecast (its Performance removed, owner
+// 2026-11-28), the Department P&L's Actual | Performance (by sales order) |
+// Forecast. Only the views the reader may open
 // are offered; a view not built yet (the Department P&L's Forecast) stays in
 // its place, greyed, saying it comes later.
 //
 // The Overall P&L's views turn on and off (the same day: 这个view 我可以select
 // 我要看什么view，也可以同时显示两个还是三个): one on is that view's own page,
-// two or three on are the side-by-side table (PNL_SIDE_BY_SIDE); the last one
+// both on are the side-by-side table (PNL_SIDE_BY_SIDE); the last one
 // on stays on. The Department P&L's are picked one at a time.
 //
 // A view is that report's own address — so a link to it, old or new, lands on
@@ -23,13 +25,12 @@ import { useLayoutEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Check } from 'lucide-react';
 import {
-  PNL_BY_MONTH, PNL_CHOICES, PNL_FAMILIES, PNL_SIDE_BY_SIDE, PNL_VIEWS, reportById, reportHref,
+  PNL_BY_MONTH, PNL_CHOICES, PNL_FAMILIES, PNL_FAMILY_VIEWS, PNL_SIDE_BY_SIDE, PNL_VIEWS, reportById, reportHref,
   type PnlChoice, type PnlFamily, type PnlView, type ReportRange,
 } from '../reports-catalog';
 import { ReportTool } from './reportParts';
 import s from './ReportShell.module.css';
 
-/** What each view reads, said on hover. */
 const VIEW_TITLE: Record<PnlView, string> = {
   actual: 'Actual: by sales invoice, the books',
   performance: 'Performance: by sales order (SO date), the expenses as booked',
@@ -37,18 +38,13 @@ const VIEW_TITLE: Record<PnlView, string> = {
 };
 const LATER = 'Comes later: this P&L’s Forecast is not built yet';
 
-/** The address bits the Department P&L keeps for itself, carried between its two views. */
 const NOT_CARRIED = new Set(['tab', 'dbasis', 'from', 'to']);
 
 export function PnlPicker({ family, current, selected, choices, range }: {
   family: PnlFamily;
-  /** The view this page is; null on the side-by-side table. */
   current: PnlChoice | null;
-  /** The views shown now: this page's, or the side-by-side table's. */
   selected: readonly PnlView[];
-  /** This P&L's views the reader may open, in the picker's order. */
   choices: readonly PnlChoice[];
-  /** The range the views carry; null opens each on its own dates. */
   range: ReportRange | null;
 }) {
   const [params] = useSearchParams();
@@ -67,7 +63,6 @@ export function PnlPicker({ family, current, selected, choices, range }: {
     for (const [k, v] of new URLSearchParams(search)) if (k !== 'tab') q.set(k, v);
     return `${path}?${q.toString()}`;
   };
-  /** Where a set of views opens: one, its own page; two or three, the side-by-side table. */
   const openOf = (next: readonly PnlView[]): string | null => {
     if (next.length === 0) return null;
     if (next.length === 1) {
@@ -78,20 +73,18 @@ export function PnlPicker({ family, current, selected, choices, range }: {
     const [path, search = ''] = reportHref(item, range).split('?');
     const q = new URLSearchParams({ tab: item.tab ?? PNL_SIDE_BY_SIDE.report, views: next.join(',') });
     for (const [k, v] of new URLSearchParams(search)) if (k !== 'tab') q.set(k, v);
-    /* On the table, By month stays as the views change. */
     const by = current == null ? params.get(PNL_BY_MONTH.param) : null;
     if (by === PNL_BY_MONTH.value) q.set(PNL_BY_MONTH.param, by);
     return `${path}?${q.toString()}`;
   };
-  /* Each view: the reader's where they may open it, greyed where this P&L has none yet. */
-  const views = PNL_VIEWS.flatMap((v): Array<{ id: PnlView; label: string; choice: PnlChoice | null }> => {
+  const offered = PNL_FAMILY_VIEWS[family];
+  const views = PNL_VIEWS.filter((v) => offered.includes(v.id)).flatMap((v): Array<{ id: PnlView; label: string; choice: PnlChoice | null }> => {
     const choice = choices.find((c) => c.view === v.id);
     if (choice) return [{ ...v, choice }];
     const built = PNL_CHOICES.some((c) => c.family === family && c.view === v.id);
     return built ? [] : [{ ...v, choice: null }];
   });
 
-  /* What is open, as text: the view kept in view moves only when it changes. */
   const openKey = `${current?.report ?? ''}|${current?.view ?? ''}|${selected.join(',')}`;
   useLayoutEffect(() => {
     for (const box of nav.current?.querySelectorAll<HTMLElement>('[data-track]') ?? []) {
@@ -114,7 +107,7 @@ export function PnlPicker({ family, current, selected, choices, range }: {
             }
             if (toggles) {
               const on = selected.includes(v.id);
-              const next = on ? selected.filter((x) => x !== v.id) : PNL_VIEWS.map((x) => x.id).filter((x) => x === v.id || selected.includes(x));
+              const next = on ? selected.filter((x) => x !== v.id) : offered.filter((x) => x === v.id || selected.includes(x));
               const to = openOf(next);
               return (
                 <button key={v.id} type="button" className={`${s.seg} ${s.segToggle} ${on ? s.segOn : ''}`} aria-pressed={on}
@@ -135,7 +128,7 @@ export function PnlPicker({ family, current, selected, choices, range }: {
           })}
         </div>
       </ReportTool>
-      {toggles && <span className={s.pickerHint}>Turn on two or three to see them side by side.</span>}
+      {toggles && <span className={s.pickerHint}>Turn both on to see them side by side.</span>}
     </nav>
   );
 }

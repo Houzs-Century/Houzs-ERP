@@ -57,9 +57,6 @@ type DoLinePhotoRow = { delivery_order_id: string; photo_urls: string[] | null }
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
-/* One membership check for both routes. `maybeSingle`, not `single`: the
-   company predicate can legitimately match zero rows, and that honest 404 must
-   not surface as a 500. Returns the line or the refusal response. */
 async function loadOwnedLine(c: Ctx, doId: string, itemId: string): Promise<
   { ok: true; line: DoLinePhotoRow } | { ok: false; res: Response }
 > {
@@ -69,8 +66,6 @@ async function loadOwnedLine(c: Ctx, doId: string, itemId: string): Promise<
     .select('delivery_order_id, photo_urls')
     .eq('id', itemId), c)
     .maybeSingle();
-  /* A FAILED READ IS NOT A MISSING LINE — supabase-js does not throw, and
-     answering 404 to a database blip reads as "photo gone" on the tile. */
   if (error) return { ok: false, res: c.json({ error: 'load_failed', reason: error.message }, 500) };
   if (!item) return { ok: false, res: c.json({ error: 'item_not_found' }, 404) };
   const line = item as DoLinePhotoRow;
@@ -81,8 +76,6 @@ async function loadOwnedLine(c: Ctx, doId: string, itemId: string): Promise<
 }
 
 export const doItemPhotoSignedHandler = async (c: Ctx) => {
-  /* `?? ''` — the exported-handler Context carries no param inference; an empty
-     id/key simply matches no row / no listed key and 404s honestly. */
   const doId = c.req.param('id') ?? '';
   const itemId = c.req.param('itemId') ?? '';
   const photoKey = decodeURIComponent(c.req.param('photoKey') ?? '');
@@ -96,14 +89,10 @@ export const doItemPhotoSignedHandler = async (c: Ctx) => {
   try {
     const bindings = soItemPhotoBindings(c.env);
     const { signedUrl, expiresAt } = await signSoItemPhotoUrl(bindings, photoKey);
-    // Signed thumb sibling. A photo uploaded before thumbnails existed has no
-    // `.thumb` object — the URL 404s and the client falls back to signedUrl.
     const { signedUrl: thumbUrl } = await signSoItemPhotoUrl(bindings, thumbKeyFor(photoKey));
     const payload: PhotoUrlPayload = { mode: 'signed', signedUrl, thumbUrl, expiresAt };
     return c.json(payload);
   } catch (e) {
-    /* R2 S3 creds unset in prod => signing throws for every photo. Fall back to
-       the proxy route below (R2 binding, no creds needed) rather than 500. */
     return c.json(
       proxyFallbackPayload(
         'do-item-photo',
@@ -129,8 +118,6 @@ export const doItemPhotoProxyHandler = async (c: Ctx) => {
 
   const owned = await loadOwnedLine(c, doId, itemId);
   if (!owned.ok) return owned.res;
-  /* Membership against the BASE key, so a `.thumb` request is authorised by the
-     photo it belongs to — thumbs are never themselves listed in photo_urls. */
   if (!(owned.line.photo_urls ?? []).includes(baseKeyOf(photoKey))) {
     return c.json({ error: 'photo_not_in_item' }, 404);
   }
@@ -141,8 +128,6 @@ export const doItemPhotoProxyHandler = async (c: Ctx) => {
   return new Response(obj.body, {
     headers: {
       'content-type': obj.httpMetadata?.contentType ?? 'application/octet-stream',
-      // Keys are immutable per object (uuid-named), so a replaced photo is a
-      // different key. `private` — delivery photos are not public.
       'cache-control': 'private, max-age=31536000, immutable',
     },
   });

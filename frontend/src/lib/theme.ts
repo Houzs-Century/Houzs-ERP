@@ -1,8 +1,5 @@
 import { useSyncExternalStore } from "react";
 
-// Light / dark / follow-the-device. A personal display preference, so it lives
-// in this browser's storage, not on the account: a phone in a dark warehouse
-// and an office desktop can differ for the same login.
 
 export type ThemePreference = "light" | "dark" | "system";
 export type ResolvedTheme = "light" | "dark";
@@ -16,7 +13,6 @@ function readStored(): ThemePreference {
     const v = localStorage.getItem(THEME_STORAGE_KEY);
     if (v === "light" || v === "dark" || v === "system") return v;
   } catch {
-    // Storage blocked (private mode): fall through to the default.
   }
   return "light";
 }
@@ -51,7 +47,6 @@ export function initTheme(): void {
       if (current === "system") apply();
     });
   }
-  // Another tab changed it.
   window.addEventListener("storage", (e) => {
     if (e.key !== THEME_STORAGE_KEY) return;
     current = readStored();
@@ -68,7 +63,6 @@ export function setThemePreference(pref: ThemePreference): void {
   try {
     localStorage.setItem(THEME_STORAGE_KEY, pref);
   } catch {
-    // Not persisted; still applied for this page.
   }
   apply();
 }

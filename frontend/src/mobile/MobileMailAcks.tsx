@@ -1,5 +1,3 @@
-// Phone side of Mail Center read state and acknowledgement (DEV-03 P2); the
-// desktop twin is pages/MailCenter/mail-acks.tsx, which owns the API calls.
 import { useState } from "react";
 import { api } from "../api/client";
 import { useQuery } from "../hooks/useQuery";

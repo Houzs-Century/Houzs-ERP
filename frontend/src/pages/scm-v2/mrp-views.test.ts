@@ -38,7 +38,6 @@ const SCHEMA_SQL = path.join(repoRoot, 'backend/scripts/scm-schema/2990s-full-sc
 const MIGRATIONS_PG = path.join(repoRoot, 'backend/src/db/migrations-pg');
 const ALIGN_PAYLOAD = path.join(repoRoot, 'backend/scripts/data/align-skus-houzs-century.json');
 
-/** Service lines never create MRP demand, so SERVICE never gets a tab. */
 const NEVER_A_TAB = new Set(['SERVICE']);
 
 const CREATE_TYPE =
@@ -46,8 +45,6 @@ const CREATE_TYPE =
 const ADD_VALUE =
   /ALTER\s+TYPE\s+(?:"?(?:public|scm)"?\s*\.\s*)?"?(\w+)"?\s+ADD\s+VALUE\s+(?:IF\s+NOT\s+EXISTS\s+)?'([^']+)'/gi;
 
-/** Members of one enum, assembled from the baseline DDL plus every ALTER TYPE
- *  in the LIVE migration tree — which is where four of these came from. */
 function enumMembers(typeName: string): string[] {
   const members = new Set<string>();
   const files = [SCHEMA_SQL];
@@ -71,9 +68,6 @@ describe('the checker itself', () => {
   test('the SQL scan finds the real mfg_product_category vocabulary', () => {
     const members = enumMembers('mfg_product_category');
     expect(fs.existsSync(SCHEMA_SQL)).toBe(true);
-    /* The four baseline members prove the CREATE TYPE half ran; DINING can only
-       have come from migration 0258, so it proves the ALTER TYPE half reached
-       the migration tree. Without both, an empty scan would pass vacuously. */
     for (const baseline of ['SOFA', 'BEDFRAME', 'ACCESSORY', 'MATTRESS', 'SERVICE']) {
       expect(members).toContain(baseline);
     }
@@ -105,9 +99,6 @@ describe('every category a product can carry is reachable from an MRP tab', () =
   });
 
   test('the categories actually written into mfg_products by the SKU alignment', () => {
-    /* MEASURED, not reasoned: scripts/align-open-skus.mjs INSERTS these rows into
-       scm.mfg_products for company 1, category and all. This is the population,
-       committed in the repo, that the enum test above is abstract about. */
     const payload = JSON.parse(fs.readFileSync(ALIGN_PAYLOAD, 'utf8')) as {
       rows: Array<{ category: string }>;
     };
@@ -127,10 +118,6 @@ describe('every category a product can carry is reachable from an MRP tab', () =
 
 describe('what the tab list does and does not invent', () => {
   test('the five tabs stand even when the server says nothing', () => {
-    /* A response from a backend that predates `categories`, or one still in
-       flight, must not blank the page's tab bar. Since 2026-09-10 Others is a
-       PERMANENT fifth tab (owner, watching it blink in a beat after the other
-       four during loading), so its null-category tab rides along even here. */
     expect(mrpViews(undefined).map((v) => v.value))
       .toEqual(['sofa', 'bedframe', 'mattress', 'accessory', 'others']);
   });
@@ -147,25 +134,13 @@ describe('what the tab list does and does not invent', () => {
   });
 
   test('the tab a click selects asks the server for the tab it displays', () => {
-    /* THE ROUND-TRIP. The page must pick a `?category=` from the tab id BEFORE
-       it has a response to derive tabs from, so the id and the category are two
-       expressions. Pinned on every tab the catalogue can produce, because a tab
-       whose id says one thing while its rows are filtered by another is this
-       whole bug with extra steps. */
     const views = mrpViews(enumMembers('mfg_product_category'));
-    expect(views.length).toBe(5); // the four, plus Others
+    expect(views.length).toBe(5);
     for (const v of views) expect(mrpCategoryOf(v.value)).toBe(v.category);
-    /* Others asks for NO filter — it stands for a set, and sending the engine a
-       category no product carries would answer with nothing. */
     expect(mrpCategoryOf('others')).toBeNull();
   });
 
   test('an unrecognised category lands in Others rather than growing a tab', () => {
-    /* `scm.acc_register_item_group()` is SECURITY DEFINER granted to
-       service_role so the owner can create a category at runtime. Under the old
-       per-category rule his new category would grow a tab nobody designed;
-       under this one it has a home the moment it exists, and the tab bar does
-       not change shape because somebody added a lookup value. */
     const views = mrpViews(['SOFA', 'WALLPAPER']);
     expect(views.map((v) => v.value)).toEqual(['sofa', 'bedframe', 'mattress', 'accessory', 'others']);
     const others = views.find((v) => v.value === 'others')!;
@@ -187,17 +162,10 @@ describe('what the tab list does and does not invent', () => {
 
   test('Others claims by EXCLUSION, so no row can be homeless', () => {
     const others = mrpViews(['DINING']).find((v) => v.value === 'others')!;
-    /* Not in the catalogue list this response happened to carry — a product
-       deleted, a category added between two requests, or a row the engine kept
-       on its item GROUP (bug 0777). It still has a home. */
     expect(rowBelongsToView(others, 'CARPET')).toBe(true);
     expect(rowBelongsToView(others, 'NEVER-SEEN-BEFORE')).toBe(true);
-    /* But it never steals a row that belongs to a real tab, and never shows a
-       service line — the page has never planned those. */
     expect(rowBelongsToView(others, 'SOFA')).toBe(false);
     expect(rowBelongsToView(others, 'SERVICE')).toBe(false);
-    /* A row with no category at all stays off every tab. bug 0777 fixed the
-       engine so this is rare, but Others must not become the bin that hides it. */
     expect(rowBelongsToView(others, null)).toBe(false);
   });
 });

@@ -26,9 +26,6 @@ import { isPosPin, isPosPinPosition, setPosPinForUser } from "../services/posPin
 import { audit } from "../services/audit";
 import { getBrandingForCompany, resolveCompanyCode } from "../services/branding";
 
-// Invite/reset emails carry the ACTIVE company's identity (the admin's top-bar
-// pick): product name in the copy, From display name, and link hostname.
-// Pre-multi-company (companyContext unset) this resolves HOUZS — unchanged.
 async function activeCompanyEmailIdentity(
   env: Env,
   companyCodeVar: string | undefined,
@@ -67,19 +64,6 @@ import {
 
 const app = new Hono<{ Bindings: Env }>();
 
-/**
- * Department-scoped Team admin decision for the current caller (owner 2026-07,
- * "Sales Director = department-scoped admin"). ADDITIVE on top of the existing
- * users.read / users.manage gates — it NEVER loosens what an admin already has:
- *
- *   • caller holds `*` or `adminPerm`  → { scoped: false } — full admin, UNCHANGED.
- *   • caller is a Sales Director (only) → { scoped: true, deptId: <their dept> }.
- *   • deptId === null (Sales Director with no department assigned) → they see
- *     ONLY themselves, never the whole org (fail-closed).
- *
- * A caller who is neither can't reach the handler — the route middleware
- * (requirePermissionOrSalesDirector) already 403'd them.
- */
 function salesDirectorScope(
   c: Context<{ Bindings: Env }>,
   adminPerm: string,
@@ -92,17 +76,9 @@ function salesDirectorScope(
   if (isSalesDirectorUser(user)) {
     return { scoped: true, deptId: user?.department_id ?? null };
   }
-  // Defensive: should be unreachable behind requirePermissionOrSalesDirector.
   return { scoped: false, deptId: null };
 }
 
-/**
- * Baseline role for a department-scoped (Sales Director) invite, whose UI hides
- * the Role picker. Mirrors the frontend InvitePanel default: prefer the neutral
- * "Position Preview" role (zero action-permissions — page visibility follows
- * the Position), then any zero-permission non-system role, then any non-system
- * role, then anything. Returns null only when the roles table is empty.
- */
 async function resolveDefaultRoleId(
   db: ReturnType<typeof getDb>,
 ): Promise<number | null> {
@@ -125,37 +101,18 @@ async function resolveDefaultRoleId(
   return (preview ?? zeroPerm ?? nonSystem ?? all[0]).id;
 }
 
-const INVITE_TTL_SECONDS = 60 * 60 * 24 * 14; // 14 days
-const RESET_TTL_SECONDS = 60 * 60; // 1 hour — password reset should expire fast
+const INVITE_TTL_SECONDS = 60 * 60 * 24 * 14;
+const RESET_TTL_SECONDS = 60 * 60;
 
-/**
- * GET /api/users
- * List all team members. Requires users.read.
- *
- * Optional ?brand=<x> narrows the list to users with that brand in
- * their user_brands row set (mig 049). Used by the project PIC picker.
- *
- * Optional ?department=<name> narrows to users whose PRIMARY department
- * name matches case-insensitively (contains). Used by the project PIC +
- * Sales-attending pickers, which list all Sales-department members
- * regardless of brand (owner: Option A). Prod's dept is "Sales Department",
- * so the match is a substring (ILIKE %name%), not equality.
- */
 app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
   const brand = (c.req.query("brand") || "").trim();
   const department = (c.req.query("department") || "").trim();
-  // Optional server typeahead: ILIKE over name + email. Additive — no `q`
-  // leaves the query, ordering and the full-list callers untouched. When
-  // present we also cap the result set (the picker only renders a slice).
   const search = (c.req.query("q") || c.req.query("search") || "").trim();
   const db = getDb(c.env);
   const manager = alias(users, "m");
   const inviter = alias(users, "ib");
 
   const conds: any[] = [];
-  // Sales Director → own-department scope only. A caller admitted purely as a
-  // Sales Director sees ONLY members whose primary department is theirs OR who
-  // are members of it (mig 0020 user_departments). No dept assigned → self only.
   const scope = salesDirectorScope(c, "users.read");
   if (scope.scoped) {
     const me = c.get("user");
@@ -171,8 +128,6 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
     }
   }
   if (brand) {
-    // EXISTS-on-user_brands narrows the list without exploding rows
-    // through a JOIN.
     conds.push(
       sql`EXISTS (SELECT 1 FROM ${user_brands} ub
                    WHERE ub.user_id = ${users.id}
@@ -180,8 +135,6 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
     );
   }
   if (department) {
-    // Match the user's primary department by name, case-insensitively and
-    // by substring so "Sales" matches the prod "Sales Department" row.
     conds.push(
       sql`EXISTS (SELECT 1 FROM ${departments} d2
                    WHERE d2.id = ${users.department_id}
@@ -189,9 +142,6 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
     );
   }
   if (search) {
-    // Typeahead: match the query as a substring of name OR email. The term is
-    // bound as a parameter (no injection) — same idiom as the department
-    // filter above.
     conds.push(
       sql`(${users.name} ILIKE ${"%" + search + "%"}
            OR ${users.email} ILIKE ${"%" + search + "%"})`
@@ -226,25 +176,16 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
       profile_pic_r2_key: users.profile_pic_r2_key,
       phone: users.phone,
       email_alias: users.email_alias,
-      // GROUP_CONCAT joins the user's brand allow-list in one round-trip.
-      // Unit-separator (US, 0x1f) keeps multi-word brands ("MY SOFA
-      // FACTORY") splittable client-side without ambiguity.
       brands_concat: sql<string | null>`(
         SELECT string_agg(ub.brand, chr(31))
           FROM ${user_brands} ub
          WHERE ub.user_id = ${users.id}
       )`,
-      // Full department membership set (mig 0020). The primary department_id is
-      // one of these; we re-add it below so legacy rows not yet backfilled are
-      // still reported as members of their primary.
       department_ids_arr: sql<number[] | null>`(
         SELECT array_agg(ud.department_id)
           FROM ${user_departments} ud
          WHERE ud.user_id = ${users.id}
       )`,
-      // Per-user company grants (Phase 0e — user_companies). Drives the Team
-      // "Company" column + the edit/invite Company selector. Empty array = no
-      // grant row → the user fail-opens to ALL companies (companyContext).
       company_ids_arr: sql<number[] | null>`(
         SELECT array_agg(uc.company_id)
           FROM user_companies uc
@@ -259,13 +200,8 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
     .leftJoin(inviter, eq(inviter.id, users.invited_by))
     .where(conds.length ? and(...conds) : undefined)
     .orderBy(desc(users.created_at));
-  // Bound the typeahead result set — the picker renders only a slice. No `q`
-  // → no limit, so every full-list caller keeps receiving the whole directory.
   const rows = await (search ? built.limit(50) : built);
 
-  // array_agg() can arrive as a JS array OR a Postgres array-literal string
-  // ("{1,2}") depending on the driver path — coerce both (empty on null) so the
-  // Company column + department "+N" never silently blank out.
   const pgIntArray = (raw: unknown): number[] =>
     (Array.isArray(raw)
       ? raw
@@ -276,7 +212,6 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
       .map((x) => Number(x))
       .filter((n) => Number.isFinite(n));
   const out = rows.map((r) => {
-    // Primary first, then any extra departments sorted — drives the "+N" UI.
     const arr = pgIntArray(r.department_ids_arr);
     const extra = arr
       .map((d) => Number(d))
@@ -284,7 +219,6 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
       .sort((a, b) => a - b);
     const department_ids =
       r.department_id != null ? [r.department_id, ...extra] : extra;
-    // Company grants — normalise to a sorted number[] for the Company column.
     const companyArr = pgIntArray(r.company_ids_arr);
     const company_ids = companyArr
       .map((x) => Number(x))
@@ -305,10 +239,6 @@ app.get("/", requirePermissionOrSalesDirector("users.read"), async (c) => {
   return c.json({ users: out });
 });
 
-/**
- * GET /api/users/:id/brands
- * Per-user brand allow-list (mig 049).
- */
 app.get("/:id/brands", requirePermission("users.read"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -320,11 +250,6 @@ app.get("/:id/brands", requirePermission("users.read"), async (c) => {
   return c.json({ brands: rows.map((r) => r.brand) });
 });
 
-/**
- * PUT /api/users/:id/brands
- * Body: { brands: string[] }  replace-set semantics, validated against
- * project_brands.name (silent-drop unknowns).
- */
 app.put("/:id/brands", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -343,9 +268,6 @@ app.put("/:id/brands", requirePermission("users.manage"), async (c) => {
     .limit(1);
   if (target.length === 0) return c.json({ error: "User not found" }, 404);
 
-  // Validate against the canonical brand list. Active OR inactive — an
-  // archived brand still scopes existing projects until manually
-  // removed; we just don't show it in the new picker.
   let valid: string[] = [];
   if (requested.length > 0) {
     const r = await db
@@ -368,12 +290,6 @@ app.put("/:id/brands", requirePermission("users.manage"), async (c) => {
   return c.json({ ok: true, brands: valid });
 });
 
-/**
- * GET /api/users/:id/companies
- * Per-user company allow-list (Phase 0e — mirrors the brand allow-list).
- * NO-OP-SAFE: if the `user_companies` table is absent (pre-0f) the query
- * throws and we return an empty grant list rather than 500.
- */
 app.get("/:id/companies", requirePermission("users.read"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -388,7 +304,6 @@ app.get("/:id/companies", requirePermission("users.read"), async (c) => {
       .filter((n) => Number.isFinite(n));
     return c.json({ companies: companyIds });
   } catch {
-    // user_companies not present yet (Phase 0f migration unapplied) — no grants.
     return c.json({ companies: [] });
   }
 });
@@ -417,22 +332,6 @@ export async function setUserCompanies(
     ),
   );
   try {
-    /* Validate against the companies the CALLER themselves holds — not against
-       the whole master (silent-drop the rest).
-       `users.manage` is a flat, global permission: it carries no company
-       dimension, and this route has no self-guard (unlike PATCH /:id, which
-       refuses `id === me.id` at :1426). Validating against `SELECT id FROM
-       companies` therefore let any users.manage holder granted ONLY company 1
-       call this on their OWN id with [1, 2]; companyContext re-reads
-       user_companies on the very next request and would then accept
-       `X-Company-Id: 2`. That is self-service cross-tenant escalation — it hands
-       over the other company's entire book, read AND write.
-       A grantor can only ever pass on what they hold. `allowedCompanyIds`
-       degrades to `undefined` ONLY when the companies master is unreadable
-       (pre-migration / cold-start), where we keep the previous whole-master
-       behaviour so a single-company install still works; `[]` means the caller
-       holds nothing and may therefore grant nothing. See the three-state
-       sentinel in scm/lib/companyScope.ts. */
     let valid = requested;
     if (requested.length > 0) {
       const mine = allowedCompanyIds(c);
@@ -462,18 +361,10 @@ export async function setUserCompanies(
     ]);
     return valid;
   } catch {
-    // user_companies / companies not present yet (pre-0f) — no-op gracefully.
     return [];
   }
 }
 
-/**
- * PUT /api/users/:id/companies
- * Body: { companies: number[] }  replace-set semantics, validated against the
- * companies master (silent-drop unknowns). Mirrors PUT /:id/brands.
- * NO-OP-SAFE: if `user_companies` (or `companies`) is absent (pre-0f) we return
- * 200 with an empty list rather than 500 — the feature simply isn't active yet.
- */
 app.put("/:id/companies", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -490,22 +381,10 @@ app.put("/:id/companies", requirePermission("users.manage"), async (c) => {
   if (target.length === 0) return c.json({ error: "User not found" }, 404);
 
   const valid = await setUserCompanies(c, id, incoming as number[]);
-  // Company grants drive the banner's companyCanSee filter — clear this user's
-  // snapshot (both scopes) so a poll inside the 300s TTL cannot serve the old
-  // company audience.
   await bustBannerForUser(c.env, id);
   return c.json({ ok: true, companies: valid });
 });
 
-/**
- * GET /api/users/:id/activity
- * Recent audit_events touching this member, newest first — powers the
- * change-history panel on the member detail page. Two angles in one query:
- * what the user DID (actor_id = id) and what was done TO them
- * (entity_type='user' AND entity_id = id). Read via raw SQL like routes/audit.ts
- * — audit_events has no Drizzle table in schema.ts. Never errors on a missing
- * table: if the ledger isn't there yet the panel just shows no history.
- */
 app.get("/:id/activity", requirePermission("users.read"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -523,23 +402,11 @@ app.get("/:id/activity", requirePermission("users.read"), async (c) => {
       .all();
     return c.json({ activity: rows.results });
   } catch {
-    // Ledger absent or unreadable — degrade to empty rather than 500.
     return c.json({ activity: [] });
   }
 });
 
-// ── Profile pictures (mig 058) ─────────────────────────────────
-// Image bytes live in R2 (POD_BUCKET); the DB row carries the key.
-// Upload writes the user's own pic; GET streams the bytes back through
-// the worker so <img> can display it via blob URL despite needing the
-// bearer token — same pattern as award images and POD photos.
 
-/**
- * PUT /api/users/me/profile-pic
- * Raw binary upload of the caller's own profile picture. The optional
- * `?name=` query carries the original filename so the R2 key keeps a
- * recognisable extension.
- */
 app.put("/me/profile-pic", async (c) => {
   const user = c.get("user");
   if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
@@ -566,12 +433,6 @@ app.put("/me/profile-pic", async (c) => {
   return c.json({ ok: true, profile_pic_r2_key: key });
 });
 
-/**
- * DELETE /api/users/me/profile-pic
- * Clears the caller's profile picture pointer. The R2 object is left
- * in place — orphans are cheap and keeping them allows undo via the
- * raw key if a user ever asks.
- */
 app.delete("/me/profile-pic", async (c) => {
   const user = c.get("user");
   if (!user) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
@@ -583,12 +444,6 @@ app.delete("/me/profile-pic", async (c) => {
   return c.json({ ok: true });
 });
 
-/**
- * GET /api/users/:id/profile-pic
- * Streams the user's profile pic bytes from R2. Any authed user can
- * view any other authed user's pic — the data is "this is what so-and-so
- * looks like", not sensitive. 404 when no pic is set.
- */
 app.get("/:id/profile-pic", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!Number.isFinite(id)) return c.json({ error: "Invalid ID." }, 400);
@@ -605,23 +460,14 @@ app.get("/:id/profile-pic", async (c) => {
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
 
-  // Measured 2026-08-01: /team fetches one per member (43, ~1s each behind the
-  // connection limit); a flat max-age=300 re-fetched all past 5 min. Avatar.tsx
-  // sends the R2 key as ?k= so a matching url pins — see lib/avatar-cache.ts.
   headers.set(
     "cache-control",
     avatarCacheControl(c.req.query("k"), row.profile_pic_r2_key),
   );
-  // nosniff: block MIME-sniffing the server content-type into html/svg (parity: mail-center INLINE_SAFE).
   headers.set("X-Content-Type-Options", "nosniff");
   return new Response(obj.body, { headers });
 });
 
-/**
- * PUT /api/users/:id/profile-pic  (admin)
- * Upload/replace another member's avatar. Mirrors /me/profile-pic but is
- * keyed on the path id and gated on users.manage.
- */
 app.put("/:id/profile-pic", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!Number.isFinite(id)) return c.json({ error: "Invalid ID." }, 400);
@@ -643,12 +489,6 @@ app.put("/:id/profile-pic", requirePermission("users.manage"), async (c) => {
   return c.json({ ok: true, profile_pic_r2_key: key });
 });
 
-/**
- * POST /api/users/invite
- * Body: { email, role_id }
- * Creates a placeholder user (status='invited') and a fresh invitation
- * token. Returns the token so the caller can copy it into a chat / email.
- */
 app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) => {
   const me = c.get("user");
   const body = await c.req.json<{
@@ -659,22 +499,9 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     position_id?: number | null;
     manager_id?: number | null;
     phone?: string | null;
-    // Per-company grants for the new member (Phase 0e). Omitted / empty →
-    // defaults to [1] (Houzs) so a new user is NEVER left with zero grants
-    // (zero rows would fail-open to ALL companies). Full-admin only; a
-    // Sales-Director-scoped invite ignores this and is forced to Houzs.
     company_ids?: number[];
-    // When provided, the admin is setting an initial password and the account
-    // is created ACTIVE — no invite link / accept step. The member signs in
-    // with email + this password and can change it later.
     password?: string;
-    // 6-digit POS tablet PIN, for a member being created into a SALES position.
-    // The email+password above is the DESKTOP credential; the POS has no
-    // password field at all (pos.2990shome.com is name-pick + PIN), so without
-    // this a new salesperson was created with no way to sign into the tablet
-    // until an admin went back and used Members → Set PIN.
     pos_pin?: string;
-    // Company mail address (DEV-03): blank = first.last@ the company domain.
     email_alias?: string | null;
   }>();
 
@@ -693,9 +520,7 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
         403,
       );
     }
-    // Force the member's department; ignore any client-supplied value.
     body.department_id = inviteScope.deptId;
-    // A position must belong to the director's own department.
     if (body.position_id) {
       const pos = await db
         .select({ id: positions.id, department_id: positions.department_id })
@@ -721,7 +546,6 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
   const email = body.email.toLowerCase().trim();
   const name = body.name?.trim() || null;
 
-  // Direct-provision path: admin sets the password now → active account.
   const directPassword = body.password?.trim() || null;
   let passwordHash: string | null = null;
   if (directPassword) {
@@ -738,8 +562,6 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     .limit(1);
   if (role.length === 0) return c.json({ error: "Role not found" }, 404);
 
-  // Org dimensions (mig 094). If a position is given, validate it and default
-  // the department from it when the department wasn't passed explicitly.
   let departmentId = body.department_id ?? null;
   const positionId = body.position_id ?? null;
   const managerId = body.manager_id ?? null;
@@ -765,10 +587,6 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     positionSlug = pos[0].slug ?? null;
   }
 
-  // POS PIN — validated BEFORE the user is created, so a bad PIN never leaves a
-  // half-provisioned member behind. The sales-position rule is not cosmetic:
-  // /api/pos/pin-login refuses any other position, so a PIN stored against one
-  // would be a credential that can never sign in.
   const posPin = body.pos_pin?.trim() || null;
   if (posPin) {
     if (!isPosPin(posPin)) {
@@ -806,9 +624,6 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     }
   }
 
-  // Create or refresh the placeholder user. Name is preset here ("the
-  // Position concept") so the invitee lands with their identity already
-  // set; they can still adjust it when accepting.
   let userId: number | null = existing.length > 0 ? existing[0].id : null;
   if (existing.length === 0) {
     const insertedUser = await db
@@ -820,11 +635,6 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
         department_id: departmentId,
         position_id: positionId,
         manager_id: managerId,
-        // Stored E.164 so a staff number is comparable and dialable no matter
-        // how it was typed. normalizePhone keeps an explicit +xx country code
-        // and assumes Malaysia only for a bare local number; it returns null
-        // for input too short to be a phone, and that null is the same "no
-        // phone" the trim path produced.
         phone: normalizePhone(body.phone),
         status: activate ? "active" : "invited",
         invited_by: me.id || null,
@@ -840,8 +650,6 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
       .returning({ id: users.id });
     userId = insertedUser[0]?.id ?? null;
   } else {
-    // Re-invite — bump role and reset invited_at, drop any old token.
-    // Only overwrite the name when a new one was supplied.
     await db
       .update(users)
       .set({
@@ -868,12 +676,6 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
       .where(and(eq(invitations.email, email), isNull(invitations.accepted_at)));
   }
 
-  // Write the member's company grants (Phase 0e). The placeholder user row
-  // exists in BOTH the invite-token and direct-activate paths, and accept-invite
-  // only promotes it (never re-creates), so grants set here persist. Default =
-  // [1] (Houzs) when the admin didn't pick one — a new user must never land with
-  // zero grants (that fail-opens to ALL companies). A Sales-Director-scoped
-  // invite may not set companies, so it is forced to Houzs.
   const inviteCompanyIds = inviteScope.scoped
     ? [1]
     : Array.isArray(body.company_ids) && body.company_ids.length > 0
@@ -881,7 +683,6 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
       : [1];
   if (userId) await setUserCompanies(c, userId, inviteCompanyIds);
 
-  // The account is already committed; a mailbox failure is reported, not fatal.
   let emailAlias: string | null = null;
   if (userId) {
     try {
@@ -891,27 +692,12 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     }
   }
 
-  // Keep the Sales Team roster in lockstep at CREATE time too — not just on the
-  // later department-change PATCH. A member invited straight into a Sales
-  // department otherwise never gets a sales_reps row (the roster is what the PMS
-  // "Sales Attending" picker and the SO salesperson list read), so the picker
-  // showed "No Sales Persons found" for a floor full of Sales staff. sync is
-  // idempotent and gated on the department NAME containing "sales", so this is a
-  // no-op for every non-Sales invite and never duplicates an existing rep. Runs
-  // for both the direct-activate and the token-invite placeholder — an invited
-  // rep is created up front so the picker lists them the moment they're onboarded.
   if (userId && departmentId != null) {
     await syncSalesRepFromUser(c.env, userId, me.id);
   }
 
-  // POS tablet PIN. The scm.staff row this keys off is created by the
-  // sync_user_to_staff trigger on the users INSERT above (mig 0066), so it
-  // exists by now — but a false result (no staff row) is reported rather than
-  // swallowed, because the member would otherwise look provisioned and still
-  // be unable to sign into the tablet.
   const posPinSet = posPin && userId ? await setPosPinForUser(c.env, userId, posPin) : false;
 
-  // Admin set a password → the account is live now; no invite token/email.
   if (activate) {
     await audit(c, {
       action: "user.create",
@@ -936,7 +722,6 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     });
   }
 
-  // Issue a fresh invitation token.
   const token = generateToken();
   const expires = isoIn(INVITE_TTL_SECONDS);
   const inserted = await db
@@ -954,11 +739,6 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     .returning({ id: invitations.id });
   const invitationId = inserted[0]?.id ?? null;
 
-  // Email the invitation. The link is built server-side from
-  // PUBLIC_APP_URL so it always carries the canonical domain no matter
-  // which origin the admin's browser is on. sendEmail() never throws —
-  // when the channel/key is off we still hand back the link for
-  // copy-paste, and the UI shows the delivery status.
   const identity = await activeCompanyEmailIdentity(c.env, c.get("companyCode"));
   const invite_url = publicUrl(c.env, `/invite/${token}`, identity.companyCode);
   const sendResult = await sendEmail(c.env, {
@@ -1005,12 +785,6 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
   });
 });
 
-/**
- * POST /api/users/invitations/:id/resend
- * Re-send the invitation email for a still-pending invite. Keeps the
- * same token (the link already shared stays valid); only the email is
- * fired again.
- */
 app.post(
   "/invitations/:id/resend",
   requirePermission("users.manage"),
@@ -1072,14 +846,6 @@ app.post(
   }
 );
 
-/**
- * POST /api/users/:id/resend-invite
- * Re-send the pending invitation email for a member who hasn't joined
- * yet, keyed by the member's USER id (the Members grid works with user
- * ids, not invitation ids). Resolves the member's still-pending
- * invitation by email and reuses the same token + email path as
- * /invitations/:id/resend — no new token, no new email system.
- */
 app.post("/:id/resend-invite", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -1097,8 +863,6 @@ app.post("/:id/resend-invite", requirePermission("users.manage"), async (c) => {
     return c.json({ error: "This member has already joined" }, 409);
   }
 
-  // Newest still-pending invitation for this member's email (same token
-  // stays valid — we only re-fire the email).
   const rows = await db
     .select({
       id: invitations.id,
@@ -1149,18 +913,11 @@ app.post("/:id/resend-invite", requirePermission("users.manage"), async (c) => {
   });
 });
 
-/**
- * PATCH /api/users/:id
- * Body: { role_id?, status?, manager_id?, department_id? }
- * Update a team member's role, enable/disable, reassign manager or
- * department.
- */
 app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   const me = c.get("user");
   if (!id) return c.json({ error: "Invalid ID." }, 400);
 
-  // Block self-modification of own role/status to avoid lockout.
   if (id === me.id) {
     return c.json({ error: "You cannot modify your own role or status" }, 400);
   }
@@ -1178,17 +935,12 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
     email?: string;
     email_alias?: string | null;
     status_reason?: string | null;
-    // Per-company grants (Phase 0e) — replace-set. Full-admin (users.manage)
-    // only; stripped for a dept-scoped Sales Director below, same as role/dept.
     company_ids?: number[];
-    // Admin-set/reset password (users.manage). Hashed; never stored plaintext.
     password?: string;
   }>();
 
   const db = getDb(c.env);
 
-  // Current primary department doubles as an existence check (the membership
-  // reconciliation below can run with an otherwise-empty column update).
   const current = await db
     .select({
       id: users.id,
@@ -1203,19 +955,8 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
     .limit(1);
   if (current.length === 0) return c.json({ error: "User not found" }, 404);
 
-  // Sales Director (dept-scoped admin, not a full users.manage admin): may EDIT
-  // basic details + ENABLE/DISABLE members of their OWN department only. They
-  // cannot touch a member outside their dept, nor change role / position /
-  // department / manager / password (those stay full-admin only). #424 grants
-  // view+invite; this adds edit+disable within the same department scope.
   const dirScope = salesDirectorScope(c, "users.manage");
   if (dirScope.scoped) {
-    // Editability must mirror the LIST scope (GET / above): a member appears in
-    // a Sales Director's list when their PRIMARY department is the director's
-    // OR they are a secondary member of it (mig 0020 user_departments). The gate
-    // used to accept the primary department only, so a member visible in the list
-    // (via user_departments) was NOT editable — 404. Accept user_departments
-    // membership too so list-visibility and edit-scope agree.
     let inDirScope = current[0].department_id === dirScope.deptId;
     if (!inDirScope && dirScope.deptId != null) {
       const secondary = await db
@@ -1231,13 +972,8 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
       inDirScope = secondary.length > 0;
     }
     if (!inDirScope) {
-      return c.json({ error: "User not found" }, 404); // out-of-dept → indistinguishable
+      return c.json({ error: "User not found" }, 404);
     }
-    // A dept-scoped Sales Director may only touch basic details + enable/disable.
-    // STRIP (not 403) the privileged fields so an edit-form resubmit that carries
-    // the member's unchanged role/dept still saves the name/phone/status — the
-    // director simply cannot change role / position / department / manager /
-    // password. Those stay full-admin only.
     delete body.role_id;
     delete body.position_id;
     delete body.department_id;
@@ -1245,9 +981,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
     delete body.manager_id;
     delete body.company_ids;
     delete body.password;
-    // Login identity is an ACCOUNT-TAKEOVER vector (change the email, then run
-    // forgot-password to seize the account), so the login email + alias are
-    // full-admin only too — strip them from a dept-scoped director's edit.
     delete body.email;
     delete body.email_alias;
   }
@@ -1271,21 +1004,16 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
     set.status = body.status;
   }
 
-  // Reason note tracks WHY an account was disabled. Re-enabling clears it;
-  // otherwise an explicit reason is stored when provided.
   if (body.status === "active") {
     set.status_reason = null;
   } else if (body.status_reason !== undefined) {
     set.status_reason = body.status_reason?.trim() || null;
   }
 
-  // Org-chart division — free-text sub-grouping within a department (mig 0021).
   if (body.division !== undefined) {
     set.division = body.division?.trim() || null;
   }
 
-  // Admin sets / resets the member's password. Validated + hashed; an empty
-  // value is ignored (so saving the panel without touching it keeps the old one).
   if (body.password) {
     const strength = validatePasswordStrength(body.password, current[0].email);
     if (!strength.ok) return c.json({ error: strength.error }, 400);
@@ -1299,8 +1027,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
       const mgr = parseInt(String(body.manager_id), 10);
       if (!mgr) return c.json({ error: "Please choose a valid manager." }, 400);
       if (mgr === id) return c.json({ error: "Cannot report to yourself" }, 400);
-      // Cycle check: walk the prospective manager's chain — if this user
-      // is anywhere in it, the assignment would create a loop.
       let cursor: number | null = mgr;
       const seen = new Set<number>();
       while (cursor != null) {
@@ -1310,7 +1036,7 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
             400
           );
         }
-        if (seen.has(cursor)) break; // defensive — existing bad data
+        if (seen.has(cursor)) break;
         seen.add(cursor);
         const mgrRow = await db
           .select({ manager_id: users.manager_id })
@@ -1353,22 +1079,18 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
         .limit(1);
       if (pos.length === 0) return c.json({ error: "Position not found" }, 404);
       set.position_id = posId;
-      // Keep department in lockstep with the position when the patch didn't
-      // set one explicitly.
       if (body.department_id === undefined && pos[0].department_id) {
         set.department_id = pos[0].department_id;
       }
     }
   }
 
-  // Personal info — editable from the Edit Member panel.
   if (body.name !== undefined) {
     set.name = body.name?.trim() || null;
   }
   if (body.phone !== undefined) {
     set.phone = normalizePhone(body.phone);
   }
-  // The member's outward Mail Center alias. Normalised lowercase; empty → null.
   if (body.email_alias !== undefined) {
     set.email_alias = body.email_alias?.trim().toLowerCase() || null;
   }
@@ -1388,9 +1110,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
     set.email = em;
   }
 
-  // Multi-department membership (mig 0020). When department_ids is provided we
-  // replace-set the join table; otherwise we just keep the primary in sync.
-  // Validate each id against departments (silent-drop unknowns, like brands).
   let finalDeptIds: number[] | null = null;
   if (Array.isArray(body.department_ids)) {
     const requested = [
@@ -1411,9 +1130,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
       finalDeptIds = [];
     }
 
-    // Reconcile against the primary. If a primary is set (this patch or the
-    // existing one), force it into the set; if the primary was cleared, promote
-    // the first of the set to primary so the two never drift apart.
     const primaryDept =
       "department_id" in set
         ? (set.department_id as number | null)
@@ -1425,17 +1141,12 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
     }
   }
 
-  // Company grants (Phase 0e) — replace-set when the edit carries company_ids.
-  // A company-only edit is a valid change, so it counts toward the guard below.
   const hasCompanyChange = Array.isArray(body.company_ids);
 
   if (Object.keys(set).length === 0 && finalDeptIds === null && !hasCompanyChange) {
     return c.json({ error: "No fields to update" }, 400);
   }
 
-  // Alias ownership is derived data in the mail tables. Atomically revoke the
-  // previous assignment/self-grant AND change users.email_alias so neither half
-  // can commit without the other.
   const auditedSet = { ...set };
   let personalMailboxAliasChange: PersonalMailboxAliasChange | null = null;
   if (body.email_alias !== undefined) {
@@ -1455,8 +1166,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
     }
     if (personalMailboxAliasChange?.mailbox_id) await markMailHostPending(c.env.DB, personalMailboxAliasChange.mailbox_id);
   }
-  // The atomic helper already wrote users.email_alias together with the mail
-  // entitlement rows. Keep the remaining Drizzle update from writing it again.
   if (body.email_alias !== undefined) delete set.email_alias;
 
   if (Object.keys(set).length > 0) {
@@ -1464,7 +1173,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
     if (!result.count) return c.json({ error: "User not found" }, 404);
   }
 
-  // Apply the membership change.
   if (finalDeptIds !== null) {
     await db.delete(user_departments).where(eq(user_departments.user_id, id));
     if (finalDeptIds.length > 0) {
@@ -1474,14 +1182,11 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
     }
   } else if ("department_id" in set) {
     if (set.department_id != null) {
-      // Primary changed (directly or via position lockstep) — keep it present
-      // in the membership table, preserving any extras already there.
       await db
         .insert(user_departments)
         .values({ user_id: id, department_id: set.department_id })
         .onConflictDoNothing();
     } else if (current[0].department_id != null) {
-      // Primary cleared — drop just that membership, leave extras intact.
       await db
         .delete(user_departments)
         .where(
@@ -1493,45 +1198,26 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
     }
   }
 
-  // Apply the company grants (Phase 0e) — replace-set via the shared helper.
   let finalCompanyIds: number[] | null = null;
   if (hasCompanyChange) {
     finalCompanyIds = await setUserCompanies(c, id, body.company_ids as number[]);
   }
 
-  // If we disabled a user, revoke their sessions. Bust the cached-user entries
-  // BEFORE the delete (reads the live tokens) so a disabled user can't ride a
-  // still-cached session for up to 60s.
   if (body.status === "disabled") {
     await bustUserSessions(c.env, id);
     await db.delete(sessions).where(eq(sessions.user_id, id));
     await closePersonalMailOnDisable(c.env.DB, id);
   } else if (set.role_id != null) {
-    // Role change keeps the sessions alive but leaves the cached AuthUser's
-    // permissions stale for up to 60s. Bust the caches so the next request
-    // re-hydrates the new role/permissions.
     await bustUserSessions(c.env, id);
   }
   if (body.status === "active" && current[0].status === "disabled") {
     await reopenPersonalMailbox(c.env.DB, id);
   }
 
-  // Keep the Sales Team roster in lockstep with the user's PRIMARY department.
-  // Department change → create / unarchive / archive the linked sales_reps row.
-  // No-op for non-Sales departments and already-consistent users. Multi-dept
-  // membership is orthogonal — sync stays keyed on the single primary.
   if (body.department_id !== undefined || set.department_id !== undefined) {
     await syncSalesRepFromUser(c.env, id, me.id);
   }
 
-  // The announcements banner filters by department_id / position_id / company
-  // grants (userCanSee / companyCanSee), and its KV snapshot now lives 300s
-  // (> the 60s poll) — so any edit that moves THIS user between audiences must
-  // clear their banner (BOTH scopes), or a poll would serve up to 5 minutes of
-  // stale targeting. Session bust alone does not cover this: it fires only on
-  // disable / role change, while a dept-only / position-only / company-only
-  // edit changes targeting without touching the session. Covers every such
-  // field in ONE place. Best-effort (bustBannerForUser swallows KV trouble).
   const bannerTargetingChanged =
     "department_id" in set || "division" in set ||
     "position_id" in set ||
@@ -1566,22 +1252,6 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
   return c.json({ ok: true });
 });
 
-/**
- * DELETE /api/users/:id[?hard=1]
- *
- * Default (no `?hard=1`): soft-delete — status='disabled', sessions
- * revoked, default-driver clears. Preserves FK references in trips,
- * sales, etc. This is the right call for established users.
- *
- * `?hard=1`: true hard delete. Cleans up CASCADE-safe rows manually
- * for tables that lack ON DELETE CASCADE (sessions, invitations,
- * driver_clock_entries, lorry_incidents, etc.), then `DELETE FROM
- * users`. If a non-cascading FK reference remains (e.g. sales_entries
- * created_by, trips driver_user_id), the FK constraint trips and we
- * return a helpful message naming what blocks the delete. Use this
- * for never-used test accounts. For users with real activity, use
- * the soft-delete (Disable) path instead.
- */
 app.delete("/:id", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   const me = c.get("user");
@@ -1615,46 +1285,18 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
     }
   }
 
-  // Revoke sessions (any path). Bust the cached-user entries BEFORE the delete
-  // (reads the live tokens) so a deleted/disabled user can't ride a still-cached
-  // session for up to 60s.
   await bustUserSessions(c.env, id);
-  // A deleted/disabled user leaves the audience — clear their banner snapshot
-  // (both scopes) so nothing rides the 300s TTL after they are gone.
   await bustBannerForUser(c.env, id);
   await db.delete(sessions).where(eq(sessions.user_id, id));
   await closePersonalMailOnDisable(c.env.DB, id);
 
-  // Hard-delete path — either explicit ?hard=1 or never-joined user.
   if (hard || target.status === "invited") {
-    // Best-effort cleanup of tables whose FK to users(id) is missing
-    // ON DELETE CASCADE/SET NULL, so the final DELETE doesn't trip.
-    // Tables that already cascade (project_reads, password_resets,
-    // user_brands) are not touched here — SQLite handles them.
     await db.delete(invitations).where(eq(invitations.email, target.email));
-    // NO lorries cleanup here. `lorries.default_driver_user_id` does NOT exist
-    // in production — `0000_baseline.sql:126` and `schema.pg.ts:311` both still
-    // declare it, but the live table (public AND scm) has no such column, and
-    // this statement was the ONLY one in this block not wrapped in safeExec.
-    // It therefore raised `column "default_driver_user_id" does not exist` on
-    // EVERY delete, which index.ts:385 folds into the operator's generic
-    // "Something went wrong processing that request." Nothing is lost by
-    // dropping it: the block exists to clear non-cascading FKs before the final
-    // DELETE, and `public.user_companies` (ON DELETE CASCADE) is now the ONLY
-    // foreign key referencing users at all. Driver records live in scm.drivers
-    // and are deactivated by the trg_sync_user_to_tms trigger.
-    // Be defensive — only run these if the tables exist on the deployed schema.
-    // SQLite's "no such table" errors get swallowed for tables that haven't
-    // shipped yet (cron-only / future migrations).
     const safeExec = async (sql: string) => {
       try { await c.env.DB.prepare(sql).bind(id).run(); } catch {}
     };
-    // Audit / chat / activity — historically tied to a user_id but the user
-    // record is the source of truth. If you hard-delete, the audit is lost.
     await safeExec(`DELETE FROM project_activity WHERE user_id = ?`);
     await safeExec(`DELETE FROM project_reads WHERE user_id = ?`);
-    // Engagement (Houzs Points + Awards + Idea boxes). Hard-deleting a user
-    // wipes their ledger; this is what the caller is asking for.
     await safeExec(`DELETE FROM point_transactions WHERE user_id = ? OR counterparty_user_id = ?`);
     await safeExec(`DELETE FROM user_streak_weeks WHERE user_id = ?`);
     await safeExec(`DELETE FROM award_redemptions WHERE user_id = ?`);
@@ -1685,14 +1327,8 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
     return c.json({ ok: true, action: "deleted" });
   }
 
-  // Soft-delete (default for joined users).
   await db.update(users).set({ status: "disabled" }).where(eq(users.id, id));
 
-  // The lorries default-driver clear that used to sit here is gone for the same
-  // reason as in the hard-delete block above: the column does not exist in
-  // production, so this raised on every soft-delete too. scm.drivers is the
-  // live driver record and trg_sync_user_to_tms deactivates it off this very
-  // status change.
 
   await audit(c, {
     action: "user.disable",
@@ -1705,15 +1341,9 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
   return c.json({ ok: true, action: "disabled" });
 });
 
-/**
- * GET /api/users/invitations
- * Pending invitations.
- */
 app.get("/invitations", requirePermissionOrSalesDirector("users.read"), async (c) => {
   const db = getDb(c.env);
   const inviter = alias(users, "ib");
-  // Sales Director → only pending invites into his own department (invitations
-  // carry department_id, set at invite time). No dept assigned → none.
   const scope = salesDirectorScope(c, "users.read");
   const inviteConds: any[] = [isNull(invitations.accepted_at)];
   if (scope.scoped) {
@@ -1734,8 +1364,6 @@ app.get("/invitations", requirePermissionOrSalesDirector("users.read"), async (c
       created_at: invitations.created_at,
       accepted_at: invitations.accepted_at,
       invited_by_email: inviter.email,
-      // Latest delivery outcome from email_log so the UI can show
-      // "emailed" vs an amber "not sent" without a schema change.
       email_status: sql<string | null>`(
         SELECT el.status FROM email_log el
          WHERE el.ref_type = 'invitation' AND el.ref_id = ${invitations.id}
@@ -1761,10 +1389,6 @@ app.get("/invitations", requirePermissionOrSalesDirector("users.read"), async (c
   });
 });
 
-/**
- * DELETE /api/users/invitations/:id
- * Revoke a pending invitation.
- */
 app.delete("/invitations/:id", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -1777,7 +1401,6 @@ app.delete("/invitations/:id", requirePermission("users.manage"), async (c) => {
     .limit(1);
   if (inv.length === 0) return c.json({ error: "Invitation not found" }, 404);
 
-  // Also clean up the placeholder user if they never accepted.
   await db
     .delete(users)
     .where(and(eq(users.email, inv[0].email), eq(users.status, "invited")));
@@ -1786,15 +1409,6 @@ app.delete("/invitations/:id", requirePermission("users.manage"), async (c) => {
   return c.json({ ok: true });
 });
 
-/**
- * POST /api/users/:id/impersonate
- * OWNER-ONLY (wildcard `*`) view-as: mints a SHORT-LIVED (1 hour) session for
- * the target member so the owner can open the portal exactly as that user
- * sees it (the local Portal Viewer passes it to the app via #login-as, which
- * stores it session-only). Deliberately NOT granted to plain users.manage
- * holders — impersonation is strictly the owner's review tool. Every use is
- * audited with the target identity.
- */
 app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
   const me = c.get("user");
   const granted = me?.permissions_set ?? me?.permissions ?? [];
@@ -1815,8 +1429,6 @@ app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
     return c.json({ error: "User is not active — only active members can be viewed as" }, 400);
   }
 
-  // Inserted directly (not createSession) so the 7-day default TTL doesn't
-  // apply — a view-as token dies after an hour.
   const token = generateToken();
   const expires = isoIn(60 * 60);
   await c.env.DB.prepare(
@@ -1857,11 +1469,6 @@ app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => 
   if (!id) return c.json({ error: "Invalid ID." }, 400);
   const me = c.get("user");
 
-  // Per-TARGET cap: 3 admin-issued links per 15 min, whoever sends them. Keyed
-  // on the recipient (not the admin) so the bulk action and two admins working
-  // the same list still cannot flood one person's inbox. Fails OPEN when KV is
-  // unbound — same posture as every other limiter here; this bounds nuisance,
-  // it is not the authorization gate (requirePermission above is).
   const limited = await checkRateLimit(c, "admin-reset", String(id), 3, 900);
   if (limited) return limited;
 
@@ -1880,15 +1487,12 @@ app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => 
   const target = targetRow[0];
 
   if (target.status === "invited") {
-    // Invited users haven't set a password yet — the existing invitation
-    // flow handles first-time setup. Steering admins at the right tool.
     return c.json(
       { error: "User is still invited — resend the invitation instead." },
       400
     );
   }
 
-  // Invalidate any prior unconsumed reset tokens for this user.
   await db
     .update(password_resets)
     .set({ consumed_at: sql`to_char(timezone('UTC', now()), 'YYYY-MM-DD HH24:MI:SS')` as unknown as string })
@@ -1905,17 +1509,7 @@ app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => 
     expires_at: expiresAt,
   });
 
-  // NOTE: no session revocation here, by design (see the header). Sending a
-  // link must be a no-op on the account. Redemption revokes the sessions —
-  // routes/auth.ts POST /reset/:token already does bustUserSessions + DELETE
-  // FROM sessions after writing the new hash, which is the correct moment: the
-  // password has actually changed by then.
 
-  // Fire the email. sendEmail() never throws — it returns a status, and a
-  // disabled channel or missing API key comes back as "skipped". Surface that
-  // status so the UI can say "not sent, check Settings, Email" instead of
-  // claiming success. The token is NOT returned; the mailbox is the only place
-  // it lands.
   const identity = await activeCompanyEmailIdentity(c.env, c.get("companyCode"));
   const link = publicUrl(c.env, `/reset/${token}`, identity.companyCode);
   const name = (target.name || target.email.split("@")[0]).split(" ")[0];
@@ -1935,11 +1529,6 @@ app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => 
     companyCode: identity.companyCode,
   });
 
-  // WHO sent it, TO WHOM, WHEN (audit rows are timestamped), and whether the
-  // mail actually left. `requested_by` on the password_resets row carries the
-  // same admin id, so the trail survives even if the audit log is trimmed.
-  // The token is deliberately absent from both — an audit log that records a
-  // live credential is a credential store.
   await audit(c, {
     action: "user.reset_password",
     entityType: "user",
@@ -1957,12 +1546,6 @@ app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => 
   });
 });
 
-/**
- * POST /api/users/:id/totp/disable
- * Admin recovery path for a user who lost their authenticator (and their
- * backup codes). Clears their 2FA so they can sign in with password alone and
- * re-enroll. The self-service disable (with a code) lives in routes/totp.ts.
- */
 app.post("/:id/totp/disable", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);   const gate = await targetWithinActorCompanies(c, id); if (!gate.ok) return c.json(gate.body, 403);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
@@ -1995,24 +1578,12 @@ app.post("/:id/totp/disable", requirePermission("users.manage"), async (c) => {
   return c.json({ ok: true });
 });
 
-/**
- * POST /api/users/:id/require-password-change
- * The member must choose a new password at their next sign-in. Their current
- * password keeps working for exactly one thing: a correct one opens a short
- * session that can only reach the change-password screen (routes/auth.ts). Every
- * session they hold now is ended, so a session opened with a leaked password
- * cannot carry on. Crew PIN sign-in is unaffected — it never asks the password.
- *
- * DELETE clears a pending requirement (set by mistake) without touching sessions.
- */
 app.post("/:id/require-password-change", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
   const gate = await targetWithinActorCompanies(c, id);
   if (!gate.ok) return c.json(gate.body, 403);
 
-  // Raw D1-compat SQL, not Drizzle, so the workers suite can drive this
-  // handler end to end (tests/passwordChangeRequired.test.ts).
   const target = await c.env.DB.prepare(`SELECT id, email, status FROM users WHERE id = ?`)
     .bind(id)
     .first<{ id: number; email: string; status: string }>();
@@ -2026,8 +1597,6 @@ app.post("/:id/require-password-change", requirePermission("users.manage"), asyn
   )
     .bind(id)
     .run();
-  // Bust the cached envelopes and void the signed passes BEFORE the rows go:
-  // bustUserSessions reads the live tokens to know what to bust.
   await bustUserSessions(c.env, id);
   const ended = await c.env.DB.prepare(`DELETE FROM sessions WHERE user_id = ?`).bind(id).run();
   const sessionsEnded = Number(ended.meta?.changes ?? 0);
@@ -2105,8 +1674,6 @@ app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
   if (!row.length) return c.json({ error: "User not found" }, 404);
   if (row[0].status !== "active") return c.json({ error: "Account is disabled" }, 403);
 
-  // Staging-flag door keeps the ordinary 7-day session (test-account hopping);
-  // the owner door mints a short-lived 1-hour session instead.
   const token = await createSession(c.env, id, undefined, viaStagingFlag ? undefined : 60 * 60);
 
   await audit(c, {

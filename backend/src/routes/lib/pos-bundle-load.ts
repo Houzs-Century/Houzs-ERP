@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-bundle-load.ts — read the device bundle for one terminal: its event, the
-// items in scope (event price, barcodes, stock at the event's stock source),
-// the cashiers assigned (hashed PINs, verified offline), the settings and
-// the company block for the receipt. Used by Prepare device (POS Admin) and
-// by the device's own refresh (GET /api/pos-device/prepare).
-// ----------------------------------------------------------------------------
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { getDb } from "../../db/client";
 import {

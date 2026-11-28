@@ -1,18 +1,7 @@
-// ----------------------------------------------------------------------------
-// DailyBankPrint — the Daily Bank's Print and Export image (the owner's Claude
-// Design redesign, batch 3). Print opens the day as an A4 sheet — BANK BALANCE
-// AVAILABLE: each account's balance brought forward, the day's money in and
-// out, the vouchers awaiting approval, what is available, then the payments
-// already planned after the day — or the Daily close count sheet with its
-// signatures; the browser prints it (or saves it as a PDF). Export image is the
-// day's picture for WhatsApp: copy it, or download the PNG.
-// The sheet carries `print-area`, the one class the app's print stylesheet lets
-// through (index.css), so window.print() prints the sheet and nothing else.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
 import { Copy, Download, Printer, X } from 'lucide-react';
-import { fmtDate, fmtDateTime, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { useBranding } from '../../hooks/useBranding';
 import { useAuth } from '../../auth/AuthContext';
 import styles from './DailyBankPrint.module.css';

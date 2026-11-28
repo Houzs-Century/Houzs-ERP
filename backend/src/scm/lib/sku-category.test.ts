@@ -1,7 +1,3 @@
-// ----------------------------------------------------------------------------
-// sku-category — the group is the SKU's, and a group that ignores the line's
-// own attributes is a contradiction worth saying out loud.
-// ----------------------------------------------------------------------------
 
 import { describe, expect, test } from 'vitest';
 import { lineItemGroup, attributesTheGroupWillIgnore, resolveItemGroups } from './sku-category';
@@ -16,7 +12,6 @@ describe('lineItemGroup — the product master wins', () => {
     expect(lineItemGroup(bySku, { itemCode: '2376-1A(LHF)', itemGroup: 'others' })).toBe('sofa');
   });
 
-  /* THE REGRESSION: the caller sent nothing at all. */
   test('the SKU fills a blank the caller left', () => {
     expect(lineItemGroup(bySku, { itemCode: '2376-1A(LHF)' })).toBe('sofa');
     expect(lineItemGroup(bySku, { itemCode: '2376-1A(LHF)', itemGroup: null })).toBe('sofa');
@@ -37,7 +32,6 @@ describe('lineItemGroup — the product master wins', () => {
 });
 
 describe('attributesTheGroupWillIgnore — the contradiction', () => {
-  /* Exactly the shape that made HC-GRN-2608-003 invisible. */
   test('a blank group on a line carrying fabric + seat is reported', () => {
     expect(attributesTheGroupWillIgnore(null, SOFA).sort())
       .toEqual(['fabricCode', 'legHeight', 'seatHeight']);
@@ -57,8 +51,6 @@ describe('attributesTheGroupWillIgnore — the contradiction', () => {
     expect(attributesTheGroupWillIgnore('accessory', {})).toEqual([]);
   });
 
-  /* Blank strings are not attributes — a line that merely HAS the keys, empty,
-     must not be reported or the signal drowns. */
   test('empty attribute values are not reported', () => {
     expect(attributesTheGroupWillIgnore(null, { fabricCode: '', seatHeight: '   ' })).toEqual([]);
   });
@@ -95,8 +87,6 @@ describe('resolveItemGroups — one value, before any reader', () => {
       { itemCode: 'BF-KING-01', qty: 2 },
     ], 1);
     expect(out.map((l) => l.itemGroup)).toEqual(['bedframe', 'bedframe']);
-    /* Everything else on the line rides through untouched — the routes pass
-       these same objects on to the row builder. */
     expect(out[1]!.qty).toBe(2);
   });
 
@@ -111,8 +101,6 @@ describe('resolveItemGroups — one value, before any reader', () => {
     expect(input[0]!.itemGroup).toBe('others');
   });
 
-  /* FAIL SOFT — a product read that blipped must never be the reason a delivery
-     cannot be saved. Same contract skuCategoryMap states. */
   test('a failed catalogue read leaves every line exactly as it arrived', async () => {
     const out = await resolveItemGroups(fakeSb(null), [{ itemCode: 'BF-KING-01', itemGroup: 'others' }], 1);
     expect(out[0]!.itemGroup).toBe('others');
@@ -160,7 +148,7 @@ describe('skuCategoryMap — an inch-mark code, and every code after it, still r
   const INCH = 'DUNLOPILLO GENERASI 5" MATT (SS)';
   const catalogue = [
     { code: INCH, category: 'MATTRESS', company_id: 1 },
-    { code: '9058-1NA', category: 'SOFA', company_id: 1 }, // in the same batch, AFTER the inch mark
+    { code: '9058-1NA', category: 'SOFA', company_id: 1 },
   ];
 
   test('the escaped read resolves both categories', async () => {
@@ -173,8 +161,6 @@ describe('skuCategoryMap — an inch-mark code, and every code after it, still r
   });
 
   test('proof the wire model bites — a raw .in() drops the inch mark and the code after it', () => {
-    // What the raw library emits, read back the way PostgREST parses it: one
-    // garbled value, and 9058-1NA gone entirely.
     expect(wireIn([INCH, '9058-1NA'])).toEqual(['DUNLOPILLO GENERASI 5 MATT (SS']);
   });
 });

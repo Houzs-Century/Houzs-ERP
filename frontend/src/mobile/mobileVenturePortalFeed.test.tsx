@@ -1,17 +1,3 @@
-// The Venture Portal Feed on a phone.
-//
-// WHAT THIS FILE IS REALLY FOR: proving the two surfaces agree. The owner's
-// standing rule is one shared logic layer with the surfaces differing only in
-// presentation, and "fixed on the desktop, missed on mobile" is a bug class
-// this repo keeps paying for. So the assertions here are deliberately the SAME
-// requirements venturePortalFeed.test.tsx asserts — same verdict sentence, same
-// secret property, same read-only behaviour, same refusal surfacing — because a
-// divergence between the surfaces should fail HERE rather than be noticed by
-// somebody holding a phone.
-//
-// Plus the one thing only this surface can get wrong: nothing may be missing
-// from the phone that the desktop offers, and turning the feed OFF is the
-// control most plausibly needed away from a desk.
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -28,7 +14,6 @@ import { MobileVenturePortalFeed } from "./MobileVenturePortalFeed";
 import type { VpRow, VpStatus } from "../lib/venturePortalFeed";
 
 afterEach(cleanup);
-/* BRACES, not a concise arrow — see the note in the desktop suite. */
 beforeEach(() => {
   apiGet.mockReset();
   apiPost.mockReset();
@@ -101,19 +86,11 @@ describe("the phone screen", () => {
   it("never renders a key the server did not hand it", async () => {
     wire(status());
     await mount();
-    /* The whole sentence — the mask alone appears twice (the field and its
-       hint), which is correct and an ambiguous query. */
     await screen.findByText(/Key ····e-42 · generated/);
     expect(document.body.textContent).not.toContain(SECRET);
-    /* No box to type a key into on this surface either — the phone must not be
-       the one place the old free-text field survived. */
     expect(screen.queryByPlaceholderText(/At least 32 characters/)).toBeNull();
   });
 
-  /* GENERATE MUST WORK FROM A PHONE, and this is where it is most likely to be
-     used: standing in front of the portal on a laptop with the ERP on a phone is
-     exactly the shape of the hand-shake. Same reveal, same instruction, same
-     Done, from the same shared state the desktop reads. */
   it("reveals a generated key once and lets it go, as the desktop does", async () => {
     wire(status({
       connection: { ...status().connection, secret: { set: false, length: 0, tail: "", setAt: null } },
@@ -132,8 +109,6 @@ describe("the phone screen", () => {
     expect(screen.queryByText(SECRET)).toBeNull();
   });
 
-  /* A phone keyboard is the worst place to type a URL, so the offer matters more
-     here than anywhere — and so does saying it is only an offer. */
   it("offers the portal's own address, and says it is not saved yet", async () => {
     wire(status({ connection: { ...status().connection, url: "" } }));
     await mount();
@@ -150,8 +125,6 @@ describe("the phone screen", () => {
     expect(onBack).toHaveBeenCalled();
   });
 
-  /* THE CONTROL THAT MUST NOT BE DESKTOP-ONLY. Somebody realising the feed is
-     sending the wrong company's orders is not necessarily at a desk. */
   it("can turn the feed off from a phone", async () => {
     wire(status());
     apiPut.mockResolvedValue({ ok: true, value: "off" });
@@ -181,14 +154,6 @@ describe("the phone screen", () => {
     wire(status());
     await mount();
     expect(await screen.findByText("HC-SO-013403")).toBeTruthy();
-    /* A 503 is the portal holding NO key. Since it now takes one pasted on its
-       own page, the next step is on this screen — generate, paste, re-send — and
-       both surfaces render the shared layer's sentence for it.
-
-       MATCHED ON A PHRASE UNIQUE TO THAT SENTENCE. It used to match "portal
-       owner", which also appeared in the receiver-address hint, so the looser
-       assertion would have read as a double render; that hint no longer says it,
-       but the lesson stands and the phrase below appears exactly once. */
     expect(screen.getByText(/no key of its own yet/i)).toBeTruthy();
   });
 

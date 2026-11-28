@@ -1,7 +1,3 @@
-/* The AI reads on the scan queue, client side (ai-read-job.ts): enqueue, poll
-   until each paper is read, and hand back exactly the body the synchronous read
-   answered; a failed read carries the same plain-language wording; the page is
-   told where each paper is. */
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 const calls: Array<{ path: string; init?: RequestInit }> = [];
@@ -16,7 +12,6 @@ import { runAiRead, runOneAiRead, type AiReadJob } from './ai-read-job';
 const noWait = async () => {};
 afterEach(() => { calls.length = 0; });
 
-/** A server whose jobs move through the given polls, one status list per poll. */
 const server = (enqueued: Array<{ index: number; job_id: string; status: string }>, polls: AiReadJob[][]) => {
   let n = 0;
   answer = (path) => {

@@ -10,22 +10,6 @@
  * items, payment ledger and audit trail. Pure functions plus one read, so both
  * are testable without a request — see backend/tests/reviewHighFindings.test.ts.
  */
-/* ── SO status legal-transition guard (FIX 1, 2026-07-16) ───────────────────
-   The manual PATCH /:docNo/status endpoint used to write body.status VERBATIM:
-   a garbage string (e.g. the V2 list "Confirm" button posts lowercase
-   "confirmed") persisted, and an already-advanced SO could be moved backward
-   with no check. Mirror the purchasing side's dedicated-status guards with an
-   explicit legal-transition table. The AUTO state-machine (so-stock-allocation,
-   so-delivery-sync, delivery-returns) writes the status column DIRECTLY and does
-   NOT come through this route, so this table only governs MANUAL status changes.
-
-   Status set grepped from the codebase (list/detail pills, so-stock-allocation,
-   so-delivery-sync, delivery-returns, inventory SO_DONE, the amend-terminal set):
-     DRAFT → CONFIRMED → IN_PRODUCTION → READY_TO_SHIP → SHIPPED → DELIVERED
-       → INVOICED, plus the side states CANCELLED and ON_HOLD.
-   Conservative by owner rule: reject ONLY an UNKNOWN target and a clearly-illegal
-   BACKWARD jump; every forward move, idempotent no-op, ON_HOLD pause/resume and
-   known regression is allowed. */
 
 /* ── CLOSED IS BACK, AS A DIFFERENT STATUS (2026-08-22) ──────────────────────
    THE RETIREMENT BELOW WAS CORRECT AND IS NOT BEING UNDONE. What it removed was
@@ -109,9 +93,6 @@ export const SO_STATUS_RANK: Record<string, number> = {
   DRAFT: 0, CONFIRMED: 1, IN_PRODUCTION: 2, READY_TO_SHIP: 3,
   SHIPPED: 4, DELIVERED: 5, INVOICED: 6,
 };
-/* Backward edges the system legitimately performs — stock regress (all-lines
-   not-ready) + delivery-return re-open. Everything else backward is rejected.
-   Keyed `${from}>${to}`. */
 export const SO_LEGAL_REGRESSIONS = new Set([
   'IN_PRODUCTION>CONFIRMED',
   'READY_TO_SHIP>CONFIRMED', 'READY_TO_SHIP>IN_PRODUCTION',
@@ -120,10 +101,6 @@ export const SO_LEGAL_REGRESSIONS = new Set([
   'DELIVERED>READY_TO_SHIP', 'DELIVERED>SHIPPED',
 ]);
 
-/* null = allowed. `to` MUST already be normalised to UPPERCASE. The CANCELLED
-   target/source is validated by the caller's cancel-final + downstream guards, so
-   it short-circuits here. `from` unknown/blank (legacy row, brand-new SO) →
-   allowed (can't judge — never OVER-block). */
 export function soStatusTransitionError(
   fromRaw: string | null,
   to: string,
@@ -132,9 +109,9 @@ export function soStatusTransitionError(
     return { error: 'invalid_status', reason: `"${to}" is not a valid Sales Order status.`, code: 400 };
   }
   const from = String(fromRaw ?? '').toUpperCase();
-  if (!from || !SO_STATUSES.has(from)) return null;              // status-blind → allow
-  if (from === to) return null;                                  // idempotent no-op
-  if (to === 'CANCELLED' || from === 'CANCELLED') return null;   // cancel guards own this
+  if (!from || !SO_STATUSES.has(from)) return null;
+  if (from === to) return null;
+  if (to === 'CANCELLED' || from === 'CANCELLED') return null;
   /* CLOSE, AND DO NOT UN-CLOSE. CLOSED is UNRANKED for the reason at the top of
      this file — an order is closed from wherever it had got to — so it is
      enterable from every live status and the rank table has nothing to say.
@@ -160,24 +137,7 @@ export function soStatusTransitionError(
      a closed order can still be marked held and a held order can still be
      closed, and neither passes through here. No gate was added for either; see
      docs/modules/document-status-vocabulary.md §1b. */
-  if (to === 'CLOSED') return null;                              // closable from anywhere live
-  /* Pause / resume. ON_HOLD was deliberately UNRANKED — an order could be paused
-     from anywhere and resumed to wherever the operator needed it, and the rank
-     table had nothing useful to say about that. Reading the paragraph below is
-     the shortest argument for why the hold should never have been a status at
-     all: an unranked member of a ranked set is a hole in the set.
-     But "unranked" was written as an unconditional `return null` on BOTH edges,
-     which made ON_HOLD a laundry: DELIVERED>DRAFT is rejected on rank and is
-     absent from SO_LEGAL_REGRESSIONS, yet DELIVERED>ON_HOLD passes on `to`,
-     ON_HOLD>DRAFT passes on `from`, and the two together are the move the rank
-     table exists to refuse. It is not a hypothetical: reaching DRAFT is what
-     unlocks DELETE /:docNo, which cascades the lines, the payments and the whole
-     audit log away (see that handler).
-     DRAFT is the one target that is never a legitimate resume. Nothing resumes
-     INTO "not yet written": an order that must go back to the beginning is
-     cancelled and re-raised, which leaves a document behind. Every other resume
-     target is still allowed, so the pause/resume the states exist for is
-     unchanged. */
+  if (to === 'CLOSED') return null;
   /* ON_HOLD IS NO LONGER A STATUS ANYONE MAY WRITE (mig 0324, owner 2026-08-22:
      「我们的hold是给我们知道一个 order hold这的」). A hold is a MARKER beside the
      status and it has its own endpoint, PATCH /:docNo/hold. Writing it here was
@@ -211,12 +171,12 @@ export function soStatusTransitionError(
       code: 409,
     };
   }
-  if (from === 'ON_HOLD') return null;                           // a legacy held row leaving
+  if (from === 'ON_HOLD') return null;
   const fromRank = SO_STATUS_RANK[from];
   const toRank = SO_STATUS_RANK[to];
   if (fromRank === undefined || toRank === undefined) return null;
-  if (toRank >= fromRank) return null;                           // forward or same rank
-  if (SO_LEGAL_REGRESSIONS.has(`${from}>${to}`)) return null;    // known regression
+  if (toRank >= fromRank) return null;
+  if (SO_LEGAL_REGRESSIONS.has(`${from}>${to}`)) return null;
   return {
     error: 'illegal_status_transition',
     reason: `A Sales Order cannot move from ${from} back to ${to}.`,
@@ -246,23 +206,9 @@ export async function soDiscardBlocked(
   docNo: string,
   soHasDownstream: (sb: any, docNo: string) => Promise<unknown>,
 ): Promise<{ body: unknown; code: 409 | 500 } | null> {
-  /* The same lock CANCELLED consults. A genuine draft has no children. */
   const childLock = await soHasDownstream(sb, docNo);
   if (childLock) return { body: childLock, code: 409 };
 
-  /* Money is the other thing a cascade cannot undo, and it cannot be
-     reconstructed from the DO/SI because those are gone too. A real draft CAN
-     carry a deposit (the POS takes one before Confirm), so this is a refusal
-     with an instruction rather than a rule that a draft may never have one.
-     FAILS CLOSED: an unreadable ledger is not an empty one, and "no payments"
-     is precisely what would authorise the delete. */
-  /* `so_doc_no`, not `doc_no`. That table has no `doc_no` column — the FK is
-     `mfg_sales_order_payments_so_doc_no_...` and every other reader in the tree
-     (ar-reconciliation.ts:102, mfg-sales-orders.ts:494) uses `so_doc_no`. With
-     the wrong name PostgREST answers 42703, `payErr` is set, and this guard —
-     correctly failing closed — turned EVERY draft discard into a 500. The
-     documented `409 so_has_payments` below was unreachable. TypeScript cannot
-     see a column name inside a string, so nothing caught it. */
   const { data: payRows, error: payErr } = await sb
     .from('mfg_sales_order_payments').select('id').eq('so_doc_no', docNo).limit(1);
   if (payErr) {

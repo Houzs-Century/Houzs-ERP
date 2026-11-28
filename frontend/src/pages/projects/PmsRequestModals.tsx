@@ -24,7 +24,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useUploadOfficialDoc } from '../../vendor/scm/lib/official-doc-queries';
 import { fileToBase64 } from '../../vendor/scm/lib/payment-voucher-queries';
 import { docFileMime } from '../../vendor/scm/lib/doc-file-mime';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import type { TaskAttachment } from './types';
 
 export type PmsModalProps =
@@ -44,14 +44,12 @@ export function billMimeOf(a: Pick<TaskAttachment, 'file_name' | 'content_type'>
   return MIME_BY_EXT[ext] ?? null;
 }
 
-/** The row file's bytes, as a File the request form reads like one picked here. */
 async function attachmentAsFile(a: TaskAttachment): Promise<File> {
   const mime = billMimeOf(a) ?? 'application/pdf';
   const blob = await api.fetchBlob(`/api/projects/attachments/${a.r2_key}`, mime);
   return new File([blob], a.file_name, { type: mime });
 }
 
-/** The row's files with a tick each — the newest usable one ticked to start. */
 function FilePicker({ attachments, ticked, onTick }: { attachments: TaskAttachment[]; ticked: Set<number>; onTick: (id: number, on: boolean) => void }) {
   return (
     <div role="group" aria-label="The row's files" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -143,13 +141,12 @@ function Inner(props: PmsModalProps) {
       let differs = false;
       for (const f of files) {
         const res = await upload.mutateAsync({ requestId: props.requestId, file: { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) } });
-        /* The reader's note: the official invoice differs from the proforma it follows. */
         if (res.note) { notes.push(res.note); differs = true; }
         else if (res.received.length > 0) notes.push(`Finance checks it on ${res.received.map((d) => d.number ?? d.kind).join(', ')}.`);
       }
       void notify({ title: 'Official invoice sent', body: notes.join(' ') || 'It is kept with the request and its payment.', tone: differs ? 'error' : 'info' });
       props.onClose();
-    } catch { /* the mutation's own onError told the user */ } finally {
+    } catch { } finally {
       setBusy(false);
     }
   };

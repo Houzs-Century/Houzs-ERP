@@ -1,12 +1,3 @@
-/* The Delivery Planning board's per-order facts (lines, deliverable sums, DOs,
-   crew, trips, balances, PO numbers), as maps keyed by SO doc_no / DO id.
-
-   Two loaders fill the SAME maps through the SAME folds, so the two can differ
-   only in which raw rows they read, never in what is made of them:
-     - loadSoBoardMapsRest: the PostgREST reads, moved verbatim out of
-       routes/delivery-planning.ts (the board as it has always been read);
-     - loadSoBoardMapsSql (delivery-board-sql.ts): one SQL statement.
-   The switch between them is lib/delivery-board-source.ts. */
 import type { Context } from 'hono';
 import { chunkIn, paginateAll } from './paginate-all';
 import { pgrestIn } from './pgrest-in-list';
@@ -39,9 +30,7 @@ export type BoardCrewRow = {
 };
 
 export type CrewOut = {
-  // legacy collapsed strings (kept for back-compat search / fallback)
   driver: string | null; helper: string | null; lorry: string | null;
-  // expanded per-person fields (HC delivery-sheet columns, snapshot)
   driver_1_name: string | null; driver_1_ic: string | null; driver_1_contact: string | null;
   driver_2_name: string | null;
   helper_1_name: string | null; helper_2_name: string | null;
@@ -66,10 +55,6 @@ export type SoBoardMaps = ItemMaps & DoMaps & {
   acExpiryByDoc: Map<string, string>;
 };
 
-/* Per-line readiness + per-line warehouse + the SO-list-matching Branding pick.
-   itemRows must arrive ordered (doc_no, line_no, created_at ASC) — IDENTICAL to
-   the SO list's item fetch — so the FIRST line seen per doc_no is its earliest
-   one. productRows = the catalog rows for the codes in view (company-scoped). */
 export function foldItems(itemRows: BoardItemRow[], productRows: BoardProductRow[]) {
   const linesByDoc = new Map<string, ReadinessLine[]>();
   const warehousesByDoc = new Map<string, Set<string>>();
@@ -101,11 +86,8 @@ export function foldItems(itemRows: BoardItemRow[], productRows: BoardProductRow
   }
   const resolveLineCat = (code: string | null, group: string): string =>
     (code ? productCategory.get(code) : undefined) ?? normCategory(group);
-  /* isServiceLine's strongest signal onto the lines — no extra read. See lib/so-readiness-category.ts. */
   attachLineCategories(linesByDoc.values(), productCategory);
   const MAIN_CATS = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
-  /* First MAIN line per doc (catalog-resolved); falls back to the earliest line
-     above when an SO has no sofa/bedframe/mattress line. */
   const repCat = new Map<string, string>();
   const repBranding = new Map<string, string | null>();
   const repCode = new Map<string, string | null>();
@@ -129,18 +111,15 @@ export function itemCodesOf(itemRows: BoardItemRow[]): string[] {
   return [...all];
 }
 
-/* DOs per SO (non-DRAFT/CANCELLED), oldest first, so the LAST is the newest: its
-   crew and HC exec fields are the ones the row shows. dual-read camelCase (the
-   pg driver camelCases result columns). */
 export function foldDos(doRowsRaw: DeliveryOrderExecRow[]) {
   const doByDoc = new Map<string, BoardDo[]>();
   const doDriverById = new Map<string, string | null>();
   const doExecByDoc = new Map<string, DoExecOut>();
   const doIds: string[] = [];
-  const typedCrewByDo = typedHeaderCrewByDo(doRowsRaw); // a DO-form typed driver with no crew row
+  const typedCrewByDo = typedHeaderCrewByDo(doRowsRaw);
   for (const d of doRowsRaw) {
     const st = (d.status ?? '').toUpperCase();
-    if (st === 'DRAFT' || st === 'CANCELLED') continue;  // exclude uncommitted / voided
+    if (st === 'DRAFT' || st === 'CANCELLED') continue;
     const dn = d.so_doc_no ?? '';
     if (!dn) continue;
     const arr = doByDoc.get(dn) ?? [];
@@ -148,7 +127,6 @@ export function foldDos(doRowsRaw: DeliveryOrderExecRow[]) {
     doByDoc.set(dn, arr);
     doIds.push(d.id);
     doDriverById.set(d.id, d.driverId ?? d.driver_id ?? null);
-    // overwrite so the LAST DO wins (matches the crew = latest-DO convention)
     doExecByDoc.set(dn, {
       time_range: d.timeRange ?? d.time_range ?? null,
       time_confirmed: d.timeConfirmed ?? d.time_confirmed ?? null,
@@ -172,18 +150,12 @@ export function foldDos(doRowsRaw: DeliveryOrderExecRow[]) {
       delivered_at: d.deliveredAt ?? d.delivered_at ?? null,
       pod_r2_key: d.podR2Key ?? d.pod_r2_key ?? null,
       pod_lat: d.podLat ?? d.pod_lat ?? null,
-      // Real POD leaves a photo or a GPS fix; an evidence-free "mark delivered"
-      // (office advance / QR scan) leaves neither.
       has_pod: (d.podR2Key ?? d.pod_r2_key) != null || (d.podLat ?? d.pod_lat) != null,
     });
   }
   return { doByDoc, doDriverById, doExecByDoc, doIds, typedCrewByDo };
 }
 
-/* DP NUMBER and live trip per SO, both read back from the trip_stops keyed on
-   the SO's DOs (an SO reaches a trip only via its DO: scm.mfg_sales_orders has no
-   `id`, so trip_stops.so_id never points at one). Last write wins = the most
-   recent schedule. A CANCELLED trip is no arrangement. */
 export function foldStops(doByDoc: Map<string, BoardDo[]>, stopRows: BoardStopRow[], tripRows: BoardTripRow[]) {
   const dpNoByDoc = new Map<string, string>();
   const tripByDoc = new Map<string, BoardTrip>();
@@ -223,7 +195,6 @@ export function stopTripIds(stopRows: BoardStopRow[]): string[] {
   return [...new Set(stopRows.map((s) => (s.tripId ?? s.trip_id) as string | null).filter((x): x is string => !!x))];
 }
 
-/* Crew snapshot per DO (names for display) and crew ids (the row scope). */
 export function foldCrew(crewRows: BoardCrewRow[]) {
   const crewByDo = new Map<string, CrewOut>();
   const crewIdsByDo = new Map<string, { driverIds: string[]; helperIds: string[] }>();
@@ -251,10 +222,6 @@ export function foldCrew(crewRows: BoardCrewRow[]) {
 type BoardCtx = Context<{ Bindings: Env; Variables: Variables }>;
 export type SoBoardHeader = { doc_no: string | null; company_id: number | null; linked_ac_docno?: string | null; linkedAcDocno?: string | null };
 
-/* The PostgREST loader: the board's original reads, in their original order and
-   with their original failure modes (delivered_sum fails the board; the others
-   degrade). The four per-SO reads and the PO-number walk were kicked off by the
-   handler, so they overlap the sub-board reads exactly as before. */
 export async function loadSoBoardMapsRest(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm service client
   sb: any,
@@ -267,9 +234,6 @@ export async function loadSoBoardMapsRest(
   },
 ): Promise<{ ok: SoBoardMaps } | { stage: string; err: unknown }> {
   const { docNos, soRows, display, reads, lap } = input;
-  /* LIVE balance per SO — same source of truth as the SO list Balance column
-     (mfg_sales_orders_with_payment_totals.balance_sen_live). VIEW-TRAP: only the
-     two view-native columns are read here (backend/docs/scm-view-trap-coe.md). */
   const liveBalanceByDoc = new Map<string, number>();
   {
     const { data: balRows, error: balErr } = await reads.liveBalanceReadP; lap('dp-balances');
@@ -280,8 +244,6 @@ export async function loadSoBoardMapsRest(
   }
   const { data: itemRowsRaw, error: itemErr } = await reads.itemRowsReadP; lap('dp-items');
   noteDegradedRead('so_lines', itemErr);
-  /* Catalog category + branding by item_code — the SAME product-branding fetch
-     the SO list runs, chunked by the codes in view (bounded .in). */
   const prodAll: BoardProductRow[] = [];
   {
     const codeList = itemCodesOf(itemRowsRaw);
@@ -305,7 +267,6 @@ export async function loadSoBoardMapsRest(
   noteDegradedRead('do_headers', doErr);
   const dos = foldDos(doRowsRaw);
 
-  /* Best-effort like before: a failed stop/trip read leaves dp_no / trip null. */
   let stops: ReturnType<typeof foldStops> = { dpNoByDoc: new Map(), tripByDoc: new Map() };
   try {
     if (dos.doIds.length) {
@@ -323,7 +284,7 @@ export async function loadSoBoardMapsRest(
       }
       stops = foldStops(dos.doByDoc, stopRows, tripRows);
     }
-  } catch { /* leave the maps empty — rows render dp_no / trip null */ }
+  } catch { }
 
   let crew: ReturnType<typeof foldCrew> = { crewByDo: new Map(), crewIdsByDo: new Map() };
   if (dos.doIds.length > 0) {
@@ -335,11 +296,9 @@ export async function loadSoBoardMapsRest(
     noteDegradedRead('do_crew', crewErr);
     crew = foldCrew(crewRows);
   }
-  /* PO lock per row: ONE batched chain for the whole board (soPoLockedMany). */
   const poLockedDocs = await soPoLockedMany(sb, display ? docNos : []); lap('dp-po-locked');
-  const poNosRes = await input.poNosByDocP; // "PO No." column (lib/planning-po-nos.ts), kicked off right after soRows
+  const poNosRes = await input.poNosByDocP;
   if ('err' in poNosRes) throw poNosRes.err; lap('dp-po-nos');
-  // Read for counts_only too: the expiry decides Overdue (derivePlanningState), so the tab counts need it.
   const acExpiryByDoc = await loadAcExemptionExpiryByDoc(sb, c, soRows); lap('dp-ac-exemption');
   return { ok: { liveBalanceByDoc, ...items, deliveredByDoc, remainingByDoc, ...dos, ...stops, ...crew, poLockedDocs, poNosByDoc: poNosRes.ok, acExpiryByDoc } };
 }

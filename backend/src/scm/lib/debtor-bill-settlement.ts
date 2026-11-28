@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// debtor-bill-settlement — move an Other Debtor BILL's received_sen the way
-// ap-invoice-settlement moves an AP invoice's paid_sen: atomic through
-// scm.settle_odb_received_sen (row lock, clamp at write time, returns what it
-// applied). An other-debtor credit note's credit comes off the debtor's bills
-// through it (acc/credit-note-allocations.ts), so a cancel gives back exactly
-// what was applied. The function ships with the migration that lets a note be
-// TO an other debtor, so there is no pre-function fallback to keep.
-// ----------------------------------------------------------------------------
 
 import type { PiSettleResult } from './pi-settlement';
 

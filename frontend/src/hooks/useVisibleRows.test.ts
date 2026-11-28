@@ -1,5 +1,3 @@
-// Unit tests for useVisibleRows — the one implementation behind the PO / PI /
-// SI / DO stat strips, so the "is a funnel active" test is pinned in one place.
 import { describe, expect, it } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { useVisibleRows } from "./useVisibleRows";
@@ -16,7 +14,6 @@ describe("useVisibleRows", () => {
   });
 
   it("reports filtered once the table publishes a narrower set", () => {
-    // The reported case: 60 matched, a stuck DATE funnel leaves 5 on screen.
     const rows = make(60);
     const { result } = renderHook(() => useVisibleRows(rows));
     act(() => result.current.onFilteredRowsChange(rows.slice(0, 5)));
@@ -25,8 +22,6 @@ describe("useVisibleRows", () => {
   });
 
   it("is NOT filtered when the funnel keeps every row", () => {
-    // A funnel that excludes nothing leaves the tiles and the table agreeing,
-    // so flagging "Filtered" there would be noise, not information.
     const rows = make(60);
     const { result } = renderHook(() => useVisibleRows(rows));
     act(() => result.current.onFilteredRowsChange([...rows]));
@@ -34,8 +29,6 @@ describe("useVisibleRows", () => {
   });
 
   it("treats an empty result as a real zero, not as 'not reported yet'", () => {
-    // `null` (never reported) and `[]` (funnel matched nothing) must not
-    // collapse: the second has to show 0, never fall back to the full page.
     const rows = make(60);
     const { result } = renderHook(() => useVisibleRows(rows));
     act(() => result.current.onFilteredRowsChange([]));
@@ -44,8 +37,6 @@ describe("useVisibleRows", () => {
   });
 
   it("keeps a stable callback identity across renders", () => {
-    // DataTable publishes from an effect keyed on this callback — a fresh
-    // function each render would re-fire it every render.
     const { result, rerender } = renderHook(({ r }) => useVisibleRows(r), {
       initialProps: { r: make(10) },
     });
@@ -55,9 +46,6 @@ describe("useVisibleRows", () => {
   });
 
   it("re-evaluates against the NEW page after a refetch", () => {
-    // Page 2 arrives with 5 rows while the last report still holds 5 from page
-    // 1: same length, so no funnel — correct, and the stale rows are replaced
-    // by the table's next publish rather than being summed forever.
     const { result, rerender } = renderHook(({ r }) => useVisibleRows(r), {
       initialProps: { r: make(60) },
     });

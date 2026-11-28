@@ -43,9 +43,6 @@ const so = (docNo: string, companyId: number): Row => ({
   balance_sen: 0,
 });
 
-/** One non-cancelled line per SO, so the delivered-sum engine gets past its
- *  "no lines -> nothing to do" early return and actually runs the read under
- *  test. */
 const soLine = (docNo: string, id: string): Row => ({
   id,
   doc_no: docNo,
@@ -58,10 +55,6 @@ const soLine = (docNo: string, id: string): Row => ({
   created_at: '2026-08-01T00:00:00.000Z',
 });
 
-/** A query builder that swallows every chained call and resolves to the error
- *  production actually returned: no rows, and an error object with NO usable
- *  message. `missing` cannot express this — its 42703 always has text — and the
- *  blank message is the whole regression. */
 function blankErrorBuilder(): unknown {
   const q: Record<string, unknown> = {};
   const self = new Proxy(q, {
@@ -76,10 +69,7 @@ function blankErrorBuilder(): unknown {
 
 function harness(opts: {
   allowedCompanyIds?: number[];
-  /** Columns a table does NOT have — asking for one fails that whole read, the
-   *  way PostgREST does. Used to break the delivered-sum read on purpose. */
   missing?: Record<string, string[]>;
-  /** Fail the delivered-sum read with a BLANK driver message instead. */
   blankErrorOn?: string;
 }) {
   const sb = fakeSb(
@@ -104,8 +94,6 @@ function harness(opts: {
     c.set('houzsUser', {
       id: 9,
       name: 'Tester',
-      // Wildcard -> resolveDeliveryScope returns `all`, so the row scope is not
-      // what these assertions are measuring.
       permissions_set: new Set(['*']),
     } as unknown as Variables['houzsUser']);
     await next();
@@ -133,7 +121,6 @@ describe('GET /delivery-planning — a failed read says which one', () => {
 
     expect(status).toBe(500);
     expect(body.error).toBe('load_failed');
-    // The whole point: the operator can name the failing step.
     expect(body.stage).toBe('delivered_sum');
     expect(body.orders).toBeUndefined();
   });
@@ -142,18 +129,11 @@ describe('GET /delivery-planning — a failed read says which one', () => {
     const app = harness({ missing: { delivery_order_items: ['so_item_id'] } });
     const { body } = await get(app);
 
-    // The real cause ("column delivery_order_items.so_item_id does not exist",
-    // 42703) belongs in the log, never in the response.
     expect(body.reason).toBeTruthy();
     expect(body.reason).not.toMatch(/42703|does not exist|delivery_order_items/);
-    // The SCM client discards any server message of 200 characters or more.
     expect((body.reason ?? '').length).toBeLessThan(200);
   });
 
-  /* THE PRODUCTION SHAPE. `wrangler tail` on 2026-08-17 printed
-     `[onError] Error: delivered-sum read failed:` — the driver's message was the
-     empty string, so the throw carried nothing and the client got the generic
-     "Something went wrong". Both halves are pinned here. */
   it('is still diagnosable when the driver error has NO message at all', async () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const app = harness({ blankErrorOn: 'delivery_order_items' });
@@ -163,7 +143,6 @@ describe('GET /delivery-planning — a failed read says which one', () => {
 
     expect(status).toBe(500);
     expect(body.stage).toBe('delivered_sum');
-    // Never again a bare colon: the log names the blank AND the list size.
     expect(logged).toContain('message=<empty>');
     expect(logged).toMatch(/in_list_size=\d+/);
   });
@@ -197,9 +176,6 @@ describe('GET /delivery-planning — cross-company means GRANTED companies', () 
     ]);
   });
 
-  /* The UNRESOLVED sentinel (companies master unreadable / cold start) must
-     still degrade to no predicate — collapsing it into [] would empty the board
-     for everyone. Same three-state contract lib/companyScope.ts states. */
   it('degrades to no predicate when the company context is unresolved', async () => {
     const { body } = await get(harness({ allowedCompanyIds: undefined }));
 
@@ -227,15 +203,13 @@ describe('GET /delivery-planning — Sales Exemption Expiry Date column', () => 
     const sb = fakeSb({
       warehouses: [],
       mfg_sales_orders: [
-        soLinked('HC-SO-2608-001', 'SO-000111', '2026-06-30'), // linked; book expiry + a frozen original date
-        soLinked('HC-SO-2608-002', 'SO-000222'), // linked, book has NO expiry
-        soLinked('HC-SO-2608-003', null),        // not in AutoCount at all
+        soLinked('HC-SO-2608-001', 'SO-000111', '2026-06-30'),
+        soLinked('HC-SO-2608-002', 'SO-000222'),
+        soLinked('HC-SO-2608-003', null),
       ],
       mfg_sales_order_items: [line('HC-SO-2608-001', 'li-1'), line('HC-SO-2608-002', 'li-2'), line('HC-SO-2608-003', 'li-3')],
       delivery_order_items: [],
       delivery_orders: [],
-      /* The AutoCount mirror (public schema). SO-000111 carries the exemption
-         expiry; SO-000222 is in the book but carries none. */
       sales_orders: [
         { doc_no: 'SO-000111', company_id: 1, expiry_date: '2026-12-31' },
         { doc_no: 'SO-000222', company_id: 1, expiry_date: null },
@@ -259,9 +233,9 @@ describe('GET /delivery-planning — Sales Exemption Expiry Date column', () => 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { orders?: Array<{ so_doc_no: string; ac_sales_exemption_expiry?: string | null }> };
     const byDoc = Object.fromEntries((body.orders ?? []).map((o) => [o.so_doc_no, o.ac_sales_exemption_expiry ?? null]));
-    expect(byDoc['HC-SO-2608-001']).toBe('2026-12-31'); // the real exemption date, NOT the delivery date 2026-09-01
-    expect(byDoc['HC-SO-2608-002']).toBeNull();          // linked but the book carries no expiry
-    expect(byDoc['HC-SO-2608-003']).toBeNull();          // not in AutoCount
+    expect(byDoc['HC-SO-2608-001']).toBe('2026-12-31');
+    expect(byDoc['HC-SO-2608-002']).toBeNull();
+    expect(byDoc['HC-SO-2608-003']).toBeNull();
   });
 
   /* Owner 2026-10-22: the board also carries the FROZEN original delivery date
@@ -272,7 +246,7 @@ describe('GET /delivery-planning — Sales Exemption Expiry Date column', () => 
     expect(res.status).toBe(200);
     const body = (await res.json()) as { orders?: Array<{ so_doc_no: string; sales_exemption_expiry?: string | null }> };
     const byDoc = Object.fromEntries((body.orders ?? []).map((o) => [o.so_doc_no, o.sales_exemption_expiry ?? null]));
-    expect(byDoc['HC-SO-2608-001']).toBe('2026-06-30'); // the frozen original, independent of the book expiry 2026-12-31
+    expect(byDoc['HC-SO-2608-001']).toBe('2026-06-30');
     expect(byDoc['HC-SO-2608-002']).toBeNull();
     expect(byDoc['HC-SO-2608-003']).toBeNull();
   });
@@ -292,12 +266,8 @@ describe('GET /delivery-planning — concurrent per-SO reads wire to the right f
       warehouses: [],
       mfg_sales_orders: [so('HC-SO-2608-001', 1)],
       mfg_sales_order_items: [soLine('HC-SO-2608-001', 'li-1')],
-      // The live-balance read (a VIEW keyed by doc_no); 4242 is a value nothing
-      // else in the fixture could produce, so reading it back proves the wiring.
       mfg_sales_orders_with_payment_totals: [{ doc_no: 'HC-SO-2608-001', balance_sen_live: 4242 }],
       delivery_order_items: [],
-      // A committed DO with a distinctive number; status is non-DRAFT/CANCELLED so
-      // it is kept and surfaces on the row.
       delivery_orders: [{ id: 'do-1', do_number: 'HC-DO-9999', so_doc_no: 'HC-SO-2608-001', status: 'ISSUED' }],
       delivery_order_crew: [],
     });
@@ -327,17 +297,7 @@ describe('GET /delivery-planning — concurrent per-SO reads wire to the right f
   });
 });
 
-/* The THREE non-SO sub-boards — ASSR legs, manual DP jobs, PMS project windows —
-   are unioned onto the board after the SO rows. The shared harness above seeds no
-   ASSR/DP/project data and gives no c.env.DB, so those reads fail-silent and the
-   paths went UNTESTED. This fixture exercises all three so the board's open-time
-   read parallelisation (kickOffSubBoardReads) can be proven output-preserving: a
-   fake D1 feeds the ASSR union + project reads (branched by SQL), and dp_orders is
-   seeded on the scm client. Each row kind must surface with its key fields. */
 describe('GET /delivery-planning — the ASSR / DP / project sub-boards union onto the board', () => {
-  // A minimal D1-shim: the handler calls c.env.DB.prepare(sql).all<T>() for the
-  // ASSR union and the project union. Branch on the SQL so each read gets its own
-  // rows; everything the processing reads is present, the rest is null.
   const fakeD1 = {
     prepare: (sql: string) => ({
       all: async () => ({
@@ -345,10 +305,7 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
           ? [{
               id: 10, code: 'PRJ-1', name: 'Expo Build', brand: 'AKEMI', venue: 'Hall 3', venue_address: 'Hall 3, KLCC',
               state: null, setup_start_at: '2026-09-10', dismantle_start_at: null,
-              // Joined from the venue master the project picked (lib/project-venue-join.ts).
               venue_postcode: '50088', venue_city: 'Kuala Lumpur', venue_state: 'Selangor',
-              // Crew lives in the per-phase JSON (the editor path); the scalar
-              // driver/lorry are stale fallbacks that the JSON must override.
               setup_crew: JSON.stringify({
                 lorry_crew: [{ plate: 'VRH1', drivers: [{ name: 'JSON Driver', phone: '+60111' }], helpers: [{ name: 'Helper One', phone: '+60122' }, { name: 'Helper Two', phone: '+60133' }] }],
               }),
@@ -374,13 +331,11 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
       mfg_sales_order_items: [soLine('HC-SO-2608-001', 'li-1')],
       delivery_order_items: [],
       delivery_orders: [],
-      // A manual DP job (no source doc) — the only sub-board read on the scm client.
       dp_orders: [{
         id: 5, company_id: 1, dp_no: 'DP-1', job_type: 'SETUP', party_name: 'Setup Co', contact_phone: '012',
         address1: 'Jln Setup', address2: null, address3: null, address4: null, city: 'KL', postcode: '50000',
         state: 'Selangor', requested_date: '2026-09-08', status: 'PENDING', trip_id: null,
         so_doc_no: null, assr_case_id: null, do_id: null,
-        // The job's origin — Last Mile titles a transfer "From -> To" from it.
         from_name: 'KL Warehouse',
         // Hand-set message status (owner 2026-10-29) — surfaces on the DP row.
         delivery_message_status: 'To Send Delivery Date',
@@ -406,11 +361,10 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     const body = (await res.json()) as { orders?: Array<{ row_type: string; so_doc_no: string; ref: string | null; dp_no: string | null; branding: string | null; delivery_state: string | null; customer_delivery_date: string | null; amended_delivery_date: string | null; delivery_message_status: string | null; crew: Crew }> };
     const byType = (t: string) => (body.orders ?? []).filter((o) => o.row_type === t);
     expect(byType('so').map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-001']);
-    expect(byType('assr')).toHaveLength(1);       // the fake ASSR union row, delivery leg
+    expect(byType('assr')).toHaveLength(1);
     expect(byType('dp').map((o) => o.dp_no)).toEqual(['DP-1']);
     expect(byType('dp').map((o) => (o as unknown as { dp_from_name: string | null }).dp_from_name)).toEqual(['KL Warehouse']);
     expect(byType('project').map((o) => o.so_doc_no)).toEqual(['PRJ:10#SETUP']);
-    // Branding column fills for a project leg from the PMS project's brand (read-only).
     expect(byType('project').map((o) => o.branding)).toEqual(['AKEMI']);
     // Owner 2026-11-17: a project leg carries the venue master's Postcode / City,
     // and its State when the project has none.
@@ -421,16 +375,14 @@ describe('GET /delivery-planning — the ASSR / DP / project sub-boards union on
     // Owner 2026-10-21 — the Delivered tab shows every job type: a project window
     // whose date has already passed is done, while an OPEN service case is still
     // pending (and a dated DP job that is not yet delivered is pending too).
-    expect(byType('project')[0]?.delivery_state).toBe('DELIVERED'); // setup 2026-09-10 is in the past
+    expect(byType('project')[0]?.delivery_state).toBe('DELIVERED');
     // Owner 2026-10-26: Service's date is a request until Logistics confirms it.
-    expect(byType('assr')[0]?.delivery_state).toBe('PENDING_SCHEDULE'); // OPEN case, nothing confirmed
+    expect(byType('assr')[0]?.delivery_state).toBe('PENDING_SCHEDULE');
     // Owner 2026-10-22: an ASSR row carries its SERVICE date in customer_delivery_date
     // (shown in the "Sales Exemption Expiry Date" column) and leaves "Delivery Date"
     // (amended_delivery_date) blank for admin to propose.
-    expect(byType('assr')[0]?.customer_delivery_date).toBe('2026-09-05'); // the seeded do_date leg
+    expect(byType('assr')[0]?.customer_delivery_date).toBe('2026-09-05');
     expect(byType('assr')[0]?.amended_delivery_date).toBeNull();
-    // Crew (driver + phone, both helpers, lorry) is pulled from the per-phase crew
-    // JSON and OVERRIDES the stale scalar driver/lorry fallback (Driver A / WXX1).
     const projCrew = byType('project')[0]?.crew;
     expect(projCrew?.driver_1_name).toBe('JSON Driver');
     expect(projCrew?.driver_1_contact).toBe('+60111');
@@ -554,9 +506,6 @@ describe('derivePlanningState: Overdue is not ready on or past the due day', () 
   });
 });
 
-/* The board feeds derivePlanningState the value its "Sales Exemption Expiry Date"
-   column shows (frozen original -> AutoCount book -> delivery date), and the tab
-   counts (counts_only, which skips the display-only reads) see the same expiry. */
 describe('GET /delivery-planning — not ready past the due day is Overdue, ready is Pending Schedule, counts too', () => {
   const row = (docNo: string, extra: Row): Row => ({
     doc_no: docNo, company_id: 1, debtor_code: 'C1', debtor_name: 'A Customer', status: 'IN_PRODUCTION', delivery_state: null,
@@ -571,11 +520,11 @@ describe('GET /delivery-planning — not ready past the due day is Overdue, read
     const sb = fakeSb({
       warehouses: [],
       mfg_sales_orders: [
-        row('SO-AC', { linked_ac_docno: 'SO-000900' }), // book expiry passed, date pushed later, not ready
-        row('SO-AMENDED', { sales_exemption_expiry: '2026-10-26', amended_delivery_date: '2026-11-27' }), // customer moved it later
-        row('SO-READY', { sales_exemption_expiry: '2026-10-26', customer_delivery_date: '2026-11-27' }), // ready, expiry passed
-        row('SO-MOVED', { sales_exemption_expiry: '2026-10-26', delivery_state: 'PENDING_SCHEDULE' }), // staff moved it
-        row('SO-AHEAD', { sales_exemption_expiry: '2026-12-01', customer_delivery_date: '2026-12-01' }), // nothing passed
+        row('SO-AC', { linked_ac_docno: 'SO-000900' }),
+        row('SO-AMENDED', { sales_exemption_expiry: '2026-10-26', amended_delivery_date: '2026-11-27' }),
+        row('SO-READY', { sales_exemption_expiry: '2026-10-26', customer_delivery_date: '2026-11-27' }),
+        row('SO-MOVED', { sales_exemption_expiry: '2026-10-26', delivery_state: 'PENDING_SCHEDULE' }),
+        row('SO-AHEAD', { sales_exemption_expiry: '2026-12-01', customer_delivery_date: '2026-12-01' }),
       ],
       mfg_sales_order_items: [line('SO-AC', 'PENDING'), line('SO-AMENDED', 'PENDING'), line('SO-READY', 'READY'), line('SO-MOVED', 'PENDING'), line('SO-AHEAD', 'PENDING')],
       delivery_order_items: [],
@@ -648,8 +597,6 @@ describe('GET /delivery-planning — an order that reaches Pending Schedule stay
   });
 });
 
-/* 2026-10-26: state=OPEN skips the per-order reads for status-DELIVERED orders
-   and still counts them on the Delivered badge. */
 describe('GET /delivery-planning?state=OPEN', () => {
   it('leaves a delivered order out of the rows and in the Delivered count', async () => {
     const delivered = { ...so('HC-SO-2608-009', 1), status: 'DELIVERED' };

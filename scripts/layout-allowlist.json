@@ -1,0 +1,19 @@
+{
+  "root": [
+    ".claude", ".gitattributes", ".github", ".gitignore", ".gitleaksignore",
+    "CLAUDE.md", "README.md", "backend", "coverage-baseline.json", "demo-statements",
+    "docs", "e2e", "formal", "frontend", "mail-sync", "native",
+    "package-lock.json", "package.json", "pos", "reference", "scripts", "shared", "tasks"
+  ],
+  "frontend/src": [
+    "api", "auth", "components", "hooks", "lib", "mobile", "pages", "portal",
+    "routing", "types", "vendor"
+  ],
+  "backend/src": [
+    "acc", "db", "lib", "middleware", "routes", "scm", "services"
+  ],
+  "_baseline": [
+    "Bedframe-variants-to-complete.xlsx",
+    "~$Bedframe-variants-to-complete.xlsx"
+  ]
+}

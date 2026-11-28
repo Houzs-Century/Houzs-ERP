@@ -1,27 +1,13 @@
-// ---------------------------------------------------------------------------
-// AssistantChat — the DESKTOP chat body (toolbar + stream + composer, or the
-// past-conversations list), used by both the Assistant page and the floating
-// AssistantPanel. Logic comes from the shared useAssistantChat hook (the same
-// hook the mobile sheet uses), so this file is presentation only. Chrome-free:
-// it fills its parent's height; each host frames it (the page in a card, the
-// panel in a floating shell).
-//
-// READ-ONLY, like the page it was lifted from: it POSTs a question and renders
-// the grounded answer + the routing trace. It never writes a business row.
-// ---------------------------------------------------------------------------
 
 import { useRef } from "react";
 import { ArrowLeft, Bot, History, Paperclip, Plus, Send, Trash2, User, X } from "lucide-react";
 import { Badge } from "./Badge";
 import { cn } from "../lib/utils";
 import { useAssistantChat, ASSISTANT_SUGGESTIONS, ASSISTANT_ACCEPT } from "./useAssistantChat";
-import { fmtDateTime } from "../vendor/shared/format";
+import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
 
 export type { AgentRef, Msg } from "./useAssistantChat";
 
-/* Was `toLocaleDateString(undefined, …)` — the viewer's OS locale, a month
-   NAME, and no year at all. Three ways to disagree with every other date in
-   the app. */
 const shortWhen = fmtDateTime;
 
 export function AssistantChat({ className }: { className?: string }) {
@@ -47,7 +33,6 @@ export function AssistantChat({ className }: { className?: string }) {
 
   return (
     <div className={cn("flex min-h-0 flex-col", className)}>
-      {/* toolbar — new chat + history toggle */}
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         <button
           type="button"
@@ -105,7 +90,6 @@ export function AssistantChat({ className }: { className?: string }) {
         </div>
       ) : (
         <>
-          {/* stream */}
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
             {msgs.length === 0 && (
               <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
@@ -146,7 +130,6 @@ export function AssistantChat({ className }: { className?: string }) {
                       : "border border-border bg-surface-dim text-ink",
                   )}
                 >
-                  {/* Routing trace — who answered. Only on replies that consulted someone. */}
                   {m.role === "bot" && m.agents && m.agents.length > 0 && (
                     <div className="mb-2 flex flex-wrap items-center gap-1.5 border-b border-border pb-2">
                       <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">Asked</span>
@@ -180,7 +163,6 @@ export function AssistantChat({ className }: { className?: string }) {
             <div ref={endRef} />
           </div>
 
-          {/* composer */}
           <div className="flex flex-col gap-2 border-t border-border bg-surface-dim p-3">
             {attachment && (
               <div className="flex items-center gap-2 self-start rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-ink-secondary">

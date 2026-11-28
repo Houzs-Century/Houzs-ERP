@@ -1,6 +1,3 @@
-/* DEV-73 (Sim, 13 Oct 2026): the supplier date dialog must show what is already
- * recorded, refuse a slot every ticked PO has filled, and default to the next
- * empty slot so a recorded Date 2 is never typed over. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PoHeaderRow } from "../../vendor/scm/lib/suppliers-queries";
@@ -36,7 +33,6 @@ describe("PoBulkSupplierDateModal", () => {
   it("sends slot next by default", async () => {
     h.authed.mockResolvedValue({ slot: "next", date: "2026-10-30", applyToLines: true, updated: [], skipped: [] });
     const { container } = renderIt();
-    // DateField's hidden native picker, the input that commits an ISO value.
     fireEvent.change(container.ownerDocument.querySelector('input[tabindex="-1"]')!, { target: { value: "2026-10-30" } });
     fireEvent.click(screen.getByRole("button", { name: "Apply to 2 POs" }));
     await waitFor(() => expect(h.authed).toHaveBeenCalled());

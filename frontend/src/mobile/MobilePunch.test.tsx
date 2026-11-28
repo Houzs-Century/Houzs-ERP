@@ -26,8 +26,6 @@ const ME = {
   sites: [SITE],
 };
 
-// watchPosition stub: call the success handler once with a fixed coordinate, or
-// the error handler when `fail` is set.
 let geoCoord: { lat: number; lng: number } | null = { lat: SITE.lat, lng: SITE.lng };
 let geoFail = false;
 beforeEach(() => {
@@ -58,7 +56,7 @@ describe("punch screen — live distance to the site", () => {
   });
 
   it("outside the radius: shows the distance and 'too far'", async () => {
-    geoCoord = { lat: 3.05, lng: 101.75 }; // ~3 km away
+    geoCoord = { lat: 3.05, lng: 101.75 };
     show();
     await waitFor(() => expect(screen.getByText(/too far to clock in/)).toBeTruthy());
     expect(screen.getByText(/from KL WAREHOUSE/)).toBeTruthy();
@@ -82,5 +80,29 @@ describe("punch screen — multi-punch", () => {
     const btn = screen.getByText(/Clock in again/).closest("button") as HTMLButtonElement | null;
     expect(btn?.disabled).toBe(false);
     expect(screen.queryByText(/Done for today:/)).toBeTruthy();
+  });
+
+  it("a day with several clockings lists each one", async () => {
+    const side = (clock: string) => ({ clock, geo: "IN" as const, siteName: "KL WAREHOUSE", distanceM: 40, source: "PHONE" });
+    const multi = {
+      id: 2,
+      workDate: "2026-11-24",
+      status: "PRESENT",
+      in: side("08:00"),
+      out: side("19:00"),
+      open: false,
+      lateMin: 0,
+      otMin: 0,
+      spanMin: 660,
+      notes: null,
+      segments: [
+        { in: side("08:00"), out: side("12:00") },
+        { in: side("13:00"), out: side("19:00") },
+      ],
+    };
+    api.get.mockResolvedValue({ ...ME, recent: [multi] });
+    show();
+    await waitFor(() => expect(screen.getByText(/clock 1:/)).toBeTruthy());
+    expect(screen.getByText(/clock 2:/)).toBeTruthy();
   });
 });

@@ -1,7 +1,3 @@
-// Trip pay against Nico's September 2026 sheet ("Houzs_Driver Comm + Worker
-// Allowance", 23 Aug - 22 Sep): Amir's own tab, row for row. These run under a
-// rates version saved before the 2026-11-17 redesign (OLD = a stored object
-// with no schema 2), which must keep paying exactly what it paid.
 import { describe, expect, test } from "vitest";
 import {
   areaOfState,
@@ -73,7 +69,6 @@ const AMIR_TAB = [
   "SO-012297\tHC-DO-2609-176\tHc9989\t5,888.00\t2026/09/22\tKuala Lumpur\tVPC 9058\tAMIR\tALI\tNAEM",
 ].join("\n");
 
-/** Sheet names to ids; the sheet spells Nayem two ways. */
 function byName(rows: TripRow[]) {
   const ids = new Map<string, number>();
   const alias: Record<string, string> = { NAEM: "NAYEM" };
@@ -159,6 +154,7 @@ describe("computeTripPay", () => {
       jobType: "DELIVERY_ORDER",
       eventType: null,
       localTotalSen: sen,
+      allowanceOverrideSen: null,
       state: "Selangor",
       postcode: "",
       lorryPlate: "",

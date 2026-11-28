@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// OtherDebtorDoc — /scm/other-debtors/:id, an other debtor as a page (the
-// owner's Claude Design, batch 5 §8; it was a card under the registry list).
-// Who they are and where the paper goes, what they owe, their bills and the
-// receipts that came in — each opening its own page — and the registry's
-// steps: Edit debtor (the debtor form in place of the page, `?form=edit`) and
-// Deactivate / Reactivate. New bill and New receipt (batch 5 step 6) open their
-// forms in place too (`?form=bill|receipt`): the bill posts as it does from
-// Invoices, the receipt waits for its four layers. Bills and receipts post to
-// the one other-debtors control; nothing on this page itself posts.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
@@ -18,7 +7,7 @@ import {
   type DebtorBill, type DebtorReceipt,
 } from '../../../vendor/scm/lib/accounting-queries';
 import { partyAddressLines } from '../../../vendor/scm/lib/debtor-party';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
 import { DataTable, type Column } from '../../../components/DataTable';
@@ -40,7 +29,6 @@ import s from './MoneyInDoc.module.css';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
 type Bill = DebtorBill & { created_at?: string | null };
-/** A receipt names the bills it knocks off (GET /other-debtors/:id, read c4). */
 type Receipt = DebtorReceipt & { created_at?: string | null; bills?: Array<{ billId: string; no: string | null; amountSen: number }> };
 
 const owing = (b: Bill): number => (b.status === 'CANCELLED' ? 0 : Math.max(0, Number(b.total_sen) - Number(b.received_sen)));
@@ -66,8 +54,6 @@ export const OtherDebtorDoc = () => {
   const rolesQ = useAccountRoles();
   const update = useUpdateDebtor();
   const { can } = useHouzsAuth();
-  /* The registry's own keys (OtherDebtors.tsx; PATCH /other-debtors/:id); a bill or a receipt is raised with
-     .create — and only on an active debtor (the forms list active debtors alone). */
   const canWrite = can('scm.payment_voucher.write');
   const canCreate = can('scm.payment_voucher.create');
   const [failure, setFailure] = useState<string | null>(null);
@@ -139,7 +125,6 @@ export const OtherDebtorDoc = () => {
     { key: 'amount', label: 'Amount', align: 'right', render: (r) => fmtSen(r.total_sen), getValue: (r) => r.total_sen },
     { key: 'stage', label: 'Stage', render: (r) => <StatusTag tag={debtorReceiptTag(pvStage(r))} />, getValue: (r) => r.status },
   ];
-  /* The debtor's own trail is its documents': each bill raised, each receipt that came in. */
   const trail: TrailStep[] = byTime([
     ...bills.filter((b) => b.created_at).map((b): TrailStep => ({ key: `bill-${b.id}`, act: `Bill raised · ${b.bill_number}`, when: b.created_at, note: fmtSen(b.total_sen), undo: b.status === 'CANCELLED' })),
     ...receipts.filter((r) => r.approved_at).map((r): TrailStep => ({ key: `odr-${r.id}`, act: `Received · ${r.receipt_number}`, when: r.approved_at, note: fmtSen(r.total_sen), undo: r.status === 'CANCELLED' })),

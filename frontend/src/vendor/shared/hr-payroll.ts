@@ -35,9 +35,6 @@ const countableOt = (surplus: number) => (round2(surplus) * 60 >= OT_MIN_MINUTES
 const ymdOf = (y: number, m: number, d: number) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 const lastDayOf = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 
-/* The last day of the month whose absences are confirmed: today walked back
- * by `graceWorkingDays` working days. A finished month counts whole; a month
- * the cutoff has not reached counts none. */
 export function absenceCutoffDay(year: number, month: number, todayYmd: string, graceWorkingDays: number, holidays: ReadonlySet<string>): number {
   const cutoff = new Date(`${todayYmd}T00:00:00Z`);
   let remaining = Math.max(0, Math.floor(graceWorkingDays));
@@ -92,7 +89,6 @@ export type MonthlyPay = {
   daysWorked: number;
   absentDays: number;
   absentDates: string[];
-  /** Working days with no hours that HR marked as paid leave: not absences. */
   paidLeaveDates: string[];
   otDays: { date: string; hours: number; kind: "WEEKDAY" | "SUNDAY" | "HOLIDAY" }[];
   otWeekdayHours: number;
@@ -116,15 +112,11 @@ export function computeMonthlyPay(input: {
   employee: PayEmployee;
   year: number;
   month: number;
-  /** Logged hours of the month; several rows a day are summed. */
   days: ReadonlyArray<{ date: string; hours: number }>;
   holidays: ReadonlySet<string>;
-  /** Absences are counted through this day (absenceCutoffDay). */
   absenceThroughDay: number;
-  /** Total short hours docked this month. */
   shortHours: number;
   rulesOn: (ymd: string) => PayRulesConfig;
-  /** Days HR marked as paid leave (phase 5). */
   paidLeave?: ReadonlySet<string>;
   /** Confirmed overtime hours per date (HC-0125): when supplied, weekday OT is
    *  these worker-reported, supervisor-confirmed hours instead of the punch
@@ -240,10 +232,6 @@ export function computeMonthlyPay(input: {
 
 export type Statutory = { epfEmployeeSen: number; epfEmployerSen: number; socsoEmployeeSen: number; socsoEmployerSen: number; eisEmployeeSen: number; eisEmployerSen: number };
 
-/* Hookka's calcStatutory: EPF a percentage of the wages it is given, which the
- * caller makes the month's full salary (not reduced by absences; a daily-paid
- * employee's salary is 0) plus the driver's commission (Nico 2026-10-23);
- * SOCSO and EIS the flat amounts in Pay Rules. Each only when on. */
 export function statutoryFor(epfWagesSen: number, flags: { epf: boolean; socso: boolean; eis: boolean }, cfg: PayRulesConfig): Statutory {
   return {
     epfEmployeeSen: flags.epf ? Math.round((epfWagesSen * cfg.epfEmployeePct) / 100) : 0,

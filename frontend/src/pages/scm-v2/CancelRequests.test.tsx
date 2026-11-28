@@ -22,7 +22,6 @@ const base = (over: Partial<Row>): Row => ({
 });
 const freshRows = (): Row[] => [
   base({ id: 'r1' }),
-  /* The record of a PO cancelled on its reason: no signature, already done. */
   base({ id: 'r2', doc_type: 'PO', doc_key: 'po-7', doc_number: 'PO-7', reason: 'Supplier cannot deliver', status: 'EXECUTED', requested_by: 12, requested_by_name: 'Dee', executed_by: 12, executed_at: '2026-09-09T02:00:00Z' }),
 ];
 let ROWS: Row[] = freshRows();
@@ -35,6 +34,9 @@ const cancelPo = vi.fn(async (_v: unknown) => ({}));
 const confirm = vi.fn(async (_o: unknown) => true);
 const notify = vi.fn(async (_o: unknown) => undefined);
 
+/* The refund approvals (owner 2026-11-27) are their own section with their own tests (RefundApprovals.test.tsx). */
+vi.mock('./RefundApprovals', () => ({ RefundApprovals: () => null }));
+vi.mock('../../mobile/MobileRefundApprovals', () => ({ MobileRefundApprovals: () => null }));
 vi.mock('../../vendor/scm/lib/document-cancel-queries', async (orig) => ({
   ...(await orig<typeof import('../../vendor/scm/lib/document-cancel-queries')>()),
   useCancelRequests: () => ({ data: { requests: ROWS }, isLoading: false, isError: false, error: null }),
@@ -59,7 +61,7 @@ beforeEach(() => {
   viewer = { id: 31, perms: ['*'] };
   ROWS = freshRows();
   approveSo.mockClear(); approvePo.mockClear(); cancelSo.mockClear(); cancelPo.mockClear(); confirm.mockClear(); notify.mockClear();
-  try { window.localStorage.clear(); } catch { /* jsdom without storage */ }
+  try { window.localStorage.clear(); } catch { }
 });
 
 describe('CancelRequests', () => {
@@ -97,9 +99,6 @@ describe('CancelRequests', () => {
     fireEvent.click(await screen.findByText('Cancel now'));
     await waitFor(() => expect(cancelPo).toHaveBeenCalledWith({ id: 'po-7', reason: 'Supplier cannot deliver' }));
     expect(cancelSo).not.toHaveBeenCalled();
-    /* The toast names the DOCUMENT, not its type: the number already carries it,
-       and a table of type nouns in the shared action flow would be one more home
-       for the {SO, PO, DO} set (owner-facing copy unchanged otherwise). */
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ title: 'PO-7 cancelled' }));
   });
 

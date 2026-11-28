@@ -7,7 +7,6 @@
  * printed "Fabric: COVE-08 / SPECIAL: COVE-08". Asserted on what the real
  * generators PAINT into the PDF stream (docs/bugs/0934). */
 import { afterEach, describe, expect, test, vi } from 'vitest';
-// The letterhead is fetched for the tab's company before drawing (BUG-111).
 vi.mock('../../../hooks/useBranding', () => ({ ensureBrandingForActiveCompany: async () => {} }));
 
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
@@ -17,8 +16,6 @@ import { pdfRawText } from './pdf-raw-text';
 type PoHeader = Parameters<typeof purchaseOrderPdfBase64>[0];
 type PoItem = Parameters<typeof purchaseOrderPdfBase64>[1][number];
 
-/* Every string the PDF stream paints, joined: a table cell wraps long text into
-   several text operations, so one phrase can span two of them. */
 const painted = (raw: string) =>
   [...raw.matchAll(/\((.*?)\) Tj/g)].map((m) => m[1].replace(/\\([()\\])/g, '$1')).join(' ');
 

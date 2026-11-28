@@ -14,23 +14,8 @@ import {
 } from "./announcementCategory";
 import { useAnnouncementBanner, type BannerAnnouncement } from "./useAnnouncementBanner";
 import { ackRateBarCls } from "../pages/announcements/announcementModel";
-import { fmtDate } from "../vendor/shared/format";
+import { fmtDate } from "../../../shared/src/vendor/shared/format";
 
-// ────────────────────────────────────────────────────────────────────────────
-// AnnouncementDashboard — the Overview's two announcement pieces (design
-// handoff 2026-09-04, screen 5):
-//
-//   · AnnouncementBannerStack — up to three unacknowledged notices at login
-//     without a modal wall: the first expanded, the rest collapsed, anything
-//     beyond behind an "n more notices collapsed · Expand" row. Reads the SAME
-//     hook the modal reads, so acknowledging here settles the modal and the
-//     inbox too.
-//   · TeamPendingCard — the supervisor's gap: direct reports who have not
-//     acknowledged a mandatory notice (GET /api/announcements/team-pending).
-//     Renders only for a user with direct reports. "Remind all" re-pops each
-//     notice for its pending people; it needs announcements.write (the remind
-//     route is write-gated), so a supervisor without it sees the list only.
-// ────────────────────────────────────────────────────────────────────────────
 
 const EYEBROW = "font-mono text-[10px] font-bold uppercase tracking-wider";
 const MAX_VISIBLE = 3;
@@ -169,7 +154,6 @@ export function AnnouncementBannerStack() {
   );
 }
 
-// ── My team's pending ──────────────────────────────────────────────────────
 
 export type TeamPendingRow = {
   userId: number;
@@ -192,11 +176,6 @@ const STATE_CLS: Record<TeamPendingRow["state"], string> = {
   pending: "bg-surface-dim border border-border text-ink-muted",
 };
 
-// ── "Ack rate · last 30 days" (design handoff 2026-09-04, screen 5; endpoint
-// 2026-09-06): six 5-day bars from GET /api/announcements/ack-trend — the
-// notices POSTED in each bucket, their summed audience, and how many of it
-// acknowledged. Write-gated like the Manage table it mirrors, so it renders
-// only for an announcer; a bucket with no notice is drawn empty, not as 0%.
 type AckTrendBucket = {
   start: string;
   end: string;

@@ -287,6 +287,11 @@
       "why": "A refusal spoken over receipts that were read and summed to the statement payable - the amount and credit count in the sentence are that evidence; an empty receipts read cannot reach it, since nothing sums to a non-zero payable."
     },
     {
+      "file": "backend/src/services/mcp-howto-errors.ts",
+      "text": "match: [\"Money was already received against this bill — it cannot be cancelled.\"],",
+      "why": "A verbatim quote of the other-debtors refusal (allowlisted above) so explain_error can recognise it; it is help text about a refusal, not a screen claiming work is done."
+    },
+    {
       "file": "backend/src/scm/routes/other-debtors.ts",
       "text": "return c.json({ error: 'bill_has_receipts', message: 'Money was already received against this bill — it cannot be cancelled.' }, 409);",
       "why": "The refusal states THIS bill's own received_sen > 0 — the document's status, not an empty read reported as finished work; the cancel is being refused, not claimed done."

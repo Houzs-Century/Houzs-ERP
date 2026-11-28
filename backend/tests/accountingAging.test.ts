@@ -252,3 +252,18 @@ describe('AP Aging', () => {
     expect(b.differenceSen).toBe(0);
   });
 });
+
+/* Last in the file: gl() numbers its lines from one counter, and a later test reads them. */
+describe('AR Aging and the AutoCount deposit note', () => {
+  test('an AutoCount deposit note nets inside its order and leaves the footer: its money is in the books now', async () => {
+    const t = AR();
+    /* SO-A's 600 taken in AutoCount, brought onto ALI at SI-A1 (acc/autocount-deposits.ts). */
+    t.v_gl_entries!.push(gl('300-0000', 'CN', 'CN-A7', '2026-08-10', 0, 600, 'C-1'));
+    t.acc_credit_notes!.push({ id: 'n-a7', company_id: CO, note_number: 'CN-A7', kind: 'CN', so_doc_no: 'SO-A', sales_invoice_id: 'si-a1', source_doc_no: 'AUTOCOUNT DEPOSIT' });
+    const b = await (await app(t).request('/ar-aging?asOf=2026-09-30')).json() as Body;
+    expect((rowOf(b, 'ALI').items as Row[]).map((i) => [i.docNo, i.openSen])).toEqual([]);
+    expect((rowOf(b, 'ALI').unapplied as Row[]).some((u) => u.docNo === 'CN-A7' && Number(u.amountSen) === -600)).toBe(false);
+    expect(b.differenceSen).toBe(0);
+    expect((b as unknown as { paidBeforeErp: Row }).paidBeforeErp).toEqual({ orders: 0, sen: 0 });
+  });
+});

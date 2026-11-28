@@ -52,7 +52,6 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
       .leftJoin(departments, eq(departments.id, hr_employees.department_id))
       .where(empWhere)
       .orderBy(asc(hr_employees.emp_no)),
-    /* The grace walk-back can cross into the previous year's December. */
     db
       .select({ d: hr_public_holidays.holiday_date })
       .from(hr_public_holidays)
@@ -66,10 +65,6 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
       .from(hr_hour_deductions)
       .where(and(eq(hr_hour_deductions.company_id, companyId), gte(hr_hour_deductions.work_date, first), lte(hr_hour_deductions.work_date, last)))
       .groupBy(hr_hour_deductions.employee_id),
-    /* Every advance started on or before this month (not just those dated in
-       it): an installment advance keeps deducting in the months after it was
-       given. No status filter — the schedule, not the settle flag, decides the
-       deduction. advanceInstallmentForMonth then gives this month's share. */
     db
       .select({ employee_id: hr_advances.employee_id, date: hr_advances.advance_date, amount: hr_advances.amount_sen, installment: hr_advances.installment_sen })
       .from(hr_advances)
@@ -80,7 +75,6 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
       .innerJoin(hr_penalties, eq(hr_penalties.id, hr_penalty_lines.penalty_id))
       .where(and(eq(hr_penalty_lines.company_id, companyId), eq(hr_penalty_lines.payroll_period, period), inArray(hr_penalties.status, ["APPROVED", "POSTED"])))
       .groupBy(hr_penalty_lines.employee_id),
-    /* PCB year-to-date: earlier months of the same year, drafts included (as Hookka). */
     db
       .select({
         employee_id: hr_payslips.employee_id,
@@ -103,7 +97,6 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
         ),
       )
       .orderBy(asc(hr_allowances.id)),
-    /* Annual / medical leave and rest days keyed on the Attendance tab are paid: not absences. */
     db
       .select({ employee_id: hr_attendance.employee_id, date: hr_attendance.work_date })
       .from(hr_attendance)
@@ -116,9 +109,6 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
         ),
       ),
     loadTripMonth(db, companyId, period, today),
-    /* Every attendance day of the month, for the ATTENDANCE allowance: its
-       status (present / half / unpaid leave) and the punch, from which lateness
-       is computed. Empty until crew start punching — the allowance is then 0. */
     db
       .select({
         employee_id: hr_attendance.employee_id,
@@ -164,11 +154,7 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
     for (const r of otClaimsBy.get(empId) ?? []) m.set(r.date, (m.get(r.date) ?? 0) + (r.end_min - r.start_min) / 60);
     return m;
   };
-  // Per-employee shift (group + delivery-day) for the month, so lateness is
-  // judged against each person's own shift, not the one global shift.
   const shiftFor = await shiftRulesResolver(db, companyId, first, last);
-  /* The month's attendance for one employee, shaped for the ATTENDANCE allowance:
-     lateness is computed from the punch against the day's rules, nothing stored. */
   const allowanceDaysFor = (empId: number): AttendanceAllowanceDay[] =>
     (attBy.get(empId) ?? []).map((r) => {
       const status = r.status as AttendanceStatus;
@@ -227,8 +213,6 @@ export async function computePeriod(db: Db, companyId: number, period: string, t
         paidLeave: new Set((leaveBy.get(e.id) ?? []).map((l) => l.date)),
         trip: trip.pay.get(e.id) ?? null,
         allowances: (allowBy.get(e.id) ?? []).map((a) => {
-          /* ATTENDANCE stores a per-day rate; the month's figure is computed from
-             attendance (rate x attended days, or 0 if late>3 or any unpaid leave). */
           if (a.kind === "ATTENDANCE") {
             const r = attendanceAllowance(Number(a.amount), allowanceDaysFor(e.id));
             return { kind: "ATTENDANCE" as AllowanceKind, amountSen: r.amountSen, note: a.note ? `${a.note} — ${r.note}` : r.note };

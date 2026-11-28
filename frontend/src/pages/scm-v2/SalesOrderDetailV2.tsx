@@ -1,21 +1,3 @@
-// SalesOrderDetailV2 — Theme C ("Ink & Petrol") redesign of the Sales Order
-// detail page. Read-first: the old page was a wall of empty inputs; this one
-// treats an SO as an object you look at, and slides the edit / status
-// mutations into the header action bar and (on Edit) into the existing
-// SalesOrderDetail editor route.
-//
-// Scope of THIS file (Item B of the 4-part redesign):
-//   · Sticky header (Back + customer name + status Badge + meta line + action
-//     buttons: History · Relationship Map · Print PDF · Cancel SO · Edit)
-//   · Two-column DetailGrid — main col of Section cards for Customer / Order
-//     info (with amber Note callout) / Delivery address + Emergency contact /
-//     Line items (DataTable with FOC badges); sticky aside with dark Order-
-//     total card + Key dates + People + Recent activity.
-//   · Wired to useMfgSalesOrderDetail; status mutation via useUpdateMfgSales-
-//     OrderStatus. Edit navigates to the existing full editor (?edit=1).
-//
-// The old ledger-style SalesOrderDetail.tsx stays in the tree; App.tsx route
-// swap on /scm/sales-orders/:docNo decides which one users see.
 
 import { SoDeliveryIssuesCard } from "../../components/scm-v2/DeliveryIssuesCard";
 import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -72,7 +54,7 @@ import {
 import { AuditHistoryPanel } from "../../components/audit/AuditHistoryPanel";
 import { SO_AUDIT_LABELS } from "./so-audit-labels";
 import { useSoHistoryWithRelated } from "./so-history-related";
-import { fmtDateTime } from "../../vendor/shared/format";
+import { fmtDateTime } from "../../../../shared/src/vendor/shared/format";
 import { brandingLabel } from "../../vendor/shared/so-branding-label";
 import { getBrandingCompanyCode } from "../../lib/branding";
 import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
@@ -110,28 +92,23 @@ import {
 import { MigratedReadonlyBanner } from "../../vendor/scm/components/MigratedReadonlyBanner";
 import { soAfterDoMode, soPriceAfterDoOn, soLinesAfterDoOn } from "../../vendor/scm/lib/so-after-do-client";
 import type { AfterDoTarget } from "../../vendor/shared/so-after-do-edit";
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
 import { OrderSlipPhoto } from "../../vendor/scm/components/OrderSlipPhoto";
 import { ADD_LINE_LABEL, addLineHref } from "../../vendor/scm/lib/add-line-handoff";
 import { fairLabel } from "../../vendor/scm/lib/fair-options-queries";
 import { linkedEvent, type LinkedFair } from "../../components/fairPick";
-import { soStreetTail } from "../../vendor/scm/lib/order-address";
-// ─── Row types (subset — see MfgSalesOrdersList.tsx for the full SoRow) ────
+import { soStreetTail } from "../../../../shared/src/vendor/scm/lib/order-address";
 
 type SoHeader = {
   doc_no: string;
-  /* POS handover payment slip (migration 0143) — passed to PaymentsTable's
-     optional Slip column; absent on non-POS orders. */
   slip_key?: string | null;
   so_date: string;
   debtor_name: string;
   debtor_code: string | null;
   agent: string | null;
   salesperson_id: string | null;
-  /* Who ELSE may see and edit this order (mig 20260909T1000). Attribution stays
-     salesperson_id above — these people carry none of it. */
   collaborator_staff_ids: string[] | null;
   sales_location: string | null;
   customer_so_no: string | null;
@@ -144,9 +121,6 @@ type SoHeader = {
   local_total_sen: number;
   balance_sen: number;
   paid_sen: number;
-  /* Stamped by GET /:docNo (ledger + the legacy header deposit) — the only
-     paid figure that is maintained. `paid_sen` is deprecated and is 0 on any
-     order paid through the payment drawer. */
   paid_sen_total?: number | null;
   total_revenue_sen?: number | null;
   discount_sen?: number;
@@ -165,10 +139,7 @@ type SoHeader = {
   venue: string | null;
   // The linked fair event (owner 2026-09-24); absent on an older server.
   fair?: LinkedFair | null;
-  // The day of that fair the order was written on; null = not recorded.
   fair_date?: string | null;
-  // The processing-date column the lock reads. Label, API field and column are
-  // finally the same word (mig 0284 renamed it from internal_expected_dd).
   processing_date?: string | null;
   // Server-derived SO-lock / amendment flags (see the /:docNo detail handler).
   // has_children = a non-cancelled DO/SI references this SO; downstream_fully_frozen =
@@ -186,10 +157,6 @@ type SoHeader = {
   currency: string;
   payment_method: string | null;
   payment_methods_summary?: string;
-  // Finance-gated cost / margin analytics (migration 0079). Present on the
-  // DETAIL payload for every caller (only the LIST endpoint strips these —
-  // #574); the UI gates the Totals·Margin card behind project_finance_viewer.
-  // Cost columns are nullable for rows predating the cost backfill.
   total_cost_sen?: number | null;
   total_margin_sen?: number | null;
   margin_pct_basis?: number | null;
@@ -247,12 +214,7 @@ type SoItem = {
   remaining_qty?: number | null;
 };
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
-/* Money display delegates to the ONE shared centi formatter (vendor/shared/
-   format.ts). The page-local copy this replaces had no finite guard, so an
-   absent / non-numeric cost rendered the literal "MYR NaN" at the user; the
-   shared helper renders "—" for a number the ERP does not have. */
 const fmtMoney = fmtMoneySen;
 
 const refOf = (h: SoHeader): string => customerRefOf(h) || "—";
@@ -328,7 +290,6 @@ const initialsOf = (name: string | null | undefined): string => {
   );
 };
 
-// ─── Field cell ────────────────────────────────────────────────────────────
 
 function Field({
   label,
@@ -362,7 +323,6 @@ function Field({
   );
 }
 
-// ─── Sub-primitives for the aside cards ────────────────────────────────────
 
 function AsideCard({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -422,7 +382,6 @@ function PersonRow({
   );
 }
 
-// ─── Recent activity timeline ─────────────────────────────────────────────
 type ActivityDot = "success" | "primary" | "muted";
 const DOT_CLS: Record<ActivityDot, string> = {
   success: "bg-synced",
@@ -454,7 +413,6 @@ function ActivityRow({
   );
 }
 
-// ─── Order total card (dark aside hero) ────────────────────────────────────
 
 function OrderTotalCard({
   header,
@@ -555,26 +513,11 @@ function TotalLine({
 // the separate Finance "Fulfillment Costing" module. The customer-facing
 // OrderTotalCard (Subtotal / Discount / Total) is untouched.
 
-// ─── Legacy inline editor (lazy) ───────────────────────────────────────────
-// V2 is READ-ONLY by design (sticky header + section cards + Order-total
-// aside). The full 2014-LOC inline editor lives in ./SalesOrderDetail — we
-// forward to it whenever ?edit=1 lands on this route so Nick's Edit button
-// actually opens editable fields (the whole read-first redesign left goEdit
-// pointing at a URL nobody handled → the button was a dead-link on
-// CONFIRMED SOs). Lazy-loaded so the editor bundle only ships when someone
-// actually clicks Edit.
 const SalesOrderDetailInlineEditor = lazy(() =>
   import("./SalesOrderDetail").then((m) => ({ default: m.SalesOrderDetail })),
 );
 
-// ─── Main page ─────────────────────────────────────────────────────────────
 
-/* Thin router — the only hooks it calls are useSearchParams and useLocation
-   (both unconditional, at the top), so Rules of Hooks
-   are respected when the ?edit=1 flip swaps between the read-only body and
-   the lazy inline editor (the two children have different hook counts;
-   letting either side call hooks conditionally inside the same function
-   would break on navigation). */
 export function SalesOrderDetailV2() {
   const [params] = useSearchParams();
   const location = useLocation();
@@ -583,10 +526,6 @@ export function SalesOrderDetailV2() {
      payment … 全部 UI 都不一样" — one page, one look; the flag now just seeds
      the payments Edit toggle below). Only full `edit=1` swaps bodies. */
   if (params.get("edit") === "1") {
-    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
-       so a failed editor chunk shows the panel in place of the editor and
-       clears when the operator moves to another document, instead of leaning
-       on a boundary in a file this one cannot see. */
     return (
       <LazySlot
         resetKey={`so-editor:${location.pathname}`}
@@ -605,9 +544,6 @@ function SalesOrderDetailV2ReadOnly() {
   const navigate = useNavigate();
 
   const detail = useMfgSalesOrderDetail(docNo ?? null);
-  /* Live stock coverage is fetched SEPARATELY so this page paints on the fast
-     detail response (stored verdict, null live fields) and never blocks on it;
-     the badge + source-PO chips upgrade in place when this arrives. */
   const coverage = useSoLineCoverage(docNo ?? null);
   const updateStatus = useUpdateMfgSalesOrderStatus();
   const requestCancel = useCancelRequestAction("so");
@@ -616,21 +552,14 @@ function SalesOrderDetailV2ReadOnly() {
   const staffRoster = useStaff();
   const notify = useNotify();
   const askConfirm = useConfirm();
-  // Followup #81 — the printed SO reads payments from the ledger, not the
-  // deprecated header columns; fetch them for the Print PDF handler.
   const printPaymentsQ = useSalesOrderPayments(docNo ?? null);
 
-  // Replace the auto-derived "Scm" module crumb with the actual SO doc no.
-  // Falls back to the raw route param while detail is loading so the top bar
-  // never flashes back to "Scm".
   useSetBreadcrumbs([
     { label: "Sales Orders", to: "/scm/sales-orders" },
     { label: docNo ?? "Sales Order" },
   ]);
 
   const salesOrder = (detail.data as { salesOrder?: SoHeader } | undefined)?.salesOrder ?? null;
-  // Coverage keyed by line id; empty until the async coverage query returns (or
-  // when the endpoint 404s on an older backend). Overlaid onto the lines below.
   /* The overlay is SHARED with the list drill-down (vendor/scm/lib/
      so-coverage-overlay) — two hand-written merges is how the board and the
      drill-down drifted apart in docs/bugs/0269-*. */
@@ -644,8 +573,6 @@ function SalesOrderDetailV2ReadOnly() {
 
   const st = salesOrder ? statusFor(salesOrder.status) : null;
 
-  // Totals — subtotal from live items; discount from header (aggregate); total
-  // = header.local_total_sen if the API stamped it, else recomputed.
   const subtotalSen = useMemo(
     () => items.reduce((s, l) => s + l.total_sen + l.discount_sen, 0),
     [items]
@@ -664,12 +591,6 @@ function SalesOrderDetailV2ReadOnly() {
     [items]
   );
 
-  // ── SO lock / amendment gating (shared with the full editor + mobile) ────
-  // A proceeded SO whose processing day has passed is locked: line/field edits
-  // must go through the SO Amendment workflow, not a direct edit. Reflect that
-  // on the PRIMARY Edit affordance here so the button routes to the amendment
-  // flow (or is disabled when the SO is hard-locked by a downstream DO/SI)
-  // instead of always presenting a plain "Edit" that opens editable fields.
   const hardLocked = salesOrder
     ? isSoLocked(salesOrder.status, soDownstreamHardLocked(salesOrder))
     : false;
@@ -683,21 +604,10 @@ function SalesOrderDetailV2ReadOnly() {
      whole order, addresses and lines included. */
   const { can } = useHouzsAuth();
   const canAttributeOther = can("scm.so.attribute_other");
-  /* DEV-56 — `scm.so.edit_after_do` (DEV-32) is spent behind Override, and
-     Override lives in the ?edit=1 editor. Asked as if Override were already on:
-     the question here is only whether the editor has anything to offer. */
   const canEditAfterDo = salesOrder
     ? soAfterDoMode(salesOrder, { can, override: true, migrated: false }).on
     : false;
-  /* CUTOVER: an order carried across from AutoCount is view-only (owner
-     2026-09-08). It out-ranks the salesperson door above — `canAttributeOther`
-     exists so a hard-locked order can still change hands, and re-attributing a
-     migrated order is still a write the API will refuse. Kept as its own term
-     rather than folded into `hardLocked` so the hint below can say WHICH lock
-     the operator is looking at; two locks with one sentence is how a refusal
-     stops being actionable. */
   const migratedLocked = soMigratedReadonly(salesOrder);
-  /* DEV-70 — a delivered line's price is changed from the editor's $ button. */
   const canPriceAfterDo = salesOrder ? soPriceAfterDoOn(salesOrder, { can, migrated: migratedLocked }) : false;
   /* Owner 2026-11-21 — a super admin edits a delivered PRODUCT line's qty / spec inline. */
   const canLinesAfterDo = salesOrder ? soLinesAfterDoOn(salesOrder, { can, migrated: migratedLocked }) : false;
@@ -738,16 +648,11 @@ function SalesOrderDetailV2ReadOnly() {
     }))) return;
     navigate(returnToWorkspaceOpener() ?? scmListReturnTo("/scm/sales-orders"));
   };
-  // Edit always forwards to the full editor (?edit=1). When the SO is
-  // amendment-eligible the editor opens in amendment mode (Save submits an
-  // amendment request); when hard-locked the button is disabled here.
   const goEdit = () => docNo && navigate(`/scm/sales-orders/${docNo}?edit=1`);
   /* "Add line" from the page you START on — the affordance lived only
      inside the editor, under a different name per document, so it read as
      missing (docs/bugs/0853). */
   const goAddLine = () => docNo && navigate(addLineHref(`/scm/sales-orders/${docNo}`));
-  /* Payments editing now lives ON this page (same PaymentsTable the editor
-     uses) — "Collect payment" just unlocks the card and scrolls to it. */
   const location = useLocation();
   const [payEditing, setPayEditing] = useState(params.get("payments") === "1");
   const [unsavedPayments, setUnsavedPayments] = useState(0);
@@ -817,23 +722,8 @@ function SalesOrderDetailV2ReadOnly() {
     ?? null;
   const [relMapOpen, setRelMapOpen] = useState(false);
   const goRelationshipMap = () => setRelMapOpen(true);
-  // Render + download the SO PDF via the shared jspdf generator (client-side),
-  // mirroring the V1 SalesOrderDetail handler. The old `?print=1` navigation
-  // was dead — nothing consumed that param — so the button did nothing.
   const deliverPrintPdf = (action: PdfAction) => {
     if (!salesOrder) return;
-    /* The guard below used to be keyed on `isLoading` alone with a `?? []`
-       fallback. On a FAILED payments read react-query leaves `isLoading` false
-       and `data` undefined, so the guard passed and this printed the
-       CUSTOMER-FACING PDF with an empty Payments table — telling the customer
-       they had paid nothing and owed the full total. V1 (SalesOrderDetail.tsx)
-       was fixed on 2026-07-19; this twin never was.
-
-       An empty array is an ANSWER (a genuinely unpaid order correctly prints an
-       empty table). The ABSENCE of an array is not — `data` is set only by a
-       successful fetch. So print only once we actually know what was paid, and
-       distinguish "still loading" from "we asked and it failed", because those
-       need different actions from the operator. */
     const paymentRows = printPaymentsQ.data;
     if (!Array.isArray(paymentRows)) {
       if (printPaymentsQ.isFetching) {
@@ -848,8 +738,6 @@ function SalesOrderDetailV2ReadOnly() {
       return;
     }
     const payments = paymentRows;
-    // `pwpCodes` rides on the same GET /:docNo payload — vouchers this SO's
-    // trigger items issued, so the printed PDF can mark the trigger lines.
     const pwpCodes = ((detail.data as { pwpCodes?: unknown[] } | undefined)
       ?.pwpCodes ?? []) as never;
     return import("../../vendor/scm/lib/sales-order-pdf")
@@ -873,9 +761,6 @@ function SalesOrderDetailV2ReadOnly() {
   const print = usePrintPreview(deliverPrintPdf);
   useOpenPrintPreviewFromUrl(print.openPreview, !!salesOrder);
 
-  // The 5-node document chain + what each node does when clicked now come from
-  // the shared hook, so this page and the ?edit=1 editor cannot drift again
-  // (they already had — see so-relationship-map.ts).
   const {
     nodes: chainNodes,
     onNodeClick: onChainNodeClick,
@@ -889,7 +774,6 @@ function SalesOrderDetailV2ReadOnly() {
     pickChoice: pickChainChoice,
   } = useSoRelationshipMap(salesOrder);
 
-  // ── Line item columns ────────────────────────────────────────────────
   const lineColumns: Column<SoItem>[] = [
     {
       key: "item",
@@ -1000,11 +884,6 @@ function SalesOrderDetailV2ReadOnly() {
         </span>
       ),
     },
-    /* Remark as its OWN column — hidden by default because the text already
-       renders under the item above, where it is read. This column exists so the
-       remark is SEARCHABLE, filterable and lands in the CSV export: a `render`
-       has no getValue, so without it the instruction is invisible to every one
-       of those (the same reason the Stock / Incoming PO pair below carry one). */
     {
       key: "remark",
       label: "Remark",
@@ -1068,7 +947,6 @@ function SalesOrderDetailV2ReadOnly() {
     },
   ];
 
-  // ── Loading / error states ───────────────────────────────────────────
   if (!docNo) {
     return (
       <div className="p-8 text-center text-ink-muted">No sales order specified.</div>
@@ -1109,7 +987,6 @@ function SalesOrderDetailV2ReadOnly() {
     );
   }
 
-  // Bottom-bar CTA on phone opens tel: with the customer's phone if present.
   const goCall = () => {
     if (!salesOrder?.phone) return;
     window.location.href = `tel:${salesOrder.phone.replace(/\s+/g, "")}`;
@@ -1117,7 +994,6 @@ function SalesOrderDetailV2ReadOnly() {
 
   return (
     <div className="pb-24 md:pb-0">
-      {/* ─── Mobile-only dark sticky header ─────────────────────────── */}
       <div className="sticky top-0 z-20 -mx-4 -mt-4 bg-sidebar text-sidebar-ink shadow-slab md:hidden">
         <div className="flex items-center justify-between gap-3 px-4 pt-3">
           <button
@@ -1155,7 +1031,6 @@ function SalesOrderDetailV2ReadOnly() {
 
       <CancelRequestPanel docType="so" docKey={salesOrder.doc_no} docNumber={salesOrder.doc_no} onExecute={executeCancel} executing={updateStatus.isPending} />
 
-      {/* ─── Desktop sticky header (hidden on phone) ────────────────── */}
       {/* Nick 2026-07-09 — "这个圈起来的需要 pin 起来".
           TopNavbar (components/TopNavbar.tsx) sits sticky top-0 z-40 h-12
           inside the SAME <main class="overflow-y-auto"> that scrolls this
@@ -1264,12 +1139,6 @@ function SalesOrderDetailV2ReadOnly() {
                 and NOTHING else: it does not set ?edit=1, so lines, header and
                 addresses stay read-only under their own `isLocked` gate, which
                 is the lock that genuinely belongs to them. */}
-            {/* CUTOVER: a migrated order takes no money here either. Its balance
-                is the ONE figure the ERP knows is wrong (AutoCount payments
-                since 2026-08-28 have not reached us), which is the whole reason
-                the document is shut — so this is the last door to leave open.
-                The API refuses the write regardless; hiding the button stops the
-                operator being offered a click that can only 409. */}
             {!migratedLocked && !["cancelled", "draft"].includes(salesOrder.status?.toLowerCase() ?? "") && (
               <Button
                 variant="secondary"
@@ -1280,7 +1149,6 @@ function SalesOrderDetailV2ReadOnly() {
                 Collect payment
               </Button>
             )}
-            {/* DEV-76: a charge-only order (no DO) is invoiced straight off the SO. */}
             {!migratedLocked && salesOrder.status.toLowerCase() === "confirmed" && salesOrder.has_children === false && (
               <Button
                 variant="secondary"
@@ -1290,11 +1158,6 @@ function SalesOrderDetailV2ReadOnly() {
                 Create Invoice
               </Button>
             )}
-            {/* Cancel is a WRITE (PATCH /:docNo/status), and on a migrated order
-                it is refused. It is also the most destructive thing on this bar,
-                so it is disabled-with-a-reason rather than hidden: a salesperson
-                looking for it must find out WHY it cannot be used, not wonder
-                where it went. */}
             {/* A DRAFT is discarded, not cancelled (owner 2026-07-20): DELETE,
                 no document number burnt, no dead CANCELLED row. The right-click
                 menu on the list still offers Request cancellation on a draft. */}
@@ -1318,8 +1181,6 @@ function SalesOrderDetailV2ReadOnly() {
                 Request cancellation
               </Button>
             )}
-            {/* Same gate as Edit: adding a line IS an edit, so an order that
-                cannot be edited must not offer it. */}
             <Button
               variant="secondary"
               icon={<Plus size={14} />}
@@ -1347,12 +1208,8 @@ function SalesOrderDetailV2ReadOnly() {
         </div>
       </div>
 
-      {/* ─── Detail body ────────────────────────────────────────────── */}
       <div className="py-5">
         <MigratedReadonlyBanner header={salesOrder} />
-        {/* Mobile-only Order total hero — sits at the very top of the scroll
-            body, above the Customer section. On md+ the dark Order total lives
-            in the sticky aside instead (below). */}
         <div className="mb-3 rounded-lg border border-border bg-surface p-4 shadow-stone md:hidden">
           <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
             Order total
@@ -1366,7 +1223,6 @@ function SalesOrderDetailV2ReadOnly() {
         </div>
         <DetailGrid>
           <DetailMain>
-            {/* Customer */}
             <Section title="Customer">
               <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-3">
                 <Field
@@ -1406,9 +1262,6 @@ function SalesOrderDetailV2ReadOnly() {
                     !salesOrder.agent && !salesOrder.salesperson_id
                   }
                 />
-                {/* Who else may see and edit this order. Hidden from viewers
-                    when it is shared with nobody; editable in place for
-                    scm.so.attribute_other. */}
                 <SoSharedWith
                   docNo={salesOrder.doc_no}
                   header={salesOrder}
@@ -1418,7 +1271,6 @@ function SalesOrderDetailV2ReadOnly() {
               </div>
             </Section>
 
-            {/* Order info + optional amber Note callout */}
             <Section title="Order info">
               <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-4">
                 <Field
@@ -1482,7 +1334,6 @@ function SalesOrderDetailV2ReadOnly() {
               )}
             </Section>
 
-            {/* Delivery address + Emergency contact */}
             <Section title="Delivery address">
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-[1.4fr_1fr] sm:divide-x sm:divide-border-subtle">
                 <div className="sm:pr-6">
@@ -1533,7 +1384,6 @@ function SalesOrderDetailV2ReadOnly() {
               </div>
             </Section>
 
-            {/* Line items */}
             <Section
               title={`Line items · ${items.length}`}
               actions={
@@ -1555,19 +1405,8 @@ function SalesOrderDetailV2ReadOnly() {
               />
             </Section>
 
-            {/* Payments — the SAME PaymentsTable the editor renders (Task #105
-                one-source rule), mounted here since 2026-08-09 so "Collect
-                payment" no longer swaps the whole page for the legacy editor
-                (owner: unify the SO surfaces). Adding/editing money follows the
-                no-naked-edits rule via the card's own Edit toggle; `?payments=1`
-                deep-links land with the toggle already open. */}
             {(() => {
               const soStatus = salesOrder.status?.toLowerCase() ?? "";
-              /* A migrated order's balance is the one number we KNOW is wrong
-                 (AutoCount payments since 2026-08-28 have not reached the ERP),
-                 so the payments card is the last place to offer an edit on one.
-                 The API refuses these writes too; this stops the operator being
-                 offered the click at all. */
               const canOfferPayEdit = !migratedLocked && !["cancelled", "draft"].includes(soStatus);
               const canEditPayments = !migratedLocked
                 && (soStatus === "draft" || (soStatus !== "cancelled" && payEditing));
@@ -1597,9 +1436,6 @@ function SalesOrderDetailV2ReadOnly() {
           </DetailMain>
 
           <DetailAside>
-            {/* Aside is hidden on phone (Order total is a light card at the
-                top of main; Key dates / People / Recent activity are omitted
-                on mobile per the design). Reappears from md up. */}
             <div className="hidden lg:sticky lg:top-[124px] space-y-3 md:block">
               <OrderTotalCard
                 header={salesOrder}
@@ -1746,7 +1582,6 @@ function SalesOrderDetailV2ReadOnly() {
         </DetailGrid>
       </div>
 
-      {/* ─── Fixed bottom action bar (phone only) ───────────────────── */}
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">
         <div className="flex items-center gap-2">
           <button
@@ -1778,9 +1613,6 @@ function SalesOrderDetailV2ReadOnly() {
         </div>
       </div>
 
-      {/* History drawer — the shared audit panel over the SO's own entries
-          (the Recent activity card summarises those) plus the rows of the
-          POs / DOs / invoices raised from it. */}
       {historyOpen && (
         <AuditHistoryPanel
           recordLabel={salesOrder.doc_no}
@@ -1793,15 +1625,11 @@ function SalesOrderDetailV2ReadOnly() {
         />
       )}
 
-      {/* Relationship map modal — 5-node graph per Nick's 2026-07-08 handoff */}
       <DocumentRelationshipMapModal
         open={relMapOpen}
         onClose={() => setRelMapOpen(false)}
         nodes={chainNodes}
         onNodeClick={(n) => {
-          // Close only when the click actually navigated away; an in-app notice
-          // (Customer PO / a GRN we may not open) must render OVER the map, not
-          // dismiss it.
           if (onChainNodeClick(n)) setRelMapOpen(false);
         }}
         amendments={chainAmendments}
@@ -1814,9 +1642,6 @@ function SalesOrderDetailV2ReadOnly() {
         }}
         pairing={chainPairing}
       />
-      {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. The picked one opens in its own tab of the
-          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}
@@ -1839,12 +1664,6 @@ function SalesOrderDetailV2ReadOnly() {
             value: fmtMoney(salesOrder.local_total_sen, salesOrder.currency),
           },
           {
-            /* Through the SHARED gate, not off `balance_sen` — the same number
-               the mobile detail shows and the same one the PDF below prints.
-               Reading the column directly is what put a 0 here for every
-               AutoCount-imported order, on a card whose Order total row above
-               it was correct. Trace: the entry named in `deriveBalance`'s own
-               docblock (vendor/scm/lib/so-detail-gates.ts). */
             label: "Balance",
             value: fmtMoney(
               soDeriveBalance(salesOrder, printPaymentsQ.data),
@@ -1858,7 +1677,6 @@ function SalesOrderDetailV2ReadOnly() {
   );
 }
 
-// ─── Small utility dot separator ──────────────────────────────────────────
 
 function Divider() {
   return (

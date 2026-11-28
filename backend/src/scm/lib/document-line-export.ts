@@ -30,12 +30,6 @@ import { pageWithTruncation, type RawPage } from './outstanding-po-lines';
 
 type QueryError = { message: string; code?: string } | null;
 
-/* A list export can be served in WINDOWS of documents, one request each, with
-   the browser asking for the next window until there is none. Every PostgREST
-   read is a Worker subrequest, and one invocation has a cap. Measured 2026-09-15
-   on production data: the Sales Order list builder and line attach cost about
-   64 requests per 100 orders, so ONE request for the Houzs "All" tab (2,959
-   orders) made 1,923 — over the cap. A window of 500 orders made at most 332. */
 export const EXPORT_WINDOW = 500;
 export type ExportWindow = { offset: number; limit: number };
 
@@ -50,12 +44,8 @@ export function readExportWindow(query: (key: string) => string | undefined): Ex
 type LinePage<L> = PromiseLike<{ data: L[] | null; error: QueryError }>;
 
 export type DocumentLineExportRead<H extends { id: string }, L> = {
-  /** One page of the filtered, sorted, COMPANY-SCOPED header read. */
   headers: (from: number, to: number) => RawPage;
-  /** One page of the COMPANY-SCOPED lines for a batch of header ids. Must be
-   *  ordered deterministically, or paging can skip and repeat rows. */
   lines: (headerIds: string[], from: number, to: number) => LinePage<L>;
-  /** The header id a line belongs to. */
   parentOf: (line: L) => string | null | undefined;
 };
 

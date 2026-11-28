@@ -1,6 +1,3 @@
-// The Files card on a Goods Received, Purchase Invoice, Delivery Return or
-// Purchase Return: DocFilesCard bound to that document's hooks. Rendered by
-// the desktop detail page and by the phone's generic detail screen alike.
 import { DocFilesCard } from './DocFilesCard';
 import { useAuth } from '../../../auth/AuthContext';
 import {

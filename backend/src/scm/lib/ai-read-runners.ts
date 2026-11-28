@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// The SCAN_QUEUE consumer for AI reads (ai-read-jobs.ts): replay the stored
-// request through the SAME handler the synchronous endpoint runs, and keep its
-// answer on the job row. Importing this module registers the runner for the
-// no-queue fallback; index.ts imports it for the consumer.
-//
-// Never throws once the read has started: a retry would pay for a second
-// Anthropic call, so every failure is written to the row (shown to the user by
-// the poll) and the message is acked.
-// ----------------------------------------------------------------------------
 
 import { extractBillsHandler } from '../routes/pv-extract';
 import { readRequestBillHandler } from '../routes/payment-request-bill';
@@ -33,8 +23,6 @@ function handlerFor(kind: AiReadKind): (c: Any) => Promise<Response> {
 
 const CRASH_ERROR = 'The reader stopped unexpectedly. Please read it again.';
 
-/** A refusal's sentence, for the job's error column (the page shows the
- *  handler's own body through the same wording the synchronous path used). */
 function reasonOf(body: unknown, status: number): string {
   const b = (body ?? {}) as { message?: unknown; reason?: unknown; error?: unknown };
   for (const v of [b.message, b.reason, b.error]) if (typeof v === 'string' && v.trim()) return v.trim().slice(0, 500);
@@ -43,19 +31,17 @@ function reasonOf(body: unknown, status: number): string {
 
 export async function runAiReadJob(env: Env, jobId: string, svc: Any): Promise<void> {
   const { data: row, error } = await svc.from('scan_jobs').select('id, status, document_type').eq('id', jobId).maybeSingle();
-  if (error) throw new Error(`scan_jobs read failed for ${jobId}: ${error.message}`); // nothing spent yet: let the queue retry
+  if (error) throw new Error(`scan_jobs read failed for ${jobId}: ${error.message}`);
   if (!row) return;
   const kind = aiReadKindOf(row.document_type);
-  if (!kind || row.status !== 'queued') return; // a redelivery of a read already under way or finished
+  if (!kind || row.status !== 'queued') return;
 
   const { data: claimed, error: claimErr } = await svc.from('scan_jobs')
     .update({ status: 'running', updated_at: new Date().toISOString() })
     .eq('id', jobId).eq('status', 'queued').select('id').maybeSingle();
-  if (claimErr) throw new Error(`scan_jobs claim failed for ${jobId}: ${claimErr.message}`); // nothing spent yet: let the queue retry
-  if (!claimed) return; // another delivery claimed it first
+  if (claimErr) throw new Error(`scan_jobs claim failed for ${jobId}: ${claimErr.message}`);
+  if (!claimed) return;
 
-  /* Only a read still 'running' takes its answer: one the poll already marked
-     too slow stays failed, as the page was told. */
   const finish = async (patch: Record<string, unknown>) => {
     const { error: upErr } = await svc.from('scan_jobs')
       .update({ ...patch, updated_at: new Date().toISOString() }).eq('id', jobId).eq('status', 'running');
@@ -67,7 +53,7 @@ export async function runAiReadJob(env: Env, jobId: string, svc: Any): Promise<v
     if (!loaded) { await finish({ status: 'error', error: LOST_READ_ERROR }); return; }
     const { c, settle } = headlessContext(env, svc, loaded.snap, loaded.file);
     const res = await handlerFor(kind)(c);
-    await settle(); // the AI-usage rows and the kept originals land before the job says done
+    await settle();
     let body: unknown = null;
     try { body = await res.json(); } catch { body = null; }
     const ok = res.status >= 200 && res.status < 300;

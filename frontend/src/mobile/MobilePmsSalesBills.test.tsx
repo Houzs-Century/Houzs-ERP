@@ -30,7 +30,6 @@ const RESPONSE: ProjectSalesBillsResponse = {
     { key: "5:2", ref_raw: "HC8993", ref_token: "HC8993", amount_sen: 650000, extra_sen: null, extra_tag: null, salesperson_name: "Jason", report_date: "2026-10-11", source_activity_id: 5, created_at: null, person_key: "rep:11", sales_rep_id: 11,
       other_event_name: "JOHOR [AKEMI] MLE @ MVEC SOUTHKEY",
       match: { status: "opened", so_doc_no: "HC-SO-2609-104", so_status: "CONFIRMED", so_project_id: 345, so_salesperson_id: "s", so_amount_sen: 650000, other_event: true, unlinked: false } },
-    /* Opened under this event: already in the Sales Orders list, so not repeated. */
     { key: "5:4", ref_raw: "HC8999", ref_token: "HC8999", amount_sen: 100000, extra_sen: null, extra_tag: null, salesperson_name: "Jason", report_date: "2026-10-11", source_activity_id: 5, created_at: null, person_key: "rep:11", sales_rep_id: 11,
       other_event_name: null,
       match: { status: "opened", so_doc_no: "HC-SO-2609-199", so_status: "CONFIRMED", so_project_id: 344, so_salesperson_id: "s", so_amount_sen: 100000, other_event: false, unlinked: false } },
@@ -57,7 +56,6 @@ describe("MobilePmsSalesBills", () => {
     expect(get).toHaveBeenCalledWith("/api/project-sales-bills/344");
     expect(screen.getByText("2 · RM 11,499.00")).toBeTruthy();
     expect(screen.getByText(/Not opened 1 · RM 4,999.00/)).toBeTruthy();
-    /* No per-person row: the red sums sit under Sales attending. */
     expect(screen.queryByText("Melvin Tan")).toBeNull();
     expect(screen.queryByText("all opened")).toBeNull();
     expect(screen.getByText("HC-SO-2609-104").closest("a")?.getAttribute("href")).toBe("/scm/sales-orders/HC-SO-2609-104");

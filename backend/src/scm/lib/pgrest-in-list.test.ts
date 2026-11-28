@@ -15,7 +15,6 @@ import { describe, expect, test } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
 import { pgrestInList, parsePgrestInList, pgrestIn } from './pgrest-in-list';
 
-/** The `item_code=` query-string value the library builds for `.in()`. */
 function libraryFilter(values: readonly string[]): string {
   let seen = '';
   const sb = createClient('http://postgrest.test', 'k', {
@@ -31,7 +30,6 @@ function libraryFilter(values: readonly string[]): string {
     .then(() => seen) as unknown as string;
 }
 
-/** Same, for the escaped payload this module builds. */
 function ourFilter(values: readonly string[]): string {
   let seen = '';
   const sb = createClient('http://postgrest.test', 'k', {
@@ -47,10 +45,6 @@ function ourFilter(values: readonly string[]): string {
     .then(() => seen) as unknown as string;
 }
 
-/* Real item codes off company 1's catalogue, chosen to cover every branch of the
-   library's quoting rule: plain, parenthesised, spaced, dotted, and one with a
-   comma. NONE of them carries a `"` or a `\`, which is exactly the population
-   this change must not disturb. */
 const UNAFFECTED = [
   '9058-1NA',
   '9058-1A(RHF)',
@@ -77,9 +71,6 @@ describe('pgrestInList — parity with the library where the library is correct'
     const theirs = await libraryFilter(withQuote);
     const ours = await ourFilter(withQuote);
     expect(ours).not.toBe(theirs);
-    /* What the library emits does not name the codes it was given — the third
-       one is gone entirely and the second is garbled. That is the defect, stated
-       as an assertion so it cannot be re-introduced by "simplifying" back. */
     expect(parsePgrestInList(theirs.slice('in.'.length)))
       .toEqual(['9058-1NA', 'DUNLOPILLO GENERASI 5 MATT (S']);
     expect(parsePgrestInList(ours.slice('in.'.length))).toEqual(withQuote);
@@ -137,7 +128,6 @@ describe('pgrestIn — the escape-when-needed applicator', () => {
   test('an inch-mark code takes the escaped path and every code survives', async () => {
     const withQuote = ['9058-1NA', 'DUNLOPILLO GENERASI 5" MATT (S)', '9058-1S'];
     const via = await pgrestInFilter(withQuote);
-    /* NOT what the raw library would emit — that dropped the third code. */
     expect(via).toBe(await ourFilter(withQuote));
     expect(via).not.toBe(await libraryFilter(withQuote));
     expect(parsePgrestInList(via.slice('in.'.length))).toEqual(withQuote);

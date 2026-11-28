@@ -14,7 +14,7 @@ import { useQuery } from "../../hooks/useQuery";
 import { useToast } from "../../hooks/useToast";
 import { useDialog } from "../../hooks/useDialog";
 import { formatDate } from "../../lib/utils";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { Field, Pill, dangerBtn, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
 import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";
@@ -80,8 +80,6 @@ export function LeavePage() {
     [mine, statusFilter, typeFilter],
   );
 
-  // Calendar entries, from the data the page already has: approved team leave
-  // (approvers) + pending team leave + my own (labelled "You"), deduped by id.
   const calEntries: CalEntry[] = useMemo(() => {
     const seen = new Set<number>();
     const out: CalEntry[] = [];

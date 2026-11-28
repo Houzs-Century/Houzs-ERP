@@ -55,7 +55,6 @@ import css from './SettlementSetup.module.css';
 export const SettlementSetup = () => {
   const navigate = useNavigate();
   const [editing, setEditing] = useState<string | null>(null);
-  /* What the last merchant save did to the reports already uploaded. */
   const [notice, setNotice] = useState<string | null>(null);
   const q = useSettlementMaintenance();
   const data = q.data;
@@ -101,8 +100,6 @@ export const SettlementSetup = () => {
 
         <div className={css.pair}>
           {companies.length > 0 ? <BankMatrix companies={companies} banks={banks} /> : <div />}
-          {/* Per-company settings: this company's numbering and default bank —
-              switch companies in the top bar for the other one. */}
           <div className={css.stack}>
             <NumberingCard company={thisCompany} />
             <DefaultBankCard />
@@ -120,9 +117,7 @@ export const SettlementSetup = () => {
   );
 };
 
-/* ── Merchants down the side, companies across the top ────────────────────── */
 
-/** A fee method's chip and its words (the server holds the vocabulary). */
 const feeChip = (method: string | null): [string, string] => {
   switch (method) {
     case 'stated': return ['Fee per line', 'fee stated per line'];
@@ -132,7 +127,6 @@ const feeChip = (method: string | null): [string, string] => {
   }
 };
 
-/** The shared half of a merchant as the design's chips: file, reference, fee, drift. */
 const layoutChips = (m: MaintenanceMerchant): Array<{ t: string; tone: Tone; tip: string }> => [
   { t: m.statement_format ?? 'File ?', tone: 'calm', tip: 'File type' },
   m.has_unique_ref === true
@@ -146,7 +140,6 @@ const layoutChips = (m: MaintenanceMerchant): Array<{ t: string; tone: Tone; tip
 
 const MerchantMatrix = ({ companies, merchants, banks, clearings, feeAccounts, onEdit }: {
   companies: MaintenanceCompany[]; merchants: MaintenanceMerchant[]; banks: MaintenanceBank[];
-  /** Each company's clearing accounts (326-/327-) — the picker under the payout bank. */
   clearings: NonNullable<MaintenanceData['clearings']>;
   feeAccounts: NonNullable<MaintenanceData['feeAccounts']>;
   onEdit: (code: string) => void;
@@ -181,7 +174,6 @@ const MerchantMatrix = ({ companies, merchants, banks, clearings, feeAccounts, o
                     {m.display_name !== m.code && <span className={css.rowSub}>{m.display_name}</span>}
                     {(m.so_names ?? []).length > 0 && <span className={css.rowSub}>also keyed as {(m.so_names ?? []).join(', ')}</span>}
                   </td>
-                  {/* OUTSIDE the company columns, because it belongs to no company. */}
                   <td>
                     <span className={css.chips}>
                       {layoutChips(m).map((k) => <Tag key={k.tip} tone={k.tone} title={k.tip}>{k.t}</Tag>)}
@@ -194,7 +186,6 @@ const MerchantMatrix = ({ companies, merchants, banks, clearings, feeAccounts, o
                   </td>
                   {companies.map((co) => {
                     const at = m.byCompany[String(co.id)] ?? { enabled: false, linked: false, bankAccountCode: null };
-                    /* Only banks THIS company has can receive THIS company's money. */
                     const usable = banks.filter((b) => b.byCompany[String(co.id)]?.enabled);
                     const coClearings = clearings[String(co.id)] ?? [];
                     const coFees = feeAccounts[String(co.id)] ?? [];
@@ -256,10 +247,6 @@ const MerchantMatrix = ({ companies, merchants, banks, clearings, feeAccounts, o
                                 </select>
                               </label>
                             )}
-                            {/* A fee account this company's chart no longer
-                                offers is named rather than shown as a blank
-                                select — that silence is exactly how 930-0000
-                                went unnoticed for six days. */}
                             {at.feeAccountCode && coFees.length > 0 && !coFees.some((a) => a.account_code === at.feeAccountCode) && (
                               <span className={css.warn}>fee → {at.feeAccountCode}, which this chart cannot post to</span>
                             )}
@@ -281,7 +268,6 @@ const MerchantMatrix = ({ companies, merchants, banks, clearings, feeAccounts, o
   );
 };
 
-/* ── Banks down the side, the same companies across the top ───────────────── */
 
 const BankMatrix = ({ companies, banks }: { companies: MaintenanceCompany[]; banks: MaintenanceBank[] }) => {
   const save = useSaveMaintenanceBank();
@@ -309,8 +295,6 @@ const BankMatrix = ({ companies, banks }: { companies: MaintenanceCompany[]; ban
                 </td>
                 {companies.map((co) => {
                   const at = b.byCompany[String(co.id)] ?? { inChart: false, enabled: false, usedBy: [] };
-                  /* A code this company simply does not carry is not a box it
-                     could tick — say so rather than offer a lie. */
                   if (!at.inChart) {
                     return <td key={co.id} className={css.mid}><span className={css.absent}>not in its chart</span></td>;
                   }
@@ -349,11 +333,6 @@ const BankMatrix = ({ companies, banks }: { companies: MaintenanceCompany[]; ban
   );
 };
 
-/* ── Voucher numbering (GL redesign item 8a) — the owner's own levers ──────
-   One letter per bank (Maybank M → the 2990-MPV-YYMM series; a new bank is a
-   letter typed HERE, never a deploy) and the suffix width (3 → -001, up to
-   5). The PV series (8b), the OR channels (9) and transfers (10) all read
-   the same letters, so Maybank is M everywhere or nowhere. */
 const NumberingCard = ({ company }: { company: string | null }) => {
   const q = useVoucherNumbering();
   const save = useSaveVoucherNumbering();
@@ -364,7 +343,6 @@ const NumberingCard = ({ company }: { company: string | null }) => {
 
   const rows = q.data?.accounts ?? [];
   const shownDigits = digits ?? q.data?.digits ?? 3;
-  // Index reads widened by hand — noUncheckedIndexedAccess is off project-wide.
   const typed = (code: string): string | undefined => draft[code] as string | undefined;
   const letterOf = (code: string, saved: string | null): string => typed(code) ?? saved ?? '';
   const dirtyLetters = rows
@@ -376,7 +354,6 @@ const NumberingCard = ({ company }: { company: string | null }) => {
   const firstLetter = firstBank ? letterOf(firstBank.accountCode, firstBank.letter).toUpperCase() : 'M';
 
   const submit = () => {
-    /* Two banks on one letter would share a number series. */
     const letters = rows.filter((a) => a.fixedCash !== true).map((a) => letterOf(a.accountCode, a.letter).toUpperCase()).filter(Boolean);
     if (new Set(letters).size !== letters.length) { setNote('Each money account needs its own letter.'); return; }
     save.mutate(
@@ -411,8 +388,6 @@ const NumberingCard = ({ company }: { company: string | null }) => {
             <span className={sp.muted}>{a.accountCode}</span>
             <span className={css.letterName}>{a.accountName}</span>
             {a.fixedCash === true ? (
-              /* The drawer: C on both papers (CPV / COR), minted off
-                 roles.CASH — nothing to type, nothing the Save sends. */
               <input className={`${sp.input} ${css.letterBox}`} value="C" readOnly aria-label={`Letter for ${a.accountCode}`}
                 title="The cash series is fixed at C — CPV for payments, COR for receipts" />
             ) : (
@@ -792,8 +767,6 @@ const BankRulesCard = () => {
                     </select>
                   </td>
                   <td>
-                    {/* A number, as today: the list reads by acquirer, the
-                        matcher reads every rule by this order. */}
                     <NumberInput
                       className={`${sp.input} ${sp.compact} ${css.order}`}
                       aria-label={`Order for ${r.acquirer_code} rule ${r.id}`}
@@ -846,8 +819,6 @@ const BankRulesCard = () => {
           </tbody>
         </table>
       </div>
-      {/* Add a rule — the acquirer and the pattern are the essentials;
-          everything else starts at its default and is edited above. */}
       <div className={css.addRule}>
         <select className={`${sp.select} ${sp.compact}`} aria-label="New rule acquirer" value={newRule.acquirerCode}
           onChange={(e) => { setNewRule((p) => ({ ...p, acquirerCode: e.target.value })); setNote(null); }}>
@@ -875,7 +846,6 @@ const BankRulesCard = () => {
   );
 };
 
-/* ── One merchant's report layout — GLOBAL, every company shares it ───────── */
 
 const HEADING_FIELDS = [
   { key: 'date', label: 'Date heading', hint: 'e.g. Txn Date' },
@@ -891,15 +861,11 @@ const HEADING_FIELDS = [
   { key: 'qr_values', label: 'QR codes in it', hint: 'e.g. DN, WC, WL' },
 ] as const;
 
-/** "Pinelabs, pine labs ,," → ["Pinelabs", "pine labs"] — the names as typed,
-    blanks dropped. The server trims, de-duplicates and refuses a name another
-    merchant already answers to. */
 const namesOf = (text: string): string[] => text.split(',').map((s) => s.trim()).filter(Boolean);
 
 const MerchantForm = ({ merchant, companies, onDone }: {
   merchant: MaintenanceMerchant;
   companies: MaintenanceCompany[];
-  /** Back to the page, with what the save did to the reports already uploaded. */
   onDone: (said?: string) => void;
 }) => {
   const save = useSaveAcquirerSetup();
@@ -925,8 +891,6 @@ const MerchantForm = ({ merchant, companies, onDone }: {
     ...(form.hasUniqueRef === 'true' ? ['ref'] : []),
   ];
 
-  /* Each company that uses this merchant, one after another — the rule is
-     shared, the reports are each company's own. */
   const matchAgain = async () => {
     setMatching(true);
     const said: string[] = [];

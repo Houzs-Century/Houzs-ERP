@@ -51,9 +51,7 @@ export type EventCostAccount = { accountCode: string; accountName: string | null
 
 export type EventCost = {
   event: EventRow;
-  /** Σ on EXPENSE accounts — what the event cost. */
   costSen: number;
-  /** Σ on every other account (a rental deposit is an asset, not a cost). */
   otherSen: number;
   accounts: EventCostAccount[];
   lines: EventCostLine[];

@@ -52,7 +52,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { APIProvider, Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { X, MapPin as MapPinIcon, ChevronDown } from 'lucide-react';
-import { fmtSen, fmtTime } from '../../vendor/shared/format';
+import { fmtSen, fmtTime } from '../../../../shared/src/vendor/shared/format';
 import {
   clusterPins,
   legendFromRoutes,
@@ -70,7 +70,6 @@ import type { VehiclePosition } from '../../vendor/scm/lib/vehicle-positions';
 
 const MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 
-/* ── Open/closed persistence (per page, per browser — a personal pref). ────── */
 export function useMapPanelOpen(pageKey: string): [boolean, (open: boolean) => void] {
   const storageKey = `dmap-open.${pageKey}.v1`;
   const [open, setOpen] = useState<boolean>(() => {
@@ -78,7 +77,7 @@ export function useMapPanelOpen(pageKey: string): [boolean, (open: boolean) => v
   });
   const set = (next: boolean) => {
     setOpen(next);
-    try { window.localStorage.setItem(storageKey, next ? '1' : '0'); } catch { /* private mode */ }
+    try { window.localStorage.setItem(storageKey, next ? '1' : '0'); } catch { }
   };
   return [open, set];
 }
@@ -96,7 +95,7 @@ export function useMapCompactColumns(pageKey: string): [boolean, (on: boolean) =
   });
   const set = (next: boolean) => {
     setOn(next);
-    try { window.localStorage.setItem(storageKey, next ? '1' : '0'); } catch { /* private mode */ }
+    try { window.localStorage.setItem(storageKey, next ? '1' : '0'); } catch { }
   };
   return [on, set];
 }
@@ -109,34 +108,20 @@ type OverlayProps = {
   depot: DeliveryMapDepot | null;
   focus: MapFocus | null;
   selectedRef: string | null;
-  /** Legend-row hover — dims the OTHER trips visually, without the zoom or the
-   *  board filter a real (clicked) focus carries. */
   emphasisRouteId: string | null;
-  /** Region key under the map's chips — the zero-pin fly-to target. */
   regionKey: string | null;
-  /** Changes on every (date, region) pick — the auto-fit trigger, so a data
-   *  load always lands on the default picture. */
   viewKey: string;
-  /** Fit the view to these refs' points only (a region chip); null = everything. */
   fitRefs: readonly string[] | null;
   onPinClick?: (ref: string) => void;
   onRouteClick?: (routeId: string) => void;
   onHoverRef?: (ref: string | null) => void;
   onMapTypeChange?: (mapTypeId: string) => void;
-  /** Colour stops by where they are in the run (null = by trip). */
   statusByRef: Map<string, StopStatus> | null;
-  /** Last Mile per-lorry view: draw stops as RINGS — filled = delivered, open
-   *  ring = still to deliver, red ring = late — on the lorry's own colour, so the
-   *  run reads as a route at a glance. Off = the fill-by-status pin used elsewhere. */
   ringStops: boolean;
   vehicles: VehiclePosition[];
   onVehicleClick?: (v: VehiclePosition) => void;
 };
 
-/* Imperative overlay — markers + polylines drawn/torn down on every change so
-   nothing leaks (the FleetDayMap pattern, extended with click/hover wiring,
-   focus dimming, the selected-pin outline, and now zoom-aware clustering +
-   direction arrows + the region fly-to). */
 function PanelOverlay({
   pins, routes, depot, focus, selectedRef, emphasisRouteId, regionKey, viewKey, fitRefs,
   onPinClick, onRouteClick, onHoverRef, onMapTypeChange, statusByRef, ringStops, vehicles, onVehicleClick,
@@ -145,8 +130,6 @@ function PanelOverlay({
   const objectsRef = useRef<Array<{ setMap: (m: google.maps.Map | null) => void }>>([]);
   const listenersRef = useRef<google.maps.MapsEventListener[]>([]);
 
-  /* Zoom bucket — clusters fold per INTEGER zoom, so the overlay redraws when
-     the operator crosses a zoom level and pins merge/split accordingly. */
   const [zoomBucket, setZoomBucket] = useState<number>(11);
   useEffect(() => {
     if (!map) return;
@@ -157,20 +140,15 @@ function PanelOverlay({
     return () => l.remove();
   }, [map]);
 
-  /* Report the map type so the panel can show the roadmap Labels toggle only
-     where it applies (satellite keeps Google's own checkbox, untouched). */
   useEffect(() => {
     if (!map || !onMapTypeChange) return;
     onMapTypeChange(String(map.getMapTypeId() ?? 'roadmap'));
     const l = map.addListener('maptypeid_changed', () =>
       onMapTypeChange(String(map.getMapTypeId() ?? 'roadmap')));
     return () => l.remove();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one listener per map; the caller passes a new callback every render
   }, [map]);
 
-  /* Fit-to-content runs when the CONTENT, the (date, region) view or the FOCUS
-     changes — not on zoom redraws, legend hovers or row selections (a row
-     click pans, it must not re-zoom the whole view). */
   const fitSig = useMemo(
     () => JSON.stringify([
       viewKey,
@@ -183,6 +161,7 @@ function PanelOverlay({
     [viewKey, pins, routes, depot, focus, fitRefs],
   );
   const appliedFitSigRef = useRef<string | null>(null);
+  const roadSig = routes.map((r) => r.roadPath?.length ?? 0).join(',');
 
   useEffect(() => {
     if (!map || typeof google === 'undefined') return;
@@ -191,9 +170,6 @@ function PanelOverlay({
     for (const o of objectsRef.current) o.setMap(null);
     objectsRef.current = [];
 
-    /* Bounds collection — only NON-focus-dimmed content counts, so a focused
-       trip fits alone (the existing rule). Legend-hover emphasis dims VISUALLY
-       but never re-fits. */
     const fitPoints: google.maps.LatLngLiteral[] = [];
     const extend = (p: google.maps.LatLngLiteral, counts: boolean) => {
       if (counts) fitPoints.push(p);
@@ -201,7 +177,6 @@ function PanelOverlay({
 
     const focused = focus?.routeId ?? null;
     const focusRefs = new Set(focus?.refs ?? []);
-    /* Visual emphasis: a real focus wins; else the hovered legend row. */
     const emphasis = focused ?? emphasisRouteId;
     const emphasisRefs = focused != null
       ? focusRefs
@@ -211,14 +186,12 @@ function PanelOverlay({
 
     const statusOf = (ref: string): StopStatus | null => statusByRef?.get(ref) ?? null;
 
-    /* Lorries — where each run is now. Not part of the fit: the view frames the
-       day's stops, and a lorry still at the depot must not zoom the map out. */
     for (const v of vehicles) {
       const at = fmtTime(v.recordedAt);
       const marker = new google.maps.Marker({
         position: { lat: v.lat, lng: v.lng },
         map,
-        title: `${v.label} · last position ${at}${v.lorryId ? ' · click for Fleet Health' : ''}`,
+        title: `${v.label} · ${v.source === 'gps' ? 'Tracker' : 'Phone'} fix ${at} (${Math.max(0, Math.round((Date.now() - Date.parse(v.recordedAt)) / 60_000))} min ago)${v.lorryId ? ' · click for Fleet Health' : ''}`,
         zIndex: 4000,
         label: { text: v.label, color: '#111827', fontWeight: 'bold', fontSize: '11px' },
         icon: {
@@ -235,7 +208,6 @@ function PanelOverlay({
       if (onVehicleClick) listenersRef.current.push(marker.addListener('click', () => onVehicleClick(v)));
     }
 
-    /* Depot — one dark marker; dims only under emphasis if no route claims it. */
     if (depot) {
       const d = { lat: depot.lat, lng: depot.lng };
       extend(d, focused == null);
@@ -265,8 +237,6 @@ function PanelOverlay({
       }
     };
 
-    /* Routes — bold polyline with direction arrows + numbered stops, dimmed
-       unless emphasised (or nothing is emphasised). */
     for (const route of routes) {
       const dimmed = emphasis != null && route.id !== emphasis;
       const countsForFit = !(focused != null && route.id !== focused);
@@ -277,15 +247,11 @@ function PanelOverlay({
         const p = { lat: s.lat, lng: s.lng };
         path.push(p);
         extend(p, countsForFit);
-        /* A second stop at the same spot rides the first one's pin ("6, 7"). */
         if (s.covered) continue;
         const spotRefs = s.spotRefs ?? [s.ref];
         const pinText = s.pinLabel ?? String(s.order);
         const isSel = selectedRef != null && spotRefs.includes(selectedRef);
         const st = statusOf(s.ref);
-        /* Ring convention (Last Mile per-lorry): the lorry colour identifies the
-           run; a FILLED dot is delivered, an OPEN ring is still to deliver, a RED
-           ring is late. Elsewhere the pre-existing fill-by-status pin stays. */
         let fillColor: string; let strokeColor: string; let strokeWeight: number; let labelColor: string;
         if (ringStops) {
           const delivered = st === 'done';
@@ -320,15 +286,15 @@ function PanelOverlay({
       }
       if (route.depot && route.stops.length > 0) path.push({ lat: route.depot.lat, lng: route.depot.lng });
       if (path.length >= 2) {
+        const onRoads = (route.roadPath?.length ?? 0) >= 2;
         const line = new google.maps.Polyline({
-          path,
+          path: onRoads ? route.roadPath! : path,
           map,
-          geodesic: true,
+          geodesic: !onRoads,
           strokeColor: route.color,
           strokeOpacity: dimmed ? 0.2 : 0.9,
           strokeWeight: dimmed ? 2 : 4,
           zIndex: dimmed ? 1 : 100,
-          /* Direction arrows — the drive order must read off the line itself. */
           icons: dimmed ? [] : [{
             icon: {
               path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
@@ -347,9 +313,6 @@ function PanelOverlay({
       }
     }
 
-    /* Plain order pins — only for orders NOT already numbered on a route.
-       Low zoom folds them into coloured COUNT bubbles (clusterPins); the
-       selected pin never disappears into a bubble. */
     const plainPins = pins.filter((p) => !onRouteRefs.has(p.ref));
     const selPin = selectedRef != null ? plainPins.find((p) => p.ref === selectedRef) ?? null : null;
     const { clusters, singles } = clusterPins(
@@ -389,7 +352,6 @@ function PanelOverlay({
       const dimmed = emphasis != null && !cluster.refs.some((r) => emphasisRefs.has(r));
       const countsForFit = !(focused != null && !cluster.refs.some((r) => focusRefs.has(r)));
       const p = { lat: cluster.lat, lng: cluster.lng };
-      /* Fit uses the member pins, not the centroid — the fit must cover them. */
       for (const ref of cluster.refs) {
         const member = pinByRef.get(ref);
         if (member) extend({ lat: member.lat, lng: member.lng }, countsForFit);
@@ -410,8 +372,6 @@ function PanelOverlay({
         },
       });
       objectsRef.current.push(marker);
-      /* Cluster click = zoom into its members (clamped — at FIT_MAX_ZOOM the
-         cluster fold is off, so the members render as real pins). */
       listenersRef.current.push(marker.addListener('click', () => {
         const b = new google.maps.LatLngBounds();
         for (const ref of cluster.refs) {
@@ -427,14 +387,8 @@ function PanelOverlay({
       }));
     }
 
-    /* The default picture (viewportForPins): many → fit with padding + zoom
-       cap; one → centred, never street level; NONE → the region's geographic
-       extent (the zero-pin fly-to). Gated on fitSig so zoom redraws and
-       legend hovers never re-fit under the operator. */
     if (appliedFitSigRef.current !== fitSig) {
       appliedFitSigRef.current = fitSig;
-      /* A region chip narrows the fit to that region's stops (falls back to all
-         when none of them is on the map). */
       let pointsToFit = fitPoints;
       if (fitRefs) {
         const want = new Set(fitRefs);
@@ -465,81 +419,50 @@ function PanelOverlay({
       for (const o of objectsRef.current) o.setMap(null);
       objectsRef.current = [];
     };
-    // fitSig folds pins/routes/depot/focus/view identity; handlers are stable per render pass.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, fitSig, selectedRef, zoomBucket, emphasisRouteId, statusByRef, vehicles]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- routes and pins redraw through fitSig and roadSig; the arrays are new every render
+  }, [map, fitSig, roadSig, selectedRef, zoomBucket, emphasisRouteId, statusByRef, vehicles]);
 
-  /* Board row → pin: PAN to the selected ref (no zoom change). */
   useEffect(() => {
     if (!map || !selectedRef) return;
     const inRoutes = routes.flatMap((r) => r.stops).find((s) => s.ref === selectedRef);
     const pin = inRoutes ?? pins.find((p) => p.ref === selectedRef);
     if (pin) map.panTo({ lat: pin.lat, lng: pin.lng });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pan only when the selection changes, not when stops reload
   }, [map, selectedRef]);
 
   return null;
 }
 
 export type DeliveryMapPanelProps = {
-  /** Panel title ("Day map", per page). */
   title: string;
-  /** Collapse — the page persists the choice via useMapPanelOpen. */
   onClose: () => void;
-  /** Page-specific header controls (the required date input, region chips…). */
   headerControls?: ReactNode;
   pins: MapPin[];
   routes?: MapRoute[];
   depot?: DeliveryMapDepot | null;
-  /** Why there is no depot marker (server's depotReason) — shown muted. */
   depotReason?: string | null;
   focus?: MapFocus | null;
   onRouteClick?: (routeId: string) => void;
-  /** The board-selected order — its pin enlarges/outlines and the map pans. */
   selectedRef?: string | null;
-  /** Pin clicked — the page scrolls/highlights the board row. */
   onPinClick?: (ref: string) => void;
-  /** Totals line: orders / sets / RM. */
   totals?: { orders: number; sets: number; revenueSen: number } | null;
-  /** The map's active region key ('ALL' or a bucket) — the zero-pin fly-to
-   *  target and the wording of the zero-pin note. */
   regionKey?: string | null;
-  /** Changes on every (date, region) pick — triggers the auto fit-bounds so a
-   *  data load always lands on the default picture. */
   viewKey?: string;
-  /** The per-zone count strip above the map (zoneSummary fold). */
   zoneSummary?: ZoneSummary | null;
-  /** Makes the zone chips clickable: a chip fits the map to its region's stops,
-   *  "All" (null) fits everything. Absent = the chips are a plain count strip. */
   onZoneClick?: (key: string | null) => void;
   activeZoneKey?: string | null;
-  /** The refs the view fits to (the picked chip's stops); null = everything. */
   fitRefs?: readonly string[] | null;
-  /** Compact-columns pill (owner rule: the map-open narrowing is a DEFAULT,
-   *  never a lock). Absent → no pill (a page without narrowing). */
   compactColumns?: boolean | null;
   onCompactColumnsChange?: (on: boolean) => void;
-  /** Orders that could not be located ("N couldn't be located — check the address").
-   *  `label` is a friendlier identity line than the raw ref when present (e.g. a job's code). */
   ungeocoded?: Array<{ ref: string; label?: string; reason: string }>;
-  /** False = the SERVER has no maps key (geocoding off) — said out loud. */
   serverConfigured?: boolean;
   isLoading?: boolean;
   mapHeight?: number;
-  /** Rendered under the map (Last Mile's trip/crew cards). */
   children?: ReactNode;
-  /** Where each stop is in its run — offers the Status colouring (Last Mile). */
   statusByRef?: Map<string, StopStatus> | null;
-  /** Last Mile: draw each lorry's stops as a numbered route of RINGS (filled =
-   *  delivered, open ring = to deliver, red ring = late) on the lorry's colour,
-   *  under the "By status" view. "By trip" keeps the solid lorry-colour dots. */
   routeStopRings?: boolean;
-  /** Lorries' current positions (vehicle-positions.ts). */
   vehicles?: VehiclePosition[];
   onVehicleClick?: (v: VehiclePosition) => void;
-  /** Extra classes on the <aside> — the pages pass the split width
-   *  (`lg:w-[40%] lg:flex-none`); sticky/top live here so the panel pins while
-   *  the board column scrolls. */
   className?: string;
 };
 
@@ -577,11 +500,8 @@ export function DeliveryMapPanel({
   vehicles = NO_VEHICLES,
   onVehicleClick,
 }: DeliveryMapPanelProps) {
-  /* Colour by status (the default when the page knows it) or by trip. */
   const [colorBy, setColorBy] = useState<'status' | 'trip'>('status');
   const activeStatus = statusByRef && colorBy === 'status' ? statusByRef : null;
-  /* Rings only under the status view (where the delivered/to-deliver/late split
-     is meaningful); "By trip" keeps the solid lorry-colour dots. */
   const ringStops = routeStopRings && activeStatus != null;
   const statusCounts = useMemo(() => {
     const n: Record<StopStatus, number> = { done: 0, active: 0, overdue: 0, scheduled: 0 };
@@ -590,7 +510,6 @@ export function DeliveryMapPanel({
   }, [activeStatus]);
   const [failed, setFailed] = useState(false);
   const [hoverRef, setHoverRef] = useState<string | null>(null);
-  /* Legend-row hover — visual dimming only (no zoom, no board filter). */
   const [legendHoverId, setLegendHoverId] = useState<string | null>(null);
   /* Which per-lorry rows have their stop-time windows expanded (owner 2026-11-04:
      the windows are secondary — a compact span shows on the row, per-stop times
@@ -613,15 +532,11 @@ export function DeliveryMapPanel({
     [roadLabels],
   );
 
-  /* The mini card follows hover first, then the board/pin selection. */
   const cardRef = hoverRef ?? selectedRef;
   const card = useMemo(() => {
     if (!cardRef) return null;
     return pins.find((p) => p.ref === cardRef)?.card ?? null;
   }, [pins, cardRef]);
-  /* Trip stop facts for the card — the hovered marker's trip, stop number and
-     time window (owner: the window must be on the hover card, not only the
-     native tooltip). */
   const cardStop = useMemo(() => {
     if (!cardRef) return null;
     for (const r of routes) {
@@ -637,7 +552,7 @@ export function DeliveryMapPanel({
     ? { lat: pins[0].lat, lng: pins[0].lng }
     : depot
       ? { lat: depot.lat, lng: depot.lng }
-      : { lat: 3.139, lng: 101.6869 }; // KL fallback
+      : { lat: 3.139, lng: 101.6869 };
 
   return (
     <aside className={['min-w-0 rounded-md border border-border bg-surface lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto', className].filter(Boolean).join(' ')}>
@@ -694,7 +609,6 @@ export function DeliveryMapPanel({
         </div>
       )}
 
-      {/* Per-zone summary strip — where the orders are, in one glance. */}
       {zoneSummary && (
         <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3 py-1.5">
           {zoneSummary.entries.length === 0 && (
@@ -775,8 +689,6 @@ export function DeliveryMapPanel({
           </APIProvider>
         )}
 
-        {/* Roadmap "Labels" toggle — mirrors Satellite's checkbox; the roadmap
-            base declutter (POI/transit/road shields) stays on in both states. */}
         {MAPS_KEY && !failed && mapTypeId === 'roadmap' && (
           <label className="absolute right-14 top-2 flex cursor-pointer items-center gap-1 rounded-md border border-border bg-surface/95 px-2 py-1 text-[11px] text-ink-secondary shadow-sm">
             <input
@@ -788,15 +700,12 @@ export function DeliveryMapPanel({
           </label>
         )}
 
-        {/* Zero-pin note — the map flew to the region's extent, say why. */}
         {MAPS_KEY && !failed && !isLoading && pins.length === 0 && (
           <div className="pointer-events-none absolute left-2 top-2 rounded-md border border-border bg-surface/95 px-2.5 py-1 text-[11.5px] text-ink-secondary shadow-sm">
             {(regionKey ?? 'ALL') === 'ALL' ? '0 orders on this day' : '0 orders in this region'}
           </div>
         )}
 
-        {/* Mini card — hover/click: SO no, customer, sets, address (+ the trip
-            stop's number and time window when the marker sits on a route). */}
         {card && (
           <div className="pointer-events-none absolute bottom-2 left-2 max-w-[85%] rounded-md border border-border bg-surface/95 px-3 py-2 shadow-sm">
             <div className="flex flex-wrap items-center gap-2">
@@ -821,12 +730,6 @@ export function DeliveryMapPanel({
         )}
       </div>
 
-      {/* Trip legend — one row per drawn trip: swatch, Trip N, stop count,
-          time range, crew (Last Mile), per-stop windows. Hover dims the other
-          trips; click is the existing focus behaviour. */}
-      {/* Ring convention (Last Mile "By status"): the dot shape reads the state —
-          filled = delivered, open ring = still to deliver, red ring = late — on
-          the lorry's own colour, so the map reads as per-lorry routes. */}
       {ringStops && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-1.5 text-[11.5px] text-ink-secondary">
           <span className="inline-flex items-center gap-1">

@@ -55,9 +55,6 @@ describe("list search scope contracts", () => {
 
   test("reports mobile module endpoint caps instead of implying global search", () => {
     const contents = source("mobile/MobileModuleList.tsx");
-    // The cap is what this test is about. Assert it CLOSED, not with a trailing
-    // `&`: that only passed because a second param happened to follow, so
-    // removing an unrelated query param broke a test about limits.
     expect(contents).toContain('endpoint: "/delivery-returns?limit=500"');
     expect(contents).toContain('endpoint: "/purchase-returns?limit=300"');
     expect(contents).toContain("loadedLimit={loadedSearchLimit}");
@@ -78,9 +75,6 @@ describe("list search scope contracts", () => {
     expect(contents).toContain("resultsAreStale ? [] : rows");
   });
 
-  // The rows are blanked while a search is in flight (above), which zeroes every
-  // aggregate computed from them. Each headline tile must therefore declare the
-  // unknown state rather than print a settled-looking figure.
   test("never states a money aggregate derived from rows it blanked", () => {
     const inventory = source("pages/scm-v2/Inventory.tsx");
     expect(inventory).toContain("const statsPending =");
@@ -91,10 +85,6 @@ describe("list search scope contracts", () => {
     expect(soDetail).toMatch(/pending=\{query\.isLoading[^}]*\}/);
   });
 
-  // Every paginated SCM list swaps its rows for a pending panel mid-search. The
-  // KPI strip above summarises the same payload, so it has to declare the same
-  // unknown state - otherwise "Outstanding RM 0.00" outlives the rows it
-  // describes, on the six money-carrying lists at once.
   test.each([
     "pages/scm-v2/MfgSalesOrdersListV2.tsx",
     "pages/scm-v2/SalesInvoicesListV2.tsx",
@@ -102,13 +92,8 @@ describe("list search scope contracts", () => {
     "pages/scm-v2/PurchaseInvoicesListV2.tsx",
     "pages/scm-v2/MfgDeliveryOrdersListV2.tsx",
     "pages/scm-v2/GoodsReceivedListV2.tsx",
-    // Loaded-scope lists: no search transition, but the same [] -> RM 0.00 on
-    // the first paint and on a failed fetch.
     "pages/scm-v2/DeliveryReturnsListV2.tsx",
     "pages/scm-v2/PurchaseReturnsListV2.tsx",
-    // Finance report, single fetch, no early return: an unloaded or failed
-    // response painted "Not billed RM 0.00" on a page whose whole purpose is to
-    // say how much is owed. Its tiles are the redesign's FigureCard (batch 5).
     "pages/scm-v2/UnbilledDeliveriesV2.tsx",
   ])("declares the unknown state on every KPI tile of %s", (file) => {
     const contents = source(file);

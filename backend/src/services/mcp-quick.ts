@@ -33,7 +33,6 @@ export function pctChange(cur: number, prev: number): number | null {
   return Math.round(((cur - prev) / prev) * 1000) / 10;
 }
 
-// ── dates ────────────────────────────────────────────────────────────────────
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 const PERIOD = /^(\d{4})(?:-(\d{2})|-Q([1-4]))?$/;
@@ -106,7 +105,6 @@ export function singleMonth(w: Range): string | null {
   return w.from.slice(0, 7) === w.to.slice(0, 7) ? w.from.slice(0, 7) : null;
 }
 
-// ── sales ────────────────────────────────────────────────────────────────────
 
 type Group = { name: string; orders: number; salesRm: number };
 
@@ -187,7 +185,6 @@ export function summariseSales(w: Window, cur: unknown, prev: unknown, analysis:
   };
 }
 
-// ── delivery ─────────────────────────────────────────────────────────────────
 
 /**
  * Delivery answer from the Logistic Overview
@@ -238,7 +235,6 @@ export function summariseDelivery(w: Window, cur: unknown, prev: unknown) {
   };
 }
 
-// ── erp_get fields ───────────────────────────────────────────────────────────
 
 /** Keep only the named keys at every object level (rows stay rows). Empty list = unchanged. */
 export function pickFields(v: unknown, fields: readonly string[]): unknown {
@@ -263,10 +259,6 @@ export function pickFields(v: unknown, fields: readonly string[]): unknown {
   return walk(v, 0);
 }
 
-// ── search / fetch (the shape ChatGPT requires) ─────────────────────────────
-// ChatGPT outside Developer Mode only accepts a connector with a `search` and a
-// `fetch` tool, and deep research uses only those two: search returns
-// {results:[{id,title,url}]}, fetch returns one {id,title,text,url,metadata}.
 
 const enc = encodeURIComponent;
 
@@ -341,7 +333,6 @@ export function docTitle(kind: string, rowId: string, doc: unknown): string {
   return `${typeWord(kind)} ${rowId}`;
 }
 
-// ── prompts (ready-made questions shown in the AI app) ──────────────────────
 
 export const PROMPTS = [
   {
@@ -365,6 +356,12 @@ export const PROMPTS = [
     description: "Find a sales order, delivery order, invoice, PO, customer or service case by number or name and summarise it.",
     arguments: [{ name: "number", description: "Document number, customer or supplier name", required: true }],
   },
+  {
+    name: "daily-brief",
+    title: "What do I need to look at today?",
+    description: "Your own to-do from the ERP: approvals and mail waiting for you, orders due or overdue, your open service cases, leave to approve, unacknowledged announcements.",
+    arguments: [],
+  },
 ];
 
 /** The message a prompt expands to (prompts/get). Unknown name → null. */
@@ -379,6 +376,9 @@ export function promptText(name: string, a: Record<string, unknown>): string | n
   }
   if (name === "find_document") {
     return `Find "${v("number")}" with search, open the best match with fetch, and summarise it: status, customer or supplier, items, amounts and dates. Give the ERP link.`;
+  }
+  if (name === "daily-brief") {
+    return "What do I need to look at today? Use daily_brief. Start with anything overdue, then what is due in the next 3 days, then approvals and mail waiting for me. Give each item's link. Keep it short, in plain language.";
   }
   return null;
 }

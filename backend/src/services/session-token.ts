@@ -1,40 +1,3 @@
-// ----------------------------------------------------------------------------
-// session-token — the "staff pass" primitive: sign a claim set at login, verify
-// it on a request with NO database read.
-//
-// WHY THIS EXISTS. Today every /api request re-reads the whole RBAC envelope
-// (role + permissions + page access + brand scope) from Postgres, on one
-// serialized connection, and fails CLOSED (401 → logout) when the DB blips.
-// That is the root cause of both the random logouts and the 7–13s latency tail
-// (measured 2026-08-18: the same lightweight endpoint returned 0.36/7/13.6/2s).
-// The durable fix, and what mainstream ERPs do, is to authorize ONCE at login
-// into a cryptographically signed token the request can verify locally.
-//
-// THIS MODULE IS STAGE 1 — THE FOUNDATION ONLY. It is a pure sign/verify pair
-// and is wired into NOTHING yet: no login path issues these, no middleware
-// reads them. Zero blast radius by construction. Later stages issue it beside
-// the existing opaque token (stage 2), verify it before the DB path with a
-// fallback (stage 3), and add the revocation list (stage 4).
-//
-// SHAPE. A token is three dot-joined parts, all URL-safe base64:
-//     hst1.<payloadB64>.<sigB64>
-// `hst1.` is a VERSION PREFIX and it is load-bearing: a value that does not
-// start with it is a legacy opaque token, so verify() returns `not-signed`
-// rather than an error, and the caller falls back to the DB path unchanged.
-// That is what lets the two token kinds coexist during the migration.
-//
-// SECURITY NOTES.
-//   • HMAC-SHA256 over the EXACT wire bytes `hst1.<payloadB64>`, so the prefix
-//     is signed too and a token cannot be downgraded to another version.
-//   • `crypto.subtle.verify` is constant-time; we never compare signatures by
-//     hand (the string-compare timing leak this repo already fixed once in the
-//     AutoCount host key lives here as a risk too).
-//   • The secret NEVER appears in a token and never leaves the Worker. It is an
-//     env secret set by the owner (stage 3), not a constant in this file.
-//   • `exp` is REQUIRED. A token with no expiry is refused at sign time — an
-//     un-expiring bearer credential is exactly what the revocation list cannot
-//     fully contain.
-// ----------------------------------------------------------------------------
 
 /** Version prefix. Signed as part of the payload, and the discriminator that
  *  tells a signed token from a legacy opaque one. Bump to `hst2.` only with a
@@ -50,17 +13,13 @@ const dec = new TextDecoder();
  *  sign() so the revocation list can say "everything for this user issued
  *  before T is void" without needing per-token ids. */
 export interface SessionClaims {
-  /** Expiry, epoch milliseconds. REQUIRED. */
   exp: number;
-  /** Issued-at, epoch milliseconds. Stamped by sign(). */
   iat?: number;
   [k: string]: unknown;
 }
 
 export type VerifyResult =
   | { ok: true; claims: SessionClaims }
-  /** `not-signed`: not one of ours — a legacy opaque token. The caller MUST
-   *  fall back to the existing DB session path, not treat this as a failure. */
   | { ok: false; reason: 'not-signed' | 'malformed' | 'bad-signature' | 'expired' };
 
 function b64urlEncode(bytes: Uint8Array): string {
@@ -149,8 +108,6 @@ export async function verifySessionToken(
   }
   if (!valid) return { ok: false, reason: 'bad-signature' };
 
-  // JSON.parse can yield null (a signed "null" payload), so the type says so
-  // and the `?.` below is a real guard, not decoration.
   let claims: SessionClaims | null;
   try {
     claims = JSON.parse(dec.decode(payloadBytes)) as SessionClaims | null;

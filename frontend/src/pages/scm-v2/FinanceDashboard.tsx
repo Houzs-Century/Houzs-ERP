@@ -27,7 +27,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { ReportShell } from './reports/ReportShell';
 import { ReportMessage, ReportTool, ReportToolbar, useReportSubtitle } from './reports/reportParts';
 import { monthName } from './reports/statementColumns';
-import { fmtSenPlain } from '../../vendor/shared/format';
+import { fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import {
   useDashboardForecastMonths, useFinanceDashboard,
   type CompareGroup, type CompareTotals, type CostStructureGroup, type DashboardFigures, type DashboardPeriod, type Granularity, type Ratios,
@@ -47,7 +47,6 @@ const danger = 'var(--fin-late-fg)';
 const good = '#2f8a5b';
 const input: React.CSSProperties = { height: 30, boxSizing: 'border-box', padding: '0 8px', border: '1px solid var(--fin-line)', borderRadius: 6, background: 'var(--fin-surface)', font: "600 12.5px 'IBM Plex Sans', system-ui, sans-serif", color: 'var(--fin-ink)' };
 const resetBtn: React.CSSProperties = { height: 30, padding: '0 12px', border: '1px solid var(--fin-line)', borderRadius: 6, background: 'var(--fin-surface)', color: 'var(--fin-text)', font: "600 12.5px 'IBM Plex Sans', system-ui, sans-serif", cursor: 'pointer' };
-/** A segment of the grey track: the one in use white (the report shell's Segmented). */
 const tabBtn = (active: boolean): React.CSSProperties => ({
   height: 26, padding: '0 10px', border: 0, borderRadius: 6, cursor: 'pointer', whiteSpace: 'nowrap',
   font: `${active ? 600 : 500} 12.5px 'IBM Plex Sans', system-ui, sans-serif`,
@@ -63,15 +62,15 @@ const tabTrack: React.CSSProperties = { display: 'inline-flex', gap: 2, flexWrap
     blues, amber, sage and greys so none of them wears the actual's petrol;
     the forecast stays red so the target jumps out; one colour a group across
     every card, Bedding = mattress + bedframe. */
-const PETROL = '#16695f';   // --fg-accent (--c-orange, Theme C primary)
-const FOREST = '#2F5D4F';   // --c-secondary-a
-const BLUE = '#1F3A8A';     // --c-secondary-b
+const PETROL = '#16695f';
+const FOREST = '#2F5D4F';
+const BLUE = '#1F3A8A';
 const SKY = '#7FA3C9';
-const AMBER = '#B76B00';    // --c-warn
+const AMBER = '#B76B00';
 const SAGE = '#7FA58A';
-const SOFT = '#9aa093';     // --fg-soft
+const SOFT = '#9aa093';
 const MIST = '#c8ccc3';
-const RED = '#B8331F';      // --c-festive-b
+const RED = '#B8331F';
 const ACTUAL = PETROL;
 const IN = PETROL;
 const OUT = AMBER;
@@ -82,7 +81,6 @@ const GROUP_COLORS: Record<string, string> = {
 };
 const colorOf = (key: string): string => GROUP_COLORS[key] ?? MIST;
 
-/** A %, one decimal, null with nothing to divide by. */
 const pct1 = (part: number, whole: number): number | null => (whole !== 0 ? Math.round((part / whole) * 1000) / 10 : null);
 const fmtPct = (p: number | null | undefined): string => (p == null ? '—' : `${p.toFixed(1)}%`);
 const fmtRatio = (r: number | null | undefined): string => (r == null ? '—' : r.toFixed(2));
@@ -96,13 +94,9 @@ export const periodName = (p: Pick<DashboardPeriod, 'months' | 'label'>): string
   if (p.months.length === 1) return monthName(first);
   return `Q${Math.floor((Number(first.slice(5, 7)) - 1) / 3) + 1} ${first.slice(2, 4)}`;
 };
-/** The period's label as the cards print it — " *" on one not finished. */
-/** A period ahead (no actual yet) is a forecast: "(F)"; one not finished is starred. */
 const labelOf = (p: DashboardPeriod): string => (p.partial && p.actual == null ? `${periodName(p)} (F)` : p.partial ? `${periodName(p)} *` : periodName(p));
-/** The head of a period's hover: its name and, when it is not finished, which way. */
 const tipHead = (p: DashboardPeriod): string => `${periodName(p)}${p.partial ? (p.actual == null ? ' · Forecast only' : ' · Not finished') : ''}`;
 
-/* ── The pieces every card shares ────────────────────────────────────────── */
 
 /** A Show pill (owner 2026-09-22: 我要这样的按钮，而不是打勾): a bordered button with the series' colour swatch, pressed = on the chart, dimmed when off. */
 const pillBtn = (on: boolean): React.CSSProperties => ({
@@ -138,7 +132,6 @@ const Tabs = ({ options, value, onChange }: { options: Array<{ key: string; labe
 );
 
 type TableRow = { id: string; label: string; cells: string[]; tone?: Array<'good' | 'bad' | null>; strong?: boolean };
-/** The figures under a chart: one column per period, a row per line the card names. */
 const FiguresTable = ({ periods, rows, ariaLabel }: { periods: DashboardPeriod[]; rows: TableRow[]; ariaLabel: string }) => (
   <div style={{ overflowX: 'auto', marginTop: 'var(--space-2)' }}>
     <table aria-label={ariaLabel} style={{ borderCollapse: 'collapse', width: '100%' }}>
@@ -171,7 +164,6 @@ const FiguresTable = ({ periods, rows, ariaLabel }: { periods: DashboardPeriod[]
    periods scroll. */
 type SideSource = { key: string; label: string };
 type SideCell = { text: string; pct: number | null };
-/** A line: cells[period][reading]. */
 type SideRow = { id: string; label: string; strong?: boolean; cells: SideCell[][] };
 const periodEdge = '1px solid var(--fin-rule)';
 const stickyLabel: React.CSSProperties = { position: 'sticky', left: 0, zIndex: 1, background: 'var(--fin-surface)' };
@@ -227,7 +219,6 @@ const CardShell = ({ title, controls, children }: { title: string; controls?: Re
   </section>
 );
 
-/* ── 1 · Income Statement ────────────────────────────────────────────────── */
 
 type Metric = { key: string; label: string; of: (f: DashboardFigures) => number; higherIsBetter: boolean };
 const METRICS: Metric[] = [
@@ -238,7 +229,6 @@ const METRICS: Metric[] = [
   { key: 'other', label: 'Other Expenses', of: (f) => f.otherExpensesSen, higherIsBetter: false },
   { key: 'net', label: 'Net Profit', of: (f) => f.netProfitSen, higherIsBetter: true },
 ];
-/** The Income Statement's readings, side by side under each period — the sample's two. */
 const IS_SOURCES: SideSource[] = [{ key: 'actual', label: 'Actual' }, { key: 'forecast', label: 'Forecast' }];
 
 const IncomeStatementCard = ({ periods }: { periods: DashboardPeriod[] }) => {
@@ -246,7 +236,6 @@ const IncomeStatementCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   const metric = METRICS.find((m) => m.key === metricKey) ?? METRICS[0]!;
   const actual = periods.map((p) => (p.actual ? metric.of(p.actual) : null));
   const forecast = periods.map((p) => (p.forecast ? metric.of(p.forecast) : null));
-  /* A forecast % is of FORECAST revenue, an actual % of ACTUAL revenue — never mixed. */
   const actualPct = periods.map((p) => (p.actual ? pct1(metric.of(p.actual), p.actual.salesSen) : null));
   const forecastPct = periods.map((p) => (p.forecast ? pct1(metric.of(p.forecast), p.forecast.salesSen) : null));
   const gap = periods.map((_, i) => (actual[i] != null && forecast[i] != null ? actual[i]! - forecast[i]! : null));
@@ -285,14 +274,11 @@ const IncomeStatementCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   );
 };
 
-/* ── 2 · Performance vs forecast, per product group ─────────────────────── */
 
 type CompareMetric = 'sales' | 'gp' | 'gpPct';
 const COMPARE_METRICS: Array<{ key: CompareMetric; label: string }> = [{ key: 'sales', label: 'Sales' }, { key: 'gp', label: 'Gross profit' }, { key: 'gpPct', label: 'GP %' }];
-/** The Performance P&L's blue beside the ledger's petrol. */
 const PERF = BLUE;
 const fmtSignedPct = (p: number | null): string => (p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`);
-/** (a − b) ÷ |b| in %, one decimal; null without both sides or with nothing to divide by. */
 const gapPct = (a: number | null, b: number | null): number | null => (a == null || b == null || b === 0 ? null : Math.round(((a - b) / Math.abs(b)) * 1000) / 10);
 const gapSen = (a: number | null, b: number | null): number | null => (a == null || b == null ? null : a - b);
 const toneUp = (g: number | null): 'good' | 'bad' | null => (g == null || g === 0 ? null : g > 0 ? 'good' : 'bad');
@@ -323,7 +309,6 @@ const PerformanceCard = ({ periods, groups }: { periods: DashboardPeriod[]; grou
   const groupLabel = groupKey === 'all' ? 'All groups' : present.find((g) => g.key === groupKey)?.label ?? groupKey;
   const perfOf = (g: CompareGroup): number | null => (metric === 'sales' ? g.performanceSalesSen : metric === 'gp' ? g.performanceGpSen : g.performanceGpPct);
 
-  /* The bars: the performance side stacks the groups on All (sales and gross profit — a % does not stack). */
   const perfBars: ChartSeries[] = groupKey === 'all' && metric !== 'gpPct'
     ? present.map((g) => ({
       key: g.key, label: g.label, color: colorOf(g.key), stack: 'performance',
@@ -356,7 +341,6 @@ const PerformanceCard = ({ periods, groups }: { periods: DashboardPeriod[]; grou
   type SalesSide = 'actual' | 'performance' | 'forecast';
   const salesOf = (t: CompareTotals | null, side: SalesSide): number | null =>
     (t == null ? null : side === 'actual' ? t.actualSalesSen : side === 'performance' ? t.performanceSalesSen : t.forecastSalesSen);
-  /** One line's cells, per period and reading: the figure and its grey %. `share` = the Sales % of the column's total. */
   const lineCells = (of: (p: DashboardPeriod) => CompareTotals | null, share: boolean): SideCell[][] => periods.map((p) => {
     const x = of(p);
     if (metric === 'sales') {
@@ -415,7 +399,6 @@ const PerformanceCard = ({ periods, groups }: { periods: DashboardPeriod[]; grou
   );
 };
 
-/* ── 3 · Cost structure by product group ────────────────────────────────── */
 
 type Measure = 'spend' | 'purchase' | 'closingStock';
 const MEASURES: Array<{ key: Measure; label: string }> = [{ key: 'spend', label: 'Spend' }, { key: 'purchase', label: 'Purchase' }, { key: 'closingStock', label: 'Closing stock' }];
@@ -461,7 +444,6 @@ const CostStructureCard = ({ periods, groups }: { periods: DashboardPeriod[]; gr
   );
 };
 
-/* ── 4 · Cash Flow ───────────────────────────────────────────────────────── */
 
 const CASH_TABS = [{ key: 'in', label: 'In' }, { key: 'out', label: 'Out' }, { key: 'net', label: 'Net' }];
 const CASH_SOURCES = [{ key: 'pnl', label: 'P&L forecast' }, { key: 'docs', label: 'Orders & bills' }];
@@ -473,7 +455,6 @@ const CashFlowCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   const pick = (p: DashboardPeriod): number | null => (p.cashFlow ? (tab === 'in' ? p.cashFlow.inSen : tab === 'out' ? p.cashFlow.outSen : p.cashFlow.netSen) : null);
   const color = tab === 'in' ? IN : tab === 'out' ? OUT : NET;
   const bars: ChartSeries[] = [{ key: tab, label: `Cash ${tab}`, color, values: periods.map(pick) }];
-  /* The Cash Flow's two forecasts of the tab's figure (step 7): the P&L forecast and Orders & bills, dashed. */
   const span = useMemo(() => forecastSpan(periods), [periods]);
   const fq = useCashFlowForecast(span.from, span.to);
   const fc = periods.map((p) => periodCashForecasts(p.months, fq.data));
@@ -491,8 +472,6 @@ const CashFlowCard = ({ periods }: { periods: DashboardPeriod[] }) => {
     { id: 'fc-docs', label: `${tabName} forecast (orders & bills)`, cells: docs.map(fmtOrDash) },
     { id: 'vs-docs', label: 'vs forecast (orders & bills)', cells: periods.map((p, i) => fmtOrDash(gapOf(pick(p), docs[i] ?? null))) },
   ];
-  /* Detail (part 3): the Cash Flow tree's categories two levels down, each period Actual | Forecast,
-     the forecast from the P&L forecast or from Orders & bills. */
   const [source, setSource] = useState('pnl');
   const forecastTrees = (source === 'pnl' ? fq.data?.months : fq.data?.docs?.months) ?? [];
   const cats = categoryRows([...periods.map((p) => p.cashFlow?.tree ?? []), ...forecastTrees.map((m) => m.report.layout.tree)]);
@@ -534,10 +513,8 @@ const CashFlowCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   );
 };
 
-/* ── 5 · Balance Sheet ───────────────────────────────────────────────────── */
 
 const BalanceSheetCard = ({ periods }: { periods: DashboardPeriod[] }) => {
-  /* A period ahead shows its Forecast Balance Sheet (faded); a month that has happened, its actual. */
   const sheetOf = (p: DashboardPeriod) => p.balanceSheet ?? p.forecastBalanceSheet;
   const faded = periods.map((p) => p.balanceSheet == null && p.forecastBalanceSheet != null);
   const bars: ChartSeries[] = [
@@ -545,7 +522,6 @@ const BalanceSheetCard = ({ periods }: { periods: DashboardPeriod[] }) => {
     { key: 'liabilities', label: 'Liabilities', color: OUT, values: periods.map((p) => sheetOf(p)?.liabilitiesSen ?? null), faded },
   ];
   const lines: ChartLine[] = [{ key: 'debt-to-asset', label: 'Debt / assets %', color: RED, axis: 'right', values: periods.map((p) => sheetOf(p)?.debtToAssetPct ?? null) }];
-  /* A month that has happened and the forecast also reaches: its forecast beside it. */
   const beside = (p: DashboardPeriod) => (p.balanceSheet != null ? p.forecastBalanceSheet : null);
   const besideAny = periods.some((p) => beside(p) != null);
   const rows: TableRow[] = [
@@ -576,7 +552,6 @@ const BalanceSheetCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   );
 };
 
-/* ── 6 · Financial Ratios ────────────────────────────────────────────────── */
 
 type RatioDef = { key: string; label: string; unit: 'pct' | 'ratio'; pick: (r: Ratios) => number | null };
 const RATIOS: RatioDef[] = [
@@ -593,7 +568,6 @@ const RatiosCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   const def = RATIOS.find((r) => r.key === key) ?? RATIOS[0]!;
   const fmt = (v: number | null | undefined): string => (def.unit === 'pct' ? fmtPct(v) : fmtRatio(v));
   const values = periods.map((p) => def.pick(p.ratios));
-  /* The same ratio off the Forecast P&L and the Forecast Balance Sheet, by the same formula. */
   const forecast = periods.map((p) => (p.forecastRatios ? def.pick(p.forecastRatios) : null));
   const gap = periods.map((_, i) => gapOf(values[i] ?? null, forecast[i] ?? null));
   const lines: ChartLine[] = [
@@ -614,7 +588,6 @@ const RatiosCard = ({ periods }: { periods: DashboardPeriod[] }) => {
   );
 };
 
-/* ── The page ────────────────────────────────────────────────────────────── */
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -635,8 +608,6 @@ function DashboardBody() {
   const ranged = MONTH_RE.test(from) && MONTH_RE.test(to) && from <= to;
   const q = useFinanceDashboard({ granularity, from: ranged ? from : null, to: ranged ? to : null });
   const periods = useMemo(() => q.data?.periods ?? [], [q.data]);
-  /* Part 3: each past month shown, by month, its forecast back-calculated — one read a month (a
-     month with no Forecast P&L row comes back without one). */
   const currentMonth = (q.data?.today ?? '').slice(0, 7);
   const pastMonths = useMemo(() => (granularity === 'month' ? periods.filter((p) => p.actual != null && p.key < currentMonth).map((p) => p.key) : []), [granularity, periods, currentMonth]);
   const past = useDashboardForecastMonths(pastMonths);

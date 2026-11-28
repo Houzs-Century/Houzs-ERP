@@ -1,16 +1,9 @@
-// ---------------------------------------------------------------------------
-// /ai-connector — System > AI Connector. Everyone: connect your own Claude /
-// ChatGPT (your own permissions), request access, see and stop your
-// connections. Admin (ai_connector.manage, the Owner via "*"): approve people,
-// see who is connected and what was looked up, disconnect anyone, run the leak
-// check, and switch AI actions (meetings, email; confirm first) on or off. Every rule is the server's (routes/mcpAdmin.ts); this lays it out.
-// Desktop and phone (AuthGate renders it standalone on the phone shell).
-// ---------------------------------------------------------------------------
 import { useCallback, useEffect, useState } from "react";
 import { Bot, Copy, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
 import { Button } from "../components/Button";
 import { cn } from "../lib/utils";
+import { BriefEmails } from "./AiConnectorBrief";
 
 type MyApp = { tokenId: string; app: string; connectedAt: string | null; lastUsedAt: string | null };
 type Me = { allowed: boolean; isAdmin: boolean; pendingRequest: { id: string; createdAt: string | null } | null; connectorUrl: string; apps: MyApp[] };
@@ -18,12 +11,15 @@ type Person = { userId: number; name: string; position: string };
 type Overview = {
   connectorUrl: string;
   actionsEnabled: boolean;
+  actionSwitches?: { mailReply: boolean; note: boolean };
+  limits?: { perMinute: number; perDay: number };
   stats: { connectedPeople: number; callsToday: number; refusedToday: number; waiting: number };
   requests: (Person & { id: string; reason: string; createdAt: string | null })[];
   connected: (Person & { tokenId: string; app: string; connectedAt: string | null; lastUsedAt: string | null })[];
   allowed: (Person & { approvedAt: string | null })[];
   calls: { id: string; userId: number; name: string; app: string; tool: string; target: string; status: number; ok: boolean; note: string; ms: number; at: string | null }[];
   staff: Person[];
+  noGuide?: { tool: string; question: string; times: number; lastAt: string | null }[];
 };
 type LeakRow = { path: string; outcome: "opened" | "refused" | "error"; status: number; hidden: string[]; sensitive: string[] };
 
@@ -67,6 +63,7 @@ function ConnectorUrl({ url }: { url: string }) {
         onClick={() => {
           void navigator.clipboard.writeText(url).then(() => {
             setCopied(true);
+            // eslint-disable-next-line houzs/no-imperative-timers -- a UI delay: the Copied label reverts after 1.5s
             setTimeout(() => setCopied(false), 1500);
           });
         }}
@@ -354,7 +351,7 @@ function AdminView({ ov, reload }: { ov: Overview; reload: () => void }) {
 
       <Section
         title="AI actions"
-        sub="Let a connected AI book a meeting or send an email for the person, only after they confirm the summary in their chat. Never orders, money, stock, approvals or deletes. At most 30 actions per person a day; each one is listed under Recent lookups."
+        sub="Let a connected AI book a meeting, send an email, reply to a Mail Center email or add a service-case note for the person, only after they confirm the summary in their chat. Never orders, money, stock, prices, payroll, approvals or deletes. At most 30 actions per person a day; each one is listed under Recent lookups."
         right={
           <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink">
             <input
@@ -372,9 +369,69 @@ function AdminView({ ov, reload }: { ov: Overview; reload: () => void }) {
         }
       >
         <Empty>{ov.actionsEnabled ? "On: connected AIs may propose meetings and emails; nothing happens until the person confirms." : "Off: connected AIs can only read."}</Empty>
+        <div className="space-y-2 border-t border-border px-4 py-3 sm:px-5">
+          <p className="text-[13px] text-ink-secondary">More actions, each off until you turn it on. They also need the switch above, and the person still needs the ERP permission for the same action.</p>
+          {(
+            [
+              { kind: "mail_reply", label: "Reply to Mail Center emails", on: ov.actionSwitches?.mailReply === true },
+              { kind: "note", label: "Add notes to service cases", on: ov.actionSwitches?.note === true },
+            ] as const
+          ).map((a) => (
+            <label key={a.kind} className="flex cursor-pointer items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={a.on}
+                disabled={busy !== null}
+                onChange={(e) => {
+                  const enabled = e.target.checked;
+                  void act(`actions-${a.kind}`, () => api.post("/api/mcp-admin/admin/actions", { kind: a.kind, enabled }));
+                }}
+              />
+              {a.label}
+            </label>
+          ))}
+        </div>
       </Section>
 
+      {ov.limits && (
+        <Section title="Limits" sub="Fixed for every person; the admin leak check is not counted.">
+          <Empty>
+            Each person may make up to {ov.limits.perMinute} AI lookups a minute and {ov.limits.perDay} a day. Over the limit the AI is told to wait a minute (or that the daily limit is reached); nothing breaks.
+          </Empty>
+        </Section>
+      )}
+
       <LeakCheck people={ov.allowed} />
+
+      <Section title="Questions with no guide yet" sub="How-to, glossary and error questions the AI found no guide for, most asked first. No names are kept.">
+        {(ov.noGuide ?? []).length === 0 ? (
+          <Empty>None so far.</Empty>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] border-collapse">
+              <thead className="bg-surface-2">
+                <tr>
+                  <th className={TH}>Question</th>
+                  <th className={TH}>Tool</th>
+                  <th className={TH}>Times</th>
+                  <th className={TH}>Last asked</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(ov.noGuide ?? []).map((q) => (
+                  <tr key={`${q.tool}:${q.question}`} className="border-t border-border">
+                    <td className={TD}>{q.question}</td>
+                    <td className={cn(TD, "font-mono text-[12px]")}>{q.tool}</td>
+                    <td className={TD}>{q.times}</td>
+                    <td className={cn(TD, "whitespace-nowrap text-ink-secondary")}>{when(q.lastAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
 
       <Section title="Recent lookups" sub="The last 100 things an AI read or did, newest first.">
         {ov.calls.length === 0 ? (
@@ -486,6 +543,8 @@ export function AiConnector() {
           </div>
         </Section>
       )}
+
+      {me && <BriefEmails key={tick} />}
 
       {me?.isAdmin && ov && <AdminView ov={ov} reload={reload} />}
 

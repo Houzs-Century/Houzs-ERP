@@ -1,7 +1,3 @@
-// The slip rule's whole boundary: a keyed payment without its proof is refused,
-// a converted row never is. Asserted on the shared module because the payments
-// POST, the SO create, the backdate request, the write core and the three
-// frontend surfaces (via the byte-identical mirror) all call this one function.
 import { describe, expect, test } from 'vitest';
 import { SLIP_REQUIRED_CODE, SLIP_REQUIRED_REASON, checkPaymentSlip } from './payment-slip-required';
 

@@ -1,13 +1,3 @@
-// Unit tests for the OCR self-learning feed on the BACKGROUND scan path.
-//
-// The behaviour being pinned: an EDITED scan-originated SO must now produce a
-// LEARNABLE `CONFIRMED` sample (the pool every distiller mines — it was fed
-// nothing at all before this), while an UNEDITED one must keep producing
-// `ACCEPTED` exactly as it did. Route-level coverage is not possible in this
-// repo's harness (scm rides Supabase Postgres, the harness rebuilds only the
-// D1 side) and @cloudflare/vitest-pool-workers has no module mocking, so these
-// drive the lib directly through a hand-rolled PostgREST stand-in — the house
-// pattern (see dropship-batch.test.ts, companyScopeHardening.test.ts).
 import { describe, expect, test, vi } from 'vitest';
 import {
   noteScanDraftAccepted,
@@ -22,10 +12,6 @@ import { slipAliasPairs } from './scan-field-aliases';
 
 type Row = Record<string, any>;
 
-/* Minimal chainable, awaitable PostgREST stand-in. `not` and `or` are
-   IMPLEMENTED rather than no-op'd (unlike the other fakes in this repo)
-   because the edit-detection predicate is the load-bearing bit here: it is
-   what decides ACCEPTED vs CONFIRMED. */
 function fakeSvc(tables: Record<string, Row[]>, opts?: { throwOn?: string }) {
   const updates: Array<{ table: string; patch: Row; rows: Row[] }> = [];
   class Q {
@@ -42,14 +28,12 @@ function fakeSvc(tables: Record<string, Row[]>, opts?: { throwOn?: string }) {
     not(c: string, op: string, v: unknown) {
       if (op === 'is' && v === null) this.preds.push((r) => r[c] != null);
       else if (op === 'in') {
-        // '("CREATE","UPDATE_STATUS")' -> the excluded action names
         const list = String(v).replace(/^\(|\)$/g, '').split(',').map((s) => s.replace(/^"|"$/g, ''));
         this.preds.push((r) => !list.includes(String(r[c])));
       }
       return this;
     }
     or(expr: string) {
-      // Only the one expression this module uses.
       if (expr === 'source.is.null,source.neq.automation') {
         this.preds.push((r) => r.source == null || r.source !== 'automation');
       }
@@ -78,7 +62,6 @@ function fakeSvc(tables: Record<string, Row[]>, opts?: { throwOn?: string }) {
   };
 }
 
-// ── Fixtures ───────────────────────────────────────────────────────────────
 
 const slipLine = (over: Row = {}): Row => ({
   rawText: 'Bamboo Cruise K', rawSpec: null,
@@ -108,8 +91,6 @@ const extractedSlip = (over: Row = {}): Row => ({
   ...over,
 });
 
-/** The SO exactly as buildDraftSoBodyFromSlip + the create core would leave it
- *  for the fixture above, with nothing touched by a human. */
 const soHeader = (over: Row = {}): Row => ({
   doc_no: 'SO-2607-001',
   debtor_name: 'Tan Ah Kow', phone: '+60127778888', emergency_contact_phone: null,
@@ -126,7 +107,6 @@ const soItem = (over: Row = {}): Row => ({
   ...over,
 });
 
-// ── The pure rebuild ───────────────────────────────────────────────────────
 
 describe('buildCorrectedSlipFromSo — an untouched SO must produce ZERO diff', () => {
   test('inverting an unedited SO returns the extraction byte-for-byte', () => {
@@ -136,24 +116,14 @@ describe('buildCorrectedSlipFromSo — an untouched SO must produce ZERO diff', 
   });
 
   test('the create core repricing the line is NOT read back as a correction', () => {
-    // The slip said RM1200; the pricing engine booked RM1390. priceRmGuess must
-    // stay the AI's read, or the distiller learns a price the operator never wrote.
     const ai = extractedSlip();
     const out = buildCorrectedSlipFromSo(ai, soHeader(), [soItem({ unit_price_sen: 139000 })]);
     expect((out?.lines as Row[])[0].priceRmGuess).toBe(1200);
   });
 
   test('the venue autofill and the duplicate note prefix are NOT read back', () => {
-    // Neither is inverted at all, so a value the pipeline invented cannot leak
-    // into the pair. Pinned against the documented exclusion list.
     expect(CARRIED_NOT_INVERTED).toContain('locationMatch');
     expect(CARRIED_NOT_INVERTED).toContain('remarks');
-    /* The SLIP'S OWN DATE. It is deliberately NOT inverted from the SO, because
-       the SO's Processing Date (internal_expected_dd) is a DIFFERENT fact — the
-       factory start date the operator keys at review. Both were once called
-       "processingDate"; if this entry ever drifts back to that name, or drops
-       out of the array, the inverter starts teaching the model to read the
-       factory date off the slip's date line. */
     expect(CARRIED_NOT_INVERTED).toContain('slipDate');
     expect(CARRIED_NOT_INVERTED).not.toContain('processingDate');
     expect(CARRIED_NOT_INVERTED).toContain('priceRmGuess');
@@ -179,7 +149,6 @@ describe('buildCorrectedSlipFromSo — the operator corrections that must surviv
     const ai = extractedSlip();
     const out = buildCorrectedSlipFromSo(ai, soHeader(), [soItem({ item_code: 'BC-KING-2026' })]);
     const line = (out?.lines as Row[])[0];
-    // This pairing IS the alias dictionary's raw material.
     expect(line.rawText).toBe('Bamboo Cruise K');
     expect(line.skuMatch).toEqual({ code: 'BC-KING-2026', confidence: 1, reason: 'operator-confirmed' });
   });
@@ -194,7 +163,6 @@ describe('buildCorrectedSlipFromSo — the operator corrections that must surviv
     expect(out?.customerSoRef).toBe('HC 14032');
     expect(out?.addressLine1).toBe('12A Jalan Mawar');
     expect(out?.city).toBe('Johor Bahru');
-    // Unchanged option pick keeps the AI's own confidence/reason — no fake diff.
     expect(out?.addressStateMatch).toEqual({ value: 'Johor', confidence: 0.9, reason: 'read' });
   });
 
@@ -209,8 +177,6 @@ describe('buildCorrectedSlipFromSo — the operator corrections that must surviv
 
   test('a corrected payment method + bank land, and bank stays carried off-Merchant', () => {
     const ai = extractedSlip({ bankMatch: { value: 'Maybank', confidence: 0.5, reason: 'read' } });
-    // Method still Cash: merchant_provider is null for a forward-mapping reason,
-    // so the AI's bank read must be carried, not "corrected" to null.
     const asCash = buildCorrectedSlipFromSo(ai, soHeader(), [soItem()]);
     expect(asCash?.bankMatch).toEqual({ value: 'Maybank', confidence: 0.5, reason: 'read' });
     const asMerchant = buildCorrectedSlipFromSo(
@@ -254,8 +220,6 @@ describe('alignSoLinesToSlip — never assert a handwriting -> SKU pair we are n
   });
 
   test('an ambiguous gap (a delete AND a re-code together) refuses to guess', () => {
-    // Two slip rows, one surviving item with a code matching neither: we cannot
-    // know which row it came from, so no rawText is paired to it.
     const out = alignSoLinesToSlip(
       [slip('A', 'ra'), slip('B', 'rb')],
       [soItem({ item_code: 'ZZ' })],
@@ -275,7 +239,6 @@ describe('alignSoLinesToSlip — never assert a handwriting -> SKU pair we are n
   });
 });
 
-// ── The listener ───────────────────────────────────────────────────────────
 
 const SAMPLE_ID = 'sample-1';
 const DOC = 'SO-2607-001';
@@ -316,12 +279,10 @@ describe('noteScanDraftAccepted — DRAFT -> CONFIRMED is the operator verdict',
     const { svc, updates } = fakeSvc(world.tables);
     await noteScanDraftAccepted(svc, DOC);
     expect(updates.length).toBe(1);
-    // CONFIRMED is the ONLY status the distillers select — this is the feed.
     expect(updates[0].patch.status).toBe('CONFIRMED');
     const corrected = updates[0].patch.corrected as Row;
     expect(corrected.customerName).toBe('Tan Ah Kaw');
     expect((corrected.lines as Row[])[0].skuMatch.code).toBe('BC-KING-2026');
-    // …and it is a real, learnable DIFF, not a restatement of the extraction.
     expect(JSON.stringify(corrected)).not.toBe(JSON.stringify(world.ai));
   });
 
@@ -349,9 +310,6 @@ describe('noteScanDraftAccepted — DRAFT -> CONFIRMED is the operator verdict',
   });
 
   test('an edit that moved nothing the OCR emits writes NOTHING (no zero-diff pair)', async () => {
-    // The operator changed the venue and the note only. Storing corrected =
-    // extracted would evict a real correction from the distill window; storing
-    // ACCEPTED would claim the AI was right about a draft a human just edited.
     const world = scanWorld({
       audit: [{ id: 2, so_doc_no: DOC, action: 'UPDATE_DETAILS', source: 'web' }],
     });
@@ -383,7 +341,6 @@ describe('noteScanDraftAccepted — DRAFT -> CONFIRMED is the operator verdict',
   });
 });
 
-// ── Draft baseline: only what a person changed counts ──────────────────────
 
 const rawSlip = (): Row => extractedSlip({
   phones: ['012-694 5676'], city: 'shah alam', postcode: '40460',
@@ -407,7 +364,6 @@ describe('keepPersonChanges — pipeline transforms are not corrections', () => 
 
   test('pipeline-only differences (phone format, postcode, city, withheld deposit) give no difference', () => {
     const raw = rawSlip();
-    // the draft really does differ from the raw read on these fields
     expect(changedFields(raw, baselineOf(raw))).toEqual(expect.arrayContaining(['Phone', 'Postcode', 'Deposit']));
     const kept = keepPersonChanges(raw, baselineOf(raw), baselineOf(raw));
     expect(changedFields(raw, kept)).toEqual([]);
@@ -473,7 +429,6 @@ describe('noteScanDraftAccepted — with a draft baseline', () => {
   });
 });
 
-// ── Reviewer cases: key order, line provenance, dropped blank lines ────────
 
 const jsonbRoundTrip = (v: unknown): unknown => Array.isArray(v) ? v.map(jsonbRoundTrip) : v && typeof v === 'object'
   ? Object.fromEntries(Object.entries(v as Record<string, unknown>)
@@ -601,7 +556,6 @@ describe('keepPersonChanges — blank raw line plus a catalog-snapped SKU line',
     const snapped = slipLine({ rawText: 'bed k', skuMatch: { code: 'bk-x', confidence: 0.6, reason: 'keyword' } });
     const pillow = slipLine({ rawText: 'pillow', skuMatch: { code: 'PL', confidence: 0.9, reason: 'keyword' } });
     const raw = slip2({ lines: [blank, snapped, pillow] });
-    // the baseline path rebuilds from the extraction without the lines the pipeline dropped
     const stripped = { ...raw, lines: [snapped, pillow] };
     const baseline = buildCorrectedSlipFromSo(stripped, pipelineHeader(), itemsBedPillow()) as Row;
     const final = buildCorrectedSlipFromSo(stripped, pipelineHeader(), [

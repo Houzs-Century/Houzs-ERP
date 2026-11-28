@@ -26,17 +26,11 @@ export type AmendmentDecisionEvent = {
   id: string;
   action: string;
   label: string;
-  /* Name snapshotted at write time (mfg_so_audit_log.actor_name_snapshot) — stays
-     stable if the staff row is later renamed. Null when the writer left it blank. */
   actor: string | null;
   at: string;
-  /* The reason / reference the gate recorded: the rejection reason, the supplier
-     confirmation ref, or the apply summary. Null when none was given. */
   note: string | null;
 };
 
-/* AMENDMENT_* action -> plain label. Unmapped keys (e.g. a future AMENDMENT_CMD_*
-   variant) fall back to a humanised form, so a new gate is never invisible. */
 const AMENDMENT_ACTION_LABEL: Record<string, string> = {
   AMENDMENT_REQUESTED:          'Requested',
   AMENDMENT_SUPPLIER_CONFIRMED: 'Supplier confirmed',
@@ -62,17 +56,10 @@ export function amendmentActionLabel(action: string): string {
   );
 }
 
-/* An amendment decision is REJECTED — the surfaces tint that row (owner wants the
-   rejection to read unmistakably, not blend into the approvals). */
 export function isRejectDecision(action: string): boolean {
   return action === 'AMENDMENT_REJECTED' || action === 'AMENDMENT_CMD_REJECT';
 }
 
-/* Build this amendment's decision history, newest first (the endpoint already
-   returns newest-first; we preserve that order). Pass the amendment's own
-   created_at as the floor so earlier amendments on the same SO are excluded. A
-   null/absent floor means "no isolation possible" — show every AMENDMENT_* row
-   rather than hide the history entirely. */
 export function buildAmendmentDecisionHistory(
   entries: SoAuditEntry[] | undefined | null,
   amendmentCreatedAt: string | null | undefined,
@@ -84,8 +71,6 @@ export function buildAmendmentDecisionHistory(
     if (typeof e.action !== 'string' || !e.action.startsWith('AMENDMENT_')) continue;
     if (!Number.isNaN(floor)) {
       const t = Date.parse(e.created_at);
-      // Keep only this amendment's lifecycle (>= floor). Unparseable timestamps
-      // are kept — dropping a real decision is worse than an out-of-window one.
       if (!Number.isNaN(t) && t < floor) continue;
     }
     const note = typeof e.note === 'string' && e.note.trim() ? e.note.trim() : null;

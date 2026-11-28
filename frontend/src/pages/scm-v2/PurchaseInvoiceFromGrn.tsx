@@ -1,25 +1,3 @@
-// ----------------------------------------------------------------------------
-// PurchaseInvoiceFromGrn — GRN LINE → Purchase Invoice picker.
-//
-// A purchase invoice belongs to ONE goods-received note (purchase_invoices has
-// a single grn_id FK), so this picker locks to one note at a time: tick the
-// lines you want to bill from a single note, then Continue to the review
-// screen where you confirm prices/dates and click Create. Nothing is invoiced
-// until that final Create — this page only carries your picks forward.
-//
-// Lines from other notes are dimmed while one note is active; clear your picks
-// to switch notes. Each line is capped at its REMAINING quantity (accepted
-// minus already-invoiced minus returned), so a part-billed note still shows
-// only what is left to bill.
-//
-// Routing: /purchase-invoices/from-grn — full-page form so the chrome matches
-// GrnFromPo / PurchaseInvoiceNew.
-//
-// HOUZS VENDOR — verbatim from apps/backend/src/pages/PurchaseInvoiceFromGrn.tsx.
-// Import boundary only: react-router → react-router-dom; the outstanding-GRN
-// picker hook stays in suppliers-queries (vendor path); NotifyDialog → vendor;
-// nav repointed to /scm/purchase-invoices.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
@@ -27,7 +5,7 @@ import { writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { ArrowRight, Search, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash, fmtQty } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtQty } from '../../../../shared/src/vendor/shared/format';
 import {
   useOutstandingGrnItems,
   type OutstandingGrnItem,
@@ -40,7 +18,7 @@ import { PageHeader } from '../../components/Layout';
 import { SearchInput } from '../../components/Button';
 import { SearchScopeHint } from '../../components/SearchScopeHint';
 
-import { fmtMoneySen } from '../../vendor/shared/format';
+import { fmtMoneySen } from '../../../../shared/src/vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number, currency = 'MYR'): string =>
@@ -53,11 +31,6 @@ export const PurchaseInvoiceFromGrn = () => {
 
   const [picks, setPicks] = useState<Record<string, { picked: boolean; qty: number }>>({});
 
-  /* "Transfer to Purchase Invoice" on a GRN lands here with ?grnId=<id> so the operator sees
-     the note they were just looking at, not every outstanding note in the
-     company. The parameter was being constructed by both callers and dropped
-     here until 2026-08-16. No parameter → the full picker, which is what the
-     list toolbar's "From GRN" button wants. */
   const [searchParams, setSearchParams] = useSearchParams();
   const scope = useMemo(
     () => readConvertScope('grnToPi', searchParams, ['q']),
@@ -83,7 +56,6 @@ export const PurchaseInvoiceFromGrn = () => {
   };
   const visibleItems = useMemo(() => filterOutstandingGrnLines(items, query), [items, query]);
 
-  // Group by GRN doc no so the UI renders one card per GRN.
   const grouped = useMemo(() => {
     const byDoc = new Map<string, { meta: OutstandingGrnItem; lines: OutstandingGrnItem[] }>();
     for (const it of visibleItems) {
@@ -107,8 +79,6 @@ export const PurchaseInvoiceFromGrn = () => {
     return null;
   }, [picks, items]);
 
-  /* The PI header carries ONE currency + FX rate, so notes that landed under a
-     different pair can't share the document even for the same supplier. */
   const fxKeyOf = (it: OutstandingGrnItem) => `${it.currency ?? 'MYR'}|${it.exchangeRate ?? 1}`;
   const activeFxKey = useMemo(() => {
     for (const it of items) {
@@ -126,8 +96,6 @@ export const PurchaseInvoiceFromGrn = () => {
     return null;
   }, [picks, items]);
 
-  /* Notes this selection spans — drives the "billing N notes" hint + the
-     handoff so the review screen knows to load every one of them. */
   const pickedGrnIds = useMemo(() => {
     const set = new Set<string>();
     for (const it of items) {
@@ -138,8 +106,8 @@ export const PurchaseInvoiceFromGrn = () => {
   }, [picks, items]);
 
   const togglePick = (it: OutstandingGrnItem) => {
-    if (activeSupplierId && activeSupplierId !== it.supplierId) return; // one supplier per invoice
-    if (activeFxKey && activeFxKey !== fxKeyOf(it)) return;             // one currency + rate per invoice
+    if (activeSupplierId && activeSupplierId !== it.supplierId) return;
+    if (activeFxKey && activeFxKey !== fxKeyOf(it)) return;
     setPicks((s) => ({
       ...s,
       [it.grnItemId]: s[it.grnItemId]?.picked
@@ -160,10 +128,6 @@ export const PurchaseInvoiceFromGrn = () => {
 
   const clearAll = () => setPicks({});
 
-  /* Scoped entry pre-ticks the note's remaining lines at full quantity, so the
-     screen is a ready-to-review draft rather than a filtered list to re-tick by
-     hand. Copies GrnFromPo, the one convert that already worked. Nothing is
-     invoiced here — Continue only carries the picks to the New PI form. */
   const prefilled = useRef(false);
   useEffect(() => {
     if (prefilled.current) return;
@@ -174,8 +138,6 @@ export const PurchaseInvoiceFromGrn = () => {
     const first = mine[0];
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mine[0] is typed non-optional without noUncheckedIndexedAccess; an empty scope match is real
     if (!first) return;
-    // One supplier + one currency/rate per invoice — tick only what can share
-    // the document, even if the scope spans notes that cannot.
     const fxLock = fxKeyOf(first);
     setPicks(() => {
       const next: Record<string, { picked: boolean; qty: number }> = {};
@@ -201,9 +163,6 @@ export const PurchaseInvoiceFromGrn = () => {
       notify({ title: 'Unable to continue', body: 'This browser could not safely store your picked lines. Your selection is still here; free some browser storage and try again.', tone: 'error' });
       return;
     }
-    /* grnId = the PRIMARY note (the review screen's header context); grnIds =
-       every note the picks span, so the review screen loads them all and the
-       created PI bills the lot as ONE invoice. */
     const extra = pickedGrnIds.length > 1 ? `&grnIds=${encodeURIComponent(pickedGrnIds.join(','))}` : '';
     navigate(`/scm/purchase-invoices/new?grnId=${encodeURIComponent(activeGrnId)}${extra}&fromPicks=1`);
   };
@@ -268,9 +227,6 @@ export const PurchaseInvoiceFromGrn = () => {
         <div style={{ padding: '0 var(--space-4)' }}>
           <UnrecognisedScopeNotice unknown={scope.unknown} />
         </div>
-        {/* The server reads every note that still has something to bill, up to a
-            runaway ceiling. When it stops there it says so, and so must the page:
-            a short list that looks whole is the silence this read used to have. */}
         {itemsQ.data?.truncated && (
           <p role="alert" style={{ color: 'var(--c-burnt)', fontSize: 'var(--fs-12)', padding: '0 var(--space-4) var(--space-2)' }}>
             This list is not complete: the server stopped reading goods-received notes at its limit, so some notes with lines still to bill are missing here and from the search.
@@ -331,10 +287,6 @@ export const PurchaseInvoiceFromGrn = () => {
             </p>
           ))}
           {grouped.map(({ docNo, meta, lines }) => {
-            /* Locked only when the note can't share the document: a DIFFERENT
-               supplier, or the same supplier under a different currency/rate
-               (the PI header carries one pair). Same supplier + same pair =
-               tickable alongside, which is the whole point of multi-note. */
             const otherSupplier = Boolean(activeSupplierId) && activeSupplierId !== meta.supplierId;
             const otherFx       = Boolean(activeFxKey) && activeFxKey !== fxKeyOf(meta);
             const locked        = otherSupplier || otherFx;

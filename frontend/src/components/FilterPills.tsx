@@ -3,15 +3,6 @@ import { cn } from "../lib/utils";
 interface Pill<T extends string> {
   value: T;
   label: string;
-  /**
-   * Optional count badge after the label. CALLER-SUPPLIED, deliberately: on a
-   * client-filtered list (Amendments — the whole ≤500-row population is
-   * loaded) counting the loaded rows is honest, but on a server-filtered /
-   * paginated list the loaded page is NOT the population — pass the backend's
-   * status-counts aggregate (the `statusCounts` shape the GRN/SO/DO/PI/SI
-   * list endpoints already return), never a count of what happens to be
-   * loaded.
-   */
   count?: number;
 }
 
@@ -29,12 +20,6 @@ interface Props<T extends string> {
  */
 export function FilterPills<T extends string>({ options, value, onChange }: Props<T>) {
   return (
-    // Outer track is the visible "slab"; the inner scroller is what
-    // actually owns the buttons. When the option set is short the
-    // group stays inline-sized; when it overflows (long label set on
-    // a phone) it scrolls horizontally inside the slab without
-    // bleeding into the layout. max-w-full prevents the inline-flex
-    // from forcing parent width.
     <div className="inline-block max-w-full overflow-hidden rounded-md border border-border bg-surface shadow-stone align-middle">
       <div
         className={cn(
@@ -73,5 +58,3 @@ export function FilterPills<T extends string>({ options, value, onChange }: Prop
     </div>
   );
 }
-/* cache-rotate 2026-07-31: see StatusDot.tsx — same edge-poisoned-URL
-   incident; comment rotates this chunk's hash to a clean URL. */

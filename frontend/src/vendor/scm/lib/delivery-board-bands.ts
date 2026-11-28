@@ -86,7 +86,6 @@ export function runBoardRequest<T>(priority: number, fn: () => Promise<T>): Prom
   return boardLimiter.run(priority, fn);
 }
 
-/** Every page of one band, as one response: rows joined, counts and delivered tallies summed. */
 async function fetchBand(band: BandNo, state: string, priority: number): Promise<PlanningResponse> {
   const pages: BandPage[] = [];
   for (let page = 0, count = 1; page < count; page += 1) {
@@ -138,19 +137,13 @@ export function loadedBoardCounts(qc: QueryClient, state: 'ALL' | 'OPEN'): Plann
 }
 
 export type BandedBoard = {
-  /** Rows loaded so far, band by band. */
   orders: PlanningOrder[];
-  /** Each loaded band's response (for OPEN's delivered tallies). */
   parts: PlanningResponse[];
   regions: PlanningResponse['regions'] | undefined;
-  /** The first band has not arrived yet. */
   firstLoading: boolean;
-  /** The band being fetched now, or null. */
   loading: { band: BandNo; label: string } | null;
-  /** The band that failed (the chain stops there) and how to try again. */
   failed: { band: BandNo; label: string; error: unknown; retry: () => void } | null;
   complete: boolean;
-  /** When the newest loaded band arrived (ms), 0 before any. */
   updatedAt: number;
   refetch: () => void;
 };
@@ -161,12 +154,10 @@ export function useBandedBoard(opts: { state: 'ALL' | 'OPEN'; first: BandNo }): 
   const results = useQueries({
     queries: order.map((b, i) => ({
       queryKey: keyOf(b),
-      // All queued at once; runBoardRequest lets them through nearest first, two at a time.
       queryFn: () => fetchBand(b, opts.state, i + 1),
       staleTime: 30_000,
     })),
   });
-  // The loaded prefix in load order: a band after a gap is not shown before the gap fills.
   const [d0, d1, d2, d3, d4] = results.map((r) => r.data);
   const parts = useMemo(() => {
     const out: PlanningResponse[] = [];

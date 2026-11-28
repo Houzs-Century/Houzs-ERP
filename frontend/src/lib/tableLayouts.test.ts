@@ -65,11 +65,8 @@ describe("table layout sync", () => {
 
     await hydrateTableLayouts();
 
-    // Same keys DataTable reads at mount — that is what makes a machine this
-    // user has never arranged render their columns on the first paint.
     expect(JSON.parse(localStorage.getItem(`dt:order:${TABLE}`)!)).toEqual(["so_date", "status"]);
     expect(JSON.parse(localStorage.getItem(`dt:hidden:${TABLE}`)!)).toEqual(["reference"]);
-    // The epoch moved, so a table already on screen remounts and re-reads.
     expect(getTableLayoutsSnapshot().epoch).toBe(1);
   });
 
@@ -80,12 +77,10 @@ describe("table layout sync", () => {
 
     await hydrateTableLayouts();
 
-    // Nothing changed, so no table is remounted — the warm-load no-op.
     expect(getTableLayoutsSnapshot().epoch).toBe(0);
   });
 
   it("keeps local edits the server never received, and re-pushes them", async () => {
-    // A push that failed (offline) leaves the marker behind the local value.
     localStorage.setItem(`dt:order:${TABLE}`, JSON.stringify(["unpushed"]));
     localStorage.setItem(`dt:sync:${TABLE}`, serializeLayout(layout({ order: ["older"] })));
     respond({ mine: { [TABLE]: { layout: layout({ order: ["from_server"] }), updatedAt: null } } });
@@ -109,7 +104,6 @@ describe("table layout sync", () => {
     await hydrateTableLayouts();
     saveMyLayout(TABLE, layout());
     await vi.runAllTimersAsync();
-    // A failed boot fetch leaves the module inert rather than half-live.
     expect(mockApi.put).not.toHaveBeenCalled();
     expect(getTableLayoutsSnapshot().ready).toBe(false);
   });
@@ -136,8 +130,6 @@ describe("table layout sync", () => {
     saveMyLayout(TABLE, EMPTY_LAYOUT);
     await vi.runAllTimersAsync();
 
-    // An empty row would hydrate as "saved, but empty" — indistinguishable from
-    // untouched only by accident. Deleting says it once, unambiguously.
     expect(mockApi.del).toHaveBeenCalledWith(`/api/table-layouts/${TABLE}`);
     expect(mockApi.put).not.toHaveBeenCalled();
   });

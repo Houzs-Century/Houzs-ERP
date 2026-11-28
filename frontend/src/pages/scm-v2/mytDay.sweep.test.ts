@@ -1,9 +1,3 @@
-/* Two scm-v2 date rules that read the device's own zone before:
-   - Payment Corrections' month picker starts at THIS month. At 01:30 on 1 Dec
-     (Malaysia) that is December, even on a machine whose clock zone is UTC.
-   - The stock movement date filter buckets a movement by the day the WHEN
-     column shows, which is the Malaysian day (fmtDateTime).
-   Run with TZ=UTC. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { recentMonths } from "./PaymentCorrectionsTab";
 import { filterMovements, movementDateKey, EMPTY_MOVEMENT_FILTER } from "./stockMovementFilter";

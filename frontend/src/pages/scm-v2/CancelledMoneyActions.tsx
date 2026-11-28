@@ -1,14 +1,9 @@
-// The Sales Orders list's bar for ticked orders holding money (cancelled, or
-// live since 2026-09-16): what still sits on them, and [Refund] [Convert]
-// over all of them at once — several orders, any customers. The forms are
-// the panel's own pickers; the new order copies the first ticked order's
-// customer and lines. A live order gives only what is above its floor.
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ConvertPicker, RefundPicker } from '../../vendor/scm/components/OrderMoneyPanel';
 import { newOrderWithMoneyHref, useOrdersWithMoney, type ConvertPick, type ConvertSource } from '../../vendor/scm/lib/so-money-queries';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 
 export type TickedOrder = { docNo: string; status: string; customer: string | null };
 
@@ -34,8 +29,6 @@ export const CancelledMoneyActions = ({ ticked, onDone }: { ticked: TickedOrder[
   const q = useOrdersWithMoney(null, ticked.length > 0);
   const [mode, setMode] = useState<'idle' | 'refund' | 'convert'>('idle');
   const { rows, without } = useMemo(() => sourcesOf(ticked, q.data?.orders ?? []), [ticked, q.data]);
-  /* Only when every ticked order holds money: a tick made to print is not a
-     money question. A read still in flight or failed shows nothing either. */
   if (ticked.length === 0 || !q.data || without.length > 0) return null;
   const total = rows.reduce((s, r) => s + r.remainingSen, 0);
   const movable = rows.reduce((s, r) => s + r.movableSen, 0);

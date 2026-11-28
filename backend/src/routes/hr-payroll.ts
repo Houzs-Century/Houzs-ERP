@@ -105,7 +105,6 @@ export function slipOut(r: SlipRow) {
       advanceDates: string[];
       pcbNote: string;
       allowances?: AllowanceLine[];
-      /** As stored on the payslip; one approved before 2026-11-17 has no category / items. */
       trip?: { commission: TripCommission; lines: Omit<TripPayLine, "category" | "items">[] } | null;
     },
     approvedAt: r.approved_at ?? null,
@@ -113,7 +112,6 @@ export function slipOut(r: SlipRow) {
   };
 }
 
-/* ── payroll ───────────────────────────────────────────────────────────── */
 
 hrPayroll.get("/payroll", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -167,9 +165,6 @@ async function setAdvancesSettled(db: Db, companyId: number, period: string, set
     .where(and(eq(hr_advances.company_id, companyId), gte(hr_advances.advance_date, first), lte(hr_advances.advance_date, last)));
 }
 
-/* Approving posts the month's penalty lines to their slips; a line whose
- * employee has no slip that month rolls to the next month (Hookka). Back to
- * draft un-posts them. */
 async function postPenalties(db: Db, companyId: number, period: string, post: boolean) {
   const now = new Date().toISOString();
   const lines = await db
@@ -245,7 +240,6 @@ hrPayroll.get("/payroll/:id", async (c) => {
   return c.json({ slip: slipOut(row as SlipRow) });
 });
 
-/* ── advances ──────────────────────────────────────────────────────────── */
 
 hrPayroll.get("/advances", async (c) => {
   const co = requireActiveCompanyId(c);
@@ -253,8 +247,6 @@ hrPayroll.get("/advances", async (c) => {
   const period = c.req.query("period") ?? todayMyt().slice(0, 7);
   if (!PERIOD.test(period)) return c.json({ error: "bad_period", message: "Pick a month." }, 400);
   const { first, last } = periodBounds(period);
-  /* Every advance started on or before this month, so an installment advance
-     from an earlier month still shows while it is being repaid. */
   const rows = await getDb(c.env)
     .select({ a: hr_advances, emp_no: hr_employees.emp_no, name: hr_employees.name })
     .from(hr_advances)
@@ -280,7 +272,6 @@ hrPayroll.get("/advances", async (c) => {
         status: a.status,
       };
     })
-    // Given this month, or still deducting / owing — drop lump sums and finished schedules from earlier months.
     .filter((r) => (r.date >= first && r.date <= last) || r.thisMonthSen > 0 || r.remainingSen > 0);
   return c.json({
     period,
@@ -301,8 +292,6 @@ function parseAdvance(raw: Record<string, unknown>): { employeeId: number; date:
   if (!Number.isInteger(employeeId) || employeeId <= 0) return "Pick the employee.";
   if (!YMD.test(date)) return "Pick the date the money was given.";
   if (!Number.isInteger(amountSen) || amountSen <= 0) return "The amount must be more than RM 0.00.";
-  // installmentSen: NULL = lump sum (today's behaviour); otherwise a positive
-  // per-month deduction no larger than the advance itself.
   let installmentSen: number | null = null;
   if (raw.installmentSen != null) {
     const n = Number(raw.installmentSen);
@@ -365,7 +354,6 @@ hrPayroll.delete("/advances/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-/* ── penalties ─────────────────────────────────────────────────────────── */
 
 type PenaltyIn = { date: string; reference: string | null; reason: string; remarks: string | null; lines: { employeeId: number; amountSen: number }[] };
 function parsePenalty(raw: Record<string, unknown>): PenaltyIn | string {
@@ -507,8 +495,6 @@ hrPayroll.post("/penalties/:id/:action{submit|approve|reject|revoke}", async (c)
     await db.update(hr_penalties).set({ status: "PENDING_APPROVAL", submitted_at: now, rejected_reason: null, updated_at: now }).where(eq(hr_penalties.id, id));
   } else if (action === "approve") {
     if (head.status !== "PENDING_APPROVAL") return c.json({ error: "bad_state", message: "Only a submitted penalty can be approved." }, 409);
-    /* Not your own: the person who raised a penalty does not approve it
-       (Hookka; it let SUPER_ADMIN through, Century has no such bypass). */
     if (head.created_by === u.id) return c.json({ error: "own_penalty", message: "Someone other than the person who raised it must approve it." }, 409);
     const period = penaltyPeriod(todayMyt(), await lockedPeriods(db, co.companyId));
     await db.update(hr_penalties).set({ status: "APPROVED", approved_by: u.id, approved_by_name: u.name ?? u.email, approved_at: now, updated_at: now }).where(eq(hr_penalties.id, id));

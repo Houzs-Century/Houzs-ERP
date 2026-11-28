@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// ScheduleRouteMap — the interactive Google Map for the Phase 3 scheduling
-// drawer. Renders the depot + numbered stop pins + the route polyline for the
-// CURRENT order (reorder happens in the drawer's stop list; this map reflects
-// it). Uses the Maps JavaScript API through @vis.gl/react-google-maps.
-//
-// KEY: reads the BROWSER key from import.meta.env.VITE_GOOGLE_MAPS_API_KEY. When
-// that env var is unset, this component is not mounted at all (the drawer shows a
-// "map key not configured" note instead). If the Maps JS fails to load at runtime
-// (bad key, referrer block, network), onError flips to a graceful in-place
-// fallback rather than crashing the drawer.
-//
-// Markers + polyline are drawn IMPERATIVELY via useMap() so the map needs no
-// cloud-configured mapId (classic raster map, numbered circle markers) — it works
-// with any Maps-enabled key out of the box.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from "react";
 import { APIProvider, Map, useMap } from "@vis.gl/react-google-maps";
@@ -27,19 +11,40 @@ export type RoutePoint = {
   violated?: boolean;
 };
 
-/* Imperative overlay: markers + a polyline for depot -> stops (in order) ->
-   depot, re-drawn whenever the order changes, with the viewport fit to the
-   points. Cleans every object up on change / unmount so no marker leaks. */
 /** Where the lorry is now (Fleet Health's lorry page) — a dark marker on top. */
 export type RouteVehicle = { lat: number; lng: number; label: string };
 
-function RouteOverlay({ depot, stops, vehicle, track }: { depot: { lat: number; lng: number } | null; stops: RoutePoint[]; vehicle: RouteVehicle | null; track: Array<{ lat: number; lng: number }> }) {
+/** True when every point is the same spot, so fitBounds has no area to fit and the map needs a fixed street zoom. */
+export function isOnePlace(points: ReadonlyArray<{ lat: number; lng: number }>): boolean {
+  const first = points.at(0);
+  return first === undefined || points.every((p) => p.lat === first.lat && p.lng === first.lng);
+}
+
+function RouteOverlay({ depot, stops, vehicle, track, drops }: { depot: { lat: number; lng: number } | null; stops: RoutePoint[]; vehicle: RouteVehicle | null; track: Array<{ lat: number; lng: number }>; drops: RoutePoint[] }) {
   const map = useMap();
   const objectsRef = useRef<Array<{ setMap: (m: google.maps.Map | null) => void }>>([]);
+  const vehicleRef = useRef(vehicle);
+  vehicleRef.current = vehicle;
+  const markerRef = useRef<google.maps.Marker | null>(null);
 
   useEffect(() => {
     if (!map || typeof google === "undefined") return;
-    // Clear previous overlay objects.
+    if (!vehicle) { markerRef.current?.setMap(null); markerRef.current = null; return; }
+    const v = { lat: vehicle.lat, lng: vehicle.lng };
+    if (!markerRef.current) {
+      markerRef.current = new google.maps.Marker({
+        position: v, map, title: vehicle.label, zIndex: 2000,
+        icon: { path: "M -11 -7 L 5 -7 L 5 -3 L 9 -3 L 12 1 L 12 6 L -11 6 Z", scale: 1.4, fillColor: "#111827", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+      });
+    } else {
+      markerRef.current.setPosition(v);
+      markerRef.current.setTitle(vehicle.label);
+    }
+  }, [map, vehicle]);
+  useEffect(() => () => { markerRef.current?.setMap(null); markerRef.current = null; }, []);
+
+  useEffect(() => {
+    if (!map || typeof google === "undefined") return;
     for (const o of objectsRef.current) o.setMap(null);
     objectsRef.current = [];
 
@@ -89,9 +94,21 @@ function RouteOverlay({ depot, stops, vehicle, track }: { depot: { lat: number; 
       objectsRef.current.push(marker);
     }
 
+    for (const s of drops) {
+      const p = { lat: s.lat, lng: s.lng };
+      bounds.extend(p);
+      objectsRef.current.push(new google.maps.Marker({
+        position: p,
+        map,
+        title: `${s.order}. ${s.label}`,
+        zIndex: 1500,
+        label: { text: String(s.order), color: "#ffffff", fontWeight: "bold", fontSize: "12px" },
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 12, fillColor: "#ea580c", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+      }));
+    }
+
     if (depot && stops.length > 0) path.push({ lat: depot.lat, lng: depot.lng });
 
-    /* The route actually driven (GPS fixes) — grey under the planned blue line. */
     if (track.length >= 2) {
       for (const p of track) bounds.extend(p);
       objectsRef.current.push(new google.maps.Polyline({
@@ -99,24 +116,8 @@ function RouteOverlay({ depot, stops, vehicle, track }: { depot: { lat: number; 
       }));
     }
 
-    if (vehicle) {
-      const v = { lat: vehicle.lat, lng: vehicle.lng };
-      bounds.extend(v);
-      objectsRef.current.push(new google.maps.Marker({
-        position: v,
-        map,
-        title: vehicle.label,
-        zIndex: 2000,
-        icon: {
-          path: "M -11 -7 L 5 -7 L 5 -3 L 9 -3 L 12 1 L 12 6 L -11 6 Z",
-          scale: 1.4,
-          fillColor: "#111827",
-          fillOpacity: 1,
-          strokeColor: "#ffffff",
-          strokeWeight: 2,
-        },
-      }));
-    }
+    const vehicleNow = vehicleRef.current;
+    if (vehicleNow) bounds.extend({ lat: vehicleNow.lat, lng: vehicleNow.lng });
 
     if (path.length >= 2) {
       const line = new google.maps.Polyline({
@@ -132,20 +133,20 @@ function RouteOverlay({ depot, stops, vehicle, track }: { depot: { lat: number; 
 
     if (!bounds.isEmpty()) {
       map.fitBounds(bounds, 48);
-      // A single point leaves fitBounds zoomed all the way in — cap it.
-      if (path.length <= 1) map.setZoom(14);
+      if (isOnePlace([...path, ...drops, ...track, ...(vehicleNow ? [vehicleNow] : [])])) map.setZoom(14);
     }
 
     return () => {
       for (const o of objectsRef.current) o.setMap(null);
       objectsRef.current = [];
     };
-  }, [map, depot, stops, vehicle, track]);
+  }, [map, depot, stops, track, drops]);
 
   return null;
 }
 
 const NO_TRACK: Array<{ lat: number; lng: number }> = [];
+const NO_DROPS: RoutePoint[] = [];
 
 export function ScheduleRouteMap({
   apiKey,
@@ -153,12 +154,14 @@ export function ScheduleRouteMap({
   stops,
   vehicle = null,
   track = NO_TRACK,
+  drops = NO_DROPS,
 }: {
   apiKey: string;
   depot: { lat: number; lng: number } | null;
   stops: RoutePoint[];
   vehicle?: RouteVehicle | null;
   track?: Array<{ lat: number; lng: number }>;
+  drops?: RoutePoint[];
 }) {
   const [failed, setFailed] = useState(false);
 
@@ -183,7 +186,7 @@ export function ScheduleRouteMap({
           disableDefaultUI={false}
           style={{ width: "100%", height: 320 }}
         >
-          <RouteOverlay depot={depot} stops={stops} vehicle={vehicle} track={track} />
+          <RouteOverlay depot={depot} stops={stops} vehicle={vehicle} track={track} drops={drops} />
         </Map>
       </APIProvider>
     </div>

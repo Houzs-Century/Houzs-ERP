@@ -5,7 +5,7 @@ import { Badge } from "../components/Badge";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { ListSkeleton } from "../components/Skeleton";
-import { fmtDateTime } from "../vendor/shared/format";
+import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
 import type { Department, TeamMember } from "../types";
 import { fetchSyncStatus, type MailboxSync } from "./MailCenter/mail-actions";
 
@@ -70,7 +70,6 @@ export function AccessChangeLog() {
   );
 }
 
-/** Newest mail older than this reads as "quiet": the mailbox may have stopped syncing. */
 const QUIET_DAYS = 3;
 
 export function syncState(r: MailboxSync, now: number): "live" | "waiting" | "quiet" | "never" {

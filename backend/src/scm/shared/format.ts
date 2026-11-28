@@ -1,5 +1,3 @@
-// Pure formatting helpers. Lifted from prototype per PORT_DESIGN.md §11.2 Issue 8.
-// SOLE source of truth — no inline duplicates anywhere in client OR server.
 
 /** Whole-MYR formatter. §10 Decision 9: integer RM only, never `.00`. */
 export const fmtMoney = (n: number): string =>
@@ -47,39 +45,6 @@ export const fmtMoneySen = (
   })}`;
 };
 
-/* ── THE ONE DATE RULE ───────────────────────────────────────────────────────
-   DD/MM/YYYY, numeric, day-first (Malaysian standard). Ruled twice by the
-   owner and written into the tree both times:
-     · frontend/src/lib/utils.ts — "House style is numeric DD/MM/YYYY (owner
-       requirement — no 'Jun'/'Jul' month names anywhere on the desktop app)"
-     · this file, below — "System-wide canonical display format
-       (Commander 2026-06-18)"
-   and then re-derived by hand ~30 more times in four other spellings, which is
-   why one screen could show "Aug 16, 2026" in the header and "12/09/2026" on
-   the line beneath it. `fmtDate` / `fmtDateTime` are now the ONLY place the
-   shape is written. backend/scripts/check-date-formatting.mjs fails the build
-   on a new hand-rolled one.
-
-   WHY THE PARSING IS EXPLICIT AND NOT `new Date(x)`. The previous body was
-   `new Date(d).toLocaleDateString('en-GB', …)` and it was wrong twice over:
-
-   1. `new Date('2026-08-16')` is parsed by the spec as UTC MIDNIGHT. Rendered
-      in any negative-offset zone that is 15 August. Malaysia is UTC+8 so it
-      looked right in the office and was wrong for anyone else — the exact trap
-      SalesOrderDetail.tsx documents dodging by hand.
-   2. `toLocaleDateString` with NO `timeZone` renders in the VIEWER's zone, so a
-      real instant near midnight showed a different day per machine.
-
-   So: a value that carries NO zone (a date-only column, a datetime-local
-   wall-clock field) is displayed VERBATIM — never round-tripped through a Date,
-   never converted. A value that IS a real instant is converted ONCE, into
-   Malaysian time, by fixed +08:00 arithmetic rather than an ICU timezone
-   lookup. Malaysia has had no DST and no offset change since 1982, the same
-   assumption `todayMY` below already makes, and it gives byte-identical output
-   in a browser, in Workers and under vitest.
-
-   DISPLAY ONLY. Never feed the output to a date input, an API payload or
-   AutoCount — those stay ISO. Use `todayMY` / the raw ISO value for those. */
 
 const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DASH = '—';
@@ -88,7 +53,6 @@ type DateParts = { yyyy: string; mm: string; dd: string; hh: string; mi: string;
 
 const pad2 = (n: number): string => String(n).padStart(2, '0');
 
-/** A real instant → its Malaysian wall-clock fields. `null` if not a real date. */
 function mytParts(date: Date): DateParts | null {
   const t = date.getTime();
   if (!Number.isFinite(t)) return null;
@@ -103,8 +67,6 @@ function mytParts(date: Date): DateParts | null {
   };
 }
 
-/** Everything the app stores or receives → display fields, or `null` for
- *  "nothing to show" (null / undefined / '' / unparseable). */
 function dateParts(d: Date | string | number | null | undefined): DateParts | null {
   if (d == null) return null;
   if (d instanceof Date) return mytParts(d);
@@ -113,37 +75,17 @@ function dateParts(d: Date | string | number | null | undefined): DateParts | nu
   const s = d.trim();
   if (s === '') return null;
 
-  /* Already in house shape. Formatting a formatted string must be a no-op —
-     a display helper that corrupts its own output is how "2026/08/16" became
-     "Invalid Date" when a second caller wrapped a first. */
   const ymd = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(s);
   if (ymd) return { yyyy: ymd[1], mm: ymd[2], dd: ymd[3], hh: '00', mi: '00', ss: '00' };
-  /* Legacy day-first display (pre-2026-09-25) still parses, so any value that
-     round-tripped through the OLD fmtDate is CONVERTED to the new shape, never
-     read as an invalid date. */
   const dmy = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(s);
   if (dmy) return { yyyy: dmy[3], mm: dmy[2], dd: dmy[1], hh: '00', mi: '00', ss: '00' };
 
-  /* NO ZONE IN THE VALUE → NO CONVERSION. Covers the two shapes this ERP
-     actually stores: a date-only `date`/`text` column (`2026-08-16`) and a
-     datetime-local wall-clock field (`2026-08-16T14:30`). Also covers
-     AutoCount's zone-less `2026-08-12T00:00:00`. Displaying these verbatim is
-     what makes the output identical on every machine. */
   const wall = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?$/.exec(s);
   if (wall && !/[Zz]$|[+-]\d{2}:?\d{2}$/.test(s)) {
-    /* A bare SQL timestamp `YYYY-MM-DD HH:MM:SS` IS an instant — SQLite's
-       `datetime('now')` returns unzoned UTC — so the space form with seconds
-       goes through the UTC branch instead. Everything else is wall clock. */
     if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s)) {
       return mytParts(new Date(s.replace(' ', 'T') + 'Z'));
     }
-    /* Sliced, not read off the optional capture groups. TypeScript types
-       `wall[4]` as `string` (this tsconfig has no noUncheckedIndexedAccess)
-       while at RUNTIME an unmatched group is `undefined` — so the `?? '00'`
-       that shape needs reads as dead code to eslint and as load-bearing to the
-       engine. The regex above has already proven the layout; slicing the
-       validated string states the same thing without the disagreement. */
-    const time = s.slice(11); // '' when the value is date-only
+    const time = s.slice(11);
     return {
       yyyy: wall[1],
       mm: wall[2],
@@ -154,7 +96,6 @@ function dateParts(d: Date | string | number | null | undefined): DateParts | nu
     };
   }
 
-  /* A zoned ISO instant (`…Z`, `…+08:00`) or anything else Date understands. */
   return mytParts(new Date(s));
 }
 

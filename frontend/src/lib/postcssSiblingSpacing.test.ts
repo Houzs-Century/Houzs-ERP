@@ -1,7 +1,3 @@
-/* The app's CSS must not carry Tailwind 3's `:not([hidden]) ~ :not([hidden])`
-   sibling selector: with it, every row a windowed table adds or removes
-   restyles all the rows after it (154 ms vs 19 ms per 10-row scroll step on
-   the 3,000-row Delivery Planning board). See postcss-sibling-spacing.js. */
 import { describe, expect, it } from "vitest";
 import postcss from "postcss";
 import tailwindcss from "tailwindcss";

@@ -1,15 +1,6 @@
-/* HR · Employees & Attendance — Overview (redesign look, real data). A 12-col
- * dashboard built from the reads HR already has: Today (the attendance day read),
- * Headcount (employee master + today's punch), the month on-time chart (hover a
- * day for who was late / absent / on leave / on time) and "most late" (the
- * working-hours month read), Payroll (the month's run), Needs attention (not
- * punched in, unlinked accounts, work permits expiring, OT to confirm, penalties
- * to approve, a draft payroll, on probation) and Coming up (holidays, work-permit
- * expiry, confirmation due). The chart sits left with Needs attention as a tall
- * right column; Coming up and Most late sit under the chart. Amounts masked. */
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { fmtSen, todayMY } from "../../vendor/shared/format";
+import { fmtSen, todayMY } from "../../../../shared/src/vendor/shared/format";
 import { minutesFromWorkDate } from "../../vendor/shared/hr-attendance";
 import { useAuth } from "../../auth/AuthContext";
 import { api } from "../../api/client";
@@ -21,13 +12,9 @@ import { monthAttendanceStats, monthBounds, monthDayDetail, pad2 } from "./atten
 import { buildUpcoming, permitAlert, probationAlert } from "./overviewReminders";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
-// Month and weekday labels from Intl, not a hand-kept array — a calendar
-// vocabulary has one source of truth (the locale), and it keeps the duplicated-
-// decisions audit from counting a second copy of the month/weekday names here.
 const monthLabel = (monthIndex: number, style: "long" | "short"): string =>
   new Date(Date.UTC(2000, monthIndex, 1)).toLocaleString("en-US", { month: style, timeZone: "UTC" });
 const weekdayLetter = (date: Date): string => date.toLocaleString("en-US", { weekday: "narrow", timeZone: "UTC" });
-/** First two names, then "+N" — keeps an alert's sub-line on one row. */
 const names2 = (list: string[]): string => (list.length <= 2 ? list.join(", ") : `${list.slice(0, 2).join(", ")} +${list.length - 2}`);
 
 function Avatar({ name, size = 24, ring = false }: { name: string; size?: number; ring?: boolean }) {
@@ -50,8 +37,6 @@ function Card({ title, right, children, className }: { title: ReactNode; right?:
 }
 const linkCls = "text-[11px] font-semibold text-primary hover:text-primary-ink";
 
-/** One status row inside the chart's hover card: a coloured dot, the label, the
- *  count, then the names. Renders nothing when nobody is in that state. */
 function TipSection({ label, names, dot }: { label: string; names: string[]; dot: string }) {
   if (names.length === 0) return null;
   return (
@@ -158,8 +143,6 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
   const payStatus = payroll.data ? (payroll.data.status ?? (payroll.data.projected ? "Projected" : "Draft")) : "—";
   const money = (sen: number) => (showPay ? fmtSen(sen) : "RM ••••••");
 
-  // The month's on-time chart, "most late" and the per-day hover detail, all from
-  // the working-hours read.
   const empNameById = useMemo(() => new Map((wh.data?.employees ?? []).map((e) => [e.id, e.name])), [wh.data]);
   const { perDay, lateByEmp } = useMemo(() => monthAttendanceStats(wh.data?.days ?? []), [wh.data]);
   const perDayByDate = useMemo(() => new Map(perDay.map((s) => [s.date, s])), [perDay]);
@@ -181,8 +164,6 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
   const isWeekend = (d: number) => { const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); return dow === 0 || dow === 6; };
   const openEmp = (id: number) => { const e = active.find((a) => a.id === id); if (e) onPickEmployee(e); else onNavigate("attendance"); };
 
-  // Someone still out after the shift (plus the grace) has started is worth
-  // flagging; before then everyone is simply "not in yet", which is normal.
   const shift = att.data?.shift ?? null;
   const pastShiftStart = shift != null && minutesFromWorkDate(today, new Date()) > shift.startMin + shift.lateGraceMin;
   const otPending = canOt ? (ot.data?.claims.filter((c) => c.status === "PENDING").length ?? 0) : 0;
@@ -267,7 +248,6 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
   return (
     <>
       <div className="grid min-w-[960px] grid-cols-12 gap-[14px] px-6 py-4" style={{ gridAutoRows: "min-content" }}>
-        {/* Today */}
         <Card title="Today" className="col-span-5" right={<button type="button" onClick={() => onNavigate("attendance")} className={linkCls}>Attendance ›</button>}>
           {!attReady ? (
             <div className="py-6 text-center text-[12px] text-ink-muted">{att.error ?? "Loading today's punches…"}</div>
@@ -293,7 +273,6 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
           )}
         </Card>
 
-        {/* Headcount */}
         <Card title="Headcount" className="col-span-4" right={<button type="button" onClick={() => onNavigate("employees")} className={linkCls}>Employees ›</button>}>
           <div className="flex gap-6">
             {[{ n: total, l: "Active" }, { n: outsourced, l: "Outsourced" }, { n: notLinked, l: "Not linked" }].map((s) => (
@@ -319,7 +298,6 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
           </div>
         </Card>
 
-        {/* Payroll */}
         <Card title={`Payroll · ${period.slice(5, 7)}/${period.slice(0, 4)}`} className="col-span-3" right={<button type="button" onClick={() => setShowPay((v) => !v)} aria-label={showPay ? "Hide amounts" : "Show amounts"} className="text-ink-muted hover:text-ink"><EyeIcon off={!showPay} /></button>}>
           {payroll.error ? (
             <div className="py-4 text-[12px] text-ink-muted">Payroll not available.</div>
@@ -338,7 +316,6 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
           )}
         </Card>
 
-        {/* Left column: the month chart, then Coming up + Most late */}
         <div className="col-span-8 flex min-w-0 flex-col gap-[14px]">
           <Card
             title={`Attendance · ${monthLabel(m - 1, "long")}`}
@@ -396,7 +373,6 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
           </div>
         </div>
 
-        {/* Needs attention — tall right column */}
         <Card title="Needs attention" className="col-span-4" right={needs.length > 0 ? <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-err px-1 text-[11px] font-bold text-white">{needs.length}</span> : undefined}>
           {needs.length === 0 ? (
             <div className="py-4 text-[12px] text-ink-muted">{emp.loading ? "Loading…" : "Nothing needs attention right now."}</div>
@@ -421,8 +397,6 @@ export function OverviewPage({ onNavigate, onPickEmployee }: { onNavigate: (key:
   );
 }
 
-/** The chart's hover card: date, the day's on-time rate, and the names by state,
- *  pinned beneath the hovered column (position: fixed, so no ancestor clips it). */
 function renderTip(
   hover: Hover,
   perDayDetail: Map<string, import("./attendanceMonth").DayDetail>,

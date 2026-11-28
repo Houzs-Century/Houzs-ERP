@@ -31,7 +31,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowDown, ArrowUp, ChevronDown, ChevronRight, GripVertical, Hand, Layers, PenLine, Plus, X } from 'lucide-react';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import {
   REPORT_TITLES, SPLIT_MAX_PART, addCategory, addSubtotal, categoryIds, itemKey, moveWithinSiblings, newCategoryId, newSubtotalId, placeItem, removeCategory, removeSubtotal, renameCategory,
   setAccountFlow, setAccountSplit, setCategoryFlow, setCategorySplit, setCategoryTick, setTotalLabel, splitChoice, splitOfChoice, splitPart, splitWord, unplaceAccount, unplacedAccounts,
@@ -45,12 +45,10 @@ import s from './ReportLayoutEditor.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 const sideWord = (side: Side): string => (side === 'in' ? 'In' : 'Out');
-/* How close to the scroll area's top or bottom a drag starts it scrolling, and how far a step goes. */
 const EDGE_PX = 56;
 const STEP_PX = 18;
 
 type Drag = { block: string; item: LayoutItem; key: string };
-/** A rename in progress: the name, and the subtotal line's name where the category has one (Cash flow's sides). */
 type Rename = { id: string; label: string; total: string | null };
 
 type Props = { report: ReportKey; onClose: () => void };
@@ -72,9 +70,7 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
      up (parked), the page scrolled freely, and the row put down with Place here. */
   const [parked, setParked] = useState<Drag | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  /* Close with unsaved changes asks first (the design's banner under the head). */
   const [asking, setAsking] = useState(false);
-  /* The groups whose parts are being typed: their two boxes stay while a part passes 0. */
   const [typingParts, setTypingParts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -84,8 +80,6 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     return () => document.removeEventListener('keydown', onKey);
   }, [parked]);
 
-  /* While a row is dragged, near the scroll area's top or bottom edge (or the window's)
-     the tree scrolls, so a drag reaches a row off the screen. */
   useEffect(() => {
     if (!drag) return;
     const onOver = (e: DragEvent) => {
@@ -103,13 +97,10 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
   }, [drag]);
 
   const data = q.data;
-  /* The server's tree is the draft until the first edit; after a save or a
-     reset the fresh read replaces it again. */
   useEffect(() => { if (data && !dirty) setDraft(data.layout); }, [data, dirty]);
 
   const names = useMemo(() => new Map((data?.accounts ?? []).map((a) => [a.code, a])), [data]);
   const companies: LayoutCompany[] = data?.companies ?? [];
-  /* The Cash Flow carries directions and the Settlement / Deposit choice — two more columns, spares per side. */
   const cashFlow = report === 'rp';
   const span = 4 + companies.length + (cashFlow ? 2 : 0);
   const title = `Layout · ${REPORT_TITLES[report]}`;
@@ -163,7 +154,6 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     <button type="button" className={s.iconBtn} aria-label={`Pick up ${label}`} title="Pick up: scroll to where it goes, then Place here"
       aria-pressed={parked?.key === key} onClick={() => setParked(parked?.key === key ? null : { block, item, key })}><Hand {...ICON} /></button>
   );
-  /* Where a parked row may go down: before this row, or inside this category. */
   const placeHere = (block: string, target: DropTarget, key: string, label: string) =>
     parked && parked.block === block && parked.key !== key && (
       <button type="button" className={s.place} aria-label={`${target.kind === 'into' ? 'Place inside' : 'Place before'} ${label}`}
@@ -206,8 +196,6 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
-  /* A whole chart on one tree (Receipts & Payments) is long — fold it to
-     its top categories in one press, open it in one press. */
   const foldAll = () => { if (draft) setFolded(new Set(categoryIds(draft))); };
   const unfoldAll = () => setFolded(new Set());
 
@@ -224,7 +212,6 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
   );
   const noTicks = companies.map((co) => <td key={co.id} />);
 
-  /* The name typed in place, and the subtotal line beside it where the category has one. */
   const renameBox = (it: { id: string; label: string }) => rename && (
     <span className={s.rename} onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) commitRename(); }}>
       <input
@@ -297,7 +284,6 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
   };
   const asAbove = (above: CashSplit | undefined): string => `As above (${splitWord(above)})`;
 
-  /* `above`: the Settlement / Deposit the group above passes down — what "As above" follows. */
   const renderItems = (block: string, items: LayoutItem[], depth: number, above: CashSplit | undefined): React.ReactNode => items.map((it) => {
     const key = itemKey(it);
     if (it.kind === 'account') {
@@ -367,7 +353,6 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
       );
     }
     const open = !folded.has(it.id);
-    /* Cash flow's sides (its top categories) name their own subtotal line. */
     const side = cashFlow && depth === 1;
     return (
       <Fragment key={key}>
@@ -435,15 +420,12 @@ export const ReportLayoutEditor = ({ report, onClose }: Props) => {
     );
   });
 
-  /* A block's spares: the accounts its tree does not place — on the Cash Flow per side, the
-     accounts whose money in (or out) no line reads yet. */
   const sparesOf = (block: LayoutBlockDef): Array<{ side: Side | null; rows: LayoutAccountRow[] }> => {
     if (!draft || !data) return [];
     return cashFlow
       ? [{ side: 'in', rows: unplacedAccounts(draft, block, data.accounts, 'in') }, { side: 'out', rows: unplacedAccounts(draft, block, data.accounts, 'out') }]
       : [{ side: null, rows: unplacedAccounts(draft, block, data.accounts) }];
   };
-  /* Place puts a spare at the end of its block — on the Cash Flow inside the first category of its side. */
   const sideCategory = (block: string, side: Side): LayoutCategory | null =>
     (draft?.blocks[block] ?? []).find((it): it is LayoutCategory => it.kind === 'category' && (it.flow ?? 'in') === side) ?? null;
   const placeSpare = (block: string, code: string, side: Side | null) => {

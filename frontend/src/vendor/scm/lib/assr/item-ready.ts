@@ -1,6 +1,3 @@
-// Pending Item Ready (Operation Dept 2026-11-09): the supplier DOs that come back
-// with the repaired item, and the route QC sends it on. Shared by the desktop
-// stage row and the mobile Stage tab so the labels cannot drift.
 
 export interface ReturnDo {
   id: number;

@@ -1,14 +1,3 @@
-// Import an edited role-matrix workbook back (RBAC rebuild, Option A — PR3).
-//
-// Pick a file → parse it LOCALLY into a preview (every role's added / removed /
-// unchanged, plus every ignored column, unknown key and unreadable cell) →
-// Apply, which runs the two PR2 write APIs per changed role:
-//   PATCH /api/roles/:id/page-access  { entries }   (full replace-set)
-//   PATCH /api/roles/:id              { permissions} (full array)
-// Nothing is written before Apply. The diff + payloads are built by the pure,
-// unit-tested lib/roleMatrixExcel; this file only reads the file and presents
-// the result. Shared by the desktop Matrix tab and the mobile Roles list — one
-// product, one logic layer.
 
 import { useCallback, useState } from "react";
 import { FileUp } from "lucide-react";
@@ -77,7 +66,6 @@ export function useRoleMatrixImport(onApplied: () => void) {
     setState({ step: "preview", fileName: file.name, sheets, snap, blankMode, parsed, applying: false, error: null, progress: 0 });
   }, []);
 
-  /** Re-parse the already-read file under a different blank convention. */
   const setBlankMode = useCallback((mode: BlankMode) => {
     setState((s) =>
       s.step === "preview" && !s.applying
@@ -86,8 +74,6 @@ export function useRoleMatrixImport(onApplied: () => void) {
     );
   }, []);
 
-  // `state` comes from the render scope (confirm is recreated each render), so it
-  // is always the live preview — no stale-closure read.
   const confirm = useCallback(async () => {
     if (state.step !== "preview" || state.applying) return;
     const { fileName, parsed } = state;
@@ -118,7 +104,6 @@ export function useRoleMatrixImport(onApplied: () => void) {
   return { state, chooseFile, confirm, reset, setBlankMode };
 }
 
-// ── Presentation ───────────────────────────────────────────────────────────
 
 const ERROR_BOX =
   "whitespace-pre-line rounded-lg border border-err/35 bg-err/[0.07] px-3 py-2 text-[12px] text-err";

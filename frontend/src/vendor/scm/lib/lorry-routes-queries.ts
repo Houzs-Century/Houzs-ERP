@@ -51,6 +51,28 @@ export function legLabelsByRef(figs: Iterable<RoadFigure>): Map<string, string> 
   return out;
 }
 
+/** Google's encoded polyline (the kept run's road) -> points; same decoder as the server's
+ *  `scm/lib/gps-road-track.ts`. PURE. */
+export function decodePolyline(encoded: string): Array<{ lat: number; lng: number }> {
+  const out: Array<{ lat: number; lng: number }> = [];
+  let i = 0, lat = 0, lng = 0;
+  const next = () => {
+    let shift = 0, result = 0, b: number;
+    do {
+      b = encoded.charCodeAt(i++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while (b >= 0x20 && i < encoded.length);
+    return result & 1 ? ~(result >> 1) : result >> 1;
+  };
+  while (i < encoded.length) {
+    lat += next();
+    lng += next();
+    out.push({ lat: lat / 1e5, lng: lng / 1e5 });
+  }
+  return out;
+}
+
 /** One lorry-day, Google against what really happened (server: scm/lib/lorry-day-stats.ts).
  *  `driveS` and `googleTimedS` cover the same timed stops, so they compare like for like. */
 export type RoadDayStat = {

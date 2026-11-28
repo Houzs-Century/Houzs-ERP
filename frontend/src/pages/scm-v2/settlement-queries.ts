@@ -1,6 +1,3 @@
-// Acquirer settlement reconciliation — the hooks behind the layer-3 screen
-// (accounting phase 2B; brief §3.5 layer 3). Every rule lives on the server;
-// these are transport only, so the page cannot drift from what actually posts.
 
 import type { BankFollows } from './bank-follows';
 import { useCallback } from 'react';
@@ -19,21 +16,17 @@ export type AcquirerSetup = {
   fee_method: string | null;
   date_tolerance_days: number;
   column_map: Record<string, string> | null;
-  /** Hong Leong writes "16-Aug" with no year anywhere in the file, so its
-      upload has to ask which month the statement covers. Nobody else does. */
   dates_have_no_year?: boolean;
   transit_account_code: string;
   fee_account_code: string;
   bank_account_code: string | null;
   is_active: boolean;
-  /** Enough config to READ a statement (global — shared by every company). */
   ready: boolean;
   /** A receiving bank account is set FOR THIS COMPANY, so a payout can be
       booked. Separate from the ready flag because the same merchant pays different
       companies into different banks (owner: 例如pbb，在houzs 可能是maybank 收钱，
       但是在2990 是hong leong bank 收钱). */
   bankReady?: boolean;
-  /** Carries a unique reference — the only thing that may auto-match. */
   autoMatchable: boolean;
   /** The other names the sales team keys this merchant as on a payment
       (owner 2026-10-21: Pinelabs = AEON, Public = PBB). */
@@ -50,18 +43,12 @@ export type SettlementCandidate = {
   paidOn: string;
   amountSen: number;
   approvalCode: string | null;
-  /** Who paid — on the batch-detail candidates (the matcher carries it); the
-      watchlist's do not, so a reader has to ask. */
   customerName?: string | null;
   /** Which acquirer the payment was recorded as. Null on migration-era rows —
       shown as 未标 merchant so the operator knows he is claiming untagged
       money; confirming stamps the tag on. */
   merchantProvider?: string | null;
-  /** On a "Find the sale" result: the payment's own amount is the line's exact
-      gross — the system's guess, ranked first, never the only choice. */
   possible?: boolean;
-  /** The order's salesperson and the payment's account sheet (the redesign's
-      Sales and Account sheet columns) — on a report's candidates. */
   salesperson?: string | null;
   accountSheet?: string | null;
 };
@@ -77,7 +64,6 @@ export type SettlementLink = {
   paid_on?: string | null;
   customer_name?: string | null;
   approval_code?: string | null;
-  /** The order's salesperson and the payment's account sheet (the redesign). */
   salesperson?: string | null;
   account_sheet?: string | null;
 };
@@ -98,15 +84,9 @@ export type SettlementRow = {
   posted_je_no: string | null;
   notes: string | null;
   linked: SettlementLink[];
-  /** Lines confirmed TOGETHER against their payments (option B): the group's
-      lines and their total. `linked` then holds the group's payments. */
   matched_with?: { leadRowId: number; lines: Array<{ rowId: number; lineNo: number; grossSen: number }>; grossSen: number } | null;
   candidates: SettlementCandidate[];
-  /** Sets of payments that add up to the line — two orders on one swipe, or
-      three. The screen flattens them into "these are worth a look". */
   comboHints: string[][];
-  /** What the system itself would pick — pre-ticked, still yours to confirm.
-      Empty unless there is exactly ONE way to make this line amount. */
   suggested?: SettlementCandidate[];
   clue: string | null;
   /** 'QR' for a DuitNow QR line (owner 2026-11-09: 0000PP 是 qr direct 去 bank
@@ -116,6 +96,12 @@ export type SettlementRow = {
   /** Set when the line was confirmed as ANOTHER company's sale swiped on this
       terminal (owner 2026-11-17: 2990's on Houzs's AEON): that company's id. */
   sold_by_company_id?: number | null;
+  /** The card terminal the report names for the line (owner 2026-11-27: 往后上传后都要
+      保存起来). Null for lines uploaded before then, or when the report names none. */
+  terminal_id?: string | null;
+  /** The line's share of its report's statement charge (AEON's subvention fee), by
+      gross (owner 2026-11-28: 把它加去每一笔的费用里面). 0 when the report has none. */
+  charge_share_sen?: number;
 };
 
 /** One credit of a payout, as the BANK shows it. */
@@ -139,32 +125,19 @@ export type SettlementBatch = {
   gross_sen: number;
   fee_sen: number;
   net_sen: number;
-  /** What the statement itself says it is paying, when it says so. */
   stated_net_sen: number | null;
-  /** lines net minus stated net: a charge the transactions do not explain. */
   adjustment_sen: number;
   adjustment_je_no: string | null;
-  /** How far the merchant side got: lines confirmed, lines still open, and
-      the two kinds of open — one you can decide, one nobody recorded. */
   confirmed_count?: number;
   open_count?: number;
-  /* MATCHED and unconfirmed: already matched by reference, one button away.
-     Not a decision — calling it one made an auto-matched line look wrong. */
   to_confirm_count?: number;
   to_choose_count?: number;
   no_record_count?: number;
-  /** How much of the payout has landed, across however many credits it came
-      in — one statement is often paid in several. */
   received_sen?: number;
   receipt_count?: number;
   outstanding_sen?: number;
-  /** The day it was FULLY received; null while any of it is still out, so
-      "partly in the bank" can never read as "in the bank". */
   received_on: string | null;
-  /** Only on the batch DETAIL: every credit recorded against this statement. */
   receipts?: SettlementReceipt[];
-  /** Only on the batch DETAIL: which bank account this payout will be booked
-      to for THIS company, and whether that was configured or fallen back to. */
   receiving_bank?: { code: string; name: string | null; configured: boolean };
   /** The DuitNow QR lines the report carries and their money — in the bank by
       their sales, so no part of gross / fee / net above (owner 2026-11-09). */
@@ -193,7 +166,6 @@ export const useSaveAcquirerSetup = () => {
       feeMethod?: string | null;
       dateToleranceDays?: number;
       columnMap?: Record<string, string> | null;
-      /** The other names this merchant is keyed as on a payment. */
       soNames?: string[];
       bankAccountCode?: string | null;
       transitAccountCode?: string;
@@ -225,13 +197,9 @@ export type MaintenanceMerchant = {
   fee_method: string | null;
   date_tolerance_days: number;
   column_map: Record<string, string> | null;
-  /** The other names the sales team keys this merchant as on a payment —
-      shared by every company, like the report layout. */
   so_names?: string[];
   ready: boolean;
   autoMatchable: boolean;
-  /* Keyed by company id, and only for the companies the server answered for —
-     so a lookup can miss, and every reader has to say what it does then. */
   byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null; transitAccountCode?: string | null; feeAccountCode?: string | null } | undefined>;
 };
 
@@ -291,8 +259,6 @@ export const useSaveMaintenanceBank = () => {
         method: 'PATCH', body: JSON.stringify(body),
       }),
     onSuccess: () => invalidateMaintenance(qc),
-    /* No writeFailedAs: refusing to unhook a bank a merchant still uses is the
-       MESSAGE, and the page shows the server's sentence verbatim. */
   });
 };
 
@@ -302,7 +268,6 @@ export type RematchResult = {
   acquirerCode: string;
   reports: number;
   lines: number;
-  /** Open lines matched by reference now — what "Confirm all" posts. */
   matched: number;
   newlyMatched: number;
   released: number;
@@ -368,12 +333,7 @@ export const useSettlementBatch = (batchId: number | null) => useQuery({
     coming back to the list does not re-read every report on it. */
 export const useSettlementBatchRow = (batchId: number) => useQuery(settlementBatchQuery(batchId));
 
-/** Several reports' lines on one screen (Payments not matched yet's merchant report
-    lines): each report read exactly as Merchant Recon reads it, so the two say the
-    same thing about a line. */
 type BatchDetail = Awaited<ReturnType<ReturnType<typeof settlementBatchQuery>['queryFn']>>;
-/* One stable function: React Query re-runs a combine only when its results or
-   the function change, so the screen's rows keep their identity between renders. */
 const combineDetails = (results: ReadonlyArray<{ data?: BatchDetail; isLoading: boolean; isError: boolean }>) => ({
   details: results.map((r) => r.data),
   loading: results.some((r) => r.isLoading),
@@ -397,7 +357,6 @@ export const useReadSettlementBatches = () => {
 export type UploadResult = {
   batchId: number;
   rows: number;
-  /** Summary/total rows in the file that are not transactions. */
   skippedLines: number;
   /** Lines already on another report of this acquirer — the same trading day,
       reference and gross — left out of this batch, each naming the report and
@@ -407,7 +366,6 @@ export type UploadResult = {
   statedNetSen: number | null;
   adjustmentSen: number;
   grossSen: number; feeSen: number; netSen: number;
-  /** The file's DuitNow QR lines — matched to Online sales, not owed through the clearing account. */
   qrLines?: number; qrSen?: number;
   periodFrom: string; periodTo: string;
   buckets: Record<string, number>;
@@ -419,35 +377,22 @@ export const useUploadStatement = () => {
     mutationFn: (body: {
       acquirerCode: string; fileName: string; content: string;
       summaryFeeSen?: number | null;
-      /** YYYY-MM — only needed when the file's dates carry no year. */
       statementMonth?: string | null;
     }) =>
       authedFetch<UploadResult>(`/accounting/settlement/batches`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['settlement-batches'] }); },
-    /* No writeFailedAs here: an unreadable statement is the MESSAGE, and the
-       page shows the server's sentence verbatim (§2.14). */
   });
 };
 
-/** `postedTo`: the reports the write posted to by id, on screen or not. */
 const invalidateAfterPosting = (qc: ReturnType<typeof useQueryClient>, postedTo: readonly number[]) => {
-  /* The reports ON SCREEN, and the ones posted to. Any other report is left as
-     read: re-read when it is opened, or once its read is older than
-     BATCH_DETAIL_STALE_MS, instead of all of them on the next visit to a list. */
   void qc.invalidateQueries({ queryKey: ['settlement-batch'], type: 'active' });
   for (const id of postedTo) void qc.invalidateQueries({ queryKey: ['settlement-batch', id] });
-  /* The LIST too, not just the open report. Its rows carry the counts every
-     screen reads — how many are ready to confirm, how many are still open —
-     and leaving them stale is what left "Confirm all 4 matched" on screen
-     beside four lines already stamped done · JE-2608-0013. */
   void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
   void qc.invalidateQueries({ queryKey: ['settlement-watchlist'] });
   void qc.invalidateQueries({ queryKey: ['account-balances'] });
   void qc.invalidateQueries({ queryKey: ['control-check'] });
   void qc.invalidateQueries({ queryKey: ['daily-bank'] });
-  /* Finance's To do counts these lines; it moves with them. */
   void qc.invalidateQueries({ queryKey: ['finance-todo'] });
-  /* A confirm can match the bank's credit for the report by itself. */
   void qc.invalidateQueries({ queryKey: ['bank-statement'] });
   void qc.invalidateQueries({ queryKey: ['bank-statements'] });
   void qc.invalidateQueries({ queryKey: ['bank-month'] });
@@ -499,9 +444,6 @@ export const useReleaseSettlementRow = () => {
   });
 };
 
-/* The door the ignore refusal points at: reverse the fee entry, release the
-   payments, send the row back to the deciding pile. Same invalidations as
-   confirming — the ledger moved, just in the other direction. */
 export const useUnconfirmSettlementRow = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -600,24 +542,16 @@ export const useUndoReceipt = () => {
   });
 };
 
-/* ── The payment advice: the payer's own answer sheet ────────────────────────
-   Public Bank sends one IBG advice when it pays: this much money, these
-   settlement days, into this account. Uploading it here is what lets the bank
-   matcher allocate one credit across however many reports the advice names —
-   without it the matcher searches for a combination and stops at four. */
 
 export type PayoutDayState = 'AGREES' | 'DIFFERS' | 'REPORT_MISSING' | 'REPORT_NOT_RECONCILED';
 
 /** One settlement date of an advice, against the report for that date. */
 export type PayoutDay = {
   settledOn: string;
-  /** What the advice says that day came to. */
   adviceNetSen: number;
   batchId: number | null;
   fileName: string | null;
-  /** What the uploaded report itself nets, when there is one. */
   reportNetSen: number | null;
-  /** report − (advice + charge). Zero is agreement; anything else is the finding. */
   differenceSen: number | null;
   reportOpenLines: number | null;
   /** What the bank deducted from this day's payout and where Finance booked it
@@ -636,9 +570,7 @@ export type ChargeAccount = { accountCode: string; accountName: string };
 export type PayoutStatus = {
   netSen: number;
   days: PayoutDay[];
-  /** Every day has a report, they all agree, and every report is reconciled. */
   readyToReceive: boolean;
-  /** One sentence saying what is in the way, or null when nothing is. */
   blockedBy: string | null;
 };
 
@@ -653,7 +585,6 @@ export type Payout = {
   commission_sen: number;
   net_sen: number;
   uploaded_by: string | null;
-  /** Re-checked against TODAY'S reports on every read, not stored. */
   status: PayoutStatus;
 };
 
@@ -662,7 +593,6 @@ export const usePayouts = () => useQuery({
   queryFn: () => authedFetch<{
     payouts: Payout[];
     chargeAccounts: ChargeAccount[];
-    /** Each acquirer's fee account — what the charge dialog defaults to. */
     feeAccountByAcquirer: Record<string, string | null>;
   }>(`/accounting/settlement/payouts`),
   staleTime: 15_000,
@@ -722,8 +652,6 @@ export const useUploadPayoutAdvice = () => {
         method: 'POST', body: JSON.stringify(body),
       }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['settlement-payouts'] }); },
-    /* No writeFailedAs: an unreadable advice is the MESSAGE, and the page shows
-       the server's sentence verbatim (§2.14). */
   });
 };
 
@@ -746,7 +674,6 @@ export type Watchlist = {
   /** salespersonName: who sold it, off the order (owner 2026-09-10: 我想要看到
       salesman 的名字); null when the order names nobody or the payment is an
       invoice's. */
-  /** ref / customer_so_no: the order's Ref No. (HC13025, ZNT6656), raw, for customerRefOf. */
   recordedNotArrived: Array<SettlementCandidate & { ageDays: number; acquirerCode: string | null; salespersonName?: string | null; ref?: string | null; customer_so_no?: string | null }>;
   arrivedNotRecorded: Array<{ id: number; acquirer_code: string; txn_date: string; ref: string | null; gross_sen: number; notes: string | null }>;
 };
@@ -763,14 +690,9 @@ export type InTransitLine = {
   paidOn: string;
   amountSen: number;
   approvalCode: string | null;
-  /** Who keyed the payment in — resolved to a name, null when unresolvable. */
   recordedBy: string | null;
   recordedById: string | null;
   ageDays: number;
-  /** NOT_ON_A_STATEMENT  — the acquirer has not reported it yet.
-   *  MATCHED_NOT_POSTED  — reported and matched, waiting to be confirmed.
-   *  RECONCILED_NOT_PAID — confirmed (its fee is booked), payout not arrived;
-   *                        amountSen is the NET for these, matching the ledger. */
   state: 'NOT_ON_A_STATEMENT' | 'MATCHED_NOT_POSTED' | 'RECONCILED_NOT_PAID';
 };
 
@@ -778,8 +700,6 @@ export type InTransit = {
   from: string;
   to: string;
   totalSen: number;
-  /** acquirer -> age bucket -> total. A bucket with nothing in it is ABSENT,
-      so the type is Partial: the screen has to ask before it reads. */
   ageing: Record<string, Partial<Record<AgeBucket, { count: number; sen: number }>>>;
   lines: InTransitLine[];
 };

@@ -1,7 +1,3 @@
-/* A new customer credit note filled from a delivery return (backlog A1): the
-   customer's order, the return's number as the reference, and one line per
-   returned line still uncredited, priced at what the invoice charged — never
-   the SKU's list price. The server holds every line to the same rule. */
 
 import type { ReturnCreditLine, ReturnCreditPrefill } from '../../vendor/scm/lib/credit-note-queries';
 import { emptyForm, type FormValues } from './CreditNotes';

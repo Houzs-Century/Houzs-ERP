@@ -1,38 +1,3 @@
-// ----------------------------------------------------------------------------
-// /trips — the TRIPS scheduling layer (Delivery / TMS Stage 5A).
-//
-// A trip is a scheduled lorry-day: one lorry + a primary driver (+ up to 2
-// helpers) leaving an origin warehouse on a date, carrying an ordered list of
-// trip_stops. Each stop links a DO (or an SO before a DO is cut) with a
-// stop_type and the delivery value attributable to that stop (revenue_sen).
-// Σ revenue_sen per trip = the trip revenue the Stage 5B "Lorry Capacity"
-// dashboard aggregates; the dashboard route itself is NOT built here.
-//
-// is_outsourced is DERIVED from the lorry's is_internal at create time
-// (is_outsourced = NOT is_internal) and snapshotted on the trip, so a later
-// master flip doesn't rewrite history. trip_no is a human doc number
-// (TRIP-YYMM-NNN) minted server-side via mintMonthlyDocNo (max+1, never count+1).
-//
-// Money: DO/SO grand totals are local_total_sen (integer cents); a stop's
-// revenue_sen is sourced from that. Dual-read camelCase ?? snake_case on every
-// result column (the pg driver camelCases result columns).
-//
-// COMPANY SCOPE — CROSS-COMPANY, which is NOT the same as unscoped. Trips is a
-// TMS shared queue (lib/companyScope.ts, "CROSS-COMPANY VIEW modules"): reads
-// WIDEN to the caller's granted companies via scopeToAllowedCompanies, and so do
-// the WRITES. The SCM supabase client is service-role, so RLS re-checks nothing
-// and that predicate is the only thing standing between a company-1-only
-// dispatcher and a company-2 trip they hold no grant for. Inserts still stamp
-// the ACTIVE company (a trip is raised from whichever company you are in; it may
-// still reference the other company's DOs). Where a write is by id, use
-// maybeSingle — the predicate can legitimately match zero rows, and single()
-// would render that 404 as a 500.
-//
-// Houzs port of 2990's apps/api/src/routes/trips.ts — same plumbing as the
-// sibling SCM routes (supabaseAuth + scm-scoped c.get('supabase'); paginateAll
-// from ../lib/paginate-all, mintMonthlyDocNo from ../lib/doc-no). scm.trips /
-// scm.trip_stops already exist (migration 0053). Mounted at '/trips'.
-// ----------------------------------------------------------------------------
 
 import { yymmFor } from '../../services/documentRefs';
 import { Hono } from 'hono';
@@ -44,9 +9,15 @@ import { paginateAll, chunkIn } from '../lib/paginate-all';
 import {
   assemblePackingLists,
   type PackTripRow, type PackStopRow, type PackDoRow, type PackItemRow, type PackLabelRow,
+  type PackSoItemRow, type PackCrewRow, type PackingList,
 } from '../lib/packing-list-view';
+import {
+  assemblePackingDay, assemblePackingRegions, mergeLorryLists,
+  type DayCrewRow, type DayDoRow, type DayTripStop, type PackingDayDo,
+} from '../lib/packing-day-view';
+import { loadRegionConfig } from '../lib/delivery-board-regions';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
-import { scopeToAllowedCompanies, companyCodeMap, withCompanyCode, activeCompanyId } from '../lib/companyScope';
+import { scopeToAllowedCompanies, companyCodeMap, withCompanyCode, activeCompanyId, type CompanyScopeCtx } from '../lib/companyScope';
 import { planStopMove } from '../lib/move-stop';
 import { optimizeRoute, travelTimeMatrix, type LatLngPoint } from '../lib/maps';
 import { geocodeAddressCached, composeAddress } from '../lib/geocode';
@@ -63,27 +34,23 @@ import { validatePing, shouldAcceptPing, latestPerDriver, PING_ACCEPTED_STATUSES
 import { dateOrNull } from '../lib/date-coerce';
 import { fillDpRowsPostcode, fillPostcodeFields, localitiesForPostcodes, postcodesToLookUp } from '../lib/postcode-from-address';
 import { DO_ARRIVED_STATES } from '../shared/do-shipped-states';
+import { resolveWorkedOutSources, type WorkedOutDo } from '../lib/do-line-worked-out-sources';
+import type { VariantAttrs } from '../shared';
 
 export const trips = new Hono<{ Bindings: Env; Variables: Variables }>();
 trips.use('*', supabaseAuth);
 
 const TRIP_COLS =
-  // company_id — TMS is a CROSS-COMPANY view: the row carries its company so the
-  // UI can show a company column (see companyScope.ts cross-company pattern).
   'company_id, id, trip_no, trip_date, lorry_id, driver_id, helper_1_id, helper_2_id, warehouse_id, ' +
   'trip_type, status, is_outsourced, clock_in_at, clock_out_at, total_distance_km, notes, ' +
   'created_at, created_by, updated_at';
 
 const STOP_COLS =
   'id, trip_id, stop_no, stop_type, do_id, so_id, customer_name, address, revenue_sen, notes, created_at, ' +
-  /* Mig 0134 — what the route optimiser worked out. NULL = never optimised, which
-     is honestly "not computed" rather than a fabricated zero. */
   'leg_distance_m, leg_duration_s, eta_offset_s, route_optimised_at';
 
 const TRIP_STATUSES = new Set(['PLANNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']);
 
-/* A trip's crew as a CrewAssignment (dual-read camelCase/snake_case), for the
-   per-assignee row scope: a Driver/Helper sees / acts on ONLY their own trips. */
 function tripAssignment(row: Record<string, unknown>): CrewAssignment {
   return {
     driverIds: [dual<string | null>(row, 'driver_id')],
@@ -91,32 +58,22 @@ function tripAssignment(row: Record<string, unknown>): CrewAssignment {
   };
 }
 
-/* Dual-read a camelCased OR snake_cased field off a query result. The pg driver
-   camelCases result columns; reading the snake_case key alone returns undefined
-   (the #1 recurring 2990/Houzs bug). Always read both. */
 function dual<T = unknown>(row: Record<string, unknown>, snake: string): T {
   const camel = snake.replace(/_([a-z])/g, (_, ch: string) => ch.toUpperCase());
   return (row[camel] ?? row[snake]) as T;
 }
 
-/* Next TRIP-YYMM-NNN. Mirrors the sibling scm minters — max(suffix)+1 via
-   mintMonthlyDocNo (self-healing; never count+1). */
 async function nextTripNo(sb: any): Promise<string> {
   const yymm = yymmFor();
-  // TRIP stays CROSS-COMPANY (no companyDocPrefix) — one shared sequence, per
-  // lib/companyScope.ts. mintMonthlyDocNo reads the row's single selected value,
-  // so it keeps working whichever of trip_no/tripNo the driver hands back.
   return mintMonthlyDocNo(sb, 'trips', 'trip_no', `TRIP-${yymm}`);
 }
 
-/* is_outsourced derives from the lorry's is_internal (NOT is_internal). A trip
-   with no lorry (or an unknown lorry) defaults to in-house (false). */
 async function deriveOutsourced(sb: any, lorryId: string | null): Promise<boolean> {
   if (!lorryId) return false;
   const { data } = await sb.from('lorries').select('is_internal').eq('id', lorryId).maybeSingle();
   if (!data) return false;
   const internal = dual<boolean | null>(data as Record<string, unknown>, 'is_internal');
-  return internal === false; // outsourced when explicitly not in-house
+  return internal === false;
 }
 
 function toNumericOrNull(v: unknown): number | null {
@@ -125,11 +82,6 @@ function toNumericOrNull(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/* Read the DELIVERY stops of a trip as ReconcileStops. Only DELIVERY stops carry
-   the SO/DO delivery the reverse sync owns — the same stop_type scheduleOntoTrip
-   stamps and the stale-stop sweep filters on, kept symmetric so forward and
-   reverse cannot drift. A read failure yields [] (best-effort): the reconcile
-   then reports NOT_REQUESTED rather than throwing on the primary trip action. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function deliveryStopsOfTrip(sb: any, tripId: string): Promise<ReconcileStop[]> {
   const { data } = await sb.from('trip_stops')
@@ -141,27 +93,20 @@ async function deliveryStopsOfTrip(sb: any, tripId: string): Promise<ReconcileSt
   }));
 }
 
-/* The actor for a reconcile audit row (best-effort, may be null). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function actorOf(c: any): { actorId: string | null; actorName: string | null } {
   const user = c.get('user') as { id?: string; user_metadata?: { name?: string } } | null;
   return { actorId: user?.id ?? null, actorName: user?.user_metadata?.name ?? null };
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
-   GET /trips?from=&to=&lorryId=&status= — list (paginated past the 1000 cap).
-   ─────────────────────────────────────────────────────────────────────────*/
 trips.get('/', async (c) => {
   const sb = c.get('supabase');
-  const from = c.req.query('from');         // YYYY-MM-DD (inclusive)
-  const to = c.req.query('to');             // YYYY-MM-DD (inclusive)
+  const from = c.req.query('from');
+  const to = c.req.query('to');
   const lorryId = c.req.query('lorryId');
   const status = c.req.query('status');
 
   const { data, error } = await paginateAll<Record<string, unknown>>((lo, hi) => {
-    // Inline literal select (not the TRIP_COLS const) so the PostgREST types
-    // resolve a concrete row shape that satisfies paginateAll's generic — the
-    // convention used by the paginated reads in delivery-planning.ts.
     let q = sb.from('trips')
       .select('company_id, id, trip_no, trip_date, lorry_id, driver_id, helper_1_id, helper_2_id, warehouse_id, trip_type, status, is_outsourced, clock_in_at, clock_out_at, total_distance_km, notes, created_at, created_by, updated_at')
       .order('trip_date', { ascending: false }).range(lo, hi);
@@ -169,43 +114,19 @@ trips.get('/', async (c) => {
     if (to) q = q.lte('trip_date', to);
     if (lorryId) q = q.eq('lorry_id', lorryId);
     if (status && TRIP_STATUSES.has(status.toUpperCase())) q = q.eq('status', status.toUpperCase());
-    // CROSS-COMPANY view: widen to every allowed company (one shared queue) —
-    // NOT isolated to the active company like SO/PO/GRN. No-op when unresolved.
     q = scopeToAllowedCompanies(q, c);
     return q;
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  /* PER-ASSIGNEE ROW SCOPE (owner rule): a Driver/Helper sees ONLY the trips
-     they are crewed on; ops/dispatcher/management resolve to `all` and see every
-     trip (the shared cross-company queue), unchanged. */
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
   const scoped = scope.mode === 'all'
     ? (data ?? [])
     : (data ?? []).filter((r) => scopeMatchesAssignment(scope, tripAssignment(r)));
-  // Tag each row with a readable company_code so the list can show a company column.
   const codes = companyCodeMap(c);
   const trips = scoped.map((r) => withCompanyCode(r, codes));
   return c.json({ trips });
 });
 
-/* ──────────────────────────────────────────────────────────────────────────
-   GET /trips/day?date=YYYY-MM-DD&warehouseId=<id> — the FLEET DAY-VIEW (A4).
-
-   Every trip on ONE date, each with its ordered stops enriched for the map + the
-   printable driver run-sheet: customer / address / revenue come straight off the
-   stop snapshot; phone + house type resolve through the stop's DO to its SO; the
-   delivery time window comes from scm.delivery_residence_rules by house type. A
-   READ layer over already-scheduled trips — it writes NOTHING and creates no trip.
-
-   Geocoding is CACHE-FIRST and gated behind GOOGLE_MAPS_API_KEY: with no key the
-   response still carries every trip + stop (configured:false), the map just has no
-   pins. A cached address never bills; a new one geocodes once then caches forever
-   (scm.geocode_cache, mig 0197) — the SAME cache the propose-schedule scheduler
-   fills, keyed on the same composed address so the two share hits.
-
-   MUST stay registered BEFORE '/:id' — '/day' is a single segment and '/:id'
-   would otherwise swallow it.
-   ─────────────────────────────────────────────────────────────────────────*/
 trips.get('/day', async (c) => {
   const sb = c.get('supabase');
   const date = c.req.query('date');
@@ -215,7 +136,6 @@ trips.get('/day', async (c) => {
   }
   const configured = !!c.env.GOOGLE_MAPS_API_KEY;
 
-  // Warehouses master — the depot list for the filter + the per-trip depot label.
   const { data: whRows } = await sb.from('warehouses').select('id, name, code, location, city, state, postcode');
   const warehousesById = new Map<string, DayMasterWarehouse>();
   const warehouseAddrById = new Map<string, string>();
@@ -231,7 +151,6 @@ trips.get('/day', async (c) => {
   }
   const warehouses = [...warehousesById.values()].sort((a, b) => (a.code ?? a.name).localeCompare(b.code ?? b.name));
 
-  // Trips on the date (cross-company fleet view), optional depot filter.
   const { data: tripData, error: tripErr } = await paginateAll<Record<string, unknown>>((lo, hi) => {
     let q = sb.from('trips')
       .select('company_id, id, trip_no, trip_date, lorry_id, driver_id, helper_1_id, helper_2_id, warehouse_id, trip_type, status, is_outsourced, total_distance_km, planned_depart_at, clock_in_at, clock_out_at')
@@ -242,7 +161,6 @@ trips.get('/day', async (c) => {
   });
   if (tripErr) return c.json({ error: 'load_failed', reason: tripErr.message }, 500);
 
-  // PER-ASSIGNEE ROW SCOPE (owner rule): a Driver/Helper sees only their trips.
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
   const scopedTrips = (scope.mode === 'all'
     ? (tripData ?? [])
@@ -269,7 +187,6 @@ trips.get('/day', async (c) => {
     return c.json({ date, configured, warehouses, trips: [] });
   }
 
-  // Stops for those trips.
   const tripIds = rawTrips.map((t) => t.id);
   const { data: stopData } = await sb.from('trip_stops')
     .select('id, trip_id, stop_no, stop_type, do_id, so_id, customer_name, address, revenue_sen, eta_offset_s, leg_distance_m')
@@ -288,8 +205,6 @@ trips.get('/day', async (c) => {
     leg_distance_m: toNumericOrNull(dual(s, 'leg_distance_m')),
   }));
 
-  // Resolve each stop's source SO through its DO (an SO stop keeps do_id; there is
-  // no trip_stops.so_id for an SO — it has no uuid). do_id -> so_doc_no -> SO.
   const doIds = [...new Set(rawStops.map((s) => s.do_id).filter((v): v is string => !!v))];
   const soDocByDoId = new Map<string, string>();
   const podByDoId = new Map<string, { delivered: boolean; hasPod: boolean }>();
@@ -345,7 +260,6 @@ trips.get('/day', async (c) => {
     }
   }
 
-  // Residence rules — house/building type -> delivery window + access flags.
   const { data: ruleRows } = await scopeToAllowedCompanies(
     sb.from('delivery_residence_rules')
       .select('building_type, earliest_delivery_time, latest_delivery_time, requires_lift_booking, requires_registration, is_active'),
@@ -366,11 +280,6 @@ trips.get('/day', async (c) => {
     });
   }
 
-  /* Postcode + state per stop. A DP job's come off its dp_orders row (company
-     predicate: the stop's trip is scoped, but a parent filter is not company
-     scope), with the postcode found in its address when the columns are empty;
-     any other stop with neither falls back to the postcode in its address text.
-     Read-only. */
   const dpByStopId = new Map<string, Record<string, unknown>>();
   {
     const stopIds = rawStops.map((s) => s.id);
@@ -389,8 +298,6 @@ trips.get('/day', async (c) => {
     .filter((s) => !dpByStopId.has(s.id) && !(s.do_id && soDocByDoId.has(s.do_id)))
     .flatMap((s) => postcodesToLookUp(snapshotFields(s.address))));
 
-  // Per-stop enrichment + the address to geocode (prefer the SO's fuller address,
-  // matching what propose-schedule cached, for cache-key parity; else the snapshot).
   const enrichByStopId = new Map<string, StopEnrichment>();
   const geoAddrByStopId = new Map<string, string>();
   const podByStopId = new Map<string, { delivered: boolean; hasPod: boolean }>();
@@ -419,7 +326,6 @@ trips.get('/day', async (c) => {
     if (addr.trim() !== '') geoAddrByStopId.set(s.id, addr);
   }
 
-  // Geocode (cache-first, gated). Depots first, then each distinct stop address.
   const depotByWarehouseId = new Map<string, DayLatLng>();
   const geoByStopId = new Map<string, DayLatLng>();
   if (configured) {
@@ -430,7 +336,6 @@ trips.get('/day', async (c) => {
       const hit = await geocodeAddressCached(sb, c.env, addr);
       if (hit) depotByWarehouseId.set(whId, { lat: hit.lat, lng: hit.lng });
     }
-    // Distinct addresses so repeated customers geocode once per request too.
     const addrToStops = new Map<string, string[]>();
     for (const [stopId, addr] of geoAddrByStopId) {
       const arr = addrToStops.get(addr);
@@ -442,7 +347,6 @@ trips.get('/day', async (c) => {
     }
   }
 
-  // Masters (cross-company fleet) — id -> display name / plate.
   const [drv, hlp, lry] = await Promise.all([
     sb.from('drivers').select('id, name'),
     sb.from('helpers').select('id, name'),
@@ -470,42 +374,124 @@ trips.get('/day', async (c) => {
   return c.json({ date, configured, warehouses, trips: dayTrips });
 });
 
+type PackLines = { items: PackItemRow[]; racks: PackLabelRow[]; soItems: PackSoItemRow[] };
+
+/* The lines of delivery orders already read under the company predicate, the racks they were picked
+   from and the SO lines they were cut from. Every read is scoped and chunked: rack_id lands in a line
+   straight off a request body, so resolving it by id alone lets one company's paperwork name the
+   other company's bay (docs/bugs/0497). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm service client, as everywhere in this file
+async function loadPackLines(sb: any, c: CompanyScopeCtx, dos: readonly WorkedOutDo[]): Promise<PackLines | { error: string }> {
+  const doIds = dos.map((d) => d.id);
+  if (doIds.length === 0) return { items: [], racks: [], soItems: [] };
+  const { data: itemData, error: itemErr } = await chunkIn<Record<string, unknown>>(doIds, (batch, lo, hi) =>
+    scopeToAllowedCompanies(
+      sb.from('delivery_order_items')
+        .select('id, delivery_order_id, line_no, item_code, description, description2, item_group, variants, qty, rack_id, shipped_from, so_item_id, committed_po_batch_no')
+        .in('delivery_order_id', batch).range(lo, hi),
+      c,
+    ));
+  if (itemErr) return { error: itemErr.message };
+  const rows = (itemData ?? []) as Array<Record<string, unknown>>;
+  /* PO and Rack of a line with no dispatch stamp yet: worked out by the DO detail's own rule,
+     batched over the whole day (owner 2026-11-28, VPC9058: every mattress and accessory line
+     printed a dash while the DO showed its PO). */
+  const worked = await resolveWorkedOutSources(sb, dos, rows.map((it) => ({
+    id: String(dual<string>(it, 'id')),
+    delivery_order_id: String(dual<string>(it, 'delivery_order_id')),
+    item_code: dual<string | null>(it, 'item_code'),
+    item_group: dual<string | null>(it, 'item_group'),
+    variants: (dual<VariantAttrs | null>(it, 'variants') ?? null),
+    so_item_id: dual<string | null>(it, 'so_item_id'),
+    rack_id: dual<string | null>(it, 'rack_id'),
+  })), () => scopeToAllowedCompanies(sb.from('warehouse_rack_movements').select('source_doc_no, item_code, rack_label'), c));
+  const items: PackItemRow[] = rows.map((it) => ({
+    delivery_order_id: String(dual<string>(it, 'delivery_order_id')),
+    line_no: toNumericOrNull(dual(it, 'line_no')),
+    item_code: dual<string | null>(it, 'item_code'),
+    description: dual<string | null>(it, 'description'),
+    qty: toNumericOrNull(dual(it, 'qty')),
+    rack_id: dual<string | null>(it, 'rack_id'),
+    shipped_from: dual<unknown>(it, 'shipped_from') ?? null,
+    item_group: dual<string | null>(it, 'item_group'),
+    variants: (dual<Record<string, unknown> | null>(it, 'variants') ?? null),
+    description2: dual<string | null>(it, 'description2'),
+    so_item_id: dual<string | null>(it, 'so_item_id'),
+    committed_po_batch_no: dual<string | null>(it, 'committed_po_batch_no'),
+    worked: (() => {
+      const w = worked.byLine.get(String(dual<string>(it, 'id')));
+      return w ? { pos: w.source_pos, racks: w.racks } : null;
+    })(),
+  }));
+
+  const rackIds = [...new Set(items.map((i) => i.rack_id).filter((v): v is string => !!v))];
+  let racks: PackLabelRow[] = [];
+  if (rackIds.length > 0) {
+    const { data: rackData, error: rackErr } = await chunkIn<Record<string, unknown>>(rackIds, (batch, lo, hi) =>
+      scopeToAllowedCompanies(
+        sb.from('warehouse_racks').select('id, rack').in('id', batch).range(lo, hi),
+        c,
+      ));
+    if (rackErr) return { error: rackErr.message };
+    racks = ((rackData ?? []) as Array<Record<string, unknown>>).map((r) => ({
+      id: String(dual<string>(r, 'id')),
+      label: dual<string | null>(r, 'rack'),
+    }));
+  }
+
+  const soItemIds = [...new Set(items.map((i) => i.so_item_id).filter((v): v is string => !!v))];
+  let soItems: PackSoItemRow[] = [];
+  if (soItemIds.length > 0) {
+    const { data: soItemData, error: soItemErr } = await chunkIn<Record<string, unknown>>(soItemIds, (batch, lo, hi) =>
+      scopeToAllowedCompanies(
+        sb.from('mfg_sales_order_items').select('id, doc_no, line_no').in('id', batch).range(lo, hi),
+        c,
+      ));
+    if (soItemErr) return { error: soItemErr.message };
+    soItems = ((soItemData ?? []) as Array<Record<string, unknown>>).map((r) => ({
+      id: String(dual<string>(r, 'id')),
+      doc_no: dual<string | null>(r, 'doc_no'),
+      line_no: toNumericOrNull(dual(r, 'line_no')),
+    }));
+  }
+  return { items, racks, soItems };
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
-   GET /trips/packing — one day's PACKING LISTS.
+   GET /trips/packing         — one day's PACKING LISTS, one per lorry.
+   GET /trips/packing-regions — the same day by Delivery Planning region.
 
-   A packing list is a TRIP, RENDERED — one per lorry per day (owner
-   2026-08-25: 「如果今天出 3 辆罗里，就会有 3 个 packing list」). No new table:
-   scm.trips IS "one day + one lorry" and trip_stops already carries the
-   ordered drops. This route reads the trip, its stops, the stops' delivery
-   orders, those orders' LINES and the racks those lines were picked from, and
-   hands the rows to assemblePackingLists (scm/lib/packing-list-view.ts), which
-   is pure so the ordering + totals rules are testable without a database.
+   Both read ONE day through loadPackingDay. Production (2026-11-27) puts
+   customer DOs on a lorry through the Delivery Planning board crew
+   (scm.delivery_order_crew, its lorry_plate), not through trips: the day's
+   trips carried only TRANSFER stops. So the day is every open DO whose Sales
+   Order's board Delivery Date (amended ?? customer) is the date, every DO whose
+   own customer_delivery_date is the date, and every DO that is a stop on a
+   non-cancelled trip dated that day.
+   A lorry is the trip's lorry, else the crew's plate, else the DO's vehicle.
+   Trip lists that carry DOs keep their stop order; every other DO with a plate
+   is grouped by plate (packing-day-view.ts, pure).
 
-   FIVE READS, FIVE COMPANY PREDICATES. The SCM client is service-role and mig
-   0061 enabled RLS with no policies, so the predicate in the statement is the
-   entire tenant boundary — and this route reads exactly the two tables the
-   ledger has already been burned on: another company's delivery orders
-   (docs/bugs/0496) and another company's RACKS (docs/bugs/0497, where a 2990
-   delivery could empty a Houzs bay). trip_stops is the one read with no
-   company_id column of its own — mig 0053 gives it none — and it is scoped by
-   trip_id over trips that were themselves scoped one statement earlier.
+   COMPANY PREDICATES. The SCM client is service-role and mig 0061 enabled RLS
+   with no policies, so the predicate in the statement is the entire tenant
+   boundary: another company's delivery orders (docs/bugs/0496) and RACKS
+   (docs/bugs/0497). trip_stops has no company_id (mig 0053) and is scoped by
+   trip_id over trips scoped one statement earlier. Every id list is chunked.
 
-   Every id list is chunked (chunkIn): a day of trips can carry hundreds of DO
-   uuids, and an unbounded in.(…) is the shape production has already refused.
+   A crew-scoped caller (driver, helper) sees only the DOs on their own trips
+   or whose board crew names them.
 
    MUST stay registered BEFORE '/:id', which would otherwise swallow it.
    ─────────────────────────────────────────────────────────────────────────*/
-trips.get('/packing', async (c) => {
-  const sb = c.get('supabase');
-  const date = c.req.query('date');
-  const warehouseId = c.req.query('warehouseId');
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return c.json({ error: 'invalid_date', reason: 'date=YYYY-MM-DD is required' }, 400);
-  }
+const DAY_DO_COLS = 'id, company_id, do_number, status, so_doc_no, debtor_code, debtor_name, address1, address2, city, postcode, state, customer_state, customer_country, phone, time_range, m3_total_milli, vehicle, driver_name, warehouse_id';
 
-  /* 1. The day's trips — cross-company TMS queue, widened to the caller's
-        GRANTED companies (never unscoped). CANCELLED is dropped: nobody loads
-        a cancelled run. Every literal here is a member of scm.trip_status. */
+type PackingDay = {
+  tripLists: PackingList[];
+  dayDos: PackingDayDo[];
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm service client, as everywhere in this file
+export async function loadPackingDay(sb: any, c: CompanyScopeCtx, date: string, warehouseId: string | null): Promise<PackingDay | { error: string }> {
   const { data: tripData, error: tripErr } = await paginateAll<Record<string, unknown>>((lo, hi) => {
     let q = sb.from('trips')
       .select('id, trip_no, trip_date, status, lorry_id, driver_id, helper_1_id, helper_2_id, warehouse_id')
@@ -514,15 +500,12 @@ trips.get('/packing', async (c) => {
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
     return scopeToAllowedCompanies(q, c);
   });
-  if (tripErr) return c.json({ error: 'load_failed', reason: tripErr.message }, 500);
+  if (tripErr) return { error: tripErr.message };
 
-  // PER-ASSIGNEE ROW SCOPE, same axis as GET /day: a Driver/Helper sees only
-  // the runs they are on. A different question from the company predicate above.
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
   const scopedTrips = (scope.mode === 'all'
     ? (tripData ?? [])
     : (tripData ?? []).filter((r) => scopeMatchesAssignment(scope, tripAssignment(r))));
-
   const packTrips: PackTripRow[] = scopedTrips.map((r) => ({
     id: String(dual<string>(r, 'id')),
     trip_no: dual<string | null>(r, 'trip_no'),
@@ -530,18 +513,18 @@ trips.get('/packing', async (c) => {
     status: dual<string | null>(r, 'status'),
     lorry_id: dual<string | null>(r, 'lorry_id'),
     driver_id: dual<string | null>(r, 'driver_id'),
+    helper_1_id: dual<string | null>(r, 'helper_1_id'),
+    helper_2_id: dual<string | null>(r, 'helper_2_id'),
     warehouse_id: dual<string | null>(r, 'warehouse_id'),
   }));
-  if (packTrips.length === 0) return c.json({ date, lists: [] });
 
-  // 2. Stops — scoped through their (already company-scoped) trips.
   const tripIds = packTrips.map((t) => t.id);
   const { data: stopData, error: stopErr } = await chunkIn<Record<string, unknown>>(tripIds, (batch, lo, hi) =>
     sb.from('trip_stops')
       .select('id, trip_id, stop_no, stop_type, do_id, customer_name, address')
       .in('trip_id', batch).range(lo, hi));
-  if (stopErr) return c.json({ error: 'load_failed', reason: stopErr.message }, 500);
-  const packStops: PackStopRow[] = ((stopData ?? []) as Array<Record<string, unknown>>).map((s) => ({
+  if (stopErr) return { error: stopErr.message };
+  const packStops: PackStopRow[] = (stopData as Array<Record<string, unknown>>).map((s) => ({
     id: String(dual<string>(s, 'id')),
     trip_id: String(dual<string>(s, 'trip_id')),
     stop_no: toNumericOrNull(dual(s, 'stop_no')),
@@ -550,104 +533,191 @@ trips.get('/packing', async (c) => {
     customer_name: dual<string | null>(s, 'customer_name'),
     address: dual<string | null>(s, 'address'),
   }));
+  const stopDoIds = [...new Set(packStops.map((s) => s.do_id).filter((v): v is string => !!v))];
 
-  // 3. The stops' delivery orders — COMPANY PREDICATE (docs/bugs/0496). A stop
-  //    naming a DO outside the caller's companies comes back with no row, and
-  //    the view marks that stop `do_missing` rather than printing it as empty.
-  const doIds = [...new Set(packStops.map((s) => s.do_id).filter((v): v is string => !!v))];
-  let packDos: PackDoRow[] = [];
-  let packItems: PackItemRow[] = [];
-  if (doIds.length > 0) {
-    const { data: doData, error: doErr } = await chunkIn<Record<string, unknown>>(doIds, (batch, lo, hi) =>
-      scopeToAllowedCompanies(
-        sb.from('delivery_orders').select('id, do_number, status, m3_total_milli').in('id', batch).range(lo, hi),
-        c,
-      ));
-    if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
-    packDos = ((doData ?? []) as Array<Record<string, unknown>>).map((d) => ({
+  const doRows = new Map<string, Record<string, unknown>>();
+  const keep = (rows: readonly Record<string, unknown>[]) => { for (const r of rows) doRows.set(String(dual<string>(r, 'id')), r); };
+  const { data: onTrip, error: onTripErr } = await chunkIn<Record<string, unknown>>(stopDoIds, (batch, lo, hi) =>
+    scopeToAllowedCompanies(
+      sb.from('delivery_orders').select(DAY_DO_COLS).in('id', batch).neq('status', 'CANCELLED').range(lo, hi),
+      c,
+    ));
+  if (onTripErr) return { error: onTripErr.message };
+  keep(onTrip);
+  const { data: dated, error: datedErr } = await paginateAll<Record<string, unknown>>((lo, hi) => {
+    let q = sb.from('delivery_orders').select(DAY_DO_COLS)
+      .eq('customer_delivery_date', date).neq('status', 'CANCELLED')
+      .order('id', { ascending: true }).range(lo, hi);
+    if (warehouseId) q = q.eq('warehouse_id', warehouseId);
+    return scopeToAllowedCompanies(q, c);
+  });
+  if (datedErr) return { error: datedErr.message };
+  keep(dated ?? []);
+
+  // The day a DO actually goes out is its Sales Order's Delivery Date on the
+  // Delivery Planning board (amended, else the customer's). Production DOs cut
+  // before #6126 carry the old SO date on the DO itself, so the board date is
+  // the one that matches the lorry the board crew put them on. Open DOs only:
+  // a DO already delivered on another day of the same order stays on that day.
+  const { data: soDay, error: soDayErr } = await paginateAll<Record<string, unknown>>((lo, hi) =>
+    scopeToAllowedCompanies(
+      sb.from('mfg_sales_orders').select('doc_no')
+        .or(`amended_delivery_date.eq.${date},and(amended_delivery_date.is.null,customer_delivery_date.eq.${date})`)
+        .order('doc_no', { ascending: true }).range(lo, hi),
+      c,
+    ));
+  if (soDayErr) return { error: soDayErr.message };
+  const soDocs = [...new Set((soDay ?? []).map((r) => String(dual<string>(r, 'doc_no'))).filter(Boolean))];
+  const { data: bySo, error: bySoErr } = await chunkIn<Record<string, unknown>>(soDocs, (batch, lo, hi) => {
+    let q = sb.from('delivery_orders').select(DAY_DO_COLS)
+      .in('so_doc_no', batch).neq('status', 'CANCELLED').range(lo, hi);
+    if (warehouseId) q = q.eq('warehouse_id', warehouseId);
+    return scopeToAllowedCompanies(q, c);
+  });
+  if (bySoErr) return { error: bySoErr.message };
+  const arrived = new Set<string>(DO_ARRIVED_STATES);
+  keep(bySo.filter((r) => !arrived.has(String(dual<string | null>(r, 'status') ?? '').toUpperCase())));
+
+  const allDoIds = [...doRows.keys()];
+  const { data: crewData, error: crewErr } = await chunkIn<Record<string, unknown>>(allDoIds, (batch, lo, hi) =>
+    scopeToAllowedCompanies(
+      sb.from('delivery_order_crew')
+        .select('do_id, lorry_plate, driver_1_id, driver_2_id, helper_1_id, helper_2_id, driver_1_name, driver_1_contact, helper_1_name, helper_2_name')
+        .in('do_id', batch).range(lo, hi),
+      c,
+    ));
+  if (crewErr) return { error: crewErr.message };
+
+  if (scope.mode !== 'all') {
+    const visible = new Set(stopDoIds);
+    for (const cr of crewData) {
+      const assignment = {
+        driverIds: [dual<string | null>(cr, 'driver_1_id'), dual<string | null>(cr, 'driver_2_id')],
+        helperIds: [dual<string | null>(cr, 'helper_1_id'), dual<string | null>(cr, 'helper_2_id')],
+      };
+      if (scopeMatchesAssignment(scope, assignment)) visible.add(String(dual<string>(cr, 'do_id')));
+    }
+    for (const id of allDoIds) if (!visible.has(id)) doRows.delete(id);
+  }
+
+  const dos = [...doRows.values()];
+  const packDos: PackDoRow[] = dos.map((d) => ({
+    id: String(dual<string>(d, 'id')),
+    do_number: dual<string | null>(d, 'do_number'),
+    status: dual<string | null>(d, 'status'),
+    m3_total_milli: toNumericOrNull(dual(d, 'm3_total_milli')),
+    so_doc_no: dual<string | null>(d, 'so_doc_no'),
+    phone: dual<string | null>(d, 'phone'),
+    time_range: dual<string | null>(d, 'time_range'),
+  }));
+  const dayDoRows: DayDoRow[] = dos.map((d) => ({
+    id: String(dual<string>(d, 'id')),
+    do_number: dual<string | null>(d, 'do_number'),
+    status: dual<string | null>(d, 'status'),
+    so_doc_no: dual<string | null>(d, 'so_doc_no'),
+    debtor_code: dual<string | null>(d, 'debtor_code'),
+    debtor_name: dual<string | null>(d, 'debtor_name'),
+    address1: dual<string | null>(d, 'address1'),
+    address2: dual<string | null>(d, 'address2'),
+    city: dual<string | null>(d, 'city'),
+    postcode: dual<string | null>(d, 'postcode'),
+    state: dual<string | null>(d, 'state'),
+    customer_state: dual<string | null>(d, 'customer_state'),
+    customer_country: dual<string | null>(d, 'customer_country'),
+    phone: dual<string | null>(d, 'phone'),
+    time_range: dual<string | null>(d, 'time_range'),
+    m3_total_milli: toNumericOrNull(dual(d, 'm3_total_milli')),
+    vehicle: dual<string | null>(d, 'vehicle'),
+    driver_name: dual<string | null>(d, 'driver_name'),
+  }));
+  const crew: DayCrewRow[] = crewData.map((cr) => ({
+    do_id: String(dual<string>(cr, 'do_id')),
+    lorry_plate: dual<string | null>(cr, 'lorry_plate'),
+    driver_1_name: dual<string | null>(cr, 'driver_1_name'),
+    driver_1_contact: dual<string | null>(cr, 'driver_1_contact'),
+    helper_1_name: dual<string | null>(cr, 'helper_1_name'),
+    helper_2_name: dual<string | null>(cr, 'helper_2_name'),
+  }));
+
+  const lines = await loadPackLines(sb, c, dos.map((d) => {
+    const companyId = toNumericOrNull(dual(d, 'company_id'));
+    return {
       id: String(dual<string>(d, 'id')),
       do_number: dual<string | null>(d, 'do_number'),
-      status: dual<string | null>(d, 'status'),
-      m3_total_milli: toNumericOrNull(dual(d, 'm3_total_milli')),
-    }));
+      warehouse_id: dual<string | null>(d, 'warehouse_id'),
+      company_id: companyId ?? undefined,
+    };
+  }));
+  if ('error' in lines) return { error: lines.error };
 
-    // 4. Their LINES — the goods. COMPANY PREDICATE again: a parent-ownership
-    //    filter proves the line is on that DO, never whose DO it is.
-    const readableDoIds = packDos.map((d) => d.id);
-    if (readableDoIds.length > 0) {
-      const { data: itemData, error: itemErr } = await chunkIn<Record<string, unknown>>(readableDoIds, (batch, lo, hi) =>
-        scopeToAllowedCompanies(
-          sb.from('delivery_order_items')
-            .select('delivery_order_id, line_no, item_code, description, qty, rack_id, shipped_from')
-            .in('delivery_order_id', batch).range(lo, hi),
-          c,
-        ));
-      if (itemErr) return c.json({ error: 'load_failed', reason: itemErr.message }, 500);
-      packItems = ((itemData ?? []) as Array<Record<string, unknown>>).map((it) => ({
-        delivery_order_id: String(dual<string>(it, 'delivery_order_id')),
-        line_no: toNumericOrNull(dual(it, 'line_no')),
-        item_code: dual<string | null>(it, 'item_code'),
-        description: dual<string | null>(it, 'description'),
-        qty: toNumericOrNull(dual(it, 'qty')),
-        rack_id: dual<string | null>(it, 'rack_id'),
-        shipped_from: dual<unknown>(it, 'shipped_from') ?? null,
-      }));
-    }
-  }
-
-  /* 5. The racks those lines were picked from — COMPANY PREDICATE. This is the
-        exact read docs/bugs/0497 was written about: rack_id lands in the line
-        straight off a request body, so resolving it by id alone lets one
-        company's paperwork name the other company's bay. */
-  const rackIds = [...new Set(packItems.map((i) => i.rack_id).filter((v): v is string => !!v))];
-  let packRacks: PackLabelRow[] = [];
-  if (rackIds.length > 0) {
-    const { data: rackData, error: rackErr } = await chunkIn<Record<string, unknown>>(rackIds, (batch, lo, hi) =>
-      scopeToAllowedCompanies(
-        sb.from('warehouse_racks').select('id, rack').in('id', batch).range(lo, hi),
-        c,
-      ));
-    if (rackErr) return c.json({ error: 'load_failed', reason: rackErr.message }, 500);
-    packRacks = ((rackData ?? []) as Array<Record<string, unknown>>).map((r) => ({
-      id: String(dual<string>(r, 'id')),
-      label: dual<string | null>(r, 'rack'),
-    }));
-  }
-
-  // Masters for the header line: plate, driver, depot.
-  const [lry, drv, wh] = await Promise.all([
+  /* company-scope: crew masters, by id off trips scoped above (the same lookup /trips/day
+     does). A helper can belong to the other company — Houzs crew run 2990's
+     trips — so the id from a scoped trip is the boundary here, not company_id. */
+  const helperIds = [...new Set(packTrips.flatMap((t) => [t.helper_1_id, t.helper_2_id]).filter((v): v is string => !!v))];
+  const [lry, drv, wh, hlp] = await Promise.all([
     sb.from('lorries').select('id, plate'),
-    sb.from('drivers').select('id, name'),
+    sb.from('drivers').select('id, name, phone'),
     sb.from('warehouses').select('id, name'),
+    helperIds.length > 0
+      ? sb.from('helpers').select('id, name, contact').in('id', helperIds)
+      : Promise.resolve({ data: [] as Array<Record<string, unknown>> }),
   ]);
+  const toCrew = (rows: unknown, phoneCol: string): PackCrewRow[] =>
+    ((rows ?? []) as Array<Record<string, unknown>>).map((r) => ({
+      id: String(dual<string>(r, 'id')),
+      name: dual<string | null>(r, 'name'),
+      phone: dual<string | null>(r, phoneCol),
+    }));
   const toLabels = (rows: unknown, col: string): PackLabelRow[] =>
     ((rows ?? []) as Array<Record<string, unknown>>).map((r) => ({
       id: String(dual<string>(r, 'id')),
       label: dual<string | null>(r, col),
     }));
+  const lorries = toLabels(lry.data, 'plate');
 
-  const lists = assemblePackingLists({
+  const tripLists = assemblePackingLists({
     trips: packTrips,
     stops: packStops,
     deliveryOrders: packDos,
-    items: packItems,
-    racks: packRacks,
-    lorries: toLabels(lry.data, 'plate'),
-    drivers: toLabels(drv.data, 'name'),
+    ...lines,
+    lorries,
+    drivers: toCrew(drv.data, 'phone'),
+    helpers: toCrew(hlp.data, 'contact'),
     warehouses: toLabels(wh.data, 'name'),
   });
+  const tripStops: DayTripStop[] = [];
+  for (const l of tripLists) {
+    for (const s of l.stops) if (s.do_id) tripStops.push({ do_id: s.do_id, trip_no: l.trip_no, stop_no: s.stop_no, lorry_plate: l.lorry_plate });
+  }
+  const dayDos = assemblePackingDay({ deliveryOrders: dayDoRows, crew, tripStops, ...lines });
+  return { tripLists, dayDos };
+}
 
-  return c.json({ date, lists });
+trips.get('/packing', async (c) => {
+  const sb = c.get('supabase');
+  const date = c.req.query('date');
+  const warehouseId = c.req.query('warehouseId') ?? null;
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return c.json({ error: 'invalid_date', reason: 'date=YYYY-MM-DD is required' }, 400);
+  }
+  const day = await loadPackingDay(sb, c, date, warehouseId);
+  if ('error' in day) return c.json({ error: 'load_failed', reason: day.error }, 500);
+  return c.json({ date, lists: mergeLorryLists(date, day.tripLists, day.dayDos) });
 });
 
-/* ──────────────────────────────────────────────────────────────────────────
-   GET /trips/history?from=&to= — the Last Mile History tab (phase 3c). The
-   DELIVERED delivery orders whose delivery day (do_date) falls in [from,to],
-   with the lorry + driver off the DO's crew snapshot (delivery_order_crew) so
-   no trip join is needed. Company-scoped; the frontend groups by day.
+trips.get('/packing-regions', async (c) => {
+  const sb = c.get('supabase');
+  const date = c.req.query('date');
+  const unassignedOnly = c.req.query('unassignedOnly') === '1';
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return c.json({ error: 'invalid_date', reason: 'date=YYYY-MM-DD is required' }, 400);
+  }
+  const day = await loadPackingDay(sb, c, date, null);
+  if ('error' in day) return c.json({ error: 'load_failed', reason: day.error }, 500);
+  const regionCfg = await loadRegionConfig(sb);
+  return c.json({ date, unassigned_only: unassignedOnly, regions: assemblePackingRegions(regionCfg, day.dayDos, unassignedOnly) });
+});
 
-   Static segment → Hono matches it before '/:id'.
-   ─────────────────────────────────────────────────────────────────────────*/
 const DO_DELIVERED = [...DO_ARRIVED_STATES];
 
 trips.get('/history', async (c) => {
@@ -666,7 +736,6 @@ trips.get('/history', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const dos = doData as Array<Record<string, unknown>>;
 
-  // Lorry + driver per DO from the crew snapshot (chunked — a month can be many).
   const ids = dos.map((d) => String(d.id));
   const crewByDo = new Map<string, { plate: string | null; driver: string | null }>();
   if (ids.length) {
@@ -698,18 +767,9 @@ trips.get('/history', async (c) => {
   return c.json({ rows });
 });
 
-/* ──────────────────────────────────────────────────────────────────────────
-   GET /trips/:id — one trip with its ordered stops.
-   ─────────────────────────────────────────────────────────────────────────*/
 trips.get('/:id', async (c) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
-  /* COMPANY BOUND — the detail must answer within the SAME set GET / lists
-     under, or the bounded list is decoration: the uuid alone opened any
-     company's trip and its stops (customer name + address on every stop).
-     Widened to the allowed set, not isolated to the active company: TMS is one
-     shared queue. The crew scope below is a DIFFERENT axis (which person), and
-     never made this one redundant — it passes ops/dispatcher straight through. */
   const [t, s] = await Promise.all([
     scopeToAllowedCompanies(sb.from('trips').select(TRIP_COLS).eq('id', id), c).maybeSingle(),
     scopeToAllowedCompanies(
@@ -718,9 +778,6 @@ trips.get('/:id', async (c) => {
   ]);
   if (t.error) return c.json({ error: 'load_failed', reason: t.error.message }, 500);
   if (!t.data) return c.json({ error: 'not_found' }, 404);
-  /* Row scope — a self-scoped Driver/Helper opening a trip that is not theirs
-     gets a 404 (indistinguishable from a nonexistent trip), same hatch the sales
-     doc detail uses. Ops/dispatcher (`all`) are never blocked. */
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
   if (scope.mode === 'self' && !scopeMatchesAssignment(scope, tripAssignment(t.data as unknown as Record<string, unknown>))) {
     return c.json({ error: 'not_found' }, 404);
@@ -728,12 +785,8 @@ trips.get('/:id', async (c) => {
   return c.json({ trip: t.data, stops: s.data ?? [] });
 });
 
-/* ──────────────────────────────────────────────────────────────────────────
-   POST /trips — create (lorry + driver + date + warehouse + type). is_outsourced
-   derived from the lorry's is_internal; trip_no auto-minted.
-   ─────────────────────────────────────────────────────────────────────────*/
 const tripCreateSchema = z.object({
-  tripDate: z.string().min(8),                          // YYYY-MM-DD
+  tripDate: z.string().min(8),
   lorryId: z.string().uuid().nullable().optional(),
   driverId: z.string().uuid().nullable().optional(),
   helper1Id: z.string().uuid().nullable().optional(),
@@ -758,8 +811,6 @@ trips.post('/', async (c) => {
   const { data, error } = await insertWithDocNoRetry(
     () => nextTripNo(sb),
     (tripNo) => sb.from('trips').insert({
-    // CROSS-COMPANY: a trip is created from whichever company you're currently
-    // in (it can still reference the other company's DOs via its stops).
     company_id:    activeCompanyId(c),
     trip_no:       tripNo,
     trip_date:     p.tripDate,
@@ -777,24 +828,12 @@ trips.post('/', async (c) => {
   );
   if (error) {
     if (error.code === '23505') return c.json({ error: 'duplicate_trip_no', reason: error.message }, 409);
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   return c.json({ trip: data }, 201);
 });
 
-/* ──────────────────────────────────────────────────────────────────────────
-   PATCH /trips/:id — edit header fields. Re-derives is_outsourced if the lorry
-   changes (unless an explicit isOutsourced is passed).
-   ─────────────────────────────────────────────────────────────────────────*/
 const tripPatchSchema = z.object({
   tripDate: z.string().min(8).optional(),
   lorryId: z.string().uuid().nullable().optional(),
@@ -828,14 +867,11 @@ export const patchTripHandler = async (c: any) => {
   if (p.helper2Id !== undefined) updates.helper_2_id = p.helper2Id;
   if (p.warehouseId !== undefined) updates.warehouse_id = p.warehouseId;
   if (p.tripType !== undefined) updates.trip_type = p.tripType;
-  /* `z.string().nullable().optional()` accepts "", and both columns are
-     TIMESTAMPTZ (mig 0053) — blank CLEARS the stamp instead of 500ing. */
   if (p.clockInAt !== undefined) updates.clock_in_at = dateOrNull(p.clockInAt);
   if (p.clockOutAt !== undefined) updates.clock_out_at = dateOrNull(p.clockOutAt);
   if (p.plannedDepartAt !== undefined) updates.planned_depart_at = dateOrNull(p.plannedDepartAt);
   if (p.totalDistanceKm !== undefined) updates.total_distance_km = toNumericOrNull(p.totalDistanceKm);
   if (p.notes !== undefined) updates.notes = p.notes;
-  // is_outsourced: explicit value wins; else re-derive when the lorry changes.
   if (p.isOutsourced !== undefined) {
     updates.is_outsourced = p.isOutsourced;
   } else if (p.lorryId !== undefined) {
@@ -843,22 +879,6 @@ export const patchTripHandler = async (c: any) => {
   }
   if (Object.keys(updates).length === 1) return c.json({ error: 'no_changes' }, 400);
 
-  /* COMPANY BOUND — the write must honour the SAME set the row was listed under.
-     GET / widens to the caller's ALLOWED companies (`.in('company_id', allowed)`);
-     this write had no company predicate at all, so a caller granted only company
-     A could PATCH company B's trip by its uuid. WIDENED, not isolated: TMS is one
-     shared cross-company queue, so scopeToCompany (active-company only) would
-     break the design — see the CROSS-COMPANY note on TRIP_COLS.
-
-     Do NOT read the `42501` branch below as the guard that was already here.
-     42501 is Postgres permission-denied, i.e. RLS — and RLS cannot fire on this
-     path: mig 0061 enabled RLS on every scm table with NO policies, and the SCM
-     client is the SERVICE-ROLE client (db/supabase.ts getSupabaseService), which
-     bypasses RLS by design and by that migration's own stated intent. The branch
-     is unreachable here; the only boundary is the predicate in this file.
-
-     .maybeSingle(), not .single(): an out-of-scope id is now a legitimate
-     zero-row answer and must read as 404, not as a 500 "update_failed". */
   const { data, error } = await scopeToAllowedCompanies(
     sb.from('trips').update(updates).eq('id', id), c,
   ).select(TRIP_COLS).maybeSingle();
@@ -867,7 +887,6 @@ export const patchTripHandler = async (c: any) => {
     return c.json({ error: 'update_failed', reason: error.message }, 500);
   }
   if (!data) return c.json({ error: 'not_found' }, 404);
-  // The run's crew lands on every DO it carries (Delivery Planning and the phones read the DO crew).
   if (p.driverId !== undefined || p.helper1Id !== undefined || p.helper2Id !== undefined || p.lorryId !== undefined) {
     const syncErr = await syncTripCrewToDos(sb, id, null, c.get('user')?.id ?? null).then(() => null, (e: Error) => String(e.message).slice(0, 160));
     if (syncErr) return c.json({ trip: data, crewSyncError: syncErr });
@@ -876,11 +895,6 @@ export const patchTripHandler = async (c: any) => {
 };
 trips.patch('/:id', patchTripHandler);
 
-/* ──────────────────────────────────────────────────────────────────────────
-   PATCH /trips/:id/status — flip the trip status (PLANNED/IN_PROGRESS/…).
-   Stamps clock_in_at on first IN_PROGRESS and clock_out_at on COMPLETED if not
-   already set (best-effort timeline, doesn't overwrite a manual clock).
-   ─────────────────────────────────────────────────────────────────────────*/
 export const patchTripStatusHandler = async (c: any) => {
   const id = c.req.param('id');
   let body: Record<string, unknown>;
@@ -895,10 +909,6 @@ export const patchTripStatusHandler = async (c: any) => {
     sb.from('trips').select('clock_in_at, clock_out_at, driver_id, helper_1_id, helper_2_id').eq('id', id), c,
   ).maybeSingle();
   if (!cur) return c.json({ error: 'not_found' }, 404);
-  /* WRITE OWNERSHIP (owner rule): a Driver/Helper may advance a trip's step
-     (status) ONLY on a trip they are crewed on. Ops/dispatcher (`all`) pass
-     untouched. Layers under the area-guard's edit gate — see the twin guard in
-     delivery-planning.ts /fields. */
   {
     const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
     if (scope.mode === 'self' && !scopeMatchesAssignment(scope, tripAssignment(cur as Record<string, unknown>))) {
@@ -916,13 +926,6 @@ export const patchTripStatusHandler = async (c: any) => {
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
 
-  /* REVERSE SYNC: cancelling a trip strands its scheduled orders. Return each to
-     the board by clearing its scheduled-looking delivery_state override — the
-     board's live derivation then falls a ready-to-ship order back to
-     PENDING_SCHEDULE. lorry-capacity already drops a CANCELLED trip and its stops
-     (lorry-capacity.ts neq status CANCELLED), so no double-count; this closes the
-     OTHER half — the stale board override. Best-effort + REPORTED. Other statuses
-     leave the schedule intact. */
   if (status === 'CANCELLED') {
     const stops = await deliveryStopsOfTrip(sb, id);
     const reconcile = await reconcileStopsToBoard(sb, { stops, ...actorOf(c) });
@@ -932,17 +935,6 @@ export const patchTripStatusHandler = async (c: any) => {
 };
 trips.patch('/:id/status', patchTripStatusHandler);
 
-/* ──────────────────────────────────────────────────────────────────────────
-   POST /trips/move-stop — the Last Mile "Change lorry" action (phase 3b). Move
-   an order's DELIVERY stop to another lorry run of the SAME day at a chosen
-   position, renumbering BOTH runs to a gap-free 1..n (lib/move-stop.ts). Same
-   company + same day only. There is no (trip_id, stop_no) unique index (mig
-   0053), so the plan applies stop-by-stop without collision juggling. Crew and
-   ETA are NOT recomputed here — the order simply rides the new run; re-apply
-   crew from the crew modal if it should change.
-
-   Registered before '/:id/*' — a static segment, so Hono matches it first.
-   ─────────────────────────────────────────────────────────────────────────*/
 const moveStopSchema = z.object({
   doId: z.string().uuid(),
   targetTripId: z.string().uuid(),
@@ -957,7 +949,6 @@ trips.post('/move-stop', async (c) => {
   const p = parsed.data;
   const sb = c.get('supabase');
 
-  // The order's DELIVERY stop — the row that moves. A DO carries one.
   const { data: movedRows, error: mErr } = await sb.from('trip_stops')
     .select('id, trip_id, company_id').eq('do_id', p.doId).eq('stop_type', 'DELIVERY');
   if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
@@ -966,7 +957,6 @@ trips.post('/move-stop', async (c) => {
   const sourceTripId = String(moved.trip_id);
   const companyId = moved.company_id;
 
-  // Both runs must exist, be the caller's company, and fall on the SAME day.
   const { data: tripRows, error: tErr } = await scopeToAllowedCompanies(
     sb.from('trips').select('id, trip_date, company_id').in('id', [sourceTripId, p.targetTripId]), c,
   );
@@ -979,7 +969,6 @@ trips.post('/move-stop', async (c) => {
     return c.json({ error: 'cross_day', reason: 'A stop can only move between runs on the same day.' }, 400);
   }
 
-  // Both runs' stops, as {id, stop_no}.
   const [{ data: srcStops }, { data: tgtStops }] = await Promise.all([
     sb.from('trip_stops').select('id, stop_no').eq('trip_id', sourceTripId),
     sb.from('trip_stops').select('id, stop_no').eq('trip_id', p.targetTripId),
@@ -1003,18 +992,12 @@ trips.post('/move-stop', async (c) => {
   return c.json({ ok: failed === 0, moved: applied, failed });
 });
 
-/* ──────────────────────────────────────────────────────────────────────────
-   POST /trips/:id/stops — add a stop linking a DO/SO, with stop_type + revenue.
-   If revenueSen is omitted and a do_id/so_id is given, the stop's revenue is
-   sourced from the DO/SO local_total_sen. customer_name/address default from
-   the DO/SO header when not supplied.
-   ─────────────────────────────────────────────────────────────────────────*/
 const stopCreateSchema = z.object({
   stopNo: z.number().int().positive().optional(),
   stopType: z.enum(['DELIVERY', 'PICKUP', 'SERVICE', 'SETUP', 'DISMANTLE']).default('DELIVERY'),
   doId: z.string().uuid().nullable().optional(),
   soId: z.string().uuid().nullable().optional(),
-  soDocNo: z.string().nullable().optional(),       // resolve a stop to an SO by its doc_no
+  soDocNo: z.string().nullable().optional(),
   customerName: z.string().nullable().optional(),
   address: z.string().nullable().optional(),
   revenueSen: z.number().int().nullable().optional(),
@@ -1030,12 +1013,9 @@ trips.post('/:id/stops', async (c) => {
   const p = parsed.data;
   const sb = c.get('supabase');
 
-  // Trip must exist (the FK would 500 anyway; this returns a clean 404).
   const { data: trip } = await sb.from('trips').select('id').eq('id', tripId).maybeSingle();
   if (!trip) return c.json({ error: 'trip_not_found' }, 404);
 
-  // Resolve revenue + customer/address snapshots from the linked DO / SO when
-  // not supplied. local_total_sen is the grand total on both headers.
   let revenue = p.revenueSen ?? null;
   let customerName = p.customerName ?? null;
   let address = p.address ?? null;
@@ -1051,7 +1031,6 @@ trips.post('/:id/stops', async (c) => {
       if (address == null) address = [dual<string>(r, 'address1'), dual<string>(r, 'address2')].filter(Boolean).join(', ') || null;
     }
   } else if (p.soDocNo) {
-    // SO lookup by doc_no → its uuid id + snapshots + grand total.
     const { data: soRow } = await sb.from('mfg_sales_orders')
       .select('id, local_total_sen, debtor_name, address1, address2').eq('doc_no', p.soDocNo).maybeSingle();
     if (soRow) {
@@ -1063,7 +1042,6 @@ trips.post('/:id/stops', async (c) => {
     }
   }
 
-  // Next stop_no for this trip if not pinned (1 = first stop).
   let stopNo = p.stopNo ?? null;
   if (stopNo == null) {
     const { data: existing } = await sb.from('trip_stops').select('stop_no').eq('trip_id', tripId);
@@ -1073,8 +1051,6 @@ trips.post('/:id/stops', async (c) => {
   }
 
   const { data, error } = await sb.from('trip_stops').insert({
-    // CROSS-COMPANY: the stop belongs to its trip's company (a trip can still
-    // reference the other company's DO/SO). Stamp the active company like the trip.
     company_id:    activeCompanyId(c),
     trip_id:       tripId,
     stop_no:       stopNo,
@@ -1093,13 +1069,10 @@ trips.post('/:id/stops', async (c) => {
   return c.json({ stop: data }, 201);
 });
 
-/* DELETE /trips/:id/stops/:stopId — remove one stop. */
 export const deleteTripStopHandler = async (c: any) => {
   const tripId = c.req.param('id');
   const stopId = c.req.param('stopId');
   const sb = c.get('supabase');
-  /* Snapshot the stop's source keys BEFORE the delete — once it is gone there is
-     nothing left to map back to a header. */
   /* company-scope: scm.trip_stops carries company_id NOT NULL (mig 0083), so the
      stop is bounded on its OWN column - not merely inherited from the trip via
      .eq('trip_id'), which a caller supplies and which would let a stop from an
@@ -1109,18 +1082,11 @@ export const deleteTripStopHandler = async (c: any) => {
     sb.from('trip_stops').select('do_id, so_id, stop_type').eq('id', stopId).eq('trip_id', tripId), c,
   ).maybeSingle();
   if (!stopRow) return c.json({ error: 'not_found' }, 404);
-  /* The predicate goes on the DELETE itself, not only on the read above: the
-     read cannot protect the write, the client being service-role. */
   const { error } = await scopeToAllowedCompanies(
     sb.from('trip_stops').delete().eq('id', stopId).eq('trip_id', tripId), c,
   );
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
 
-  /* REVERSE SYNC: a removed DELIVERY stop means that order is no longer on this
-     trip — return it to the board by clearing its scheduled-looking override.
-     Non-DELIVERY stops (a PICKUP / SERVICE raised for the same order) are a
-     different job and are left alone, same stop_type discipline as the forward
-     sweep. */
   const r = (stopRow ?? null) as Record<string, unknown> | null;
   const stopType = r ? ((r.stopType ?? r.stop_type ?? null) as string | null) : null;
   if (r && stopType === 'DELIVERY') {
@@ -1134,28 +1100,17 @@ export const deleteTripStopHandler = async (c: any) => {
 };
 trips.delete('/:id/stops/:stopId', deleteTripStopHandler);
 
-/* ──────────────────────────────────────────────────────────────────────────
-   DELETE /trips/:id — cancel (default) or hard-delete (?hard=true). A cancel
-   flips status → CANCELLED (the legs FK is ON DELETE SET NULL, so a hard delete
-   orphans the legs back to unplanned rather than removing them). Idempotent.
-   ─────────────────────────────────────────────────────────────────────────*/
 export const deleteTripHandler = async (c: any) => {
   const id = c.req.param('id');
   const hard = c.req.query('hard') === 'true';
   const sb = c.get('supabase');
 
-  /* Snapshot the scheduled orders BEFORE mutating: a hard delete CASCADEs the
-     stops away (trip_stops.trip_id ON DELETE CASCADE, mig 0053), and even a soft
-     cancel drops the trip out of lorry-capacity — either way the orders must be
-     returned to the board. Read once, up front, for both paths. */
   const stops = await deliveryStopsOfTrip(sb, id);
 
   /* company-scope: BOTH paths - see the COMPANY BOUND note on PATCH /:id. The
      hard path is the more dangerous of the two: trip_stops CASCADEs (mig 0053),
      so an unbounded DELETE by uuid took another company's stops with it. */
   if (hard) {
-    /* Confirm the trip is in scope BEFORE deleting, because a DELETE reports no
-       rows-affected here - a silent no-op and a real delete would look alike. */
     const { data: own, error: ownErr } = await scopeToAllowedCompanies(
       sb.from('trips').select('id').eq('id', id), c,
     ).maybeSingle();
@@ -1174,20 +1129,11 @@ export const deleteTripHandler = async (c: any) => {
   ).select(TRIP_COLS).maybeSingle();
   if (error) return c.json({ error: 'cancel_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
-  /* REVERSE SYNC — return each stranded order to the board (clear its
-     scheduled-looking override). Best-effort + REPORTED. */
   const reconcile = await reconcileStopsToBoard(sb, { stops, ...actorOf(c) });
   return c.json({ trip: data, cancelled: true, ...reconcileFieldsFor(reconcile) });
 };
 trips.delete('/:id', deleteTripHandler);
 
-/* ──────────────────────────────────────────────────────────────────────────
-   POST /trips/:id/optimize-route — ask Google Directions for the shortest order
-   of this trip's stops, from the origin warehouse and back. GATED: with no
-   GOOGLE_MAPS_API_KEY it returns { configured:false } and never calls Google, so
-   nothing bills until the owner sets the key. Read-only by default; `?apply=true`
-   writes the optimised order back to trip_stops.stop_no.
-   ─────────────────────────────────────────────────────────────────────────*/
 export const optimizeTripRouteHandler = async (c: any) => {
   const sb = c.get('supabase');
   const id = c.req.param('id');
@@ -1217,16 +1163,10 @@ export const optimizeTripRouteHandler = async (c: any) => {
 
   const result = await optimizeRoute(c.env, { originAddress, stops: stopRows });
 
-  // Only write when routing actually succeeded AND the caller asked to apply.
-  // A failed/absent route must never renumber the operator's manual order.
   let applied = false;
   if (apply && result.ok && result.stops.length > 0) {
     const optimisedAt = new Date().toISOString();
     for (const st of result.stops) {
-      /* Persist the numbers too (mig 0134) — otherwise the ETA lived only in this
-         response and the next page load would have to re-bill Google to show it.
-         eta_offset_s is an OFFSET from departure, not a clock time: the trip's
-         start can move, and a stored wall-clock ETA would go stale silently. */
       await scopeToAllowedCompanies(sb.from('trip_stops').update({
         stop_no: st.order,
         leg_distance_m: st.legDistanceMetres,
@@ -1235,7 +1175,6 @@ export const optimizeTripRouteHandler = async (c: any) => {
         route_optimised_at: optimisedAt,
       }).eq('id', st.ref).eq('trip_id', id), c);
     }
-    // The trip's own distance was hand-typed until now; the optimiser knows it.
     await scopeToAllowedCompanies(sb.from('trips')
       .update({ total_distance_km: Math.round(result.totalDistanceMetres / 100) / 10, updated_at: optimisedAt })
       .eq('id', id), c);
@@ -1245,21 +1184,6 @@ export const optimizeTripRouteHandler = async (c: any) => {
 };
 trips.post('/:id/optimize-route', optimizeTripRouteHandler);
 
-/* ──────────────────────────────────────────────────────────────────────────
-   POST /trips/propose-schedule — the "Propose times + route" SMART scheduler
-   (Phase 3). Given the selected SO stops + a depot warehouse, geocode each
-   address (CACHED), read each stop's SERVICE DURATION + delivery TIME WINDOW
-   from scm.delivery_residence_rules (by the SO's building_type), fetch the
-   point-to-point travel matrix (Google Distance Matrix, ONE call), and sequence
-   the stops with per-stop arrival / start / finish times.
-
-   COST: this is the ONLY place that calls the Distance Matrix, and it runs ONLY
-   when the operator clicks "Propose times + route" — never on render. Geocodes
-   are cache-first (scm.geocode_cache), so a given address bills Google once ever.
-   With no GOOGLE_MAPS_API_KEY it returns { configured:false } and never calls
-   Google; the drawer then keeps its plain stop list. NOTHING is written here —
-   the operator applies via the existing schedule path (stopNo + etaOffsetS).
-   ─────────────────────────────────────────────────────────────────────────*/
 const proposeScheduleSchema = z.object({
   soDocNos: z.array(z.string().min(1)).min(1).max(40),
   depotWarehouseId: z.string().uuid().nullable().optional(),
@@ -1276,8 +1200,6 @@ trips.post('/propose-schedule', async (c) => {
   const departTime = parsed.data.departTime ?? '09:00';
   const departMin = timeToMinutes(departTime) ?? 9 * 60;
 
-  // 1. Load the selected SO stops — address parts + building_type, scoped to the
-  //    caller's allowed companies (never a blind doc_no read).
   const soQuery = scopeToAllowedCompanies(
     sb.from('mfg_sales_orders')
       .select('doc_no, debtor_name, address1, address2, postcode, customer_state, customer_country, building_type')
@@ -1291,7 +1213,6 @@ trips.post('/propose-schedule', async (c) => {
     soByDoc.set(String((r.docNo ?? r.doc_no) as string), r);
   }
 
-  // 2. Residence rules for this company — building_type -> service + window.
   const { data: ruleRows } = await scopeToAllowedCompanies(
     sb.from('delivery_residence_rules')
       .select('building_type, service_duration_minutes, earliest_delivery_time, latest_delivery_time, is_active'),
@@ -1314,7 +1235,6 @@ trips.post('/propose-schedule', async (c) => {
     return ruleByType.get(key) ?? { service: DEFAULT_SERVICE, earliest: null, latest: null };
   };
 
-  // 3. Resolve + geocode the depot (cache-first). No depot -> no route.
   let depotAddress = '';
   if (depotWarehouseId) {
     const { data: wh } = await sb.from('warehouses')
@@ -1331,7 +1251,6 @@ trips.post('/propose-schedule', async (c) => {
   }
   const depotHit = depotAddress ? await geocodeAddressCached(sb, c.env, depotAddress) : null;
 
-  // 4. Geocode each stop (cache-first, preserving the selection order).
   type StopOut = {
     ref: string; debtorName: string | null; address: string; buildingType: string | null;
     lat: number; lng: number; serviceMinutes: number; earliestTime: string | null; latestTime: string | null;
@@ -1367,7 +1286,6 @@ trips.post('/propose-schedule', async (c) => {
     ? { warehouseId: depotWarehouseId ?? null, address: depotAddress, lat: depotHit.lat, lng: depotHit.lng }
     : null;
 
-  // Not enough to route: report honestly, the drawer keeps its plain list.
   if (!c.env.GOOGLE_MAPS_API_KEY) {
     return c.json({ configured: false, ok: false, reason: 'GOOGLE_MAPS_API_KEY not set — smart scheduling disabled',
       departTime, depot: null, stops: geocoded, ungeocoded, travelSeconds: [], distanceMetres: [], proposed: null });
@@ -1381,7 +1299,6 @@ trips.post('/propose-schedule', async (c) => {
       departTime, depot: depotOut, stops: [], ungeocoded, travelSeconds: [], distanceMetres: [], proposed: null });
   }
 
-  // 5. ONE Distance Matrix call over [depot, ...stops].
   const points: LatLngPoint[] = [{ lat: depotOut.lat, lng: depotOut.lng }, ...geocoded.map((s) => ({ lat: s.lat, lng: s.lng }))];
   const matrix = await travelTimeMatrix(c.env, points);
   if (!matrix.ok) {
@@ -1389,7 +1306,6 @@ trips.post('/propose-schedule', async (c) => {
       departTime, depot: depotOut, stops: geocoded, ungeocoded, travelSeconds: [], distanceMetres: [], proposed: null });
   }
 
-  // 6. Sequence with the residence-rule windows + service durations.
   const stopInputs: ProposeStopInput[] = geocoded.map((s) => ({
     ref: s.ref,
     serviceMinutes: s.serviceMinutes,
@@ -1427,42 +1343,25 @@ trips.post('/propose-schedule', async (c) => {
   });
 });
 
-/* ──────────────────────────────────────────────────────────────────────────
-   LIVE GPS TRACKING (Phase 4). The driver keeps the delivery page open; the
-   browser posts coordinates every ~20-30s WHILE the trip is IN_PROGRESS; the
-   dispatcher map POLLS the latest position per driver (no websockets — polling
-   is this repo's realtime mechanism). Append-only ping log in scm.trip_locations
-   (mig 0199). Capture is scoped to an ACTIVE trip only (privacy) — see below.
-   ─────────────────────────────────────────────────────────────────────────*/
 
 const LOCATION_COLS = 'trip_id, driver_id, lat, lng, accuracy_m, recorded_at, received_at';
 
-/* POST /trips/:id/location — a driver on an ACTIVE trip posts one GPS ping
-   { lat, lng, accuracy?, recorded_at? }. Range-validated, rate-capped
-   server-side (pings <10s apart are ignored), and accepted ONLY for a trip in
-   an IN_PROGRESS state. A bad ping is REJECTED cleanly (4xx), never a 500 — a
-   phone on a bad connection must not be able to crash the endpoint. */
 trips.post('/:id/location', async (c) => {
   const tripId = c.req.param('id');
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  // Range + timestamp validation up front (pure, never throws).
   const v = validatePing(body);
   if (!v.ok) return c.json({ error: 'invalid_ping', reason: v.error }, 400);
 
   const sb = c.get('supabase');
-  // The trip must exist, be visible to this caller, and be IN_PROGRESS. A
-  // Driver/Helper is row-scoped to their OWN trips (same self-scope as the rest
-  // of the trips router), so they can only ping a trip they are crewed on.
+  // company-scope: crew-gated by pingCallerAllowed below; the trip read has no company predicate (open finding, tasks/TODO.md)
   const { data: trip } = await sb.from('trips')
     .select('id, status, company_id, driver_id, helper_1_id, helper_2_id')
     .eq('id', tripId).maybeSingle();
   if (!trip) return c.json({ error: 'trip_not_found' }, 404);
   const t = trip as Record<string, unknown>;
 
-  // A crew member without Transportation edit arrives on the guard's
-  // writeBypass; only their OWN trip is accepted (tripLocation.ts, WHO MAY PING).
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
   if (!pingCallerAllowed(scope, tripAssignment(t), c.get('scmWriteBypassed') === true)) {
     return c.json({ error: 'not_your_trip' }, 403);
@@ -1470,15 +1369,11 @@ trips.post('/:id/location', async (c) => {
 
   const status = String(dual(t, 'status') ?? '').toUpperCase();
   if (!PING_ACCEPTED_STATUSES.has(status)) {
-    // Not live — the driver's page should stop tracking. Reported, not 500'd.
     return c.json({ ok: false, accepted: false, reason: 'trip_not_in_progress', status }, 409);
   }
 
   const driverId = (dual<string | null>(t, 'driver_id') ?? null);
 
-  // Rate cap: read the newest stored ping for this trip+driver and drop the new
-  // one if it is closer than the minimum gap (a flaky watchPosition can fire far
-  // faster than the ~20-30s cadence). Best-effort — a read miss accepts.
   {
     let lastQ = sb.from('trip_locations')
       .select('recorded_at').eq('trip_id', tripId)
@@ -1500,36 +1395,19 @@ trips.post('/:id/location', async (c) => {
     lng:         v.ping.lng,
     accuracy_m:  v.ping.accuracyM,
     recorded_at: v.ping.recordedAt,
-    /* Mig 0253. Only the native watcher can tell a mock-location app from the
-       GPS chip; a browser always sends nothing here and the column defaults to
-       false, which is a true statement about a browser ping rather than a
-       guess. Recorded, never rejected: refusing a simulated fix would leave a
-       gap indistinguishable from lost signal, and the point is to be able to
-       SEE it. */
     simulated:   (body as { simulated?: unknown } | null)?.simulated === true,
   });
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
-    // Any other insert failure is reported, not thrown — the driver's page keeps
-    // trying on the next tick.
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   return c.json({ ok: true, accepted: true });
 });
 
-/* GET /trips/:id/locations/latest — the latest position per driver on ONE trip,
-   for the dispatcher's live map. Read-only. Row-scoped like the rest of the
-   router. Returns [] when the trip has no pings yet (a fresh trip). */
 trips.get('/:id/locations/latest', async (c) => {
   const tripId = c.req.param('id');
   const sb = c.get('supabase');
 
-  /* COMPANY BOUND. The header comment above says "row-scoped like the rest of
-     the router", and that was only half true: the crew scope below was here,
-     the company predicate was not. Its own sibling GET /active/locations DOES
-     call scopeToAllowedCompanies on the trip set, so the two endpoints answered
-     the same question differently — and this is the one that hands back live
-     driver GPS for a single trip. */
   const { data: trip } = await scopeToAllowedCompanies(
     sb.from('trips').select('id, driver_id, helper_1_id, helper_2_id').eq('id', tripId), c,
   ).maybeSingle();
@@ -1539,9 +1417,6 @@ trips.get('/:id/locations/latest', async (c) => {
     return c.json({ error: 'not_found' }, 404);
   }
 
-  // A bounded newest-first window (uses idx_trip_locations_trip_recorded); one
-  // trip has at most a handful of driver phones, so 200 rows is ample headroom
-  // for latestPerDriver to find the newest of each.
   const { data, error } = await sb.from('trip_locations')
     .select(LOCATION_COLS).eq('trip_id', tripId)
     .order('recorded_at', { ascending: false }).limit(200);
@@ -1549,15 +1424,9 @@ trips.get('/:id/locations/latest', async (c) => {
   return c.json({ locations: latestPerDriver((data ?? []) as Array<Record<string, unknown>>) });
 });
 
-/* GET /trips/active/locations — board-level: the latest position per driver
-   across every IN_PROGRESS trip, for the Delivery-Planning / Trips overview map.
-   Read-only, scoped to the caller's allowed companies (cross-company like the
-   trip list) and to their own trips when self-scoped. */
 trips.get('/active/locations', async (c) => {
   const sb = c.get('supabase');
 
-  // The set of live trips the caller may see (cross-company; self-scoped when a
-  // Driver/Helper). Empty → no pings.
   let tripQ = sb.from('trips')
     .select('id, driver_id, helper_1_id, helper_2_id').eq('status', 'IN_PROGRESS');
   tripQ = scopeToAllowedCompanies(tripQ, c);
@@ -1570,8 +1439,6 @@ trips.get('/active/locations', async (c) => {
   const tripIds = visible.map((r) => dual<string>(r as Record<string, unknown>, 'id')).filter(Boolean);
   if (tripIds.length === 0) return c.json({ locations: [] });
 
-  // Newest-first window over just those trips; latestPerDriver collapses it to
-  // one row per (trip, driver).
   const { data, error } = await sb.from('trip_locations')
     .select(LOCATION_COLS).in('trip_id', tripIds)
     .order('recorded_at', { ascending: false }).limit(1000);

@@ -12,7 +12,7 @@ import { CacheStamp } from "../../components/CacheStamp";
 import { useCacheRefresh, withFresh } from "../../lib/cacheStamp";
 import { api } from "../../api/client";
 import { formatCurrency, cn } from "../../lib/utils";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 import { Panel, Th, Td, Toggle, SELECT_CLS, SortTh, useTableSort } from "../../components/scm-v2/OverviewKit";
 import { VenueRentPanel } from "./VenueRentPanel";
 import { Columns, TONE, PALETTE } from "../../components/scm-v2/Charts";
@@ -32,7 +32,6 @@ const pctTxt = (x: number | null) => (x == null ? "—" : `${x.toFixed(1)}%`);
 export function ProjectOverviewPage() {
   const navigate = useNavigate();
   const today = todayMY();
-  /* A new period drops the breakdown pick in the same URL write. */
   const [period, setPeriod] = useDashboardPeriod(today, "af_from", "af_to", [VIEW_PARAMS.pick, PART_PARAM]);
   /* "This month" is the WHOLE month (owner 2026-11-19: 下个礼拜的 project 没进来):
      an event booked for next week belongs to it and carries its forecast. The
@@ -42,7 +41,6 @@ export function ProjectOverviewPage() {
   const winPreset = presetOf(win, PROJECT_REPORT_RANGE_PRESETS, today);
   const winLabel = winPreset === "wholeMonth" ? `This month (${today.slice(0, 7)})` : winPreset ? presetLabel(winPreset) : period.label;
   const q = useQuery<{ projects: OvProject[]; cachedAt?: string }>("/api/projects/overview", () => api.get("/api/projects/overview"));
-  /* Served from a copy up to 2 h old: say when, and offer figures computed now. */
   const { refresh, refreshing } = useCacheRefresh();
   const onRefresh = () => void refresh([{ queryKey: buildQueryKey("/api/projects/overview"), load: () => api.get(withFresh("/api/projects/overview")) }]);
   /* Every other choice lives in the URL too (owner 2026-10-21): Back keeps
@@ -104,10 +102,8 @@ export function ProjectOverviewPage() {
      unless the period picked reaches it, where its events carry their forecast (owner 2026-11-18). */
   const trendEnd = win.to > today ? win.to : today;
   const trend = drillOf(all, drill, today).filter((b) => b.from <= trendEnd);
-  /* The part of each bucket's sales still to come (events after today), on forecast. */
   const toCome = trend.map((b) => totalsOf(all.filter((p) => !!p.startDate && !isHeld(p, today) && p.startDate >= b.from && p.startDate <= b.to)).sales);
   const anyToCome = toCome.some((v) => v !== 0);
-  /* Breadcrumb back up the drill: All years > 2026 > Q4 > Oct. */
   const crumbs: Array<[string, Drill]> = [["All years", { level: "years" }]];
   if (drill.level !== "years") {
     const year = drill.level === "weeks" ? Number(drill.month.slice(0, 4)) : drill.year;
@@ -119,7 +115,6 @@ export function ProjectOverviewPage() {
   const unit = drill.level === "years" ? "Year" : drill.level === "quarters" ? "Quarter" : drill.level === "months" || drill.level === "yearMonths" ? "Month" : "Week";
   const yearView = drill.level === "quarters" || drill.level === "yearMonths" ? drill.year : null;
   const openBucket = (b: (typeof trend)[number]) => { if (b.next) setDrill(b.next); else setPeriod(b.from, b.to); };
-  /* Running costs after COGS, only the ones that are not zero. */
   /* The lines of the Financial Snapshot, each against sales (owner 2026-10-19). */
   const cogsLines: Array<[string, number, string]> = [
     ["COGS — Matt / Sofa", ts.cogsMattSofa, PALETTE[1]!], ["COGS — Bedframe", ts.cogsBedframe, "#c98a4b"], ["COGS — Accessories", ts.cogsAccessories, "#e0b184"],
@@ -132,7 +127,6 @@ export function ProjectOverviewPage() {
   const running = costLines.reduce((a, [, v]) => a + v, 0);
   const npMax = Math.max(1, ...groups.map((g) => Math.abs(g.np)));
   const listed = shown.filter((p) => !pick || (p[dim] || "—") === pick).map((p) => ({ p, f: figuresOf(p) }));
-  /* Collected: what the period's orders have been paid, of what they ordered. */
   const paidSen = shown.reduce((a, p) => a + p.collection.paidSen, 0);
   const orderedSen = shown.reduce((a, p) => a + p.collection.totalSen, 0);
   const options = (key: "brand" | "eventType" | "organizer" | "venue" | "state" | "stage") => [...new Set((q.data?.projects ?? []).map((p) => p[key]).filter((x): x is string => !!x))].sort();
@@ -154,7 +148,6 @@ export function ProjectOverviewPage() {
       </div>
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load: {q.error}</div>}
 
-      {/* The period's P&L, on the dark slab the home page uses for its hero. */}
       <section className="relative overflow-hidden rounded-2xl bg-sidebar px-5 py-5 text-sidebar-ink shadow-slab sm:px-7">
         <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-50 blur-2xl" style={{ background: "radial-gradient(circle, rgba(22,105,95,0.6), transparent 70%)" }} />
         <div className="relative">
@@ -205,7 +198,6 @@ export function ProjectOverviewPage() {
         </Panel>
         <Panel title="Where each ringgit of sales goes" hint={`${winLabel}${partLabel}`}>
           <RinggitBar sales={ts.sales} parts={[["COGS", ts.cogs, PALETTE[1]!], ...costLines.map(([l, v, c]) => [l, v, c] as [string, number, string]), ["Net profit", Math.max(0, ts.np), "#2f8a5b"]]} />
-          {/* Scrolls sideways on a phone rather than cutting off the % column. */}
           <div className="mt-3 overflow-x-auto" data-testid="ringgit-table">
           <table className="w-full border-collapse text-[12.5px] tabular-nums"><tbody>
             <tr className="font-semibold"><Td left>Sales</Td><Td>{money(ts.sales)}</Td><Td className="w-[64px] text-ink-muted">100.0%</Td></tr>

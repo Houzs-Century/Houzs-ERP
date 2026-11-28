@@ -1,11 +1,3 @@
-// The mobile Relationship Map's pure render model. The load-bearing
-// assertions: (1) the FLOATING pairing rows equal EXACTLY the coverage
-// assignments with source 'mrp' — the model delegates to the SAME pinned
-// buildFloatingOverlay the desktop canvases merge, so the phone can never
-// disagree with the desktop maps or the Assigned-SO chips (one-engine
-// symmetry); (2) the stored SO ▸ PO raise-link renders as PROVENANCE, never
-// as an execution hop, including the kind-'value' fallback for an older
-// cached response; (3) the identity wording matches the desktop verbatim.
 
 import { describe, expect, it } from "vitest";
 import type { FlowEdge, FlowNode, PoSoCoverageResp } from "../vendor/scm/lib/flow-queries";
@@ -92,7 +84,7 @@ describe("buildMobileMapModel — chains", () => {
   it("the SO ▸ PO raise-link is a pairing, never a vertical connector parent", () => {
     const m = buildMobileMapModel(flow, undefined);
     const po = m.purchase[0][0];
-    expect(po.fromLabels).toEqual([]); // its only inbound edge is the provenance hop
+    expect(po.fromLabels).toEqual([]);
     expect(m.pairings).toEqual([
       { soDocNo: "SO-1", poLabel: "PO-1", identity: "provenance", soNav: { kind: "so", docNo: "SO-1" } },
     ]);
@@ -108,9 +100,7 @@ describe("buildMobileMapModel — chains", () => {
 
   it("names chain parents only when the parent stage is ambiguous (>1 node)", () => {
     const m = buildMobileMapModel(flow, undefined);
-    // DO's parent stage holds a single SO — unambiguous, no caption.
     expect(m.sales[1].every((c) => c.fromLabels.length === 0)).toBe(true);
-    // The SI hangs off one of TWO DOs — its parent must be named.
     expect(m.sales[2][0].fromLabels).toEqual(["DO-1"]);
   });
 
@@ -161,7 +151,6 @@ describe("buildMobileMapModel — the floating overlay (one-engine symmetry)", (
     expect(soCard.label).toBe("SO-7");
     expect(soCard.floating).toBe(true);
     expect(soCard.nav).toEqual({ kind: "so", docNo: "SO-7" });
-    // The stored graph's own PO is untouched by the overlay.
     expect(m.purchase[0][0].floating).toBe(false);
   });
 

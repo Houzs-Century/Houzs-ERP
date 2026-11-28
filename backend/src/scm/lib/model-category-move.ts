@@ -10,7 +10,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { scopeToCompanyId } from './companyScope';
 import { pgrestIn } from './pgrest-in-list';
-import { mfgCategoryLabel, parseMfgCategory } from '../shared/product-categories';
+import { mfgCategoryLabel, parseMfgCategory, type ProductCategory } from '../shared/product-categories';
 
 export type ModelCategoryMove =
   | { ok: true; model: { id: string; model_code: string | null; name: string | null }; skuCodes: string[] }
@@ -21,6 +21,7 @@ export async function moveModelCategory(
   companyId: number,
   modelId: string,
   category: string,
+  categories: readonly ProductCategory[],
 ): Promise<ModelCategoryMove> {
   const { data: models, error: modelErr } = await scopeToCompanyId(supabase
     .from('product_models')
@@ -35,16 +36,13 @@ export async function moveModelCategory(
        system hit a problem" (owner 2026-09-18: two "SERVICE X SL" models of the
        same code, changing one to SERVICE hit the other). */
     if ((modelErr as { code?: string }).code === '23505') {
-      // Best-effort enrichment: name the code in the message when we can read
-      // it. A failed re-read must not turn an actionable clash into a 500, so
-      // it just falls back to the code-less sentence.
       const { data: self, error: selfErr } = await scopeToCompanyId(supabase
         .from('product_models')
         .select('model_code')
         .eq('id', modelId), companyId)
         .maybeSingle();
       const code = selfErr ? '' : ((self as { model_code?: string } | null)?.model_code ?? '');
-      const label = mfgCategoryLabel(category);
+      const label = mfgCategoryLabel(categories, category);
       return {
         ok: false,
         error: 'target_category_taken',
@@ -80,21 +78,16 @@ export type ModelMovePlan =
   | { ok: true; moves: Map<string, Omit<ImportModelMove, 'skuCount'>>; conflicts: Map<string, string> }
   | { ok: false; reason: string };
 
-/* Import SKUs, before anything is written: which rows change the category of a
-   SKU that belongs to a model (keyed by row code -> the model move), and which
-   rows must be refused because the file gives SKUs of ONE model more than one
-   category. A row that restates the category a sibling is leaving counts as a
-   disagreement too — the file says both, so neither is picked. Existing SKUs in
-   this company only; a blank or unreadable category cell takes no part. */
 export async function planModelCategoryMoves(
   supabase: SupabaseClient,
   companyId: number,
   rows: ReadonlyArray<Record<string, unknown>>,
+  categories: readonly ProductCategory[],
 ): Promise<ModelMovePlan> {
   const asked: Array<{ code: string; category: string }> = [];
   for (const r of rows) {
     const code = String(r.code ?? '').trim();
-    const category = parseMfgCategory(String(r.category ?? '').trim());
+    const category = parseMfgCategory(categories, String(r.category ?? '').trim());
     if (code && category) asked.push({ code, category });
   }
   const moves = new Map<string, Omit<ImportModelMove, 'skuCount'>>();
@@ -141,7 +134,7 @@ export async function planModelCategoryMoves(
     const modelCode = model?.model_code ?? modelId;
     const targets = [...new Set(list.map((l) => l.category))];
     if (targets.length > 1) {
-      const said = list.map((l) => `${l.code}: ${mfgCategoryLabel(l.category)}`).join(', ');
+      const said = list.map((l) => `${l.code}: ${mfgCategoryLabel(categories, l.category)}`).join(', ');
       for (const l of list) {
         conflicts.set(l.code, `${l.code} belongs to model ${modelCode}, and a model's SKUs share one category — but this file gives that model's SKUs different categories (${said}). Nothing was saved for these rows. Put the same category on every row of model ${modelCode}, or leave the category blank on the rows you are not changing.`);
       }

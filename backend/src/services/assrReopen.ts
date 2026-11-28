@@ -10,7 +10,6 @@ import type { Context } from "hono";
 import type { Env } from "../types";
 import { transitionStage, logActivity, type Stage } from "./assr";
 
-// The stages a reopen may land on — assessment stages before the supplier leg.
 export const REOPEN_STAGES: readonly Stage[] = [
   "pending_review",
   "pending_solution",
@@ -31,8 +30,6 @@ export async function reopenCaseWithComplaint(
     .first<{ complaint_issue: string | null; closed_at: string | null }>();
   if (!before) return false;
 
-  // Record the previous complaint on the timeline BEFORE it is overwritten, so
-  // the first problem's text survives even though the field now holds the new one.
   await logActivity(
     env, assrId, "case_reopened",
     before.complaint_issue ?? null, complaint,
@@ -40,8 +37,6 @@ export async function reopenCaseWithComplaint(
     userId, { category: "service" },
   );
 
-  // New complaint + reactivate. transitionStage stamps closed_at only on ENTERING
-  // a terminal stage and never clears it, so a reopen must clear it here.
   await env.DB.prepare(
     `UPDATE assr_cases
         SET complaint_issue = ?, closed_at = NULL, completion_date = NULL,
@@ -51,7 +46,6 @@ export async function reopenCaseWithComplaint(
     .bind(complaint, assrId)
     .run();
 
-  // Move onto the chosen re-assessment stage (records stage_history).
   await transitionStage(env, assrId, stage, userId, "reopened for a new complaint", "app");
   return true;
 }

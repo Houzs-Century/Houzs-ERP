@@ -1,15 +1,3 @@
-// DocumentRelationshipMapModal — shared node-graph modal for the SCM detail
-// pages (SO / DO / SI / DR). Nick's 2026-07-08 design handoff specified a
-// single chain shape for every doc page:
-//   Customer PO → Sales Order → Delivery Order → GRN → Sales Invoice
-// The current-doc node paints brass; upstream nodes paint green when linked,
-// downstream nodes stay grey (Pending) until the doc actually exists.
-//
-// Each page passes in a `ChainNode[]` describing which nodes are done /
-// current / pending for its own state; the modal owns the SVG canvas + the
-// dashed grid + arrow markers, and calls `onNodeClick(type, doc)` when a
-// linked non-current node is clicked so the caller can navigate to the
-// real document.
 
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -25,15 +13,7 @@ export type ChainNode = {
   meta: string;
   state: ChainNodeState;
   href?: string;
-  // Whether the node has something to do when tapped. Defaults to
-  // `state === "done"` (a linked document opens). Set TRUE on a node that is
-  // grey/pending but still actionable — e.g. the PO node that lists advisory
-  // candidate POs ("N candidates — tap"); without this it renders disabled and
-  // the tap is dead.
   actionable?: boolean;
-  // FLOATING slot ("soft until DO, hard from DO"): the doc(s) shown are a live
-  // MRP pairing, recomputed on every view — nothing stored binds them. Renders
-  // dashed with a trailing "~" (the Assigned-SO chip idiom), never as Linked.
   float?: boolean;
 };
 
@@ -46,17 +26,12 @@ export type ChainNode = {
 // Omitted → the legacy neutral connectors (the sales-side DO/SI/DR maps).
 export type PairingKind = "provenance" | "floating";
 
-// A Sales Order amendment (revision request) surfaced beside the graph. Each is
-// a real document, clickable to its job card at /scm/amendments/:id.
 export type AmendmentChip = {
   id: string;
   label: string;
   status: string | null;
 };
 
-// Turn a raw amendment status key (REQUESTED / SUPPLIER_PENDING / SO_APPROVED /
-// PO_APPROVED / SENT / REJECTED …) into a readable label. No canonical status
-// map exists for amendments, so lower-case the token and space the underscores.
 function humaniseAmendmentStatus(status: string): string {
   const s = status.trim();
   if (!s) return s;
@@ -64,8 +39,6 @@ function humaniseAmendmentStatus(status: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-// ─── Modal shell (portal-anchored so `fixed` latches to the viewport even
-// when an ancestor has transform/filter set) ───────────────────────────
 
 export function ModalOverlay({
   open,
@@ -85,9 +58,6 @@ export function ModalOverlay({
   footer?: ReactNode;
 }) {
   useEscapeLayer(onClose, open);
-  /* z-100/101, above the side drawers (ResizableDetailDrawer / ResizableDrawer,
-     z-90/91). A print preview or document map opened from a list's quick-view
-     drawer used to open BEHIND that drawer. ModalOverlay.layer.test.ts pins it. */
   return createPortal(
     <>
       <div
@@ -150,9 +120,7 @@ export function ModalOverlay({
 export type DocChoice = {
   id: string;
   label: string;
-  /** Optional second line — status, date, whatever names the row apart. */
   sub?: string | null;
-  /** Route to open when this row is picked. */
   to: string;
 };
 
@@ -171,7 +139,6 @@ export function DocumentChoiceDialog({
   onClose: () => void;
   onPick: (doc: DocChoice) => void;
 }) {
-  // Keep the overlay mounted through its close transition, like the map modal.
   if (!prompt) return null;
   return (
     <ModalOverlay open onClose={onClose} title={prompt.title} icon={<Share2 size={16} />}>
@@ -253,7 +220,6 @@ function ChipRow({
   );
 }
 
-// ─── Relationship-map modal (5-node graph on a dotted canvas) ──────────────
 
 export function DocumentRelationshipMapModal({
   open,
@@ -272,24 +238,12 @@ export function DocumentRelationshipMapModal({
   onClose: () => void;
   nodes: ChainNode[];
   onNodeClick?: (node: ChainNode) => void;
-  // Optional amendments branch (SO / PO maps). When present, a labelled row of
-  // clickable amendment chips renders beneath the graph.
   amendments?: AmendmentChip[];
   onAmendmentClick?: (a: AmendmentChip) => void;
-  // Optional canvas row-label overrides — the PO map reads the same 5-node
-  // shape as a purchase chain ("Purchase chain" / "After goods receipt")
-  // instead of the sales-side defaults. Omitted → labels unchanged.
   rowLabels?: { primary: string; secondary: string };
-  // Optional heading for the amendments row (default keeps the SO map's
-  // "Amendments off the Sales Order").
   amendmentsLabel?: string;
-  // Optional Delivery Returns (SO map), a second chip row beneath the graph.
   returns?: AmendmentChip[];
   onReturnClick?: (r: AmendmentChip) => void;
-  // Optional SO↔PO pairing kind (see PairingKind). Passed by the maps that
-  // carry a purchase leg (the PO map, the SO map): the pairing hop restyles
-  // (muted solid = provenance, dashed pulsing = floating) and the execution
-  // hops that FOLLOW it render solid — anchored. Omitted → legacy rendering.
   pairing?: { kind: PairingKind } | null;
 }) {
   // Canvas layout — fixed pixel positions so the graph reads at any modal
@@ -307,12 +261,10 @@ export function DocumentRelationshipMapModal({
   const twoChain = nodes.length >= 7;
   const positions = twoChain
     ? [
-        // Sales chain: Customer PO → SO → DO → SI
         { left: x0 + xStep * 0, top: row1Top },
         { left: x0 + xStep * 1, top: row1Top },
         { left: x0 + xStep * 2, top: row1Top },
         { left: x0 + xStep * 3, top: row1Top },
-        // Purchase chain, dropping from the SO: PO → GRN → PI
         { left: x0 + xStep * 1, top: row2Top },
         { left: x0 + xStep * 2, top: row2Top },
         { left: x0 + xStep * 3, top: row2Top },
@@ -325,12 +277,6 @@ export function DocumentRelationshipMapModal({
         { left: x0 + xStep * 3, top: row2Top },
       ];
 
-  // The SO↔PO pairing hop, when the caller declares one (see PairingKind):
-  //   7-node (SO map)  — the branch drop, SO ↓ PO.
-  //   5-node (PO map)  — the first top segment, SO → PO.
-  // Floating pairs in brass (the live/current accent) with the dashed pulse;
-  // provenance stays muted but SOLID, so a dash can only ever mean "floating".
-  // Execution hops behind a declared pairing drop their dashes — anchored.
   const pairingKind = pairing?.kind ?? null;
   const floatingPairing = pairingKind === "floating";
   const pairingTitle = floatingPairing
@@ -343,12 +289,6 @@ export function DocumentRelationshipMapModal({
   const nodeCard = (n: ChainNode, opts: { left: number; top: number }) => {
     const cur = n.state === "current";
     const done = n.state === "done";
-    // A node is tappable when the caller wired a handler AND it is not the
-    // current tile (you are already there). "Actionable" is what decides it:
-    // a linked document (done) opens, but a grey/pending node the builder marks
-    // actionable (e.g. the PO node listing candidate POs) must tap too. The old
-    // `state === "done"` test left that candidate node disabled and its
-    // "N candidates — tap" action dead.
     const actionable = n.actionable ?? done;
     const linked = !!onNodeClick && !cur && actionable;
     return (
@@ -402,7 +342,6 @@ export function DocumentRelationshipMapModal({
           )}
         >
           {n.doc}
-          {/* The floating tilde — the Assigned-SO chip idiom for "live, may change". */}
           {n.float && <span className="font-normal text-ink-muted">{" ~"}</span>}
         </div>
         <div
@@ -454,9 +393,6 @@ export function DocumentRelationshipMapModal({
           className="pointer-events-none absolute inset-0"
           preserveAspectRatio="none"
         >
-          {/* First top segment. On the 5-node PO map this IS the SO → PO
-              pairing hop, so a declared pairing restyles it; every other
-              shape keeps the solid execution stroke. */}
           <line
             x1={x0 + 150}
             y1={row1Top + 42}
@@ -480,7 +416,6 @@ export function DocumentRelationshipMapModal({
             strokeWidth="2"
             markerEnd="url(#arrowP)"
           />
-          {/* 7-node only: DO → Sales Invoice closes the SALES row. */}
           {twoChain && (
             <line
               x1={x0 + xStep * 2 + 150}
@@ -492,10 +427,6 @@ export function DocumentRelationshipMapModal({
               markerEnd="url(#arrowP)"
             />
           )}
-          {/* Branch drop: 7-node hangs the PURCHASE row off the SO (col 1) —
-              that IS the SO ↓ PO pairing hop, restyled when declared; 5-node
-              keeps the original drop off col 2 (an execution hop — solid when
-              a pairing is declared, legacy dashes otherwise). */}
           <line
             x1={x0 + xStep * (twoChain ? 1 : 2) + 74}
             y1={row1Top + 88}
@@ -510,8 +441,6 @@ export function DocumentRelationshipMapModal({
           >
             {twoChain && pairingKind && <title>{pairingTitle}</title>}
           </line>
-          {/* 7-node only: PO → GRN (the 5-node shape has nothing at col 1).
-              Execution — anchored (solid) once a pairing is declared. */}
           {twoChain && (
             <line
               x1={x0 + xStep + 148}
@@ -524,7 +453,6 @@ export function DocumentRelationshipMapModal({
               markerEnd="url(#arrowM)"
             />
           )}
-          {/* Last hop of the bottom row — GRN → PI (7-node) / GRN → SI (5). */}
           <line
             x1={x0 + xStep * 2 + 148}
             y1={row2Top + 40}
@@ -558,7 +486,6 @@ export function DocumentRelationshipMapModal({
             >
               <path d="M0,0 L7,3.5 L0,7 z" fill="var(--border-strong, #b3b8ac)" />
             </marker>
-            {/* Brass arrowhead for the FLOATING pairing hop. */}
             <marker
               id="arrowF"
               markerWidth="7"
@@ -576,10 +503,6 @@ export function DocumentRelationshipMapModal({
         {nodes.slice(0, positions.length).map((n, i) => nodeCard(n, positions[i]!))}
       </div>
 
-      {/* Amendments branch off the Sales Order — revision requests are real
-          documents, so they get their own labelled row of clickable chips
-          rather than being hidden. Rendered only when the caller supplies them
-          (the SO map does; the DO / SI / DR maps do not). */}
       {amendments && amendments.length > 0 && (
         <ChipRow
           heading={amendmentsLabel ?? "Amendments off the Sales Order"}
@@ -589,8 +512,6 @@ export function DocumentRelationshipMapModal({
         />
       )}
 
-      {/* Goods the customer sent back (2990-0011): a return reopens the order
-          for MRP and delivery, so the SO map has to show it. */}
       {returns && returns.length > 0 && (
         <ChipRow
           heading="Returned off the Delivery Order"
@@ -611,8 +532,6 @@ export function DocumentRelationshipMapModal({
           <span className="inline-block h-2.5 w-2.5 rounded-full border border-border-strong bg-surface" />{" "}
           Pending
         </span>
-        {/* The pairing legend, only when the chain declares one — a dash can
-            only ever mean FLOATING, a muted solid line is stored provenance. */}
         {pairingKind && (
           <span className="inline-flex items-center gap-1.5" title={pairingTitle}>
             <span

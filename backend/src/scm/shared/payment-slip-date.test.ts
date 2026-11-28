@@ -1,7 +1,3 @@
-// The slip-date window's boundaries, which are the whole rule: 14 days back is
-// IN, 15 is out, today is in, tomorrow is out. Asserted on the shared module
-// because the desktop panel, the phone, the New-SO forms and the write core all
-// call this one function — a boundary that moves here moves on every surface.
 import { describe, expect, test } from 'vitest';
 import {
   PAYMENT_SLIP_WINDOW_DAYS,
@@ -61,8 +57,6 @@ describe('payment slip date window', () => {
   });
 
   test('an unreadable TODAY judges nothing rather than refusing everything', () => {
-    // A caller whose clock helper returned junk must not turn every payment
-    // into a refusal — that would shut the screen, not protect the books.
     expect(checkPaymentSlipDate(TODAY, '').ok).toBe(true);
   });
 

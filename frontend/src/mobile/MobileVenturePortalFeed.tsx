@@ -1,19 +1,3 @@
-// ---------------------------------------------------------------------------
-// Venture Portal Feed, on a phone.
-//
-// SAME VERDICTS, SAME ACTIONS, SAME WORDS as pages/VenturePortalFeed.tsx —
-// every one of them from lib/venturePortalFeed.ts. This file decides nothing.
-// The owner's standing rule is one shared logic layer with the two surfaces
-// differing only in presentation, and "the rule was fixed on the desktop and
-// not on mobile" is a bug class this repo keeps paying for.
-//
-// WHAT IS DIFFERENT HERE, and it is only layout: the two settings cards stack,
-// the queue is a scrolling list of cards rather than a register, and the state
-// filter is the header's chip strip (where every other mobile screen's filter
-// lives) instead of in-page pills. Nothing is hidden from the phone that the
-// desktop shows — including turning the feed off, which is the one control
-// somebody most plausibly needs while not at a desk.
-// ---------------------------------------------------------------------------
 
 import { useCallback, useMemo, useState } from "react";
 
@@ -162,17 +146,11 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
   const canManage = s?.canManage ?? false;
   const verdict = useMemo(() => vpVerdict(s), [s]);
 
-  /* Draft state, seeded once from the server. Deliberately not re-synced on
-     every poll — overwriting a half-typed address every fifteen seconds is the
-     classic version of this bug, and a phone keyboard makes it worse. */
   const [urlDraft, setUrlDraft] = useState<string | null>(null);
   const [sinceDraft, setSinceDraft] = useState<string | null>(null);
   const [companiesDraft, setCompaniesDraft] = useState<string | null>(null);
   const [everyCompany, setEveryCompany] = useState<boolean | null>(null);
 
-  /* Pre-filled with the portal's own address when nothing is stored — a phone
-     keyboard is the worst place to type a URL, and this is where the owner is
-     most likely to be doing it. */
   const url = urlDraft ?? vpReceiverDraft(s);
   const since = sinceDraft ?? s?.connection.since ?? "";
   const scope = s?.feed.scope;
@@ -206,9 +184,6 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
           </div>
         </div>
 
-        {/* The state filter, where every other mobile screen keeps its filter.
-            Counts are the SERVER's aggregate — the list is capped at 100, so
-            counting what loaded would understate a real backlog. */}
         <div className="chips" style={{ marginTop: 11 }}>
           {TABS.map((t) => (
             <button
@@ -339,8 +314,6 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
                 </button>
               ) : null}
 
-              {/* THE KEY. No input box on either surface — it is minted by the
-                  server, and the one place a human types it is the portal. */}
               <div style={{ marginTop: 13 }}>
                 <Label>API key</Label>
                 <div
@@ -358,9 +331,6 @@ export function MobileVenturePortalFeed({ onBack }: { onBack: () => void }) {
                 <Hint>{vpKeyLine(s)}</Hint>
               </div>
 
-              {/* THE ONE-TIME REVEAL, from the same shared state the desktop
-                  reads — dismissed, it is gone from the browser and the server
-                  will not answer it again. */}
               {actions.revealedKey ? (
                 <div
                   style={{

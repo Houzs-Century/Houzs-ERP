@@ -40,24 +40,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import jsQR from 'jsqr';
 import { scanHitFeedback } from './scan-feedback';
 
-/* HOW LONG THE SAME VALUE IS IGNORED FOR. 1500ms is Hookka's, arrived at on a
-   real floor: long enough that a paper held steady adds once, short enough that
-   a storekeeper who genuinely wants to re-scan the same document only has to
-   move it out of frame and back. */
 const DEDUP_MS = 1500;
 
 export type QrScannerState = {
-  /** True while the camera is open and the loop is decoding. */
   scanning: boolean;
-  /** A sentence to show the operator, or null. Never a silent failure. */
   cameraError: string | null;
-  /** True only when THIS lens reports a torch — the button hides otherwise. */
   torchSupported: boolean;
   torchOn: boolean;
 };
 
 export type QrScanner = QrScannerState & {
-  /** Attach to the <video> the preview renders into. */
   videoRef: React.RefObject<HTMLVideoElement | null>;
   start: () => Promise<void>;
   stop: () => void;
@@ -80,9 +72,6 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
   const rafRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastHitRef = useRef<{ value: string; at: number }>({ value: '', at: 0 });
-  /* Bumped by stop(). A getUserMedia that resolves after the scanner closed
-     belongs to a session nobody is watching; without this check its stream was
-     kept and the lens stayed on with nothing on screen. */
   const sessionRef = useRef(0);
   const startingRef = useRef(false);
   const onDecodedRef = useRef(onDecoded);
@@ -101,9 +90,6 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
     setTorchOn(false);
   }, []);
 
-  /* THE CAMERA MUST BE RELEASED WHEN THE PAGE GOES. A left-running track holds
-     the lens and shows the recording indicator, and on some Android builds no
-     other app can open the camera until the tab is killed. */
   useEffect(() => stop, [stop]);
 
   const start = useCallback(async () => {
@@ -130,16 +116,7 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
       }
       streamRef.current = stream;
 
-      /* Continuous autofocus where the lens has it — a fixed-focus lens leaves
-         a small code blurred at arm's length, which reads to the operator as
-         "it does not scan". Best-effort: never block a scan on focus tuning. */
       try {
-        /* ANNOTATED `| undefined` rather than inferred, and `getCapabilities`
-           reached through a cast: lib.dom types both as always present, and
-           neither is. A stream can arrive with no video track, and Safari
-           shipped MediaStreamTrack without getCapabilities for years. Letting
-           the compiler's optimism stand here would crash the whole start() on
-           the phones this exists for. */
         const track: MediaStreamTrack | undefined = stream.getVideoTracks()[0];
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- lib.dom types getVideoTracks()[0] as always present; a stream can arrive with no video track and this whole block is best-effort.
         const getCaps = track?.getCapabilities as
@@ -154,14 +131,9 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
         }
         setTorchSupported(!!caps?.torch);
       } catch {
-        /* focus and torch are niceties; the scan proceeds without them */
       }
       setScanning(true);
     } catch (e) {
-      /* A HARD BLOCK AND A MISSING CAMERA NEED DIFFERENT SENTENCES. Once the
-         browser remembers a denial, asking again shows nothing — only the
-         person can undo it at the address bar — so telling them to "try again"
-         would send them tapping a button that can never work. */
       const name = e instanceof DOMException ? e.name : '';
       setCameraError(
         name === 'NotAllowedError' || name === 'SecurityError'
@@ -183,12 +155,9 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
       });
       setTorchOn(next);
     } catch {
-      /* Some lenses advertise torch and refuse it while streaming. Leave the
-         state alone rather than showing a button that lies about being on. */
     }
   }, [torchOn]);
 
-  // ── The decode loop ───────────────────────────────────────────────────────
   useEffect(() => {
     const stream = streamRef.current;
     const video = videoRef.current;
@@ -197,17 +166,8 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
     video.srcObject = stream;
     video.setAttribute('playsinline', 'true');
     video.muted = true;
-    /* A REFUSED play() IS A BLACK RECTANGLE, and swallowing it is how the
-       operator ends up staring at one deciding the scanner is broken. It rejects
-       for real reasons — an autoplay policy that wants a user gesture, the
-       element detached mid-start — and none of them are visible any other way,
-       because the decode loop below simply never sees a frame. So it is said out
-       loud, in the same place every other camera failure is said. */
     video.play().catch((e: unknown) => {
       const name = e instanceof DOMException ? e.name : '';
-      /* AbortError is the ordinary one: a play() interrupted by the stream being
-         torn down, which is what STOPPING the scanner looks like. Not a failure
-         and not worth a message. */
       if (name === 'AbortError') return;
       setCameraError('The camera opened but the picture would not start. Close this page and open it again.');
     });
@@ -224,25 +184,14 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
       }
     }
 
-    /* ANNOTATED, because the compiler narrows `let stopped = false` to the
-       LITERAL false and then calls every `if (stopped)` below dead — the writes
-       happen in the cleanup closure, across an await it does not follow. The
-       checks are real: they are what stops a decode that was already in flight
-       from firing after the camera closed. */
     let stopped: boolean = false;
     let lastDecode = 0;
-    /* The native decoder is cheap enough to run more often; the canvas path
-       costs a full frame copy plus a JS decode, so it is throttled harder to
-       keep the preview smooth on an older phone. */
     const THROTTLE_MS = nativeDetector ? 60 : 90;
 
     const onHit = (value: string) => {
       if (stopped || !value) return;
       const now = performance.now();
       const last = lastHitRef.current;
-      /* SEE RULE 2 AT THE TOP. Silent, not a rejection message: a held paper
-         re-decoding is not the operator doing anything wrong, and telling them
-         so sixteen times a second is worse than saying nothing. */
       if (value === last.value && now - last.at < DEDUP_MS) {
         lastHitRef.current = { value, at: now };
         return;
@@ -267,8 +216,6 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
             const first = codes.find((cd) => cd.rawValue);
             if (first?.rawValue) hit = first.rawValue;
           } catch {
-            /* Exposed but flaky on this device — drop to the canvas path for
-               the rest of the session rather than throwing every frame. */
             nativeDetector = null;
           }
         } else {
@@ -276,8 +223,6 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
           const vh = video.videoHeight;
           const ctx = canvas.getContext('2d', { willReadFrequently: true });
           if (ctx) {
-            /* Work at ~1440px on the long edge. Smaller is faster and loses the
-               small/angled codes this was built to catch. */
             const scale = Math.min(1, 1440 / Math.max(vw, vh));
             const cw = Math.max(1, Math.round(vw * scale));
             const ch = Math.max(1, Math.round(vh * scale));
@@ -288,12 +233,9 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
             try {
               imageData = ctx.getImageData(0, 0, cw, ch);
             } catch {
-              imageData = null; // tainted canvas — nothing to decode
+              imageData = null;
             }
             if (imageData) {
-              /* attemptBoth reads a code printed light-on-dark as well as the
-                 usual dark-on-light. It costs a second pass and catches the
-                 photocopied sheets. */
               const code = jsQR(imageData.data, cw, ch, { inversionAttempts: 'attemptBoth' });
               if (code?.data) hit = code.data;
             }
@@ -302,9 +244,6 @@ export function useQrScanner(onDecoded: (value: string) => void): QrScanner {
       }
 
       if (hit) onHit(hit);
-      /* SEE RULE 1 AT THE TOP. ALWAYS reschedule — never inside an `if`, never
-         after an early return. This single line is what makes the scanner
-         continuous. */
       rafRef.current = requestAnimationFrame(() => void tick());
     };
     rafRef.current = requestAnimationFrame(() => void tick());

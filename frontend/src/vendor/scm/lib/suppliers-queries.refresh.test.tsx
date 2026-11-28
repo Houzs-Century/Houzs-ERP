@@ -1,6 +1,3 @@
-// Changing a supplier must refresh the paged Suppliers list, not only the detail
-// page: the list keeps its rows for 30 seconds, so a missed refresh showed the
-// old values on the way back (Conts-ERP #406).
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';

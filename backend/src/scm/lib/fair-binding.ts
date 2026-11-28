@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// fair-binding.ts — the SQL half of the fair picker. Thin and impure BY DESIGN:
-// it only FETCHES. Every decision lives in the pure `fair-options.ts` beside it,
-// so the rule that decides which exhibition a sale is attributed to is testable
-// without a database. Same split as venue-binding.ts, and for the same reason:
-// the last time this decision lived inside SQL, `ORDER BY start_date DESC LIMIT
-// 1` hid a missing end_date check for a month.
-//
-// Reads the PUBLIC schema (projects, project_venues) via `env.DB` — the scm
-// supabase client cannot reach public.
-// ----------------------------------------------------------------------------
 
 import {
   boothsOf,
@@ -56,9 +45,6 @@ export type FairDb = {
 /** One venue-master row, for the "Others" pick. */
 export type VenueMasterRow = { id: string; name: string };
 
-/* The pg driver camelCases result columns and the D1 mirror does not. Reading
-   only one of the two is the single most recurring bug in this tree, so every
-   row mapper here is dual-read. */
 function str(r: Record<string, unknown>, ...keys: string[]): string | null {
   for (const k of keys) {
     const v = r[k];
@@ -81,13 +67,9 @@ function toFairRow(r: Record<string, unknown>): FairProjectRow {
   };
 }
 
-/* Cancelled fairs are excluded in SQL as well as in the pure filter. Not
-   redundant: it keeps the row set small on a table with 924 Houzs Century
-   projects, and `isPickableFair` stays the single authority on the decision. */
 const FAIR_COLUMNS =
   'p.id AS id, p.venue AS venue, p.organizer AS organizer, p.brand AS brand, ' +
   'p.start_date AS startdate, p.end_date AS enddate, p.status AS status, ' +
-  /* The event type decides the picker LABEL only (a solo roadshow reads "SOLO"). */
   '(SELECT et.slug FROM project_event_types et WHERE et.id = p.event_type_id) AS eventtype';
 
 /* ARCHIVED IS NOT PICKABLE (owner 2026-09-19).
@@ -110,9 +92,6 @@ const LIVE_FAIR = `p.venue IS NOT NULL AND trim(p.venue) <> ''
      AND p.archived_at IS NULL
      AND lower(coalesce(p.status, '')) <> 'cancelled'`;
 
-/* The window itself is a RULE, so it lives in the pure module beside the one
-   that groups the rows — importing it keeps the SQL and the grouping working
-   from one definition instead of two that can drift apart. */
 
 /**
  * Every fair that could appear in the picker for one order date: anything that
@@ -279,38 +258,16 @@ export async function loadVenueMaster(
     .filter((r) => r.id && r.name);
 }
 
-/**
- * Resolve a picked venue (+ optional organizer) and the order's own brand to ONE
- * project id, for the create / patch / reconcile paths.
- *
- * NEVER trusts a project id from the client. The picker sends a venue and an
- * organizer — what a person can see and verify — and the server re-derives which
- * BOOTH that is from the order's lines. A client-supplied project id would let a
- * stale dropdown attribute a sale to another company's fair, and `project_id`
- * has no company predicate of its own.
- *
- * Best-effort by contract: a lookup failure returns PENDING with no project,
- * never an exception. No fair-link problem may ever block a sale.
- */
 type FairSaveArgs = {
   db: FairDb;
   companySql: string;
   venue: string | null;
   organizer: string | null;
-  /** The PICKED row's period. Present whenever the operator chose an EVENT from
-   *  the dropdown, absent when they came through "Others" and named a place
-   *  only, or when the nightly reconcile is retrying a place-only order.
-   *  REQUIRED rather than optional on purpose: its absence changes which path
-   *  resolves the order, and an optional argument whose absence changes the
-   *  answer is the bug class this repo keeps paying for. Pass null explicitly. */
   picked: { startDate: string; endDate: string | null } | null;
   soDate: string;
   brand: string | null;
 };
 
-/* An EVENT was picked: match it exactly. A PLACE only: fall back to the window
-   at that venue, where the date is all there is to go on. The caller has
-   already refused a blank venue. */
 function loadSaveCandidates(args: FairSaveArgs, venue: string): Promise<FairProjectRow[]> {
   const organizer = (args.organizer ?? '').trim();
   return args.picked && organizer
@@ -333,15 +290,10 @@ export async function resolveFairForSave(args: FairSaveArgs): Promise<FairResolu
       organizer: args.organizer,
     });
   } catch {
-    /* An unreadable projects table is NOT "there is no fair". PENDING says
-       "unresolved, try again", which is what the reconcile job acts on; a
-       silent UNMATCHED would be a verdict this never computed. */
     return { projectId: null, match: 'PENDING', candidateIds: [] };
   }
 }
 
-/* The keyer STANDS AT a project as its PIC or on its Sales Attending — the two
-   links venue-binding.ts reads. Binds the user id TWICE. */
 const KEYER_ON_PROJECT = `(p.pic_id = ? OR EXISTS (
          SELECT 1 FROM project_sales_attendees psa
            JOIN sales_reps sr ON sr.id = psa.sales_rep_id
@@ -365,7 +317,6 @@ export async function resolveFairForCreate(args: KeyerFairArgs): Promise<FairRes
 
 type KeyerFairArgs = FairSaveArgs & { keyerId: number; booth: number | null };
 
-/** `resolveFairForCreate`, plus the rows it chose between (the edit names them). */
 async function resolveWithKeyer(args: KeyerFairArgs): Promise<{ fair: FairResolution; candidates: FairProjectRow[] }> {
   const venue = (args.venue ?? '').trim();
   const pending = { fair: { projectId: null, match: 'PENDING' as const, candidateIds: [] }, candidates: [] };
@@ -376,11 +327,8 @@ async function resolveWithKeyer(args: KeyerFairArgs): Promise<{ fair: FairResolu
   } catch {
     return pending;
   }
-  /* Not knowing where the keyer stands is not a reason to drop the brand's
-     answer: on a failed read the plain rule still runs, with no keyer step. */
   const keyerProjectIds = await keyerProjectIdsAmong(args.db, args.companySql, args.keyerId, candidates).catch(() => new Set<number>());
   const fair = resolveFairWithKeyer({ candidates, brand: args.brand, organizer: args.organizer, keyerProjectIds });
-  /* A booth is picked inside an EVENT; a place alone spans several fairs. */
   const event = args.picked != null && (args.organizer ?? '').trim() !== '';
   return { fair: event ? withBoothPick(fair, candidates, args.booth) : fair, candidates };
 }
@@ -570,11 +518,9 @@ export async function fairLinkOnCreate(args: {
   db: FairDb;
   companySql: string;
   companyCode: unknown;
-  /** Created from a slip scan (`isScanCreate`). */
   scanned: boolean;
   keyerId: number;
   body: Record<string, unknown>;
-  /** The venue the order was written with — a pick or the binding's. */
   venue: string | null;
   soDate: string;
   brand: string | null;
@@ -588,8 +534,6 @@ export async function fairLinkOnCreate(args: {
   const fair = await resolveFairForCreate({
     keyerId: args.keyerId, db: args.db, companySql: args.companySql, venue: args.venue,
     organizer: text(body.fairOrganizer),
-    /* The PICKED row's period — the only way to know WHICH occurrence was meant:
-       the order date is the day it was keyed, not a day the fair was on. */
     picked: fairPickedPeriod(body),
     soDate: args.soDate, brand: args.brand, booth: fairBoothOf(body),
   });
@@ -608,7 +552,6 @@ export function isScanCreate(auditSource: string | undefined, body: Record<strin
   return body.asDraft === true && typeof body.slipImageKey === 'string' && body.slipImageKey.trim() !== '';
 }
 
-/** The scan_jobs columns the confirm rules read. */
 type ScanJobRow = { houzs_user_id?: number | string | null };
 
 /** The supabase surface `fairConfirmProblems` needs (structural, so tests fake it). */
@@ -676,7 +619,6 @@ export async function fairConfirmProblems(args: {
   };
   const scan = await loadScanKeyer(args);
   if ('error' in scan) return [checkFailed(`scan: ${scan.error}`)];
-  /* The slip photo marks the phone's old fallback scan, which has no job row. */
   const scanned = scan.scanned || (order.slip_image_key ?? '').trim() !== '';
   if (!keyerRule && !scanned) return [];
   const keyerId = scan.scanned && Number.isFinite(scan.scannerId) ? scan.scannerId : args.confirmerId;
@@ -684,15 +626,12 @@ export async function fairConfirmProblems(args: {
   const projectId = order.project_id != null ? Number(order.project_id) : null;
   if (projectId == null || !Number.isInteger(projectId)) {
     if (order.fair_match === 'NO_FAIR') return [];
-    /* A fair was found but the booth is a person's call: the standing sentence.
-       Nothing found: why, for the keyer (companies on the keyer rule only). */
     const why = !keyerRule || order.fair_match === 'AMBIGUOUS' || order.fair_match === 'UNMATCHED'
       ? null
       : (await keyerFairDefaultFor({ db: args.db, companySql: args.companySql, userId: keyerId, orderDate: args.todayMyt })).why;
     return [{ code: 'fair_required', message: fairMissingMessage(why), field: 'Fair' }];
   }
   if (!scanned) return [];
-  /* A scan fills no Fair Day, so a linked scan without one was never given it. */
   const noDay: SaveProblem[] = (order.fair_date ?? '').trim() === ''
     ? [{ code: 'required_field', message: 'Fair day is required.', field: 'Fair day' }]
     : [];
@@ -717,8 +656,6 @@ export async function fairConfirmProblems(args: {
   }
 }
 
-/** Whether the order came from a slip scan, and who scanned it (NaN when the job
- *  names nobody) — the keyer of a scan for Confirm and for an edit's re-pick. */
 async function loadScanKeyer(args: { sb: FairConfirmSb; scope: <Q>(q: Q) => Q; docNo: string }): Promise<{ scanned: boolean; scannerId: number } | { error: string }> {
   const jobs = await args.scope(
     args.sb.from('scan_jobs').select('houzs_user_id').eq('so_doc_no', args.docNo),
@@ -741,9 +678,6 @@ export async function editFairKeyerId(args: { sb: FairConfirmSb; scope: <Q>(q: Q
   }
 }
 
-/* The switch is OFF unless the row says ON — an absent row is the default
-   (flag only). A failed read refuses nothing extra: the switch can only ADD a
-   refusal, and the rest of the gate has already looked. */
 async function venueDiffersBlocks(args: { sb: FairConfirmSb; scope: <Q>(q: Q) => Q }): Promise<boolean> {
   const res = await args.scope(args.sb.from('so_settings').select('enabled').eq('key', VENUE_DIFFERS_BLOCKS_KEY)).maybeSingle();
   return !res.error && (res.data as { enabled?: boolean } | null)?.enabled === true;
@@ -892,14 +826,8 @@ export async function loadLinkedFair(
 export async function bindVenueOnCreate(args: {
   db: VenueBindingDb;
   sb: VenueBindingSb;
-  /** `public.users.id` of the salesperson the order is attributed to. */
   userId: number;
-  /** `scm.staff.id` of that same person — the SALESPERSON, not necessarily the
-   *  caller: an admin keying an order in for a showroom rep must stamp the
-   *  REP's showroom. Null skips the showroom half. */
   staffId: string | null;
-  /** The ORDER's date (`YYYY-MM-DD`, MYT), not today's — a backdated slip must
-   *  resolve against the fair that was running the day it was written. */
   soDate: string;
 }): Promise<{ projectId: number | null; venueName: string | null; source: VenueSource | null }> {
   if (!Number.isFinite(args.userId)) return { projectId: null, venueName: null, source: null };

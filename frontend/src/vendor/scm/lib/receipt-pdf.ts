@@ -24,11 +24,11 @@ import {
   amountInWordsMyr, fmtRm, fmtDocDate, safeName, type PdfAction,
 } from './pdf-common';
 import { PAYMENT_METHOD_DEFAULT_LABELS } from '@2990s/shared/payment-methods';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type ReceiptPdfData = {
   or_number: string;
-  status: string;            // DRAFT | FORMAL | CANCELLED
+  status: string;
   doc_no: string | null;
   customer_name: string | null;
   method: string | null;
@@ -37,31 +37,21 @@ export type ReceiptPdfData = {
   issued_at: string | null;
   issued_by: string | null;
   cancel_reason?: string | null;
-  /** RECEIVED FROM's other lines, when the caller has the customer's details. */
   address_lines?: string[] | null;
   phone?: string | null;
   email?: string | null;
-  /** The sales order the payment is for, when doc_no is not one (a sales invoice's payment). */
   sales_order?: string | null;
-  /** SOPAY or SIPAY: a sales invoice's payment keeps the invoice's id in doc_no — never an order number to print. */
   payment_source?: string | null;
 };
 
-/* The SHARED method vocabulary — the same labels the payment rows render, so
-   the receipt cannot call a method something the recording screen does not.
-   The widened value type makes the miss (an unknown method string on an old
-   row) visible to the compiler; noUncheckedIndexedAccess is off here. */
 const labelOf: Record<string, string | undefined> = { ...PAYMENT_METHOD_DEFAULT_LABELS };
 const methodLabel = (m: string | null): string => (m ? labelOf[m] ?? m : '—');
 
-/* The fact that says the money is real, as the design names it (kept apart
-   from any stored status word — confirmRungReadsSubmitted.test.ts). */
 const MONEY_SEEN = 'Confirmed';
 
 type JsPdf = import('jspdf').jsPDF;
 type AutoTable = (doc: JsPdf, options: Record<string, unknown>) => void;
 
-/** Who saw the money and when — or the counter, for cash; nothing on a draft. */
 const confirmedLine = (r: ReceiptPdfData): string | null => {
   const formal = r.status.toUpperCase() === 'FORMAL';
   if (!formal) return null;
@@ -69,7 +59,6 @@ const confirmedLine = (r: ReceiptPdfData): string | null => {
   return r.issued_by ? `${r.issued_by}${r.issued_at ? ` · ${fmtDocDate(r.issued_at)}` : ''}` : null;
 };
 
-/** One receipt on the current page of an A5 landscape document. */
 function renderReceiptInto(doc: JsPdf, autoTable: AutoTable, r: ReceiptPdfData): void {
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
@@ -120,7 +109,6 @@ function renderReceiptInto(doc: JsPdf, autoTable: AutoTable, r: ReceiptPdfData):
   });
   let ty = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 5;
 
-  /* AMOUNT RECEIVED over a double rule — the figure the paper is for. */
   const totalsX = pageW - margin - 86;
   doc.setDrawColor(0);
   doc.line(totalsX, ty - 2, pageW - margin, ty - 2);
@@ -136,8 +124,6 @@ function renderReceiptInto(doc: JsPdf, autoTable: AutoTable, r: ReceiptPdfData):
   doc.text(amountInWordsMyr(r.amount_sen), margin, ty + 4, { maxWidth: pageW - margin * 2 });
   ty += 9;
 
-  /* Received by and the company chop, straight after — sized to what is left
-     of the half sheet, so a long address never pushes them off the page. */
   const boxH = Math.max(12, Math.min(20, pageH - 8 - (ty + 2)));
   const boxW = (pageW - margin * 2) / 2 - 5;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
@@ -149,8 +135,6 @@ function renderReceiptInto(doc: JsPdf, autoTable: AutoTable, r: ReceiptPdfData):
   doc.rect(pageW / 2 + 5, ty + 2, boxW, boxH);
   doc.setLineDashPattern([], 0);
 
-  /* The watermark LAST, over everything: a draft must read as a draft from
-     across the counter, and a cancelled receipt as cancelled. */
   if (status !== 'FORMAL') {
     const cancelled = status === 'CANCELLED';
     doc.saveGraphicsState();

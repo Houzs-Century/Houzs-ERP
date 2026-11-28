@@ -49,7 +49,6 @@ export const REPEAT_KIND = 'DUPLICATE';
 export const repeatNote = (where: string): string =>
   `This movement is already recorded — ${where} on a statement uploaded earlier. Leave it out unless the bank really paid twice.`;
 
-/** Containment needs at least this many words on the shorter print. */
 const MIN_WORDS_TO_CONTAIN = 2;
 
 const keyOf = (m: { bookedOn: string; amountSen: number }): string => `${String(m.bookedOn).slice(0, 10)}|${Number(m.amountSen)}`;
@@ -99,7 +98,6 @@ export function pairRepeats(earlier: readonly EarlierPrint[], incoming: readonly
   const out: Array<string | null> = incoming.map(() => null);
   const take = (i: number, p: Pooled) => { p.used = true; out[i] = p.where; };
 
-  /* The words first, in file order: equal words before one print's inside the other's. */
   const byWords: Array<(a: ReadonlySet<string>, b: ReadonlySet<string>) => boolean> = [sameWords, samePrint];
   for (const agrees of byWords) {
     asked.forEach((q, i) => {
@@ -109,9 +107,6 @@ export function pairRepeats(earlier: readonly EarlierPrint[], incoming: readonly
     });
   }
 
-  /* Then a mark both carry, for what the words left: the pairs sharing the
-     most marks first — a bill's transaction number outranks the biller account
-     two bills of one day both print — then file order. */
   const offers: Array<{ i: number; j: number; p: Pooled; shared: number }> = [];
   asked.forEach((q, i) => {
     if (out[i] != null || q.marks.size === 0) return;

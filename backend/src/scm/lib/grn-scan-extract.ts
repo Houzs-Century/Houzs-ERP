@@ -23,27 +23,18 @@ import {
 type SupabaseClient = SupabaseClientGeneric<any, any, any>;
 
 export type GrnExtractedLine = {
-  // The supplier's printed item code / Article No.
   itemCode: string | null;
   barcode: string | null;
   description: string | null;
   qty: number;
-  // A purchase order number printed ON THIS ROW. A consolidated delivery order
-  // (Hookka's DO-2609-097) carries one of our POs per line and no header P.O.,
-  // so without this every line fell back to item matching.
   poNo: string | null;
-  // The rack the receiving warehouse HANDWROTE beside this row ("R11-2"), as
-  // written, else null. Matched to a rack of the GRN's warehouse later.
   rack: string | null;
 };
 
 export type GrnExtracted = {
   supplierName: string | null;
-  // The supplier-printed P.O. No (e.g. "PO-010070") — their reference, matched
-  // best-effort against our po_number, else item-matched (see grn-scan-match).
   poNo: string | null;
   doNo: string | null;
-  // ISO yyyy-mm-dd when the DO date parses cleanly, else null.
   deliveryDate: string | null;
   lines: GrnExtractedLine[];
 };
@@ -53,18 +44,11 @@ const NOTE_NO_LINES =
 const NOTE_UNREADABLE =
   'This photo does not look like a delivery order, or the paper is cut off or blurry. Please retake it with the whole paper in view, or open the PO and create the goods receipt from it.';
 
-// Needs-review note for a scan that produced no lines. A read that came back
-// with no DO no, PO no, supplier or lines (the date alone is only today's default)
-// means the model saw no delivery order. A null read is a failed call, not a bad
-// photo, so it keeps the neutral note.
 export function emptyScanNote(parsed: GrnExtracted | null): string {
   const blank = parsed && !parsed.doNo && !parsed.poNo && !parsed.supplierName && parsed.lines.length === 0;
   return blank ? NOTE_UNREADABLE : NOTE_NO_LINES;
 }
 
-// The model call itself failed (an Anthropic 5xx such as 2026-11-13's 503
-// "credential validation failed", a timeout, a network error): nothing was read,
-// and nothing is wrong with the paper. The scan fails so it can be read again.
 export const NOTE_READ_FAILED =
   'The reading service did not answer this time. This is a fault on our side, not your paper. Press Read again.';
 
@@ -80,7 +64,6 @@ export type GrnExtractCall = {
   timedOut: boolean;
   claudeText: string;
   cacheHit: boolean;
-  // The answer hit max_tokens: `parsed` holds only the lines before the cut.
   truncated: boolean;
 };
 
@@ -92,17 +75,14 @@ export function salvageTruncatedJson(text: string): GrnExtracted | null {
   const start = text.indexOf('{');
   if (start < 0) return null;
   const body = text.slice(start);
-  // Walk back over closing braces: the first prefix that closes as JSON is the
-  // last complete line. Bounded so a huge broken answer cannot spin.
   let tries = 0;
   for (let i = body.lastIndexOf('}'); i > 0 && tries < 400; i = body.lastIndexOf('}', i - 1), tries += 1) {
     for (const tail of [']}', '}']) {
       try {
         return normalizeGrnExtract(JSON.parse(body.slice(0, i + 1) + tail));
-      } catch { /* try a shorter prefix */ }
+      } catch { }
     }
   }
-  // Cut before the first line closed: keep the header alone.
   const head = body.split('"lines"')[0].trimEnd().replace(/,$/, '');
   try { return normalizeGrnExtract(JSON.parse(`${head}}`)); } catch { return null; }
 }
@@ -167,9 +147,6 @@ RULES:
 - When a row prints our sales order as "SO: HC-SO-..." (not the supplier's own "Our SO"), end its description with it, e.g. " SO: HC-SO-2609-316". It finds the order when the row's PO is missing.
 - Never invent a P.O. No, D.O. No or code you cannot read; use null.`;
 
-// Defensive coercion — the model occasionally omits a field or returns the
-// wrong primitive. Coerce into the GrnExtracted shape so downstream code never
-// sees undefined where it expects an array/number.
 export function normalizeGrnExtract(raw: unknown): GrnExtracted {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const str = (v: unknown): string | null => {
@@ -210,10 +187,6 @@ export function normalizeGrnExtract(raw: unknown): GrnExtracted {
   };
 }
 
-// ONE Claude vision call for a delivery order. Mirrors callClaudeSlipExtract's
-// transport (shared anthropicFetchWithRetry, 110s abort, temperature 0), with
-// the GR prompt and no catalog prefix. `fewShotText` (optional) is injected
-// after the system prompt as prior accepted extractions.
 export async function callClaudeGrExtract(
   apiKey: string,
   fileBlocks: ContentBlock[],
@@ -239,12 +212,7 @@ export async function callClaudeGrExtract(
       },
       body: JSON.stringify({
         model: CLAUDE_MODEL,
-        // Not raised: more output would outlast the 110s abort (and the 3-minute
-        // stale-job reaper). A long DO that hits the cap is salvaged below and
-        // then read page by page (grn-scan-pages.ts).
         max_tokens: 8192,
-        // temperature=0 — deterministic OCR so a wrong read is a reproducible
-        // bug, not a flaky lottery (same rule as the SO scanner).
         temperature: 0,
         messages: [
           {
@@ -306,10 +274,6 @@ export async function callClaudeGrExtract(
   return { parsed, errorMsg, timedOut, claudeText, cacheHit, truncated };
 }
 
-// Few-shot pool for GR: the latest operator-reviewed delivery-order extractions
-// (so_scan_samples.document_type='GR', status ACCEPTED/CONFIRMED). Best-effort:
-// any query error or a missing table just yields '' (no examples). Kept small
-// so the injected prompt stays cheap.
 export async function loadGrnFewShot(svc: SupabaseClient): Promise<string> {
   try {
     const { data, error } = await svc

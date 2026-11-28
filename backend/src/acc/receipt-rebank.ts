@@ -39,13 +39,11 @@ type Source = 'SOPAY' | 'SIPAY';
 export type RebankCandidate = {
   source: Source;
   paymentId: string;
-  /** The order or invoice the payment is on, as a reader recognises it. */
   docNo: string;
   paidOn: string;
   amountSen: number;
   jeNo: string;
   fromAccount: string;
-  /** Why it cannot move, or null when it can. */
   blocked: string | null;
 };
 
@@ -54,7 +52,6 @@ export type RebankList = { ok: true; target: string; rows: RebankCandidate[] } |
 /** At most this many receipts per move call — each one is several writes. */
 export const MAX_REBANK_PER_CALL = 25;
 
-/* Date-safe: inside the transaction (postgres.js) a DATE comes back as a JS Date. */
 const dayOf = (v: unknown): string =>
   v instanceof Date ? (Number.isNaN(v.getTime()) ? '' : v.toISOString().slice(0, 10)) : String(v ?? '').slice(0, 10);
 const nextDay = (ymd: string): string => {
@@ -65,7 +62,6 @@ const nextDay = (ymd: string): string => {
 
 type PaymentRead = { source: Source; row: Rec; docNo: string };
 
-/** The transfer payments in [from, to], or only the ones named. */
 async function readTransfers(
   sb: Db, companyId: number, range: { from: string; to: string } | null, only: Array<{ source: Source; paymentId: string }> | null,
 ): Promise<{ ok: true; rows: PaymentRead[] } | { ok: false; reason: string }> {
@@ -86,7 +82,6 @@ async function readTransfers(
     if (r.error) return { ok: false, reason: `${t.table}: ${r.error.message}` };
     for (const row of r.data ?? []) out.push({ source: t.source, row, docNo: String((t.source === 'SOPAY' ? row.so_doc_no : row.sales_invoice_id) ?? '') });
   }
-  /* An SI payment names its invoice by id; the reader wants its number. */
   const siIds = [...new Set(out.filter((p) => p.source === 'SIPAY').map((p) => p.docNo))];
   if (siIds.length > 0) {
     const inv = await chunkIn<Rec>(siIds, (batch, lo, hi) => sb.from('sales_invoices').select('id, invoice_number')
@@ -98,7 +93,6 @@ async function readTransfers(
   return { ok: true, rows: out };
 }
 
-/** Each payment's live entry and the account its money leg debits. */
 async function liveEntries(
   sb: Db, companyId: number, payments: PaymentRead[],
 ): Promise<{ ok: true; byPayment: Map<string, { jeNo: string; entryDate: string; account: string }> } | { ok: false; reason: string }> {
@@ -129,8 +123,6 @@ async function liveEntries(
   return { ok: true, byPayment };
 }
 
-/** `bank`: the bank to move onto; null = the company's current BANK_DEFAULT
-    (Receive into). Formalising a receipt onto a named bank passes that bank. */
 async function listFor(
   sb: Db, companyId: number, range: { from: string; to: string } | null, only: Array<{ source: Source; paymentId: string }> | null,
   bank: string | null,
@@ -155,8 +147,6 @@ async function listFor(
   }
   if (rows.length === 0) return { ok: true, target, rows, payments };
 
-  /* Confirmed into a named bank (Conts #476): a receipt Finance confirmed into
-     the bank its entry sits on stays there — the clean-up never undoes it. */
   if (bank === null) {
     const confirmed = new Set<string>();
     for (const source of ['SOPAY', 'SIPAY'] as const) {
@@ -175,13 +165,11 @@ async function listFor(
     if (rows.length === 0) return { ok: true, target, rows, payments };
   }
 
-  /* Claimed on a statement: the money was matched on the bank it sits on. */
   const claims = await chunkIn<Rec>(rows.map((r) => r.jeNo), (batch, lo, hi) => sb.from('acc_bank_statement_matches')
     .select('je_no').eq('company_id', companyId).in('je_no', batch).order('je_no').range(lo, hi));
   if (claims.error) return { ok: false, reason: `bank matches: ${claims.error.message}` };
   const claimed = new Set(claims.data.map((c) => String(c.je_no)));
 
-  /* Closed months, on the bank it leaves and the bank it joins. */
   const accounts = [...new Set([target, ...rows.map((r) => r.fromAccount)])];
   const locks = await chunkIn<Rec>(accounts, (batch, lo, hi) => sb.from('acc_bank_month_locks')
     .select('account_code, period_month, released_at').eq('company_id', companyId).in('account_code', batch).order('account_code').range(lo, hi));
@@ -210,7 +198,6 @@ export type RebankOutcome = {
   paymentId: string;
   status: 'moved' | 'skipped' | 'failed';
   reason: string | null;
-  /** The reversed entry and the new one. */
   fromJeNo: string | null;
   jeNo: string | null;
 };
@@ -254,7 +241,6 @@ export async function moveReceipts(
     const key = `${it.source}:${it.paymentId}`;
     const c = byKey.get(key);
     const base = { source: it.source, paymentId: it.paymentId, fromJeNo: c?.jeNo ?? null, jeNo: null };
-    /* The same receipt twice in one call is one journal moved twice: the second is refused. */
     if (seen.has(key)) { results.push({ ...base, status: 'skipped', reason: 'listed twice in this move' }); continue; }
     seen.add(key);
     if (!c) { results.push({ ...base, status: 'skipped', reason: `not a transfer receipt on another bank than ${fresh.target}` }); continue; }
@@ -267,7 +253,6 @@ export async function moveReceipts(
   return { ok: true, target: fresh.target, results };
 }
 
-/** Why the transaction is rolled back; `status` is what the receipt reports. */
 class RebankRollback extends Error {
   constructor(readonly status: 'skipped' | 'failed', readonly why: string) { super(why); }
 }
@@ -280,15 +265,12 @@ const postOnto = (db: Db, source: Source, payment: PaymentRead, target: string) 
   return source === 'SOPAY' ? postSoPayment(db, payment.row as SoPaymentRow, onto) : postSiPayment(db, payment.row as SiPaymentRow, onto);
 };
 
-/** Contra + new entry + read-back in ONE transaction: any refusal or error
-    rolls all of it back, and the receipt stays on the bank it was on. */
 async function moveOneAtomic(
   tx: RebankTx, companyId: number, it: { source: Source; paymentId: string }, c: RebankCandidate, payment: PaymentRead, target: string,
 ): Promise<RebankOutcome> {
   const base = { source: it.source, paymentId: it.paymentId, fromJeNo: c.jeNo };
   try {
     const jeNo = await tx(async (db) => {
-      /* Checked again inside the transaction: a statement match made since the list. */
       const claim = await db.from('acc_bank_statement_matches').select('je_no')
         .eq('company_id', companyId).eq('je_no', c.jeNo).limit(1);
       if (claim.error) throw new RebankRollback('failed', `bank matches: ${claim.error.message}`);
@@ -298,7 +280,6 @@ async function moveOneAtomic(
         sourceType: it.source, sourceDocNo: it.paymentId, companyId, onOriginalDate: true, narration: contraNarration(c, target),
       });
       if (!undone.ok) throw new RebankRollback('failed', `reverse: ${undone.status}${undone.reason ? ` (${undone.reason})` : ''}`);
-      /* The entry reversed must be the one listed — anything else changed under us. */
       if (undone.status !== 'reversed' || undone.originalJeNo !== c.jeNo) {
         throw new RebankRollback('skipped', `its entry changed since the list (expected ${c.jeNo}) — list again`);
       }
@@ -308,7 +289,6 @@ async function moveOneAtomic(
         const why = posted.ok ? posted.status : `${posted.status}${posted.reason ? ` (${posted.reason})` : ''}`;
         throw new RebankRollback('failed', `the new entry did not post: ${why}`);
       }
-      /* Read back: the new entry's money leg must be the target bank. */
       const after = await liveEntries(db, companyId, [payment]);
       const leg = after.ok ? after.byPayment.get(`${it.source}:${it.paymentId}`) : null;
       if (!leg || leg.account !== target) {
@@ -324,8 +304,6 @@ async function moveOneAtomic(
   }
 }
 
-/** THE OLD PATH (RECEIPT_REBANK_MODE=two-step), unchanged: the reversal commits
-    before the new entry is written. Remove after one clean release. */
 async function moveOneTwoStep(
   sb: Db, companyId: number, it: { source: Source; paymentId: string }, c: RebankCandidate, payment: PaymentRead, target: string,
 ): Promise<RebankOutcome> {

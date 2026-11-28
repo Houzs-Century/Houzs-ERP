@@ -1,6 +1,3 @@
-// planningPoNosByDoc — pins the one rule this adapter owns: the shared
-// cross-company board is walked ONCE PER COMPANY, each walk scoped to its own
-// company_id, and rows without a company are never walked unscoped.
 import { describe, expect, test, vi } from 'vitest';
 
 const walk = vi.fn();

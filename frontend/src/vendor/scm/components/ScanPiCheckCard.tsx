@@ -1,9 +1,3 @@
-// ----------------------------------------------------------------------------
-// One scanned supplier invoice in the check step, the twin of ScanGrnCheckCard:
-// the head row is the supplier, invoice no and date; rows split GRN, SKU and
-// description, and bill a Goods Receipt line. The draft bills the supplier's
-// printed price; one that differs from the PO shows in red for the operator.
-// ----------------------------------------------------------------------------
 import { useState } from 'react';
 import { ChevronRight, FileText, Loader2, Star, X } from 'lucide-react';
 import { DateField } from './DateField';
@@ -11,7 +5,7 @@ import { skuOption } from './ScanGrnCheckCard';
 import { SearchableSelect } from './SearchableSelect';
 import { fetchDocFileBlobUrl } from '../lib/payment-voucher-queries';
 import { writeFailedAs } from '../lib/mutation-error';
-import { fmtDate, fmtSen, todayMY } from '../../shared/format';
+import { fmtDate, fmtSen, todayMY } from '../../../../../shared/src/vendor/shared/format';
 import { isOddDate, printedText, shortNote, swappedDate, type CheckSupplier } from '../lib/scan-gr-check';
 import { FREE_ROW_NOTE, billSkuOptions, grnOptions, isFreeRow, lineTierNote, newPiLineKey, piAmounts, piAmountsDiffer, piQtyTotals, priceDiffers, type BillLine, type PiCheckDoc, type PiReview, type PiReviewLine } from '../lib/scan-pi-check';
 import type { CardProps } from './ScanCheckModal';

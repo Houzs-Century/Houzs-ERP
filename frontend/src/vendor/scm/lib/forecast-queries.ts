@@ -15,8 +15,6 @@ export type ForecastSupplier = { id: string; code: string; name: string; active:
 
 export type ForecastResponse = {
   months: ForecastGrid;
-  /* `suppliers` and `supplierList` are absent from a server older than the
-     supplier split (the page may deploy before the Worker does). */
   suppliers?: SupplierGrid;
   accounts: ForecastAccount[];
   layout: { stored: boolean; blocks: Record<string, LayoutItem[]> };

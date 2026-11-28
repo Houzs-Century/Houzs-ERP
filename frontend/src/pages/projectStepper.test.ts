@@ -19,7 +19,6 @@ describe("itemComplete — approved counts as done", () => {
     expect(itemComplete({ status: "na", review_status: null })).toBe(true);
   });
   it("is complete when APPROVED even though status is still pending", () => {
-    // The exact stuck row: uploaded + approved, status never flipped to done.
     expect(itemComplete({ status: "pending", review_status: "approved" })).toBe(true);
   });
   it("is NOT complete while only submitted for review", () => {

@@ -1,7 +1,3 @@
-/* HR attendance for a whole month: one place to classify an employee-day and to
- * roll a month of the working-hours read up into the per-day on-time rate and
- * the per-employee late count. Shared by the Attendance month grid and the
- * Overview dashboard so the two never drift on what counts as late or absent. */
 import type { WorkDay } from "./hrApi";
 
 /** What one employee-day reads as. "notin" is a day with no punch; "future" a

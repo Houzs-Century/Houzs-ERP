@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// AI reads on the scan queue (backend scm/lib/ai-read-jobs.ts) — the bill
-// reader, the payment request's bill, the supplier credit note and the
-// card-terminal receipt. The request answers at once with one job per paper;
-// this polls until each is read and hands back exactly what the old synchronous
-// endpoint answered, so every form fills as before. A failed read throws (or,
-// for a batch, comes back as that paper's failure) with the same plain-language
-// wording authedFetch gave the synchronous refusal. Polling, never a socket.
-// ----------------------------------------------------------------------------
 
 import { authedFetch, humanApiError } from './authed-fetch';
 
@@ -25,8 +16,6 @@ type Enqueued = { jobs: Array<{ index: number; job_id: string; status: string }>
 export type AiReadOutcome<T> = { ok: true; body: T } | { ok: false; error: Error };
 
 export const AI_READ_POLL_MS = 1500;
-/* Past the server's own 5-minute stale mark, so the server's "took too long"
-   sentence normally arrives first. */
 const AI_READ_DEADLINE_MS = 6 * 60_000;
 const TOO_LONG = 'Reading took too long — nothing was saved. Please read it again.';
 

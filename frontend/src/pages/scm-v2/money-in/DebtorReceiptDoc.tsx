@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// DebtorReceiptDoc — /scm/receipts/debtor/:id, an other debtor's receipt as a
-// page (the owner's Claude Design, batch 5 §8; no page had it before). Who
-// paid, into which account, the bills it knocks off, its journal — and the
-// payment voucher's four layers, walked here again: Prepare → Check (or
-// Withdraw) → Approve & post, Reject… back to Draft with a reason, and Void…
-// once it is on the books. Every step is a route that already exists
-// (other-debtors.ts); Approve posts exactly what the Receipts page's post-now
-// door posts. Edit (batch 5 step 6, `?form=edit`) changes a Draft or a
-// Prepared receipt in place — PATCH /other-debtors/receipts/:id (c5), which
-// posts nothing and keeps the stage. Who may press what is the server's — the
-// buttons follow the same keys.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
@@ -19,7 +6,7 @@ import {
   useAccountRoles, useAccounts, useDebtorReceiptAction, useVoidDebtorReceipt,
 } from '../../../vendor/scm/lib/accounting-queries';
 import { partyAddressLines } from '../../../vendor/scm/lib/debtor-party';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
 import { DataTable, type Column } from '../../../components/DataTable';
@@ -64,7 +51,6 @@ export const DebtorReceiptDoc = () => {
   const step = useDebtorReceiptAction();
   const voidIt = useVoidDebtorReceipt();
   const { can } = useHouzsAuth();
-  /* The server's keys, step by step (other-debtors.ts); an edit takes .write or .create, as raising it did. */
   const canWrite = can('scm.payment_voucher.write');
   const canEdit = canWrite || can('scm.payment_voucher.create');
   const canCheck = can('scm.payment_voucher.check');
@@ -146,7 +132,6 @@ export const DebtorReceiptDoc = () => {
   };
   const ask = asking ? asks[asking] : null;
 
-  /* A rejection is kept on the receipt's notes, `[rejected] <why>` — the preparer reads it here. */
   const noteLines = String(r.notes ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
   const rejections = noteLines.filter((l) => l.startsWith('[rejected]')).map((l) => l.replace(/^\[rejected\]\s*/, ''));
   const otherNotes = noteLines.filter((l) => !l.startsWith('[rejected]')).join(' · ');

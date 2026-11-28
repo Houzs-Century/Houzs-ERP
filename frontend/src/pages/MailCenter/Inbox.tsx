@@ -1,35 +1,3 @@
-// ---------------------------------------------------------------------------
-// Mail Center — shared inbox (3-pane Gmail/Outlook-like client + compose).
-//
-// Reads /api/mail-center/threads (list) + /api/mail-center/addresses (the
-// mailbox sidebar) + /api/mail-center/labels (the colour catalogue). Bodies are
-// rendered in the detail view; the list shows cleaned-text snippets only.
-//
-// LAYOUT:
-//   • LEFT RAIL  — "New email" (opens ComposeDialog), the FOLDER list (Inbox /
-//                  Starred / Sent / Archive / Drafts / Trash / All), a LABELS
-//                  section (filter by DB label), the mailbox switcher (All +
-//                  per-dept + per-person), then the search box.
-//   • MIDDLE     — the thread list (<ThreadList>) with per-row checkbox + hover
-//                  actions, plus a bulk action bar when rows are selected.
-//   • RIGHT (lg+)— a reading pane embedding Thread.tsx for the selected thread
-//                  (split mode only).
-//
-// FOLDERS vs API STATUS:
-//   Inbox   → status=open (server filter)
-//   Archive → status=closed (server filter, labelled "Archive")
-//   Starred → ?starred=1 (server filter)
-//   Trash   → ?status=trashed (server filter; excluded from every other view)
-//   Sent    → fetched with status=all, narrowed client-side by hasOutbound
-//   All     → fetched with status=all
-//   Drafts  → local-only compose drafts (no backend draft table — mail-local.ts)
-// Star / labels / trash / mark-unread are DB-backed (PATCH /threads/:id) and
-// sync across users/devices. Only compose drafts remain local.
-//
-// GMAIL-STYLE VIEW TOGGLES (mail-prefs.ts, localStorage, surfaced via the "View"
-// gear): density (compact / comfortable), reading-pane (split / full), category
-// tabs (Primary / Notifications client-side split over the fetched rows).
-// ---------------------------------------------------------------------------
 import {
   useEffect,
   useMemo,
@@ -134,7 +102,7 @@ import {
   Square,
   Paperclip,
 } from "lucide-react";
-import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../../vendor/shared/format";
+import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../../../../shared/src/vendor/shared/format";
 import { mytDayOf, todayMyt } from "../../vendor/scm/lib/dates";
 
 type MailThreadRow = {
@@ -170,8 +138,6 @@ type MailAddress = {
   active: boolean;
 };
 
-// Paginated /threads response (opt-in via ?page=&pageSize=). The bare-array
-// shape is still used by the counts + trash-badge fetches.
 type ThreadsPageResp = {
   threads: MailThreadRow[];
   total: number;
@@ -180,8 +146,6 @@ type ThreadsPageResp = {
   pageSize: number;
 };
 
-// Debounce a rapidly-changing value (the search box) so each keystroke doesn't
-// fire a server round-trip — the list refetches 300ms after typing settles.
 function useDebouncedValue<T>(value: T, ms: number): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -205,20 +169,12 @@ type Folder =
   | "starred"
   | "sent"
   | "sentbyme"
-  // Auto-sent system notices (the outbox_emails log) — Delivery Order /
-  // Invoice / CN / PO notices the system sends from a noreply sender, so there
-  // is no human "Sent" copy to read. Rendered by its own OutboxPanel, not the
-  // thread list.
   | "autosent"
   | "archive"
   | "drafts"
   | "trash"
   | "all";
 
-// Department LABELS used by the 5 shared department mailboxes (operation@ /
-// sales@ / marketing@ / finance@ / hr@houzscentury.com). These MUST match the
-// mailboxes' `assignedDept` strings exactly so the sidebar groups each shared
-// mailbox under its department header (and rolls up its unread count).
 const DEPT_PRIORITY = ["Operation", "Sales", "Marketing", "Finance", "HR"];
 
 function deptRank(dept: string): number {
@@ -235,20 +191,11 @@ function sortDepts(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
-/* Accepts an ISO string OR an epoch-millisecond number, because both reach it:
-   thread rows carry ISO strings from the API, local drafts carry epoch numbers
-   from localStorage. Callers used to normalise the number half themselves with
-   `new Date(x).toISOString()`, which threw RangeError on a missing value and
-   took the whole page down — the guard below was never reached. Widening the
-   parameter is what lets every caller hand the raw value straight over and
-   actually get the tolerant behaviour this function was written to provide. */
 function fmtTime(iso: string | number | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const sameDay = mytDayOf(d.toISOString()) === todayMyt();
-  /* Today shows the clock, older rows show the date — one INBOX convention,
-     but both halves come from the one rule rather than the OS locale. */
   return sameDay ? fmtClock(d) : fmtDate(d);
 }
 
@@ -297,7 +244,6 @@ function cleanSnippet(s: string): string {
   );
 }
 
-// ── ThreadList ───────────────────────────────────────────────────────────
 export function ThreadList({
   threads,
   loading,
@@ -359,10 +305,6 @@ export function ThreadList({
   }
 
   const compact = density === "compact";
-  // DOM windowing: the full (client-filtered) thread array is kept intact — only
-  // the rows scrolled into view are mounted, so a fully-loaded inbox (LIMIT 300
-  // from the server) keeps ~30 <li> nodes in the DOM instead of all 300. No-op
-  // below WINDOW threshold, so short lists render byte-identically to before.
   return (
     <WindowedThreadUl
       count={threads.length}
@@ -399,18 +341,6 @@ export function ThreadList({
   );
 }
 
-// ── Windowed <ul> for the thread list ─────────────────────────────────────────
-// Mirrors MobileVirtualList / DataTable's proven window-scroll virtualization,
-// adapted to a `<ul className="divide-y">` of `<li>` rows: a CAPTURING window
-// scroll listener catches scroll from any ancestor, the visible slice is
-// measured against the viewport, and two spacer <li>s reserve the off-screen
-// height so the page scrollbar + divide-y borders behave exactly as before.
-// Row height is measured from the FIRST rendered real row (`li[data-vrow]`) so
-// the spacers track the actual row height. Caveat: thread rows are variable
-// height (comfortable rows grow with label chips; compact rows are shorter), so
-// the single measured height is an approximation — with many chip-heavy rows the
-// spacer math can drift slightly, but overscan + re-measure on every scroll keep
-// the visible window correct.
 const THREAD_WINDOW_THRESHOLD = 40;
 const THREAD_WINDOW_OVERSCAN = 8;
 function WindowedThreadUl({
@@ -441,7 +371,7 @@ function WindowedThreadUl({
       const row = el.querySelector<HTMLElement>("li[data-vrow]");
       if (row && row.offsetHeight > 0) rowH.current = row.offsetHeight;
       const rh = rowH.current || estimateHeight;
-      const top = el.getBoundingClientRect().top; // list top relative to viewport
+      const top = el.getBoundingClientRect().top;
       const first = Math.max(0, Math.floor(-top / rh) - overscan);
       const cnt = Math.ceil(window.innerHeight / rh) + overscan * 2;
       const last = Math.min(count, first + cnt);
@@ -824,7 +754,6 @@ function emptyLabel(folder: Folder): string {
   }
 }
 
-// ── Drafts list ────────────────────────────────────────────────────────────
 function DraftsList({
   drafts,
   legacyFound,
@@ -902,8 +831,6 @@ export function MailInbox() {
   const prefs = useMailPrefs();
   const splitView = prefs.readingPane === "split";
   const [category, setCategory] = useState<MailCategory>("all");
-  // Admin (the owner wildcard or the mail-center.manage grant) can provision a
-  // missing canonical department mailbox.
   const isAdmin = can("mail_center.manage");
 
   const [q, setQ] = useState("");
@@ -925,11 +852,6 @@ export function MailInbox() {
           ? "trashed"
           : "all";
 
-  // COUNTS / AGGREGATES query — feeds the left-rail unread badges, the Starred
-  // and Trash counts, and the label union. Scoped to the folder's status + the
-  // selected mailbox (same shape as before). The MAIN thread list no longer
-  // reads this array; it has its own server-filtered + paginated fetch (below),
-  // so nothing past the first page is lost to Starred/Sent/label/search.
   const countsParams = new URLSearchParams();
   if (apiStatus !== "all") countsParams.set("status", apiStatus);
   if (filter.kind === "mailbox") countsParams.set("mailbox", filter.value);
@@ -940,8 +862,6 @@ export function MailInbox() {
     error: countsError,
     reload: reloadCounts,
   } = useQuery<MailThreadRow[]>("mail-center-counts", () => api.get(countsUrl), [countsUrl], {
-    // Folder / filter switch keeps the current counts on screen while the next
-    // folder loads instead of flashing empty badges.
     keepPreviousData: true,
   });
   const { data: addresses } = useQuery<MailAddress[]>("/api/mail-center/addresses",
@@ -952,7 +872,6 @@ export function MailInbox() {
     () => api.get("/api/mail-center/labels"),
     [],
   );
-  // Dedicated trashed fetch — drives the Trash folder badge from ANY folder.
   const trashCountUrl = `/api/mail-center/threads?status=trashed${
     filter.kind === "mailbox" ? `&mailbox=${encodeURIComponent(filter.value)}` : ""
   }`;
@@ -990,8 +909,6 @@ export function MailInbox() {
     return m;
   }, [deptGroups]);
 
-  // Department buckets (≠ "Other"). Canonical shared mailboxes are derived from
-  // the branding domain so a Support/Finance/HR placeholder always shows.
   const departmentGroups = useMemo(() => {
     const real = new Map<string, MailAddress[]>();
     for (const g of deptGroups) {
@@ -1015,12 +932,6 @@ export function MailInbox() {
     return other?.mailboxes ?? [];
   }, [deptGroups]);
 
-  // ── Server-filtered + paginated thread list ──────────────────────────────
-  // The visible list is fetched with EVERY narrowing applied in SQL — folder
-  // status, Starred, Sent, the dept mailbox set, the label filter, and the
-  // (debounced) search box — then paged in with "Load more". Nothing is filtered
-  // client-side over a truncated array, so a match on thread #900 is reachable.
-  // Drafts (local) and Auto-sent (its own OutboxPanel) don't use this fetch.
   const LIST_PAGE_SIZE = 50;
   const debouncedQ = useDebouncedValue(q, 300);
   const activeCompanyId = useSyncExternalStore(
@@ -1039,8 +950,6 @@ export function MailInbox() {
     if (filter.kind === "mailbox") p.set("mailbox", filter.value);
     if (filter.kind === "dept") {
       const addrs = addressesByDept.get(filter.value);
-      // A dept with no mailboxes must return NOTHING, never everything — send a
-      // sentinel that matches no address rather than omitting the filter.
       p.set(
         "mailboxes",
         addrs && addrs.size ? Array.from(addrs).join(",") : "__none__",
@@ -1115,7 +1024,6 @@ export function MailInbox() {
       ctrl.abort();
       loadMoreAbortRef.current?.abort();
     };
-    // listReloadKey / activeCompanyId force a refetch on mutation + company switch.
   }, [usesThreadList, listQueryStr, listReloadKey, activeCompanyId]);
 
   async function loadMoreThreads() {
@@ -1153,8 +1061,6 @@ export function MailInbox() {
     }
   }
 
-  // Refresh BOTH the aggregates query and the paginated list — a mutation
-  // changes the badges AND the rows (and may drop a row out of the current view).
   function reloadAll() {
     reloadCounts();
     setListReloadKey((k) => k + 1);
@@ -1168,8 +1074,6 @@ export function MailInbox() {
     usesThreadList &&
     (listLoading || q.trim() !== debouncedQ.trim() || listRowsQuery !== listQueryStr);
 
-  // The server already narrowed the list; the only remaining client split is the
-  // optional Primary/Notifications category tab over the loaded pages.
   const categoryBase = listRows;
 
   const categoryCounts = useMemo(() => {
@@ -1426,7 +1330,6 @@ export function MailInbox() {
 
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Mail className="h-6 w-6 text-accent" />
@@ -1456,9 +1359,6 @@ export function MailInbox() {
         </div>
       )}
 
-      {/* Search — at the TOP (Gmail-style), full-width above the 3-pane grid.
-          Was previously buried at the bottom of the left rail, below the whole
-          folder list. */}
       <div className="relative max-w-md">
         <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
         <input
@@ -1488,7 +1388,6 @@ export function MailInbox() {
           splitView && "lg:grid-cols-[230px_minmax(360px,400px)_minmax(0,1fr)]",
         )}
       >
-        {/* LEFT RAIL: scrolls by itself and stays in view, so a long mailbox list never pushes the list and reading pane off screen. */}
         <aside className="space-y-3 md:sticky md:top-16 md:max-h-[calc(100dvh-5.5rem)] md:self-start md:overflow-y-auto md:overscroll-contain md:pr-1">
           <button
             onClick={() => {
@@ -1525,7 +1424,6 @@ export function MailInbox() {
             }}
           />
 
-          {/* FOLDERS */}
           <nav className="space-y-0.5">
             <FolderItem icon={InboxIcon} label="Inbox" active={folder === "inbox"} badge={folderCounts.inboxUnread}
               onClick={() => { setFolder("inbox"); setLabelFilter(null); }} />
@@ -1546,7 +1444,6 @@ export function MailInbox() {
           </nav>
           <PendingAcks onOpen={setSelectedId} />
 
-          {/* LABELS */}
           <div className="space-y-0.5">
             <div className="flex items-center justify-between px-3 pb-0.5 pt-1">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-muted/70">Labels</p>
@@ -1592,7 +1489,6 @@ export function MailInbox() {
             )}
           </div>
 
-          {/* MAILBOX SWITCHER */}
           <div className="space-y-0.5 border-t border-border/60 pt-2">
             <p className="px-3 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-muted/70">
               Mailboxes
@@ -1645,18 +1541,12 @@ export function MailInbox() {
           <VisibilityPanel />
         </aside>
 
-        {/* MIDDLE+RIGHT — "Auto-sent" renders the read-only outbox panel across
-            the content area; every other folder keeps the thread list (+ the
-            split reading pane). The left rail stays mounted either way. */}
         {folder === "autosent" ? (
-          // Only span cols 2-3 when the 3-col SPLIT grid is active; in the 2-col
-          // grid a col-span-2 has no col 3 to land in and would wrap the panel.
           <div className={cn("min-w-0", splitView && "lg:col-span-2")}>
             <OutboxPanel q={q} />
           </div>
         ) : (
           <>
-        {/* MIDDLE */}
         <div className="overflow-hidden rounded-xl border border-border bg-surface">
           {prefs.categoryTabs && folder !== "drafts" && (
             <CategoryTabs active={category} counts={categoryCounts} onSelect={setCategory} />
@@ -1675,8 +1565,6 @@ export function MailInbox() {
                 {selectedCount > 0 ? `${selectedCount} selected` : "Select"}
               </label>
               <span className="text-[11px] text-ink-muted/70">
-                {/* Server total across the active filters (not just what's
-                    loaded). Falls back to the loaded count for Drafts. */}
                 {listTotal} {listTotal === 1 ? "conversation" : "conversations"}
               </span>
             </div>
@@ -1729,8 +1617,6 @@ export function MailInbox() {
                 onInjectTest={injectTest}
                 onRowAction={onRowAction}
               />
-              {/* Server-side pagination: pull the next page in place. The
-                  windowed <ul> keeps the DOM light as the array grows. */}
               {!listBusy && listHasMore && (
                 <div className="border-t border-border bg-surface-dim/20 p-3 text-center">
                   <button
@@ -1749,7 +1635,6 @@ export function MailInbox() {
           )}
         </div>
 
-        {/* RIGHT — reading pane (lg+ only, split mode only) */}
         {splitView && (
           <div className="hidden min-w-0 lg:sticky lg:top-16 lg:block lg:max-h-[calc(100dvh-5.5rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain">
             {selectedId ? (
@@ -1793,12 +1678,6 @@ export function MailInbox() {
 
 export default MailInbox;
 
-// ── Auto-sent panel (outbox) ─────────────────────────────────────────────────
-// Read-only view of the system's auto-sent customer notices (Delivery Order
-// dispatched, Invoice, etc.) — the emails that go out from a noreply sender so
-// there is no human "Sent" copy to read. Lists the org's sent log newest-first
-// with a per-row status, and opens the full body (+ recipient / time / failure
-// reason / attachment names) in a modal. Data via fetchOutbox / fetchOutboxDetail.
 function outboxStatusTone(status: string): string {
   switch (status.toUpperCase()) {
     case "SENT":
@@ -1806,7 +1685,7 @@ function outboxStatusTone(status: string): string {
     case "FAILED":
       return "bg-err-bg text-err ring-1 ring-inset ring-err/20";
     default:
-      return "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-200"; // PENDING
+      return "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-200";
   }
 }
 
@@ -1823,10 +1702,6 @@ function outboxStatusLabel(status: string): string {
 
 const fmtMailTime = fmtDateTime;
 
-// One outbox page. The backend caps at 200/page and returns `hasMore` when a
-// full page came back; the "Load more" button pulls the next offset so entries
-// past the first page are reachable (previously the response's `hasMore` was
-// ignored, so only the first 60 were ever visible).
 const OUTBOX_PAGE = 60;
 
 function OutboxPanel({ q }: { q: string }) {
@@ -1847,9 +1722,6 @@ function OutboxPanel({ q }: { q: string }) {
   const needle = q.trim();
 
   useEffect(() => {
-    // No synchronous setState in the effect body — `loading` starts true for
-    // the first load; reloads flip it true in the trigger handlers (filter
-    // chip / refresh button). Each filter/search/refresh resets to page 1.
     let alive = true;
     (async () => {
       try {
@@ -1911,7 +1783,6 @@ function OutboxPanel({ q }: { q: string }) {
 
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-surface">
-      {/* Header + status roll-up */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface-dim/30 px-3 py-2">
         <div className="flex items-center gap-2">
           <Bell className="h-4 w-4 text-accent" />
@@ -1954,7 +1825,6 @@ function OutboxPanel({ q }: { q: string }) {
         </div>
       </div>
 
-      {/* Status filter chips */}
       <div className="flex flex-wrap items-center gap-1 border-b border-border px-3 py-1.5">
         {filters.map((f) => (
           <button
@@ -2073,15 +1943,12 @@ export function OutboxReaderModal({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // No synchronous setState in the effect body; `loading` starts true and the
-    // modal mounts once per id, so the fetch just flips it false when done.
     let alive = true;
     (async () => {
       try {
         const j = await fetchOutboxDetail(id);
         if (alive && j) setData(j);
       } catch {
-        /* leave data null — body shows "(no content)" */
       } finally {
         if (alive) setLoading(false);
       }
@@ -2172,9 +2039,6 @@ export function OutboxReaderModal({
               Loading…
             </div>
           ) : data?.bodyHtml ? (
-            // Sandboxed iframe — renders the exact email the customer received,
-            // with no script/same-origin access; its links open in a new tab,
-            // as in the conversation reader (they were dead under sandbox="").
             <iframe
               title="email body"
               sandbox={EMAIL_FRAME_SANDBOX}
@@ -2192,7 +2056,6 @@ export function OutboxReaderModal({
   );
 }
 
-// ── Category tabs ───────────────────────────────────────────────────────────
 function CategoryTabs({
   active,
   counts,
@@ -2245,7 +2108,6 @@ function CategoryTabs({
   );
 }
 
-// ── View settings menu ───────────────────────────────────────────────────────
 function ViewSettingsMenu({ prefs }: { prefs: MailViewPrefs }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -2351,7 +2213,6 @@ function SegButton({
   );
 }
 
-// ── Bulk action bar ─────────────────────────────────────────────────────────
 function BulkBar({
   count,
   folder,
@@ -2512,7 +2373,6 @@ function BulkButton({
   );
 }
 
-// ── Mailbox switcher rows ───────────────────────────────────────────────────
 function MailboxItem({
   label,
   title,
@@ -2737,7 +2597,6 @@ function PersonItem({
   );
 }
 
-// ── Label manager dialog ─────────────────────────────────────────────────────
 function LabelManagerDialog({
   open,
   labels,

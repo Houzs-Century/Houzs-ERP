@@ -26,7 +26,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MoneyInput } from './MoneyInput';
-import { fmtDate } from '../../shared/format';
+import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
 import { useNotify } from './NotifyDialog';
 import {
   EMPTY_BANK, convertParamOf, newOrderWithMoneyHref, refundAskGaps, useAddedConvertSources, useOrderMoney, useRequestRefund, useRequestRefunds,
@@ -62,15 +62,13 @@ export function moneySummary(m: OrderMoney): string {
 
 /** A refund request as the panel lists it: its number, amount and answer. */
 export function refundRequestText(r: MoneyRefundRequest): string {
-  const answer = r.state === 'WAITING' ? 'waiting for Finance'
+  const answer = r.state === 'WAITING' ? (r.approvedBy ? `approved by ${r.approvedBy}, waiting for Finance` : 'waiting for approval')
     : r.state === 'ANSWERED' ? `answered by ${r.pvNumber ?? 'a refund voucher'}`
       : r.state === 'RETURNED' ? `rejected${r.financeNote ? `: ${r.financeNote}` : ''}`
         : 'withdrawn';
   return `${r.requestNo} · ${fmtRm(r.amountSen)} (${answer})`;
 }
 
-/** The customer's bank — the bank, the account number, the name on the
-    account; `of` names the order when several sit side by side. */
 function BankFields({ value, onChange, of }: { value: RefundAskBank; onChange: (v: RefundAskBank) => void; of?: string }) {
   const at = of ? ` for ${of}` : '';
   return (
@@ -191,8 +189,6 @@ export function ConvertPicker({ rows: given, copyFrom, ticked: tickedAtFirst, on
   );
 }
 
-/** The panel's convert: this order first, ticked, for what may move; the
-    customer's other orders beneath, unticked. */
 function ConvertForm({ money, others, onDone, onOpen }: { money: OrderMoney; others: ConvertSource[]; onDone: () => void; onOpen?: OpenNewOrder }) {
   const rows = useMemo<ConvertRow[]>(() => [
     { docNo: money.docNo, customer: money.customer.name, status: money.status, cancelledOn: null, remainingSen: money.remainingSen, bookedSen: money.bookedSen, movableSen: money.movableSen, keepSen: money.keepSen, self: true },

@@ -21,26 +21,22 @@ import { holdsChecklistApproval } from "../auth/projectAccess";
 import { isReviewableTitle } from "../vendor/scm/lib/pms-reviewable-titles";
 import { DefectFileActions } from "./MobilePmsDefectActions";
 
-// ── Shared checklist types (moved from MobilePMS.tsx) ──
 export type ChecklistItem = {
   id: number;
   seq: number;
   title: string;
   role_label: string | null;
   due_date: string | null;
-  status: string | null; // pending | done | na | blocked | review | rejected | amended
+  status: string | null;
   section_id: number | null;
   owner_name?: string | null;
   required_perm?: string | null;
-  // mig 090 — payment / deposit rows render as multi-state pills instead of a
-  // done/pending tick. pill_value stored via the standard checklist PATCH.
-  pill_kind?: string | null; // "rental_payment" | "security_deposit" | null
-  pill_value?: string | null; // none | unpaid | fully_paid | refunded
-  review_status?: string | null; // drives the approve/reject gate
-  notes?: string | null; // item-level remark (Deco/Coffee Table, Weekend Activity)
+  pill_kind?: string | null;
+  pill_value?: string | null;
+  review_status?: string | null;
+  notes?: string | null;
 };
 
-// Per-task attachment (mig 050). Grouped by item_id.
 export type TaskAttachment = {
   id: number;
   item_id: number;
@@ -53,17 +49,11 @@ export type TaskAttachment = {
   caption?: string | null;
 };
 
-// Dialog-hook signatures shared across the PMS screens.
 export type NotifyFn = (o: { title: string; body?: ReactNode; tone?: "info" | "error" }) => Promise<void>;
 export type ConfirmFn = (o: { title: string; body?: ReactNode; confirmLabel?: string; cancelLabel?: string; danger?: boolean }) => Promise<boolean>;
 export type PromptFn = (o: { title: string; body?: ReactNode; defaultValue?: string; placeholder?: string; confirmLabel?: string; validate?: (v: string) => string | null }) => Promise<string | null>;
 export type SetBusy = Dispatch<SetStateAction<boolean>>;
 
-// ── Small shared helpers (moved from MobilePMS.tsx) ──
-// Best-effort content type from an R2 key's extension — some payloads
-// (finance lines, phase photos) don't carry a stored mime type, and the
-// lightbox needs one to decide between inline <img>/<video> and a
-// download tile.
 export const mimeFromKey = (key: string): string | null => {
   const m = /\.([a-z0-9]+)$/i.exec(key);
   if (!m) return null;
@@ -79,8 +69,6 @@ export function humanize(s: string): string {
   return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// Role-badge colours mirror the design's PROJ_TASKS palette, keyed by the
-// checklist item's `role_label` (BD / PURCHASER / DRIVER / SALES PIC …).
 const ROLE_COLOR: Record<string, string> = {
   BD: "#7a5c86",
   PURCHASER: "#a16a2e",
@@ -107,7 +95,6 @@ export const formatRoleLabel = (label: string): string =>
 export const roleLabelParts = (label: string): string[] =>
   label.split("&").map((s) => s.trim()).filter(Boolean);
 
-// Auth'd blob-URL thumbnail for an R2 attachment key.
 export function R2Thumb({ r2Key, style }: { r2Key: string; style?: CSSProperties }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -115,8 +102,6 @@ export function R2Thumb({ r2Key, style }: { r2Key: string; style?: CSSProperties
     let made: string | null = null;
     api.fetchBlobUrl(`/api/projects/attachments/${r2Key}`)
       .then((u) => { if (live) { made = u; setUrl(u); } else URL.revokeObjectURL(u); })
-      // Preview only — a failed fetch keeps the hatched placeholder; the
-      // full-size viewer surfaces the real error when the file is opened.
       .catch(() => { if (live) setUrl(null); });
     return () => { live = false; if (made) URL.revokeObjectURL(made); };
   }, [r2Key]);
@@ -124,8 +109,6 @@ export function R2Thumb({ r2Key, style }: { r2Key: string; style?: CSSProperties
   return <img src={url} alt="" style={{ ...style, objectFit: "cover", display: "block" }} />;
 }
 
-// One confirm-guarded checklist-attachment delete, shared by the doc cards and
-// the Floor-Plans card so both keep exactly one remove path.
 export async function removeChecklistAttachment(
   att: { id: number; file_name?: string | null },
   o: { confirm?: ConfirmFn; notify: NotifyFn; setBusy: SetBusy; reload: () => void },
@@ -142,11 +125,6 @@ export async function removeChecklistAttachment(
   }
 }
 
-// ── The B2 full-width file preview ──
-// Image files render large (tap → lightbox) with the file name chipped onto
-// the photo; PDFs/videos keep a short hatched block with the same chip. The
-// optional × (top-right) is the editor's remove — confirm-guarded by the
-// caller via removeChecklistAttachment.
 export function BigFilePreview({
   media, onOpen, onRemove, busy, height = 200,
 }: {
@@ -220,7 +198,6 @@ export function UploadGlyph() {
   );
 }
 
-// The mockup's "Reason:" strip — a per-photo remark under its preview.
 export function RemarkStrip({ label = "Remark", text }: { label?: string; text: string }) {
   return (
     <div style={{ background: "var(--hz-dk-surface-2, #faf9f5)", borderLeft: "3px solid #d8a85a", borderRadius: 7, padding: "7px 10px", fontSize: 11.5, lineHeight: 1.45, color: "var(--hz-c-ink-secondary)", marginTop: 6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
@@ -234,15 +211,12 @@ export type DocTile = {
   label: string;
   match: RegExp;
   salesPicOnly?: boolean;
-  /** Pin to the DRIVER-badged variant when a title exists in two roles. */
   driverOnly?: boolean;
   remarkTile?: boolean;
   /** Owner 2026-07-21 (crew Decoration): the item's remark AND its files,
    *  files view/download-only. */
   remarkWithFiles?: boolean;
   requirePhotoRemark?: boolean;
-  /** Kept for call-site compatibility — every block is full-width in the B2
-   *  stacked layout, so these two are no longer read. */
   fullWidth?: boolean;
   mediaH?: number;
   /** Owner 2026-07-17: BD-owned items — sales VIEW + DOWNLOAD only, no
@@ -262,8 +236,6 @@ export const SALES_DOC_TILES: ReadonlyArray<DocTile> = [
   { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, requirePhotoRemark: true },
 ];
 
-// Match BOTH title families — live rows are "Defect Item …", not
-// "Defect List …" (BUG-HISTORY 2026-08-07: the narrow match hid the buttons).
 export const isDefectTile = (t: { item?: ChecklistItem | null }): boolean =>
   /^defect (list|item)/i.test((t.item?.title ?? "").trim());
 
@@ -290,16 +262,7 @@ export const CREW_DOC_TILES: ReadonlyArray<DocTile> = [
   { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, requirePhotoRemark: true },
 ];
 
-// ── Document review (Approve / Reject) — shared by the doc cards ──
-// The rule now lives in pms-reviewable-titles.ts, shared with desktop, which
-// used to test a Set of EXACT titles — so a suffixed row got this workflow here
-// and no review controls at all on the PC.
 
-// After uploading to a reviewable doc, auto-submit it so the approver's
-// Approve/Reject (re)appear — desktop does exactly this (Projects.tsx upload →
-// onReview("submit")). Non-perm reviewables (3D/2D/Display/Exchange) depend on
-// this: their gate needs review_status=pending_review, which nothing else sets.
-// Non-fatal: a failed submit only delays the amber PENDING badge.
 export async function autoSubmitReviewable(itemId: number, title: string | null | undefined): Promise<void> {
   if (!isReviewableTitle(title)) return;
   try {
@@ -311,12 +274,6 @@ export async function autoSubmitReviewable(itemId: number, title: string | null 
   }
 }
 
-// Whether to show Approve/Reject on a document tile — desktop-parity gate
-// (pages/Projects.tsx DocRow): once a file exists, a holder of the item's
-// approval permission decides a still-open gated doc; an un-permed reviewable
-// keeps the submit-then-review flow (any viewer, while a review is pending).
-// canApprove = wildcard-free: an explicit approval key is required for the four
-// EXPLICIT_APPROVAL_KEYS, but a non-perm reviewable is open to any viewer.
 export function checklistReviewVisible(
   permissions: readonly string[] | null | undefined,
   item: ChecklistItem | undefined,
@@ -340,9 +297,6 @@ export function checklistReviewVisible(
   return reviewable && awaitingReview && canApprove;
 }
 
-// The Approve / Reject button pair + review handler, shared by the doc cards.
-// Reject requires a reason (prompt); both POST /checklist/:id/review (the
-// endpoint re-checks the approval permission server-side → 403s a non-holder).
 export function ReviewButtons({
   item, busy, setBusy, prompt, notify, reload,
 }: {
@@ -439,7 +393,6 @@ export function SalesDocsCard({
   prompt: PromptFn;
   confirm: ConfirmFn;
   reload: () => void;
-  /** Tile set — defaults to the sales set; crew pass CREW_DOC_TILES. */
   tiles?: ReadonlyArray<DocTile>;
   title?: string;
   /** Owner 2026-07-23: show each task's role chip (DRIVER / SALES PIC / …) on
@@ -529,7 +482,6 @@ export function SalesDocsCard({
         buf,
         file.type || "application/octet-stream",
       );
-      // Reviewable docs auto-submit so the approver's Approve/Reject appear (desktop parity).
       await autoSubmitReviewable(pending.itemId, pending.title);
       reload();
     } catch (e) {
@@ -559,8 +511,6 @@ export function SalesDocsCard({
     }
   };
 
-  // The remark face (Weekend Activity, Decoration) — tap edits when this
-  // cohort owns it, otherwise surfaces the full text (the box clamps).
   const openRemark = async (t: (typeof tiles)[number]) => {
     if (canTick && !t.readOnly) { await editRemark(t); return; }
     const txt = (t.item?.notes ?? "").trim();
@@ -576,7 +526,6 @@ export function SalesDocsCard({
           const hasContent = t.remarkTile ? !!(t.item?.notes ?? "").trim()
             : t.remarkWithFiles ? (t.files.length > 0 || !!(t.item?.notes ?? "").trim())
             : t.files.length > 0;
-          // Review state (desktop parity) — shared gate + badge + buttons.
           const rItem = t.item!;
           const canReview = checklistReviewVisible(user?.permissions, rItem, t.files.length > 0);
           const editable = canTick && !t.readOnly;
@@ -585,7 +534,6 @@ export function SalesDocsCard({
           const compactRows = isStockTransferTitle(t.item?.title);
           return (
             <div key={t.label} style={{ border: "1px solid var(--hz-c-border)", borderRadius: 12, background: "var(--hz-c-surface)", padding: "10px 11px", display: "flex", flexDirection: "column", gap: 8 }}>
-              {/* Block header — name · count badge · role chips · review badge */}
               <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 13, fontWeight: 800, color: "var(--hz-c-ink)", marginRight: "auto" }}>{t.label}</span>
                 {/* Owner 2026-07-23: oversight viewers (mgt/BD/owner/SD/
@@ -606,7 +554,6 @@ export function SalesDocsCard({
                 </span>
               </div>
 
-              {/* Remark face (Weekend Activity / Decoration) */}
               {(t.remarkTile || t.remarkWithFiles) && (
                 <div
                   role="button"
@@ -659,9 +606,6 @@ export function SalesDocsCard({
                       ? () => void removeChecklistAttachment(a, { confirm, notify, setBusy, reload })
                       : undefined}
                   />
-                  {/* Per-photo remark. Defect photos carry theirs (Model/
-                      Reason) inside DefectFileActions, which also brings the
-                      Done/Replace loop + timeline. */}
                   {isDefect ? (
                     <DefectFileActions att={{ id: a.id, r2_key: a.r2_key, content_type: t.files[i]?.content_type, caption: a.caption }} wide />
                   ) : (
@@ -670,8 +614,6 @@ export function SalesDocsCard({
                 </div>
               ))}
 
-              {/* Empty state — a slim tap target instead of the old hatched
-                  thumbnail, so "nothing here yet" stays obvious. */}
               {!t.remarkTile && !t.remarkWithFiles && t.atts.length === 0 && (
                 <div
                   role="button"
@@ -719,9 +661,6 @@ export function SalesDocsCard({
                 </button>
               )}
 
-              {/* Approve / Reject — shown to a holder of this doc's approval
-                  permission (server re-checks). Renders even on a read-only
-                  block: the approver often isn't the uploader. */}
               {canReview && (
                 <ReviewButtons item={rItem} busy={busy} setBusy={setBusy} prompt={prompt} notify={notify} reload={reload} />
               )}
@@ -729,7 +668,7 @@ export function SalesDocsCard({
           );
         })}
       </div>
-      <input ref={fileRef} type="file" accept="image/*,.pdf,.mp4,.mov,.webm" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); }} />
+      <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.mp4,.mov,.webm" style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files ?? []); for (const f of files) await upload(f); if (fileRef.current) fileRef.current.value = ""; }} />
       {view && (
         <MediaLightbox
           items={view.items}

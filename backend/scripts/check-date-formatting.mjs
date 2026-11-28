@@ -5,7 +5,7 @@
 // THE RULE (owner, 2026-08-18: "全套系统的 date format 没有统一"). Every date a
 // user reads is DD/MM/YYYY, numeric, day-first; every timestamp is
 // DD/MM/YYYY HH:mm. It is produced by `fmtDate` / `fmtDateTime` in
-// frontend/src/vendor/shared/format.ts (mirrored in backend/src/scm/shared/
+// shared/src/vendor/shared/format.ts (mirrored in backend/src/scm/shared/
 // format.ts) and NOWHERE ELSE.
 //
 // WHY A GATE AND NOT A HABIT. The rule was already written down TWICE — once in
@@ -363,6 +363,7 @@ function clockVariableHits(lines) {
    last rule in this repo was declared correct while being wrong. */
 const ROOTS = [
   path.join(repoRoot, "frontend", "src"),
+  path.join(repoRoot, "shared", "src"),
   path.join(repoRoot, "backend", "src"),
   /* An EXTRA root, used by tests/dateFormatGate.test.ts to plant a violation
      OUTSIDE the source tree and watch this exit 1. A gate nobody has seen fail
@@ -599,7 +600,7 @@ const allowed = new Map(allowEntries.map((e) => [allowKey(e.file, e.text), e]));
    deliberately not a directory prefix: `vendor/shared` as a whole would have
    exempted every future date helper somebody drops beside format.ts. */
 const RULE_FILES = new Set([
-  "frontend/src/vendor/shared/format.ts",
+  "shared/src/vendor/shared/format.ts",
   "backend/src/scm/shared/format.ts",
   "frontend/src/vendor/shared/format.date.canonical.test.ts",
   "frontend/src/vendor/scm/components/DateField.tsx",

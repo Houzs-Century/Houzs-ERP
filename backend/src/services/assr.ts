@@ -1,6 +1,4 @@
 import type { Env } from "../types";
-// Case-level SLA clock — its own module (see assrSla.ts header). Re-exported
-// because callers and tests have imported slaHoursFor from here since mig 065.
 import { slaHoursFor, slaHoursForPriority } from "./assrSla";
 import { listSupplierReturns } from "./assrSupplierReturns";
 import { listReturnDos } from "./assrReturnDos";
@@ -25,83 +23,41 @@ import { caseAddressFromSo, fetchScmSoContext, soAddressForDoc } from "./assrSoC
 import { saveCaseAddress } from "./assrCaseAddress";
 import { CASE_ADDRESS_KEYS } from "../scm/shared/assr-case-address";
 
-// ── Types ─────────────────────────────────────────────────────
 
 export interface CreateAssrInput {
   doc_no: string;
   items: { item_code: string; item_description?: string; qty?: number }[];
   complaint_issue: string;
-  /** Optional issue taxonomy entry captured at create time. Free-text
-   *  string ("Product defect", "Missing / short item", or admin
-   *  custom). Replaces the older service_category-driven flow on the
-   *  intake form. */
   issue_category?: string | null;
-  /** Optional priority slug — drives both `sla_hours` and the per-stage
-   *  target snapshot (mig 082). Defaults to 'normal' when omitted. */
   priority?: string | null;
-  /** Optional complaint date (assr_cases.complained_date) captured at
-   *  intake as `YYYY-MM-DD`. Defaults to today (MYT) when omitted. */
   complained_date?: string | null;
-  /** Customer reference (the SO's own customer docket, e.g. "HC14032").
-   *  When omitted the AutoCount SO context's Ref is used as fallback. */
   ref_no?: string | null;
-  /** Customer contact email captured at intake. */
   customer_email?: string | null;
-  /** Product category. Multi-select since 2026-08: an array of names or
-   *  slugs from the current UI, or a comma string from anything older. */
   service_category?: string | string[] | null;
-  /** Operations PIC — assr_cases.assigned_to. When provided, overrides
-   *  the admin-configured default assignee. */
   assigned_to?: number | null;
-  delivery_order?: string | null; // the DO, set by a crew POD issue report
+  delivery_order?: string | null;
   created_by?: number;
-  /** Multi-company (Phase 0b) — the active company (companies.id) resolved
-   *  from the request via activeCompanyId(c). Left undefined pre-migration /
-   *  cold-start; createAssrCase then falls back to the Houzs default and, if
-   *  that too is unresolvable, omits the column entirely (single-company safe). */
   company_id?: number;
 }
 
-// v3.1 9-stage workflow. Old enum (registration / triage / action /
-// logistics / resolution / closed) was renamed in mig 074. Inspection
-// is now its own stage, and the legacy "logistics" stage split into 4
-// explicit handover steps (item pickup / supplier pickup / item ready
-// / delivery).
 export type Stage =
-  | "pending_review"            // Stage 1 — Service Admin
-  | "under_verification"        // Stage 2 — Service Admin
-  | "pending_solution"          // Stage 3 — Service Admin / Manager pick the fix
-  //  (pending_inspection retired 2026-07-14 — inspection folded into
-  //   Under Verification as inspect_by + QC-issue fields; mig 0105.
-  //   pending_item_pickup retired 2026-07-14 too — the customer-side
-  //   collection lives inside the Supplier stage now; mig 0110)
-  | "pending_supplier_pickup"   // Stage 4 — supplier pickup AND return leg
-  | "pending_item_ready"        // Stage 5 — QC after the supplier returns it
-  | "pending_delivery_service"  // Stage 6 — SA assigns Logistic Admin
-  | "completed"                 // Stage 7 — system
-  //  voided — terminal alt-outcome (Nico 2026-07-29): the case was
-  //  verified as not valid / not warranty-covered, so it closes here
-  //  instead of running Solution → Supplier → Delivery. Parallel to
-  //  'completed', NOT a pipeline step.
+  | "pending_review"
+  | "under_verification"
+  | "pending_solution"
+  | "pending_supplier_pickup"
+  | "pending_item_ready"
+  | "pending_delivery_service"
+  | "completed"
   | "voided";
 
 type Priority = "low" | "normal" | "high" | "urgent";
 
-// Maps stage → user-facing status (backward compat for legacy list
-// renderers that still read `status`).
 function statusForStage(stage: Stage): string {
   if (stage === "pending_review") return "Open";
   if (stage === "completed" || stage === "voided") return "Closed";
   return "In Progress";
 }
 
-// Stage transitions are unrestricted — ops can revert (e.g. flip a
-// completed case back when the customer reports the same issue) or
-// skip (proposal §8.3 legitimate skips: Replace Unit with in-stock SKU
-// skips inspection + supplier pickup + item ready; Field Service Own
-// Team skips supplier pickup + item ready; Return Visit skips item
-// pickup + supplier pickup + item ready). The CHECK on the column
-// still bounds the value set so bad inputs fail loud.
 export const ALL_STAGES: ReadonlyArray<Stage> = [
   "pending_review",
   "pending_solution",
@@ -113,9 +69,6 @@ export const ALL_STAGES: ReadonlyArray<Stage> = [
   "voided",
 ];
 
-// Default per-stage target days (proposal §8.1 — Normal profile).
-// Phase B replaces this fallback with a lookup against the active
-// assr_lead_time_profiles + assr_stage_targets row.
 const DEFAULT_STAGE_TARGET_DAYS: Record<Stage, number> = {
   pending_review: 1,
   under_verification: 2,
@@ -223,14 +176,8 @@ export async function getActiveLeadTimeProfileId(env: Env): Promise<number | nul
   }
 }
 
-// ── PO number generator (internal / service-issued) ───────────
 
-// ── ASSR number generator ─────────────────────────────────────
 
-// ASSR/YYMM-NNN, month in MYT (07:00 on the 1st is the new month). The number
-// comes from the atomic counter (scm.next_doc_no_n) floored at the live max, so
-// simultaneous creates cannot read the same max; without it (D1 mirror) max + 1,
-// still guarded by the unique index + retry in createAssrCase.
 export async function nextAssrNumber(env: Env, nowMs = Date.now()): Promise<string> {
   const prefix = `ASSR/${yymmFor(nowMs)}`;
 
@@ -282,21 +229,7 @@ async function resolveCaseCompanyId(
   }
 }
 
-// SCM SO context + the SO address in the case's shape: services/assrSoContext.ts.
 
-// The owning company of the order a doc number names — by the ERP number OR
-// the AutoCount number. Go-live imported every Houzs order as HC-SO-xxxxxx with
-// its book number (SO-xxxxxx) in linked_ac_docno, and a case raised against the
-// book number missed fetchScmSoContext's doc_no match, so the creator's
-// switcher company won: ASSR/2608-016 (SO-012823) was stamped 2990 (owner
-// 2026-10-05: the case follows its SO's company). Company only — the context
-// path is unchanged.
-//
-// An order that never reached the ERP (delivered before go-live — SO-012823
-// itself) is identified by its NUMBER instead: every HOUZS order is HC-SO-… or
-// the book's SO-<digits>, every 2990 order 2990-SO-… (prod 2026-10-05: 3,293
-// HOUZS / 209 2990 orders, no exception either way). Anything else (display
-// stock, free text) is null and the switcher company still decides.
 function companyCodeFromSoNumber(docNo: string): string | null {
   const d = docNo.trim().toUpperCase();
   if (d.startsWith(`${docPrefixForCode(MIRRORED_COMPANY_CODE)}SO-`)) return MIRRORED_COMPANY_CODE;
@@ -337,7 +270,6 @@ async function orderCompanyId(env: Env, docNo: string): Promise<number | null> {
   }
 }
 
-// ── Create case ───────────────────────────────────────────────
 
 export async function createAssrCase(
   env: Env,
@@ -363,38 +295,20 @@ export async function createAssrCase(
     }
   }
 
-  // The address in the SO's shape (lines + postcode / city / state); the
-  // AutoCount context has lines only, so its postcode / state come from them.
   const soAddr = scmSo ? scmSo.address : caseAddressFromSo({ address1: context?.InvAddr1, address2: context?.InvAddr2,
     address3: context?.InvAddr3, address4: context?.InvAddr4, postcode: null, city: null, customer_state: null });
 
-  // `let`, not `const` — the create loop below takes a FRESH number when the
-  // unique guard (mig 0218 / D1 135) reports a concurrent create won the race.
   let assrNo = await nextAssrNumber(env);
   const today = todayMyt();
-  // complained_date — honour an explicit intake value (validated to a
-  // strict YYYY-MM-DD), else default to today (MYT). Anything malformed
-  // falls back to today so the column never takes a junk string.
   const complainedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(input.complained_date ?? ""))
     ? String(input.complained_date)
     : today;
-  // Use first item_code for the legacy column
   const firstItem = input.items[0]?.item_code ?? null;
 
-  // SLA window from the case's priority (defaults to 'normal' when intake
-  // didn't pick one). Read from assr_priorities on every create so a Service
-  // Maintenance edit takes effect without a deploy — same reason the default
-  // assignee below is read here rather than cached. Priority is stored as the
-  // slug on assr_cases.priority; mig 082 also drives per-stage targets off it.
   const prioritySlug = input.priority ?? "normal";
   const slaHours = await slaHoursForPriority(env, prioritySlug);
   const deadlineAt = new Date(Date.now() + slaHours * 3600 * 1000).toISOString();
 
-  // Optional default assignee — admin sets this in Settings → Service.
-  // Read it on every create so a setting change takes effect without a
-  // deploy. Falls back to NULL (unassigned) if missing or malformed.
-  // An explicit PIC picked at intake (input.assigned_to) takes
-  // precedence over the admin default.
   let defaultAssigneeId: number | null = null;
   let defaultAssignee2Id: number | null = null;
   if (input.assigned_to != null) {
@@ -412,47 +326,25 @@ export async function createAssrCase(
         if (r.key === "assr_default_assignee_id") defaultAssigneeId = n;
         else defaultAssignee2Id = n;
       }
-      // The same person twice adds nothing — keep the co-slot empty.
       if (defaultAssignee2Id === defaultAssigneeId) defaultAssignee2Id = null;
     } catch (e) {
       console.warn("[assr.create] could not read default assignees:", e);
     }
   }
 
-  // v3.1 — new cases enter Stage 1 (pending_review). Stage target is
-  // snapshotted from the active profile so the alert engine has a
-  // deterministic SLA even if the portal is amended later. The
-  // lead_time_profile_id is stamped so reporting can show which
-  // profile each case ran under.
   const initialStage: Stage = "pending_review";
-  // Mig 082 — pass the priority slug so the lookup checks priority
-  // targets before falling back to the active Lead Time profile.
   const initialTargetDays = await lookupStageTargetDays(env, initialStage, prioritySlug);
   const activeProfileId = await getActiveLeadTimeProfileId(env);
   const nowIso = new Date().toISOString();
 
-  // Multi-company (Phase 0b): stamp the owning company — the SO's own company
-  // outranks the request's (see resolveCaseCompanyId's doc). Append the column
-  // + bind ONLY when resolved so the pre-migration / cold-start window (no
-  // companies master, no company_id column yet) inserts unchanged.
   const companyId = await resolveCaseCompanyId(env, soCompanyId ?? input.company_id);
   const companyCol = companyId != null ? ", company_id" : "";
   const companyPlaceholder = companyId != null ? ", ?" : "";
 
-  /* Product Category is multi-select, so the caller may send an array. It
-     has to be folded into the display string BEFORE the INSERT binds it —
-     binding an array trips D1_TYPE_ERROR. The join rows are written once we
-     have an id, below. */
   const categories = input.service_category != null
     ? await resolveCategories(env, parseCategoryInput(input.service_category))
     : null;
 
-  /* Guarded take-a-number. nextAssrNumber is read-max-then-+1 with no lock,
-     so two concurrent creates can mint the same number — that is exactly how
-     the 8 grandfathered 2604 duplicates happened. The partial unique index
-     (PG mig 0218, D1 135) turns the race into a constraint error; losing
-     racer takes a fresh number and retries. Bounded so a NON-race unique
-     error (or an index misconfiguration) still surfaces instead of looping. */
   let result: Awaited<ReturnType<ReturnType<typeof env.DB.prepare>["run"]>> | null = null;
   for (let attempt = 0; ; attempt++) {
     try {
@@ -497,17 +389,9 @@ export async function createAssrCase(
       soAddr?.addr3 ?? null,
       soAddr?.addr4 ?? null,
       input.created_by ?? null,
-      // ref_no <- the SO's own customer reference (the pre-printed
-      // customer docket, e.g. "HC14032"), distinct from the internal
-      // service PO which maps to po_no above via SOUDF_ToPONo. An
-      // explicit intake value wins; else fall back to the SO context.
       input.ref_no ?? context?.Ref ?? null,
-      // customer_email / service_category <- captured on the intake
-      // form so a case is created complete rather than backfilled.
       input.customer_email ?? null,
       categories?.display ?? null,
-      // delivery_order <- only a crew POD issue report knows its DO (getSingle
-      // exposes none); do_date stays NULL: it is the SERVICE delivery leg's date.
       input.delivery_order ?? null,
       null,
       defaultAssigneeId,
@@ -525,10 +409,6 @@ export async function createAssrCase(
 
   const assrId = result!.meta.last_row_id as number;
 
-  // Seed the per-stage lifecycle row for Stage 1 so the Workflow
-  // Progress Tracker has data and the alert engine has a target.
-  // alerts_fired = 1 stamps FLAG_ENTERED so the scanner doesn't
-  // double-fire on first tick.
   await env.DB.prepare(
     `INSERT INTO assr_stage_history (assr_id, stage, entered_at, target_days, alerts_fired)
      VALUES (?, ?, ?, ?, 1)`
@@ -536,7 +416,6 @@ export async function createAssrCase(
     .bind(assrId, initialStage, nowIso, initialTargetDays)
     .run();
 
-  // Insert items
   for (const item of input.items) {
     await env.DB.prepare(
       `INSERT INTO assr_items (assr_id, item_code, item_description, qty)
@@ -546,14 +425,11 @@ export async function createAssrCase(
       .run();
   }
 
-  // The display string went in with the INSERT; the queryable rows need the
-  // id, so they land here.
   if (categories?.slugs.length) await writeCaseCategories(env, assrId, categories.slugs);
 
   if (soAddr) await saveCaseAddress(env, assrId, { postcode: soAddr.postcode, city: soAddr.city, state: soAddr.state }, input.created_by ?? 0, false);
   await logActivity(env, assrId, "created", null, initialStage, null, input.created_by);
 
-  // Log the default assignment so the timeline reflects who got it.
   if (defaultAssigneeId != null) {
     await logActivity(
       env,
@@ -589,19 +465,7 @@ export async function createAssrCase(
   return { assr_no: assrNo, id: assrId };
 }
 
-// ── Product categories (multi-select) ────────────────────────
-//
-// A case can be more than one category (mattress AND bedframe on the same
-// complaint), so assr_case_categories holds one row per category — that is
-// what grouping/counting must read, because a comma-joined string cannot
-// count a Bedframe+Mattress case once on each side.
-//
-// assr_cases.service_category stays the DISPLAY value (comma-joined names,
-// lookup order) because ~50 read sites — list column, CSV export, print,
-// both portals, mobile — only ever render it. Both are written here and
-// nowhere else, so they cannot drift.
 
-/** "Bedframe, Mattress" | ["Bedframe","mattress"] | ["bed_frame"] -> tokens. */
 function parseCategoryInput(v: unknown): string[] {
   const raw = Array.isArray(v)
     ? v.map((x) => String(x ?? ""))
@@ -619,14 +483,6 @@ function parseCategoryInput(v: unknown): string[] {
   return out;
 }
 
-/**
- * Resolve caller tokens against the lookup by slug OR name (both
- * case-insensitive). Unrecognised tokens are NOT dropped — they survive in
- * the display string, matching the form's rule that a legacy/unknown value
- * stays selectable so reopening a case never silently discards it. They
- * simply get no row in the join table, i.e. they stay uncategorised for
- * reporting, exactly like the cases that never had a category at all.
- */
 async function resolveCategories(
   env: Env,
   tokens: string[],
@@ -651,8 +507,6 @@ async function resolveCategories(
   return { display: display || null, slugs: matched.map((m) => m.slug) };
 }
 
-/** Replace a case's category rows. Delete-then-insert: the caller always
- *  sends the complete set, so a removed category must disappear. */
 async function writeCaseCategories(env: Env, caseId: number, slugs: string[]) {
   await env.DB.prepare(`DELETE FROM assr_case_categories WHERE case_id = ?`)
     .bind(caseId)
@@ -680,7 +534,6 @@ export async function getCaseCategories(env: Env, caseId: number): Promise<strin
   return (rows.results ?? []).map((r) => r.name);
 }
 
-// ── Detail (composite) ───────────────────────────────────────
 
 export async function getAssrDetail(env: Env, id: number) {
   const caseRow = await env.DB.prepare(
@@ -716,10 +569,6 @@ export async function getAssrDetail(env: Env, id: number) {
     .first<any>();
   if (!caseRow) return null;
 
-  // Same DO resolution the list does (transfer_to → ref-matched mirror →
-  // SCM fallback) so the detail page's DO field also fills for cases
-  // whose hand-entered delivery_order was never set — which is nearly
-  // all of them.
   await Promise.all([attachDeliveryOrders(env, [caseRow]).then(() => attachOrderDeliveryDates(env, [caseRow])), attachOrderPos(env, [caseRow]), attachExchangePosEnv(env, [caseRow])]);
 
   const items = await env.DB.prepare(
@@ -728,9 +577,6 @@ export async function getAssrDetail(env: Env, id: number) {
     .bind(id)
     .all();
 
-  // Child queries filter out archived rows by default. If/when a
-  // manager needs to see archived children, add an endpoint that
-  // takes ?include_archived=1 for surgical audits.
   const attachments = await env.DB.prepare(
     `SELECT * FROM assr_attachments
       WHERE assr_id = ? AND archived_at IS NULL
@@ -759,16 +605,9 @@ export async function getAssrDetail(env: Env, id: number) {
     .bind(id)
     .all();
 
-  // Factory/supplier returns — one row per trip (round_no 1..N). The three
-  // summary columns on the case mirror the CURRENT (highest) round; this list
-  // is the full history so a case sent back twice keeps both trips' dates.
   const [supplierReturns, returnDos] = await Promise.all([listSupplierReturns(env, id), listReturnDos(env, id)]);
   await showErpSupplierNames(env, [caseRow], supplierReturns);
 
-  // v3.1 — per-stage lifecycle for the Workflow Progress Tracker.
-  // Returns one row per stage (entered + exited timestamps), ordered
-  // chronologically. The Tracker UI walks this list to colour completed
-  // / current / skipped / future nodes.
   const stageHistory = await env.DB.prepare(
     `SELECT id, stage, entered_at, exited_at, target_days, status,
             skipped, skip_reason, alerts_fired, snoozes_applied
@@ -785,13 +624,8 @@ export async function getAssrDetail(env: Env, id: number) {
     .bind(caseRow.doc_no)
     .all();
 
-  // Active portal link (if any) so the staff UI can show the existing
-  // link on panel-open instead of forcing a regenerate each time.
   const portalToken = await getActiveStaffToken(env, id);
 
-  // Nth-person access list (mig 20260911T1600): staff granted row visibility on
-  // this case WITHOUT taking a sales_agent / assigned_to slot. The UI renders
-  // these as chips and manages them via POST/DELETE /api/assr/:id/access.
   const access = await env.DB.prepare(
     `SELECT ac.user_id, u.name as user_name, ac.added_by, ac.created_at
        FROM assr_case_access ac
@@ -804,8 +638,6 @@ export async function getAssrDetail(env: Env, id: number) {
 
   return {
     case: caseRow,
-    // The multi-select form needs the categories as a list; the flat
-    // service_category string on `case` stays for every read-only site.
     service_categories: await getCaseCategories(env, id),
     items: items.results ?? [],
     attachments: attachments.results ?? [],
@@ -819,7 +651,6 @@ export async function getAssrDetail(env: Env, id: number) {
   };
 }
 
-// ── Stage transition ──────────────────────────────────────────
 
 export async function transitionStage(
   env: Env,
@@ -839,17 +670,11 @@ export async function transitionStage(
   if (!ALL_STAGES.includes(newStage)) {
     throw new Error(`Unknown stage: ${newStage}`);
   }
-  // No-op when the stage hasn't actually changed.
   if (row.stage === newStage) return true;
 
   const newStatus = statusForStage(newStage);
-  // Mig 082 — priority-driven per-stage targets. Falls back to active
-  // Lead Time profile when the priority has no targets defined.
   const newTargetDays = await lookupStageTargetDays(env, newStage, row.priority);
   const nowIso = new Date().toISOString();
-  // stage_changed_at + stage_entered_at both get refreshed so the
-  // "days in stage" lead-time column reads cleanly without scanning
-  // the activity log. stage_target_days snapshots the new target.
   const sets = [
     "stage = ?",
     "status = ?",
@@ -871,17 +696,8 @@ export async function transitionStage(
   const subDefault = assrSubStatusSeed(newStage);
   sets.push("sub_status = ?");
   binds.push(subDefault);
-  // Landing on the customer-pickup leg with no owner yet -> own team, so the
-  // collection surfaces on Delivery Planning as a driver job (board + HC sheet
-  // gate on pickup_by='customer'). An explicit supplier/3PL leg is untouched.
   pushCustomerPickupDefault(sets, binds, subDefault, row.pickup_by);
 
-  // Both terminal stages stop the SLA clock (closed_at). Only a genuine
-  // 'completed' stamps completion_date + feeds the satisfaction survey;
-  // 'voided' (not valid / not warranty-covered) closes without either,
-  // so it stays out of the completed count + CSAT.
-  // NB the D1 test mirror's stage CHECK does not yet list 'voided'
-  // (prod PG carries no CHECK); don't add a voided-writing DB test there.
   if (newStage === "completed" || newStage === "voided") {
     sets.push("closed_at = ?");
     binds.push(nowIso);
@@ -898,9 +714,6 @@ export async function transitionStage(
     .bind(...binds)
     .run();
 
-  // Close the prior open stage-history row (set exited_at = now) and
-  // insert a new open row for the new stage. The "open" row is
-  // identified by exited_at IS NULL.
   await env.DB.prepare(
     `UPDATE assr_stage_history
         SET exited_at = ?
@@ -909,10 +722,6 @@ export async function transitionStage(
     .bind(nowIso, id)
     .run();
 
-  // alerts_fired = 1 stamps the FLAG_ENTERED bit so the v3.1 alert
-  // scanner (services/assrAlerts.ts) doesn't re-fire the entered
-  // event on its next tick — the in-app timeline + assignment row
-  // already cover "stage entered" notification.
   await env.DB.prepare(
     `INSERT INTO assr_stage_history (assr_id, stage, entered_at, target_days, alerts_fired)
      VALUES (?, ?, ?, ?, 1)`
@@ -920,9 +729,6 @@ export async function transitionStage(
     .bind(id, newStage, nowIso, newTargetDays)
     .run();
 
-  // v3.1 (mig 077): stamp how long the OLD stage took + what its
-  // target was, plus the request's source_channel so the timeline can
-  // distinguish app/portal/email-driven moves.
   let elapsedDays: number | null = null;
   if (row.stage_entered_at) {
     const enteredMs = new Date(
@@ -939,13 +745,6 @@ export async function transitionStage(
   return true;
 }
 
-// ── Admin-open auto-advance ───────────────────────────────────
-//
-// Mig 106 — Service Admin opens a pending_review case → the case
-// auto-advances to under_verification and the activity log stamps
-// who did it. No-op when the case is already past pending_review or
-// when the caller doesn't have write permission (route enforces that
-// gate; the service function itself is trust-based).
 export async function markCaseOpened(
   env: Env,
   id: number,
@@ -958,8 +757,6 @@ export async function markCaseOpened(
     .first<{ stage: Stage }>();
   if (!row) return false;
   if (row.stage !== "pending_review") return false;
-  // Order change (Nico 2026-08-11): Solution now precedes Verification,
-  // so first-open auto-advance lands on Pending Solution.
   return transitionStage(
     env,
     id,
@@ -969,12 +766,8 @@ export async function markCaseOpened(
   );
 }
 
-// ── Patch case fields ─────────────────────────────────────────
 
 const PATCH_FIELDS = [
-  // doc_no is editable since 2026-07-14 — sales fat-finger the SO no at
-  // intake and the case never matches its customer. Changing it also
-  // re-matches identity fields from the local SO mirror (see below).
   "doc_no",
   "customer_name", "customer_email", "phone", "location", "sales_agent", "item_code",
   "complaint_issue", "action_remark", "service_category",
@@ -982,52 +775,26 @@ const PATCH_FIELDS = [
   "priority", "assigned_to", "assigned_to_2", "ref_no", "delivery_order", "do_date",
   "satisfaction_rating", "satisfaction_notes",
   "addr1", "addr2", "addr3", "addr4",
-  // QMS additions
   "ncr_category", "quality_review_passed",
   "po_amount", "customer_amount", "supplier_invoice_ref", "cost_notes",
-  // SLA fields — allow manual override (ops can extend a deadline)
   "sla_hours", "deadline_at",
-  // Mig 064 — supplier handover + ready dates
   "supplier_pickup_at", "items_ready_at",
-  // Mig 107 — date we collect the faulty item from the customer's house (shown as the Scheduled Pickup Date / ETA)
   "customer_pickup_at", "pickup_status", "actual_pickup_at", "pickup_pic", "item_location", // HC-0129, values checked in the route
-  // Mig 127 — own-team inspection visit date (not customer_pickup_at); drives the INSPECTION leg on Delivery Planning.
   "inspection_visit_at",
-  // Mig 074 — v3.1 fields
   "inspection_result", "email_for_survey",
-  // Mig 081 — verification card (Under Verification → Pending Solution gate)
   "verification_outcome", "verified_root_cause",
-  // Mig 105 — editable QC-on-receipt inspection date (distinct from
-  // the auto-stamped verified_at audit timestamp).
   "qc_receipt_date",
-  // Mig 106 — paperwork that travels with the item between Houzs and
-  // supplier. Both are free text; ops edits goods_returned_note from
-  // the main case, supplier edits supplier_service_note from the
-  // supplier portal.
   "goods_returned_note", "supplier_service_note",
-  // Mig 0073 — who performs the issue inspection: 'own' | 'supplier'.
-  // Own-team inspections link into delivery planning for the visit.
-  // Lives on the Under Verification stage since mig 0105.
   "inspection_by",
   "pickup_by",
-  // Who delivers the item back to the customer: 'own' = our team (the leg
-  // syncs to the HC Delivery sheet), 'supplier' = supplier/3PL (never synced),
-  // NULL = not yet confirmed. Mirrors inspection_by / pickup_by as the
-  // own-team gate for the delivery-back leg.
   "delivery_by",
-  // Mig 0105 — QC-on-receipt result (pass/fail/na), shown next to
-  // qc_receipt_date in the Verification stage panel.
   "qc_issue_result",
   // Nick 2026-07-15 — switchable sub-status (小类) inside Verification
   // and Supplier. Values are allow-listed in the PATCH route.
   "sub_status",
-  // Void reason (Nico 2026-07-29) — why the case is not valid /
-  // not warranty-covered, captured when it moves to 'voided'.
   "void_reason",
 ] as const;
 
-// Human labels for the append-only per-field timeline audit. Anything not
-// listed falls back to a prettified column name.
 const FIELD_LABELS: Record<string, string> = {
   doc_no: "SO No", customer_name: "Customer Name", customer_email: "Customer Email",
   phone: "Phone", location: "Location", sales_agent: "Sales Agent", item_code: "Item Code",
@@ -1051,16 +818,9 @@ const FIELD_LABELS: Record<string, string> = {
   delivery_by: "Delivery By",
   qc_issue_result: "QC Result",
 };
-// Only DATE and REMARK/note edits are worth a timeline entry (owner
-// 2026-07-21 — "record date + remark, the rest no need"). Everything else
-// (resolution method, verification outcome, priority, costs, identity, …)
-// is config noise and is NOT recorded. Photos/files/videos are logged
-// separately as attachment events, and item remarks via item_remark.
 export const FIELD_LOG_ALLOW = new Set<string>([
-  // dates
   "customer_pickup_at", "actual_pickup_at", "supplier_pickup_at", "items_ready_at",
   "completion_date", "do_date", "qc_receipt_date",
-  // remarks / free-text notes
   "goods_returned_note", "supplier_service_note", "action_remark", "satisfaction_notes", "verified_root_cause",
 ]);
 const fieldLabel = (k: string): string =>
@@ -1080,12 +840,6 @@ export async function patchAssrCase(
   const sets: string[] = [];
   const binds: any[] = [];
 
-  // Correcting the SO number re-matches the customer identity from the
-  // local sales_orders mirror (the AutoCount live API is disconnected —
-  // AUTOCOUNT_SYNC_DISABLED — so this is the same source search-so
-  // suggests from). Only fields the caller did NOT explicitly send are
-  // refreshed, so a combined manual edit still wins. No mirror hit →
-  // just the doc_no changes (mirror is frozen; new SOs may be absent).
   let prevDocNo: string | null = null;
   // A corrected SO number also re-stamps the case's company from that order
   // (owner 2026-10-05: the case follows its SO's company, at create AND when
@@ -1107,11 +861,6 @@ export async function patchAssrCase(
       )
         .bind(body.doc_no)
         .first<{ ref: string | null; debtor_name: string | null; phone: string | null; sales_agent: string | null }>();
-      // 2990 / SCM-native SOs never reach the HOUZS AutoCount `sales_orders`
-      // mirror, so a re-match to a 2990 doc found nothing and left the customer
-      // blank. Fall back to the scm order table — the same source createAssrCase
-      // hydrates from — so re-matching a 2990 SO fills the identity too. Same
-      // "only fields the caller didn't send" rule applies below.
       if (!so) {
         const scm = await fetchScmSoContext(env, body.doc_no);
         if (scm) {
@@ -1137,25 +886,15 @@ export async function patchAssrCase(
       if (soAddr) Object.assign(body, soAddr);
     }
   } else if ("doc_no" in body) {
-    // Blank / non-string doc_no would orphan the case from its SO —
-    // ignore rather than null the linkage.
     delete body.doc_no;
   }
 
-  // Snapshot the pre-update values of every auditable field, so each actual
-  // change can be written to the timeline as an append-only entry. A later
-  // edit or removal never erases the earlier recorded value — the history
-  // stays fully reviewable.
   const beforeSnapshot = await env.DB.prepare(
     `SELECT ${PATCH_FIELDS.join(", ")} FROM assr_cases WHERE id = ?`
   )
     .bind(id)
     .first<Record<string, any>>();
 
-  // Product Category is multi-select. Normalise the incoming value (array
-  // from the current UI, comma string from anything older) into the display
-  // form BEFORE the generic loop writes the column, and remember the slugs
-  // so the join rows can be rewritten once the UPDATE lands.
   let pendingCategorySlugs: string[] | null = null;
   if ("service_category" in body) {
     const cats = await resolveCategories(env, parseCategoryInput(body.service_category));
@@ -1173,17 +912,9 @@ export async function patchAssrCase(
     binds.push(docCompanyId);
   }
 
-  // Switching onto the customer-pickup leg with no owner yet -> own team, so it
-  // reaches Delivery Planning. Skipped when the caller set pickup_by in the same
-  // request, or a supplier/3PL leg was already chosen (pushCustomerPickupDefault).
   if ("sub_status" in body && !("pickup_by" in body))
     pushCustomerPickupDefault(sets, binds, body.sub_status, beforeSnapshot?.pickup_by);
 
-  // Mig 081 — when QA sets the verification outcome, server-stamp
-  // verified_at + verified_by so the actor can't be spoofed from the
-  // client. Clearing the outcome clears the stamps too. NULL the
-  // verified_by FK when userId is 0/falsy (no auth context) — anything
-  // else would trip the foreign-key constraint.
   if ("verification_outcome" in body) {
     if (body.verification_outcome) {
       sets.push("verified_at = datetime('now')", "verified_by = ?");
@@ -1193,8 +924,6 @@ export async function patchAssrCase(
     }
   }
 
-  // Sub-status switches land on the timeline as system events (like
-  // stage changes) — capture the old value for the diff.
   let prevSubStatus: string | null = null;
   if ("sub_status" in body) {
     const prev = await env.DB.prepare(
@@ -1205,8 +934,6 @@ export async function patchAssrCase(
     prevSubStatus = prev?.sub_status ?? null;
   }
 
-  // For audited fields (complaint_issue), capture the OLD value so the
-  // service-log row reflects an actual diff, not just "edited at X".
   let prevComplaint: string | null = null;
   if ("complaint_issue" in body) {
     const prev = await env.DB.prepare(
@@ -1217,9 +944,6 @@ export async function patchAssrCase(
     prevComplaint = prev?.complaint_issue ?? null;
   }
 
-  // When priority changes (and deadline isn't being set explicitly in the
-  // same request), recompute deadline_at off the case's created_at so the
-  // SLA clock tracks the new priority band.
   if ("priority" in body && !("deadline_at" in body) && !("sla_hours" in body)) {
     const newHours = await slaHoursForPriority(env, body.priority);
     const row = await env.DB.prepare(
@@ -1245,7 +969,6 @@ export async function patchAssrCase(
 
   if (pendingCategorySlugs) await writeCaseCategories(env, id, pendingCategorySlugs);
 
-  // Log assignment changes
   if ("assigned_to" in body) {
     await logActivity(env, id, "assignment", null, String(body.assigned_to ?? ""), null, userId);
   }
@@ -1268,9 +991,6 @@ export async function patchAssrCase(
     );
   }
 
-  // Audit SO-number corrections — the case's whole customer identity
-  // hangs off this key, so the change (and what it re-matched) must be
-  // visible in the service log.
   if (prevDocNo !== null && "doc_no" in body && prevDocNo !== body.doc_no) {
     await logActivity(env, id, "so_changed", prevDocNo, body.doc_no, null, userId, {
       category: "service",
@@ -1278,8 +998,6 @@ export async function patchAssrCase(
     });
   }
 
-  // Audit complaint edits so the customer-facing description has a
-  // diffable trail in the service log (mig 077).
   if ("complaint_issue" in body) {
     const next = body.complaint_issue ?? null;
     if ((prevComplaint ?? null) !== (next ?? null)) {
@@ -1316,9 +1034,6 @@ export async function patchAssrCase(
     );
   }
 
-  // When the case's item_code changes, re-resolve the creditor so the
-  // link to the procurement supplier stays accurate. Awaited (a floating
-  // promise dies with the response); a failed lookup shouldn't fail the PATCH.
   if ("item_code" in body || ("doc_no" in body && (beforeSnapshot?.doc_no ?? null) !== body.doc_no)) {
     await resolveCreditorForCase(env, id, "item_code" in body ? body.item_code ?? null : beforeSnapshot?.item_code ?? null).catch((e) =>
       console.warn(`[assr.patch] creditor resolve failed for case=${id}:`, e?.message || e)
@@ -1328,13 +1043,6 @@ export async function patchAssrCase(
   return r.meta.changes > 0;
 }
 
-// ── Manual creditor assignment ────────────────────────────────
-// AutoCount can't resolve every item (MainSupplier gaps, creditor sync
-// off), so staff may hand-pick the supplier. creditor_source='manual'
-// shields the choice from the auto-resolver and the bulk stock
-// refresh; the explicit "Resolve now" (force) hands it back to
-// AutoCount. Clearing the link resets the source so auto-resolution
-// applies again.
 export async function setCaseCreditorManual(
   env: Env,
   id: number,
@@ -1384,7 +1092,6 @@ export async function setCaseCreditorManual(
   return { ok: true, creditor_name: creditorName };
 }
 
-// ── Items management ──────────────────────────────────────────
 
 export async function addItems(
   env: Env,
@@ -1414,9 +1121,6 @@ export async function removeItem(env: Env, assrId: number, itemId: number) {
     .run();
 }
 
-// Per-item remark (Nick 2026-07-15) — edited from the Product Info
-// card, printed in the ITEMS table's REMARK column on both the
-// customer and supplier copies.
 export async function setItemRemark(
   env: Env,
   assrId: number,
@@ -1448,8 +1152,6 @@ export async function setItemSupplierRemark(
   return (r.meta.changes ?? 0) > 0;
 }
 
-// Per-item quantity (Nick 2026-07-20) — editable in the Product Info
-// card; feeds the ITEMS table's QTY column on both print copies.
 export async function setItemQty(
   env: Env,
   assrId: number,
@@ -1481,7 +1183,6 @@ export async function setItemCartonQty(
   return (r.meta.changes ?? 0) > 0;
 }
 
-// ── Attachments ───────────────────────────────────────────────
 
 export function assrAttachmentKey(
   assrId: number,
@@ -1500,10 +1201,6 @@ export async function saveAttachment(
   category: string,
   uploadedBy: number | null
 ): Promise<number> {
-  // Set visible_to_customer explicitly so it never lands NULL: the
-  // Postgres cut-over dropped the D1 `DEFAULT 1`, and a NULL flag is
-  // treated as hidden on the customer print + portal. Staff still flip
-  // it to 0 to hide a specific photo.
   const r = await env.DB.prepare(
     `INSERT INTO assr_attachments (assr_id, r2_key, file_name, content_type, category, uploaded_by, visible_to_customer)
      VALUES (?, ?, ?, ?, ?, ?, 1)`
@@ -1513,7 +1210,6 @@ export async function saveAttachment(
   return r.meta.last_row_id as number;
 }
 
-// ── Logistics ─────────────────────────────────────────────────
 
 export async function createLogistics(
   env: Env,
@@ -1562,7 +1258,6 @@ export async function patchLogistics(
   return r.meta.changes > 0;
 }
 
-// ── SO item lookup ────────────────────────────────────────────
 
 /**
  * Look up the line items for a Sales Order. Calls AutoCount's
@@ -1580,15 +1275,6 @@ export async function lookupSOItems(
   // as the AutoCount branch below; cancelled lines drop out. The scm schema is
   // absent on the D1 test mirror — the catch falls through to AutoCount.
   try {
-    // No boolean literal, no uuid in ORDER BY, exact doc_no: keep the SQL to the
-    // plain shape the env.DB (Hyperdrive) shim is proven to run for the sibling
-    // scm."mfg_sales_orders" reads. `cancelled` is a REAL Postgres boolean on
-    // the SCM table (2990's convention — not the Houzs 0/1 flag convention), so
-    // the drop-cancelled filter runs in JS below rather than as a SQL predicate.
-    // No ORDER BY: a 2990 SO whose lines all carry a NULL line_no (an import
-    // that never stamped the ordinal) came back EMPTY through env.DB while an SO
-    // with 0/1/2 line_no returned fine — ordering by an all-NULL column is the
-    // only difference, and the picker doesn't need a guaranteed order anyway.
     const rows = await env.DB.prepare(
       `SELECT item_code, description, qty, cancelled
          FROM scm."mfg_sales_order_items"
@@ -1599,8 +1285,6 @@ export async function lookupSOItems(
       .all<{ item_code: string; description: string | null; qty: number | null; cancelled: unknown }>();
     const scmSeen = new Map<string, { item_code: string; item_description: string | null; qty: number }>();
     for (const r of rows.results ?? []) {
-      // Skip cancelled lines. Coerce every truthy encoding the driver/shim might
-      // hand back for the boolean (true / 1 / 't' / 'true') to "cancelled".
       if (r.cancelled === true || r.cancelled === 1 || r.cancelled === "t" || r.cancelled === "true") continue;
       const code = (r.item_code ?? "").trim();
       if (!code) continue;
@@ -1621,9 +1305,6 @@ export async function lookupSOItems(
     }
     if (scmSeen.size > 0) return [...scmSeen.values()];
   } catch (e) {
-    // scm schema absent (D1 test mirror / pre-migration) is expected → fall
-    // through to AutoCount. A REAL error here (the 2990 item-lookup miss we are
-    // chasing) must not stay silent, so surface it to wrangler tail.
     console.warn(`[assr] scm item lookup failed for ${docNo}:`, (e as Error)?.message ?? e);
   }
 
@@ -1634,8 +1315,6 @@ export async function lookupSOItems(
     for (const d of details ?? []) {
       const code = (d.ItemCode ?? "").trim();
       if (!code) continue;
-      // Same service-line filter as the SCM branch above — SVC-* codes are
-      // fees, not the item that has the issue.
       if (isServiceLine({ itemCode: code })) continue;
       const desc = d.Description ?? d.ItemDescription ?? null;
       const qty = Number(d.Qty ?? 0) || 0;
@@ -1652,7 +1331,6 @@ export async function lookupSOItems(
     console.warn(`[assr] getDetail failed for ${docNo}, falling back to purchase_orders`, e);
   }
 
-  // Fallback: derive from locally-cached purchase_orders
   const rows = await env.DB.prepare(
     `SELECT DISTINCT item_code, item_description
        FROM purchase_orders
@@ -1661,13 +1339,11 @@ export async function lookupSOItems(
   )
     .bind(docNo)
     .all<{ item_code: string; item_description: string | null }>();
-  // Same SVC-* filter for the purchase_orders fallback so no path leaks a fee.
   return (rows.results ?? [])
     .filter((r) => !isServiceLine({ itemCode: r.item_code }))
     .map((r) => ({ ...r, qty: 1 }));
 }
 
-// ── Listing ───────────────────────────────────────────────────
 
 export interface ListAssrFilters {
   stage?: string;
@@ -1678,24 +1354,10 @@ export interface ListAssrFilters {
   page?: number;
   per_page?: number;
   include_archived?: boolean;
-  /** Show ONLY archived rows (Nick 2026-07-21: the Show-archived
-   *  toggle is a separate archived list, not a merged view). */
   archived_only?: boolean;
-  /** Comma-separated stage slugs to exclude. Used by the "Hide
-   *  completed" toggle to drop finished cases from the working list
-   *  without dropping them from the dataset. */
   exclude_stage?: string;
-  /** Calendar date-window bound (inclusive, `yyyy-mm-dd`) applied to the
-   *  column named by `date_field`. Lets the Cases Calendar fetch ONLY the
-   *  viewed month grid instead of fetch-all (perf: no freeze at scale).
-   *  Backward-compatible — omit both and no predicate is added, so the
-   *  List view and every other caller are unaffected. */
   from?: string;
   to?: string;
-  /** Which date column `from`/`to` bound. `reported` → complained_date;
-   *  `deadline` → COALESCE(deadline_at, complained_date), mirroring the
-   *  calendar's own day-bucketing so no in-window case is ever lost.
-   *  Defaults to `reported`. Only consulted when `from`/`to` is set. */
   date_field?: "reported" | "deadline";
   sort_by?: string;
   sort_dir?: "asc" | "desc";
@@ -1716,22 +1378,6 @@ export interface ListAssrFilters {
   allowed_company_ids?: number[];
 }
 
-// Case-insensitive (PG LIKE is case-sensitive, unlike SQLite) and
-// covers the Ref No column too (Nick 2026-07-07). LOWER() instead
-// of ILIKE so the D1 test mirror stays happy.
-//
-// Restore mobile client-search coverage lost when the Service Case list
-// moved to server pagination: the old client search also matched the
-// complaint issue text and the item code / description. complaint_issue
-// and item_code are denormalized columns on assr_cases; item_description
-// lives only in the child assr_items table, matched via a correlated
-// EXISTS so it also works inside the COUNT(*) query (no assr_items join).
-// Additive — keeps case no / SO doc / Ref / customer. Salesperson
-// (sales_agent) matches too, alongside its list column (2026-07-27).
-// Also match customer PHONE. assr_cases.phone is stored separator-free
-// (write path runs cleanPhone(so.phone) — strips +/-/space), so a term the
-// user types with dashes/spaces is cleanPhone'd the SAME way before the
-// LIKE; the raw predicate still catches an exact-format substring.
 async function pushCaseSearch(
   env: Env,
   where: string[],
@@ -1745,7 +1391,7 @@ async function pushCaseSearch(
   const doMatches = await findOrdersByDoNumber(env, search, allowedCompanyIds);
   const placeholders = (values: string[]) => values.map(() => "?").join(",");
   const doArms = [
-    "LOWER(c.delivery_order) LIKE ? OR LOWER(c.po_no) LIKE ?", // po_no: the PO column's service PO
+    "LOWER(c.delivery_order) LIKE ? OR LOWER(c.po_no) LIKE ?",
     ...(doMatches.soDocNos.length > 0 ? [`c.doc_no IN (${placeholders(doMatches.soDocNos)})`] : []),
     ...(doMatches.refKeys.length > 0 ? [`LOWER(TRIM(c.ref_no)) IN (${placeholders(doMatches.refKeys)})`] : []),
   ];
@@ -1755,17 +1401,6 @@ async function pushCaseSearch(
   binds.push(like, like, like, like, like, like, like, like, phoneLike, like, like, like, like, like, ...doMatches.soDocNos, ...doMatches.refKeys);
 }
 
-/** Shared company-scope WHERE fragment for the raw-SQL ASSR readers. Receives
- *  the caller's granted company ids from the route (see the field above — the
- *  HOUZS pin this used to describe was removed on 2026-07-20). The ids come from
- *  OUR companies master (validated integers), so inlining is safe.
- *
- *  THREE STATES (see the sentinel doc on companyScope.allowedCompanyIds):
- *  `undefined` = unresolved → NO predicate (single-company behaviour, and the
- *  pre-migration / D1 / cold-start path). `[]` = the caller is granted no active
- *  company → a predicate that matches NOTHING. Non-empty = scope to those ids.
- *  Treating `[]` as "no predicate" here would hand a restricted caller every
- *  company's cases. */
 function pushAllowedCompanies(where: string[], ids: number[] | undefined): void {
   if (ids === undefined) return;
   const clean = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
@@ -1776,43 +1411,21 @@ function pushAllowedCompanies(where: string[], ids: number[] | undefined): void 
   where.push(`c.company_id IN (${clean.join(",")})`);
 }
 
-/** WHERE fragment for the visibility scope on the paginated list and the CSV
- *  export.
- *
- *  It does not STATE the rule — `assrVisibilityPredicateSql`
- *  (services/assrVisibility.ts) does, and the aggregate endpoints, the detail
- *  GET and the printable all resolve through that same string. This used to be
- *  a hand-maintained twin of `assrVisibilitySql` in routes/assr.ts and the two
- *  drifted, which is the leak `fix/assr-aggregate-scope` had to close when the
- *  list and its own totals disagreed. There is nothing left here to keep in
- *  sync.
- *
- *  No binds: every id is inlined after being re-validated as a positive integer
- *  inside the predicate builder, the same justification `allowedCompaniesSql`
- *  gives. The list's bind array is positional, so having one fewer thing that
- *  can be spliced at the wrong offset is the point. */
 function pushVisibilityScope(
   where: string[],
   ids: number[] | undefined,
 ): void {
   const pred = assrVisibilityPredicateSql(ids, "c.");
-  if (pred === null) return; // unrestricted
+  if (pred === null) return;
   where.push(`(${pred})`);
 }
 
-// Allow-listed sort columns. Computed aliases (stage_since,
-// days_in_stage, is_breached, hours_to_deadline) and joined names
-// reference the SELECT list — the outer query is wrapped in
-// FROM (…) sub so the ORDER BY can name them directly.
 const ASSR_SORT_MAP: Record<string, string> = {
   id: "id",
   assr_no: "assr_no",
   doc_no: "doc_no",
   status: "status",
   stage: "stage",
-  // Semantic severity order (ASC = urgent first), not the raw text column —
-  // alphabetically 'high' sorted BELOW 'low'/'normal', so a priority sort
-  // never surfaced High cases second. Unknown values sink to the end.
   priority: "CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 ELSE 4 END",
   customer_name: "customer_name",
   complained_date: "complained_date",
@@ -1823,7 +1436,6 @@ const ASSR_SORT_MAP: Record<string, string> = {
   created_by: "created_by_name",
   stage_since: "stage_since",
   days_in_stage: "days_in_stage",
-  // Mig 064 — supplier handover + ready milestones
   supplier_pickup_at: "supplier_pickup_at",
   items_ready_at: "items_ready_at",
   stage_changed_at: "stage_changed_at",
@@ -1839,9 +1451,6 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
   const where: string[] = [];
   const binds: any[] = [];
 
-  // Soft-delete filter: archived_only flips the list to ONLY archived
-  // rows (the UI's Archived view); otherwise archived rows are hidden
-  // unless explicitly merged in with ?include_archived=1.
   if (f.archived_only) where.push("c.archived_at IS NOT NULL");
   else if (!f.include_archived) where.push("c.archived_at IS NULL");
 
@@ -1878,14 +1487,6 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
     binds.push(f.creditor_code);
   }
   if (f.search) await pushCaseSearch(env, where, binds, f.search, f.allowed_company_ids);
-  // Calendar date-window bound (perf/servicecase-board-calendar-bound):
-  // the Cases Calendar passes the viewed month grid as from/to so it pulls
-  // only that window instead of the whole active backlog. We compare on the
-  // yyyy-mm-dd prefix (substr 1..10) so the predicate lines up EXACTLY with
-  // the client-side day bucketing (raw.slice(0,10)) and is immune to the
-  // stored time-of-day. `deadline` basis coalesces to complained_date to
-  // match the calendar's own fallback, so no in-window case is dropped.
-  // Additive — no from/to means no predicate (List view unaffected).
   if (f.from || f.to) {
     const dateCol =
       f.date_field === "deadline"
@@ -1908,13 +1509,6 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
   const perPage = Math.min(f.per_page ?? 50, 200);
   const offset = (page - 1) * perPage;
 
-  // stage_since: when the case entered its current stage.
-  //   - If there is a stage_change activity to the current stage, use its created_at
-  //   - Otherwise fall back to the case's created_at (still in initial stage)
-  // days_in_stage: whole days elapsed (SQLite julianday diff, floored)
-  // We wrap the SELECT in FROM (…) sub so the outer ORDER BY can
-  // reference the computed aliases (stage_since, days_in_stage,
-  // hours_to_deadline, is_breached) directly without re-computing.
   const sortExpr = f.sort_by ? ASSR_SORT_MAP[f.sort_by] : null;
   const sortDir = f.sort_dir === "asc" ? "ASC" : "DESC";
   const orderBy = sortExpr
@@ -1973,10 +1567,6 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
     ${whereSql}
   `;
 
-  // The COUNT and the page itself are independent reads over the same
-  // predicate, so they go out as one wave instead of the count blocking the
-  // rows. Both statements are unchanged; this only removes a serial round trip
-  // from every list load (the pattern PR #416 used on the SO list).
   const [total, rows] = await Promise.all([
     env.DB.prepare(`SELECT COUNT(*) as count FROM assr_cases c ${whereSql}`)
       .bind(...binds)
@@ -2001,7 +1591,6 @@ export async function listAssrCases(env: Env, f: ListAssrFilters) {
   };
 }
 
-/** `order_pos` — see services/assrOrderPos.ts. No scm in the D1 test env. */
 async function attachOrderPos(env: Env, rows: Array<Record<string, unknown>>) {
   if (isSupabaseConfigured(env)) await attachOrderPosAndFill(env, rows);
 }
@@ -2044,9 +1633,6 @@ export async function attachDeliveryOrders(env: Env, rows: any[]) {
         .bind(...soDocNos)
         .all();
       for (const d of (q.results ?? []) as any[]) {
-        // XS-prefixed docs are AutoCount's cancelled-transfer artifacts —
-        // the SO pull filters those SOs out today, but older mirror rows
-        // may still carry one; never show them as a live DO.
         const t = d.transfer_to != null ? String(d.transfer_to).trim() : "";
         if (d.doc_no && t && !/^xs/i.test(t)) bySoDo.set(String(d.doc_no), t);
       }
@@ -2060,12 +1646,6 @@ export async function attachDeliveryOrders(env: Env, rows: any[]) {
     ...new Set(
       houzs
         .map((r) => String(r.ref_no ?? "").trim().toLowerCase())
-        // A ref can only be a matching KEY if it carries at least one
-        // letter/digit. Operators park "-" / "—" / "." in Ref on both sides,
-        // and placeholders are SHARED, not identifying: prod carries 22
-        // mirror DOs whose ref is "-", so a case whose ref_no is also "-"
-        // (ASSR/2607-065, 2026-07-29) glued all 22 unrelated DOs onto
-        // itself. `Boolean` alone let every non-empty placeholder through.
         .filter((s) => /[a-z0-9]/.test(s))
     ),
   ];
@@ -2124,9 +1704,6 @@ export async function attachDeliveryOrders(env: Env, rows: any[]) {
   }
 }
 
-// Full dump used by the CSV export route. Honors the same filters
-// as listAssrCases but skips pagination — caller is responsible for
-// applying a sensible safety cap if needed.
 export async function exportAssrCases(
   env: Env,
   f: Omit<ListAssrFilters, "page" | "per_page">
@@ -2198,7 +1775,6 @@ export async function exportAssrCases(
   return results;
 }
 
-// ── Activity log helper ───────────────────────────────────────
 
 // `category` (mig 064) drives the timeline filter pills. Mig 0108
 // renames 'purchasing' and splits it into audience buckets (Nick
@@ -2263,26 +1839,10 @@ async function logActivity(
 
 export { logActivity };
 
-// ── Survey tokens ─────────────────────────────────────────────
-// Reused by the manual survey-token endpoint AND by the auto-email
-// dispatch on case close — pulled out so both paths agree on the
-// "reuse unsubmitted token" behavior.
 
-// mig 015 shipped assr_survey_tokens.expires_at as "nullable -- null =
-// never expires" and then no code ever wrote it, so every survey token
-// minted since has been immortal while the route's 404 claimed
-// otherwise. A survey is asked for right after the case closes and
-// goes stale fast -- a rating submitted a year later is noise -- and
-// the link sits on an unauthenticated route that echoes the customer's
-// name and SO number, so the window is the exposure. 90 days is far
-// past any real response and still ends.
 export const SURVEY_TTL_DAYS = 90;
 
 export async function issueSurveyToken(env: Env, assrId: number): Promise<string> {
-  // The reuse branch has to honour the TTL too. Without the expiry
-  // predicate this hands back a token routes/survey.ts now rejects --
-  // a link that 404s the moment it is shared, which is worse than the
-  // immortal one it replaced.
   const existing = await env.DB.prepare(
     `SELECT token FROM assr_survey_tokens
       WHERE assr_id = ? AND submitted_at IS NULL

@@ -8,27 +8,6 @@
 // route re-exports them, because two suites import them from there.
 // ----------------------------------------------------------------------------
 
-/* ── ROLLOUT GRACE WINDOW for mandatory CAS (2026-07-22) ───────────────────────
-   Making `version` mandatory is a BREAKING wire change for every browser tab
-   that is ALREADY OPEN when this deploys. Those tabs run the previous JS
-   bundle, which never sends a version, so without a grace path the first Save
-   after deploy 428s for every single person mid-edit, all at once, with no way
-   to recover except a reload they have not been told to do. A correctness fix
-   that interrupts the whole shop the moment it lands is not a fix yet.
-
-   MECHANISM: a bounded, opt-in, self-closing window driven by the
-   `SO_CAS_GRACE_UNTIL` Worker variable (an ISO-8601 instant).
-     • unset  → strict from the first request (the safe default, and the
-                permanent steady state; nothing to remember to turn off)
-     • set and in the FUTURE → a request that omits the version is accepted with
-                the PRE-CAS semantics (server-current version, last-writer-wins,
-                exactly today's production behaviour) and flagged `casGrace`
-     • set and in the PAST → strict again, automatically
-
-   A STALE version is ALWAYS a 409, in or out of the window: the grace only
-   covers clients that cannot speak the protocol at all, never a client that
-   spoke it and lost. Set it to deploy time + 30 minutes at rollout and delete
-   the variable afterwards — see docs/IDEMPOTENCY-PHASE2-RUNBOOK.md. */
 export type SoCasGraceWindow = { until?: string | null; now?: number };
 
 export function soCasGraceOpen(window?: SoCasGraceWindow): boolean {

@@ -1,7 +1,3 @@
-// Sister review P3 follow-up: the stock allocator now gives a held Sales Order
-// no stock, so putting an SO on hold, or taking it off, has to start an
-// allocation sweep or the stock stays where it was until some unrelated write.
-// Drives the REAL shared hold handler through the fake PostgREST client.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 

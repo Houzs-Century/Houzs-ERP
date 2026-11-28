@@ -1,22 +1,3 @@
-// ----------------------------------------------------------------------------
-// StockCard — per-SKU drilldown at /inventory/stock-card/:itemCode
-// (Inv PR2). Optional ?warehouseId=… scopes the ledger + lots to one
-// warehouse; otherwise we sum across all warehouses.
-//
-// Read-only — no new tables, no new API endpoints. Reuses:
-//   useInventoryMovements({ itemCode, warehouseId? })
-//   useInventoryLots(itemCode, { warehouseId?, includeClosed? })
-//   useInventoryProductBreakdown(itemCode) — per-warehouse balances
-//
-// Layout (full page, PurchaseOrderDetail chrome):
-//   1. Header + back link
-//   2. Stats: Total Qty · Warehouses · Last Movement · Owned Value
-//      (owned = consignment excluded from VALUE, shown as quantity beside it)
-//   3. Warehouse filter pills (when no ?warehouseId param)
-//   4. Per-Warehouse Balance card (All-mode only)
-//   5. Movements ledger w/ running balance (computed client-side)
-//   6. FIFO Lots card (collapsible, "Show closed lots" toggle)
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
@@ -50,17 +31,10 @@ import chrome from './SalesOrderDetail.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-// Type toggles for the movements filter. TRANSFER is a real movement_type but
-// inventory writes it as a signed ADJUSTMENT here, so only these three ever
-// appear in the ledger — the owner named exactly IN / OUT / ADJUSTMENT.
 const MOVEMENT_TYPE_OPTIONS: readonly MovementType[] = ['IN', 'OUT', 'ADJUSTMENT'];
 
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
-/** Best-effort route for a source doc on the ledger row. Inventory writes
- *  carry source_doc_id (the UUID of the originating GRN/DO/etc) — when
- *  present we can deep-link straight to the detail page. ADJUSTMENT links to its
- *  document when it has one, else to the list. */
 const docHrefFor = (m: InventoryMovement): string | null => {
   switch (m.source_doc_type) {
     case 'GRN':              return m.source_doc_id ? `/scm/grns/${m.source_doc_id}` : null;
@@ -94,18 +68,10 @@ export const StockCard = () => {
 
   const warehouses = warehousesQ.data ?? [];
   const breakdownAll = (breakdownQ.data?.balances ?? []).filter((b) => b.item_code === itemCode);
-  // When filtered, only show the matching warehouse row in the summary stats.
   const breakdown = warehouseId
     ? breakdownAll.filter((b) => b.warehouse_id === warehouseId)
     : breakdownAll;
 
-  // API returns DESC; reverse to ASC for running-balance accumulation, then
-  // re-render DESC. Running balance is the cumulative qty *after* the row's
-  // movement is applied. Reflects whatever scope the user is viewing (All
-  // warehouses or one).
-  // OUT rows store qty as a positive count but reduce on-hand; we subtract.
-  // IN adds. ADJUSTMENT / TRANSFER carry a SIGNED qty (positive = found stock,
-  // negative = write-off / transfer-out) — add as-is.
   const movementsDesc = useMemo(() => movementsQ.data ?? [], [movementsQ.data]);
   const movementsWithBalance = useMemo(() => {
     const asc = [...movementsDesc].slice().reverse();
@@ -115,17 +81,11 @@ export const StockCard = () => {
       running += m.movement_type === 'OUT' ? -m.qty : m.qty;
       out.push({ ...m, runningBalance: running });
     }
-    // newest-first render
     return out.reverse();
   }, [movementsDesc]);
 
   const lots: InventoryLot[] = lotsQ.data ?? [];
 
-  /* Batch 2 — the Movements ledger renders through the shared DataTable
-     (was DataGrid). Running Balance is precomputed per row above
-     (chronological), so it stays correct no matter how the table re-sorts.
-     The Per-Warehouse Balance and FIFO Lots cards stay as plain tables —
-     small summary views with their own collapse toggle. */
   type MovementRow = InventoryMovement & { runningBalance: number };
   // SHORT code-name only ("KL WAREHOUSE") — the ONE canonical warehouse label
   // (owner 2026-07-24). Not a code+name concat, not the long `name`.
@@ -239,9 +199,6 @@ export const StockCard = () => {
         key: 'reason',
         label: 'Reason',
         width: '130px',
-        // reason_code is set on ADJUSTMENT movements (and COUNT on stock-take
-        // corrections); other movement types have none → '—'. The raw code
-        // (WRITEOFF / DAMAGE …) is mapped to its plain label, matching mobile.
         getValue: (m) => (m.reason_code ? adjustmentReasonLabel(m.reason_code) : ''),
         render: (m) => (
           <span className={styles.numCellZero}>{m.reason_code ? adjustmentReasonLabel(m.reason_code) : '—'}</span>
@@ -267,8 +224,6 @@ export const StockCard = () => {
   const [movementFilter, setMovementFilter] = useState<MovementFilter>(EMPTY_MOVEMENT_FILTER);
   const filterActive = isMovementFilterActive(movementFilter);
 
-  // Warehouse options for the select — the distinct warehouses that actually
-  // appear in the loaded movements, by their SHORT code (the canonical label).
   const movementWarehouses = useMemo(() => {
     const seen = new Map<string, string>();
     for (const m of movementsWithBalance) {
@@ -279,8 +234,6 @@ export const StockCard = () => {
       .sort((a, b) => a.code.localeCompare(b.code));
   }, [movementsWithBalance, whName]);
 
-  /* Free-text search box (kept — it also matches notes / reason / qty, which the
-     structured filter does not) plus the structured filter. Both narrow. */
   const [movementSearch, setMovementSearch] = useState('');
   const visibleMovements = useMemo(() => {
     const filtered = filterMovements(movementsWithBalance, movementFilter);
@@ -301,23 +254,13 @@ export const StockCard = () => {
     setMovementFilter(EMPTY_MOVEMENT_FILTER);
     setMovementSearch('');
   };
-  // "showing X of N" is meaningful whenever EITHER the structured filter or the
-  // free-text search has narrowed the loaded rows.
   const anyNarrowing = filterActive || movementSearch.trim() !== '';
 
-  // ── Stats (always reflect the active warehouse filter) ────────────────
   const productName =
     breakdownAll[0]?.product_name ?? movementsDesc.find((m) => m.product_name)?.product_name ?? null;
   const totalQty = breakdown.reduce((s, b) => s + (b.qty ?? 0), 0);
   const warehouseCount = breakdown.filter((b) => (b.qty ?? 0) !== 0).length;
   const lastMovementAt = movementsDesc[0]?.created_at ?? null;
-  /* Consignment stock is in our warehouse and is the supplier's until it sells:
-     quantity yes, value never. This stat used to be a raw
-     `qty_remaining x unit_cost_sen` over EVERY lot labelled "FIFO Value", which
-     contradicted the per-warehouse table right below it — that one comes from
-     /breakdown/:itemCode, which has excluded consignment since BUG-HISTORY
-     2026-07-25. Same shared transform mobile's Stock Card uses, so there is one
-     split and one owned-value sum for all three surfaces. */
   const bd = useMemo(() => buildStockBreakdown(lots), [lots]);
   const scopedTo = warehouseId ? warehouses.find((x) => x.id === warehouseId)?.code ?? null : null;
 
@@ -348,9 +291,6 @@ export const StockCard = () => {
         />
       </div>
 
-      {/* ── Warehouse filter pills (All-mode only — once a warehouse is
-              picked, the per-warehouse breakdown card is hidden and the
-              pills act as the navigation back to All). ────────────────── */}
       <div className={styles.warehouseChips}>
         <button
           type="button"
@@ -432,7 +372,6 @@ export const StockCard = () => {
         </section>
       )}
 
-      {/* ── Movements ledger ───────────────────────────────────────────── */}
       <section className={chrome.card}>
         <header className={chrome.cardHeader}>
           <h2 className={chrome.cardTitle}>
@@ -558,7 +497,6 @@ export const StockCard = () => {
         )}
       </section>
 
-      {/* ── FIFO Lots ──────────────────────────────────────────────────── */}
       <section className={chrome.card}>
         <header
           className={chrome.cardHeader}

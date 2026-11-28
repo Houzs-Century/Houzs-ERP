@@ -53,11 +53,6 @@
 
 import { isServiceLine } from '../shared';
 
-/* Emission order for the ready list, and the source of MAIN_CATEGORIES so the
-   two cannot drift apart. docs/stock-reconciliation.md §2.4 records why the
-   order is fixed here: AutoCount holds "BEDFRAME/ACC" 31 times and
-   "ACC/BEDFRAME" twice for the same meaning, so the ERP is the canonical side
-   and the parity checker compares order-insensitively. */
 export const MAIN_CATEGORY_ORDER = ['BEDFRAME', 'SOFA', 'MATTRESS'] as const;
 
 export const MAIN_CATEGORIES = new Set<string>(MAIN_CATEGORY_ORDER);
@@ -75,32 +70,10 @@ export function normCategory(raw: string | null | undefined): string {
 
 export type ReadinessLine = {
   item_group: string | null;
-  /** Used to detect SERVICE lines (SVC- code) when item_group is ambiguous. */
   item_code?: string | null;
-  /** mfg_products.category, when the caller already has the catalog joined.
-   *  isServiceLine calls this the STRONGEST service signal — but until
-   *  2026-08-16 this type had no field for it, so no caller could ever pass it
-   *  and the "strongest signal" was dead code from here. Optional: callers that
-   *  have not resolved the catalog omit it and fall back to item_group /
-   *  the SVC- code prefix. */
   category?: string | null;
   stock_status: 'PENDING' | 'READY' | string;
   cancelled?: boolean | null;
-  /** This line has nothing left to deliver — `qty - delivered + returned <= 0`.
-   *
-   *  A line that has SHIPPED cannot be waiting for stock, but its
-   *  `stock_status` says it is: recomputeSoStockAllocation skips the line at
-   *  `remaining <= 0` (correctly — there is nothing left to allocate), so the
-   *  stored value is FROZEN at whatever it last was, and for goods that shipped
-   *  straight off a purchase order that is usually PENDING.
-   *
-   *  OPTIONAL, and this is the one shape CLAUDE.md's "a parameter that DECIDES
-   *  something is required" rule permits: **its absence is the STRICTER
-   *  direction.** A caller that cannot say whether the line shipped leaves it
-   *  undefined and the line keeps gating exactly as it did before this field
-   *  existed — the order reads NOT ready, which never over-promises. Making it
-   *  required would have forced eight call sites, several of which do not load
-   *  delivery quantities at all, to invent an answer. */
   fulfilled?: boolean | null;
 };
 
@@ -109,34 +82,12 @@ export type ReadinessSummary = {
   mainReady:    number;
   accCount:     number;
   accReady:     number;
-  /** Live SERVICE lines. COUNTED, not dropped: a service-only SO ("had lines,
-   *  every one of them a service") must be distinguishable from an SO with no
-   *  lines at all, because the first is ready and the second is never ship-able.
-   *  Services carry no inventory, so they have no ready/short tally. */
   svcCount:     number;
-  /** True when every MAIN line is READY (regardless of accessories).
-   *  VACUOUSLY TRUE when there is no MAIN line — that is the right reading for
-   *  an accessory-only order and a trap everywhere else. Never read it BARE:
-   *  the ship gate is isShipReady, and the one place the label reads it
-   *  ("PARTIAL") pairs it with `mainCount > 0` for exactly this reason. */
   isMainReady:  boolean;
-  /** True when the SO has at least one live line and every stock-bearing one —
-   *  MAIN and accessory — is READY. Service-only SOs qualify: they have a live
-   *  line and nothing to allocate. A line-less SO never does. */
   isFullyReady: boolean;
-  /** THE ship gate — use this, never bare isMainReady (see below). False for a
-   *  line-less SO. */
   isShipReady:  boolean;
-  /** UI label per the contract above (empty string when nothing is ready). */
   stockRemark:  string;
-  /** Groups that ARE fully allocated, in emission order (MAIN_CATEGORY_ORDER,
-   *  then the single collapsed "ACC" entry). This IS what stockRemark names,
-   *  except in the two states that have their own word — "READY" and
-   *  "PARTIAL". Empty when nothing is ready yet. */
   readyCategories: string[];
-  /** Groups still short of READY — the complement, kept for internal callers
-   *  that need to ask "what are we waiting on". MAIN cats sorted, the single
-   *  collapsed "ACC" entry last. NOT what the label names. */
   pendingCategories: string[];
 };
 
@@ -147,44 +98,21 @@ export type ReadinessSummary = {
 export function summariseReadiness(lines: ReadinessLine[]): ReadinessSummary {
   const live = lines.filter((l) => !l.cancelled);
   let mainCount = 0, mainReady = 0, accCount = 0, accReady = 0, svcCount = 0, fulCount = 0;
-  /* Per-MAIN-category totals, so the label can name the categories that are
-     FULLY in ("BEDFRAME" when every bedframe line is READY while a mattress
-     line on the same SO is not). A category is ready only when total === ready;
-     one short line among ten disqualifies it. */
   const mainByCat = new Map<string, { total: number; ready: number }>();
   const pendingMainCats = new Set<string>();
   let anyAccPending = false;
 
   for (const l of live) {
-    /* SERVICE lines (delivery fee / dispose / lift) have NO inventory — they
-       must never gate stock readiness nor show in the Stock Status pill.
-       Previously SERVICE fell into the accessory (`else`) bucket and a delivery
-       fee kept the SO showing "ACC".
-       They are still excluded from every ready/short tally, but they are now
-       COUNTED: `continue` alone made a service-only SO byte-identical to an SO
-       with zero lines, which is why such an SO could never become ready.
-       `category` is passed when the caller has the catalog joined — it is the
-       strongest of the three signals. */
     if (isServiceLine({ itemGroup: l.item_group, itemCode: l.item_code, category: l.category })) {
       svcCount += 1;
       continue;
     }
-    /* ALREADY SHIPPED — counted, never gating, for the same reason SERVICE
-       lines are counted: `continue` alone would make an order whose every line
-       has been delivered byte-identical to an order with NO LINES, and the
-       empty-husk gate below would then refuse a finished order (soShipGate,
-       the 16 POS husks of 2026-08-13). It is excluded from the ready tallies
-       because its goods are at the customer — asking whether they are "in
-       stock" is asking the wrong question of the wrong line. */
     if (l.fulfilled === true) {
       fulCount += 1;
       continue;
     }
     const cat = normCategory(l.item_group);
     const isMain = MAIN_CATEGORIES.has(cat);
-    /* stock_status 'READY' = fully allocated. 'PARTIAL' (Commander 2026-05-30
-       #4) = some but not all of the line's qty allocated → counts as NOT
-       ready for the category-level "all ready" gate. 'PENDING' = nothing. */
     const isReady = l.stock_status === 'READY';
     if (isMain) {
       mainCount += 1;
@@ -200,40 +128,16 @@ export function summariseReadiness(lines: ReadinessLine[]): ReadinessSummary {
     }
   }
 
-  /* Every live line, service included — the ONLY thing that separates "this SO
-     has nothing left to wait for" from "this SO has nothing on it". */
   const liveCount = mainCount + accCount + svcCount + fulCount;
 
-  const isMainReady  = mainCount > 0 ? mainReady === mainCount : true;  // no-main SO = main-ready by convention
+  const isMainReady  = mainCount > 0 ? mainReady === mainCount : true;
   /* >= 1 live line AND every stock-bearing line allocated. Service lines make
      liveCount non-zero without adding anything to allocate, which is precisely
      the owner's ruling that a service-only SO is ready on sight. The empty SO
      still fails here, so PR #2186's husk gate is untouched. */
   const isFullyReady = liveCount > 0 && mainReady === mainCount && accReady === accCount;
-  /* THE ship gate. isMainReady is VACUOUSLY true when mainCount === 0, which is
-     the right convention for an accessory-only SO but a trap everywhere else:
-     an SO with NO stock-bearing lines at all also reports main-ready, so any
-     caller gating on bare isMainReady ships an empty document.
-
-     That is not hypothetical. On 2026-08-13/14 the 2990 POS minted 16 test SOs;
-     staff "undid" them by deleting every line, and the auto-allocation sweep
-     then advanced all 16 empty husks to READY_TO_SHIP — "every main product
-     line is READY" is trivially satisfied by zero lines. Delivery Planning had
-     already worked around this locally; the gate now lives here so that every
-     caller inherits it.
-
-     Rule: when the SO HAS a main line, main-ready is enough (accessories don't
-     block ship). Otherwise fall back to isFullyReady, which requires at least
-     one live line AND all of them READY — so a line-less SO is never ship-able.
-
-     UNCHANGED for any SO carrying a main line. The only behaviour that moved on
-     2026-08-16 is that a service-only SO now satisfies isFullyReady and so may
-     ship, per the owner's ruling. */
   const isShipReady  = mainCount > 0 ? isMainReady : isFullyReady;
 
-  /* What IS ready — MAIN cats with every line allocated, in emission order,
-     then the one collapsed ACC entry. Services never appear in either list:
-     they carry no stock, so there is nothing for them to be ready FOR. */
   const readyCats: string[] = [];
   for (const cat of MAIN_CATEGORY_ORDER) {
     const cell = mainByCat.get(cat);
@@ -241,30 +145,18 @@ export function summariseReadiness(lines: ReadinessLine[]): ReadinessSummary {
   }
   if (accCount > 0 && accReady === accCount) readyCats.push('ACC');
 
-  /* The complement — what is still short. Not the label; kept for callers that
-     ask "what are we waiting on" (the probe scripts do). */
   const pc = [...pendingMainCats].sort();
   if (anyAccPending) pc.push('ACC');
 
-  /* Stock remark — names WHAT IS READY.
-
-     Deliberately NOT branched on bare isMainReady. That flag is VACUOUSLY TRUE
-     when mainCount === 0, and reading it alone is exactly how an accessory-only
-     SO with one short accessory came to print "READY (PARTIAL)" beside its own
-     isShipReady of false. `mainCount > 0 &&` is that fix, and it is the
-     difference between this and the pre-2026-08-16 code: PARTIAL asserts "the
-     MAIN products are in", so an SO with no main line can never earn it and
-     falls through to the ready list — which is empty while its accessories are
-     short, so the cell says nothing. */
   let stockRemark: string;
   if (liveCount === 0) {
-    stockRemark = '';                       // no lines — say nothing, ship nothing
+    stockRemark = '';
   } else if (isFullyReady) {
-    stockRemark = 'READY';                  // incl. service-only and acc-only-all-in
+    stockRemark = 'READY';
   } else if (mainCount > 0 && isMainReady) {
-    stockRemark = 'PARTIAL';                // every MAIN in, an accessory is not
+    stockRemark = 'PARTIAL';
   } else {
-    stockRemark = readyCats.join('/');      // '' when nothing is ready yet
+    stockRemark = readyCats.join('/');
   }
 
   return { mainCount, mainReady, accCount, accReady, svcCount, isMainReady, isFullyReady, isShipReady, stockRemark, readyCategories: readyCats, pendingCategories: pc };

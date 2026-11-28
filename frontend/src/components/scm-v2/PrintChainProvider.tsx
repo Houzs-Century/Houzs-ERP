@@ -45,13 +45,9 @@ import {
 import { clearPrintResume, peekPrintResume, trackPrintAction } from "../../lib/chunkActionRecovery";
 import { PrintPreviewModal } from "./PrintPreviewModal";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
-import { TRANSFER_DOC } from "../../vendor/shared/transfer-vocabulary";
+import { TRANSFER_DOC } from "../../../../shared/src/vendor/shared/transfer-vocabulary";
 import type { PrintTarget } from "../../lib/printChain";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
-/* `printPreviewRows` lives in printDocumentPdf.ts beside the fetch that shapes
-   the header it reads. It is pure and tiny, so it is imported statically while
-   the fetch and the generators stay behind the dynamic imports below — that is
-   what keeps jspdf out of every list's bundle. */
 import { printPreviewRows } from "../../lib/printDocumentPdf";
 
 /** Open the print preview for one document. Never navigates. */
@@ -64,25 +60,13 @@ type Loaded = { header: Record<string, unknown>; items: unknown[]; payments?: un
 export function PrintChainProvider({ children }: { children: ReactNode }) {
   const notify = useNotify();
   const [target, setTarget] = useState<PrintTarget | null>(null);
-  /* The card's summary lines. Null while the detail read is in flight, so the
-     band shows the document type and number — which the row already knew — and
-     the lines fill in a beat later instead of the dialog waiting to open. */
   const [loaded, setLoaded] = useState<Loaded | null>(null);
 
-  /* The read the dialog is waiting on, held as a PROMISE and not only as its
-     result, so "Print now" clicked while the card still says Loading waits for
-     the document instead of doing nothing — a dead click is the "failure that
-     reaches nobody" shape this repo keeps paying for. The target rides along so
-     a resolved read is applied only while it is still the live one: a slow
-     Sales Order must not fill in the card of the Delivery Order the operator
-     picked after giving up on it, nor reopen a dialog that has been closed. */
   const read = useRef<{ target: PrintTarget; promise: Promise<Loaded> } | null>(null);
 
   const printDocument = useCallback<PrintDocumentFn>((t) => {
     setLoaded(null);
     setTarget(t);
-    /* Tracked (lib/chunkActionRecovery): a chunk the last deploy deleted reloads
-       the tab once and the effect below reopens THIS document's preview. */
     const promise = trackPrintAction(
       { kind: "chain", target: t },
       () => import("../../lib/printDocumentPdf").then((m) => m.fetchPrintBundle(t)),
@@ -122,8 +106,6 @@ export function PrintChainProvider({ children }: { children: ReactNode }) {
     }
   }, [notify]);
 
-  /* The load after a stale-build reload: reopen the document that was being
-     printed, once, and only on the URL it was printed from. */
   useEffect(() => {
     const resume = peekPrintResume(`${window.location.pathname}${window.location.search}`, Date.now());
     if (resume?.kind !== "chain") return;
@@ -132,17 +114,11 @@ export function PrintChainProvider({ children }: { children: ReactNode }) {
   }, [printDocument]);
 
   const close = useCallback(() => { read.current = null; setTarget(null); setLoaded(null); }, []);
-  /* Print and download close the dialog once the render RESOLVES, never before
-     — the same rule `usePrintPreview` states, so a slow document can show
-     "Preparing…" instead of vanishing. A new-tab preview leaves it open: the
-     operator looked, and now wants to print. */
   const finish = useCallback(async (action: PdfAction) => { await deliver(action); close(); }, [deliver, close]);
 
   const rows = useMemo(() => {
     if (!target) return [];
     if (!loaded) return [{ value: "Loading document details…" }];
-    /* Built by the module that fetched it, so the card and the PDF read the
-       same header rather than two opinions of it. */
     return printPreviewRows(target, loaded.header);
   }, [target, loaded]);
 

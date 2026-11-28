@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { formatPhone } from "../vendor/shared/phone";
+import { formatPhone } from "../../../shared/src/vendor/shared/phone";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { MobileGantt } from "./MobileGantt";
 import { MediaLightbox, type MediaItem } from "../components/MediaLightbox";
@@ -25,7 +25,7 @@ import { ledgerCategoryLabel } from "../vendor/scm/lib/pms-ledger-categories";
 import { isReviewableTitle } from "../vendor/scm/lib/pms-reviewable-titles";
 import { PROJECT_STATUS_OPTIONS, paymentPillOptions } from "../vendor/scm/lib/pms-project-status";
 import "./mobile.css";
-import { fmtTime } from "../vendor/shared/format";
+import { fmtTime } from "../../../shared/src/vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { EditProjectSheet } from "./MobileEditProjectSheet";
 import { DefectActionsCtx, DefectFileActions, type AttachmentAction } from "./MobilePmsDefectActions";
@@ -51,30 +51,7 @@ import type { DetailForecast, LastEventExpoMap } from "../pages/projects/forecas
 import { LastEventExpoMapBlock } from "../pages/projects/LastEventExpoMap";
 import { MobileForecastLines } from "./MobilePmsForecast";
 
-/* ------------------------------------------------------------------ *
- * Mobile Project (PMS) — list + detail.
- *
- * Presentation ported VERBATIM from the owner's Houzs Mobile.html design
- * (`<section id="project">` + `renderProject`/`projRenderTasks`) onto the
- * .hz-m design classes now in mobile.css (.hdr .ey .pacc .psec-t .pbody
- * .pstage .pdot .docrow .rbadge .tinybtn .pgrid2 .pkv-l .pkv-v .so-row
- * .so-grid .so-k .so-v .spill .sochip). Only the presentation changed —
- * all data-fetching + behaviour is unchanged.
- *
- * Wired to the same /api/projects backend the desktop Projects page uses
- * (row-scoped + page-access-gated server side). The list hits GET
- * /api/projects (returns { data, page, per_page, total }); the detail hits
- * GET /api/projects/:id (returns { project, finance, checklist, sections,
- * section_progress, sales_attendees, _access, ... }).
- *
- * ROLE GATE: the Financial-snapshot section renders ONLY when the user has
- * finance page-access — pageAccess("projects.finances") !== "none". The
- * backend ALSO strips `finance` from the payload for a role whose PMS
- * position lacks FINANCIAL access (defense in depth), so we additionally
- * hide the panel when `finance` came back null.
- * ------------------------------------------------------------------ */
 
-// ── List row (subset of the desktop ProjectRow the list endpoint returns) ──
 type ProjectListRow = {
   id: number;
   code: string;
@@ -91,10 +68,6 @@ type ProjectListRow = {
   progress_pct?: number | null;
   pic_name: string | null;
   active_section_name?: string | null;
-  // Section-driven stage counters (mig 050). Already returned by the
-  // /api/projects list SELECT and consumed by the desktop Projects table; typed
-  // here so the mobile card can show the current section "done/total" instead of
-  // the retired coarse `stage` enum.
   sections_total?: number;
   sections_complete?: number;
   // Sales-only progress (owner 2026-07-21): counts over role_label
@@ -106,14 +79,11 @@ type ProjectListRow = {
 
 type ListResponse = {
   data?: ProjectListRow[];
-  // Tolerate alternate envelope keys just in case.
   projects?: ProjectListRow[];
   rows?: ProjectListRow[];
   total?: number;
 };
 
-// ── Detail (subset — never crash on missing fields) ──
-// ChecklistItem + TaskAttachment moved to MobilePmsDocCard.tsx (imported above).
 
 type TasklistSection = {
   id: number;
@@ -138,9 +108,6 @@ type SalesAttendee = {
   user_name: string | null;
 };
 
-// Setup / dismantle crew + timing (mig 024/083). The detail endpoint
-// spreads `p.*` plus JOIN aliases, so these arrive at the top level of
-// `project`. setup_start_at / dismantle_start_at are ISO "date T time".
 type PhasePhoto = {
   id: number;
   phase: "setup" | "dismantle" | string;
@@ -172,7 +139,6 @@ type ProjectDetail = {
     pic_phone?: string | null;
     payment_status?: string | null;
     archived_at?: string | null;
-    // Setup / dismantle logistics (real columns + JOIN aliases).
     setup_start_at?: string | null;
     dismantle_start_at?: string | null;
     setup_driver_user_id?: number | null;
@@ -183,8 +149,6 @@ type ProjectDetail = {
     dismantle_driver_name?: string | null;
     setup_lorry_plate?: string | null;
     dismantle_lorry_plate?: string | null;
-    // Phase crew editor JSON (desktop parsePhaseCrew) — the desktop form
-    // writes crew here, NOT the FK columns above, so mobile must dual-read.
     setup_crew?: string | null;
     dismantle_crew?: string | null;
   };
@@ -215,7 +179,6 @@ type ProjectDetail = {
   };
 };
 
-// Full stock-transfer row (dual-read camelCase ?? snake_case).
 type StockTransfer = {
   id: number;
   direction?: string | null;
@@ -234,9 +197,6 @@ type StockTransfer = {
   fileName?: string | null;
 };
 
-// Finance ledger line (income/cost). Synthetic sales rows carry source='sales_entry';
-// money Finance posted to the event carries source='books' and its document
-// number (payment-request item 5 — the server already set aside what it replaced).
 type FinanceLine = {
   id: number;
   kind: string;
@@ -275,36 +235,23 @@ type ProjectAttachment = {
 
 type Lorry = { id: number; plate: string | null; type?: string | null; is_internal?: boolean | null };
 
-// ── Reference-data list rows (populate the write-form selects) ──
 type PicUser = { id: number; name: string | null; email: string };
 type SalesRepOption = { id: number; code: string | null; name: string | null };
-/** Active staff not on the Sales Team roster yet — adding one puts them on it. */
 type StaffOption = { user_id: number; name: string | null; email: string };
 type FleetStaff = { id: number; name: string | null; role_name: string | null; phone?: string | null; company_phone?: string | null; companyPhone?: string | null };
 
-// Shared dialog-hook / setter fn types moved to MobilePmsDocCard.tsx (imported above).
 
-// Dual-read helper — the PG driver camelCases result columns, so a row may
-// carry either snake_case (D1 fallback / raw SQL) or camelCase. Always read
-// both (project_pg_camelcase_columns memory — #1 recurring bug).
 function pick<T>(...vals: (T | null | undefined)[]): T | null {
   for (const v of vals) if (v != null) return v;
   return null;
 }
 
-// ── Formatters ──
-// P&L figures here are plain ringgit numbers (NOT centi) — format via the shared
-// ringgit formatter. TZ-aware numeric DD/MM/YYYY date via the shared helper.
 const dm = (d: string | null | undefined) => formatDate(d);
-// Date-only portion of an ISO "date T time" string (setup_start_at etc).
 const dOnly = (d: string | null | undefined) => dm(d);
-// Time-only portion ("08:00"). Reads the literal HH:mm off the ISO string so
-// it doesn't shift with the device timezone; falls back to "—".
 const tOnly = (d: string | null | undefined) => {
   const m = d ? /T(\d{2}:\d{2})/.exec(d) : null;
   return m ? m[1] : fmtTime(d);
 };
-// Uploader credit line: "Uploaded by {name} · {date time}" or a placeholder.
 const uploaderCredit = (photo: PhasePhoto | undefined) => {
   if (!photo) return "Not uploaded yet";
   const who = photo.uploaded_by_name?.trim();
@@ -312,13 +259,6 @@ const uploaderCredit = (photo: PhasePhoto | undefined) => {
   return ["Uploaded by " + (who || "crew"), when].filter(Boolean).join(" · ");
 };
 
-// ── Stage / status vocab ──
-// The backend `stage` model (mig 053): draft → setup → live → dismantle →
-// completed. The owner's mobile design shows a richer 9-step logistics
-// pipeline (Floorplan → Done). We drive the pipeline off the project's
-// checklist SECTIONS when present (that is what the desktop tracker uses),
-// and fall back to a fixed 9-step reference pipeline keyed off `stage`.
-// Designer's 9-step reference pipeline (MobilePMS PIPELINE), VERBATIM.
 const FALLBACK_PIPELINE = [
   "Confirmed",
   "Setup",
@@ -331,8 +271,6 @@ const FALLBACK_PIPELINE = [
   "Done",
 ];
 
-// Map the coarse backend stage onto an approximate pipeline index so the
-// fallback pipeline highlights a plausible "current" step.
 const STAGE_TO_INDEX: Record<string, number> = {
   draft: 1,
   setup: 2,
@@ -341,7 +279,6 @@ const STAGE_TO_INDEX: Record<string, number> = {
   completed: 8,
 };
 
-// ── Component ──
 export function MobilePMS({
   onBack,
   initialProjectId,
@@ -358,15 +295,9 @@ export function MobilePMS({
   onCreateCase?: () => void;
 }) {
   const [openId, setOpenId] = useState<number | null>(initialProjectId ?? null);
-  // When entered straight into a detail (e.g. tapped from the Calendar), Back
-  // leaves PMS entirely; once the user visits the list, Back returns to it.
   const [direct, setDirect] = useState<boolean>(initialProjectId != null);
-  // Lifted from ProjectListView so the + FAB inside ProjectDetailView can open
-  // the New Project sheet after it closes itself back to the list.
   const [creating, setCreating] = useState(false);
 
-  // Peter 2026-10-14: the list screen unmounts while a detail is open, so its
-  // scroll position died with it — remember it here and restore on return.
   const listScroll = useRef(0);
 
   if (openId != null) {
@@ -391,23 +322,10 @@ export function MobilePMS({
   );
 }
 
-// ── List ──
-// FOLLOW THE BACKEND: the mobile PMS mirrors the desktop Projects page
-// (frontend/src/pages/Projects.tsx) verbatim — the real workflow `stage`
-// enum (mig 053) is draft → setup → live → dismantle → completed, with
-// `closed`/`cancelled` possible on rows. No invented Planning/Live/Settled
-// buckets: the filter chips, list-card badge and detail badge all key off
-// the real `stage` value directly.
-// Stage label + variant now come from the SHARED vendor/scm/lib/pms-status so
-// desktop + mobile can't drift on the stage vocabulary. Mobile keeps its own
-// variant→tint palette (STAGE_TINT) below.
 type StageVariant = PmsStageVariant;
 const stageLabel = pmsStageLabel;
 const stageVariant = pmsStageVariant;
 
-// Map the desktop variant onto the mobile badge palette already used across
-// the screen (amber = open, green/teal = in-progress, grey = neutral/closed,
-// clay-red = error). bg/fg pairs match the ListChip tints.
 const STAGE_TINT: Record<StageVariant, { bg: string; fg: string }> = {
   neutral: { bg: "#eef0ec", fg: "#767b6e" },
   open: { bg: "#f6efd9", fg: "#6e4d12" },
@@ -416,7 +334,6 @@ const STAGE_TINT: Record<StageVariant, { bg: string; fg: string }> = {
   error: { bg: "#f7e7e5", fg: "#a13a34" },
 };
 
-// Filter chips — the REAL stages, mirroring desktop STAGE_OPTIONS.
 const STAGE_FILTERS: [string, string][] = [
   ["all", "All"],
   ["draft", "Draft"],
@@ -438,8 +355,6 @@ function ProjectListView({
   onOpen: (id: number) => void;
   onBack?: () => void;
   scrollMemory?: { current: number };
-  /** Lifted up to MobilePMS so the project-detail + FAB can trigger "New
-   *  Project" by closing itself and setting this flag. */
   creating: boolean;
   setCreating: (v: boolean) => void;
 }) {
@@ -481,38 +396,21 @@ function ProjectListView({
   const visibleStageFilters = restrictedCohort
     ? STAGE_FILTERS.filter(([k]) => k === "setup" || k === "dismantle")
     : STAGE_FILTERS;
-  const myEventsOn = tickOnly ? showAssigned : true; // sales are already scoped to their events
-  /* Debounced search term — the value actually sent to the server (and keyed
-     into the infinite query) so a keystroke doesn't fire a request per
-     character. 300ms after the operator stops typing the list re-runs from
-     page 1. Mirrors the merged MobileSalesOrders pattern. */
+  const myEventsOn = tickOnly ? showAssigned : true;
   const [debouncedQ, setDebouncedQ] = useState("");
   useEffect(() => {
     const t = window.setTimeout(() => setDebouncedQ(q.trim()), 300);
     return () => window.clearTimeout(t);
   }, [q]);
 
-  /* Scroll container + sentinel for the IntersectionObserver infinite-scroll
-     trigger (the mobile screens scroll an inner overflow div, not the window). */
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  /* Server-side stage filter + search + infinite scroll. Both the stage chip
-     and the search box map to real /api/projects params (stage / search), so
-     the server finds matches across the WHOLE table — not just the rows already
-     loaded (the old per_page=200 silently truncated past 200). per_page 30;
-     default order (start_date DESC, id DESC) is stable → no skipped/dup rows.
-     NOTE: the server `search` matches code/name/venue/organizer; the old
-     client search also matched brand + PIC name — those two are no longer
-     searchable (organizer now is). Stage chips + search cross every page. */
   const buildParams = (page: number): string => {
     const p = new URLSearchParams();
     p.set("page", String(page));
     p.set("per_page", String(PMS_PAGE_SIZE));
     if (stageFilter !== "all") {
-      // Field/sales cohort's Setup/Dismantle filter on date-derived event PHASE
-      // (the `stage` enum is unmaintained — never reaches 'dismantle'). The full
-      // stage bar (mgt/admin) keeps the raw stage enum. Mirrors desktop f.phase.
       if (restrictedCohort && (stageFilter === "setup" || stageFilter === "dismantle")) {
         p.set("phase", stageFilter);
       } else {
@@ -528,9 +426,6 @@ function ProjectListView({
     data, isLoading, isFetching, isPlaceholderData, error,
     fetchNextPage, hasNextPage, isFetchingNextPage,
   } = useInfiniteQuery({
-    // `showAssigned` is read by buildParams, so it MUST be in the key (main) —
-    // and the query's signal is forwarded so a superseded search is cancelled
-    // rather than left racing (this branch).
     queryKey: ["mobile-pms-list-paged", stageFilter, debouncedQ, showAssigned, myPendingOn],
     queryFn: ({ pageParam, signal }) => api.get<ListResponse>(`/api/projects?${buildParams(pageParam)}`, { signal }),
     initialPageParam: 1,
@@ -546,8 +441,6 @@ function ProjectListView({
     [data],
   );
   const totalCount = data?.pages[0]?.total ?? 0;
-  // Restore the remembered scroll ONCE rows have height again (they come from
-  // the query cache on return, so this fires on the first paint back).
   const restoredScroll = useRef(false);
   useEffect(() => {
     if (restoredScroll.current || !scrollMemory?.current || rows.length === 0) return;
@@ -565,12 +458,6 @@ function ProjectListView({
   });
   const visibleRows = searchTransition.resultsAreStale ? [] : rows;
 
-  /* Infinite-scroll trigger — an IntersectionObserver watches a 1px sentinel at
-     the list's bottom and fetches the next page as it nears the viewport
-     (rootMargin 600px pre-load). Guarded by hasNextPage && !isFetchingNextPage
-     so it can't double-fire; re-observing when those flip re-fires the
-     initial-state callback so a first page shorter than the viewport still
-     pulls the next until the sentinel scrolls out or the pages run out. */
   useEffect(() => {
     const target = sentinelRef.current;
     if (!target || !hasNextPage) return;
@@ -672,8 +559,6 @@ function ProjectListView({
               return (
                 <div key={r.id} onClick={() => onOpen(r.id)} className="card" style={{ cursor: "pointer", ...(dimmed ? { opacity: 0.55, filter: "grayscale(.5)" } : null) }}>
                   <div className="card-b" style={{ padding: "12px 13px" }}>
-                    {/* Build Spec §27: project_title wraps 2 lines (no ellipsis) +
-                        stage badge right; branding/venue chips; dates · PIC meta. */}
                     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
                       <span style={{ fontSize: 13, fontWeight: 800, color: "var(--ink)", lineHeight: 1.3 }}><SoloSafeName p={r} /></span>
                       {salesList ? (
@@ -698,9 +583,6 @@ function ProjectListView({
                         {where && <ListChip>{where}</ListChip>}
                       </div>
                     )}
-                    {/* Crew cards: the caller's own due pending tasks (owner
-                        2026-07-21) — my_pending_titles is attached server-side
-                        for driver/helper/storekeeper callers only. */}
                     {!!(r as any).my_pending_titles && (
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
                         {String((r as any).my_pending_titles).split("|").map((t: string) => (
@@ -726,14 +608,9 @@ function ProjectListView({
                 }}
               />
             )}
-            {/* Infinite-scroll sentinel — the IntersectionObserver watches this
-                1px marker at the list's bottom; it enters view (+600px) near the
-                end and pulls the next page. Only present while more pages exist. */}
             {visibleRows.length > 0 && hasNextPage && (
               <div ref={sentinelRef} aria-hidden style={{ height: 1 }} />
             )}
-            {/* "Loading more…" while the next page is in flight; nothing once
-                every page is loaded (hasNextPage false). */}
             {visibleRows.length > 0 && isFetchingNextPage && (
               <div style={{ textAlign: "center", padding: "14px 0 2px", fontSize: 11.5, color: "var(--hz-c-ink-soft)" }}>Loading more…</div>
             )}
@@ -757,7 +634,6 @@ function ProjectListView({
   );
 }
 
-// ── Detail ──
 function ProjectDetailView({
   id,
   onBack,
@@ -778,14 +654,6 @@ function ProjectDetailView({
   onCreateProject: (() => void) | null;
 }) {
   const { pageAccess, can, user } = useAuth();
-  // NOTE: the old `canSeeFinance = pageAccess("projects.finances") !== "none"`
-  // is gone. It was only ever the FALLBACK arm of the finance gate, and it
-  // answered a different question (page matrix) than the one being asked (the
-  // PMS FINANCIAL section). The gate now reads `access.canFinancial` — the
-  // server's own answer — with no second source to drift from. The desktop
-  // Projects.tsx finance gate does the same.
-  // Sales quick-log gate — ONE helper, shared with desktop, so the two surfaces
-  // cannot drift off requirePageAccess("sales") on POST /api/sales/entries.
   const salesAccess = pageAccess("sales");
   const canLogSale = canLogSalesEntry(salesAccess);
   const canWrite = can("projects.write");
@@ -824,14 +692,6 @@ function ProjectDetailView({
     staleTime: 15_000,
   });
 
-  // THE server's decision for this user × project, read fail-closed. One reader,
-  // shared with the desktop Projects.tsx (auth/projectAccess) — desktop and
-  // mobile are one logic layer. Resolved up here so it can gate the FETCHES
-  // below, not just the rendering: "off" means the query never fires.
-  //
-  // `data == null` (still loading) resolves to all-denied, which is the same
-  // answer the old code gave and is what keeps the phase-photos fetch from
-  // firing before we know.
   const access = readProjectAccess(data);
   const accessUnresolved = projectAccessUnresolved(data);
 
@@ -847,9 +707,6 @@ function ProjectDetailView({
   // fallback is gone: it made a MISSING permission payload mean full access.
   const canSetupDismantle = access.canSetupDismantle;
 
-  // Crew-uploaded setup/dismantle evidence photos (mig 084) live on a
-  // separate endpoint. Used only for the uploader credit on the Setup &
-  // dismantle block — a 403 (no phase access) just yields no credit.
   const { data: photoData } = useQuery({
     queryKey: ["mobile-pms-phase-photos", id],
     queryFn: () => api.get<{ photos: PhasePhoto[] }>(`/api/projects/${id}/phase-photos`),
@@ -860,9 +717,6 @@ function ProjectDetailView({
   });
   const photos = photoData?.photos ?? [];
 
-  // Reference-data for the write forms. All best-effort (retry:false): a rep
-  // whose token lacks the perm gets 403 → empty list → the select just shows
-  // the current value with no options, never crashes.
   const picUsersQ = useQuery({
     queryKey: ["mobile-pms-pic-users"],
     queryFn: () => api.get<{ users: PicUser[] }>(`/api/users?department=${encodeURIComponent("Sales")}`),
@@ -888,8 +742,6 @@ function ProjectDetailView({
     queryKey: ["mobile-pms-fleet"],
     queryFn: () => api.get<{ data: FleetStaff[] }>(`/api/fleet/staff`),
     staleTime: 5 * 60_000,
-    // Only feeds the Setup & Dismantle crew editor — skip the fetch when the
-    // section is hidden (off, not hide).
     enabled: canWrite && canSetupDismantle,
     retry: false,
   });
@@ -898,28 +750,21 @@ function ProjectDetailView({
     [fleetQ.data],
   );
 
-  // Lorry list (GET /api/scm/lorries → { lorries: [...] }). Best-effort; a
-  // reader without scm access gets [] and the picker shows only the current value.
   const lorriesQ = useQuery({
     queryKey: ["mobile-pms-lorries"],
     queryFn: () => api.get<{ lorries: Lorry[] }>(`/api/scm/lorries`),
     staleTime: 5 * 60_000,
-    // Only feeds the Setup & Dismantle crew editor — skip when it's hidden.
     enabled: canWrite && canSetupDismantle,
     retry: false,
   });
   const lorries = lorriesQ.data?.lorries ?? [];
 
-  // Mark the project read when the detail opens (drives the unread bell).
   useEffect(() => {
     api.post(`/api/projects/${id}/read`).catch(() => {});
   }, [id]);
 
   const reload = () => {
     void qc.invalidateQueries({ queryKey: ["mobile-pms-detail", id] });
-    // Prefix MUST match the list query (["mobile-pms-list-paged", …]);
-    // "mobile-pms-list" is not a prefix of it, so it never invalidated → the
-    // project list stayed stale after any detail mutation until staleTime.
     void qc.invalidateQueries({ queryKey: ["mobile-pms-list-paged"] });
   };
   const reloadPhotos = () => qc.invalidateQueries({ queryKey: ["mobile-pms-phase-photos", id] });
@@ -940,9 +785,6 @@ function ProjectDetailView({
     [data, user],
   );
 
-  // Central PATCH /:id helper (project-detail edits, PIC, status, stage,
-  // setup/dismantle logistics). Surfaces the "shifted N tasks" hint the
-  // backend returns when a date move re-dates the checklist.
   const patchProject = async (body: Record<string, unknown>): Promise<boolean> => {
     setBusy(true);
     try {
@@ -966,14 +808,6 @@ function ProjectDetailView({
 
   const p = data?.project; const soloMasked = isSoloMasked(p ?? { name: "" }, useCanSeeSoloOrganizer()); // solo organizer: BD/Owner/weisiang only (owner 2026-09-18)
   const archived = !!p?.archived_at;
-  // Show finance only when the server says canFinancial AND it actually returned
-  // the finance block (it strips it server-side for a role whose PMS position
-  // lacks FINANCIAL). Gating follows the real backend permission — no in-screen
-  // view-as switcher (removed to match v4).
-  //
-  // The `pms ? … : canSeeFinance` fallback is gone. `canSeeFinance` is the PAGE
-  // matrix level, a different question from the PMS FINANCIAL section, so an
-  // unresolved payload used to answer the finance question with the page answer.
   const financeVisible = access.canFinancial && !!data?.finance;
   // ── Mobile role-based checklist visibility (owner 2026-07-16) ──────────────
   // Gate specific items/sections by the viewer's org role. Keyed off stable org
@@ -984,22 +818,6 @@ function ProjectDetailView({
   const _dept = (user?.department_name ?? "").trim();
   const _roleName = (user?.role_name ?? "").trim();
   const isOwnerAdmin = !!user?.permissions?.includes("*");
-  /* The DIRECTOR term is now the backend's own answer (`org.director` =
-     pmsAccess.isDirectorUser, resolved on /auth/me), not a local regex.
-
-     It WAS /\b(Super Admin|Sales Director|Finance Manager)\b/i — the exact
-     word-boundary test that pmsAccess.ts and auth/salesAccess.ts both replaced
-     with an exact-name Set, and for a documented reason: position names are
-     owner-editable free text, so a \b substring match turns a RENAME into a
-     privilege grant. "Assistant to Sales Director" or "Deputy Finance Manager"
-     inherited management visibility here — the last copy of a hole that had been
-     closed everywhere else. `org.director` also folds in the `*` wildcard
-     (isDirectorUser checks it), so isOwnerAdmin is subsumed; it is kept in the
-     OR below only because `seeAllTasks` reads it separately.
-
-     NO LIVE DELTA: over every position in the prod snapshot the old regex and
-     the exact-name set agree, so this narrows nothing that exists today — it
-     removes the way a future rename could widen it. */
   const isDirectorPos = capability(user, "org.director");
   const isMgt = isOwnerAdmin || isDirectorPos || /^management$/i.test(_dept);
   const isBD = /bd\s*exec|business\s*develop/i.test(_roleName);
@@ -1021,15 +839,7 @@ function ProjectDetailView({
   // sections are hidden.
   const isSalesExecMgr = isSalesStaff && !isMgt;
   const cohort5 = isDriverCrew || isStorekeeper || isSalesExecMgr;
-  // Sales-section visibility — mirror the desktop split (Projects.tsx:9914-9918):
-  // the Sales panel is gated on sales VIEW access (page-access OR sales-staff OR
-  // director), NOT on canFinancial. The desktop renders ProjectSalesEntriesSection
-  // outside the finance gate for exactly this reason — a non-financial salesperson
-  // (isSalesExecMgr) HOLDS the log-sale action but has canFinancial=false, so
-  // nesting it under the finance gate lost the action for the person who owns it.
   const canViewSales = salesAccess !== "none" || isSalesStaff || isDirectorPos;
-  // The pasted sales report — the Sales panel's block and the red number
-  // beside each name under Sales Attending read the same query.
   const billsQ = useMobileProjectSalesBills(id, canViewSales);
   const notOpenedByRep = notOpenedByRepId(billsQ.data?.persons ?? []);
   // ── Owner 2026-07-23 card respec — the remaining two cohorts go card-based ──
@@ -1044,9 +854,6 @@ function ProjectDetailView({
   // so they sit outside the generic ops cohort.
   const isPurchaserView = isPurchaser && !cohortMgmt && !cohort5;
   const cohortOps = !cohort5 && !cohortMgmt && !isSalesStaff && !isPurchaserView;
-  // Named editors (owner spec): "BD, weisiang, kingsley". Matched by stable
-  // user id — names are owner-editable free text (weisiang = id 4 "Lim",
-  // kingsley = id 44 "Kingsley"/Sales Director, the Agreement Approver).
   const isWeisiangDev = user?.id === 4;
   const isKingsley = user?.id === 44;
   // Ummu (id 7) — owner 2026-09-30: upload + edit on the mobile doc cards.
@@ -1055,29 +862,19 @@ function ProjectDetailView({
   const isUmmu = user?.id === 7;
   const isFinanceRole = /finance/i.test(_roleName) || /^finance manager$/i.test(_pos);
   const isSalesDirectorPos = /^sales\s*director$/i.test(_pos);
-  // Doc-edit tiers: BD-domain documents (license, weekend, stamp duty, permit,
-  // decoration, payment, S&D docs) are editable by owner/BD/weisiang; the
-  // Agreement/Quotation contract additionally by Kingsley.
   const canBdEdit = isOwnerAdmin || isBD || isWeisiangDev || isUmmu;
   const canContractEdit = canBdEdit || isKingsley;
-  // P&L: edit for owner/BD/weisiang/finance; VIEW-ONLY for sales directors;
-  // hidden from everyone else (server already strips finance data for
-  // non-director callers via access.canFinancial).
   const financeRoleAllowed = isOwnerAdmin || isBD || isWeisiangDev || isFinanceRole || isSalesDirectorPos;
   const financeCanEdit = isOwnerAdmin || isBD || isWeisiangDev || isFinanceRole;
   const cohortHiddenSection = (name: string) =>
     /payment|closeout|booth layout|setup\s*&?\s*dismantle documents|expo map/i.test(name);
   const sectionNameById = new Map((data?.sections ?? []).map((s) => [s.id, s.name] as const));
-  // Section ids for "SETUP & DISMANTLE DOCUMENTS" (used for per-role part filtering).
   const sdSectionIds = new Set(
     (data?.sections ?? []).filter((s) => /setup\s*&?\s*dismantle/i.test(s.name)).map((s) => s.id)
   );
   const itemHidden = (it: ChecklistItem): boolean => {
     const title = (it.title ?? "").trim().toLowerCase();
     const label = (it.role_label ?? "").trim().toUpperCase();
-    // Filled Floorplan now lives on the Floor Plans & Layout card (view for all,
-    // upload for sales), so its tasklist row is redundant on mobile (owner
-    // 2026-07-17).
     if (/^filled\s*floor\s*plan/.test(title)) return true;
     // Field/sales cohort: whole tasklist sections removed (kept: OPERATION etc.).
     // Owner 2026-07-16 (2nd pass): sales executives/managers must still get
@@ -1087,12 +884,8 @@ function ProjectDetailView({
     if (cohort5 && cohortHiddenSection(sectionNameById.get(it.section_id ?? -1) ?? "")) {
       if (!(isSalesExecMgr && label === "SALES PIC")) return true;
     }
-    // License / Stamp Duty → only BD, management, owner. (Titles carry suffixes
-    // like "License (from Majlis)", so match by prefix.)
     if (title.startsWith("license") || title.startsWith("stamp duty")) return !seeAllTasks;
-    // Weekend Activity → hidden from helper, driver, logistic, purchaser.
     if (title.startsWith("weekend")) return isDriverCrew || isLogistic || isPurchaser;
-    // Setup & Dismantle documents → each role sees only its own part.
     if (it.section_id != null && sdSectionIds.has(it.section_id)) {
       if (seeAllTasks) return false;
       // includes(): a combined badge ("SALES PIC & DRIVER" — the Defect List
@@ -1125,24 +918,18 @@ function ProjectDetailView({
   const opsSdTiles: DocTile[] = [
     { label: "Setup Image (Driver)", match: /^setup image/i, driverOnly: true, readOnly: true },
     { label: "Setup Image (Sales PIC)", match: /^setup image/i, salesPicOnly: true, readOnly: true },
-    // A reviewer (Nancy, Ops Exec) has the dedicated Defect list card — drop
-    // the view-only defect pair here so it doesn't render twice (same rule as
-    // the crew card).
     ...(defectActionsValue.canReview ? [] : [
       { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
       { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
     ]),
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: true },
   ];
-  // Purchaser view (Sim, Farra): Defect tiles to consult + their two docs.
   const purchaserSdTiles: DocTile[] = [
     { label: "Defect Item Setup", match: /^defect (list|item) setup/i, readOnly: true },
     { label: "Defect Item Dismantle", match: /^defect (list|item) dismantle/i, readOnly: true },
     { label: "Exchange List", match: /^exchange list/i },
     { label: "Stock In Transfer Record", match: /^stock in transfer/i },
   ];
-  // Management cohort: everything view & download; the BD tier edits, Kingsley
-  // additionally edits the contract. License shows only to the BD tier.
   const mgmtContractTiles: DocTile[] = [
     { label: "Agreement / Quotation", match: /^agreement/i, readOnly: !canContractEdit, fullWidth: true },
   ];
@@ -1183,7 +970,6 @@ function ProjectDetailView({
   const canAssignPeople = canWrite;
   const canEditTeam = canAssignPeople;
   const canEditAttending = canAssignPeople;
-  // PIC's phone (backend pic_phone) — on the mobile Team card for everyone.
   const picPhone = formatPhone(p?.pic_phone);
 
   return (
@@ -1320,11 +1106,6 @@ function ProjectDetailView({
 
         {!isLoading && !error && data && p && (
           <>
-            {/* The project loaded but carried NO permission payload, so every
-                section gate reads false and most of this screen is missing.
-                Safe, but say WHICH it is: a system failure sends the operator to
-                IT, "no permission" sends them to their manager. Same wording and
-                same trigger as the desktop Projects.tsx banner — one logic layer. */}
             {accessUnresolved && (
               <div
                 role="alert"
@@ -1352,7 +1133,6 @@ function ProjectDetailView({
                 dates | booth line), so the card was pure repetition. Its Edit
                 button moved into the header controls row. */}
 
-            {/* project team */}
             <details className="pacc" open>
               <summary>
                 <span className="psec-t">Team</span>
@@ -1467,8 +1247,6 @@ function ProjectDetailView({
                 photos={photos}
                 drivers={drivers}
                 lorries={lorries}
-                /* `canEdit !== false` treated BOTH an absent pms block and an
-                   omitted flag as writable. Now the server's answer, fail-closed. */
                 canWrite={canWrite && access.canEdit}
                 /* Crew manage the setup/dismantle photos (owner 2026-07-21);
                    the backend re-gates on being crewed on the phase. */
@@ -1509,8 +1287,6 @@ function ProjectDetailView({
                 tasklist rows; photo work lives in Setup & Dismantle. */}
             {(isDriverCrew || isStorekeeper) && (
               <SalesDocsCard
-                /* A crew reviewer (Shukor) has the dedicated Defect list card —
-                   drop the defect tiles here so they don't render twice. */
                 tiles={defectActionsValue.canReview
                   ? CREW_DOC_TILES.filter((t) => !/^defect/i.test(t.label))
                   : CREW_DOC_TILES}
@@ -1653,7 +1429,6 @@ function ProjectDetailView({
               />
             )}
 
-            {/* floor plans & layout + stock transfers (upload-only) */}
             <FloorPlans
               projectId={id}
               stockTransfers={data.stock_transfers}
@@ -1678,10 +1453,6 @@ function ProjectDetailView({
                 (desynced). Payment status now flows only through the pill; the
                 rental AMOUNT + Total Sales are editable in the snapshot below. */}
 
-            {/* Sales — SALES-gated, split out of the finance snapshot so a
-                non-financial salesperson (who HOLDS the log-sale action) can
-                reach it. Mirrors desktop ProjectSalesEntriesSection, gated on
-                canViewSales (NOT canFinancial). */}
             {canViewSales && !isPurchaserView && (
               <SalesPanel
                 projectId={id}
@@ -1854,16 +1625,13 @@ function ProjectDetailView({
   );
 }
 
-// ── Sales attending (add via picker + remove) ──
 function SalesAttending({
   projectId, attendees, options, others, notOpenedByRep, canWrite, busy, setBusy, notify, confirm, reload,
 }: {
   projectId: number;
   attendees: SalesAttendee[];
   options: SalesRepOption[];
-  /** Staff not on the Sales Team roster; adding one puts them on it. */
   others: StaffOption[];
-  /** sen still not opened per rep, from the pasted sales report — red beside the name. */
   notOpenedByRep: Map<number, number>;
   canWrite: boolean;
   busy: boolean;
@@ -1880,10 +1648,6 @@ function SalesAttending({
   const present = new Set(attendees.map((a) => a.sales_rep_id));
   const available = options.filter((o) => !present.has(o.id));
   const pickedCount = picks.size + staffPicks.size;
-  // Peter 2026-10-21: merge reps + the 2026-10-19 "not in Sales Team" staff into
-  // ONE continuous A→Z list (they were two separate A→Z sections, so the picker
-  // restarted the alphabet at the divider and read as un-sorted). Non-roster
-  // staff keep a small inline tag.
   type PickItem =
     | { kind: "rep"; id: number; name: string; code: string | null }
     | { kind: "staff"; id: number; name: string };
@@ -2018,23 +1782,12 @@ function SalesAttending({
   );
 }
 
-// ── Sales (SALES-gated — split from the finance snapshot) ──
-// The quick-log-a-sale action belongs to the salesperson working the project,
-// not to finance. Desktop renders ProjectSalesEntriesSection on canViewSales
-// (Projects.tsx:9885,9914-9918), NOT canFinancial — so a non-financial sales
-// exec keeps the action. POST /api/sales/entries is gated on sales page-access
-// (requirePageAccess("sales")), which canLogSale mirrors. The income lines come
-// from the finance ledger, which the backend strips for a finance-hidden user;
-// a sales-only user therefore sees the log action with an empty list and still
-// no P&L.
 function SalesPanel({
   projectId, incomeLines, finalTotalRm, bills, canLogSale, busy, setBusy, prompt, notify, reload,
 }: {
   projectId: number;
   incomeLines?: FinanceLine[];
-  /** project_finance.total_sales (RM) — null when finance is stripped or unset. */
   finalTotalRm: number | null;
-  /** The pasted sales report, read by the detail view and shared with Sales Attending. */
   bills: MobileProjectSalesBillsQuery;
   canLogSale: boolean;
   busy: boolean;
@@ -2043,11 +1796,7 @@ function SalesPanel({
   notify: NotifyFn;
   reload: () => void;
 }) {
-  // The POS bills of a Cash & Carry fair; also tells the panel to drop the
-  // SO / sales-report blocks that project type has none of.
   const posQ = useMobileProjectPosSales(projectId, true);
-  // Quick-log a sale at the project (POST /api/sales/entries { quick_log }).
-  // Lands as a draft sales entry; surfaces as a synthetic income line.
   const logSale = async () => {
     const amtStr = await prompt({
       title: "Sale amount (RM)",
@@ -2084,11 +1833,7 @@ function SalesPanel({
         <svg className="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="m9 6 6 6-6 6" /></svg>
       </summary>
       <div className="pbody">
-        {/* The Houzs POS bills of a Cash & Carry fair (layout E9) stand in for
-            the sales report and the SO block, which that project type has none of. */}
         <MobilePmsPosSales query={posQ} />
-        {/* The orders opened in the SO module for this fair — the desktop
-            block's phone half, same read and arithmetic. */}
         {!posQ.data?.pos_enabled && <MobilePmsSalesBills query={bills} />}
         {!posQ.data?.pos_enabled && <MobilePmsSalesOrders projectId={projectId} finalTotalRm={finalTotalRm} />}
         <div style={{ display: "flex", alignItems: "center", margin: "0 0 6px" }}>
@@ -2112,14 +1857,6 @@ function SalesPanel({
   );
 }
 
-// ── Pipeline (prototype #project VERBATIM — numbered-dot stage tracker) ──
-// The owner's richest design (prototype `#project`): a Done/Pending/Overdue
-// legend row, then a horizontal-scroll strip of numbered `.pstage`/`.pdot`
-// steps with a per-step done/total sub-label. Driven off the project's real
-// checklist SECTIONS (the desktop tracker's source of truth): each complete
-// section reads green, the first still-open section is the current step
-// (amber), and the rest are grey outlines. With no sections yet we fall back
-// to the 9-step reference pipeline keyed off the coarse backend `stage`.
 function StagePipeline({ stage, sections }: { stage: string | null; sections?: SectionProgress[] }) {
   type Step = { label: string; sub: string | null; state: "done" | "current" | "todo" };
   let steps: Step[];
@@ -2151,7 +1888,6 @@ function StagePipeline({ stage, sections }: { stage: string | null; sections?: S
   return (
     <div className="card"><div className="card-b">
       <div className="fld-l" style={{ marginBottom: 8 }}>Pipeline</div>
-      {/* legend — the colour vocabulary the dots use */}
       <div style={{ display: "flex", alignItems: "center", gap: 14, margin: "0 2px 8px" }}>
         {([["#2f8a5b", "Done"], ["#cf9a2e", "Pending"], ["#b23a3a", "Overdue"]] as const).map(([c, t]) => (
           <div key={t} style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -2173,10 +1909,7 @@ function StagePipeline({ stage, sections }: { stage: string | null; sections?: S
   );
 }
 
-// ── Tasklist ──
-// Role-badge colours + label helpers moved to MobilePmsDocCard.tsx (imported above).
 
-// Checklist status cycle for the tick control: pending → done → na → pending.
 const NEXT_STATUS: Record<string, "pending" | "done" | "na"> = {
   pending: "done",
   done: "na",
@@ -2216,7 +1949,6 @@ function TasklistSectionView({
     }
     return m;
   }, [attachments]);
-  // Group items by section_id; keep an "Uncategorised" bucket for null.
   const bySection = useMemo(() => {
     const m = new Map<number, ChecklistItem[]>();
     for (const it of list) {
@@ -2232,8 +1964,6 @@ function TasklistSectionView({
   const orderedSecs = [...secs].sort((a, b) => a.sort_order - b.sort_order);
   const progressById = new Map((progress ?? []).map((p) => [p.id, p]));
 
-  // List | Gantt toggle. Tapping a Gantt diamond flips back to the list and
-  // scrolls the tapped task's row into view with a brief highlight.
   const [view, setView] = useState<"list" | "gantt">("list");
   const [flashId, setFlashId] = useState<number | null>(null);
   useEffect(() => {
@@ -2312,7 +2042,6 @@ function TasklistSectionView({
                 </div>
               );
             })}
-            {/* Uncategorised bucket */}
             {(() => {
               const rows = bySection.get(0) ?? [];
               if (!rows.length) return null;
@@ -2341,9 +2070,6 @@ export function AttachRemark({ att, canEdit }: { att: TaskAttachment; canEdit: b
   const [cap, setCap] = useState(att.caption ?? "");
   const [saved, setSaved] = useState(att.caption ?? "");
   const [saving, setSaving] = useState(false);
-  /* The typed text stays on screen after a refused PATCH, so the box looks
-     exactly like a saved one. Blur has already happened — the person tapped
-     away — and leaving the page loses what they wrote. */
   const [failed, setFailed] = useState(false);
   const save = async () => {
     const v = cap.trim();
@@ -2391,7 +2117,7 @@ export function ItemRemark({ it, canEdit }: { it: ChecklistItem; canEdit: boolea
   const [val, setVal] = useState(it.notes ?? "");
   const [saved, setSaved] = useState(it.notes ?? "");
   const [saving, setSaving] = useState(false);
-  const [failed, setFailed] = useState(false); // see AttachRemark
+  const [failed, setFailed] = useState(false);
   const save = async () => {
     const v = val.trim();
     if (v === saved.trim()) return;
@@ -2429,10 +2155,6 @@ export function ItemRemark({ it, canEdit }: { it: ChecklistItem; canEdit: boolea
   );
 }
 
-// One checklist row. Tick cycles status (POST /checklist/:id/status); the
-// paperclip uploads a per-task attachment (PUT /checklist/:id/attachments) and
-// the "…" opens remark / approval. Payment-pill rows (mig 090) render N/A /
-// PENDING / PAID buttons instead of the tick, saved via PATCH /checklist/:id.
 function TaskRow({
   item: it, attachments, canTick, can, busy, setBusy, notify, prompt, reload,
 }: {
@@ -2449,9 +2171,6 @@ function TaskRow({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const { user } = useAuth();
   const confirm = useConfirm();
-  // Attachment viewer — every user (incl. read-only drivers) can open the
-  // task's files fullscreen; MediaLightbox fetches with the bearer token,
-  // so this also sidesteps mobile popup-blockers that ate window.open.
   const [viewIdx, setViewIdx] = useState<number | null>(null);
   const files = attachments.filter((a) => !a.archived_at);
   const status = (it.status ?? "").toLowerCase();
@@ -2470,8 +2189,6 @@ function TaskRow({
   // drivers, so they attach on DRIVER-badged rows too (owner 2026-07-13) —
   // no task is ever badged HELPER/STOREKEEPER.
   const tickOnly = canTick && !can("projects.write");
-  // Shared with the desktop and mirroring backend roleLabelAdmits: a combined
-  // badge admits every listed role, DRIVER also admitting helper/storekeeper.
   const roleMatchesUser = roleLabelAdmitsRole(it.role_label, user?.role_name);
   // Gated row, no approval key, but the row is badged for THIS user's function
   // (the purchaser on her own Exchange List / Stock In / Stock Out): since
@@ -2548,8 +2265,6 @@ function TaskRow({
     }
   };
 
-  // Approve / reject a task awaiting review (gated by required_perm).
-  // reject needs a reason.
   const review = async (action: "approve" | "reject") => {
     const body: Record<string, unknown> = { action };
     if (action === "reject") {
@@ -2581,7 +2296,6 @@ function TaskRow({
     }
   };
 
-  // Tappable file chips + fullscreen viewer, shared by both row variants.
   const fileChips = files.length > 0 && (
     <div style={{ display: "flex", flexDirection: "column", gap: 9, padding: "0 0 8px 24px" }}>
       {files.map((a, i) => (
@@ -2653,7 +2367,6 @@ function TaskRow({
     }
     fileRef.current?.click();
   };
-  // Payment / deposit pill rows: N/A / PENDING / PAID instead of the tick.
   if (it.pill_kind) {
     const opts = paymentPillOptions(it.pill_kind);
     const cur = it.pill_value || "unpaid";
@@ -2727,7 +2440,7 @@ function TaskRow({
       {it.due_date && <span style={{ fontSize: 9.5, color: "var(--hz-c-ink-soft)", whiteSpace: "nowrap" }}>{dm(it.due_date)}</span>}
       {canAttach && (
         <>
-          <input ref={fileRef} type="file" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; const cap = pendingCaptionRef.current; pendingCaptionRef.current = undefined; if (f) void upload(f, cap); }} />
+          <input ref={fileRef} type="file" multiple style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files ?? []); const cap = pendingCaptionRef.current; pendingCaptionRef.current = undefined; for (const f of files) await upload(f, cap); if (fileRef.current) fileRef.current.value = ""; }} />
           <button className="tinybtn" style={{ minWidth: 60, display: "inline-flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, lineHeight: 1, boxSizing: "border-box", border: "none", background: "transparent", color: "var(--hz-c-ink-muted)", padding: "4px 6px" }} disabled={busy} onClick={() => void startAttach()} title={isDefectList ? "Write a remark, then upload" : attachments.length ? `${attachments.length} file(s)` : "Attach"}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none" }}><path d="M13.2 6.5 7 12.7a4.4 4.4 0 1 0 6.2 6.2l6.5-6.5a2.9 2.9 0 1 0-4.1-4.1l-6.5 6.5a1.5 1.5 0 1 0 2.1 2.1l6.1-6.2" /></svg>
             <span style={{ fontSize: 9, fontWeight: 700 }}>{attachments.length ? `Attach (${attachments.length})` : isDefectList ? "Add photo" : "Attach"}</span>
@@ -2754,9 +2467,6 @@ function TaskRow({
       )}
     </div>
     {fileChips}
-    {/* Sales PIC photo tasks: standalone remark box (no file needed). Only the
-        SALES PIC-badged variants — "Setup Image" also exists DRIVER-badged.
-        startsWith: the Defect List pair is badged "SALES PIC & DRIVER". */}
     {(it.role_label ?? "").trim().toUpperCase().startsWith("SALES PIC") &&
       /^(setup image|defect list|event complete image)/i.test((it.title || "").trim()) &&
       <ItemRemark it={it} canEdit={canTick} />}
@@ -2770,11 +2480,6 @@ function TaskRow({
   );
 }
 
-// The desktop Setup & Dismantle crew editor stores crew as JSON on
-// projects.setup_crew / dismantle_crew ({drivers:[{name,phone}], helpers,
-// lorries:["PLATE"], outsourced:{enabled,entries}}) and leaves the FK
-// columns (setup_driver_user_id / setup_lorry_id) untouched. Mobile shows
-// the FK-joined names when present and falls back to this JSON otherwise.
 type CrewPerson = { name: string; phone?: string | null };
 // `at` (owner 2026-10-26): each lorry's own setup / dismantle date+time. The
 // desktop editor dropped the single shared window date; mobile shows per-lorry
@@ -2791,8 +2496,6 @@ const parseCrewJson = (raw: string | null | undefined): PhaseCrew => {
         .filter((p): p is { name?: unknown; phone?: unknown } => !!p && typeof p === "object")
         .filter((p) => typeof p.name === "string" && p.name.trim() !== "")
         .map((p) => ({ name: String(p.name), phone: typeof p.phone === "string" && p.phone ? p.phone : null }));
-    // Per-lorry structure (new, desktop writes it). Flat arrays are kept for
-    // legacy data + the FK-fallback display.
     if (Array.isArray(j.lorry_crew) && j.lorry_crew.length) {
       out.lorryCrew = (j.lorry_crew as any[]).map((l) => ({
         plate: typeof l?.plate === "string" ? l.plate : "",
@@ -2813,21 +2516,18 @@ const parseCrewJson = (raw: string | null | undefined): PhaseCrew => {
         }
       }
     }
-    // Legacy flat crew with no per-lorry array → synthesize one lorry per plate.
     if (out.lorryCrew.length === 0 && (out.drivers.length || out.helpers.length || out.lorries.length)) {
       out.lorryCrew = out.lorries.length
         ? out.lorries.map((plate, i) => (i === 0 ? { plate, drivers: out.drivers, helpers: out.helpers } : { plate, drivers: [], helpers: [] }))
         : [{ plate: "", drivers: out.drivers, helpers: out.helpers }];
     }
   } catch {
-    // Legacy plain-text crew — nothing structured to show.
   }
   return out;
 };
 const crewLabel = (p: CrewPerson): string => (p.phone ? `${p.name} (${formatPhone(p.phone)})` : p.name);
 const crewIsEmpty = (c: PhaseCrew): boolean =>
   c.lorryCrew.length === 0 && c.outsourced.length === 0 && c.drivers.length === 0 && c.helpers.length === 0 && c.lorries.length === 0;
-// One crew member on its own line: fixed-width role label + name · formatted phone.
 function CrewLine({ role, person }: { role: string; person: CrewPerson }) {
   return (
     <div style={{ display: "flex", gap: 7, fontSize: 10.5, lineHeight: 1.45, marginBottom: 3 }}>
@@ -2840,9 +2540,7 @@ function CrewLine({ role, person }: { role: string; person: CrewPerson }) {
   );
 }
 
-// mimeFromKey moved to MobilePmsDocCard.tsx (imported above).
 
-// Split an ISO "date T time" into the parts an <input type=date/time> wants.
 const isoDatePart = (iso: string | null | undefined): string => {
   if (!iso) return "";
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(iso);
@@ -2854,11 +2552,6 @@ const isoTimePart = (iso: string | null | undefined): string => {
   return m ? m[1] : "";
 };
 
-// ── Setup & dismantle (logistic) ──
-// Editable per-phase schedule (date + start time), driver picker + lorry
-// picker (GET /api/scm/lorries), plus a real photo upload (two-step:
-// PUT /:id/phase-photos/upload → POST /:id/phase-photos). Schedule/driver/
-// lorry all persist via PATCH /:id.
 function SetupDismantle({
   projectId, project, photos, drivers, lorries, canWrite, canPhoto, canScheduleView, canScheduleEdit, busy, setBusy, patchProject, notify, reloadPhotos, confirm,
 }: {
@@ -2888,7 +2581,6 @@ function SetupDismantle({
 }) {
   const setupPhoto = photos.find((ph) => ph.phase === "setup");
   const dismantlePhoto = photos.find((ph) => ph.phase === "dismantle");
-  // r2_key is nullable on PhasePhoto (legacy rows) — only keyed shots render.
   const scheduleShots = photos.filter((ph): ph is PhasePhoto & { r2_key: string } => ph.phase === "schedule" && !!ph.r2_key);
   const schedRef = useRef<HTMLInputElement | null>(null);
   const [schedView, setSchedView] = useState<{ items: MediaItem[]; idx: number } | null>(null);
@@ -3046,7 +2738,7 @@ function SetupDismantle({
                 <UploadGlyph />
                 {scheduleShots.length ? "+ Add / replace screenshot" : "Upload handbook schedule (image or PDF)"}
               </button>
-              <input ref={schedRef} type="file" accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadSchedule(f); }} />
+              <input ref={schedRef} type="file" multiple accept="image/*,application/pdf,.heic" style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files ?? []); for (const f of files) await uploadSchedule(f); if (schedRef.current) schedRef.current.value = ""; }} />
             </>
           )}
           {schedView && (
@@ -3100,7 +2792,7 @@ function SetupDismantle({
               <button className="tinybtn" style={{ width: "100%" }} disabled={busy} onClick={() => serviceRef.current?.click()}>
                 Add service photo
               </button>
-              <input ref={serviceRef} type="file" accept="image/*,video/*,application/pdf,.heic" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadService(f); }} />
+              <input ref={serviceRef} type="file" multiple accept="image/*,video/*,application/pdf,.heic" style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files ?? []); for (const f of files) await uploadService(f); if (serviceRef.current) serviceRef.current.value = ""; }} />
             </>
           )}
           {serviceView && (
@@ -3153,17 +2845,12 @@ function SetupDismantle({
   );
 }
 
-// Staff name with phone in parens when available (mirrors the prototype's
-// "Faiz Rahman (012-880 5567)" driver option). Dual-reads phone / company_phone.
 function staffLabel(o: FleetStaff): string {
   const name = o.name || `#${o.id}`;
   const ph = o.phone ?? o.company_phone ?? o.companyPhone ?? null;
   return ph ? `${name} (${ph})` : name;
 }
 
-// A driver/helper picker that always renders the current out-of-scope value
-// (so a rep who can't list fleet still sees who's assigned). When
-// `withContact` is set, options show the staff phone alongside the name.
 function StaffSelect({
   label, value, currentName, options, disabled, onChange, withContact,
 }: {
@@ -3225,17 +2912,12 @@ function PhaseBlock({
 
   const [date, setDate] = useState(isoDatePart(startAt));
   const [time, setTime] = useState(isoTimePart(startAt));
-  // Existing phase photo — thumbnail + tap-to-view for everyone (drivers
-  // included); upload/replace stays gated on canWrite.
   const photoKey = photo?.r2_key ?? null;
   const [photoOpen, setPhotoOpen] = useState(false);
-  // Crew fallback: FK-joined name wins, else the crew-editor JSON.
   const crew = parseCrewJson(isSetup ? project.setup_crew : project.dismantle_crew);
   const driverDisplay = driverName || crew.drivers.map(crewLabel).join(", ") || "—";
   const lorryDisplay = lorryPlate || crew.lorries.join(", ") || "—";
 
-  // Compose date + time → the ISO the backend stores. Only PATCHes when a date
-  // is present (time-only is meaningless without a day).
   const saveStart = async (d: string, t: string) => {
     if (!d) return;
     await patchProject({ [startCol]: `${d}T${t || "00:00"}:00` });
@@ -3295,8 +2977,6 @@ function PhaseBlock({
               </label>
             </div>
           )}
-          {/* Single driver/lorry quick-assign — only as a fallback when NO
-              per-lorry crew is set (owner: hide once crew details exist). */}
           {crewIsEmpty(crew) && (
             <>
               <StaffSelect label={`${kind} driver & contact`} value={driverId} currentName={driverName} options={drivers} disabled={busy} onChange={(v) => { void patchProject({ [driverCol]: v }); }} withContact />
@@ -3405,7 +3085,7 @@ function PhaseBlock({
           </button>
         )}
       </div>
-      <input ref={fileRef} type="file" accept="image/*,.pdf,.mp4,.mov,.webm" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadPhoto(f); }} />
+      <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.mp4,.mov,.webm" style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files ?? []); for (const f of files) await uploadPhoto(f); if (fileRef.current) fileRef.current.value = ""; }} />
       {photoOpen && photoKey && (
         <MediaLightbox
           items={[{ r2_key: photoKey, content_type: mimeFromKey(photoKey), caption: photo?.caption ?? `${kind} photo` }]}
@@ -3420,15 +3100,7 @@ function PhaseBlock({
   );
 }
 
-// SalesDocsCard + doc tiles + review helpers moved to MobilePmsDocCard.tsx
 
-// ── Floor plans & layout + stock transfers ──
-// The 3D viewer stays a design placeholder (no plan-image payload). The
-// Unfilled / Filled plan tiles are wired to the project's floorplan-category
-// attachments: tap opens the plan when one exists, or prompts an upload.
-// The Stock Transfer Record is upload-only (matches the design): a stock-out
-// record is uploaded via PUT /:id/stock-transfers/upload → POST
-// /:id/stock-transfers. Existing rows are listed read-only.
 function FloorPlans({
   projectId, stockTransfers, attachments, checklist, checklistAttachments, canWrite, crewPlanView, hidePlanTiles, canStockEdit, confirm, busy, setBusy, notify, reload,
 }: {
@@ -3476,16 +3148,7 @@ function FloorPlans({
   const filledItem = itemByPrefix(/^filled\s*floor\s*plan/i);
   const stockOutItem = itemByPrefix(/^stock\s*out\s*transfer/i);
 
-  // The tiles mirror the "Blank Floorplan" / "Filled Floorplan" CHECKLIST
-  // task attachments (mig 050 moved uploads per-task — files attached in the
-  // tasklist must surface here). The legacy project-level floorplan-category
-  // attachments remain as a fallback for pre-050 projects.
-  // Viewing goes through MediaLightbox rather than window.open(blobUrl):
-  // mobile browsers popup-block window.open once an await has broken the
-  // user-gesture chain, which made these tiles dead on phones.
   const plans = (attachments ?? []).filter((a) => (a.category || "").toLowerCase() === "floorplan");
-  /** The tile's live attachment ROWS — the lightbox only needs r2_key, but
-   *  removing a file needs its id, so keep the rows and derive the media. */
   const taskPlanAtts = (prefix: RegExp): TaskAttachment[] => {
     const ids = new Set(
       (checklist ?? []).filter((it) => prefix.test((it.title || "").trim())).map((it) => it.id)
@@ -3520,7 +3183,6 @@ function FloorPlans({
   // display floorplan here instead.
   const displayPlanAtts = taskPlanAtts(/^display\s*floor\s*plan/i);
   const displayPlanFiles = displayPlanAtts.map(asMedia);
-  // Checklist task ids by title prefix — used to attach uploads to the right task.
   const taskIdByPrefix = (prefix: RegExp): number | null =>
     (checklist ?? []).find((it) => prefix.test((it.title || "").trim()))?.id ?? null;
   // Purchaser stock-out edit (owner 2026-07-23) — uploads land on the Stock
@@ -3546,7 +3208,6 @@ function FloorPlans({
         buf,
         file.type || "application/octet-stream",
       );
-      // Auto-submit so the approver's Approve/Reject appear (desktop parity).
       await autoSubmitReviewable(stockOutUploadTaskId, stockOutItem?.title ?? "Stock Out Transfer Record");
       reload();
     } catch (e) {
@@ -3556,12 +3217,6 @@ function FloorPlans({
       if (stockRef.current) stockRef.current.value = "";
     }
   };
-  // Stock transfer records — the "Stock Out" AND "Stock In" CHECKLIST tasks'
-  // attachments, pooled into one list. (The legacy project-level
-  // stock_transfers store is unused: every record is attached to its task,
-  // which is why this read empty.) Each row carries WHICH task it came from —
-  // the badge used to hardcode OUT, so a Stock In record wore an OUT badge and
-  // the owner read one event's out+in pair as "two stock outs" (2026-09-30).
   const stockOutAtts = (() => {
     const dirById = new Map(
       (checklist ?? [])
@@ -3606,9 +3261,6 @@ function FloorPlans({
         buf,
         file.type || "application/octet-stream",
       );
-      // Display / 3D / 2D are reviewable — mirror the doc cards so the
-      // approver's Approve/Reject reappear after a re-upload (no-op for the
-      // non-reviewable plan tasks).
       await autoSubmitReviewable(pending.taskId, pending.title);
       reload();
     } catch (e) {
@@ -3649,9 +3301,6 @@ function FloorPlans({
             // Unfilled / Filled plan tiles are not.
             const tileItem = t.item;
             const tileCanReview = checklistReviewVisible(user?.permissions, tileItem, files.length > 0);
-            // Per-file remove needs the checklist attachment row for its id —
-            // the legacy project-level fallback files (pre-mig-050 events)
-            // have none, so they stay view-only, exactly as before.
             const removable = canDeleteFiles && t.atts.length === files.length;
             return (
               <div key={t.key} style={{ border: "1px solid var(--hz-c-border)", borderRadius: 12, background: "var(--hz-c-surface)", padding: "10px 11px", display: "flex", flexDirection: "column", gap: 8 }}>
@@ -3705,7 +3354,7 @@ function FloorPlans({
             );
           })}
         </div>
-        <input ref={planUpRef} type="file" accept="image/*,.pdf" style={{ display: "none" }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadPlanFile(f); }} />
+        <input ref={planUpRef} type="file" multiple accept="image/*,.pdf" style={{ display: "none" }} onChange={async (e) => { const files = Array.from(e.target.files ?? []); for (const f of files) await uploadPlanFile(f); if (planUpRef.current) planUpRef.current.value = ""; }} />
 
         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)", margin: "10px 0 6px" }}>Stock transfer record</div>
         {stockOutAtts.length === 0 && <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)", marginBottom: 8 }}>No stock transfer recorded yet.</div>}
@@ -3790,9 +3439,10 @@ function FloorPlans({
             <input
               ref={stockRef}
               type="file"
+              multiple
               accept="image/*,.pdf"
               style={{ display: "none" }}
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) void uploadStockOut(f); }}
+              onChange={async (e) => { const files = Array.from(e.target.files ?? []); for (const f of files) await uploadStockOut(f); if (stockRef.current) stockRef.current.value = ""; }}
             />
           </>
         )}
@@ -3821,11 +3471,6 @@ function FloorPlans({
   );
 }
 
-// ── Finance snapshot ──
-// Quick Total Sales — set project_finance.total_sales directly (mirror desktop
-// saveQuickTotal, Projects.tsx:9937-9954). PATCH /:id/finance requires
-// projects.write + finance visibility (denyFinance); the caller only mounts this
-// inside the finance-gated snapshot for a writer. Saves on blur / Enter.
 function QuickTotalSalesField({
   projectId, current, busy, setBusy, notify, reload,
 }: {
@@ -3844,13 +3489,13 @@ function QuickTotalSalesField({
 
   const save = async () => {
     const trimmed = val.trim();
-    if (trimmed === "") return; // leave unset rather than forcing 0
+    if (trimmed === "") return;
     const n = parseFloat(trimmed);
     if (!Number.isFinite(n) || n < 0) {
       await notify({ title: "Invalid amount", body: "Enter a valid total sales amount.", tone: "error" });
       return;
     }
-    if (current != null && Math.abs(n - current) < 0.005) return; // unchanged
+    if (current != null && Math.abs(n - current) < 0.005) return;
     setBusy(true);
     try {
       await api.patch(`/api/projects/${projectId}/finance`, { total_sales: n });
@@ -3881,12 +3526,6 @@ function QuickTotalSalesField({
   );
 }
 
-// Quick Rental (RM) — writes a single `rental` cost line to the finance ledger
-// (mirror desktop QuickRentalField, Projects.tsx:5323-5392): keying rental here
-// syncs the Rental row, Total Cost, Net Profit + the Project List column.
-// POST/PATCH/DELETE /projects/finance/lines require projects.write + finance
-// visibility (denyFinance); the caller only mounts this inside the finance-gated
-// snapshot for a writer. Saves on blur / Enter.
 function QuickRentalField({
   projectId, lines, busy, setBusy, notify, reload,
 }: {
@@ -3903,7 +3542,6 @@ function QuickRentalField({
       && !pick(l.auto_source, l.autoSource)
       && !l.source,
   );
-  // Rental from the books: Finance's figure, shown, never typed over.
   const fromBooks = lines.filter((l) => (l.kind ?? "").toLowerCase() === "cost" && l.source === "books" && l.category === "rental");
   const current = existing.reduce((s, l) => s + (l.amount || 0), 0);
   const [val, setVal] = useState(current ? String(current) : "");
@@ -3919,7 +3557,7 @@ function QuickRentalField({
       await notify({ title: "Invalid amount", body: "Enter a valid rental amount.", tone: "error" });
       return;
     }
-    if (Math.abs(n - current) < 0.005) return; // unchanged
+    if (Math.abs(n - current) < 0.005) return;
     setBusy(true);
     try {
       if (n <= 0) {
@@ -3927,7 +3565,6 @@ function QuickRentalField({
       } else if (existing.length === 1) {
         await api.patch(`/api/projects/finance/lines/${existing[0].id}`, { amount: n });
       } else {
-        // 0 existing → create; >1 → consolidate the duplicates into one.
         for (const l of existing) await api.del(`/api/projects/finance/lines/${l.id}`);
         await api.post(`/api/projects/${projectId}/finance/lines`, {
           kind: "cost", category: "rental", amount: n, description: "Rental",
@@ -3987,8 +3624,6 @@ function FinancialSnapshot({
   notify: NotifyFn;
   reload: () => void;
 }) {
-  // Receipts open in the lightbox — window.open(blobUrl) after an await is
-  // popup-blocked on mobile browsers.
   const [receipt, setReceipt] = useState<MediaItem | null>(null);
   const openReceipt = (line: FinanceLine) => {
     const key = pick(line.r2_key, line.r2Key);
@@ -3998,9 +3633,6 @@ function FinancialSnapshot({
 
   const allLines = lines ?? [];
   const costLines = allLines.filter((l) => (l.kind ?? "").toLowerCase() === "cost");
-  /* The server's P&L by Total Sales when it sent one — the desktop page's own
-     figures, Finance's books and the orders' cost included; else the old
-     cached rollup. */
   const sales = forecast ? forecast.lines.sales.amount : pnl ? pnl.by_sales.sales : finance.total_sales ?? 0;
   const cost = forecast ? forecast.totals.total_cost.amount : pnl ? pnl.by_sales.totalCost :
     (finance.rental ?? 0) +
@@ -4060,12 +3692,6 @@ function FinancialSnapshot({
             <span style={{ fontWeight: 700, color: pnl.by_so.netProfit >= 0 ? "var(--hz-c-synced)" : "var(--hz-c-err)" }}>{formatCurrency(pnl.by_so.netProfit)}</span>
           </div>
         )}
-        {/* Quick edit (finance write) — Total Sales PATCHes
-            project_finance.total_sales (mirror desktop saveQuickTotal:9937-9954);
-            Rental writes a `rental` cost line (mirror desktop
-            QuickRentalField:5323-5392). Both endpoints require projects.write +
-            finance visibility, which financeVisible + canWrite already satisfy,
-            so the control never 403s. */}
         {canWrite && (
           <>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)", margin: "12px 0 6px" }}>Quick edit</div>
@@ -4076,7 +3702,6 @@ function FinancialSnapshot({
           </>
         )}
 
-        {/* Cost ledger — read-only snapshot. A stored receipt opens in the lightbox. */}
         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)", margin: "12px 0 6px" }}>Cost lines</div>
         {costLines.length === 0 ? (
           <div style={{ fontSize: 12, color: "var(--hz-c-ink-soft)" }}>No cost lines yet.</div>
@@ -4119,13 +3744,7 @@ function FinancialSnapshot({
   );
 }
 
-// R2-backed thumbnail. <img src> can't carry the bearer, so fetch as a blob
-// URL (api.fetchBlobUrl) and revoke on unmount. r2Key is streamed from the
-// project attachments endpoint (/api/projects/attachments/:key).
-// R2Thumb moved to MobilePmsDocCard.tsx (imported above).
 
-// ── Small building blocks ──
-// List meta pill (spec project-list: branding / venue chips under the title).
 function ListChip({ children }: { children: ReactNode }) {
   return (
     <span style={{ fontSize: 10, fontWeight: 700, color: "#5c6156", background: "var(--hz-dk-surface-2, #f0f1ed)", border: "1px solid var(--line)", padding: "3px 8px", borderRadius: 7 }}>
@@ -4175,12 +3794,6 @@ function titleCaseName(name: string): string {
     .join(" ");
 }
 
-// Section-driven stage badge — the project's CURRENT active section
-// (active_section_name + done/total, mig 050), matching the desktop Projects
-// table's stage column, which retired the coarse legacy `stage` enum. Reuses the
-// StageBadge .spill shape; the active stage takes the "open" tint (in progress).
-// Falls back to the legacy StageBadge when the row has no open section (all done
-// or none defined) so the pill is never blank.
 function SectionStageBadge({ row }: { row: ProjectListRow }) {
   const active = row.active_section_name?.trim() || null;
   if (!active) return <StageBadge stage={row.stage} />;
@@ -4199,10 +3812,6 @@ function SectionStageBadge({ row }: { row: ProjectListRow }) {
   );
 }
 
-// Thin inline progress rail + % for the list card footer — mirrors the desktop
-// Projects ProgressBar (green at 100%, brand otherwise) using the mobile tokens
-// and the same 4px-radius rail treatment as the Delivery header bar. Sized to
-// sit inline on the meta row, never a tall block.
 function MiniProgress({ pct }: { pct: number }) {
   const c = Math.max(0, Math.min(100, Math.round(pct)));
   return (
@@ -4215,4 +3824,3 @@ function MiniProgress({ pct }: { pct: number }) {
   );
 }
 
-// humanize moved to MobilePmsDocCard.tsx (imported above).

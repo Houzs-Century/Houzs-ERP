@@ -1,8 +1,3 @@
-/* The Financial Dashboard's forecast helpers (step 7 of the forecast port):
-   the span the card asks the forecast for, a period's two forecasts summed
-   over its months (none when a month is missing), the tab's figure, actual
-   less forecast. The page's own test drives them through the card
-   (FinanceDashboard.test.tsx). Made-up figures. */
 import { describe, expect, it } from 'vitest';
 import { categoryAmounts, categoryRows, forecastSpan, gapOf, periodCashForecasts, periodCategoryForecast, pickCash } from './dashboardForecast';
 import type { CashFlowForecast } from '../../../vendor/scm/lib/cash-flow-forecast-queries';
@@ -22,7 +17,6 @@ describe('the forecasts per period', () => {
 
   it('a period sums its months; a month missing leaves that forecast out', () => {
     expect(periodCashForecasts(['2026-11'], F)).toEqual({ pnl: { inSen: 200, outSen: 50, netSen: 150 }, docs: { inSen: 150, outSen: 70, netSen: 80 } });
-    /* A quarter: the P&L forecast covers it; Orders & bills starts in November. */
     expect(periodCashForecasts(['2026-10', '2026-11', '2026-12'], F)).toEqual({ pnl: { inSen: 600, outSen: 150, netSen: 450 }, docs: null });
     expect(periodCashForecasts(['2026-11'], undefined)).toEqual({ pnl: null, docs: null });
     expect(periodCashForecasts([], F)).toEqual({ pnl: null, docs: null });

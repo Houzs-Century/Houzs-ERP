@@ -1,30 +1,3 @@
-/* The Delivery Planning board's reads as TWO SQL statements over Hyperdrive,
-   instead of ~800-1,400 PostgREST calls (production 2026-11, p95 13.9 s).
-
-   1. BOARD_HEAD_SQL: region master + state mapping + warehouses + the SO headers
-      (status, company, ?docs and date-band filters). Was 4+ serial reads plus
-      one per 1,000 headers.
-   2. BOARD_DATA_SQL: every per-order fact for the doc numbers the board builds —
-      lines, catalog, deliverable sums (linked + unlinked DO lines, returns),
-      DOs, trip stops, trips, crew, live balances, PO lock, PO numbers, the
-      AutoCount exemption expiry. Was one chunked read per ~80 doc numbers per
-      table.
-
-   ACCURACY. Each dataset is the same columns, filters and company predicates as
-   the PostgREST read it replaces (named on each CTE), and is folded by the SAME
-   functions (delivery-board-maps.ts) the PostgREST path uses; only the
-   deliverable sum and the PO walks are re-folded here, from their pure parts
-   (attributeUnlinkedDoLines, doCountsAsDelivered). Rows are serialised by
-   Postgres json (json_agg), the same serialiser PostgREST uses, so a date, a
-   timestamptz or a bigint reaches the fold as the same JSON value. Where the
-   PostgREST read's ORDER decides a "last write wins", the chunked order is
-   re-created (chunkRank) rather than assumed.
-
-   COMPANY SCOPE. The caller's allowed companies filter the SO headers (as the
-   PostgREST read did), the catalog is the active company (scopeToCompany), the
-   PO-number walk is per company on all three tables (planningPoNosByDoc), and
-   the AutoCount mirror is the allowed companies. Every other dataset is keyed
-   through those company-scoped doc numbers, exactly as before. */
 import type { Sql } from 'postgres';
 import type { Context } from 'hono';
 import { activeCompanyId, allowedCompanyIds } from './companyScope';
@@ -47,11 +20,6 @@ type BoardCtx = Context<{ Bindings: Env; Variables: Variables }>;
 const SO_COLS = 'doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, sales_exemption_expiry, amend_date_from_customer, amended_delivery_date, amend_reason, amend_reason_from_customer, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral, ref, customer_so_no, delivery_message_status, disposal_request, dp_remark, linked_ac_docno';
 const DO_COLS = 'id, do_number, so_doc_no, status, driver_id, driver_name, vehicle, delivery_state, customer_delivery_date, do_date, delivered_at, pod_r2_key, pod_lat, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date, em_delivery_status, consignment_no, vessel_voyage, etd_port_klang, bs_delivery_date, esb_remarks, bs_remarks, ctn, em_delivered_date, created_at';
 const EFF = 'coalesce(amended_delivery_date, customer_delivery_date)';
-/* JSON and date parameters go in as TEXT ($n::text::jsonb): postgres.js serialises a
-   parameter Postgres describes as jsonb with JSON.stringify, so a JSON string would be
-   encoded twice and arrive as a jsonb scalar.
-   $1 allowed companies (jsonb array, null = unresolved: no predicate), $2 ?docs (jsonb, null = all),
-   $3 band ranges inside (jsonb [[lo,hi],...]), $4/$5 band 5 outside lo/hi. */
 export const BOARD_HEAD_SQL = `
 WITH so AS (
   SELECT ${SO_COLS}
@@ -68,11 +36,6 @@ SELECT
   (SELECT coalesce(json_agg(w), '[]'::json) FROM (SELECT id, code, name FROM scm.warehouses) w) AS warehouses,
   (SELECT coalesce(json_agg(so ORDER BY so.customer_delivery_date ASC NULLS LAST, so.doc_no), '[]'::json) FROM so) AS so`;
 
-/* $1 doc numbers (jsonb), $2 display (false for ?counts_only: the reads that feed
-   only display columns and the row scope are skipped, as kickOffBoardReads does),
-   $3 catalog scope ('company' | 'none' | 'open'), $4 active company, $5 PO-walk
-   [doc, company] pairs (jsonb), $6 AutoCount book doc numbers (jsonb), $7 allowed
-   companies (jsonb, null = unresolved). */
 export const BOARD_DATA_SQL = `
 WITH docs AS (SELECT DISTINCT d AS doc_no FROM jsonb_array_elements_text($1::text::jsonb) d),
 -- kickOffBoardReads itemRowsReadP + soDeliverableRemaining's lines: non-cancelled lines.
@@ -187,9 +150,6 @@ type DataRow = {
   ac: Array<{ doc_no: string | null; expiry_date: string | null }>;
 };
 
-/* The batch each value lands in when chunkIn(values) splits it: the PostgREST
-   read returns batch by batch, each batch in its own ORDER BY, so a "last row
-   wins" fold over it depends on the batching. */
 export function chunkRank(values: readonly string[]): Map<string, number> {
   const size = chunkSizeForUrl(values);
   const out = new Map<string, number>();
@@ -200,11 +160,6 @@ const byRank = <T>(rows: T[], rank: Map<string, number>, key: (r: T) => string |
   rows.map((r, i) => ({ r, i, k: rank.get(String(key(r) ?? '')) ?? Number.MAX_SAFE_INTEGER }))
     .sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.r);
 
-/* soDeliverableRemaining folded down to the two sums the board reads. Per order,
-   both are independent of the order lines and unlinked DO lines are visited in:
-   attributeUnlinkedDoLines fills a (doc, item code) bucket greedily, so a bucket
-   takes min(Σ unlinked, Σ open) whatever the order, and a return nets inside the
-   same order either way. */
 export type DeliverableRows = {
   items: Array<{ id: string; doc_no: string; item_code: string | null; qty: number | null }>;
   dos: Array<{ id: string; so_doc_no: string | null; status: string | null }>;
@@ -297,10 +252,7 @@ export async function loadSoBoardMapsSql(
     if (!companyOrder.includes(cid)) companyOrder.push(cid);
     pairs.push([String(r.doc_no), cid]);
   }
-  // Every row, counts_only too: the expiry decides Overdue (derivePlanningState).
   const linkedAc = linkedAcDocByDoc(input.soRows);
-  /* JSON text for the $n::text::jsonb placeholders of BOARD_DATA_SQL (pinned by
-     delivery-board-sql.test.ts: no bare $n::jsonb in either statement). */
   const docsJson = JSON.stringify(docNos);
   const pairsJson = JSON.stringify(pairs);
   const acDocsJson = JSON.stringify([...new Set(linkedAc.values())]);
@@ -316,9 +268,7 @@ export async function loadSoBoardMapsSql(
   }
   const items = foldItems(row.items, row.products);
   const { deliveredByDoc, remainingByDoc } = foldDeliverable(row);
-  // The DO read was chunked on docNos, each batch ordered (created_at, id).
   const dos = foldDos(display ? byRank(row.dos, chunkRank(docNos), (d) => d.so_doc_no) : []);
-  // The stop read was chunked on the live DO ids, each batch ordered by do_id.
   const live = new Set(dos.doIds);
   const stopRows = byRank(row.stops.filter((s) => !!s.do_id && live.has(s.do_id)), chunkRank(dos.doIds), (s) => s.do_id);
   const stops = foldStops(dos.doByDoc, stopRows, row.trips);

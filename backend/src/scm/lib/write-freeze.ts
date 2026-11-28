@@ -79,11 +79,8 @@ export type FreezeScope = 'off' | 'all' | number[];
 /** A parsed app_config value. */
 export interface FreezeValue {
   scope: FreezeScope;
-  /** L2 areas lifted out of the freeze — the staged-lift exceptions. */
   open: readonly string[];
-  /** Tokens after the `-` we could not resolve to an area. NOT lifted. */
   unknown: readonly string[];
-  /** The company part was present but unintelligible; scope was forced to 'all'. */
   malformed: boolean;
 }
 
@@ -101,10 +98,6 @@ export function primeWriteFreezeCache(raw: string | null | undefined, descriptio
   cached = { at: Date.now(), state: { value: parseFreezeValue(raw), message: description ?? null } };
 }
 
-/* An explicit "we are open" token. Anything else non-empty is an instruction to
-   freeze something, and is parsed as such. Shared with the migrated-SO lock next
-   door (lib/app-config-tokens.ts): the two grammars differ, but "did I turn it
-   off?" must not have two answers for two rows of the same table. */
 
 const dedupe = <T>(xs: T[]): T[] => [...new Set(xs)];
 const split = (s: string): string[] => s.split(',').map((t) => t.trim()).filter((t) => t.length > 0);
@@ -126,9 +119,6 @@ export function parseFreezeValue(raw: string | null | undefined): FreezeValue {
   const v = String(raw ?? '').trim().toLowerCase();
   if (OPEN_TOKENS.has(v)) return { scope: 'off', open: [], unknown: [], malformed: false };
 
-  /* Split on the FIRST '-' only. It reads as "minus": freeze company 1 MINUS
-     sales orders. No company id and no area key contains one, so there is
-     nothing for it to collide with. */
   const dash = v.indexOf('-');
   const head = (dash === -1 ? v : v.slice(0, dash)).trim();
   const tail = dash === -1 ? '' : v.slice(dash + 1).trim();
@@ -139,9 +129,6 @@ export function parseFreezeValue(raw: string | null | undefined): FreezeValue {
     scope = 'all';
   } else {
     const tokens = split(head);
-    /* STRICT digits. The old parser used Number(), so a stray trailing comma
-       ('1,') yielded company 0 and '1.5' yielded a fractional id — neither can
-       ever match a real company, but both quietly mean "not what was typed". */
     const ids = tokens.filter((t) => /^\d+$/.test(t)).map(Number);
     if (tokens.length > 0 && ids.length === tokens.length) {
       scope = dedupe(ids);
@@ -154,13 +141,11 @@ export function parseFreezeValue(raw: string | null | undefined): FreezeValue {
   const open: string[] = [];
   const unknown: string[] = [];
   for (const token of split(tail)) {
-    // The `scm.` prefix is optional — a mechanical rule, not a synonym list.
     const key = token.startsWith('scm.') ? token : `scm.${token}`;
     if (SCM_AREAS.has(key)) { if (!open.includes(key)) open.push(key); }
     else if (!unknown.includes(token)) unknown.push(token);
   }
 
-  /* A freeze instruction we could not read does not get to carry a lift. */
   if (malformed) return { scope, open: [], unknown: dedupe([...unknown, ...open]), malformed: true };
   return { scope, open, unknown, malformed: false };
 }
@@ -173,24 +158,12 @@ export function parseFreezeValue(raw: string | null | undefined): FreezeValue {
 export function isFrozen(v: FreezeValue, companyId: number | undefined, area: string | null): boolean {
   if (v.scope === 'off') return false;
   if (v.scope !== 'all') {
-    // Unresolved company → let it through (see the header note).
     if (companyId == null || !v.scope.includes(companyId)) return false;
   }
-  /* The exception applies only WITHIN the frozen scope — a company that is not
-     in `scope` returned above and never consults `open`, so a lift cannot leak
-     into a company the value never froze. */
   if (area != null && v.open.includes(area)) return false;
   return true;
 }
 
-/** Read the row. Throws — callers decide what a failure means.
- *
- *  A PostgREST `error` is RAISED rather than folded into a null row, because
- *  "the query failed" and "the row is absent" are different answers and only one
- *  of them means open. The middleware treats both the same (fail open, see
- *  readFreeze), so this changes nothing there — but the status surface must not
- *  tell an operator the freeze is off when what actually happened is that we
- *  could not read it. */
 async function fetchFreezeRow(sb: unknown): Promise<{ value?: string; description?: string } | null> {
   const { data, error } = await (sb as {
     from(t: string): {
@@ -215,10 +188,6 @@ export async function readFreezeUncached(sb: unknown): Promise<FreezeState> {
   return { value: parseFreezeValue(data?.value), message: data?.description ?? null };
 }
 
-/* Takes a FACTORY, not a client: on a cache hit — the common case, since the
-   TTL covers ~30s of traffic — no Supabase client is constructed at all. It used
-   to be built eagerly as the argument expression, so every write request paid
-   for a client it then threw away. */
 async function readFreeze(makeSb: () => unknown): Promise<FreezeState> {
   const now = Date.now();
   if (cached && now - cached.at < FREEZE_TTL_MS) return cached.state;
@@ -228,11 +197,6 @@ async function readFreeze(makeSb: () => unknown): Promise<FreezeState> {
     cached = { at: now, state };
     return state;
   } catch {
-    /* FAIL OPEN, deliberately — and note this is the OUTAGE case, not the typo
-       case (see the header). A freeze is an operational convenience; a
-       misconfigured/unreachable app_config must not take the whole SCM write
-       surface down. The cutover's real protection is that staff were TOLD to
-       stop — this makes that stick, it is not a security control. */
     const state: FreezeState = {
       value: { scope: 'off', open: [], unknown: [], malformed: false },
       message: null,
@@ -277,10 +241,6 @@ export function scmWriteFreeze() {
     const method = c.req.method.toUpperCase();
     if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return next();
 
-    /* Own client on purpose: `supabase` is set by each sub-router's
-       supabaseAuth, so it is NOT in the context this early. Reading one
-       app_config row with the service client keeps the freeze ahead of every
-       sub-router instead of having to repeat it inside each one. */
     const { value, message } = await readFreeze(() => getSupabaseService(c.env));
     if (value.scope === 'off') return next();
 
@@ -289,16 +249,6 @@ export function scmWriteFreeze() {
 
     if (callerBypasses(c)) return next();
 
-    /* Both fields carry the SAME sentence on purpose. The vendored SCM client
-       reads `reason` (vendor/scm/lib/authed-fetch.ts humanApiError) and has
-       always shown this correctly; the core api/client.ts reads
-       `message`/`detail` and, sending only `reason`, showed the generic 503
-       line instead — "The service is briefly unavailable. Please try again in a
-       moment.", an outage sentence for a deliberate business pause. That line
-       also matches api/client.ts isColdPool503, so that client silently re-sent
-       the refused write four more times. Only one /api/scm write goes through
-       it today (pages/Team.tsx showroom parking), but it is the default client
-       for anything not vendored, so send both fields and let neither drift. */
     /* `area` is additive metadata for a client that wants to react to WHICH
        module is shut, and it is emitted ONLY during a staged lift. Before the
        first lift the refusal body stays byte-for-byte what it has been since
@@ -315,19 +265,11 @@ export function scmWriteFreeze() {
   };
 }
 
-/* Says the three things the floor needs and nothing else: saving is OFF, the
-   system is not broken, retrying will not help. Kept under OPERATOR_MESSAGE_MAX
-   so it survives both clients' length guard. */
 const DEFAULT_FROZEN_MESSAGE =
   'Saving is paused while the AutoCount data is brought across. '
   + 'Nothing is broken and retrying will not help. '
   + 'Editing reopens after the cutover — ask IT if something must change today.';
 
-/* BOTH clients discard a server sentence of 200 characters or more and fall
-   back to their generic 5xx line, which reads as an outage — so an
-   operator-typed app_config.description that runs long would silently undo this
-   fix. The cap belongs here, the one place that holds both the operator's text
-   and the default. */
 const OPERATOR_MESSAGE_MAX = 200;
 
 /**
@@ -353,7 +295,6 @@ export function freezeMessage(
     const sentence =
       `Saving ${areaLabel(area)} is still paused while the AutoCount data is brought across. `
       + 'Other areas have reopened. Retrying will not help — ask IT if this must change today.';
-    // Guard, not a hope: a label long enough to breach the cap falls back.
     if (sentence.length < OPERATOR_MESSAGE_MAX) return sentence;
   }
   return DEFAULT_FROZEN_MESSAGE;

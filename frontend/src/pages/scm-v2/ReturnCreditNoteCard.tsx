@@ -1,6 +1,3 @@
-/* A delivery return's money side (backlog A1): where its credit note stands,
-   the notes raised from it, and — while one is awaited — the way to raise it,
-   filled from the return at the invoiced price. */
 
 import { Link, useNavigate } from 'react-router-dom';
 import { Badge } from '../../components/Badge';
@@ -16,7 +13,6 @@ export function ReturnCreditNoteCard({ returnId, credit, cancelled, canCreate }:
   returnId: string;
   credit: ReturnCreditNote | null | undefined;
   cancelled: boolean;
-  /** scm.payment_voucher.create / .write — the server's own keys for raising a note. */
   canCreate: boolean;
 }) {
   const navigate = useNavigate();

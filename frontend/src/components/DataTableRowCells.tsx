@@ -29,8 +29,6 @@ export function dataCellStyle<T>(
     cellStyle.maxWidth = userWidth;
   } else if (column.width) {
     cellStyle.width = column.width;
-    // Same cap as the header cell: a px width means "clip here", never
-    // "stretch to the longest value".
     const px = parsePxWidth(column.width);
     if (px != null) cellStyle.maxWidth = px;
   }
@@ -78,8 +76,6 @@ function DataRowCellsInner<T>({
   fillerAt: number;
   fillerCount: number;
   stickyBg: string;
-  /* The first data column gets the leading gutter only when no select / chevron
-     cell sits before it (that cell owns the gutter otherwise). */
   firstColGutter: boolean;
 }) {
   return (
@@ -91,8 +87,6 @@ function DataRowCellsInner<T>({
         const isFirstStickyRight =
           isStickyRight && i === columns.length - stickyRightCount;
         const cellStyle = dataCellStyle(c, i, { widths, stickyLeft, stickyRight, stickyCount }, stickyBg);
-        // Full raw value as a native tooltip so a clipped cell stays readable on
-        // hover. Strings only: numeric getValues are raw centi/ISO shapes.
         const rawVal = c.getValue?.(row);
         const cellTitle =
           typeof rawVal === "string" && rawVal !== "" ? rawVal : undefined;
@@ -130,5 +124,4 @@ function DataRowCellsInner<T>({
     </>
   );
 }
-/* memo keeps the generic signature (React.memo erases it on its own). */
 export const DataRowCells = memo(DataRowCellsInner) as typeof DataRowCellsInner;

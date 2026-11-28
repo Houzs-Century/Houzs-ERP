@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Search } from "lucide-react";
 import { cn, relativeTime } from "../../lib/utils";
-import { fmtDateTime } from "../../vendor/shared/format";
+import { fmtDateTime } from "../../../../shared/src/vendor/shared/format";
 import { DataTable, type Column } from "../../components/DataTable";
 import {
   CATEGORY_META,
@@ -29,17 +29,10 @@ import {
   type NameLookups,
 } from "./announcementModel";
 
-// ────────────────────────────────────────────────────────────────────────────
-// ManageView — the poster's view of /announcements (design handoff 2026-09-04,
-// screen 2): a 4-up stat strip, the ack-rate table, and a drawer with the
-// two-level drill-down (notice → department → person). Presentational, like
-// InboxView: the page owns the fetches and passes plain data.
-// ────────────────────────────────────────────────────────────────────────────
 
 export type ManageViewProps = {
   items: Announcement[];
   loading: boolean;
-  /** { id → { total, acked } } from /ack-summary; null while loading / failed. */
   summary: AckSummary | null;
   addressedIds: ReadonlySet<string>;
   ackedIds: ReadonlySet<string>;
@@ -51,36 +44,21 @@ export type ManageViewProps = {
   onFilter: (f: InboxFilter) => void;
   search: string;
   onSearch: (q: string) => void;
-  /** Receipts for the SELECTED notice. */
   receipts: AcksData | null;
   receiptsLoading: boolean;
-  /** The attachment log for the SELECTED notice (GET /:id/files); null while
-   *  loading / not fetched. Rendered only when it has lines. */
   files?: AnnouncementFile[] | null;
-  /** The department bucket open in the drill-down (deptKey), null = first. */
   drillDept: string | null;
   onDrill: (key: string) => void;
   onRemindPending: (a: Announcement) => void;
-  /** Remind only the pending people of one department (mig 20260906T0921). */
   onRemindDept: (a: Announcement, departmentId: number | null, departmentName: string) => void;
   onEscalate: (a: Announcement, departmentId: number | null, departmentName: string) => void;
-  /** Hide / show (PATCH isActive) and permanent delete — the poster's row
-   *  actions from the old list, kept in the drawer header. */
   onToggleHidden: (a: Announcement) => void;
   onDelete: (a: Announcement) => void;
-  /** announcements.write (or a Sales Director on their own post): may hide /
-   *  delete / submit. The approval desk alone (announcements.approve) reads
-   *  the table and acts on the queue only. */
   canWrite: boolean;
-  /** announcements.approve: Approve / Reject on a pending notice. */
   canApprove: boolean;
-  /** DRAFT / REJECTED → back into the approval queue. */
   onSubmit: (a: Announcement) => void;
   onApprove: (a: Announcement) => void;
-  /** The page asks for the reason (a dialog) and posts it. */
   onReject: (a: Announcement) => void;
-  /** Void a SUBMITTED notice with a reason (mig 20260907T1030) — the page
-   *  asks for the reason. Delete stays for drafts only. */
   onVoid: (a: Announcement) => void;
   className?: string;
 };
@@ -178,7 +156,6 @@ export function ManageView(p: ManageViewProps) {
 
   return (
     <div className={cn("flex min-h-0 flex-col", p.className)}>
-      {/* ── Stat strip ─────────────────────────────────────────────────── */}
       <div className="grid shrink-0 grid-cols-4 gap-3 px-5 pt-4">
         <Stat label="Awaiting you" value={String(stats.awaitingYou)} valueCls="text-err" />
         <Stat label="Live notices" value={String(stats.liveNotices)} />
@@ -194,7 +171,6 @@ export function ManageView(p: ManageViewProps) {
       </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-[1fr_392px] gap-4 px-5 pb-6 pt-4">
-        {/* ── Table ─────────────────────────────────────────────────────── */}
         <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-stone">
           <div className="flex shrink-0 items-center gap-2 border-b border-border px-3.5 py-2.5">
             <label className="flex min-w-[200px] items-center gap-[7px] rounded-md border border-border bg-surface-2 px-[9px] py-1.5">
@@ -260,7 +236,6 @@ export function ManageView(p: ManageViewProps) {
           </div>
         </div>
 
-        {/* ── Drawer ────────────────────────────────────────────────────── */}
         <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-slab">
           {selected ? (
             <Drawer

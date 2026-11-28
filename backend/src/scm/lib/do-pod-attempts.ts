@@ -23,8 +23,6 @@ export type PodSet = {
   pod_located_at?: string | null;
 };
 
-/* departure_at / arrival_at stay on the order: the lorry did leave and arrive,
-   and the next run re-stamps them. Only the evidence of the handover clears. */
 export const CLEARED_POD_SET = {
   signature_data: null,
   pod_r2_key: null,

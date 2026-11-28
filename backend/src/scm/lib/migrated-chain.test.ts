@@ -19,9 +19,6 @@ import {
   MIGRATED_RECEIPTS_NOT_INVOICED_AS_OF,
 } from './migrated-receipts-not-invoiced.generated';
 
-/* Every fixture below is a real document read out of production and live
-   AED_HOUZS on 2026-08-11, not an invented shape. The AutoCount totals are
-   PI.NetTotal / IV.NetTotal in sen. */
 
 const line = (over: Partial<MigratedSourceDoc['lines'][number]> = {}) => ({
   lineId: 'l1', itemCode: 'AKEMI IMMORTAL MATT (Q)', qty: 1, unitPriceSen: 369400,
@@ -35,7 +32,6 @@ const src = (over: Partial<MigratedSourceDoc> = {}): MigratedSourceDoc => ({
 describe('migrated invoice numbering', () => {
   it('carries the AutoCount invoice number, never a fresh sequence', () => {
     expect(migratedInvoiceNumber('PI-000658')).toBe('HC-PI-000658');
-    // AutoCount's sales invoices are numbered I-…, not IV-… (verified live)
     expect(migratedInvoiceNumber('I-2601-0154')).toBe('HC-I-2601-0154');
   });
 
@@ -43,14 +39,12 @@ describe('migrated invoice numbering', () => {
     const { plans } = planMigratedInvoices([src()], { 'PI-000658': 369400 });
     expect(plans).toHaveLength(1);
     expect(plans[0]!.invoiceNumber).toBe('HC-PI-000658');
-    // the check-migrated-numbering rule, restated as an assertion
     expect(plans[0]!.invoiceNumber).toBe(`HC-${plans[0]!.acInvoiceNo}`);
   });
 });
 
 describe('rule 1 — one ERP invoice per AutoCount invoice', () => {
   it('merges the GRNs one AutoCount invoice spans into ONE invoice', () => {
-    // real: PI-000832 covers HC-GR-000201-PO-000273 and HC-GR-000201-PO-000275
     const { plans } = planMigratedInvoices([
       src({ docNo: 'HC-GR-000201-PO-000273', acDocNo: 'GR-000201', acInvoiceNos: ['PI-000832'] }),
       src({
@@ -75,7 +69,6 @@ describe('rule 1 — one ERP invoice per AutoCount invoice', () => {
 
 describe('rule 2 — only what AutoCount actually invoiced', () => {
   it('refuses a delivery AutoCount never invoiced', () => {
-    // real: HC-DO-007466, HC-DO-007525, HC-DO-008624
     const { plans, blocked } = planMigratedInvoices(
       [src({ docNo: 'HC-DO-007466', acDocNo: 'DO-007466', acInvoiceNos: [] })], {});
     expect(plans).toHaveLength(0);
@@ -89,7 +82,6 @@ describe('rule 2 — only what AutoCount actually invoiced', () => {
   });
 
   it('refuses a document with no AutoCount number to mirror', () => {
-    // real: 12 of 291 migrated GRNs
     const { blocked } = planMigratedInvoices([src({ acDocNo: null })], {});
     expect(blocked[0]!.reason).toBe('no_autocount_document');
   });
@@ -102,7 +94,6 @@ describe('rule 2 — only what AutoCount actually invoiced', () => {
   });
 
   it('refuses a document with nothing left to invoice', () => {
-    // real: HC-DO-000608 holds 3 rows, all qty 0
     const { plans, blocked } = planMigratedInvoices(
       [src({ lines: [line({ qty: 0 })] })], { 'PI-000658': 0 });
     expect(plans).toHaveLength(0);
@@ -111,10 +102,6 @@ describe('rule 2 — only what AutoCount actually invoiced', () => {
 });
 
 describe('rule 3 — a duplicated source line is refused, never silently billed', () => {
-  /* HC-DO-005452 really holds 12 rows / 24 units against AutoCount's 6 rows /
-     12 units: every so_item_id appears twice with the same qty. Its AutoCount
-     invoice I-2507-0184 billed RM 7,300.00; the doubled rows would bill
-     RM 14,600.00. */
   const doubled = src({
     docNo: 'HC-DO-005452', acDocNo: 'DO-005452', acInvoiceNos: ['I-2507-0184'],
     lines: [
@@ -132,7 +119,6 @@ describe('rule 3 — a duplicated source line is refused, never silently billed'
     expect(plans).toHaveLength(0);
     expect(blocked[0]!.reason).toBe('duplicate_source_lines');
 
-    // WITHOUT rule 3, this document reaches the total gate carrying double.
     const naive = planMigratedInvoices(
       [{ ...doubled, lines: doubled.lines.map((l, i) => ({ ...l, sourceLineKey: `distinct-${i}` })) }],
       { 'I-2507-0184': 730000 });
@@ -154,7 +140,6 @@ describe('rule 3 — a duplicated source line is refused, never silently billed'
 
 describe('rule 4 — the total must equal AutoCount\'s, to the sen', () => {
   it('passes the delivery that reconciles exactly', () => {
-    // real: HC-DO-008331 -> I-2601-0154, RM 4,849.50 on both sides
     const { plans } = planMigratedInvoices([src({
       docNo: 'HC-DO-008331', acDocNo: 'DO-008331', acInvoiceNos: ['I-2601-0154'],
       lines: [line({ itemCode: 'AKEMI ARMOUR MATT (K)', qty: 1, unitPriceSen: 484950 })],
@@ -166,7 +151,6 @@ describe('rule 4 — the total must equal AutoCount\'s, to the sen', () => {
   });
 
   it('a free line does NOT fail the gate when AutoCount billed it free too', () => {
-    // real shape: HC-DO-007726 bills RM 3,694.00 across 4 lines, 3 of them RM 0
     const { plans } = planMigratedInvoices([src({
       docNo: 'HC-DO-007726', acDocNo: 'DO-007726', acInvoiceNos: ['I-2512-0062'],
       lines: [
@@ -180,7 +164,6 @@ describe('rule 4 — the total must equal AutoCount\'s, to the sen', () => {
   });
 
   it('a line the cutover failed to price DOES fail the gate, and reports both numbers', () => {
-    // real: HC-DO-010222 would bill RM 0.00 against AutoCount's RM 7,650.00
     const { plans, blocked } = planMigratedInvoices([src({
       docNo: 'HC-DO-010222', acDocNo: 'DO-010222', acInvoiceNos: ['I-2606-0009'],
       lines: [line({ qty: 8, unitPriceSen: 0 })],
@@ -206,9 +189,6 @@ describe('rule 4 — the total must equal AutoCount\'s, to the sen', () => {
 });
 
 describe('rule 5 — one invoice, one party', () => {
-  /* 309 of 4,789 AutoCount purchase invoices and 568 of 9,245 sales invoices
-     span more than one source document, so the merged header is the common
-     case. It can name only one supplier / debtor. */
   it('merges documents that agree on the party', () => {
     const { plans } = planMigratedInvoices([
       src({ docNo: 'HC-GR-000201-PO-000273', acInvoiceNos: ['PI-000832'], partyKey: 'supplier-a' }),
@@ -231,7 +211,6 @@ describe('rule 5 — one invoice, one party', () => {
     ], { 'PI-000832': 738800 });
     expect(plans[0]!.eligible).toBe(false);
     expect(plans[0]!.reason).toBe('party_disagrees_across_sources');
-    // both source documents are named, not just the losing one
     expect(blocked.map((b) => b.docNo).sort())
       .toEqual(['HC-GR-000201-PO-000273', 'HC-GR-000201-PO-000275']);
   });
@@ -244,8 +223,8 @@ describe('rule 5 — one invoice, one party', () => {
         lines: [line({ lineId: 'l2', sourceLineKey: 'so-2' })],
       }),
     ], { 'PI-000832': 738800 });
-    expect(plans[0]!.valueSen).toBe(plans[0]!.acValueSen);   // the money agrees
-    expect(plans[0]!.eligible).toBe(false);                       // and it is STILL refused
+    expect(plans[0]!.valueSen).toBe(plans[0]!.acValueSen);
+    expect(plans[0]!.eligible).toBe(false);
     expect(plans[0]!.reason).toBe('party_disagrees_across_sources');
   });
 
@@ -268,7 +247,6 @@ describe('rule 5 — one invoice, one party', () => {
 
 describe('partial AutoCount coverage is refused by the total gate, with no rule of its own', () => {
   it('an invoice spanning four receipts of which we migrated one cannot reach its total', () => {
-    // real shape: PI-001895 covers GR-000954, GR-000986, GR-001032, GR-001074
     const { plans, blocked } = planMigratedInvoices([src({
       docNo: 'HC-GR-000954', acDocNo: 'GR-000954', acInvoiceNos: ['PI-001895'],
       lines: [line({ qty: 1, unitPriceSen: 100000 })],
@@ -310,11 +288,6 @@ describe('AutoCount write-back is suppressed for a migrated conversion', () => {
 });
 
 describe('the convert routes refuse a migrated source', () => {
-  /* All three operator convert paths call refuseMigratedSources — POST
-     /from-grn, POST /from-grn-items, POST /from-dos. The handlers themselves
-     cannot be driven in this suite (it runs in the Cloudflare Workers pool,
-     where vi.mock does not intercept), which is exactly why the decision lives
-     in a function instead of inline in three handlers. */
   it('refuses, and names every migrated document in the pick', () => {
     const r = refuseMigratedSources([
       { docNo: 'HC-DO-009888', migrated: true },
@@ -334,8 +307,6 @@ describe('the convert routes refuse a migrated source', () => {
   });
 
   it('one migrated line in an otherwise ordinary pick is enough to refuse the whole invoice', () => {
-    // a partial invoice cannot carry AutoCount's number, so the pick cannot be
-    // silently narrowed to the ordinary rows
     expect(refuseMigratedSources([
       { docNo: 'GRN-2608-001', migrated: false },
       { docNo: 'HC-GR-000034', migrated: true },
@@ -369,11 +340,8 @@ describe('migrated delivery mirror — open while the ERP is the sole book', () 
   });
 
   it('mirror LOGIC with the flag forced on: an AutoCount-invoiced delivery mirrors, a never-invoiced one is ordinary', () => {
-    // HC-DO-011484 is on the never-invoiced list -> ordinary even when AutoCount is the book.
     expect(mustMirrorAutoCount(true, { docNo: 'HC-DO-011484', migrated: true }, MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT)).toBe(false);
-    // HC-DO-000097 (AutoCount invoiced it as I-000213) is NOT on the list -> mirrors.
     expect(mustMirrorAutoCount(true, { docNo: 'HC-DO-000097', migrated: true }, MIGRATED_DELIVERIES_NOT_INVOICED_IN_AUTOCOUNT)).toBe(true);
-    // A migrated delivery missing from the measurement fails closed (mirrors); an ordinary one never does.
     expect(mustMirrorAutoCount(true, { docNo: 'HC-DO-011484', migrated: true }, new Set())).toBe(true);
     expect(mustMirrorAutoCount(true, { docNo: 'HC-DO-2609-103', migrated: false }, new Set())).toBe(false);
   });
@@ -404,7 +372,6 @@ describe('migrated GRN mirror — open while the ERP is the sole book', () => {
   it('mirror LOGIC with the flag forced on: an AutoCount-invoiced GRN mirrors, a never-invoiced one is ordinary', () => {
     expect(mustMirrorAutoCount(true, { docNo: 'HC-GR-000201-PO-000273', migrated: true }, onList)).toBe(true);
     expect(mustMirrorAutoCount(true, { docNo: 'HC-GR-000034', migrated: true }, onList)).toBe(false);
-    // fail-closed with an empty measurement; an ordinary (non-migrated) GRN never mirrors
     expect(mustMirrorAutoCount(true, { docNo: 'HC-GR-000034', migrated: true }, new Set())).toBe(true);
     expect(mustMirrorAutoCount(true, { docNo: 'GRN-2608-001', migrated: false }, onList)).toBe(false);
   });

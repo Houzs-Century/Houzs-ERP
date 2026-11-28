@@ -36,7 +36,7 @@ import { Plus, X } from 'lucide-react';
 import { ReportShell } from './reports/ReportShell';
 import { getActiveCompanyId } from '../../lib/activeCompany';
 import { fmtMoneyAtRest } from '../../vendor/scm/components/MoneyInput';
-import { fmtSenPlain } from '../../vendor/shared/format';
+import { fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import {
   FORECAST_BLOCKS, OTHER_SUPPLIER, blockOfSection, inheritMonth, inheritSuppliers, isAmountCell, isPurchaseAccount, isSalesAccount, monthFigures, nextMonth, sortedMonths,
   type ForecastAccount, type ForecastBlockKey, type ForecastCell, type ForecastFigures, type ForecastGrid, type ForecastLines, type SupplierGrid, type SupplierLines,
@@ -51,16 +51,11 @@ import f from './reports/Forecast.module.css';
 
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'That was not accepted.');
 
-/** The month a column names: "Sep 2026" (as the statements' month columns). */
 const monthLabel = (m: string): string => monthName(m);
-/** "September 2026" — a month in the Add month list and the toast. */
 const monthFull = (m: string): string =>
   new Date(`${m}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-/** Basis points as the box shows them: 15, 15.4, 0.25. */
 const fmtBp = (bp: number): string => (bp / 100).toFixed(2).replace(/\.?0+$/, '');
-/** % of sales for a total line, one decimal; nothing when there are no sales. */
 const pctOfSales = (sen: number, salesSen: number): string => (salesSen !== 0 ? `${((sen / salesSen) * 100).toFixed(1)}%` : '—');
-/** What a line's % box is a share of — the tooltip on the box. */
 const basisTitle = (a: ForecastAccount): string =>
   (a.basis && a.basis.length > 0 ? `% of this line's own sales: ${a.basis.join(' + ')}` : "% of the month's sales");
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -74,16 +69,12 @@ export const monthsToAdd = (last: string | undefined, today: string): string[] =
 };
 const OTHER = 'other';
 
-/* ── The rows: the P&L's tree over the forecast's accounts ──────────────── */
 
 type Row =
   | { kind: 'category'; id: string; depth: number; label: string; codes: string[] }
   | { kind: 'account'; id: string; depth: number; account: ForecastAccount };
 type Block = { key: ForecastBlockKey; title: string; rows: Row[]; codes: string[] };
 
-/** One block's rows: the layout's categories (a company's unticked ones
-    skipped) holding the accounts they place, then whatever the tree did not
-    place under Unassigned — every account of the block prints somewhere. */
 function layBlock(items: LayoutItem[], accounts: ForecastAccount[], companyId: number | null): { rows: Row[]; codes: string[] } {
   const byCode = new Map(accounts.map((a) => [a.code, a]));
   const placed = new Set<string>();
@@ -115,11 +106,7 @@ function layBlock(items: LayoutItem[], accounts: ForecastAccount[], companyId: n
   return { rows, codes: accounts.map((a) => a.code) };
 }
 
-/* ── The two boxes of a cell ─────────────────────────────────────────────── */
 
-/** An amount in RM, typed free, parsed on blur or Enter (a discount on a sales
-    line may be negative — it reduces the month's sales); Esc reverts; a blank
-    clears the cell. Shows the implied amount in grey while a % is keyed. */
 const AmountBox = ({ valueSen, impliedSen, onCommit, label, cellKey }: { valueSen: number | null; impliedSen: number | null; onCommit: (sen: number | null) => void; label: string; cellKey: string }) => {
   const [draft, setDraft] = useState(fmtMoneyAtRest(valueSen));
   const [focused, setFocused] = useState(false);
@@ -145,10 +132,6 @@ const AmountBox = ({ valueSen, impliedSen, onCommit, label, cellKey }: { valueSe
   );
 };
 
-/** A share of the line's basis (the month's sales, or a purchase line's own
-    group's sales), typed as 15 or 15.4, stored in basis points; Esc reverts; a
-    blank clears the cell. Shows the implied share in grey while an amount is
-    keyed; the tooltip says what the share is of. */
 const PercentBox = ({ bp, impliedBp, onCommit, label, cellKey, title }: { bp: number | null; impliedBp: number | null; onCommit: (bp: number | null) => void; label: string; cellKey: string; title?: string }) => {
   const [draft, setDraft] = useState(bp == null ? '' : fmtBp(bp));
   const [focused, setFocused] = useState(false);
@@ -174,7 +157,6 @@ const PercentBox = ({ bp, impliedBp, onCommit, label, cellKey, title }: { bp: nu
   );
 };
 
-/* ── What a refused save says ────────────────────────────────────────────── */
 
 const CELL_RE = /^(\d{4}-\d{2}(?: [^\s:]+){0,2}?(?: amount| percent)?)(?=:|$)/;
 /** The server names the cell ("2026-10 900-T003 amount") and says why; the
@@ -183,21 +165,18 @@ export function refusalOf(e: unknown): { cell: string | null; message: string } 
   const o = (e ?? {}) as { cell?: unknown; body?: unknown };
   let message = errText(e);
   let named: string | null = typeof o.cell === 'string' ? o.cell : null;
-  /* The raw body rides the error (authed-fetch): the server's own cell and
-     sentence, when they are there, beat the client's rewording. */
   if (typeof o.body === 'string') {
     try {
       const b = JSON.parse(o.body) as { cell?: unknown; message?: unknown };
       if (typeof b.cell === 'string') named = b.cell;
       if (typeof b.message === 'string' && b.message) message = b.message;
-    } catch { /* not JSON — the sentence stands */ }
+    } catch { }
   }
   if (named) return { cell: named, message };
   const m = CELL_RE.exec(message);
   return { cell: m ? m[1]! : null, message };
 }
 
-/** JSON with every object's keys in order — a cell cleared and typed again is no change. */
 const canon = (v: unknown): string => JSON.stringify(v, (_k, x: unknown) => (x && typeof x === 'object' && !Array.isArray(x)
   ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
   : x));
@@ -235,7 +214,6 @@ export function supplierRowsFor(code: string, open: boolean, list: ForecastSuppl
   return open || keyedIds.has(OTHER_SUPPLIER) ? [...rows, OTHER_ROW] : rows;
 }
 
-/* ── The page ────────────────────────────────────────────────────────────── */
 
 /** In the Finance report shell (batch 6 §4.3), under Reports › Plan. */
 export const ForecastPnl = () => (
@@ -262,15 +240,12 @@ function ForecastGridPage() {
   const [savedSup, setSavedSup] = useState<SupplierGrid>({});
   const [hideEmpty, setHideEmpty] = useState(true);
   const [closed, setClosed] = useState<Record<string, boolean>>({});
-  /* A purchase line's supplier rows: closed on every load; suppliers picked here before they carry a figure. */
   const [openLines, setOpenLines] = useState<Record<string, boolean>>({});
   const [added, setAdded] = useState<Record<string, string[]>>({});
   const [pick, setPick] = useState('');
   const [otherMonth, setOtherMonth] = useState('');
   const [refusal, setRefusal] = useState<{ cell: string | null; message: string } | null>(null);
 
-  /* The server's grid becomes the page's the first time, and again whenever
-     nothing typed would be lost by it. */
   useEffect(() => {
     if (!q.data) return;
     if (grid && saved && (!sameGrid(grid, saved) || !sameGrid(sup, savedSup))) return;
@@ -293,11 +268,9 @@ function ForecastGridPage() {
   const months = useMemo(() => (grid ? sortedMonths(grid) : []), [grid]);
   const lastMonth = months.length > 0 ? months[months.length - 1] : undefined;
   const firstMonth = months.length > 0 ? months[0] : undefined;
-  /* Add month offers the six months after the last on the grid; Other… takes any month. */
   const choices = monthsToAdd(lastMonth, mytMonth());
   const picked = pick && (pick === OTHER || choices.includes(pick)) ? pick : (choices[0] ?? '');
   const addTarget = picked === OTHER ? otherMonth : picked;
-  /* Index reads typed as possibly absent on purpose: a month the grid does not carry has no figures. */
   const supOf = (m: string): Partial<SupplierLines> => (Object.prototype.hasOwnProperty.call(sup, m) ? sup[m]! : {});
   const figures = useMemo<Record<string, ForecastFigures | undefined>>(() => Object.fromEntries(months.map((m) => [m, monthFigures(grid?.[m] ?? {}, Object.prototype.hasOwnProperty.call(sup, m) ? sup[m]! : {}, accounts)])), [months, grid, sup, accounts]);
   const lineOf = (m: string, code: string) => figures[m]?.lines.find((l) => l.code === code);
@@ -310,7 +283,6 @@ function ForecastGridPage() {
     const cells: Partial<Record<string, ForecastCell>> = supOf(m)[code] ?? {};
     return cells[id] ?? null;
   };
-  /** The suppliers with a figure under a line in any month on the grid. */
   const keyedSuppliers = (code: string): Set<string> => {
     const ids = new Set<string>();
     for (const m of months) for (const id of Object.keys(supOf(m)[code] ?? {})) ids.add(id);
@@ -388,7 +360,6 @@ function ForecastGridPage() {
     });
   };
 
-  /* Rows fold under a closed category; empty accounts hide when asked. */
   const visibleRows = (block: Block): Row[] => {
     const out: Row[] = [];
     let closedAt: number | null = null;
@@ -417,7 +388,6 @@ function ForecastGridPage() {
       default: return t.taxationSen;
     }
   };
-  /* The statement's lines after a block: gross profit, profit before tax, net profit. */
   const afterOf = (key: ForecastBlockKey): { id: string; label: string; sen: (m: string) => number } | null => {
     if (key === 'costOfSales') return { id: 'gross-profit', label: 'GROSS PROFIT', sen: (m) => figures[m]?.totals.grossProfitSen ?? 0 };
     if (key === 'expenses') return { id: 'profit-before-tax', label: 'PROFIT BEFORE TAX', sen: (m) => figures[m]?.totals.profitBeforeTaxSen ?? 0 };
@@ -425,7 +395,6 @@ function ForecastGridPage() {
     return null;
   };
 
-  /* The grid as shown — the lines open, the empty ones as the switch has them — for Excel / PDF / Print. */
   const sheet = (): ReportSheet | null => {
     if (!grid || !firstMonth || !lastMonth) return null;
     const rows: SheetRow[] = [];
@@ -438,7 +407,6 @@ function ForecastGridPage() {
         }
         const code = r.account.code;
         rows.push({ kind: 'row', depth: r.depth, label: `${code} · ${r.account.name}`, cells: months.map((m) => lineOf(m, code)?.amountSen ?? 0) });
-        /* The suppliers that carry a figure, under their line. */
         if (!isPurchaseAccount(r.account)) continue;
         for (const s of supplierRowsFor(code, false, supplierList, keyedSuppliers(code), [])) {
           rows.push({ kind: 'row', depth: r.depth + 1, label: s.name, cells: months.map((m) => lineOf(m, code)?.bySupplier.find((x) => x.supplierId === s.id)?.amountSen ?? 0) });
@@ -480,8 +448,6 @@ function ForecastGridPage() {
     return a ? <TotalRow id={a.id} label={a.label} strong sen={a.sen} /> : null;
   };
 
-  /* An account's line: its ▸ when it is a purchase account, and its two boxes
-     each month — read-only, showing their sum, in a month its suppliers carry. */
   const accountRow = (r: Extract<Row, { kind: 'account' }>): ReactElement => {
     const a = r.account;
     const purchase = isPurchaseAccount(a);
@@ -536,9 +502,6 @@ function ForecastGridPage() {
     );
   };
 
-  /* A purchase line's supplier rows (supplierRowsFor), each with the line's
-     two boxes, and — open — the Add supplier picker of the company's active
-     suppliers not listed yet. */
   const supplierRows = (r: Extract<Row, { kind: 'account' }>): ReactElement[] => {
     const a = r.account;
     if (!isPurchaseAccount(a)) return [];

@@ -38,12 +38,6 @@ vi.mock("../../hooks/useBreadcrumbs", () => ({ useSetBreadcrumbs: () => undefine
 vi.mock("../../hooks/useStaffLookup", () => ({
   useStaffLookup: () => ({ nameOf: () => "Kris" }),
 }));
-/* The "Shared with" field (2026-09-09) reads the staff roster to turn
-   collaborator uuids into names. It is a real useQuery, so without this stub it
-   throws for want of a QueryClientProvider and takes the whole page down —
-   these tests mount the page with every other data hook faked for the same
-   reason. Empty roster: none of the three assertions is about sharing, and an
-   unshared order is what they were written against. */
 vi.mock("../../vendor/scm/lib/admin-queries", () => ({
   useStaff: () => ({
     data: [
@@ -54,12 +48,7 @@ vi.mock("../../vendor/scm/lib/admin-queries", () => ({
   }),
 }));
 vi.mock("../../vendor/scm/components/NotifyDialog", () => ({ useNotify: () => vi.fn() }));
-/* The 2026-08-25 native-confirm sweep gave the page a useConfirm() (Cancel and
-   the unsaved-payments Back gate); like useNotify it throws outside its
-   provider, and like useNotify these tests never reach a confirm. */
 vi.mock("../../vendor/scm/components/ConfirmDialog", () => ({ useConfirm: () => vi.fn() }));
-/* The cancel-request card (2026-09-08) reads the prompt provider and its own
-   query; neither is under test here, so both stand in. */
 vi.mock("../../vendor/scm/components/PromptDialog", () => ({ usePrompt: () => vi.fn() }));
 vi.mock("../../vendor/scm/lib/document-cancel-queries", async (orig) => ({
   ...(await orig<typeof import("../../vendor/scm/lib/document-cancel-queries")>()),
@@ -79,10 +68,6 @@ vi.mock("../../components/scm-v2/DocumentRelationshipMapModal", () => ({
   DocumentChoiceDialog: () => null,
 }));
 vi.mock("../../vendor/scm/components/PaymentsTable", () => ({ PaymentsTable: () => null }));
-/* The page reads ONE permission (`scm.so.attribute_other`, added 2026-08-17 — it
-   decides whether Edit opens on a DO/SI-locked order so its salesperson can be
-   changed), and `useAuth` throws outside its provider. Faked as a caller WITHOUT
-   it, so these tests keep exercising the behaviour they were written for. */
 vi.mock("../../auth/AuthContext", () => ({ useAuth: () => ({ can: () => false }) }));
 
 import SalesOrderDetailV2 from "./SalesOrderDetailV2";
@@ -109,8 +94,6 @@ const header = {
   email: null,
 };
 
-/* One audit row, recorded at a time of day that `so_date` provably cannot
-   carry — that is the whole point of the second test. */
 const auditEntry = {
   id: "a1",
   action: "UPDATE_STATUS",
@@ -151,18 +134,12 @@ describe("SO V2 History button", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^history$/i }));
 
-    /* The drawer is on screen ... */
     expect(screen.getByRole("dialog", { name: /sales order history/i })).toBeTruthy();
     expect(screen.getByText(new RegExp(`History · ${DOC}`))).toBeTruthy();
-    /* ... and we did NOT navigate to do it. The old code's only effect was to
-       push the URL we were already on, which is why nothing happened. */
     expect(screen.getByTestId("loc").textContent).toBe(urlBefore);
   });
 });
 
-/* Ticket DEV-16: "why history did not show the PO created date & time". The
-   PO's CREATE row lives in entity_audit_log against the PO, so the drawer has
-   to merge it in, in time order, tagged with a link to the PO. */
 describe("SO V2 History related documents", () => {
   it("shows the PO raised from the order, in time order, linked to the PO", () => {
     auditLog.mockReturnValue(loaded([auditEntry]));
@@ -182,7 +159,6 @@ describe("SO V2 History related documents", () => {
     }]));
     mountPage();
 
-    /* Not fetched until the drawer opens. */
     expect(relatedAuditLog).toHaveBeenLastCalledWith(null);
     fireEvent.click(screen.getByRole("button", { name: /^history$/i }));
     expect(relatedAuditLog).toHaveBeenLastCalledWith(DOC);
@@ -192,7 +168,6 @@ describe("SO V2 History related documents", () => {
     const created = screen.getByText("Created purchase order");
     const link = screen.getByRole("link", { name: "HC-PO-2608-012" });
     expect(link.getAttribute("href")).toBe("/scm/purchase-orders/po-uuid-1");
-    /* Newest first: the PO (10:30) sits above the SO status change (09:53). */
     const status = screen.getAllByText("Status changed").find((el) => dialog.contains(el))!;
     expect(created.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -203,10 +178,6 @@ describe("SO V2 Recent activity", () => {
     auditLog.mockReturnValue(loaded([auditEntry]));
     mountPage();
 
-    /* A real clock time. `so_date` is "2026-08-14" — a DATE column — so no
-       formatting of it could ever produce h:mm. The hour is `numeric` and the
-       suite's timezone is not pinned, so match 1-or-2 digits rather than
-       asserting a wall-clock hour this test does not control. */
     expect(screen.getByText(/Status changed/)).toBeTruthy();
     expect(screen.getAllByText(/\d{1,2}:\d{2}/).length).toBeGreaterThan(0);
   });
@@ -215,7 +186,6 @@ describe("SO V2 Recent activity", () => {
     auditLog.mockReturnValue(loaded([]));
     mountPage();
 
-    /* Losing the card entirely is a worse answer than a dateless one. */
     expect(screen.getByText(/^Created$/)).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: /sales order history/i })).toBeNull();
   });
@@ -231,14 +201,10 @@ describe("SO V2 shared-with", () => {
     mountPage({ ...header, collaborator_staff_ids: ["s-1", "s-2"] });
 
     expect(screen.getByText("Shared with")).toBeTruthy();
-    /* A→Z, and resolved to names — a uuid on screen is the defect this
-       replaces, so assert the id is absent as well as the name present. */
     expect(screen.getByText("alicia, Stanley")).toBeTruthy();
     expect(screen.queryByText(/s-1/)).toBeNull();
   });
 
-  /* Most orders are shared with nobody. A field that is blank on almost every
-     order teaches people to stop reading it, so it is absent, not empty. */
   it("renders no field at all when the order is shared with nobody", () => {
     auditLog.mockReturnValue(loaded([]));
     mountPage({ ...header, collaborator_staff_ids: [] });

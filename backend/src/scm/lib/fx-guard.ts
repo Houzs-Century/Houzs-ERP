@@ -1,27 +1,3 @@
-// ----------------------------------------------------------------------------
-// fx-guard.ts — POST-boundary guard for the R2 foreign-rate mis-cost.
-//
-// See docs/inventory-costing-integrity-audit.md, R2. safeRate and
-// masterRateForCurrency degrade a missing / non-positive / non-finite FX rate to
-// 1 (fx.ts:47-84), and a brand-new currency's currencies.rate_to_myr defaults to
-// 1 until the owner sets a real rate. So a GRN / PI in a foreign currency posted
-// BEFORE that rate is entered folds the raw foreign figure into the FIFO lot / AP
-// GL as if it were ringgit — toMyrSen(x, 1) === x. recostFromGrn re-reads the
-// GRN's OWN stored rate, so the error is sticky and never self-heals.
-//
-// This guard refuses that POST instead of silently capitalising at 1:1. It fires
-// ONLY when the document currency is non-MYR AND no real rate is available: the
-// operator did not enter a positive rate on the document AND the currency master
-// has no positive rate_to_myr (the value safeRate would coerce to 1).
-//
-// It deliberately does NOT change safeRate / toMyrSen / masterRateForCurrency:
-// those coerce-to-1 rules are correct for the READ path (a bad rate must never
-// zero out money) and are relied on across the FIFO layer. The provenance of a
-// stored "1" — an unset master vs. a rate the operator deliberately typed — is
-// only knowable at the CREATE boundary, before the resolved rate is flattened
-// into the stored exchange_rate. That is why the guard lives here, at the write
-// boundary, and reads the RAW master rate rather than the coerced one.
-// ----------------------------------------------------------------------------
 
 import { normalizeCurrency } from './fx';
 
@@ -55,8 +31,8 @@ export function isPositiveFiniteRate(raw: unknown): boolean {
  */
 export function isUnratedForeignPost(args: {
   currency: unknown;
-  operatorRate: unknown; // the raw exchange_rate the operator sent on the doc, if any
-  masterRate: unknown; // the raw currencies.rate_to_myr for that currency
+  operatorRate: unknown;
+  masterRate: unknown;
 }): boolean {
   if (normalizeCurrency(args.currency) === MYR) return false;
   if (isPositiveFiniteRate(args.operatorRate)) return false;
@@ -134,19 +110,6 @@ export async function assertForeignRatePostable(
   return { ok: true };
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
-   THE EDIT-PATH HOLE (2026-07-30) — the POST guard above closed the create
-   boundary, and the very next door was left open.
-
-   `PATCH /grns/:id` and `PATCH /purchase-invoices/:id` both accept `currency`. Both
-   derive exchange_rate from it with the SAME three-branch rule: a rate explicitly
-   sent is normalised; a flip TO MYR resets the rate to 1; and *neither* leaves the
-   stored rate UNTOUCHED (grns.ts, purchase-invoices.ts). So switching an MYR
-   document to RMB without sending a rate leaves exchange_rate sitting at 1 — the
-   value it held because the document used to be ringgit — and nothing looks at the
-   currency master at all. That is bit-for-bit the R2 mis-cost, reached by editing
-   instead of creating, and the POST guard never sees it.
-   ──────────────────────────────────────────────────────────────────────────── */
 
 /**
  * The EDIT predicate — pure and DB-free, like its POST sibling.
@@ -167,17 +130,15 @@ export async function assertForeignRatePostable(
  * overwhelming majority of documents in this system.
  */
 export function isUnratedForeignCurrencyFlip(args: {
-  /** The currency stored on the row BEFORE this patch. */
   fromCurrency: unknown;
-  /** The currency the patch sets, or undefined when the patch does not touch it. */
   toCurrency: unknown;
   operatorRate: unknown;
   masterRate: unknown;
 }): boolean {
-  if (args.toCurrency === undefined || args.toCurrency === null) return false; // not a flip
+  if (args.toCurrency === undefined || args.toCurrency === null) return false;
   const to = normalizeCurrency(args.toCurrency);
   if (to === MYR) return false;
-  if (normalizeCurrency(args.fromCurrency) === to) return false; // same currency, not a flip
+  if (normalizeCurrency(args.fromCurrency) === to) return false;
   if (isPositiveFiniteRate(args.operatorRate)) return false;
   return !isPositiveFiniteRate(args.masterRate);
 }

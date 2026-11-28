@@ -34,15 +34,12 @@ import { DataGridCompat, type GridColumn } from '../../../components/DataGridCom
 import { useConfirm } from './ConfirmDialog';
 import styles from '../../../pages/scm-v2/FabricTracking.module.css';
 
-/* Tier picker — hooks live in a real component (NOT a column accessor
-   closure) so the rules of hooks hold inside the DataGrid render. */
 const TierCell = ({ row, field, tier }: {
   row: FabricTrackingRow; field: FabricTierField; tier: FabricTier | null;
 }) => {
   const updateTier = useUpdateFabricTier();
   const askConfirm = useConfirm();
   const label = field === 'sofaPriceTier' ? 'Sofa' : 'Bedframe';
-  // A legacy tier outside today's list (bedframe Price 3) still shows as picked.
   const options = tier && !FABRIC_TIER_OPTIONS[field].includes(tier)
     ? [...FABRIC_TIER_OPTIONS[field], tier]
     : FABRIC_TIER_OPTIONS[field];
@@ -131,23 +128,15 @@ const DeleteCell = ({ row }: { row: FabricTrackingRow }) => {
   );
 };
 
-/* Column spec lives at module scope — accessors only render self-contained
-   cell components, so the array is stable and the DataGrid memo hits. */
 const sofaTier = (r: FabricTrackingRow): FabricTier | null => r.sofa_price_tier ?? r.price_tier;
 const bedTier = (r: FabricTrackingRow): FabricTier | null => r.bedframe_price_tier ?? r.price_tier;
 
-// Exported so fabric-csv.test.ts can check the toolbar export still imports back.
 export const FABRIC_COLUMNS: GridColumn<FabricTrackingRow>[] = [
   {
     key: 'code',
     label: 'Internal Code',
     width: 150,
     accessor: (r) => <span className={styles.codeChip}>{r.fabric_code}</span>,
-    // fabric_code is OUR internal code (e.g. BF-01); the supplier's EXTERNAL
-    // code (e.g. PC151-01) has its own "Supplier Code" column below. Owner
-    // 2026-07-24 restored that column once the two codes were confirmed to be
-    // different things. Both stay searchable from here so a lookup by either
-    // code resolves.
     searchValue: (r) => `${r.fabric_code} ${r.supplier_code ?? ''}`,
     filterValue: (r) => r.fabric_code,
     sortFn: (a, b) => (a.fabric_code ?? '').localeCompare(b.fabric_code ?? ''),
@@ -230,15 +219,12 @@ export const FabricsTable = ({
   rows: FabricTrackingRow[];
   isLoading: boolean;
   error: unknown;
-  /** Legacy "N of N records" header toggle — the DataGrid's own status line
-      now shows the row count, so this prop is accepted but unused. */
   showHeader?: boolean;
 }) => (
   <>
     {error && !isLoading && (
       <div className={styles.bannerWarn}>
         <strong>Failed to load fabrics.</strong>{' '}
-        {/* authedFetch already humanised `message`; fallback for a non-Error throw. */}
         {error instanceof Error ? error.message : 'Something went wrong.'}
       </div>
     )}
@@ -257,7 +243,6 @@ export const FabricsTable = ({
   </>
 );
 
-/* PR #38 — Click-to-edit Description cell. Same UX as the Series cell. */
 const DescriptionCell = ({ id, value }: { id: string; value: string }) => {
   const update = useUpdateFabricDescription();
   const [editing, setEditing] = useState(false);
@@ -315,8 +300,6 @@ const DescriptionCell = ({ id, value }: { id: string; value: string }) => {
   );
 };
 
-/* Migration 0063 — Click-to-edit Series cell. Same UX as Description /
-   Supplier Code. Click chip → input → Enter saves, Esc cancels, blur saves. */
 const SeriesCell = ({ id, value }: { id: string; value: string }) => {
   const update = useUpdateFabricSeries();
   const [editing, setEditing] = useState(false);

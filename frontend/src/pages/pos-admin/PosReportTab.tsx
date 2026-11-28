@@ -1,16 +1,8 @@
-/* POS Admin > Sales Report (layout E6): one event at a time. Filters date
- * range, terminal, salesman, status; KPIs; by day with the payment split;
- * by salesman (review only); by item with qty, FOC, gross, discount, net and
- * stock left at the event's stock location; by payment method with refunds
- * and net received. Export Excel (one sheet of the shared report rows plus
- * the stock column) and PDF (the shared printable page through the
- * browser's Save as PDF). The figures are the same aggregation the device
- * and the summary email use. */
 import { useMemo, useState } from "react";
 import { Download, Printer } from "lucide-react";
 import { useToast } from "../../hooks/useToast";
 import { cn } from "../../lib/utils";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { reportHtml, reportRows, rmCell, type ReportTotals } from "../../vendor/shared/pos-report";
 import { POS_PAYMENT_METHODS, posMethodLabel } from "../../vendor/shared/pos-vocabulary";
 import { DateField } from "../../vendor/scm/components/DateField";

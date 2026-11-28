@@ -21,14 +21,11 @@ import { MAIN_CATEGORY_ORDER } from './so-readiness';
 
 export interface PeriodDo {
   id: string; doDate: string; status: string; amountSen: number; state: string | null;
-  /** The lorry that carried it, or null when not recorded. */
   lorry: string | null;
 }
 
 export { regionOf };
 
-/** What an order is, when it carries several. Bedframe comes last: it names an order only
- *  when nothing bigger is on it. */
 const MAIN_CATEGORY: string[] = [...MAIN_CATEGORY_ORDER].reverse().map((c) => PROCUREMENT_CATEGORY_LABEL[c as keyof typeof PROCUREMENT_CATEGORY_LABEL]);
 
 const addDay = (d: string) => new Date(Date.parse(`${d}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
@@ -60,7 +57,6 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
       date: d, orders: o.length, amountSen,
       avgOrderSen: o.length ? Math.round(amountSen / o.length) : null,
       lorries, lorryOrders: withLorry.length,
-      /* Only the DOs whose lorry is known, over those lorries. */
       perLorrySen: lorries ? Math.round(withLorry.reduce((a, x) => a + x.amountSen, 0) / lorries) : null,
     });
   }
@@ -81,7 +77,6 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
     const linesOf = new Map<string, Map<string, number>>();
     let chargesSen = 0;
     for (const l of catLines) {
-      /* A free line (a bundled bedframe, a gift pillow) is not an order of that category. */
       if (!outIds.has(l.doId) || l.sen <= 0) continue;
       if (l.category === 'Charges') { chargesSen += l.sen; continue; }
       const m = linesOf.get(l.doId) ?? new Map<string, number>();
@@ -127,12 +122,10 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
     const t = lorryTrips(ds, jobs);
     const inUse = new Set([...ds.map((x) => x.date), ...jobs.map((j) => j.date)]);
     const downDays = Math.min(work, [...(downDatesOf.get(plate) ?? [])].filter((d) => !inUse.has(d)).length);
-    /* Sunday is not a working day, but a Sunday it went out is a day it was available. */
     const available = work - downDays + [...inUse].filter((d) => new Date(`${d}T00:00:00Z`).getUTCDay() === 0).length;
     return {
       lorry: plate, internal: internal.has(plate), daysOut: t.deliveryTrips, fairTrips: t.fairTrips, stockTrips: t.stockTrips,
       usedDays: t.usedDays, trips: t.trips, otherTrips: t.otherTrips, workingDays: available, downDays,
-      /* Over 100% is real: two set-ups in a day are two trips. */
       occupancyPct: available ? Math.round((t.trips / available) * 1000) / 10 : null,
       doOrders: ds.reduce((a, x) => a + x.orders, 0), serviceOrders: t.serviceOrders,
       orders: ds.reduce((a, x) => a + x.orders, 0) + t.serviceOrders, amountSen,
@@ -140,14 +133,17 @@ export function logisticPeriod(dos: PeriodDo[], catLines: DoCatLine[], from: str
     };
   }).sort((a, b) => Number(b.internal) - Number(a.internal) || b.amountSen - a.amountSen);
 
+  const runsToday = today >= from && today <= to
+    ? [...plates].reduce((a, plate) => a + lorryTrips(lorryDayList.filter((x) => x.lorry === plate && x.date === today), lorryJobs.filter((j) => j.plate === plate && j.date === today)).trips, 0)
+    : null;
   const lorryDays = days.reduce((a, x) => a + x.lorries, 0);
   const lorryDos = out.filter((x) => x.lorry && countsForLorry(regionOf(x.state)));
   const lorrySen = lorryDos.reduce((a, x) => a + x.amountSen, 0);
   return {
     days,
-    /* Average a lorry carried per day it went out, over the period. */
     lorry: { lorryDays, recordedOrders: lorryDos.length, lorryRegionOrders: out.filter((x) => countsForLorry(regionOf(x.state))).length, perLorrySen: lorryDays ? Math.round(lorrySen / lorryDays) : null, workingDays: work },
     byLorry,
+    runsToday,
     lorryDayList: lorryDayList.slice(0, 400),
     byRegion: [...regions.values()].map((g) => ({ ...g, avgOrderSen: g.orders ? Math.round(g.amountSen / g.orders) : null }))
       .sort((a, b) => b.amountSen - a.amountSen),

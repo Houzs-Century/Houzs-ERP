@@ -158,11 +158,6 @@ export function employeeDiff(before: EmployeeInput, after: EmployeeInput): Recor
   return out;
 }
 
-/* ── bulk add ────────────────────────────────────────────────────────────────
- * Two ways to fill Employee Master without keying each row: pick the ERP
- * accounts that already exist, or import a spreadsheet. Both reduce to "make
- * many employee rows at once", so the Emp No assignment and the duplicate rules
- * live here, pure and tested; the route only does the database I/O. */
 
 /** One ERP account offered for a bulk add. */
 export type BulkAccount = {
@@ -244,18 +239,11 @@ export type BulkImportPlan = {
   errors: Array<{ index: number; message: string }>;
 };
 
-/* The fields a spreadsheet re-import may change on someone already in the book.
- * Deliberately left out: emp_no and the ERP-account link (an import enriches a
- * record, it does not renumber or relink it), status, and anything to do with
- * pay — the salary and day rate stay with HR and the salary history, so a sheet
- * with a blank or default salary can never knock down what someone earns. */
 const UPDATABLE_TEXT: ReadonlyArray<keyof EmployeeInput> = [
   "name", "phone", "position", "joinDate", "nationality", "icNumber", "passportNumber", "bankName", "bankAccount", "tripNames",
 ];
 const UPDATABLE_BOOL: ReadonlyArray<keyof EmployeeInput> = ["epfEnabled", "socsoEnabled", "eisEnabled", "pcbEnabled"];
 
-/** The patch for a matched employee: only the updatable fields the sheet gave,
- *  text left out when blank so an empty cell changes nothing. */
 function buildUpdatePatch(input: EmployeeInput, provided: ReadonlySet<keyof EmployeeInput>): Partial<EmployeeInput> {
   const patch: Record<string, unknown> = {};
   for (const k of UPDATABLE_TEXT) if (provided.has(k) && String(input[k] ?? "").trim() !== "") patch[k] = input[k];

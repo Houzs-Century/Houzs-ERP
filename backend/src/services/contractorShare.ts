@@ -1,9 +1,3 @@
-// Contractor calendar share links — the unguessable token behind each
-// contractor's public, no-login calendar. Modeled on services/caseTracking.ts:
-// mint (get-or-create), resolve, revoke, and read-the-current-one for the admin
-// panel. The token IS the credential; `revoked_at` is the kill switch for a
-// leaked link. The token grants a read of exactly ONE contractor's confirmed
-// schedule — the contractor NAME lives on the token row, never in the request.
 import type { Env } from "../types";
 import { generateToken } from "./auth";
 

@@ -1,19 +1,3 @@
-// ---------------------------------------------------------------------------
-// assistant-history.ts — per-user Assistant conversation history. The chat
-// endpoint is otherwise stateless; these helpers give each user a durable thread
-// list the chat widget can reopen.
-//
-// SCOPE IS PER-USER. Every read is filtered by user_id; a conversation that is
-// missing, not owned, or soft-deleted resolves to null so the route can 404 (not
-// 403 — do not reveal existence). The service-role client the rest of the app
-// uses is not involved here; these are public-schema tables on env.DB.
-//
-// Called from the ROUTE, never from services/assistant.ts, so the answerer keeps
-// its read-only invariant. Answers are already money-redacted at gather (they are
-// worded strictly from the redacted payload), so stored history carries nothing
-// the user could not see. Best-effort by contract: a history failure must never
-// break the chat — callers wrap appendExchange in try/catch.
-// ---------------------------------------------------------------------------
 
 import type { Env } from "../types";
 

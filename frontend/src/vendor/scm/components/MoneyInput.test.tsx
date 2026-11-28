@@ -44,8 +44,6 @@ describe('MoneyInput', () => {
     expect(box.value).toBe('75.00');
   });
 
-  /* Regression: the default used to be selectOnFocus=false, so clicking a cell
-     showing 0.00 left the caret before the 0 and typing 5000 read as 50000. */
   test('selects the whole value on focus by default, so typing replaces it', () => {
     vi.useFakeTimers();
     try {

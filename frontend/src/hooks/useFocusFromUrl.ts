@@ -23,7 +23,6 @@ export function useFocusFromUrl(onFocus: (id: number) => void): void {
     const next = new URLSearchParams(params);
     next.delete("focus");
     setParams(next, { replace: true });
-    // Run only on mount — subsequent navigations are user-initiated.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }

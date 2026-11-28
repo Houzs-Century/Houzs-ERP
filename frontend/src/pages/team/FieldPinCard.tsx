@@ -3,7 +3,7 @@ import { useToast } from "../../hooks/useToast";
 import { useDialog } from "../../hooks/useDialog";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
-import { fmtDateTime } from "../../vendor/shared/format";
+import { fmtDateTime } from "../../../../shared/src/vendor/shared/format";
 import { Eyebrow } from "./teamShared";
 import {
   FIELD_PIN_LENGTH,
@@ -15,11 +15,6 @@ import {
   type FieldPinStatus,
 } from "../../lib/fieldPin";
 
-/* Crew PIN sign-in, on the member's profile. Drivers and helpers with no usable
- * email sign in with their staff code and a 6-digit PIN set here. The card
- * never shows a PIN back — the server keeps a hash and answers set / not set,
- * and whether wrong tries have locked it. A failed status read says so instead
- * of reading as "no PIN", so nobody overwrites a working PIN blind. */
 export function FieldPinCard({ userId, memberName }: { userId: number; memberName: string }) {
   const toast = useToast();
   const dialog = useDialog();

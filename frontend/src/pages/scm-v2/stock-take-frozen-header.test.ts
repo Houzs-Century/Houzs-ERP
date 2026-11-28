@@ -1,13 +1,8 @@
-/* The Count Sheet scrolls in its own box, at most a screen tall under the
-   pinned page header. Inside it the header row sticks to the top and the first
-   column (SKU by default) to the left, so both stay on screen when the sheet
-   scrolls down or sideways (Sim, 2026-11-23). */
 
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 
 const css = readFileSync('src/pages/scm-v2/SalesOrderDetail.module.css', 'utf8');
-/* Every declaration aimed at `selector`, across all blocks that list it. */
 const rule = (selector: string): string => css.split('}')
   .map((block) => block.split('{'))
   .filter(([selectors]) => selectors.split(',').some((part) => part.trim().endsWith(selector)))

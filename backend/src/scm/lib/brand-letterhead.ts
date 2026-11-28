@@ -68,14 +68,9 @@ export function normaliseBrandRows(rows: readonly BrandRow[]): NormalisedBrand[]
 }
 
 export interface BrandLetterheadInput {
-  /** The active company's brand pool. MUST be read with a company predicate;
-   *  the sofa rule below refuses to leak even if it is not. */
   brands: readonly BrandRow[];
-  /** Every line's item_group, in the document's display order. */
   itemGroups: ReadonlyArray<string | null | undefined>;
-  /** The FIRST displayed line's description. */
   firstDescription: string | null | undefined;
-  /** The document's owning company code ('HOUZS' / '2990'). */
   companyCode: string | null | undefined;
 }
 

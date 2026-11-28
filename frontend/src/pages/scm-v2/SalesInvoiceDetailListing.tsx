@@ -1,11 +1,7 @@
-// ----------------------------------------------------------------------------
-// SalesInvoiceDetailListing — Task #120 L2 page for Sales Invoices.
-// One row per sales_invoice_items line, with the SI header denormalised.
-// ----------------------------------------------------------------------------
 
 import { useCallback } from 'react';
-import { fmtDateOrDash, fmtMoneySen, fmtQty, fmtSen } from '../../vendor/shared/format';
-import { statusLabel } from '../../vendor/scm/lib/status-pill';
+import { fmtDateOrDash, fmtMoneySen, fmtQty, fmtSen } from '../../../../shared/src/vendor/shared/format';
+import { statusLabel } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useSalesInvoiceDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import type { GridColumn } from '../../components/DataGridCompat';
@@ -19,7 +15,7 @@ type SiRow = DetailListingRow & {
   invoice_date?: string | null;
   due_date?: string | null;
   currency?: string;
-  total_sen_header?: number;  // header.total_sen after flatten
+  total_sen_header?: number;
   paid_sen?: number;
   uom?: string;
   item_group?: string | null;

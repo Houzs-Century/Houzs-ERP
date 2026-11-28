@@ -1,6 +1,3 @@
-// Personal Mail Center mailboxes (DEV-03 / PRD T-011 P3). The atomic alias
-// helper moved here from routes/users.ts unchanged; invite, accept-invite and
-// the user edit screen all provision through it.
 import type { Env } from "../types";
 import { getBranding } from "../services/branding";
 import { resolveDatabaseUrl } from "../db/pg";
@@ -16,7 +13,6 @@ export interface PersonalMailboxAliasChange {
   old_alias: string;
   old_mailbox_id: string | null;
   new_alias: string;
-  // The canonical id resolved inside the same commit as users.email_alias.
   mailbox_id: string | null;
 }
 
@@ -33,18 +29,10 @@ export async function companyMailboxDomain(env: Env): Promise<string> {
     const branding = await getBranding(env);
     return (branding.email.split("@")[1] || fallback).trim().toLowerCase();
   } catch {
-    // Branding is optional during bootstrap. Provisioning writes below remain
-    // fail-closed; this is only the established default-domain fallback.
     return fallback;
   }
 }
 
-// Change the canonical alias and all DERIVED personal-mailbox ownership as one
-// commit. A company-domain alias is guaranteed to resolve to one active mailbox
-// owned by the user plus one self-grant before users.email_alias can change.
-// An inbound-created, unowned mailbox may be claimed; a mailbox owned by another
-// user is a hard collision and is never reassigned. The previous mailbox stays
-// active and other users' grants survive when this user's ownership moves away.
 export async function changePersonalMailboxAliasAtomically(
   env: Env,
   userId: number,
@@ -77,9 +65,6 @@ export async function changePersonalMailboxAliasAtomically(
     .first<{ id: string }>();
 
   if (resolveDatabaseUrl(env)) {
-    // PostgreSQL path: one statement is one real transaction. Every mutating
-    // CTE is gated by ready_user, so collision or concurrent alias drift writes
-    // nothing. d1Compat.batch is intentionally not used on the PG path.
     const result = await env.DB.prepare(
       `WITH target_user AS (
          SELECT id, email_alias
@@ -211,18 +196,12 @@ export async function changePersonalMailboxAliasAtomically(
       mailbox_id: result.mailbox_id,
     };
   } else {
-    // Native D1 path. Cloudflare D1 batch is transaction-bound: any statement
-    // failure rolls the whole batch back. This branch is selected only when no
-    // PG/HYPERDRIVE URL exists, so d1Compat.batch is never trusted here.
     const expectedUser = `EXISTS (
       SELECT 1 FROM users
        WHERE id = ? AND lower(COALESCE(email_alias, '')) = ?
     )`;
     const statements: D1PreparedStatement[] = [];
     if (shouldProvision) {
-      // Existing unowned (inbound-created) mailboxes may be claimed. The guard
-      // grant intentionally violates address_id NOT NULL for another owner's
-      // mailbox, making D1 roll the entire batch back instead of taking it over.
       statements.push(
         env.DB.prepare(
           `INSERT INTO email_addresses

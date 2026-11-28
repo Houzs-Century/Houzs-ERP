@@ -31,7 +31,6 @@ export function calendarCrewScope(c: Context<{ Bindings: Env }>): {
   scopeWhere: string;
   scopeBinds: unknown[];
 } {
-  // Typed as possibly absent on purpose: no session must fail closed, not open.
   const user = c.get("user") as AuthUser | undefined;
   if (!user) return { scopeWhere: " AND 1 = 0", scopeBinds: [] };
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- tests and scripts build AuthUser without permissions_set
@@ -47,8 +46,6 @@ export function calendarCrewScope(c: Context<{ Bindings: Env }>): {
   const assignArms: string[] = [];
   const scopeBinds: unknown[] = [];
   if (user.id) {
-    // Crew arm — FK slots + per-lorry crew JSON exact-name containment (same
-    // match listProjects' assigned_user arm uses).
     const idArms = [
       "p.setup_driver_user_id = ?", "p.dismantle_driver_user_id = ?",
       "p.setup_helper_1_id = ?", "p.setup_helper_2_id = ?",
@@ -62,7 +59,6 @@ export function calendarCrewScope(c: Context<{ Bindings: Env }>): {
       scopeBinds.push(`%"${nm}"%`, `%"${nm}"%`);
     }
     assignArms.push(`(${arm})`);
-    // A crew member on a project's Sales Attending list still sees that event.
     assignArms.push(
       `EXISTS (SELECT 1 FROM project_sales_attendees psa` +
       ` JOIN sales_reps sr ON sr.id = psa.sales_rep_id` +

@@ -37,16 +37,11 @@ export const monthOf = (day: string): string => day.slice(0, 7);
 
 export type LogisticsDo = {
   id: string; doNumber: string; soDocNo: string | null;
-  /** The delivery day, YYYY-MM-DD. */
   day: string;
   state: string | null;
-  /** The address's own words — what tells a Singapore DO with no state. */
   city?: string | null;
   postcode?: string | null;
-  /** The address lines, the DO's and its sales order's: a Singapore order keyed
-      with no state writes SINGAPORE only there (the DO copies two of its lines). */
   address?: string | null;
-  /** What the DO carries, from its lines. */
   valueSen: number;
   crewLorryId: string | null;
   crewPlate: string | null;
@@ -62,14 +57,12 @@ export type EventCost = { id: number; code: string | null; name: string; startDa
 
 export type LogisticsInput = {
   from: string; to: string;
-  /** Every DO of the whole months the range touches — a month's trips divide its whole cost. */
   dos: LogisticsDo[];
   lorries: LogisticsLorry[];
   charges: ThreeplCharge[];
   runs: ThreeplRun[];
   ownCost: OwnCostLeg[];
   events: EventCost[];
-  /** 3PL bill lines nobody assigned yet, and fair lines with no fair. */
   openLines: { count: number; sen: number };
   eventLinesNoFair: { count: number; sen: number };
 };
@@ -96,7 +89,6 @@ export type LogisticsReport = {
   gaps: {
     dosNoDeliverer: number;
     dosOutsideNoBill: number;
-    /** DOs with no state and no Singapore address — counted under KL's "others". */
     dosNoState: number;
     unlistedPlates: string[];
     openLines: { count: number; sen: number };
@@ -106,7 +98,6 @@ export type LogisticsReport = {
   totals: { dos: number; valueSen: number; ownSen: number; threeplSen: number; totalSen: number; setupSen: number; transportSen: number };
 };
 
-/* ── The four regions ─────────────────────────────────────────────────────── */
 export type RegionCode = 'PG' | 'KL' | 'EM' | 'SG';
 export const REGIONS: ReadonlyArray<{ code: RegionCode; name: string; covers: string }> = [
   { code: 'PG', name: 'Penang', covers: 'Penang, Perlis, Kedah, Kelantan, Terengganu, Pahang' },
@@ -117,9 +108,7 @@ export const REGIONS: ReadonlyArray<{ code: RegionCode; name: string; covers: st
 const keyOf = (s: string | null | undefined): string => String(s ?? '').toLowerCase().replace(/[^a-z]/g, '');
 const PG_STATES = new Set(['penang', 'pulaupinang', 'pinang', 'perlis', 'kedah', 'kelantan', 'terengganu', 'pahang']);
 const EM_STATES = new Set(['sabah', 'sarawak', 'labuan', 'wplabuan']);
-/* Singapore, and the regions a Singapore address names in the state box. */
 const SG_STATES = new Set(['singapore', 'central', 'east', 'west', 'north', 'northeast', 'northwest', 'southeast', 'southwest']);
-/* KL's own states: one of these named wins over any word in the address lines. */
 const KL_STATES = new Set(['kualalumpur', 'wpkualalumpur', 'wilayahpersekutuankualalumpur', 'kl', 'selangor', 'putrajaya', 'wpputrajaya',
   'wilayahpersekutuanputrajaya', 'melaka', 'malacca', 'johor', 'negerisembilan', 'perak']);
 
@@ -171,7 +160,6 @@ export function buildLogisticsReport(input: LogisticsInput): LogisticsReport {
   const regionsOf = (dos: readonly LogisticsDo[]): string[] => [...new Set(dos.map((d) => regionName(where.get(d.id)!.code)))].sort();
   const who = new Map(input.dos.map((d) => [d.id, delivererOf(d, input.lorries)] as const));
 
-  /* Our trips, every one of the whole months: lorry + day. */
   const trips = new Map<string, { plate: string; day: string; dos: LogisticsDo[] }>();
   for (const d of input.dos) {
     const w = who.get(d.id)!;
@@ -183,7 +171,6 @@ export function buildLogisticsReport(input: LogisticsInput): LogisticsReport {
   const tripsByMonth = new Map<string, number>();
   for (const t of trips.values()) tripsByMonth.set(monthOf(t.day), (tripsByMonth.get(monthOf(t.day)) ?? 0) + 1);
 
-  /* The months: what the ticked accounts booked, per account. */
   const monthCost = new Map<string, Map<string, { name: string | null; sen: number }>>();
   for (const l of input.ownCost) {
     const m = monthCost.get(l.month) ?? new Map<string, { name: string | null; sen: number }>();
@@ -204,7 +191,6 @@ export function buildLogisticsReport(input: LogisticsInput): LogisticsReport {
   });
   const perTrip = new Map(months.map((m) => [m.month, m.perTripSen] as const));
 
-  /* Each own DO's share of its trip. */
   const ownShare = new Map<string, number>();
   const tripRows: TripRow[] = [];
   for (const t of trips.values()) {
@@ -219,13 +205,11 @@ export function buildLogisticsReport(input: LogisticsInput): LogisticsReport {
     });
   }
 
-  /* The DOs of the report's own days. */
   const shown = input.dos.filter((d) => inRange(d.day, from, to));
   const shownIds = new Set(shown.map((d) => d.id));
   const charged = new Map<string, number>();
   for (const ch of input.charges) if (shownIds.has(ch.doId)) charged.set(ch.doId, (charged.get(ch.doId) ?? 0) + ch.billedSen);
 
-  /* Every region, in the owner's order, even one with nothing this month. */
   const regions: RegionRow[] = REGIONS.map((r) => ({ code: r.code, name: r.name, covers: r.covers, dos: 0, valueSen: 0, ownSen: 0, threeplSen: 0, totalSen: 0 }));
   let dosNoState = 0;
   for (const d of shown) {
@@ -239,8 +223,6 @@ export function buildLogisticsReport(input: LogisticsInput): LogisticsReport {
     row.totalSen = row.ownSen + row.threeplSen;
   }
 
-  /* The 3PL runs: one bill line each, on its own date — else its DOs' first day,
-     else the bill's. A run whose DOs all fall outside the range stays out. */
   const doById = new Map(input.dos.map((d) => [d.id, d] as const));
   for (const run of input.runs) {
     const its = run.doIds.map((id) => doById.get(id)).filter((d): d is LogisticsDo => !!d);

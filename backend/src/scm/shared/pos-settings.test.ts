@@ -1,7 +1,5 @@
-// The POS settings document: defaults a device can rely on, a stored value
-// that only overrides keys of the same type, and the receipt header lines.
 import { describe, expect, test } from "vitest";
-import { normalizePosSettings, normalizePosSettingsGroup, posSettingsDefaults, receiptHeaderLines } from "./pos-settings";
+import { normalizePosSettings, normalizePosSettingsGroup, posSettingsDefaults, receiptHeaderLines, receiptNoFormatProblem } from "./pos-settings";
 
 describe("pos-settings", () => {
   test("defaults: cash OFF, every cashless method ON, SST 8% unticked, 58 mm, 15 min logout, alerts to the office", () => {
@@ -41,5 +39,17 @@ describe("pos-settings", () => {
 
   test("the receipt header fills the event name and drops blank lines", () => {
     expect(receiptHeaderLines({ header_lines: ["{event name}", "  ", "Booth A12"] }, "AEON Tebrau C&C")).toEqual(["AEON Tebrau C&C", "Booth A12"]);
+  });
+
+  test("a receipt no format must keep {TERM} and a running number (audit H3)", () => {
+    expect(receiptNoFormatProblem("{TERM}-{000000}")).toBeNull();
+    expect(receiptNoFormatProblem("HZ{TERM}/{0000}")).toBeNull();
+    expect(receiptNoFormatProblem("{000000}")).toMatch(/\{TERM\}/);
+    expect(receiptNoFormatProblem("{TERM}-SALE")).toMatch(/running number/);
+  });
+
+  test("a stored receipt no format without {TERM} reaches devices as the default", () => {
+    expect(normalizePosSettingsGroup("general", { receipt_no_format: "{000000}" }).receipt_no_format).toBe("{TERM}-{000000}");
+    expect(normalizePosSettingsGroup("general", { receipt_no_format: "HZ{TERM}/{0000}" }).receipt_no_format).toBe("HZ{TERM}/{0000}");
   });
 });

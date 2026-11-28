@@ -5,7 +5,7 @@ import { queryClient } from "../../lib/queryClient";
 import { useToast } from "../../hooks/useToast";
 import { Button } from "../../components/Button";
 import { Eyebrow } from "./teamShared";
-import { fmtDate } from "../../vendor/shared/format";
+import { fmtDate } from "../../../../shared/src/vendor/shared/format";
 
 type Requests = {
   usage: { used: number; limit: number };
@@ -35,7 +35,6 @@ export function MailClaimRequests() {
       setRejecting(null);
       setReason("");
       reload();
-      // The approved address joins the Google list and the mailbox table.
       void queryClient.invalidateQueries({
         predicate: (q) => q.queryKey[0] === "uq" && String(q.queryKey[1]).startsWith("/api/mail-center"),
       });

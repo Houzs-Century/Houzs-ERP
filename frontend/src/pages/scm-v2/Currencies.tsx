@@ -1,20 +1,3 @@
-// ----------------------------------------------------------------------------
-// Currencies — the owner-maintained currency MASTER (backend Phase 1-A,
-// migration 0082), Finance › Setup › Currencies in the owner's Claude Design
-// redesign (Finance-1a-Setup, batch 6 §6.4).
-//
-// The single source of truth for the currency dropdown list everywhere (GRN /
-// Purchase Invoice / Payment Voucher) + each currency's current rate to MYR.
-// Adding a currency here makes it selectable across the app with NO code change;
-// GRN / PI / PV auto-fill their exchange rate from the rate set here.
-//
-// MYR is the base currency — its rate is fixed at 1 (a base-currency rate of 1
-// is a no-op in the money path) and is read-only here.
-//
-// The list is the shared table: a double-click (or the row's ⋯ / right-click)
-// opens Edit in a centred modal; New currency opens the same modal empty.
-// Gated by scm.currency.manage at the route (App.tsx) + nav.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { MoreHorizontal, Plus } from 'lucide-react';
@@ -27,7 +10,7 @@ import {
 } from '../../vendor/scm/lib/currencies-queries';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import { useToastOptional } from '../../hooks/useToast';
 import { Check, Field, PopMenu, SetupModal, Tag } from './finance/SetupParts';
 import sp from './finance/SetupParts.module.css';
@@ -67,7 +50,6 @@ export const Currencies = () => {
       getValue: (r) => (r.is_active ? 'Active' : 'Not offered'),
     },
     {
-      /* updated_at moves on ANY edit, not only the rate — so it reads Updated. */
       key: 'updated', label: 'Updated', width: '110px',
       render: (r) => <span className={sp.muted}>{fmtDateOrDash(r.updated_at)}</span>,
       getValue: (r) => r.updated_at,
@@ -142,7 +124,6 @@ export const Currencies = () => {
   );
 };
 
-/* ── New currency / Edit <code> — the centred modal ─────────────────────── */
 const CurrencyForm = ({
   editing, taken, onClose,
 }: {
@@ -158,7 +139,6 @@ const CurrencyForm = ({
     code: editing?.code ?? '',
     name: editing?.name ?? '',
     symbol: editing?.symbol ?? '',
-    // Show the stored rate as a plain string for editing (numeric → string).
     rate: editing ? String(Number(editing.rate_to_myr)) : '',
     isActive: editing?.is_active ?? true,
   });

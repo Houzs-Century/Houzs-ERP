@@ -1,14 +1,9 @@
-/* POS Admin > Barcode labels (layout E1b): the inventory items with their
- * factory barcode / own generated barcode / none, "Missing only", Generate
- * for selected (EAN-13, prefix 200, saved for good on the item), label qty
- * per item, and Print labels: an A4 sheet of 40 x 30 mm labels through the
- * browser, or a TSPL / ZPL job file for a label printer. */
 import { useMemo, useState } from "react";
 import { Barcode, Printer } from "lucide-react";
 import { api } from "../../api/client";
 import { useToast } from "../../hooks/useToast";
 import { cn } from "../../lib/utils";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { SearchInput } from "../../components/Button";
 import { Pagination } from "../../components/Pagination";
 import { POS_ADMIN, useAdminLabels, type LabelRow } from "./posAdminApi";

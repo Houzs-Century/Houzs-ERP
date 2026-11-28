@@ -1,36 +1,10 @@
-// Vendored SLICE of apps/backend/src/lib/inventory-queries.ts.
-//
-// Originally only the Warehouse type + useWarehouses() (the PO pages' Purchase
-// Location + per-line Ship-to dropdowns). The Inventory hub + Stock Card wave
-// extends this with the read hooks those two pages need: product-totals,
-// per-product breakdown, movements, FIFO lots, batches, COGS and the analytics
-// KPI board — all copied verbatim from the source module, through the same
-// authedFetch (→ /api/scm). The mutation surface beyond warehouse CRUD
-// (useStockAdjustment / useInventoryBuckets / useInventoryValue / useInventory-
-// Balances / useDeleteWarehouse) is still NOT pulled in — these two pages
-// don't call it.
-//
-// HOUZS VENDOR NOTE: the source `import { supabase } from './supabase'` was
-// imported but NEVER referenced in this module (all reads go through
-// authedFetch); it is DROPPED here exactly as in the vendored suppliers-queries
-// slice. Everything below is copied verbatim.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LOOKUP_CACHE } from './lookup-cache';
 import { authedFetch } from './authed-fetch';
 import { writeFailed } from './mutation-error';
-// Host retry policy — the vendor auth/transport boundary already reaches into
-// the host for readAuthToken (see authed-fetch.ts); retry semantics belong to
-// the host's QueryClient for the same reason.
 import { retryUnlessClientError } from '../../../lib/queryClient';
 
-/* TYPE (mig 0171) — 5-bucket classification. `warehouse` = pure stock; `showroom`
-   = a sales point that also feeds the venue list (mig 0148); `display` = display
-   stock held at a partner site (not sellable in the same net); `service` = a
-   repair / customer-service centre; `others` = HQ, C&C K.J, anything that does
-   not fit. `is_showroom` (mig 0148) is now derived: `is_showroom = (type =
-   'showroom')`. The old boolean stays in reads so the venue resolver and the
-   Members page keep working without a rewrite. */
 /** The closing stock a warehouse's goods book on at month end (backend scm/lib/stock-bucket.ts). */
 export type StockBucket = 'customer' | 'display' | 'service' | 'showroom' | 'others';
 
@@ -46,44 +20,26 @@ export type Warehouse = {
   code: string;
   name: string;
   location: string | null;
-  /* Mig 0180 — structured address (country / state / postcode / city).
-     Optional so pre-mig payloads still parse. */
   country?: string | null;
   state?: string | null;
   postcode?: string | null;
   city?: string | null;
   is_active: boolean;
   is_default: boolean;
-  /* SHOWROOM (migration 0148) — flagging a warehouse as a Showroom makes it a
-     VENUE source: it feeds the Sales Maintenance venue list, and salespeople
-     parked under it on the Members page attribute their orders to venue_name.
-     venue_name is deliberately separate from `name` — a warehouse is named for
-     stock, a venue for the report — and a flagged showroom with no venue_name
-     resolves to no venue at all rather than to its own code. Optional on the
-     type so a pre-migration response still parses. */
   is_showroom?: boolean;
   venue_name?: string | null;
-  /* Optional on the type so a pre-mig-0171 response still parses (backend
-     defaults to 'warehouse' on POST when unspecified). */
   type?: WarehouseType;
-  /** The closing-stock bucket override (mig 20260921T2000; showroom / others since 2026-09-30); null = by type. */
   stock_bucket?: StockBucket | null;
 };
 
 export type InventoryBalance = {
   warehouse_id: string;
   item_code: string;
-  /* Migration 0095 — attribute-composition bucket; '' = unclassified.
-     Present on the default (non-showAll) balances rows. */
   variant_key?: string;
-  /* Supplier's own code for the key's internal fabric, stamped READ-side by
-     /inventory/breakdown (batched, fail-soft — absent when the fabric has no
-     distinct supplier code). Feeds formatVariantKey's parens: "EZ-002 (KN390-2)". */
   fabric_supplier_code?: string | null;
   product_name: string | null;
   qty: number;
   last_movement_at: string | null;
-  /* showAll=true rows include these */
   warehouse_code?: string;
   warehouse_name?: string;
   /* R6 (owner 2026-07-24) — the balance's warehouse is a CONSIGNMENT location
@@ -98,13 +54,9 @@ export type InventoryBalance = {
   main_supplier_name?: string | null;
 };
 
-/* PR #38 — Product totals view (one row per SKU, summed qty across warehouses) */
 export type InventoryProductTotal = {
   item_code: string;
   product_name: string;
-  /* AutoCount barcode (cash & carry / bedline items carry one; most make-to-order
-     furniture has none and this is null). Exposed on v_inventory_product_totals by
-     mig 20261104T1000; searchable and shown as the Barcode column. */
   barcode: string | null;
   category: 'ACCESSORY' | 'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'SERVICE';
   size_label: string | null;
@@ -113,12 +65,8 @@ export type InventoryProductTotal = {
   branding: string | null;
   total_qty: number;
   total_value_sen: number;
-  /* OWNED qty (consignment excluded) — divisor for avg unit cost so the average
-     isn't diluted by consignment units counted in total_qty. */
   owned_qty?: number;
-  /** Consignment units standing in the warehouse — held, not owned. */
   held_qty?: number;
-  /* Consignment value, reported separately — never inside total_value_sen. */
   held_value_sen?: number;
   last_movement_at: string | null;
   main_supplier_code: string | null;
@@ -148,14 +96,8 @@ export type InventoryProductTotal = {
   reserved_total: number;
   available_qty: number;
   surplus_qty: number;
-  /* Optional so a cached payload from before this shipped still renders — the
-     call sites fall back to surplus_qty, i.e. the old behaviour. */
   non_selling_qty?: number;
   sellable_surplus_qty?: number;
-  /* The MOVEMENT rollup (SUM of IN − OUT) and whether it disagrees with the lot
-     ledger the row is built from. Comparison only, never arithmetic: a mismatch
-     is a real data fault (docs/inventory-ledger-divergence-coe.md), and the row
-     marks it rather than presenting one ledger as the truth. */
   movement_qty?: number;
   ledger_mismatch?: boolean;
   oldest_lot_at: string | null;
@@ -173,9 +115,6 @@ export type InventoryWarehouseQty = {
   held_qty: number;
 };
 
-/* One incoming purchase-order line feeding a SKU's Incoming (≤30-day) figure —
-   the PO number bringing the stock and its effective ETA (mig 0180 revised
-   date). Surfaced in the Balances row drill so "Incoming +6" names WHICH PO. */
 export type InventoryIncomingPo = {
   po_number: string;
   eta: string | null;
@@ -223,11 +162,6 @@ export type InventoryLot = {
   received_at: string;
   source_doc_type: string | null;
   source_doc_no: string | null;
-  /* Server-stamped consignment verdict (scm/routes/inventory.ts), derived from
-     the lot's SOURCE by the one classifier isConsignmentLotSource — never from
-     the warehouse's own is_consignment flag, which a mis-posted PC Receive
-     defeats. Optional only for a cached payload that predates the stamp; a
-     consumer must treat "absent" as unknown, not as owned. */
   is_consignment?: boolean;
 };
 
@@ -254,18 +188,10 @@ export function useWarehouses(opts?: { includeInactive?: boolean }) {
       return authedFetch<{ warehouses: Warehouse[] }>(`/inventory/warehouses${qs}`, { signal }).then((r) => r.warehouses);
     },
     ...LOOKUP_CACHE,
-    /* HOUZS VENDOR — was a bare `retry: 1`, which re-sent a 403 that could only
-       403 again (the owner saw this endpoint refused twice per page load). The
-       host predicate keeps the single retry for network / 5xx and drops it for
-       an authorization or validation failure. */
     retry: retryUnlessClientError,
   });
 }
 
-/* HOUZS VENDOR — ProductModels/Warehouses wave. The Warehouses CRUD page needs
-   the create + update mutations. Copied verbatim from the source
-   inventory-queries.ts (POST / PATCH /inventory/warehouses), through authedFetch
-   (→ /api/scm). */
 export function useCreateWarehouse() {
   const qc = useQueryClient();
   return useMutation({
@@ -286,14 +212,7 @@ export function useUpdateWarehouse() {
   });
 }
 
-/* ════════════════════════════════════════════════════════════════════════
-   HOUZS VENDOR — Inventory hub + Stock Card wave. Read hooks copied verbatim
-   from the source inventory-queries.ts.
-   ════════════════════════════════════════════════════════════════════════ */
 
-/* PR #38 — AutoCount-style: one row per SKU, totals across all warehouses.
-   ask A (2026-07-24): optional warehouseId narrows Stock / Value / demand /
-   incoming to one warehouse. */
 export function useInventoryProductTotals(opts?: { search?: string; category?: string; warehouseIds?: readonly string[] }) {
   return useQuery({
     queryKey: ['inventory', 'product-totals', opts ?? {}],
@@ -307,14 +226,11 @@ export function useInventoryProductTotals(opts?: { search?: string; category?: s
         { signal },
       ).then((r) => r.products);
     },
-    // Keep the current rows on screen while a search / category filter change
-    // loads, instead of flashing an empty table (keepPreviousData).
     placeholderData: (prev) => prev,
     staleTime: 30_000,
   });
 }
 
-/* ── Inventory analytics / KPI board ─────────────────────────────────── */
 export type InventoryAnalytics = {
   asOf: string;
   windowDays: number;
@@ -344,12 +260,9 @@ export function useInventoryAnalytics(opts?: { days?: number; warehouseId?: stri
   });
 }
 
-/* PR #38 — Per-warehouse breakdown for a single product (drilldown drawer) */
 export function useInventoryProductBreakdown(itemCode: string | null) {
   return useQuery({
     queryKey: ['inventory', 'breakdown', itemCode],
-    // Migration 0095 — per (warehouse × attribute-composition) rows so the
-    // drawer can show a SKU broken into its variant buckets, each with qty.
     queryFn: () =>
       authedFetch<{ balances: InventoryBalance[] }>(
         `/inventory/breakdown/${encodeURIComponent(itemCode ?? '')}`,
@@ -375,9 +288,6 @@ export function useInventoryLots(itemCode: string | null, opts?: { warehouseId?:
   });
 }
 
-/* Stage 2 (Commander 2026-05-31) — open lots grouped by (warehouse, batch).
-   A batch = the source PO number; sofa set components share one batch so the
-   outbound side (Stage 3) can ship a whole colour-matched set from one dye lot. */
 export type BatchComponent = {
   itemCode: string;
   variantKey: string | null;
@@ -385,8 +295,6 @@ export type BatchComponent = {
   qtyRemaining: number;
   unitCostSen: number;
   receivedAt: string | null;
-  /* Supplier fabric code for the component's variantKey (READ-side stamp,
-     /inventory/batches — same contract as InventoryBalance.fabric_supplier_code). */
   fabric_supplier_code?: string | null;
 };
 export type InventoryBatch = {
@@ -432,17 +340,10 @@ export function useCogsEntries(opts?: { warehouseId?: string; itemCode?: string;
   });
 }
 
-/* Reserved-but-unshipped — one row per OPEN FIFO lot with the READY SO demand
-   claiming it (GET /inventory/reservations). `reserved_since` is the reserving
-   SO's created_at (no allocation timestamp exists — an honest proxy for the age
-   of the claim). status FREE = no order claims the lot yet. */
 export type InventoryReservationClaim = {
   doc_no: string;
   so_created_at: string | null;
   qty_ready: number;
-  // Owner Q4 — the reserving SO's EFFECTIVE delivery date
-  // (amended_delivery_date ?? customer_delivery_date). May be absent on older
-  // payloads; always guard.
   delivery_date?: string | null;
 };
 export type InventoryReservation = {
@@ -457,15 +358,8 @@ export type InventoryReservation = {
   qty_remaining: number;
   unit_cost_sen: number;
   received_at: string | null;
-  // Source of the lot (GRN / PCR / …). is_consignment is derived server-side
-  // from the SOURCE (a Purchase Consignment Receive fed this lot), NOT the
-  // warehouse flag — so PCR stock mis-posted into a normal warehouse is still
-  // excluded from owned value (BUG-HISTORY 2026-07-25).
   source_doc_type?: string | null;
   source_doc_no?: string | null;
-  // For a GRN-sourced lot, the ORIGINATING purchase order (display trace only),
-  // resolved server-side by grn_number -> purchase_order_id -> po_number. Null
-  // for non-GRN sources and for a GRN with no resolvable PO.
   source_po_no?: string | null;
   is_consignment?: boolean;
   fabric_supplier_code?: string;
@@ -488,21 +382,6 @@ export type InventoryReservation = {
   is_dead_stock?: boolean;
 };
 
-/* ── Shared stock-breakdown transform — ONE logic layer for both surfaces ──
-   The desktop drawer (Inventory.tsx ProductBreakdownDrawer) and the mobile Stock
-   Card (mobile/MobileStockCard.tsx) both render the merged per-lot stock view
-   from this. Splits the open-lot feed into OWNED vs CONSIGNMENT by each lot's
-   source-derived is_consignment flag, and computes the OWNED value/quantity
-   totals with consignment excluded from value (owner rule: show consignment
-   quantity, keep it out of inventory value). FIFO order (oldest received first)
-   is preserved as the backend returns it. Null-safe throughout. */
-/* The MINIMUM a row must carry to be split and valued. Structural on purpose:
-   the SAME transform now serves two different lot feeds — /inventory/reservations
-   (InventoryReservation, richer) and /inventory/lots/:itemCode (InventoryLot,
-   the FIFO drilldown the desktop Stock Card reads). Both carry the qty, the unit
-   cost and the server-stamped consignment verdict, which is all this needs; the
-   generic keeps each caller its own row type on the way out. Adding a THIRD
-   filter for the second feed is what produced the defect this closes. */
 export type StockLotLike = {
   qty_remaining: number;
   unit_cost_sen: number;
@@ -525,8 +404,6 @@ export type StockBreakdown<T extends StockLotLike = InventoryReservation> = {
   ownedFreeQty: number;
 };
 
-/* Per-lot on-hand split, null-safe: a lot with no MRP fields (older/degraded
-   payload) is treated as fully FREE (assigned 0), matching the endpoint. */
 export function lotAssignedQty(l: StockLotLike): number {
   return Math.max(0, Math.round(l.assigned_qty ?? 0));
 }
@@ -535,9 +412,6 @@ export function lotFreeQty(l: StockLotLike): number {
   return l.free_qty != null ? Math.max(0, Math.round(l.free_qty)) : qty;
 }
 
-/* Is this lot a dead-stock candidate? The server's verdict (is_dead_stock also
-   excludes showroom / display / service warehouses); an older payload without it
-   falls back to free owned units. */
 export function lotIsDeadStock(l: StockLotLike & { is_dead_stock?: boolean }): boolean {
   return l.is_dead_stock ?? (!l.is_consignment && lotFreeQty(l) > 0);
 }

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { useQuery } from "@tanstack/react-query";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { useAuth } from "../auth/AuthContext";
-import { splitE164 } from "../vendor/shared/phone";
+import { splitE164 } from "../../../shared/src/vendor/shared/phone";
 import { compressAllForOcr } from "../vendor/shared/image-compress";
 import type { ExtractedSlip } from "../vendor/scm/components/ScanOrderModal";
 import {
@@ -29,8 +29,6 @@ import {
 } from "../vendor/scm/lib/scan-jobs";
 import "./mobile.css";
 
-// Re-export the shared job helpers so existing consumers that import them from
-// MobileScan (MobileSalesOrders) keep working after the move to scan-jobs.ts.
 export { normalizeJobs };
 export type { ScanJob, ScanJobsResp };
 
@@ -102,31 +100,12 @@ export type { ScanJob, ScanJobsResp };
 type Shot = { file: File; url: string };
 type Slot = Shot | null;
 
-/* A picked file can now be a PDF (desktop parity — a PDF slip / e-receipt), and
-   an object-URL of a PDF rendered into an <img> is a broken thumbnail. So the
-   preview branches on this: image → the <img>, PDF → a document tile with the
-   filename. */
 const isPdfShot = (s: Shot): boolean =>
   s.file.type === "application/pdf" || /\.pdf$/i.test(s.file.name);
 
-/* One queued order in the session: a single front slip + its payment slips.
-   `id` is a stable client key for React lists + remove (independent of array
-   index so removing an order doesn't reshuffle keys).
-
-   `id` and `idempotencyKey` are deliberately SEPARATE and must stay so. `id` is
-   a React list key + the key of the orderErrors map; reusing it as the order key
-   would work by accident today and teach the next reader that a UI key carries
-   order semantics — the same trap MobileNewSO.Payment records (BUG-HISTORY
-   2026-07-17, fix/p1-so-create-idem). `idempotencyKey` is a real
-   crypto.randomUUID and means "this scanned slip becomes ONE draft order". */
 type OrderDraft = { id: string; idempotencyKey: string; front: Slot; payShots: Shot[] };
 
 let ORDER_SEQ = 0;
-/* The ONLY birth site of an OrderDraft (all 6 call sites verified; every other
-   setOrders is a `{ ...o }` spread that carries the key through), so the key
-   lives exactly as long as the object the operator thinks of as "this order":
-   the same one for as long as the order sits on screen, and resetOrders() after
-   a submit mints a fresh one — so the next scan is a genuinely new order. */
 const newOrder = (): OrderDraft => ({
   id: `ord-${++ORDER_SEQ}-${Date.now()}`,
   idempotencyKey: newIdempotencyKey(),
@@ -169,17 +148,8 @@ const newOrder = (): OrderDraft => ({
    lands a blank draft for it, so it flows through the toast like any draft. */
 const isStickyJob = (j: ScanJob): boolean => j.status === "error";
 
-/* Visit tracking for the sticky-row dismissal — module scope so it survives
-   screen unmounts. A sticky row stays visible for the ENTIRE visit in which it
-   appears and is dropped only when its terminal update predates the PREVIOUS
-   visit's start (i.e. a full visit has already shown it). The 5s clamp keeps
-   dev StrictMode's double-mount from counting as a re-entry. */
 let SCAN_VISIT = { openedAt: 0, prevOpenedAt: 0 };
 
-/* ── /scan-so/extract response shape (subset the mobile flow consumes) ─────
-   The SO scan endpoint returns sampleId + imageKey + receiptImageKey (NOT
-   uploadSessionId — that belongs to scan-payment). extracted is the slip;
-   catalog.skus lets us resolve a matched SKU code to a display name. */
 type SkuMatch = { code: string; confidence: number; reason: string };
 type CatalogSku = { code: string; name: string; category: string; baseModel: string | null };
 type ExtractResp = {
@@ -194,83 +164,50 @@ type ExtractResp = {
   };
 };
 
-/* ── Handoff contract with MobileNewSO ───────────────────────────────────
-   A dropdown-agnostic prefill mapped to the mobile New SO form's simpler
-   state shape (free-text venue, plain State/method strings). Carries the
-   sampleId + salesperson + frozen AI-original so the New SO save can run the
-   same edit-gate learning POST desktop does (/scan-so/samples/:id/confirm). */
 export type MobileScanLine = {
-  name: string; // matched SKU name, else the raw slip text (operator edits)
+  name: string;
   qty: string;
-  price: string; // RM
+  price: string;
   remark: string;
-  /* Learning carry-through — the verbatim slip row + the AI's SKU guess, so the
-     New SO save can pair the operator's final line against the AI original. */
   rawText: string;
   suggestedCode: string;
   confidence: number;
-  itemCode: string; // the SKU code the scan matched ('' = no match)
-  /* HOW itemCode was reached. 'exact' is the reader's code found verbatim; the
-     others are near matches (findNearestSku), which is what turns a slightly
-     misread code into the real SKU NAME on the line instead of raw handwriting.
-     The operator still picks the product, so nothing is auto-committed here. */
+  itemCode: string;
   matchSource: import("../vendor/scm/lib/sku-nearest-match").SkuMatchSource | null;
 };
 export type MobileScanPayment = {
-  method: string; // Cash / Merchant / Online (3-method model)
-  amount: string; // RM
+  method: string;
+  amount: string;
   approval: string;
 };
-/* One captured payment slip = ONE payment. Carries the OCR'd values PLUS the
-   captured File so the New SO form can pre-attach it to the payment row and
-   upload it (a payment row is only RECORDED once it has an uploaded slip). The
-   front slip has no such carrier — it seeds the order header, not a payment. */
 export type MobileScanPaymentSlip = MobileScanPayment & {
-  file: File; // the captured payment-slip image, for the New SO row's slip upload
+  file: File;
 };
 export type MobileScanPrefill = {
   name: string;
-  phone: string; // national digits (no +60 — the form's prefix box owns it)
-  emergencyPhone: string; // second slip number → emergency contact
+  phone: string;
+  emergencyPhone: string;
   address1: string;
   state: string;
   city: string;
   postcode: string;
   custRef: string;
   note: string;
-  deliveryDate: string; // '' when none / not a clean date
-  /* The SLIP'S OWN written date ('' when none / not a clean date). NOT the
-     Sales Order's Processing Date (internal_expected_dd) — see
-     ReconciledPrefill.slipDate. */
+  deliveryDate: string;
   slipDate: string;
   customerType: string;
   buildingType: string;
-  venue: string; // raw slip location text (mobile venue is free-text)
-  /* First payment (back-compat) — kept so the mobile New SO form's existing
-     single-payment seed keeps working unchanged. Equals payments[0] ?? null. */
+  venue: string;
   payment: MobileScanPayment | null;
-  /* ALL payments — one entry per captured payment slip, each OCR'd in its own
-     /extract call and carrying its captured File for the New SO row's slip
-     upload. Empty when no payment slip was captured. The New SO form should seed
-     ONE payment row per entry (see report note). */
   payments: MobileScanPaymentSlip[];
   lines: MobileScanLine[];
-  /* Edit-gate carry-through — mirrors desktop's ScanPrefill. */
   sampleId: string | null;
   salesperson: string | null;
-  /* PROVENANCE — the R2 keys of the photos this prefill was read from, which
-     /scan-so/extract already answers with. They ride to the create as
-     slip_image_key / receipt_image_key (migrations 0033 / 0034) so the SO detail
-     can show the slip as proof; desktop's ScanPrefill carries the same pair.
-     Dropping them here is why a phone-scanned order's "Scanned photos" card was
-     always empty. null = that photo does not exist for this scan. */
   slipImageKey: string | null;
   receiptImageKey: string | null;
   aiOriginal: ExtractedSlip;
 };
 
-/* mfg_product_category → the mobile line has no itemGroup; we only surface a
-   display name, so category isn't needed here (kept minimal). */
 
 const CHECK = (
   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -285,7 +222,6 @@ const CAMERA = (
   </svg>
 );
 
-/* 16px twins of the tile camera, for the source menu's rows. */
 const CAMERA_SM = (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" />
@@ -301,16 +237,8 @@ const UPLOAD_SM = (
   </svg>
 );
 
-/* Which of a slot's two hidden inputs a tap targets — the camera one
-   (capture="environment") or the photo-library / Files one (no capture). */
 type PickSource = "camera" | "library";
 
-/* Small source menu — one tap on a slot pops this over the tile, and the row
-   picked here decides which hidden input fires. It exists because `capture`
-   cannot be conditional on a single input: iOS reads the attribute at click
-   time and offers the camera ONLY, so "camera or gallery" has to be asked
-   before the picker opens. Anchored, not a bottom sheet: the choice is two
-   words, and a full-height sheet for it reads as a much bigger decision. */
 const MENU_W = 156;
 const MENU_H = 88;
 
@@ -327,8 +255,6 @@ function PickSourceMenu({ at, onPick, onClose }: {
   const icon: CSSProperties = { display: "flex", width: 16, height: 16, flex: "none" };
   return (
     <>
-      {/* Transparent catcher — a tap anywhere else closes without dimming the
-          screen, which a two-word choice does not warrant. */}
       <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
       <div
         style={{
@@ -351,8 +277,6 @@ function PickSourceMenu({ at, onPick, onClose }: {
   );
 }
 
-/* A small red "×" delete control reused for every uploaded thumbnail (front +
-   payment). Position is supplied by the caller. */
 function RemoveButton({ label, onClick, style }: { label: string; onClick: () => void; style: CSSProperties }) {
   return (
     <button
@@ -365,10 +289,6 @@ function RemoveButton({ label, onClick, style }: { label: string; onClick: () =>
   );
 }
 
-/* Preview fill for a captured slip — the <img> for an image, a document tile for
-   a PDF (an object-URL of a PDF in an <img> renders as a broken thumbnail). Fills
-   its positioned `.ph` wrapper; the wrapper owns the overlays (check / remove /
-   retake). Added with PDF accept (desktop parity). */
 function ShotPreview({ shot, alt }: { shot: Shot; alt: string }) {
   if (isPdfShot(shot)) {
     return (
@@ -384,9 +304,6 @@ function ShotPreview({ shot, alt }: { shot: Shot; alt: string }) {
 
 const SLOT_LABELS = ["Front slip", "Payment slip"];
 
-/* Status pill for a Recent-scans row: Queued grey / Reading… teal-tint with a
-   spinner / Done solid teal / Failed red-tint. Anything unexpected renders as
-   Queued-grey with the raw word so a new backend state never blanks the row. */
 function JobPill({ status }: { status: string }) {
   const base: CSSProperties = {
     display: "inline-flex", alignItems: "center", gap: 5, flex: "none",
@@ -405,18 +322,9 @@ function JobPill({ status }: { status: string }) {
   return <span style={{ ...base, background: "var(--hz-c-bg)", color: "var(--hz-c-ink-muted)" }}>{status === "queued" ? "Queued" : status}</span>;
 }
 
-/* Money formatter shared by the payment + line mappings below (matches the
-   desktop RM→display shape). */
 const fmtRm = (rm: number): string =>
   rm.toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-/* Map ONE extracted slip's payment fields into the mobile payment shape, or
-   null when the slip carries no payment. Delegates to the SHARED reconciler's
-   reconcilePayment so method-folding + the One-Shot default resolve identically
-   to desktop; the mobile row keeps only method/amount/approval (bank/plan/online
-   are carried by the reconciler but the mobile payment row doesn't surface them
-   yet — see report note). Shared by the front-slip extraction (payment #1) and
-   every additional payment-slip extraction (payments #2..N). */
 function extractPayment(ex: ExtractedSlip, catalogs: ReconcileCatalogs): MobileScanPayment | null {
   const p = reconcilePayment(ex, catalogs);
   if (!p) return null;
@@ -427,17 +335,6 @@ function extractPayment(ex: ExtractedSlip, catalogs: ReconcileCatalogs): MobileS
   };
 }
 
-/* Build the mobile New-SO handoff via the SAME shared reconciler desktop uses
-   (reconcileScanPrefill) — so the OCR values are reconciled to the live catalog
-   IDENTICALLY on both platforms (venue text resolved, customer/building type +
-   state + payment method snapped to the maintained dropdowns) — then adapted to
-   the mobile form's simpler state (free-text venue, national phone parts,
-   free-text line name).
-
-   `paymentSlips` is the per-slip payment + captured File for EVERY payment slip
-   (one per /extract call, in capture order). The prefill's back-compat `payment`
-   field is set to the first entry so the existing single-payment New SO seed
-   keeps working; `payments` carries the full array. */
 function buildPrefill(
   d: ExtractResp["data"],
   repName: string,
@@ -447,8 +344,6 @@ function buildPrefill(
   const ex = d.extracted;
   const rec = reconcileScanPrefill(ex, catalogs);
 
-  // Canonical +60 E.164 phones (from the reconciler), then split off the
-  // national part (the form's +60 prefix box owns the country code).
   const mainNational = rec.phones[0] ? splitE164(rec.phones[0]).national : "";
   const emergencyNational = rec.phones[1] ? splitE164(rec.phones[1]).national : "";
 
@@ -466,19 +361,12 @@ function buildPrefill(
     slipDate: rec.slipDate ?? "",
     customerType: rec.customerType,
     buildingType: rec.buildingType,
-    // Mobile venue is free text — seed the raw slip location (nothing lost).
     venue: rec.venueText,
-    // Back-compat first payment = payments[0] (the existing single-payment New
-    // SO seed reads this). Falls back to the front slip's own reconciled payment
-    // when no payment-slip-specific extraction produced one.
     payment: paymentSlips[0]
       ? { method: paymentSlips[0].method, amount: paymentSlips[0].amount, approval: paymentSlips[0].approval }
       : extractPayment(ex, catalogs),
-    // One payment per captured payment slip, each with its captured File.
     payments: paymentSlips,
     lines: rec.lines.map((l) => ({
-      // Matched SKU name, else the raw slip text so the operator has the
-      // handwriting to type the real item against (never lost).
       name: l.description || l.rawText || "",
       qty: String(l.qty),
       price: fmtRm(l.unitPriceRm),
@@ -491,8 +379,6 @@ function buildPrefill(
     })),
     sampleId: d.sampleId,
     salesperson: repName || rec.salesRep || null,
-    /* Straight off the extract response — the reader uploaded these photos, so
-       these keys are what the SO must point at. */
     slipImageKey: d.imageKey ?? null,
     receiptImageKey: d.receiptImageKey ?? null,
     aiOriginal: ex,
@@ -511,45 +397,24 @@ export function MobileScan({
      the operator STAYS here and watches the Recent-scans pills progress,
      leaving via Cancel/back whenever. */
   onDrafted: (count: number) => void;
-  /* Navigate to one SO's detail — a finished job's "Done → SO-xxxx" row is
-     tappable and opens the draft it created. Optional so the screen still
-     renders if a host doesn't wire it (the row is then not tappable). */
   onOpenSo?: (docNo: string) => void;
 }) {
   const { user } = useAuth();
-  // The session is an ARRAY of orders. Each order = one front slip + N payment
-  // slips. Start with a single empty order. `activeOrderId` is which order the
-  // hidden camera inputs currently target (set right before .click()).
   const [orders, setOrders] = useState<OrderDraft[]>(() => [newOrder()]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Per-order inline errors, keyed by OrderDraft.id — today only the /enqueue
-  // 409 duplicate_slip refusal ("This slip was already uploaded — it created
-  // <doc no>."). Rendered inside that order's card; cleared when the order's
-  // photos change (a retake is a new attempt).
   const [orderErrors, setOrderErrors] = useState<Record<string, string>>({});
-  // The order id currently being re-queued via "Create anyway" (force=1), so
-  // its button shows a busy state without blocking the rest of the screen.
   const [forcingId, setForcingId] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
-  // TWO hidden inputs per slot — a camera one (capture="environment") and a
-  // library one (no capture). All four are re-targeted to the active order right
-  // before each pick. One input with capture cannot serve both: iOS honours the
-  // attribute and opens the rear camera with no way to reach Photos or Files.
   const frontCamInputRef = useRef<HTMLInputElement>(null);
   const frontLibInputRef = useRef<HTMLInputElement>(null);
   const payCamInputRef = useRef<HTMLInputElement>(null);
   const payLibInputRef = useRef<HTMLInputElement>(null);
-  // Which slot is waiting on a source choice, and where its menu sits — null
-  // when no menu is open.
   const [pickMenu, setPickMenu] = useState<
     { orderId: string; slot: "front" | "payment"; replacing: boolean; left: number; top: number } | null
   >(null);
   const activeOrderIdRef = useRef<string | null>(null);
 
-  // Revoke every object URL still held when the component unmounts so captured
-  // previews don't leak. Latest orders are read via the setter so we never close
-  // over a stale list.
   useEffect(() => {
     return () => {
       setOrders((cur) => {
@@ -562,19 +427,10 @@ export function MobileScan({
     };
   }, []);
 
-  // Pre-warm the catalog prompt-cache the moment the screen opens so the first
-  // /extract pays less. Fire-and-forget — never blocks or errors the screen.
   useEffect(() => {
     authedFetch("/scan-so/warm", { method: "POST" }).catch(() => {});
   }, []);
 
-  /* Live catalogs for the SHARED reconciler — the SAME masters MobileNewSO
-     renders its dropdowns from, so a reconciled value always matches a live
-     option (this is the fix: the mapping now snaps against the live catalog, not
-     stale hardcoded lists). Venues stay a resolvable master even though mobile's
-     venue field is free-text (venueText carries the raw location regardless).
-     The per-order skus catalog is merged in at call time from each /extract
-     response (d.catalog.skus). */
   const venuesQ = useVenues();
   const customerTypeOptsQ  = useSoDropdownOptions("customer_type");
   const buildingTypeOptsQ  = useSoDropdownOptions("building_type");
@@ -584,8 +440,6 @@ export function MobileScan({
   const installmentPlanQ   = useSoDropdownOptions("installment_plan");
   const localitiesQ        = useLocalities();
 
-  /* Catalogs sans skus — merged with each /extract response's catalog.skus at
-     call time. Memoised on the resolved option lists. */
   const catalogsBase = useMemo(
     () => ({
       venues:          venuesQ.data ?? [],
@@ -604,24 +458,8 @@ export function MobileScan({
     ],
   );
 
-  /* Salesperson — desktop parity (ScanOrderModal). Each rep has their own
-     handwriting/notation habits, so the extractor learns PER REP: this value
-     picks which rule file and few-shot examples READ the slip, and files the
-     resulting learning sample. Default it to whoever is signed in (the usual
-     case — staff scan their OWN slips) and keep it EDITABLE against the same
-     GET /scan-so/salespeople list desktop offers, "for the occasional
-     someone-else slip".
-
-     This was a `const` off the signed-in user with no setter and no list, so an
-     office person working through a stack of colleagues' slips read every one of
-     them against their OWN habits, and taught their colleagues' corrections into
-     their own rule file. */
   const [salesperson, setSalesperson] = useState((user?.name || user?.email || "").trim());
   const [knownReps, setKnownReps] = useState<string[]>([]);
-  /* The list failing must not take the screen down — the field is free-text
-     either way — but the failure is SAID, not swallowed: an empty datalist and a
-     refused read look identical, and "the names stopped appearing" with no
-     reason is the shape CLAUDE.md calls worse than a crash. */
   const [repsUnavailable, setRepsUnavailable] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -635,11 +473,6 @@ export function MobileScan({
     return () => { alive = false; };
   }, []);
 
-  /* ── Recent scans — background-job status list ──────────────────────────
-     Visit bookkeeping first: record this open, remembering the previous one
-     (sticky rows are dismissed only once a full visit has passed since their
-     terminal update). Ref-guarded so it runs once per mount; the 5s clamp
-     absorbs StrictMode's dev double-mount. */
   const dismissBeforeRef = useRef<number | null>(null);
   if (dismissBeforeRef.current === null) {
     const nowOpen = Date.now();
@@ -657,9 +490,7 @@ export function MobileScan({
         salesperson ? `/scan-so/jobs?salesperson=${encodeURIComponent(salesperson)}` : "/scan-so/jobs",
       ),
     staleTime: 0,
-    retry: false, // fail-soft — a jobs hiccup just hides the section, no dialog
-    // Poll every 4s ONLY while a listed job is still queued/running; a settled
-    // list stops the interval entirely (done-row expiry is a local timer).
+    retry: false,
     refetchInterval: (query) =>
       normalizeJobs(query.state.data).some(isActiveJob) ? 4000 : false,
   });
@@ -668,22 +499,14 @@ export function MobileScan({
   const visibleJobs = useMemo(
     () =>
       jobs.filter((j) => {
-        if (!isTodayTs(jobTs(j.createdAt))) return false; // today's jobs only
+        if (!isTodayTs(jobTs(j.createdAt))) return false;
         if (isActiveJob(j)) return true;
-        // Genuine system failures stay for the whole visit (dismissed once a
-        // full later visit has shown them). DONE jobs never show here — they
-        // are drafts in Orders, announced by the Orders-open toast.
         if (isStickyJob(j)) return jobTs(j.updatedAt ?? j.createdAt) > dismissBefore;
         return false;
       }),
     [jobs, dismissBefore],
   );
 
-  /* "Clear" for failed rows — POST /scan-so/jobs/clear-failed deletes THIS
-     salesperson's terminal error rows server-side (self-scoped by the
-     caller's name on the backend; a wildcard admin clears all), then the list
-     refetches. Shown while any error row is visible. Plain cleanup of rows
-     already read. Fail-soft: on error the rows just stay; next tap retries. */
   const hasFailedRows = visibleJobs.some((j) => j.status === "error");
   const [clearingFailed, setClearingFailed] = useState(false);
   const clearFailedJobs = async () => {
@@ -701,19 +524,9 @@ export function MobileScan({
     }
   };
 
-  // The session is submittable once EVERY queued order has its front slip. The
-  // payment slip is OPTIONAL — desktop parity (ScanOrderModal `ready` = slip
-  // only): a slip alone submits and the payment can be recorded later; the
-  // background /enqueue OCR reads zero-or-more receipts. (An order that's still
-  // blank — no front slip — blocks submit; finish it or remove it.)
   const ready = orders.length > 0 && orders.every((o) => o.front !== null);
   const multiOrder = orders.length > 1;
 
-  /* Tapping a slot does NOT open a picker straight away — it pops the source
-     menu (Take photo / Upload) over the tile, and the choice there fires the
-     matching hidden input. `replacing` means the front slip already has a shot,
-     so the old one is dropped the moment a source is chosen. The menu is placed
-     against the tapped element and clamped to the viewport. */
   const openPicker = (
     e: React.MouseEvent<HTMLElement>,
     orderId: string,
@@ -723,8 +536,6 @@ export function MobileScan({
     if (submitting) return;
     const r = e.currentTarget.getBoundingClientRect();
     const left = Math.min(Math.max(8, r.left + r.width / 2 - MENU_W / 2), window.innerWidth - MENU_W - 8);
-    // Below the tile's top edge, or flipped above it when the bottom of the
-    // screen is too close.
     const below = r.top + 44;
     const top = below + MENU_H > window.innerHeight - 12 ? Math.max(8, r.top - MENU_H - 6) : below;
     setPickMenu({ orderId, slot, replacing, left, top });
@@ -742,7 +553,6 @@ export function MobileScan({
     }
   };
 
-  // Drop one order's inline error (its photos changed — new attempt).
   const clearOrderError = (orderId: string) =>
     setOrderErrors((cur) => {
       if (!cur[orderId]) return cur;
@@ -778,10 +588,6 @@ export function MobileScan({
     clearOrderError(orderId);
   };
 
-  // Append captured payment slips to the active order (each = one payment). The
-  // input is `multiple`, so a single pick can carry a whole batch of slip photos
-  // — EVERY selected file becomes its own payShot. No cap — an order can take as
-  // many payments as slips.
   const addPayFiles = (files: FileList | null | undefined) => {
     if (!files || files.length === 0) return;
     const orderId = activeOrderIdRef.current;
@@ -809,8 +615,6 @@ export function MobileScan({
     setOrders((cur) => [...cur, newOrder()]);
     setError(null);
   };
-  // Remove a whole order (and revoke its previews). Never let the list go empty —
-  // removing the last order resets it to a fresh blank one.
   const removeOrder = (orderId: string) => {
     if (submitting) return;
     setOrders((cur) => {
@@ -825,10 +629,6 @@ export function MobileScan({
     clearOrderError(orderId);
   };
 
-  // Clear the whole capture session back to one blank order (revoking every
-  // preview URL). Used after a successful submit — the operator now STAYS on
-  // this screen watching Recent scans, so the submitted photos must not linger
-  // looking still-pending.
   const resetOrders = () => {
     setOrders((cur) => {
       for (const o of cur) {
@@ -840,26 +640,15 @@ export function MobileScan({
     setOrderErrors({});
   };
 
-  // POST one order's front slip + ONE payment slip to /scan-so/extract. The
-  // existing contract reads exactly one order slip + one payment receipt into a
-  // single payment, so one call per payment slip yields one payment per slip. The
-  // order's front slip rides EVERY call (order fields are read identically each
-  // time; we keep the FIRST response's order + this call's single payment).
   const extractOne = async (front: Shot, payFile: File): Promise<ExtractResp> => {
     const form = new FormData();
-    // Downscale first: the raw camera file can clear the backend's 20MB gate and
-    // still exceed the model's per-image cap, which returns a NON-retryable 400.
     const [frontFile, slipFile] = await compressAllForOcr([front.file, payFile]);
     form.append("file", frontFile);
     form.append("file", slipFile);
     if (salesperson) form.append("salesperson", salesperson);
-    // authedFetch handles the FormData content-type + bearer + long scan
-    // timeout. A non-ok reason throws a plain-language message we catch below.
     return authedFetch<ExtractResp>("/scan-so/extract", { method: "POST", body: form });
   };
 
-  // OCR one order into a prefill (front slip + all its payment slips → one
-  // header + one payment per slip). Returns null when the first call fails.
   const extractOrder = async (order: OrderDraft): Promise<MobileScanPrefill | null> => {
     if (!order.front || order.payShots.length === 0) return null;
     const responses: ExtractResp[] = [];
@@ -869,14 +658,7 @@ export function MobileScan({
     const first = responses[0];
     if (!first || !first.success || !first.data) return null;
     const repName = salesperson || (first.data.extracted.salesRep ?? "").trim();
-    /* Full reconciler catalogs = the live option/venue/state masters + this
-       order's SKU catalog (from the first extract response). */
     const catalogs: ReconcileCatalogs = { ...catalogsBase, skus: first.data.catalog.skus };
-    // One MobileScanPaymentSlip per captured slip: the per-call OCR'd payment
-    // (falling back to a blank-method / zeroed row when a call couldn't read a
-    // payment, so the slip is never silently dropped — the operator picks the
-    // method and fixes the amount) + the captured File for the New SO row's slip
-    // upload.
     const paymentSlips: MobileScanPaymentSlip[] = order.payShots.map((shot, i) => {
       const res = responses[i];
       const pm = res && res.success && res.data ? extractPayment(res.data.extracted, catalogs) : null;
@@ -896,25 +678,15 @@ export function MobileScan({
   // Worker's waitUntil finishes the OCR and mints the DRAFT SO on its own.
   const enqueueOne = async (order: OrderDraft, force = false): Promise<{ job_id: string; status: string }> => {
     const form = new FormData();
-    // Downscale before the upload, not after: this POST is the whole point of
-    // the background path (the phone may leave the screen the moment it
-    // returns), so the bytes that ride it are the bytes the model will read.
     const files = await compressAllForOcr([order.front!.file, ...order.payShots.map((s) => s.file)]);
     for (const f of files) form.append("file", f);
     if (salesperson) form.append("salesperson", salesperson);
-    // force=1 = the operator confirmed "create anyway" on a duplicate-slip
-    // warning, so the backend skips its hard reject and queues the order.
     if (force) form.append("force", "1");
     return authedFetch<{ job_id: string; status: string }>("/scan-so/enqueue", { method: "POST", body: form });
   };
 
-  // "Create anyway" — re-queue a duplicate-slip-warned order with force=1. Owner
-  // 2026-07-15: a repeat slip only WARNS; whether to open again is the person's
-  // call. On success the card drops off (like a normal queue) and its warning
-  // clears; the background job still marks it as a soft duplicate for the trail.
   const createAnyway = async (orderId: string) => {
     const order = orders.find((o) => o.id === orderId);
-    // Front slip is the only requirement — payment optional (desktop parity).
     if (!order || !order.front || forcingId) return;
     setForcingId(orderId);
     try {
@@ -949,21 +721,7 @@ export function MobileScan({
     });
   };
 
-  /* Legacy on-screen flow — kept VERBATIM as the fallback when /enqueue is not
-     served yet (a 404 from a stale worker): OCR every order while the operator
-     waits, then fire the client-side draft creates. */
   const submitLegacy = async () => {
-    /* Carry each order's OWN key alongside its prefill — the prefill is derived
-       data (re-OCR'd on every press), the OrderDraft is the intent, so the key
-       belongs to the order and not to this loop.
-
-       Honest scope: no double-fire is reachable here TODAY — submit() guards on
-       `!ready || submitting` and resetOrders() clears the photos afterwards, and
-       the primary /enqueue path is domain-idempotent anyway (it 409s
-       duplicate_slip against a slip that already made an SO). This is the right
-       OWNER for the key rather than a live fix: the bare POST it feeds is the
-       same create the interactive form uses, and if a retry is ever added here
-       the key is already on the object that means "one order". */
     const prefills: { prefill: MobileScanPrefill; idempotencyKey: string }[] = [];
     for (const order of orders) {
       const prefill = await extractOrder(order);
@@ -982,9 +740,6 @@ export function MobileScan({
         });
       });
     }
-    // The legacy path has no job rows to watch, but the post-submit contract is
-    // the same: stay on this screen (the parent no longer navigates), clear the
-    // submitted photos, toast + Orders-list nudge via onDrafted.
     resetOrders();
     onDrafted(prefills.length);
   };
@@ -996,38 +751,24 @@ export function MobileScan({
     setUnavailable(false);
     setOrderErrors({});
     try {
-      // Enqueue every queued order (upload-only — fast). Each order = one
-      // background job = one DRAFT SO. The await here is just the photo upload,
-      // not the OCR, so the operator leaves this screen in seconds.
       let queued = 0;
       const dupErrors: Record<string, string> = {};
       for (const order of orders) {
-        // Slip-only orders enqueue too (payment optional — desktop parity). Only
-        // a genuinely blank order (no front slip) is skipped.
         if (!order.front) continue;
         try {
           await enqueueOne(order);
           queued++;
         } catch (e) {
           const err = e as Error & { status?: number; body?: string };
-          // 409 duplicate_slip = the backend refused THIS order at upload
-          // because its slip photo already created an SO (hard reject, nothing
-          // queued). Keep that order on screen with the reason — which names
-          // the existing order number — inline on its card; the OTHER orders
-          // in the batch still enqueue. NEVER falls through to the legacy
-          // path (that would create the duplicate client-side anyway).
           if (err.status === 409 && typeof err.body === "string" && err.body.includes("duplicate_slip")) {
             let reason = "This slip was already uploaded.";
             try {
               const b = JSON.parse(err.body) as { reason?: string };
               if (typeof b.reason === "string" && b.reason.trim() !== "") reason = b.reason;
-            } catch { /* body wasn't JSON — keep the fallback wording */ }
+            } catch { }
             dupErrors[order.id] = reason;
             continue;
           }
-          // 404 = worker without /enqueue yet — do the WHOLE batch the legacy
-          // way (mixing paths would double-create the already-queued orders,
-          // and a duplicate-refused order must never be re-created either).
           if (err.status === 404 && queued === 0 && Object.keys(dupErrors).length === 0) {
             await submitLegacy();
             return;
@@ -1036,10 +777,6 @@ export function MobileScan({
         }
       }
       if (Object.keys(dupErrors).length > 0) {
-        // Stay on this screen so the operator SEES which order was refused:
-        // keep only the refused order cards (with their inline reason); the
-        // queued ones are already running server-side, so drop them here and
-        // say so.
         setOrders((cur) => {
           for (const o of cur) {
             if (dupErrors[o.id]) continue;
@@ -1051,7 +788,6 @@ export function MobileScan({
         });
         setOrderErrors(dupErrors);
         if (queued > 0) {
-          // Surface the just-queued jobs in Recent scans right away.
           void refetchJobs();
           void serviceNotify({
             title: `${queued} draft${queued === 1 ? "" : "s"} queued`,
@@ -1073,20 +809,12 @@ export function MobileScan({
       void refetchJobs();
       onDrafted(queued);
     } catch (e) {
-      // Staging has no ANTHROPIC_API_KEY → /extract returns 503
-      // anthropic_key_missing. Surface a clear "not available here" note instead
-      // of the raw wrangler instruction humanApiError would otherwise pass
-      // through. The error object carries the raw status/body for this check.
       const err = e as Error & { status?: number; body?: string };
       const keyMissing =
         err.status === 503 || (typeof err.body === "string" && err.body.includes("anthropic_key_missing"));
       if (keyMissing) {
         setUnavailable(true);
       } else {
-        // Surface the server's OWN plain-language reason (authedFetch already
-        // ran it through humanApiError, so err.message is a clean sentence —
-        // "File too large…", "Unsupported file type…", "The photos could not be
-        // uploaded…") instead of a blanket line that hides WHY it failed.
         setError(err.message || "Couldn't read the slip — try again.");
       }
     } finally {
@@ -1097,7 +825,6 @@ export function MobileScan({
 
   return (
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
-      {/* Spec #scan: back "Cancel" chevron, screen-title, helper sub-line. */}
       <header className="hdr">
         <div className="hdr-row">
           <button onClick={onBack} className="back" aria-label="Cancel">
@@ -1124,17 +851,10 @@ export function MobileScan({
           </div>
         ) : (
           <>
-            {/* ── Recent scans — today's background jobs, top of the screen ──
-                Queued/running always; done shows briefly (tappable → the SO it
-                created) then drops (it lives in Orders now); failures and
-                duplicate warnings stay for the whole visit. Hidden entirely
-                when nothing is visible. */}
             {visibleJobs.length > 0 && (
               <div style={{ marginBottom: 14 }}>
                 <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
                   <div className="ey" style={{ letterSpacing: ".14em", color: "var(--hz-c-ink-soft)", fontSize: 10.5 }}>Recent scans</div>
-                  {/* Clear failed rows — only while error/duplicate rows are on
-                      screen; deletes the caller's own error rows server-side. */}
                   {hasFailedRows && (
                     <button
                       onClick={() => void clearFailedJobs()}
@@ -1198,12 +918,6 @@ export function MobileScan({
               </div>
             )}
 
-            {/* Hidden inputs: a camera one and a library one per slot, all four
-                re-targeted to activeOrderIdRef before each pick. The camera
-                inputs carry capture="environment" and take images only (a live
-                shot is never a PDF, and capture drops `multiple` anyway); the
-                library inputs carry no capture, so the OS offers Photos and
-                Files, and the payment one keeps `multiple` for batch picks. */}
             <input
               ref={frontCamInputRef}
               type="file"
@@ -1218,7 +932,6 @@ export function MobileScan({
             <input
               ref={frontLibInputRef}
               type="file"
-              /* Desktop parity — also accept a PDF slip (ScanOrderModal ACCEPT). */
               accept="image/*,application/pdf"
               style={{ display: "none" }}
               onChange={(e) => {
@@ -1240,7 +953,6 @@ export function MobileScan({
             <input
               ref={payLibInputRef}
               type="file"
-              /* Desktop parity — accept a PDF e-receipt alongside images. */
               accept="image/*,application/pdf"
               multiple
               style={{ display: "none" }}
@@ -1250,17 +962,11 @@ export function MobileScan({
               }}
             />
 
-            {/* One grouped card per queued order — the front slip and its payment
-                slips live under one "Order N" header so it's clear they belong to
-                the same order. */}
             {orders.map((order, oi) => (
               <div
                 key={order.id}
                 style={{ border: "1px solid var(--hz-c-border-subtle)", borderRadius: 14, padding: 12, marginBottom: 12, background: "var(--hz-c-surface)" }}
               >
-                {/* Order header — "Order N" + a remove-order control (only when
-                    more than one order is queued; the sole order can't be removed,
-                    only its slips). */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                   <span style={{ fontSize: 12.5, fontWeight: 800, color: "var(--hz-c-ink)" }}>Order {oi + 1}</span>
                   {multiOrder && !submitting && (
@@ -1273,7 +979,6 @@ export function MobileScan({
                   )}
                 </div>
 
-                {/* FRONT SLIP — single per order. */}
                 <div className="ey" style={{ letterSpacing: ".14em", color: "var(--hz-c-ink-soft)", fontSize: 10.5, marginBottom: 6 }}>{SLOT_LABELS[0]}</div>
                 {order.front ? (
                   <div className="ph" style={{ position: "relative", height: 130, borderRadius: 12, overflow: "hidden", marginBottom: 4 }}>
@@ -1283,13 +988,11 @@ export function MobileScan({
                     </span>
                     {!submitting && (
                       <>
-                        {/* Delete the front slip. */}
                         <RemoveButton
                           label={`Remove ${SLOT_LABELS[0]} for order ${oi + 1}`}
                           onClick={() => clearFront(order.id)}
                           style={{ position: "absolute", top: 6, right: 6 }}
                         />
-                        {/* Replace = pick a new source, then drop the old shot. */}
                         <button
                           onClick={(e) => openPicker(e, order.id, "front", true)}
                           aria-label={`Replace ${SLOT_LABELS[0]} for order ${oi + 1}`}
@@ -1311,9 +1014,6 @@ export function MobileScan({
                   </button>
                 )}
 
-                {/* PAYMENT SLIPS — one photo per payment, within this order. Add-
-                    more tile + thumbnail list with a per-slip delete. Each slip
-                    becomes its own payment on the draft SO. */}
                 <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 14, marginBottom: 6 }}>
                   <span className="ey" style={{ letterSpacing: ".14em", color: "var(--hz-c-ink-soft)", fontSize: 10.5 }}>Payment slips</span>
                   <span style={{ fontSize: 10.5, color: "var(--hz-c-ink-soft)" }}>
@@ -1377,7 +1077,6 @@ export function MobileScan({
               </div>
             ))}
 
-            {/* + Add order — queue another order (its own front + payment slips). */}
             <button
               onClick={addOrder}
               disabled={submitting}
@@ -1386,21 +1085,13 @@ export function MobileScan({
               <span style={{ fontSize: 18, lineHeight: 1 }}>{"+"}</span> Add order
             </button>
 
-            {/* Design #scan: amber helper note box (design's #f3ece0 / #e8dcc5 /
-                #6a4a1e amber trio). Copy reflects the real flow — the scan reads
-                the slip and creates a DRAFT order in the background; the operator
-                opens it from Orders to review and finalise. */}
             <div style={{ display: "flex", alignItems: "flex-start", gap: 9, background: "var(--hz-c-accent-soft)", border: "1px solid #e8dcc5", borderRadius: 11, padding: 11, marginTop: 12, fontSize: 11, color: "#6a4a1e", lineHeight: 1.5 }}>
-              {/* Spec #scan amber info glyph on the left of the note. */}
               <svg width="15" height="15" style={{ flex: "none", marginTop: 1 }} viewBox="0 0 24 24" fill="none" stroke="#a16a2e" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 8v4M12 16h.01" /></svg>
               <span>
                 We read {multiOrder ? "each slip" : "the slip"} and save {multiOrder ? "a draft order per slip" : "a draft order"} to Orders in the background. Open {multiOrder ? "each draft" : "the draft"} from Orders to review every field, correct anything the reader missed, then finalise.
               </span>
             </div>
 
-            {/* Salesperson — EDITABLE (desktop parity). It was a read-only
-                caption showing the signed-in user, which is why a stack of
-                colleagues' slips all landed under the scanner's own name. */}
             <label style={{ marginTop: 16, display: "block" }}>
               <span className="ey" style={{ display: "block", letterSpacing: ".14em", color: "var(--hz-c-ink-soft)", fontSize: 9.5, fontWeight: 700, marginBottom: 5 }}>Salesperson</span>
               <input

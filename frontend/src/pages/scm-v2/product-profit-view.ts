@@ -10,7 +10,7 @@
 
 import type { ProductCategory, ProductProfitData, ProductProfitRow } from '../../vendor/scm/lib/product-profit-queries';
 import { AMOUNT_COLUMN, PCT_COLUMN, type ReportSheet, type SheetRow, type SheetValue } from '../../vendor/scm/lib/report-sheet';
-import { fmtSenPlain } from '../../vendor/shared/format';
+import { fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { monthEnd } from '../../lib/dateRangePresets';
 import { monthsSpanned, periodLabel } from './reports/statementColumns';
 

@@ -80,7 +80,6 @@ export async function aliasUsage(c: Ctx): Promise<{ used: number; limit: number 
   return { used: Number(row?.n ?? 0), limit: Number.isInteger(configured) && configured > 0 ? configured : DEFAULT_ALIAS_LIMIT };
 }
 
-/** Someone else's open request for this address makes it taken too. */
 async function requestedByAnother(c: Ctx, address: string, userId: number): Promise<boolean> {
   // company-scope: the active-company predicate on the request rows.
   const row = await c.env.DB
@@ -168,7 +167,6 @@ app.post("/claim", async (c) => {
     `INSERT INTO mail_address_requests (id, company_id, user_id, address, requested_department_id, status, created_at)
      VALUES (?, COALESCE(?, 1), ?, ?, ?, 'requested', ?)`,
   )
-    // Same company the mailbox lands in on approval: provisioning leaves email_addresses.company_id at its default (1).
     .bind(crypto.randomUUID(), activeCompanyId(c) ?? null, userId, address, requestedDepartmentId, new Date().toISOString())
     .run();
   return c.json({ ok: true, address, status: "requested", requestedDepartmentId }, 201);

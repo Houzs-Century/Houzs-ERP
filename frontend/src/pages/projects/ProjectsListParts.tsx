@@ -7,7 +7,7 @@ import { api, humanHttpMessage, tokenStore } from "../../api/client";
 import { companyHeader } from "../../lib/activeCompany";
 import { consumeCorrelated, correlateError, correlatedFetch, requestIdFromError, requestIdFromResponse } from "../../lib/requestCorrelation";
 import { cn } from "../../lib/utils";
-import { fmtDate } from "../../vendor/shared/format";
+import { fmtDate } from "../../../../shared/src/vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 
@@ -45,8 +45,6 @@ export function DateRangeFilter({
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
-  /* Was a month-NAME array — the exact thing utils.ts says the owner ruled
-     out ("no 'Jun'/'Jul' month names anywhere on the desktop app"). */
   const fmt = (d: string) => (d ? fmtDate(d) : "…");
   const active = !!(from || to);
   return (
@@ -113,7 +111,6 @@ export function MultiSelectFilter({
   selected: string[];
   onChange: (next: string[]) => void;
   title?: string;
-  /** Label when >1 is ticked, e.g. "3 brands". Defaults to "n selected". */
   summary?: (n: number) => string;
   panelWidth?: string;
 }) {
@@ -321,7 +318,6 @@ export function TaskPendingBadges({ map }: { map?: string | null }) {
   );
 }
 
-// ── Import CSV panel ─────────────────────────────────────────
 
 export function ImportCsvPanel({
   onClose,
@@ -340,13 +336,6 @@ export function ImportCsvPanel({
     if (!text.trim()) return;
     setSubmitting(true);
     try {
-      // Raw text body (POST text/csv) — api helpers all assume JSON, so
-      // we call the correlated raw-body transport. Auth token is the same one api uses — read it
-      // THROUGH tokenStore, not from localStorage: a session-only login (Remember
-      // me unchecked, or the owner's view-as) keeps the token in sessionStorage,
-      // and the old inline read sent `Bearer ` and 401'd.
-      // No timeout here would hang the dialog forever on a stalled cold-start;
-      // cap it with an upload-length AbortSignal and surface a retryable error.
       const token = tokenStore.get();
       let signal: AbortSignal | undefined;
       try { signal = AbortSignal.timeout(120_000); } catch { signal = undefined; }
@@ -357,9 +346,6 @@ export function ImportCsvPanel({
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "text/csv",
-            // Without X-Company-Id the backend stamps the hostname-default company
-            // (HOUZS), so importing while "2990" is active would write to the wrong
-            // company. Mirror lib/branding.ts.
             ...companyHeader(),
           },
           body: text,

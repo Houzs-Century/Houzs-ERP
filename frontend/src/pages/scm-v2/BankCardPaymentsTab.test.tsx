@@ -51,7 +51,6 @@ describe('the Card payments tab', () => {
     fireEvent.click(screen.getByLabelText('Card payment 2990-SO-2611-017 for the picked movement'));
     find('3500.00');
     expect(rows()).toEqual(['Card payment 2990-SO-2611-017 for the picked movement', 'Card payment 2990-SO-2611-081 for the picked movement']);
-    /* Ticked with no movement yet: the bar asks for the one movement. */
     expect(screen.getByRole('region', { name: 'Match the ticked movements and entries' }).textContent).toContain('Tick the one movement that paid these card payments in.');
     find('nothing like this');
     expect(rows()).toEqual(['Card payment 2990-SO-2611-017 for the picked movement']);

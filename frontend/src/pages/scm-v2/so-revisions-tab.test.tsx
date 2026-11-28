@@ -1,8 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-revisions-tab — the Revisions tab lifted out of SalesOrderDetail.tsx so
-// that file could shrink under its ceiling. The move must be behaviour-neutral,
-// so this pins what it renders in each of its four states.
-// ----------------------------------------------------------------------------
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
@@ -57,8 +52,6 @@ describe('RevisionsTab', () => {
           id: 'r1',
           revision: 1,
           created_at: '2026-08-14T02:00:00.000Z',
-          // The approve-so snapshot shape is not frozen, which is why the
-          // component dual-reads. Mix the two here on purpose.
           snapshot: {
             header: { debtorName: 'Test Debtor Sdn Bhd', local_total_sen: 123400 },
             lines: [{ item_code: 'SOFA-A', qty: 2, unitPriceSen: 61700 }],

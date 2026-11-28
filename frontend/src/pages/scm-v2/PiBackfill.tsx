@@ -15,7 +15,7 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
-import { fmtSen, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtSen, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { useToastOptional } from '../../hooks/useToast';
 import { DataTable, type Column } from '../../components/DataTable';
 import { Tag } from './finance/SetupParts';
@@ -27,7 +27,6 @@ type DryRun = { dryRun: true; missing: Item[]; reshape: Item[]; current: number 
 type Outcome = { invoiceNumber: string; kind: string; outcome: string; jeNo?: string; reason?: string };
 type WritePass = { dryRun: false; processed: Outcome[]; remaining: number; summary: { attempted: number; done: number; failed: number } };
 
-/** One invoice in the table: what the dry run found, then what the write did. */
 type Row = Item & { written: boolean; note: string };
 
 const sum = (items: Item[]): number => items.reduce((s, i) => s + i.totalSen, 0);
@@ -83,9 +82,6 @@ export const PiBackfillCard = () => {
         : { ...r, written: true, note: o.jeNo ?? '' };
     }));
     try {
-      /* Loop the batch until nothing is left — but bail when a pass gets
-         NOTHING done, so a wall of unbound-group failures shows itself once
-         instead of spinning. */
       for (;;) {
         const pass = await authedFetch<WritePass>('/accounting/backfill/pi-periodic?limit=25', { method: 'POST', body: '{}' });
         all.push(...pass.processed);
@@ -95,7 +91,6 @@ export const PiBackfillCard = () => {
       }
       const failed = all.filter((o) => o.outcome === 'failed').length;
       toast?.success(`Purchase invoices written · ${all.length - failed} done${failed > 0 ? `, ${failed} failed` : ''}`);
-      /* Re-classify so the card's counts tell the after-state truth. */
       setPreview(await authedFetch<DryRun>('/accounting/backfill/pi-periodic?dryRun=1', { method: 'POST', body: '{}' }));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The write pass stopped.');
@@ -107,8 +102,6 @@ export const PiBackfillCard = () => {
   const pendingCount = preview ? preview.missing.length + preview.reshape.length : 0;
   const failed = useMemo(() => (outcomes ?? []).filter((o) => o.outcome === 'failed'), [outcomes]);
 
-  /* The result line under the head: what the dry run found, or what the
-     write did — and, after it, what the re-check says is left. */
   let result: { tone: 'calm' | 'info' | 'warn'; text: string } | null = null;
   if (outcomes) {
     const done = outcomes.length - failed.length;

@@ -153,8 +153,12 @@ jobs:
             backend:
               - 'backend/**'
               - '.github/workflows/deploy.yml'
+              # shared/ is bundled by both apps (the SO / PO layout behind the AI
+              # Connector's get_pdf, backend/src/lib/shared-pdf.ts).
+              - 'shared/**'
             frontend:
               - 'frontend/**'
+              - 'shared/**'
               - '.github/workflows/deploy.yml'
 
   # The deploy used to run `npm test` inline, unsharded: 201 files, one at a

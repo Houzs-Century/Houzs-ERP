@@ -34,8 +34,7 @@
 // ----------------------------------------------------------------------------
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 
-import { fmtMoneySen } from '../../../vendor/shared/format';
-/** At-rest display for the amount half: "1000.00", "" when there is none. */
+import { fmtMoneySen } from '../../../../../shared/src/vendor/shared/format';
 const amountAtRest = (sen: number | null | undefined): string =>
   sen == null || sen === 0 ? '' : (sen / 100).toFixed(2);
 
@@ -68,13 +67,9 @@ export const readDiscountEntry = (raw: string, baseSen: number): DiscountEntry =
   const pctMatch = /^(\d+(?:\.\d+)?)\s*%$/.exec(t);
   if (pctMatch) {
     if (!(baseSen > 0)) return { kind: 'invalid' };
-    // Clamp to 100: a discount cannot exceed the line. Mirrors the
-    // workshop-repair rule (mig 0241 CHECK 0..100) so both surfaces agree.
     const pct = Math.min(100, Number(pctMatch[1]));
     return { kind: 'percent', pct, sen: Math.round((baseSen * pct) / 100) };
   }
-  // An amount. A leading currency word or symbol is accepted because a pasted
-  // quote carries one; anything else is a typo and must not commit a number.
   const amtMatch = /^(?:rm|myr|\$)?\s*(\d+(?:\.\d{1,2})?)$/i.exec(t);
   if (!amtMatch) return { kind: 'invalid' };
   return { kind: 'amount', sen: Math.round(Number(amtMatch[1]) * 100) };
@@ -95,9 +90,6 @@ export const DiscountInput = ({
 }: {
   valueSen: number | null;
   onCommit: (sen: number | null) => void;
-  /** qty x unitPriceSen, the amount a percentage is taken FROM. Required — a
-      percentage with no base is undefined, and the field says so instead of
-      committing a zero. */
   baseSen: number;
   bare?: boolean;
   inputClassName?: string;
@@ -121,15 +113,10 @@ export const DiscountInput = ({
      `title`, and it is still announced to a screen reader below. */
   const [showHint, setShowHint] = useState(false);
 
-  // Re-seed from the stored value whenever it changes under us (a qty edit
-  // recomputes the line), but never while the operator is typing into it.
   useEffect(() => {
     if (!focused.current) setDraft(amountAtRest(valueSen));
   }, [valueSen]);
 
-  /* The live reading of what is in the box. While focused it follows the
-     draft, so "25%" shows its ringgit before the operator lets go; at rest it
-     describes the stored amount as a percentage. */
   const live = readDiscountEntry(draft, baseSen);
   const hint = (() => {
     if (baseSen <= 0) return 'Set a unit price first';
@@ -187,11 +174,6 @@ export const DiscountInput = ({
           }
         }}
       />
-      {/* ABSOLUTE so it cannot change the row's height: the cell keeps the
-          input's height at rest AND while typing, and the reading appears over
-          whatever is below rather than pushing it down. Opacity rather than
-          unmounting, so `aria-live` still announces the reading to a screen
-          reader on a field that never receives visible focus. */}
       <span
         aria-live="polite"
         style={{

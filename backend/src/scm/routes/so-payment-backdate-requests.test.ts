@@ -1,9 +1,3 @@
-/* A payment whose slip is more than 14 days old is keyed in as a REQUEST, and
- * only an admin (scm.payment.backdate) sees the queue and decides it (owner
- * 2026-09-30). This suite drives the routes over the in-memory PostgREST fake
- * with the payment write core stubbed: what is under test is who may do what,
- * that nothing is booked until an admin approves, and that the approval books
- * exactly the payment that was asked for. */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
@@ -74,8 +68,6 @@ beforeEach(() => {
       { doc_no: 'SO-OTHER', status: 'CONFIRMED', company_id: 2, salesperson_id: 11 },
     ],
     so_payment_backdate_requests: [],
-    /* One uploaded slip per request a test raises — a session is promoted by
-       the request that claims it, so a second request needs its own. */
     pending_slip_uploads: [
       { upload_session_id: 'sess-1', r2_key: 'slips/x.jpg', status: 'uploaded' },
       { upload_session_id: 'sess-2', r2_key: 'slips/y.jpg', status: 'uploaded' },
@@ -166,8 +158,6 @@ describe('who sees the requests', () => {
 });
 
 describe('the slip behind a request (inbox drawer)', () => {
-  /* The R2 binding the route serves from: one object under the key the
-     request carries, nothing else. */
   const bucket = { get: vi.fn(async (key: string) => (key === 'slips/x.jpg'
     ? { body: 'JPEG-BYTES', httpMetadata: { contentType: 'image/jpeg' } }
     : null)) };

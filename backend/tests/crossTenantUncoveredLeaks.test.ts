@@ -376,7 +376,7 @@ describe('PWP voucher burn is company-scoped (createSalesOrderCore)', () => {
     squish(hay).includes(squish(needle));
 
   test('the create-loop prefetch, burn and rollback all carry .eq(company_id)', () => {
-    const block = between(routeSource, 'const allPwpCodes = Array.from', 'Default Free Gift validation');
+    const block = between(routeSource, 'const allPwpCodes = Array.from', 'const modelGiftsById = await loadModelDefaultGifts(sb);');
     // one resolved company id, refused up front
     expect(block).toContain('const pwpCompanyId = activeCompanyId(c)');
     expect(block).toContain("error: 'company_unresolved'");

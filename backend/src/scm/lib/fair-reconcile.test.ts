@@ -1,16 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-/* The nightly second pass at linking an order to its fair. It exists because an
- * exhibition is often not in the system when the order is written — 23% of
- * Houzs Century's fairs reached PMS within a week of opening and 13 of 114 only
- * after they had started (Jun-Sep 2026).
- *
- * What matters here is what it REFUSES to do: it never revisits a settled order,
- * never writes a project it could not resolve, and never writes without the
- * company predicate on the UPDATE as well as the read — nothing re-checks
- * between two PostgREST round trips, and a scoped-read-then-open-update has
- * already shipped across this system once.
- */
 
 type Row = Record<string, unknown>;
 
@@ -52,8 +41,6 @@ vi.mock('../../db/supabase', () => ({ getSupabaseService: () => fakeSb() }));
 
 import { reconcilePendingFairs } from './fair-reconcile';
 
-/** Stands in for env.DB. Returns whatever PROJECTS holds, filtered the way the
- *  real SQL filters: venue, period, and the company predicate. */
 const fakeDb = {
   prepare(sql: string) {
     return {
@@ -77,9 +64,6 @@ const fakeDb = {
   },
 };
 
-/* Only `DB` is ever touched — the supabase half is mocked above — so the cast is
-   to the real Env rather than a looser shape that would let a future field slip
-   in untyped. */
 const env = { DB: fakeDb } as unknown as Parameters<typeof reconcilePendingFairs>[0];
 
 const project = (o: Row): Row => ({
@@ -137,8 +121,6 @@ describe('reconcilePendingFairs', () => {
   });
 
   it('never reads another company’s fairs', async () => {
-    /* The row's own company_id is the whole tenant boundary in a cron: there is
-       no active-company context to fall back on. */
     PENDING = [{ doc_no: 'HC-SO-5', so_date: '2026-09-13', venue: 'MID VALLEY', branding: 'AKEMI', company_id: 1 }];
     PROJECTS = [project({ id: 999, brand: 'AKEMI', company_id: 2 })];
     const r = await reconcilePendingFairs(env);

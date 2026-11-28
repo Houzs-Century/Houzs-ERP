@@ -1,11 +1,3 @@
-/* DEV-32 (Syu 2026-10-01) — "Edit SO after DO" in the desktop editor. HC-SO-013143's
- * shape: DELIVERED, every line on HC-DO-2610-011, processing date passed. With
- * `scm.so.edit_after_do` and Override pressed, the customer details and the
- * charge lines reopen; everything else stays as frozen as before.
- *
- * Same harness as SalesOrderDetail.frozenLines.test.tsx: the real page on its
- * route with ?edit=1, the detail read faked, SoLineCard replaced by a probe.
- */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -15,7 +7,6 @@ const { detail, perms } = vi.hoisted(() => ({ detail: vi.fn(), perms: { afterDo:
 
 vi.mock("../../vendor/scm/lib/sales-order-queries", async (orig) => ({
   ...(await orig<typeof import("../../vendor/scm/lib/sales-order-queries")>()),
-  /* The server kept the override reason: the page unlocks (fix/failed-save-looks-ok). */
   useOverrideSoLock: () => ({ mutate: (_v: unknown, o?: { onSuccess?: () => void }) => o?.onSuccess?.(), isPending: false }),
   useMfgSalesOrderDetail: detail,
   useSalesOrderAuditLog: () => ({ data: [], isLoading: false, isError: false }),
@@ -80,7 +71,7 @@ let calls: Array<{ url: string; method: string; body: Record<string, unknown> }>
 beforeEach(() => {
   perms.afterDo = true;
   calls = [];
-  sessionStorage.setItem(AUTH_TOKEN_KEY, "test-token"); // authedFetch refuses to send without one
+  sessionStorage.setItem(AUTH_TOKEN_KEY, "test-token");
   vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
     calls.push({ url: String(url), method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : {} });
     if ((init?.method ?? "GET") === "GET") return new Promise(() => undefined);

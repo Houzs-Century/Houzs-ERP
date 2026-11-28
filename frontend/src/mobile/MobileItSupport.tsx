@@ -12,13 +12,6 @@ import {
 } from "../lib/itSupport";
 import { openLoadedTab } from "../lib/openLoadedTab";
 
-/**
- * IT Support on a phone: the same requests, states and rules as the desktop
- * page (pages/ItSupport.tsx, shared logic in lib/itSupport.ts), laid out as one
- * mobile screen with three views: my requests (All / Active / Resolved, with a
- * search), report a problem, one request.
- * Who is asking comes from the session on the server, never from this screen.
- */
 
 const TONE_CLASS: Record<ItTone, string> = {
   neutral: "b-grey", accent: "b-brand", success: "b-green", warning: "b-amber", error: "b-red",
@@ -31,7 +24,6 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`badge ${TONE_CLASS[itStatusTone(status)]}`}>{itStatusText(status)}</span>;
 }
 
-/* A picture shows as itself so the person can see it is the right screenshot. */
 function FileTile({ file, onRemove }: { file: File; onRemove: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -89,7 +81,6 @@ function Files({ files, onChange }: { files: File[]; onChange: (f: File[]) => vo
   );
 }
 
-// The same module names as the desktop form, from the one sidebar.
 const MODULES = itModuleIndex(NAV_TABS);
 
 function NewRequest({ onSent }: { onSent: (code: string) => void }) {
@@ -182,7 +173,6 @@ function OneRequest({ code }: { code: string }) {
     try {
       setDetail(await itFresh<ItDetail>(path));
       setLoadError(null);
-      // Reading it marked it seen on the hub, so the Profile count has moved.
       refreshUnread();
     } catch (err) {
       setLoadError(itMessage(err, "This IT request could not be opened."));
@@ -243,7 +233,6 @@ function OneRequest({ code }: { code: string }) {
       setBusy("");
     }
   };
-  /* The download needs the Authorization header, which a plain link cannot send. */
   const openFile = async (a: ItFileRef) => {
     if (busy) return;
     setError(null);
@@ -343,7 +332,6 @@ function RequestList({ tab, onTab, search, onSearch, onOpen }: {
     return () => window.clearInterval(t);
   }, [load]);
 
-  // Counts come from every request, never from what the search box left.
   const counts = useMemo(
     () => Object.fromEntries(IT_TABS.map((k) => [k, (rows ?? []).filter((r) => itInTab(r.status, k)).length])) as Record<ItTab, number>,
     [rows],
@@ -412,7 +400,6 @@ type View = { v: "list" } | { v: "new" } | { v: "one"; code: string };
 
 export function MobileItSupport({ onBack }: { onBack: () => void }) {
   const [view, setView] = useState<View>({ v: "list" });
-  // Kept here, not in the list, so opening a request and coming back keeps them.
   const [tab, setTab] = useState<ItTab>("all");
   const [search, setSearch] = useState("");
   const toList = () => setView({ v: "list" });

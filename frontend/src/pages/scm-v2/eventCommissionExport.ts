@@ -35,7 +35,6 @@ import {
   summaryTabsOf, summaryTotalOf, type BelowDepositRow, type SoListRow, type SummaryLine,
 } from './eventCommissionModel';
 
-/** Each table's row. */
 type Rows = {
   fairs: CommissionFairRow;
   fairOrders: SoListRow;
@@ -54,11 +53,8 @@ export type EcRows = Rows;
 
 /** What one table on the page shows, as it told the page. */
 export type ShownTable<T> = {
-  /** Its columns showing, in their order. */
   columns: ReadonlyArray<Column<T>>;
-  /** Its rows' keys as its own column filters leave them, in its sort; null before it has said. */
   rowKeys: readonly string[] | null;
-  /** Its column filters, in words; null when none. */
   filters: string | null;
 };
 export type ShownTables = { [K in EcTableKey]: ShownTable<Rows[K]> };
@@ -101,9 +97,7 @@ export type EcInput = { report: EventCommission; period: string; brand: string; 
 
 type Spec<K extends EcTableKey> = {
   title: (r: EventCommission) => string;
-  /** The Excel tab: short, unique, at most 31 characters. */
   sheet: (r: EventCommission) => string;
-  /** A table not added to the total says so. */
   apart: ((r: EventCommission) => string) | null;
   rows: (r: EventCommission) => Array<Rows[K]>;
   unit: string;
@@ -132,21 +126,17 @@ export const EC_TABLES: Record<CommissionBasis, EcTableKey[]> = {
 };
 
 const isFigure = (f: ExportFormat): boolean => f === 'money' || f === 'number';
-/** A table's columns as written: its header, its cell type, which side it reads from, whether its foot adds it up. */
 const columnOf = <T,>(c: Column<T>): EcColumn => {
   const format = c.exportFormat ?? 'text';
   return { label: c.exportLabel || c.label, format, align: isFigure(format) || c.align === 'right' ? 'right' : 'left', sums: isFigure(format) };
 };
-/** A sum in ringgit, added in sen so 0.1 + 0.2 stays 0.30. */
 const addUp = (cells: readonly ExportCell[]): number => cells.reduce<number>((s, v) => s + (typeof v === 'number' ? Math.round(v * 100) : 0), 0) / 100;
 
-/** A foot row: the label in the first column that does not add up, every column that does added up. */
 function footOf(kind: 'subtotal' | 'total', label: string, columns: readonly EcColumn[], body: readonly ExportCell[][]): EcRow {
   const at = Math.max(0, columns.findIndex((c) => !c.sums));
   return { kind, cells: columns.map((c, i) => (c.sums ? addUp(body.map((row) => row[i] ?? null)) : i === at ? label : null)) };
 }
 
-/** A table's rows in the order its table on the page shows them, and only those its own column filters leave. */
 function ordered<K extends EcTableKey>(key: K, rows: Array<Rows[K]>, rowKeys: readonly string[] | null): Array<Rows[K]> {
   if (!rowKeys) return rows;
   const keyOf = EC_ROW_KEY[key] as (row: Rows[K]) => string;
@@ -154,13 +144,8 @@ function ordered<K extends EcTableKey>(key: K, rows: Array<Rows[K]>, rowKeys: re
   return rows.filter((row) => at.has(keyOf(row))).sort((a, b) => at.get(keyOf(a))! - at.get(keyOf(b))!);
 }
 
-/** A report as the file holds it (`r`: its lines that earn, unless every line is asked for)
-    beside every line of it (`all`): what a table left out at 0.00 is counted against that. */
 type Pair = { r: EventCommission; all: EventCommission };
 
-/** One table's columns and its body over one report — the whole one, or one salesperson's —
-    and how many rows it had before its table's own filters. A salesperson's own pages leave
-    out the Salesperson column: their name heads them. */
 function bodyOf<K extends EcTableKey>(key: K, r: EventCommission, shown: ShownTable<Rows[K]>, personal: boolean): { columns: EcColumn[]; body: ExportCell[][]; of: number } {
   const cols = shown.columns.filter((c) => (c.getValue || c.exportValue) && !(personal && c.key === 'salesperson'));
   const all = SPECS[key].rows(r);
@@ -168,14 +153,11 @@ function bodyOf<K extends EcTableKey>(key: K, r: EventCommission, shown: ShownTa
   return { columns: cols.map(columnOf), body: buildLineExportMatrix(rows, () => [], cols).body, of: all.length };
 }
 
-/** Of a table's rows as its column filters leave them, how many a 0.00 left out of the file. */
 function zeroOf<K extends EcTableKey>(key: K, pair: Pair, rowKeys: readonly string[] | null): { left: number; of: number } {
   const of = ordered(key, SPECS[key].rows(pair.all), rowKeys).length;
   return { left: of - ordered(key, SPECS[key].rows(pair.r), rowKeys).length, of };
 }
 
-/** Above a table: that it is not in the total, what narrowed it — its column filters, or
-    (a search on the table) how many of its rows it kept — and how many rows at 0.00 it left out. */
 const noteOf = (key: EcTableKey, r: EventCommission, shown: ShownTable<unknown>, kept: number, of: number, zero: { left: number; of: number }): string | null => {
   const apart = SPECS[key].apart?.(r) ?? null;
   const narrowed = shown.filters ? `Filter: ${shown.filters}` : kept < of ? `Filtered on the page: ${kept} of ${of} rows` : null;
@@ -184,7 +166,6 @@ const noteOf = (key: EcTableKey, r: EventCommission, shown: ShownTable<unknown>,
   return parts.length > 0 ? parts.join(' · ') : null;
 };
 
-/** One table over one report, its total at its foot; null when it has no row. */
 function tableBlock<K extends EcTableKey>(key: K, pair: Pair, input: EcInput, personal: boolean): EcBlock | null {
   const shown = input.shown[key];
   const { columns, body, of } = bodyOf(key, pair.r, shown, personal);
@@ -195,7 +176,6 @@ function tableBlock<K extends EcTableKey>(key: K, pair: Pair, input: EcInput, pe
   };
 }
 
-/** One table for each salesperson in turn: their name, their rows, their subtotal; the total at the foot. */
 function groupedBlock<K extends EcTableKey>(key: K, pair: Pair, people: ReadonlyArray<{ name: string; report: EventCommission }>, input: EcInput): EcBlock | null {
   const shown = input.shown[key];
   const each = people.map((p) => ({ name: p.name, ...bodyOf(key, p.report, shown, true) }));
@@ -272,7 +252,6 @@ export const SUMMARY_NOTE = "The summary counts only the lines that earn. On eac
 export const LEFT_OUT_NOTE = 'Lines at 0.00 are left out of this file, and with them Below 30% paid and Marked — not paid here; the page lists every line.';
 const summaryNote = (input: EcInput): string => [SUMMARY_NOTE, input.part === 'full' && input.leaveOutZero ? LEFT_OUT_NOTE : null].filter(Boolean).join(' ');
 
-/** The report as the file holds it, beside every line, and the lines that earn (the summary's). */
 function filed(input: EcInput): { pair: Pair; earning: EventCommission; personal: (name: string) => Pair } {
   const earning = earningOnly(input.report);
   const r = input.leaveOutZero ? earning : input.report;
@@ -298,7 +277,6 @@ export function ecSheets(input: EcInput): EcSheet[] {
   const people = who.kind === 'each' ? salespeopleOf(pair.r).map((name) => ({ name, report: forSalesperson(pair.r, name) })) : [];
   for (const key of EC_TABLES[basisOf(report)]) {
     const block = who.kind === 'each' ? groupedBlock(key, pair, people, input) : tableBlock(key, one ? personal(one) : pair, input, one != null);
-    /* The table's own title and note are the sheet's two lines, so its header is the third row on every sheet. */
     if (block) sheets.push({ name: SPECS[key].sheet(report), title: block.title, subtitle: [subtitle, block.note].filter(Boolean).join(' · '), blocks: [{ ...block, title: '', note: null }], notes: [] });
   }
   return sheets;

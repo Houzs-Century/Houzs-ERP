@@ -17,7 +17,6 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 const NOW = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 7);
 const TODAY = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 
-/* ── What the server answers (ONE stable object per read, as react-query hands back) ── */
 const DEBTORS = { data: { debtors: [
   { id: 'd1', name: 'AHMAD BIN ALI', code: '305-A001', phone: '012-345', notes: null, is_active: true, outstanding_sen: 45_000, business_reg_no: '202001012345', tin_number: 'IG123', email: 'ahmad@example.com', country: 'Malaysia' },
   { id: 'd2', name: 'OLD DEBTOR', code: null, phone: null, notes: null, is_active: false, outstanding_sen: 0, business_reg_no: null },
@@ -133,7 +132,6 @@ const where = () => screen.getByTestId('where').textContent;
 const row = (text: string) => screen.getByText(text, { selector: 'a' }).closest('tr') as HTMLElement;
 const menuOf = (name: string) => { fireEvent.click(within(row(name)).getByRole('button', { name: `${name} menu` })); return screen.getByRole('menu'); };
 const items = (menu: HTMLElement) => within(menu).getAllByRole('menuitem').map((m) => m.textContent);
-/** Run the options a mutate call was handed (react-query calls them after the server answers). */
 const answer = async (fn: ReturnType<typeof vi.fn>, call: number, what: 'onSuccess' | 'onError', value: unknown) => {
   const opts = fn.mock.calls[call]![1] as Record<string, (v: unknown) => void>;
   await act(async () => { opts[what]!(value); });
@@ -158,7 +156,6 @@ describe('the debtors', () => {
     expect(within(ahmad).getByText('305-A001')).toBeTruthy();
     expect(within(ahmad).getByText('202001012345')).toBeTruthy();
     expect(within(ahmad).getByText('012-345')).toBeTruthy();
-    /* b1 and b2 still owe; the cancelled one does not count. */
     expect(within(ahmad).getAllByRole('cell').map((c) => c.textContent)).toContain('2');
     expect(within(ahmad).getByText('RM 450.00')).toBeTruthy();
     expect(within(ahmad).getByText('Active')).toBeTruthy();
@@ -166,7 +163,6 @@ describe('the debtors', () => {
     const old = row('OLD DEBTOR');
     expect(within(old).getByText('Inactive')).toBeTruthy();
     expect(old.getAttribute('style') ?? '').not.toMatch(/#fcf7ec|252, 247, 236/);
-    /* No code, no registration, no phone: a dash each. */
     expect(within(old).getAllByText('—')).toHaveLength(3);
   });
 
@@ -241,7 +237,6 @@ describe('the debtor form, in place of the list', () => {
       fireEvent.change(screen.getByLabelText(label!), { target: { value } });
     }
     expect(screen.queryByLabelText('Address line 3')).toBeNull();
-    /* Picking the postcode fills City and State, as on the Sales Order. */
     const postcode = screen.getAllByRole('combobox').find((el) => (el as HTMLInputElement).placeholder.startsWith('Pick postcode'))!;
     fireEvent.focus(postcode);
     fireEvent.change(postcode, { target: { value: '47810' } });
@@ -286,7 +281,7 @@ describe('the debtor form, in place of the list', () => {
       expect(code().value).toBe('');
       expect(code().placeholder).toBe('305-A001');
       name('Alpha Sdn Bhd');
-      expect(code().value).toBe('305-A002'); // AHMAD holds 305-A001
+      expect(code().value).toBe('305-A002');
       expect(screen.getByText('Suggested from the name · type to change')).toBeTruthy();
       expect(screen.getByText('Account code 305-A002 · bills and receipts post to the 305-0000 Other Debtors control')).toBeTruthy();
       name('Beng Hoe');

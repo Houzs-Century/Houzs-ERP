@@ -40,8 +40,6 @@ export { LIST_MRP_ENRICHMENT_KEYS } from '../lib/list-mrp-enrichment-keys';
 export const grnsListEnrichment = new Hono<{ Bindings: Env; Variables: Variables }>();
 grnsListEnrichment.use('*', supabaseAuth);
 
-/* One list page is capped at 100 rows, so a well-behaved client asks for at most
-   that many. Bound it defensively — computeMrp downstream is company-wide work. */
 const MAX_IDS = 200;
 
 grnsListEnrichment.get('/list-mrp-enrichment', async (c) => {
@@ -50,11 +48,8 @@ grnsListEnrichment.get('/list-mrp-enrichment', async (c) => {
   const raw = (c.req.query('grnIds') ?? '').trim();
   const grnIds = [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))].slice(0, MAX_IDS);
   if (grnIds.length === 0) return c.json({ enrichment: {} });
-  /* The 15-min list snapshot, not a live run (lib/list-mrp-source.ts). */
   const listMrp = resolveListMrp(sb, c, wantsListMrpRefresh(c));
 
-  /* Re-read the GRN headers under the company predicate — the tenant boundary —
-     to get each one's parent PO. A spoofed id from another company yields no row. */
   const { data: hdrs, error: hdrErr } = await scopeToCompany(
     sb.from('grns').select('id, purchase_order_id'), c,
   ).in('id', grnIds);
@@ -66,8 +61,6 @@ grnsListEnrichment.get('/list-mrp-enrichment', async (c) => {
   const poByGrn = new Map<string, string | null>();
   for (const g of rows) poByGrn.set(g.id, g.purchase_order_id);
 
-  /* Each GRN's OWN line codes — the columns roll up ONLY these SKUs, exactly as
-     the list does. */
   const codesByGrn = new Map<string, Set<string>>();
   {
     const { data: lineRows, error: lineErr } = await paginateAll<{ grn_id: string; item_code: string | null }>((from, to) => sb
@@ -86,7 +79,6 @@ grnsListEnrichment.get('/list-mrp-enrichment', async (c) => {
     }
   }
 
-  /* The SAME two resolvers the list ran inline, keyed on the parent POs. */
   const poIds = rows.map((g) => g.purchase_order_id);
   const [originsByPo, deliveredByPoCode] = await Promise.all([
     resolvePoSoCoveragePerSkuForPos(sb, c, poIds, listMrp),

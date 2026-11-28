@@ -16,8 +16,6 @@ type Row = {
   so_ref?: string | null; so_customer_so_no?: string | null;
 };
 
-/* Dates run newest-first in id order so every row is Requested and the open
-   order is simply the order written here. */
 const row = (id: string, day: number, over: Partial<Row> = {}): Row => ({
   id, so_doc_no: `SO-${id}`, po_number: `PO-${id}`, amendment_no: `A-${id}`, status: 'REQUESTED',
   reason: null, requested_by: null, created_at: `2026-09-${String(day).padStart(2, '0')}T08:00:00Z`,
@@ -26,6 +24,9 @@ const row = (id: string, day: number, over: Partial<Row> = {}): Row => ({
 
 let soRows: Row[] = [];
 let poRows: Row[] = [];
+/* The refund approvals (owner 2026-11-27) are their own section with their own tests (RefundApprovals.test.tsx). */
+vi.mock('./RefundApprovals', () => ({ RefundApprovals: () => null }));
+vi.mock('../../mobile/MobileRefundApprovals', () => ({ MobileRefundApprovals: () => null }));
 vi.mock('../../vendor/scm/lib/so-amendment-queries', () => ({
   useAmendments: () => ({ data: { amendments: soRows }, isLoading: false, error: null }),
 }));

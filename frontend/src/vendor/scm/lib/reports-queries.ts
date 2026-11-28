@@ -1,19 +1,7 @@
-// Vendored SLICE of apps/backend/src/lib/flow-queries.ts — ONLY the four
-// AutoCount-style Detail Listing reads (SO / DO / SI / DR) that the vendored
-// report pages render. Copied verbatim from the source's "Reports (PR-H)"
-// block; the only change is the import of the vendored authedFetch
-// (→ /api/scm/reports/...) instead of 2990's.
-//
-// The DO/SI/DR hooks share one DetailListingFilters shape + one qs builder;
-// the SO hook has its own richer filter/row types (cost + margin + variant +
-// payment-ledger columns the listing surfaces).
 
 import { useQuery } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 
-/* ════════════════════════════════════════════════════════════════════════
-   Reports (PR-H) — AutoCount-style reporting endpoints
-   ════════════════════════════════════════════════════════════════════════ */
 
 export type SoDetailListingFilters = {
   dateFrom?: string;
@@ -58,28 +46,13 @@ export type SoDetailListingRow = Record<string, unknown> & {
   remark3: string | null;
   sales_exemption_expiry: string | null;
   customer_delivery_date: string | null;
-  /** Live paid total summed from mfg_sales_order_payments (replaces legacy paid_sen). */
   paid_total_sen: number;
-  /* Task #121 — country snapshot, auto-derived from customer_state via
-     my_localities at SO create/PATCH time (migration 0082). */
   customer_state: string | null;
   customer_country: string | null;
-  /* Task #114 — per-line cost snapshot (from mfg_products.cost_price_sen
-     server-side) + derived line cost + margin. Used by the listing
-     report's cost columns + 6-tile KPI bar. */
   unit_cost_sen: number;
   line_cost_sen: number;
   line_margin_sen: number;
-  /* Task #63 — Houzs port gap closure. Line-level variant + payment-ledger
-     fields surfaced by the API so the Detail Listing's Fabric / Divan
-     Height / Leg Height / Specials / Account Sheet / Approval Code / Last
-     Payment / Collected By columns render typed data (no `r as Record<>`
-     hack). custom_specials is a jsonb array — element shape varies
-     (string | { label } | { description }) so the type stays loose. */
   fabric: string | null;
-  /* SO-SKU spec P5 — heights now also extract from line variants; values can
-     be non-numeric picks ('No Leg'), so the server passes number when
-     parseable, else the raw string. */
   divan_height: number | string | null;
   leg_height: number | string | null;
   custom_specials: unknown;
@@ -87,7 +60,6 @@ export type SoDetailListingRow = Record<string, unknown> & {
   account_sheet: string | null;
   approval_code: string | null;
   collected_by: string | null;
-  /** The order's own reference pair (resolve with customerRefOf). */
   ref?: string | null;
   customer_so_no?: string | null;
 };
@@ -109,15 +81,11 @@ export const useSalesOrderDetailListing = (filters: SoDetailListingFilters) => {
     queryFn: () => authedFetch<{ rows: SoDetailListingRow[] }>(
       `/reports/sales-order-detail-listing${qs ? `?${qs}` : ''}`,
     ),
-    placeholderData: (prev) => prev,  // TanStack v5 equivalent of keepPreviousData
+    placeholderData: (prev) => prev,
     staleTime: 30_000,
   });
 };
 
-/* ── Task #120 — L2 Detail Listings for DO / SI / DR ────
-   Mirrors the SO Detail Listing pattern (one row per line item, header
-   denormalised onto each row). Server-side endpoints in
-   apps/api/src/routes/reports.ts. */
 
 export type DetailListingFilters = {
   dateFrom?: string;
@@ -127,9 +95,6 @@ export type DetailListingFilters = {
   itemCode?: string;
 };
 
-/* Each module emits a Record<string, unknown> — the column accessor reads
-   fields by name. Common fields produced by the server flatten step are
-   typed here; module-specific fields stay loose for column accessors. */
 export type DetailListingRow = Record<string, unknown> & {
   id: string;
   doc_no: string;
@@ -143,10 +108,8 @@ export type DetailListingRow = Record<string, unknown> & {
   total_sen?: number;
   balance_sen?: number;
   status?: string | null;
-  /** DO / SI rows: the order's raw reference pair (resolve with soRefOfStamp). */
   so_ref?: string | null;
   so_customer_so_no?: string | null;
-  /** DR rows: the return header's own reference pair (resolve with customerRefOf). */
   ref?: string | null;
   customer_so_no?: string | null;
 };

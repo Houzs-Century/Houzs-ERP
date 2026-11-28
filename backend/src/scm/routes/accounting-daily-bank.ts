@@ -1,27 +1,17 @@
-// ----------------------------------------------------------------------------
-// accounting-daily-bank — GET /accounting/daily-bank, the owner's board (brief
-// 3.6), and its reads as one loader: the To do's "Can move today"
-// (accounting-todo.ts) reads the same board, so the two never disagree. Moved
-// out of accounting.ts unchanged (2026-11-02) so the To do can import it
-// without importing the whole router.
-// ----------------------------------------------------------------------------
 
 import type { Variables } from '../env';
 import { requireActiveCompanyId } from '../lib/companyScope';
 import { mytDayWindow, todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
 import {
-  computeDailyBank, payoutDay, type CashbookPayout, type CashbookReceipt, type CashbookSkip, type CashbookStart, type DailyBankCashbook,
-  type PendingVoucherRow,
+  computeDailyBank, payoutDay, type CashbookPayout, type CashbookReceipt, type CashbookSkip, type CashbookStart, type CashbookTransferIn,
+  type DailyBankCashbook, type PendingVoucherRow,
 } from '../../acc/daily-bank';
 import { canWriteCashbook } from './accounting-daily-bank-cashbook';
 import { describeVouchers } from './payment-vouchers-describe';
 import { resolveRoles } from '../../acc/rules';
 import { isReversalPair } from '../../acc/reversal-pairs';
 
-/* GET /daily-bank?date=YYYY-MM-DD — the owner's board (brief 3.6): where the
-   money is today and how much can actually move. Live from the ledger, no
-   cache (2.3) - so it can never disagree with the trial balance. */
 /** The board for one company and day — the handler's reads and the To do's
     "Can move today" (acc/finance-todo) share it, so the two never disagree.
     `withNames` false skips the names the board prints for the day's lines.
@@ -80,11 +70,6 @@ export async function loadDailyBankBoard(
     bankAccountCode: bankByTransit.get(code) ?? null,
   }));
 
-  /* Phase 3: DRAFT vouchers sitting in the approval cycle — money already
-     asked for. Submitted on or before the board date, still undecided-or-
-     approved (posting clears the pending by flipping status; withdraw/reject
-     clear the marks). The error is bound: a failed read must not dress up as
-     "nothing pending" on the one board that answers how much can move. */
   const { data: pendingRaw, error: pErr } = await sb.from('payment_vouchers')
     /* Each voucher's payee, number, note and Paid From ride along: the board
        lists them under the bank they will pay out of (owner 2026-09-29). */
@@ -98,9 +83,6 @@ export async function loadDailyBankBoard(
   if (pErr) return { ok: false, reason: pErr.message };
   let pending = (pendingRaw ?? []) as PendingVoucherRow[];
 
-  /* The cash book's own reads, for its board only; its banks need none of their
-     ledger lines, and a voucher paying out of a bank it does not carry is not
-     its pending (the original board still shows it). */
   let cashbook: DailyBankCashbook | null = null;
   if (opts.book === 'cashbook') {
     const cash = await loadCashbook(sb, co.companyId, date, money.map((m) => m.account_code));
@@ -114,13 +96,18 @@ export async function loadDailyBankBoard(
      never its bill number (owner 2026-11-09) — the pending ones and, on the cash
      book, the day's payouts, in one read. The To do's sum needs no words. */
   const paidToday = (cashbook?.payouts ?? []).filter((v) => payoutDay(v) === date);
-  if (opts.withNames && pending.length + paidToday.length > 0) {
+  const paidIds = new Set(paidToday.map((v) => v.id));
+  const inToday = (cashbook?.transfersIn ?? []).filter((v) => payoutDay(v) === date && !paidIds.has(v.id));
+  if (opts.withNames && pending.length + paidToday.length + inToday.length > 0) {
     const described = await describeVouchers(sb, { get: (k: string) => (k === 'companyId' ? co.companyId : undefined) },
-      [...pending, ...paidToday].map((v) => ({ ...v, id: String(v.id) })));
+      [...pending, ...paidToday, ...inToday].map((v) => ({ ...v, id: String(v.id) })));
     if (!described.ok) return { ok: false, reason: described.reason };
     const wordsOf = (id: unknown): string | null => described.byId.get(String(id))?.description_text ?? null;
     pending = pending.map((v) => ({ ...v, description_text: wordsOf(v.id) }));
-    if (cashbook) cashbook.payouts = cashbook.payouts.map((v) => (payoutDay(v) === date ? { ...v, description_text: wordsOf(v.id) } : v));
+    if (cashbook) {
+      cashbook.payouts = cashbook.payouts.map((v) => (payoutDay(v) === date ? { ...v, description_text: wordsOf(v.id) } : v));
+      cashbook.transfersIn = cashbook.transfersIn.map((v) => (payoutDay(v) === date ? { ...v, description_text: wordsOf(v.id) } : v));
+    }
   }
 
   const ledgerMoney = cashbook ? [] : money;
@@ -168,8 +155,6 @@ export async function loadDailyBankBoard(
         const shown = r.or_number ?? r.doc_no;
         if (shown) receiptOf.set(String(r.payment_id), shown);
       }
-      /* How each was paid (the Accounts sheet groups the day's money in by it),
-         and for a payment with no receipt row yet, its order's number. */
       const soIds = [...new Set(todays.filter((l) => l.source_type === 'SOPAY' && l.source_doc_no).map((l) => String(l.source_doc_no)))];
       const siIds = [...new Set(todays.filter((l) => l.source_type === 'SIPAY' && l.source_doc_no).map((l) => String(l.source_doc_no)))];
       const [soPays, siPays] = await Promise.all([
@@ -187,8 +172,6 @@ export async function loadDailyBankBoard(
       }
     }
   }
-  /* A customer payment's id is internal — never printed: its receipt, its
-     order, else the journal's own number. */
   const docOf = (l: BoardLine): string | null => {
     if (l.source_type === 'SOPAY' || l.source_type === 'SIPAY') return receiptOf.get(String(l.source_doc_no ?? '')) ?? l.je_no;
     return null;
@@ -218,30 +201,25 @@ export async function loadCashbook(
     .map((s) => ({ account_code: String(s.account_code), start_date: String(s.start_date).slice(0, 10), balance_sen: Number(s.balance_sen) }))
     .filter((s) => isMoney.has(s.account_code));
   const live = starts.filter((s) => s.start_date <= date);
-  if (live.length === 0) return { ok: true, cashbook: { starts, receipts: [], payouts: [], skips: [] } };
+  if (live.length === 0) return { ok: true, cashbook: { starts, receipts: [], payouts: [], transfersIn: [], skips: [] } };
   const codes = live.map((s) => s.account_code);
   const since = live.reduce((first, s) => (s.start_date < first ? s.start_date : first), date);
   const days = mytDayWindow(since, date);
   if (!days?.startUtc || !days.endUtc) return { ok: false, reason: `not a day: ${since} to ${date}` };
   const PV_COLS = 'id, pv_number, payee_name, notes, purpose, credit_account_code, voucher_date, total_sen, exchange_rate, bank_charge_sen, approved_at, posted_at';
-  const [rq, pq, uq, kq] = await Promise.all([
+  const [rq, pq, uq, kq, lq] = await Promise.all([
     paginateAll<Record<string, unknown>>((from, to) => sb.from('acc_daily_bank_receipts')
       .select('id, account_code, receipt_date, amount_sen, note, created_by')
       .eq('company_id', companyId).in('account_code', codes).is('deleted_at', null)
       .gte('receipt_date', since).lte('receipt_date', date)
       .order('receipt_date').order('created_at').order('id')
       .range(from, to)),
-    /* Approved = POSTED: approval posts in the same request, and a voucher whose
-       posting died stays DRAFT — pending above, never paid here as well. It comes
-       off on the Malaysia day it was approved, whatever its voucher date. */
     paginateAll<Record<string, unknown>>((from, to) => sb.from('payment_vouchers')
       .select(PV_COLS)
       .eq('company_id', companyId).eq('status', 'POSTED').in('credit_account_code', codes)
       .gte('approved_at', days.startUtc).lt('approved_at', days.endUtc)
       .order('approved_at').order('pv_number').order('id')
       .range(from, to)),
-    /* One posted without an approval stamp falls back to its posting, then its
-       voucher date (payoutDay); none in production on 2026-11-24. */
     paginateAll<Record<string, unknown>>((from, to) => sb.from('payment_vouchers')
       .select(PV_COLS)
       .eq('company_id', companyId).eq('status', 'POSTED').in('credit_account_code', codes)
@@ -255,28 +233,57 @@ export async function loadCashbook(
       .eq('company_id', companyId).is('unticked_at', null)
       .order('ticked_at').order('id')
       .range(from, to)),
+    /* The voucher lines paying INTO these accounts — internal transfers (owner
+       2026-11-27: maybank 转钱给 hong leong, hong leong 不会增加？); their vouchers below. */
+    paginateAll<Record<string, unknown>>((from, to) => sb.from('payment_voucher_lines')
+      .select('id, pv_id, debit_account_code, amount_sen')
+      .eq('company_id', companyId).in('debit_account_code', codes)
+      .order('pv_id').order('id')
+      .range(from, to)),
   ]);
   if (rq.error) return { ok: false, reason: rq.error.message };
   if (pq.error) return { ok: false, reason: pq.error.message };
   if (uq.error) return { ok: false, reason: uq.error.message };
   if (kq.error) return { ok: false, reason: kq.error.message };
-  if (rq.truncated || pq.truncated || uq.truncated || kq.truncated) return { ok: false, reason: 'the cash book is too long to read in one go' };
+  if (lq.error) return { ok: false, reason: lq.error.message };
+  if (rq.truncated || pq.truncated || uq.truncated || kq.truncated || lq.truncated) return { ok: false, reason: 'the cash book is too long to read in one go' };
   const receipts: CashbookReceipt[] = (rq.data ?? []).map((r) => ({
     id: String(r.id), account_code: String(r.account_code), receipt_date: String(r.receipt_date).slice(0, 10),
     amount_sen: Number(r.amount_sen), note: String(r.note ?? ''), created_by: (r.created_by as string | null) ?? null,
   }));
-  const payouts = ([...(pq.data ?? []), ...(uq.data ?? [])].map((v) => ({
+  const asVoucher = (v: Record<string, unknown>): CashbookPayout => ({
     ...v, id: String(v.id), pv_number: String(v.pv_number), credit_account_code: String(v.credit_account_code),
     voucher_date: String(v.voucher_date).slice(0, 10),
     approved_at: (v.approved_at as string | null) ?? null, posted_at: (v.posted_at as string | null) ?? null,
-  })) as unknown as CashbookPayout[])
-    .filter((v) => payoutDay(v) >= since && payoutDay(v) <= date)
-    .sort((a, b) => payoutDay(a).localeCompare(payoutDay(b)) || a.pv_number.localeCompare(b.pv_number) || a.id.localeCompare(b.id));
+  }) as unknown as CashbookPayout;
+  const inWindow = (v: CashbookPayout): boolean => payoutDay(v) >= since && payoutDay(v) <= date;
+  const byDay = (a: CashbookPayout, b: CashbookPayout): number =>
+    payoutDay(a).localeCompare(payoutDay(b)) || a.pv_number.localeCompare(b.pv_number) || a.id.localeCompare(b.id);
+  const payouts = [...(pq.data ?? []), ...(uq.data ?? [])].map(asVoucher).filter(inWindow).sort(byDay);
+
+  const intoOf = new Map<string, Map<string, number>>();
+  for (const l of lq.data ?? []) {
+    const per = intoOf.get(String(l.pv_id)) ?? new Map<string, number>();
+    const to = String(l.debit_account_code);
+    per.set(to, (per.get(to) ?? 0) + Number(l.amount_sen));
+    intoOf.set(String(l.pv_id), per);
+  }
+  const ids = [...intoOf.keys()];
+  const transferVouchers: CashbookPayout[] = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data, error } = await sb.from('payment_vouchers').select(PV_COLS)
+      .eq('company_id', companyId).eq('status', 'POSTED').in('id', ids.slice(i, i + 100));
+    if (error) return { ok: false, reason: error.message };
+    transferVouchers.push(...(data as Array<Record<string, unknown>>).map(asVoucher));
+  }
+  const transfersIn: CashbookTransferIn[] = transferVouchers.filter(inWindow).sort(byDay)
+    .flatMap((v) => [...(intoOf.get(v.id) ?? new Map<string, number>())].map(([to, sen]) => ({ ...v, to_account_code: to, line_sen: sen })));
+
   const paying = new Set(payouts.map((v) => v.id));
   const skips: CashbookSkip[] = (kq.data ?? [])
     .map((k) => ({ pv_id: String(k.pv_id), ticked_by: (k.ticked_by as string | null) ?? null, ticked_at: (k.ticked_at as string | null) ?? null }))
     .filter((k) => paying.has(k.pv_id));
-  return { ok: true, cashbook: { starts, receipts, payouts, skips } };
+  return { ok: true, cashbook: { starts, receipts, payouts, transfersIn, skips } };
 }
 
 /** GET /daily-bank (the original board) and GET /daily-bank/cashbook/board (the

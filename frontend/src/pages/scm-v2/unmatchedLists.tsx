@@ -13,8 +13,8 @@
 
 import { Link } from 'react-router-dom';
 import type { Column } from '../../components/DataTable';
-import { customerRefOf } from '../../lib/customer-ref';
-import { fmtDate } from '../../vendor/shared/format';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { danger, fmt, good, softText } from './settlement-ui';
 import styles from './Suppliers.module.css';
 import { lineTab } from './MerchantReportsTop';
@@ -40,7 +40,6 @@ export const LISTS: ReadonlyArray<{ key: ListKey; label: string; sub: string; ex
 const dayGap = (from: string, to: string): number =>
   Math.max(0, Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000));
 
-/* ── Shared cells ─────────────────────────────────────────────────────────── */
 
 /** Money in RM, totalled at the foot, exported in ringgit. */
 export const moneyColumn = <T,>(key: string, label: string, sen: (r: T) => number, over: Partial<Column<T>> = {}): Column<T> => ({
@@ -51,7 +50,14 @@ export const moneyColumn = <T,>(key: string, label: string, sen: (r: T) => numbe
   ...over,
 });
 
-/** How long it has waited — red past two weeks. */
+/** The card terminal the merchant report names (owner 2026-11-27: 这里我要显示terminal id).
+    Reports uploaded before then, and payments no report line claims, have none. */
+const terminalColumn = <T,>(terminal: (r: T) => string | null): Column<T> => ({
+  key: 'terminal', label: 'Terminal',
+  render: (r) => terminal(r) ?? '—',
+  getValue: (r) => terminal(r) ?? '',
+});
+
 const daysColumn = <T,>(key: string, age: (r: T) => number): Column<T> => ({
   key, label: 'Days', align: 'right',
   render: (r) => {
@@ -65,7 +71,6 @@ const daysColumn = <T,>(key: string, age: (r: T) => number): Column<T> => ({
 export const docLink = (source: string | null | undefined, docNo: string) =>
   (source === 'SOPAY' ? <Link to={`/scm/sales-orders/${encodeURIComponent(docNo)}`}>{docNo}</Link> : docNo);
 
-/* ── reports: merchant report lines nobody reconciled ─────────────────────── */
 
 export type ReportLineRow = {
   key: string;
@@ -76,17 +81,15 @@ export type ReportLineRow = {
   txnDate: string;
   lineNo: number;
   reference: string | null;
+  terminalId: string | null;
   grossSen: number;
   feeSen: number;
   netSen: number;
   status: LineStatus;
   statusWords: string;
-  /** The sale the line claims, or the system's guess — Merchant Recon's own columns. */
   orders: ReturnType<typeof ordersOf>;
-  /** No sale shown: how many it could be. */
   possible: number;
   ageDays: number;
-  /** Merchant Recon at this report, on the tab the line sits in. */
   to: string;
 };
 
@@ -103,7 +106,7 @@ export function reportLinesOf(
       return {
         key: `${b.id}:${r.id}`,
         batchId: b.id, rowId: r.id, acquirerCode: b.acquirer_code, fileName: b.file_name,
-        txnDate: r.txn_date, lineNo: r.line_no, reference: isQrLine(r) ? QR_REF_WORDS : r.ref,
+        txnDate: r.txn_date, lineNo: r.line_no, reference: isQrLine(r) ? QR_REF_WORDS : r.ref, terminalId: r.terminal_id ?? null,
         grossSen: Number(r.gross_sen), feeSen: Number(r.fee_sen), netSen: Number(r.net_sen),
         status: lineStatus(r), statusWords: statusWordsOf(r),
         orders, possible: orders.length === 0 ? r.candidates.length : 0,
@@ -137,6 +140,7 @@ export const REPORT_COLUMNS: Column<ReportLineRow>[] = [
   },
   { key: 'line', label: 'Line', defaultHidden: true, align: 'right', render: (r) => r.lineNo, getValue: (r) => r.lineNo, exportFormat: 'number' },
   { key: 'reference', label: 'Reference', render: (r) => r.reference ?? '—', getValue: (r) => r.reference ?? '' },
+  terminalColumn<ReportLineRow>((r) => r.terminalId),
   moneyColumn<ReportLineRow>('gross', 'Gross', (r) => r.grossSen),
   moneyColumn<ReportLineRow>('fee', 'Fee', (r) => r.feeSen, { defaultHidden: true }),
   moneyColumn<ReportLineRow>('net', 'Net', (r) => r.netSen, { defaultHidden: true }),
@@ -159,7 +163,6 @@ export const REPORT_COLUMNS: Column<ReportLineRow>[] = [
   { key: 'go', label: '', render: (r) => <Link to={r.to}>Merchant reports</Link> },
 ];
 
-/* ── payments: money recorded, not matched ────────────────────────────────── */
 
 const reportLink = (r: UnmatchedPayment, tab?: string): string => (r.report
   ? `/scm/merchant-recon?acq=${encodeURIComponent(r.report.acquirerCode)}&batch=${r.report.batchId}${tab ? `&tab=${tab}` : ''}`
@@ -247,6 +250,7 @@ export const PAYMENT_COLUMNS: Column<PaymentRow>[] = [
   { key: 'method', label: 'Method', render: (r) => <span className={styles.codeChip}>{methodText(r)}</span>, getValue: (r) => methodText(r) },
   moneyColumn<PaymentRow>('amount', 'Amount', (r) => r.amountSen),
   { key: 'reference', label: 'Reference', render: (r) => r.reference ?? '—', getValue: (r) => r.reference ?? '' },
+  terminalColumn<PaymentRow>((r) => r.terminalId ?? null),
   { key: 'file', label: 'Report', defaultHidden: true, render: (r) => r.report?.fileName ?? '—', getValue: (r) => r.report?.fileName ?? '' },
   daysColumn<PaymentRow>('days', (r) => r.ageDays),
   { key: 'stuck', label: 'Where it is stuck', render: (r) => STUCK[r.state].text(r), getValue: (r) => STUCK[r.state].text(r) },
@@ -258,7 +262,6 @@ export const PAYMENT_COLUMNS: Column<PaymentRow>[] = [
   { key: 'go', label: '', render: (r) => <Link to={STUCK[r.state].to(r)}>{STUCK[r.state].screen(r)}</Link> },
 ];
 
-/* ── bank: money in, no entry matched ─────────────────────────────────────── */
 
 export const BANK_KINDS: ReadonlyArray<{ key: BankLineWhat; label: string }> = [
   { key: 'CARD', label: 'Card payout' },

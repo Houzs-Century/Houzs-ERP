@@ -12,11 +12,11 @@ import { authedFetch } from './authed-fetch';
 import { writeFailedAs } from './mutation-error';
 import { fetchDocFileBlobUrl, type PvFile, type PvFilePayload } from './payment-voucher-queries';
 import type { EventSuggestion } from './event-queries';
-import { fmtSen } from '../../shared/format';
+import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { runOneAiRead, type AiReadStage } from './ai-read-job';
 
 export type RequestStage =
-  | 'SUBMITTED' | 'PROCESSING' | 'BOOKED' | 'PARTLY_PAID' | 'PAID' | 'BANK_CONFIRMED'
+  | 'AWAITING_APPROVAL' | 'SUBMITTED' | 'PROCESSING' | 'BOOKED' | 'PARTLY_PAID' | 'PAID' | 'BANK_CONFIRMED'
   | 'RETURNED' | 'WITHDRAWN' | 'VOUCHER_CANCELLED';
 
 export type PaymentRequest = {
@@ -28,7 +28,6 @@ export type PaymentRequest = {
   amount_sen: number;
   due_date: string | null;
   purpose: string;
-  /** The requester's note to Finance (2026-10-02) — absent before then. */
   note?: string | null;
   project_id: number | null;
   bank_name: string | null;
@@ -44,12 +43,7 @@ export type PaymentRequest = {
   updated_at: string;
   stage: RequestStage;
   voucher: { id: string; pvNumber: string | null; status: string | null; approvedAt: string | null; postedAt: string | null; bankConfirmed: boolean } | null;
-  /** The AP invoice answering it, when Finance booked the bill first: what is
-      paid of it so far, and by which AP Payments. */
   invoice?: { id: string; invoiceNumber: string | null; status: string | null; totalSen: number; paidSen: number; paidBy: string[]; bankConfirmed: boolean } | null;
-  /** What the bill reader read off its bill when it was attached (owner
-      2026-10-01, item 1): the bill's own number, date and total, and whether it
-      is for an event — with the requester's reason when it went without one. */
   bill_no?: string | null;
   bill_date?: string | null;
   bill_total_sen?: number | null;
@@ -62,13 +56,10 @@ export type PaymentRequest = {
       bill's FIRST request; 1 for the first itself. */
   parent_request_id?: string | null;
   installment_no?: number;
-  /** The percent of the bill this instalment is, as typed. */
   pay_pct?: number | null;
-  /** The whole bill's figures and its instalments, read on every request. */
   family?: BillFamily;
   /** 欠正式单 (item 3): the answering payment's official-invoice state, read off it. */
   officialDoc?: { state: 'OWED' | 'RECEIVED' | 'CHECKED'; note: string | null } | null;
-  /** The first request's AP invoice, when Finance booked the bill — a balance is paid ON it. */
   familyInvoice?: { id: string; invoiceNumber: string | null; status: string | null; supplierId: string | null; totalSen: number; paidSen: number } | null;
   /** The PMS row it was raised from (owner 2026-10-08) — an event's CONTRACT
       row; null when raised on this page. Its event is fixed. */
@@ -78,6 +69,9 @@ export type PaymentRequest = {
       Customer Refund voucher on it, never edited. Null on any other request. */
   refund_source_type?: 'SO' | null;
   refund_source_doc_no?: string | null;
+  /** A refund request's one approval (owner 2026-11-27): who signed it and when; null until then. */
+  refund_approved_by_name?: string | null;
+  refund_approved_at?: string | null;
 };
 
 /** A refund raised from a Sales Order's money panel. */
@@ -154,6 +148,7 @@ export type StageTagTone = 'calm' | 'warn' | 'info' | 'late';
     colour it reads in, and the tone of its tag on Finance's list — one home
     for all three. */
 export const STAGE: Record<RequestStage, { label: string; tone: string; tag: StageTagTone }> = {
+  AWAITING_APPROVAL: { label: 'Waiting approval', tone: 'var(--c-orange)', tag: 'warn' },
   SUBMITTED: { label: 'Submitted', tone: 'var(--fg-muted)', tag: 'info' },
   PROCESSING: { label: 'Finance processing', tone: 'var(--c-orange)', tag: 'warn' },
   BOOKED: { label: 'Booked, not paid yet', tone: 'var(--c-orange)', tag: 'warn' },
@@ -189,11 +184,9 @@ export const answerText = (r: Pick<PaymentRequest, 'voucher' | 'invoice'>): stri
 export type PaymentRequestInput = {
   payeeName: string; amountSen: number; dueDate: string | null; purpose: string; projectId: number | null;
   bankName: string | null; bankAccountNo: string | null; bankAccountName: string | null;
-  /* What the reader read off the bill (absent = keep what the request has). */
   billNo?: string | null; billDate?: string | null; billTotalSen?: number | null; eventBill?: boolean;
   /** Why an event bill goes without its Event (找不到这场活动) — 5 characters at least. */
   noEventReason?: string | null;
-  /** The percent of the bill this payment is, when typed as one (item 2). */
   payPct?: number | null;
   /** The requester's note to Finance (owner 2026-10-02: 多一个第五给他们写note). */
   note?: string | null;
@@ -228,7 +221,6 @@ export type ReadBillResult =
       bankName?: string | null; bankAccountNo?: string | null; bankAccountName?: string | null;
     };
     hasEvents: boolean;
-    /** The bill is for an event — it goes with its Event, or a reason. */
     eventBill: boolean;
     eventSuggestions: EventSuggestion[];
     matches: BillMatch[];
@@ -298,8 +290,8 @@ const invalidate = (qc: ReturnType<typeof useQueryClient>) => {
   /* A refund request holds its order's money (owner 2026-10-14) — withdrawn or
      returned, the order's money panel reads it back. */
   void qc.invalidateQueries({ queryKey: ['so-money'] });
-  /* To do's "requests waiting" job reads them. */
   void qc.invalidateQueries({ queryKey: ['finance-todo'] });
+  void qc.invalidateQueries({ queryKey: ['refund-approvals'] });
 };
 
 export const useCreatePaymentRequest = () => {
@@ -354,7 +346,38 @@ export const useReturnPaymentRequest = () => {
   });
 };
 
-/* The bill — the same factory the voucher's files ride (doc-files.ts). */
+/* ── A refund request's one approval (owner 2026-11-27: 只要一级，但这一级的权限和
+   cancel 的第二级一样) ─────────────────────────────────────────────────────────
+   Whoever holds the key that signs a Sales Order cancellation's second level
+   approves it — or rejects it — before Finance may answer it; never the person
+   who raised it. The server decides who may (mayApprove) and refuses anyone
+   else; these only read and send. */
+
+/** The approver's list: `open` — waiting for the approval, oldest first; `all` — every refund request, newest first. */
+export type RefundApprovals = { requests: PaymentRequest[]; mayApprove: boolean; me?: number | null };
+
+export const useRefundApprovals = (scope: 'open' | 'all') => useQuery({
+  queryKey: ['refund-approvals', scope],
+  queryFn: () => authedFetch<RefundApprovals>(`/payment-requests/refund-approvals${scope === 'all' ? '?scope=all' : ''}`),
+});
+
+export const useApproveRefundRequest = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => authedFetch<{ ok: true; already?: boolean }>(`/payment-requests/${id}/approve-refund`, { method: 'POST' }),
+    onSuccess: () => invalidate(qc),
+    onError: writeFailedAs('Refund not approved'),
+  });
+};
+
+/** Approve and Reject are offered on a refund request still waiting for its approval — never to the person who raised it. */
+export const viewerMayApproveRefund = (r: Pick<PaymentRequest, 'stage' | 'requested_by'>, me: number | null, mayApprove: boolean): boolean =>
+  mayApprove && r.stage === 'AWAITING_APPROVAL' && me != null && Number(r.requested_by) !== me;
+
+/** Where a refund request's approval stands, in one line: "Approved by X · 27/11/2026", or null before it is approved. */
+export const refundApprovalText = (r: Pick<PaymentRequest, 'refund_approved_by_name' | 'refund_approved_at'>, fmtDate: (iso: string) => string): string | null =>
+  (r.refund_approved_at ? `Approved by ${r.refund_approved_by_name?.trim() || 'someone'} · ${fmtDate(r.refund_approved_at)}` : null);
+
 export const usePaymentRequestFiles = (id: string | null) => useQuery({
   queryKey: ['payment-request-files', id],
   queryFn: () => authedFetch<{ files: PvFile[] }>(`/payment-requests/${id}/files`),

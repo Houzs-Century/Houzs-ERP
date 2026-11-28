@@ -11,20 +11,7 @@ import {
   requirePasswordChangeDoneText,
 } from "../lib/requirePasswordChange";
 
-/* Member account actions (Team -> Members). The desktop member profile exposes
-   Set password / Send reset link / Resend invitation; this mirrors them 1:1 on
-   mobile (single-logic-layer rule) against the SAME endpoints — no new backend.
-   Gated on users.manage (the manage tier the desktop actions use); the endpoints
-   enforce it too, so a stray render still 403s. A pending (status "invited")
-   member gets Resend invitation (+ the returned invite link copied); an active
-   member gets Set new password (direct, for a locked-out driver with no usable
-   email) and Send reset link (emailed, nothing changes until they click).
 
-   Lifted out of MobileModuleDetail so the god-file does not grow past its size
-   ceiling; the admin-reset invariant (frontend/src/pages/adminResetLink.test.ts)
-   scans this file by path, so the reset handler must stay here. */
-
-// Local string coercion — the list row carries loosely-typed cells.
 const str = (v: unknown): string => {
   if (typeof v === "string") return v;
   if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
@@ -83,8 +70,6 @@ export function MemberAccountActions({ row, onDone }: { row: MemberRow; onDone: 
     }
   };
 
-  // Mirrors the desktop sendReset against the SAME endpoint — sending the link is
-  // a no-op on the account, and the link itself is never surfaced to the admin.
   const resetPassword = async () => {
     if (!(await confirm({ title: "Send reset link?", body: `Email a password reset link to ${email}? Nothing changes until they click it — their password and active sessions keep working. The link expires in 1 hour.`, confirmLabel: "Send link" }))) return;
     setBusy("reset");
@@ -106,11 +91,6 @@ export function MemberAccountActions({ row, onDone }: { row: MemberRow; onDone: 
     }
   };
 
-  // Hand the member a new password directly (PATCH { password }) — the desktop
-  // profile's "Set password" field, mirrored 1:1. For a driver locked out with no
-  // office email they check, the emailed reset link above is no use; this is the
-  // way back in. Min 12 mirrors the backend strength rule; the server has the
-  // final say.
   const setNewPassword = async () => {
     const pw = await prompt({
       title: "Set a new password",

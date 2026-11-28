@@ -17,7 +17,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 
-/** The decode callback the component handed to the scanner hook. */
 let decode: ((v: string) => void) | null = null;
 
 vi.mock('../lib/use-qr-scanner', () => ({
@@ -35,7 +34,6 @@ const { PublicDoScanBasket } = await import('./PublicDoScanBasket');
 const TOK = (c: string) => c.repeat(64);
 const url = (c: string) => `https://erp.houzscentury.com/d/${TOK(c)}`;
 
-/** What the lookup endpoint will answer, keyed by token. */
 let answers: Record<string, unknown> = {};
 
 beforeEach(() => {
@@ -76,8 +74,6 @@ describe('the pile is uniform by construction', () => {
     /* 「就当做它还没扫描到」 — the count did not move and the row is not there. */
     expect(screen.getByText('Scanned: 1')).toBeTruthy();
     expect(screen.queryByText('HC-DO-2')).toBeNull();
-    /* And it is NAMED. An operator scanning with nothing happening decides the
-       scanner is broken. */
     expect(screen.getByText(/HC-DO-2 was not added/)).toBeTruthy();
   });
 
@@ -95,7 +91,6 @@ describe('the pile is uniform by construction', () => {
     answers[TOK('a')] = line(TOK('a'), 'HC-DO-1', 'LOADED', 'DISPATCHED', 'Confirm Loaded');
     await open();
     await scan('a');
-    /* Not three buttons to choose from — the pile has one next rung. */
     expect(screen.getByText('Confirm Loaded (1)')).toBeTruthy();
     expect(screen.queryByText(/Confirm Delivered/)).toBeNull();
     expect(screen.queryByText(/Confirm Departure/)).toBeNull();
@@ -118,9 +113,6 @@ describe('the pile is uniform by construction', () => {
     await scan('a');
     await act(async () => { screen.getByText('Clear the list').click(); });
 
-    /* The paper refused a moment ago is now the FIRST one in, and sets the rung
-       itself. Without the release a storekeeper would have to reload the page
-       between piles. */
     await scan('b');
     expect(screen.getByText('Scanned: 1')).toBeTruthy();
     expect(screen.getByText('Confirm Delivered (1)')).toBeTruthy();

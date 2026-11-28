@@ -18,9 +18,6 @@ describe("isDispatched — run-sheet dispatched filter", () => {
   });
 
   it("keeps a rescheduled bill with a cut DO + driver (the amended date is what counts, not the DO's document date)", () => {
-    // UMAR FARHAN: order rescheduled to a new day; the DO was cut earlier, so its
-    // own document date is a different day. It used to drop off the driver's
-    // phone; now it stays and runDateOf buckets it on the amended day.
     expect(isDispatched({
       row_type: "so", delivery_orders: [{ id: "do1" }], crew: { driver: "UMAR FARHAN" },
       amended_delivery_date: "2026-10-31", customer_delivery_date: "2026-10-25",
@@ -48,7 +45,6 @@ describe("isDispatched — run-sheet dispatched filter", () => {
   });
 
   it("keeps a SETUP / DISMANTLE (project / DP) leg with a named driver and no DO", () => {
-    // Project / DP legs never carry a DO — the driver-name arm is what keeps them.
     expect(isDispatched({ row_type: "project", delivery_orders: [], crew: { driver: "FASLIE ANAK DENNIS" } })).toBe(true);
     expect(isDispatched({ row_type: "dp", delivery_orders: [], crew: { driver: "FASLIE ANAK DENNIS" } })).toBe(true);
   });

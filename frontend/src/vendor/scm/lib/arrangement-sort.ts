@@ -41,17 +41,12 @@ export type ArrangementSortRow = Pick<
   | 'customer_state'
   | 'postcode'
 > & {
-  /* Nullable here (unlike PlanningOrder's non-null so_doc_no): a DP row keys
-     the final tiebreak on dp_no instead, and the comparator's `?? dp_no`
-     fallback needs the null to be expressible. A full PlanningOrder row still
-     satisfies this shape (string is assignable). */
   so_doc_no?: string | null;
   dp_no?: string | null;
   trip_eta_offset_s?: number | null;
   trip_stop_no?: number | null;
 };
 
-/** Truncate a date-ish value to its calendar day (YYYY-MM-DD); null = none. */
 function dayOf(d: string | null | undefined): string | null {
   if (d == null) return null;
   const day = String(d).slice(0, 10);
@@ -63,8 +58,6 @@ export function arrangementDateOf(o: ArrangementSortRow): string | null {
   return dayOf(o.amended_delivery_date);
 }
 
-/* One ascending key: blank/null LAST, otherwise case-insensitive A→Z.
-   ISO YYYY-MM-DD dates compare correctly under plain string comparison. */
 function cmpBlankLast(a: string | null | undefined, b: string | null | undefined): number {
   const av = (a ?? '').trim().toLowerCase();
   const bv = (b ?? '').trim().toLowerCase();

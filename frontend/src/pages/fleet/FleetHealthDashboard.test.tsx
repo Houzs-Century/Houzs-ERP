@@ -1,5 +1,3 @@
-// The dashboard says when the fleet failed to load instead of showing an empty
-// fleet, and draws each lorry's row with its plate and record link.
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";

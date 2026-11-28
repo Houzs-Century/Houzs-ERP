@@ -19,13 +19,11 @@
    kept: it prints the way the bank reconciliation does). */
 
 import { useMemo, useState } from 'react';
-import { fmtDate, fmtDateOrDash, fmtSen } from '../../vendor/shared/format';
+import { fmtDate, fmtDateOrDash, fmtSen } from '../../../../shared/src/vendor/shared/format';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import type { ReportSheet, SheetColumn } from '../../vendor/scm/lib/report-sheet';
 import { usePaymentCorrections, type PaymentCorrectionRow } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
-/* The page already reads the document's own sentences from this module, so
-   its builder costs nothing more imported here. */
 import { emptyText, generatePaymentCorrectionsPdf, ledgerText, whatChanged } from '../../vendor/scm/lib/payment-corrections-pdf';
 import { FinanceDocLink } from './finance/FinanceDocLink';
 import { Tag, type Tone } from './finance/SetupParts';
@@ -50,15 +48,12 @@ export const recentMonths = (today: string = todayMyt(), count = 12): string[] =
   return out;
 };
 
-/** "October 2026" — a month as the select and the grey line name it. */
 const monthLong = (ym: string): string =>
   new Date(`${ym}-01T00:00:00Z`).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
 const fmt = (sen: number | null | undefined) => fmtSen(sen);
 const signed = (sen: number) => (sen < 0 ? `−${fmt(-sen)}` : sen > 0 ? `+${fmt(sen)}` : fmt(0));
 
-/* The tag each kind wears (the design's tones): money that came in info, an
-   edit calm, money that went late, a proof calm. */
 const KIND: Record<PaymentCorrectionRow['kind'], { text: string; tone: Tone; dot?: boolean }> = {
   added: { text: 'Added', tone: 'info' },
   edited: { text: 'Edited', tone: 'calm' },

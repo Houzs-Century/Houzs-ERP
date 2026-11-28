@@ -46,8 +46,6 @@ threeplDoCharges.get('/bill-lines', listBillLinesHandler);
 threeplDoCharges.patch('/bill-lines/:id', assignBillLineHandler);
 
 type Row = Record<string, unknown>;
-// The new table is not in the generated Supabase types until it merges; same
-// narrow bridge as delivery-rate-cards.ts rc().
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = (sb: unknown): any => sb;
 const str = (v: unknown) => (v == null || v === '' ? null : String(v));
@@ -114,8 +112,6 @@ threeplDoCharges.get('/', async (c) => {
       apInvoiceId: str(r.ap_invoice_id),
     };
   });
-  /* The bills read off AP invoices and their parts (DOs / service / fairs / not
-     counted / waiting) — Finance's, as the AP invoice is. */
   let bills: unknown[] = [];
   if (hasHouzsPerm(c, 'scm.finance.accounting')) {
     const sum = await billSummaries({ sb, companyId: co.companyId, allowedIds: [co.companyId], usage: null });
@@ -141,7 +137,6 @@ threeplDoCharges.put('/', async (c) => {
   if (!Number.isInteger(billed) || billed < 0) return c.json({ error: 'invalid_billed_sen' }, 400);
   if (invoiceDate && !ISO.test(invoiceDate)) return c.json({ error: 'invalid_invoice_date' }, 400);
 
-  // The carrier must be the paying company's own; the DO any company the caller may see.
   const { data: carrier, error: cErr } = await scopeToCompanyId(db(sb).from('threepl_companies').select('id'), co.companyId).eq('id', carrierId).maybeSingle();
   if (cErr) return c.json({ error: 'load_failed', reason: cErr.message }, 500);
   if (!carrier) return c.json({ error: 'carrier_not_found' }, 404);
@@ -150,8 +145,6 @@ threeplDoCharges.put('/', async (c) => {
   const live = ((dos ?? []) as Row[]).filter((d) => d.status !== 'CANCELLED');
   if (live.length !== 1) return c.json({ error: live.length ? 'do_ambiguous' : 'do_not_found' }, 404);
 
-  /* A second key-in for the same DO and 3PL used to overwrite the first in
-     silence. Say what is already there; replace only when the person says so. */
   if (body.replace !== true) {
     const { data: prior, error: pErr } = await scopeToCompanyId(db(sb).from('threepl_do_charges')
       .select('id, billed_sen, invoice_no'), co.companyId)

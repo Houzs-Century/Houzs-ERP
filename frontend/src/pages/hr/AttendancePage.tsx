@@ -1,10 +1,3 @@
-/* HR · Attendance (v3 design). Today's status as four cards, then the whole
- * month as a grid (sticky employee column + day header), built from the
- * working-hours range read (present / late / absent / leave / rest per day) and
- * the attendance day read for today. Lateness comes from each day's lateMin on
- * the working-hours read, shown in today's cards and marked in the month grid.
- * "Record attendance" and clicking a day open a form to set / correct that day
- * (status + clock-in / out); Export downloads the month grid as CSV. */
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
@@ -17,7 +10,7 @@ import { avatarColor, initials } from "./hrAvatar";
 import { punchOf, type PunchState } from "./attendanceToday";
 import { HR, useAttendance, useWorkingHours, type WorkDay } from "./hrApi";
 import { cellOf, monthBounds, pad2, type Cell } from "./attendanceMonth";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 const WD = ["S", "M", "T", "W", "T", "F", "S"];
@@ -45,9 +38,6 @@ const CELL: Record<Cell, { bg: string; letter: string; color: string; dot: boole
   late: { bg: "bg-time/15", letter: "L", color: "text-time", dot: false },
   absent: { bg: "bg-err-bg", letter: "A", color: "text-err", dot: false },
   leave: { bg: "bg-surface-dim", letter: "V", color: "text-ink-secondary", dot: false },
-  // Rest days and days with no punch stay blank, so the month reads calm and
-  // only real exceptions (late / absent / leave) draw the eye. Before go-live
-  // every past day has no punch; a grid full of grey "?" was the eye-strain.
   rest: { bg: "", letter: "", color: "", dot: false },
   notin: { bg: "", letter: "", color: "", dot: false },
   future: { bg: "", letter: "", color: "", dot: false },
@@ -82,11 +72,9 @@ export function AttendancePage() {
 
   const canManage = grid.data?.canManage ?? false;
 
-  // Today's four status cards, from the attendance day read.
   const todayRows = useMemo(() => (att.data?.rows ?? []).map((r) => ({ name: r.employee.name, state: punchOf(r.day).state })), [att.data]);
   const countOf = (s: PunchState) => todayRows.filter((r) => r.state === s).length;
 
-  // Month grid, from the working-hours range read.
   const employees = grid.data?.employees ?? [];
   const byDay = useMemo(() => {
     const m2 = new Map<string, WorkDay>();
@@ -148,7 +136,6 @@ export function AttendancePage() {
         }
       />
       <div className="flex min-h-0 flex-1 flex-col gap-3 px-6 py-4">
-        {/* today's status cards */}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {STATUS.map((s) => {
             const list = todayRows.filter((r) => r.state === s.key);
@@ -167,7 +154,6 @@ export function AttendancePage() {
           })}
         </div>
 
-        {/* month grid */}
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-surface">
           <div className="flex flex-wrap items-center gap-3 border-b border-border-subtle px-3 py-2.5">
             <div className="flex items-center gap-1">

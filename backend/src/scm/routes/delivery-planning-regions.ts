@@ -1,35 +1,3 @@
-// ----------------------------------------------------------------------------
-// /delivery-planning-regions — CONFIG for the Delivery Planning board.
-//
-// Ported 1:1 from 2990 apps/api/src/routes/delivery-planning-regions.ts. The scm
-// schema (migration 0053) made the board's region classification owner-maintained:
-//   • delivery_planning_regions — the master list of region buckets (tabs).
-//     Houzs seeds SELANGOR / KL / NORTHERN / SOUTHERN / EAST_COAST / EAST_MY,
-//     owner-extensible. code + name + sort_order + active.
-//   • state_delivery_regions — a per-STATE MULTI mapping of which region(s) a
-//     state's orders appear under. One state can map to MANY regions so an order
-//     surfaces under several tabs.
-//
-// A state's identity = its NAME (TEXT) — the same value held in
-// mfg_sales_orders.customer_state. The frontend multi-select sends
-// { stateKey, country, regionCodes }.
-//
-// Endpoints:
-//   GET    /                       — list region masters (active+inactive, sorted)
-//   POST   /                       — create a region bucket
-//   PATCH  /:id                    — patch a region bucket
-//   DELETE /:id                    — delete a region (BLOCKED if any state maps to it)
-//   GET    /states                 — full per-state → region-codes map (for the editor)
-//   GET    /states/:stateKey       — the region codes for ONE state (?country=)
-//   PUT    /states/:stateKey       — REPLACE a state's region set (multi)
-//
-// Houzs adaptation vs 2990: import paths only (../middleware/auth, ../env,
-// ../lib/paginate-all are the vendored scm equivalents). c.get('supabase') is the
-// scm-scoped service client, so .from('delivery_planning_regions') = scm.delivery_
-// planning_regions. snake_case columns, no camelCase transform.
-//
-// Mounted at '/delivery-planning-regions' in scm/index.ts.
-// ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -50,8 +18,6 @@ deliveryPlanningRegions.use('*', supabaseAuth);
 
 const REGION_COLS = 'id, code, name, sort_order, active, created_at';
 
-/* Shape a region master row out (dual-read camelCase — the pg/PostgREST layer
-   may surface either snake_case or camelCase depending on the path). */
 type RegionRow = {
   id: string; code: string | null; name: string | null;
   sort_order?: number | null; sortOrder?: number | null;
@@ -98,7 +64,6 @@ const regionCreateSchema = z.object({
   active:    z.boolean().optional(),
 });
 
-// ── POST / — create a region bucket. code is UNIQUE (case-normalised upper).
 deliveryPlanningRegions.post('/', async (c) => {
   let body: unknown;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -116,14 +81,6 @@ deliveryPlanningRegions.post('/', async (c) => {
   }).select(REGION_COLS).single();
   if (error) {
     if (error.code === '23505') return c.json({ error: 'duplicate_code', reason: 'A region with that code already exists.' }, 409);
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
@@ -137,9 +94,6 @@ const regionPatchSchema = z.object({
   active:    z.boolean().optional(),
 });
 
-// ── PATCH /:id — patch a region bucket. STRICT company scope (owner audit
-//   2026-07-22): the id-only WHERE was a blind-id cross-company WRITE — a
-//   caller in company A could re-name company B's region by knowing its UUID.
 deliveryPlanningRegions.patch('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -181,8 +135,6 @@ deliveryPlanningRegions.delete('/:id', async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
 
-  // In-use check is scoped to this company's mappings (a mapping in another
-  // company is not this caller's concern and its existence must not leak).
   const { data: inUse, error: useErr } = await scopeToCompanyId(
     sb.from('state_delivery_regions').select('id').eq('region_id', id),
     co.companyId,
@@ -204,9 +156,6 @@ deliveryPlanningRegions.delete('/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-/* ──────────────────────────────────────────────────────────────────────────
-   STATE → REGION(S) mapping (the per-state MULTI mapping).
-   ─────────────────────────────────────────────────────────────────────────*/
 
 type StateRegionRow = {
   state_key?: string | null; stateKey?: string | null;
@@ -235,7 +184,6 @@ async function loadRegionMaps(sb: any, c: any) {
   return { error: null, codeById, idByCode };
 }
 
-// ── GET /states — full per-state → region-codes map (drives the editor table).
 deliveryPlanningRegions.get('/states', async (c) => {
   const sb = c.get('supabase');
   const { codeById, error: rErr } = await loadRegionMaps(sb, c);
@@ -249,7 +197,6 @@ deliveryPlanningRegions.get('/states', async (c) => {
   );
   if (error) return c.json({ error: 'fetch_failed', reason: error.message }, 500);
 
-  // Group by (stateKey|country) → sorted region codes.
   const byState = new Map<string, { stateKey: string; country: string; regionCodes: string[] }>();
   for (const row of (data ?? [])) {
     const stateKey = row.stateKey ?? row.state_key ?? '';
@@ -268,7 +215,6 @@ deliveryPlanningRegions.get('/states', async (c) => {
   return c.json({ states });
 });
 
-// ── GET /states/:stateKey?country= — the region codes for ONE state.
 deliveryPlanningRegions.get('/states/:stateKey', async (c) => {
   const stateKey = c.req.param('stateKey');
   const country = (c.req.query('country') ?? 'Malaysia').trim() || 'Malaysia';
@@ -294,9 +240,8 @@ deliveryPlanningRegions.get('/states/:stateKey', async (c) => {
 });
 
 const putStateSchema = z.object({
-  // The set of region CODES this state should map to. [] clears the mapping.
   regionCodes: z.array(z.string().trim().min(1)).default([]),
-  country:     z.string().trim().min(1).optional(),   // defaults to Malaysia
+  country:     z.string().trim().min(1).optional(),
 });
 
 // ── PUT /states/:stateKey — REPLACE a state's region set (multi). Delete the
@@ -323,17 +268,12 @@ deliveryPlanningRegions.put('/states/:stateKey', async (c) => {
   const { idByCode, error: rErr } = await loadRegionMaps(sb, c);
   if (rErr) return c.json({ error: 'fetch_failed', reason: rErr.message }, 500);
 
-  // Resolve codes → ids; reject if any code is unknown (so a typo can't silently
-  // drop the state from a tab).
   const unknown = wantCodes.filter((code) => !idByCode.has(code));
   if (unknown.length > 0) {
     return c.json({ error: 'unknown_region_code', reason: `Unknown region code(s): ${unknown.join(', ')}` }, 400);
   }
   const regionIds = wantCodes.map((code) => idByCode.get(code)!);
 
-  // Replace: clear THIS company's existing rows for the state, then insert the
-  // new set. Scoping the DELETE by company_id is the fix — the previous
-  // (state_key + country) predicate wiped every company's mapping.
   const { error: delErr } = await scopeToCompanyId(
     sb.from('state_delivery_regions').delete().eq('state_key', stateKey).eq('country', country),
     co.companyId,

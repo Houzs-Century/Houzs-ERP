@@ -1,7 +1,5 @@
-// What one lorry did, day by day and newest first: every job on it, not only its
-// delivery orders. A job type filter and a search narrow it.
 import { useMemo, useState } from "react";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { Th, Td } from "../../components/scm-v2/OverviewKit";
 

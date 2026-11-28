@@ -17,8 +17,6 @@ describe('doNosBySalesOrder', () => {
       row({ so_doc_no: 'SO-1', do_number: '2990-DO-2608-004', do_date: '2026-08-11' }),
       row({ so_doc_no: 'SO-2', do_number: '2990-DO-2607-013', do_date: '2026-07-20' }),
     ]);
-    // A part-delivered order keeps BOTH — showing one of two shipments is the
-    // failure this column exists to avoid.
     expect(out.get('SO-1')).toEqual(['2990-DO-2608-004', '2990-DO-2607-001']);
     expect(out.get('SO-2')).toEqual(['2990-DO-2607-013']);
   });
@@ -58,8 +56,6 @@ describe('doNosBySalesOrder', () => {
   });
 
   it('returns no entry for an order with no delivery at all, rather than a stand-in', () => {
-    // The caller renders a dash. It must never borrow the SO's own number the
-    // way current_doc_no does — that is what made the old column lie.
     const out = doNosBySalesOrder([]);
     expect(out.size).toBe(0);
     expect(out.get('SO-1')).toBeUndefined();
@@ -100,7 +96,6 @@ describe('doRefsBySalesOrder', () => {
       row({ id: 'has-id', do_number: 'DO-ADDRESSABLE', do_date: '2026-08-11' }),
     ];
     expect(doRefsBySalesOrder(rows).get('SO-1')).toEqual([{ id: 'has-id', docNo: 'DO-ADDRESSABLE' }]);
-    // The delivery still happened, so the column must still show it.
     expect(doNosBySalesOrder(rows).get('SO-1')).toEqual(['DO-NO-ADDRESS', 'DO-ADDRESSABLE']);
   });
 

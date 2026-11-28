@@ -33,7 +33,7 @@ import {
   type ProductRequest, type ProductRequestApplication, type ProductRequestInput, type ProductRequestLine, type ProductRequestLineInput, type ProductRequestType,
 } from '../../vendor/scm/lib/product-request-queries';
 import { useMfgProducts, useMaintenanceConfig, mfgCategoryLabel } from '../../vendor/scm/lib/mfg-products-queries';
-import { MFG_PRODUCT_CATEGORIES } from '../../vendor/shared/product-categories';
+import { useProductCategories } from '../../vendor/scm/lib/product-categories-store';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { sortByNumeric, sortByText } from '../../vendor/scm/lib/sort-options';
@@ -49,14 +49,12 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import styles from './SalesOrderDetail.module.css';
 
 const soft: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' };
 const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)' };
 const linkBtn: React.CSSProperties = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--c-orange)', textDecoration: 'underline' };
-/* The line tables draw their own skin: SalesOrderDetail's .table pins
-   nth-child widths for the sales-line layout, which these columns are not. */
 const lineTable: React.CSSProperties = { width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-12)' };
 const th: React.CSSProperties = { fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', textAlign: 'left', padding: '4px 6px', background: 'var(--hz-c-surface-dim)', borderBottom: '2px solid #d6d9d2', whiteSpace: 'nowrap' };
 const td: React.CSSProperties = { padding: '4px 6px', borderBottom: '1px solid var(--line, #ece9e2)', verticalAlign: 'top' };
@@ -324,7 +322,6 @@ function RequestFiles({ request, canWrite, approver }: { request: ProductRequest
   );
 }
 
-/* ── The request's lines, read-only, with the per-line build button ───────── */
 function LinesTable({ request, onBuild }: { request: ProductRequest; onBuild: ((line: ProductRequestLine, existing: boolean) => void) | null }) {
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -383,7 +380,6 @@ function LinesTable({ request, onBuild }: { request: ProductRequest; onBuild: ((
   );
 }
 
-/* ── The Purchaser builds one line's new Model + its first SKU ─────────────── */
 function BuildModelForm({ request, line, onDone, onCancel }: { request: ProductRequest; line: ProductRequestLine; onDone: () => void; onCancel: () => void }) {
   const build = useCreateModelFromRequest();
   const notify = useNotify();
@@ -399,7 +395,7 @@ function BuildModelForm({ request, line, onDone, onCancel }: { request: ProductR
       const left = linesNeedingModel(res.request).length;
       void notify({ title: `${res.sku.code} created`, body: `Model ${res.model.modelCode} · the SKU is in the catalogue but not on POS until someone turns it on. ${left === 0 ? 'Every line has its SKU — raise the Purchase Consignment Order next.' : `${left} line${left === 1 ? '' : 's'} still need${left === 1 ? 's' : ''} a Model.`}` });
       onDone();
-    } catch { /* the mutation's own onError told the user */ }
+    } catch { }
   };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -424,9 +420,6 @@ function BuildModelForm({ request, line, onDone, onCancel }: { request: ProductR
   );
 }
 
-/* ── The line takes a SKU already in the catalogue (2990-0025) ─────────────
-   Sim imports the SKUs through SKU Master first; building here then made a
-   second SKU. Pre-filled when one SKU carries the line's proposed name. */
 function LinkSkuForm({ request, line, onDone, onCancel }: { request: ProductRequest; line: ProductRequestLine; onDone: () => void; onCancel: () => void }) {
   const link = useLinkSkuToRequestLine();
   const notify = useNotify();
@@ -447,7 +440,7 @@ function LinkSkuForm({ request, line, onDone, onCancel }: { request: ProductRequ
       const left = linesNeedingModel(res.request).length;
       void notify({ title: `Line ${line.line_no} is ${res.sku.code}`, body: left === 0 ? 'Every line has its SKU — raise the order next.' : `${left} line${left === 1 ? '' : 's'} still need${left === 1 ? 's' : ''} a SKU.` });
       onDone();
-    } catch { /* the mutation's own onError told the user */ }
+    } catch { }
   };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -466,7 +459,6 @@ function LinkSkuForm({ request, line, onDone, onCancel }: { request: ProductRequ
   );
 }
 
-/* ── New / edit ─────────────────────────────────────────────────────────── */
 type DraftLine = ProductRequestLineInput & { rid: string; newModel: boolean };
 const draftLine = (from: ProductRequestLineInput | null): DraftLine => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -475,12 +467,11 @@ const draftLine = (from: ProductRequestLineInput | null): DraftLine => ({
 });
 
 export function RequestForm({ initial, onDone, onCancel }: { initial: ProductRequest | null; onDone: (id: string) => void; onCancel: () => void }) {
+  const categoryOptions = useProductCategories().active;
   const notify = useNotify();
   const create = useCreateProductRequest();
   const update = useUpdateProductRequest();
   const upload = useUploadProductRequestFile();
-  /* Files picked before the request exists; uploaded one by one once it does
-     (a new request only — an existing one attaches on its own card). */
   const [pending, setPending] = useState<File[]>([]);
   const pickRef = useRef<HTMLInputElement>(null);
   const [v, setV] = useState<Omit<ProductRequestInput, 'lines'>>(() => ({
@@ -511,8 +502,6 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
     const sku = (skus.data ?? []).find((p) => p.code === code);
     setLine(rid, { itemCode: code || null, proposedModelName: null, ...(sku ? { category: String(sku.category).toUpperCase() } : {}) });
   };
-  /* The line's product, as the server reads it: a SKU for an existing one, a
-     name for a new Model — a repack is always existing. */
   const lineBody = (l: DraftLine): ProductRequestLineInput => {
     const existing = isRepack || !l.newModel;
     return {
@@ -542,10 +531,10 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
         try {
           const file: PvFilePayload = { name: f.name, mime: docFileMime(f), dataBase64: await fileToBase64(f) };
           await upload.mutateAsync({ id: res.request.id, file });
-        } catch { /* the mutation's own onError told the user; the request stands — attach again on it */ }
+        } catch { }
       }
       onDone(res.request.id);
-    } catch { /* the mutation's own onError told the user */ }
+    } catch { }
   };
 
   const grid = (min: number): React.CSSProperties => ({ display: 'grid', gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))`, gap: 'var(--space-3)' });
@@ -617,7 +606,7 @@ export function RequestForm({ initial, onDone, onCancel }: { initial: ProductReq
                     </td>
                     <td style={td}>
                       <select style={cell} value={l.category} onChange={(e) => setLine(l.rid, { category: e.target.value })} aria-label={`Category line ${n}`} disabled={existing && !!l.itemCode}>
-                        {MFG_PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{mfgCategoryLabel(c)}</option>)}
+                        {categoryOptions.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
                       </select>
                     </td>
                     <td style={td}>

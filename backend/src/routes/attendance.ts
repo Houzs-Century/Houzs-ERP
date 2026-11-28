@@ -24,7 +24,8 @@ import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { todayMyt } from "../scm/lib/my-time";
 import { hasPermission } from "../services/permissions";
 import { checkPunchLocation, instantOnWorkDate } from "../scm/shared/hr-attendance";
-import { attendanceView, planPunch, punchGateRefusal, type AttendanceRow } from "./lib/hr-attendance-view";
+import { attendanceView, punchGateRefusal, rowSegments, segmentSummaryColumns, type AttendanceRow } from "./lib/hr-attendance-view";
+import { applyPunch, daySummary, MAX_PUNCH_PAIRS } from "./lib/hr-attendance-segments";
 import { loadSites, loadAttendanceSettings } from "./lib/hr-attendance-store";
 import { parseOtSegment } from "./lib/hr-ot";
 import { parsePunchFix } from "./lib/hr-punch";
@@ -146,87 +147,72 @@ attendance.post("/punch", async (c) => {
       .then((r) => r.at(0)),
     openPunch(db, co.companyId, emp.id),
   ]);
-  const plan = planPunch(action, todayRow ?? null, open ?? null);
-  if (plan.kind === "already-out") {
-    return c.json({ error: "already_out", message: `You already clocked out today at ${plan.clock}. Ask HR if that is wrong.` }, 409);
-  }
-  if (plan.kind === "no-open-punch") {
-    return c.json({ error: "not_clocked_in", message: "You have not clocked in today, so there is nothing to clock out." }, 409);
-  }
-
   const [sites, settings] = await Promise.all([loadSites(db, co.companyId), loadAttendanceSettings(db, co.companyId)]);
   const loc = checkPunchLocation(hasGps ? lat : null, hasGps ? lng : null, sites.active);
-  /* HC-0125 punch gates: when HR turns a gate on, a recording punch is REFUSED
-     (hard block) unless it carries a selfie / is within a site. */
-  const refusal = punchGateRefusal(settings, plan.kind, !!photo, loc);
+  const at = now.toISOString();
+  const markBase = {
+    at,
+    source: "PHONE" as const,
+    lat: hasGps ? lat : null,
+    lng: hasGps ? lng : null,
+    accuracyM: accuracy != null ? Math.round(accuracy) : null,
+    geo: loc.geo,
+    siteId: loc.siteId,
+    distanceM: loc.distanceM,
+  };
+
+  /* Actual clocking (HC-0125): the punch acts on the OPEN day's segments (a
+     clock-out closes it, even yesterday's — the driver back after midnight) or
+     on today's row (a clock-in opens the next of up to 4 segments). A row from
+     before this feature reads as its single clock_in/out pair. */
+  const actingRow = open ?? (action === "CLOCK_IN" ? todayRow ?? null : null);
+  const curSegments = actingRow ? rowSegments(actingRow as AttendanceRow) : [];
+  const decided = applyPunch(curSegments, action, { ...markBase, photoKey: null });
+  if (!decided.ok) {
+    if (decided.reason === "already-in") {
+      return c.json({ ok: true, action, already: true, location: { geo: loc.geo, siteName: loc.siteName, distanceM: loc.distanceM }, photoSaved: false });
+    }
+    if (decided.reason === "no-open-punch") {
+      return c.json({ error: "not_clocked_in", message: "You have not clocked in today, so there is nothing to clock out." }, 409);
+    }
+    return c.json({ error: "max_punches", message: `You have already clocked in and out ${MAX_PUNCH_PAIRS} times today. Ask HR if you need another.` }, 409);
+  }
+
+  /* HC-0125 punch gates: a recording punch (a new clock-in or a clock-out) is
+     REFUSED when HR has a gate on and it carries no selfie / is off site. */
+  const refusal = punchGateRefusal(settings, action === "CLOCK_IN" ? "stamp-in" : "stamp-out", !!photo, loc);
   if (refusal) return c.json(refusal, 422);
   let photoKey: string | null = null;
-  if (photo && plan.kind !== "already-in" && plan.kind !== "reopen") {
+  if (photo) {
     photoKey = `hr-punch/${co.companyId}/${emp.id}/${today}-${action === "CLOCK_IN" ? "in" : "out"}-${crypto.randomUUID().slice(0, 8)}.${PHOTO_TYPES[photo.type]}`;
     await c.env.POD_BUCKET.put(photoKey, await photo.arrayBuffer(), { httpMetadata: { contentType: photo.type } });
   }
-  const at = now.toISOString();
-  const evidence =
-    action === "CLOCK_IN"
-      ? { in_lat: hasGps ? lat : null, in_lng: hasGps ? lng : null, in_accuracy_m: accuracy != null ? Math.round(accuracy) : null, in_geo: loc.geo, in_site_id: loc.siteId, in_distance_m: loc.distanceM, in_photo_key: photoKey }
-      : { out_lat: hasGps ? lat : null, out_lng: hasGps ? lng : null, out_accuracy_m: accuracy != null ? Math.round(accuracy) : null, out_geo: loc.geo, out_site_id: loc.siteId, out_distance_m: loc.distanceM, out_photo_key: photoKey };
+  const applied = applyPunch(curSegments, action, { ...markBase, photoKey });
+  const segments = applied.ok ? applied.segments : curSegments;
+  const closed = !daySummary(segments).open;
 
-  if (plan.kind === "insert") {
+  if (actingRow) {
+    await db
+      .update(hr_attendance)
+      .set({ status: "PRESENT", ...segmentSummaryColumns(segments), updated_at: at, updated_by: userId })
+      .where(eq(hr_attendance.id, actingRow.id));
+    if (action === "CLOCK_OUT" && closed) await syncDayFromPunch(db, co.companyId, actingRow.id);
+  } else {
     try {
-      await db.insert(hr_attendance).values({
-        company_id: co.companyId,
-        employee_id: emp.id,
-        work_date: today,
-        status: "PRESENT",
-        clock_in_at: at,
-        in_source: "PHONE",
-        ...evidence,
-        updated_by: userId,
-      });
+      const inserted = await db
+        .insert(hr_attendance)
+        .values({ company_id: co.companyId, employee_id: emp.id, work_date: today, status: "PRESENT", ...segmentSummaryColumns(segments), updated_by: userId })
+        .returning({ id: hr_attendance.id });
+      if (action === "CLOCK_OUT" && closed && inserted[0]) await syncDayFromPunch(db, co.companyId, inserted[0].id);
     } catch (e) {
-      /* Two taps racing: the unique (employee, work date) row already exists,
-         and the second tap is the no-op it would have been a second later. */
       if ((e as { code?: string } | null)?.code !== "23505" && !String((e as Error | null)?.message ?? "").includes("duplicate key")) throw e;
     }
-  } else if (plan.kind === "stamp-in") {
-    await db
-      .update(hr_attendance)
-      .set({ status: "PRESENT", clock_in_at: at, in_source: "PHONE", ...evidence, updated_at: at, updated_by: userId })
-      .where(and(eq(hr_attendance.id, plan.rowId), isNull(hr_attendance.clock_in_at)));
-  } else if (plan.kind === "stamp-out") {
-    await db
-      .update(hr_attendance)
-      .set({ clock_out_at: at, out_source: "PHONE", ...evidence, updated_at: at, updated_by: userId })
-      .where(and(eq(hr_attendance.id, plan.rowId), isNull(hr_attendance.clock_out_at)));
-    await syncDayFromPunch(db, co.companyId, plan.rowId);
-  } else if (plan.kind === "reopen") {
-    /* Back on duty after clocking out (HC-0125 multi-punch): drop the clock-out
-       so the day is open again and the next clock-out re-stamps the latest time.
-       The first clock-in and its location/lateness stay; the re-entry's selfie
-       is required by the gate but not stored (the clock-in evidence is the first
-       one). The day's auto hours/dock/OT are recomputed on the next clock-out. */
-    await db
-      .update(hr_attendance)
-      .set({
-        clock_out_at: null,
-        out_source: null,
-        out_lat: null,
-        out_lng: null,
-        out_accuracy_m: null,
-        out_geo: null,
-        out_site_id: null,
-        out_distance_m: null,
-        out_photo_key: null,
-        updated_at: at,
-        updated_by: userId,
-      })
-      .where(and(eq(hr_attendance.id, plan.rowId), isNotNull(hr_attendance.clock_out_at)));
   }
 
   return c.json({
     ok: true,
     action,
-    already: plan.kind === "already-in",
+    already: false,
     location: { geo: loc.geo, siteName: loc.siteName, distanceM: loc.distanceM },
     photoSaved: !!photoKey,
   });
@@ -254,9 +240,6 @@ attendance.get("/me/photo/:id", async (c: Ctx) => {
   return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType ?? "image/jpeg", "cache-control": "private, max-age=300" } });
 });
 
-/* My pay (Hookka's worker pay screen): this month's running estimate (the
-   same pipeline as Generate, nothing stored) and the slips HR has approved.
-   A draft slip is not shown: the figures can still change. */
 attendance.get("/me/pay", async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -333,9 +316,6 @@ const canConfirmOt = (c: Ctx): boolean => {
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- tests build AuthUser without permissions_set
   return hasPermission(u.permissions_set ?? u.permissions, "hr.ot.confirm");
 };
-// A confirmer pinned to specific employees (hr-confirmer-scope) only ever sees
-// or reviews their own; an unrestricted confirmer gets `undefined` here, which
-// drizzle's and() drops, so the query is company-wide as before.
 const otScopeCond = (c: Ctx) => {
   const scope = scopedEmployeeIds(c.get("user").id);
   return scope ? inArray(hr_ot_claims.employee_id, [...scope]) : undefined;
@@ -409,10 +389,6 @@ attendance.post("/ot", async (c: Ctx) => {
   const seg = parseOtSegment(String(body.startHHMM ?? ""), String(body.endHHMM ?? ""));
   if (!seg.ok) return c.json({ error: "bad_segment", message: seg.message }, 400);
   const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : "";
-  /* A reported window and the punch-derived AUTO claim must never both pay for
-     one day. The AUTO claim is removed below; but if a supervisor already
-     CONFIRMED it, the day's overtime is settled — refuse the report and send
-     the worker to HR rather than silently voiding an approved figure. */
   const confirmedAuto = (
     await db
       .select({ id: hr_ot_claims.id })
@@ -425,9 +401,6 @@ attendance.post("/ot", async (c: Ctx) => {
     .insert(hr_ot_claims)
     .values({ company_id: co.companyId, employee_id: emp.id, work_date: workDate, start_min: seg.startMin, end_min: seg.endMin, note, status: "PENDING", source: "REPORTED", created_by: userId })
     .returning({ id: hr_ot_claims.id });
-  /* A reported window is the precise record for the day, so the crude punch-
-     derived AUTO claim steps aside — removed here too (not only on the next
-     punch sync) so the two never both reach a supervisor for one day. */
   await db
     .delete(hr_ot_claims)
     .where(and(eq(hr_ot_claims.company_id, co.companyId), eq(hr_ot_claims.employee_id, emp.id), eq(hr_ot_claims.work_date, workDate), eq(hr_ot_claims.source, "AUTO"), eq(hr_ot_claims.status, "PENDING")));
@@ -534,8 +507,6 @@ attendance.post("/punch-fix", async (c: Ctx) => {
   const fix = parsePunchFix(workDate, String(body.clockIn ?? ""), String(body.clockOut ?? ""), todayMyt());
   if (!fix.ok) return c.json({ error: "bad_fix", message: fix.message }, 400);
   const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 500) : "";
-  // One open request per day: a re-filing replaces the pending one (a reviewed
-  // one stays, for the record).
   await db
     .delete(hr_punch_corrections)
     .where(and(eq(hr_punch_corrections.company_id, co.companyId), eq(hr_punch_corrections.employee_id, emp.id), eq(hr_punch_corrections.work_date, workDate), eq(hr_punch_corrections.status, "PENDING")));
@@ -575,7 +546,6 @@ attendance.post("/punch-fix/:id/review", async (c: Ctx) => {
   const db = getDb(c.env);
   const at = new Date().toISOString();
   const by = c.get("user").id;
-  // Claim the pending row atomically, so two approvers cannot both act on it.
   const claimed = await db
     .update(hr_punch_corrections)
     .set({
@@ -590,8 +560,6 @@ attendance.post("/punch-fix/:id/review", async (c: Ctx) => {
   const pc = claimed.at(0) as PcRow & { employee_id: number } | undefined;
   if (!pc) return c.json({ error: "not_found", message: "That request is gone or already reviewed." }, 404);
   if (decision === "approve") {
-    // Write the day's attendance like an HR correction: PRESENT, the stated
-    // times (MANUAL), and re-sync the working hours the day pays from.
     const inAt = pc.req_in_min != null ? instantOnWorkDate(pc.work_date, pc.req_in_min).toISOString() : null;
     const outAt = pc.req_out_min != null ? instantOnWorkDate(pc.work_date, pc.req_out_min).toISOString() : null;
     const existing = (
@@ -661,9 +629,6 @@ attendance.get("/leave", async (c: Ctx) => {
       .orderBy(asc(hr_leave_requests.start_date), asc(hr_leave_requests.id));
     pending = rows.map((r) => ({ ...lrOut(r.c as LrRow), employeeName: r.name, empNo: r.emp_no }));
   }
-  // Team history: the reviewed team requests (approved / rejected) an approver
-  // can look back on, with who reviewed them. The pending queue above stays the
-  // actionable list; this is the record. Additive — the phone ignores it.
   let teamHistory: Array<ReturnType<typeof lrOut> & { employeeName: string; empNo: string }> = [];
   if (canApprove) {
     const rows = await db
@@ -726,10 +691,7 @@ attendance.post("/leave/:id/review", async (c: Ctx) => {
   const db = getDb(c.env);
   const at = new Date().toISOString();
   const by = c.get("user").id;
-  // Stamp the reviewer's name now: reviewed_by is a user id in a different store
-  // than this table, so the name cannot be joined back later.
   const byName = (c.get("user").name ?? "").trim().slice(0, 120) || null;
-  // Claim the pending row atomically, so two approvers cannot both act on it.
   const claimed = await db
     .update(hr_leave_requests)
     .set({ status: decision === "approve" ? "APPROVED" : "REJECTED", reject_reason: decision === "reject" ? rejectReason || null : null, reviewed_by: by, reviewed_by_name: byName, reviewed_at: at, updated_at: at })
@@ -738,8 +700,6 @@ attendance.post("/leave/:id/review", async (c: Ctx) => {
   const lr = claimed.at(0) as (LrRow & { employee_id: number }) | undefined;
   if (!lr) return c.json({ error: "not_found", message: "That request is gone or already reviewed." }, 404);
   if (decision === "approve") {
-    // Stamp each day as the leave status, no times — payroll reads the status,
-    // and a leave day carries no worked hours and no short-hour dock.
     const parsed = parseLeaveRequest(lr.leave_status, lr.start_date, lr.end_date);
     const days = parsed.ok ? parsed.days : [];
     for (const d of days) {

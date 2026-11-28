@@ -1,20 +1,3 @@
-// ---------------------------------------------------------------------------
-// Mail Center — thread detail (reply + resolve/reopen + assign).
-//
-// Renders a conversation's messages. HTML bodies render inside a SANDBOXED
-// iframe (no allow-scripts); plain text renders as an escaped text node. Adds an
-// in-ERP reply composer (POST .../reply, sent via Resend) and a resolve/reopen
-// control (PATCH .../:id status).
-//
-// DUAL-MODE: this same component powers BOTH
-//   • the standalone /mail-center/:id route  (id from useParams), and
-//   • the desktop reading pane embedded inside Inbox.tsx (id passed as a prop,
-//     embedded=true to drop the page wrapper + the "Back to inbox" button).
-//
-// Attachment chips point at the authed streaming route
-// GET /api/mail-center/attachments/:id (fetched via api.fetchBlobUrl, which
-// attaches the bearer) rather than a signed URL.
-// ---------------------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
@@ -37,7 +20,6 @@ import {
   MAIL_ATTACH_MAX_COUNT,
   MAIL_ATTACH_MAX_TOTAL_BYTES,
 } from "./mail-attachments";
-// Shared with desktop Compose and the phone — one pick → read → validate rule.
 import {
   pickMailAttachments,
   attachmentPayload,
@@ -94,7 +76,7 @@ import {
   Plus,
   Paperclip,
 } from "lucide-react";
-import { fmtDateTime } from "../../vendor/shared/format";
+import { fmtDateTime } from "../../../../shared/src/vendor/shared/format";
 
 type UserOption = {
   id: number;
@@ -102,8 +84,6 @@ type UserOption = {
   name: string | null;
 };
 
-// One attachment served on a message. We resolve a blob: URL on demand via the
-// authed route (no signed URL). sizeBytes is the byte count for the "(size)" hint.
 type MailAttachment = {
   id: string;
   filename: string;
@@ -129,7 +109,6 @@ type MailMessage = {
   attachments?: MailAttachment[];
   acks?: AckState[];
   ackRequestId?: string | null;
-  /** Who in the ERP sent an outbound message. */
   sentByName?: string;
 };
 
@@ -151,7 +130,6 @@ type ThreadDetail = {
   thread: MailThread;
   readers?: ThreadReaders;
   messages: MailMessage[];
-  /** Colleagues writing a reply right now (not me). */
   replying?: ReplyingPerson[];
 };
 
@@ -178,8 +156,6 @@ function isImageAttachment(a: MailAttachment): boolean {
   return /^image\//i.test(a.contentType || "");
 }
 
-// Strip HTML to readable text as a fallback when a message has no plain-text
-// part. Never rendered as HTML — output is escaped by React as a text node.
 function htmlToText(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -214,21 +190,17 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
     [url],
   );
 
-  // Users for the Assign dropdown. Envelope is { users: [] } (see routes/users).
   const { data: usersResp } = useQuery<{ users: UserOption[] }>("/api/users",
     () => api.get("/api/users"),
     [],
   );
   const users = usersResp?.users ?? [];
-  // Label catalogue (name → colour) for chip colours + the add-label menu.
   const { data: labelCatalog } = useQuery<MailLabel[]>("/api/mail-center/labels",
     () => api.get("/api/mail-center/labels"),
     [],
   );
   const colorMap = labelColorMap(labelCatalog ?? []);
 
-  // Our mailboxes (for the reply From picker) + the current user (so the From
-  // defaults to THEIR own mailbox).
   const { data: addresses } = useQuery<MailAddress[]>("/api/mail-center/addresses",
     () => api.get("/api/mail-center/addresses"),
     [],
@@ -286,8 +258,6 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
   ).length;
   const badRecipient = firstInvalid(to) ?? firstInvalid(cc) ?? firstInvalid(bcc);
   useReplyingHeartbeat(id ?? null, replyText.trim().length > 0);
-  // The thread re-reads every 20 s while open, so a colleague's reply or
-  // "is writing" shows up without a refresh (polling, not sockets).
   useEffect(() => {
     if (!url) return;
     const t = setInterval(reload, 20_000);
@@ -444,7 +414,6 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
         to: parseRecipients(to),
         cc: parseRecipients(cc),
         bcc: parseRecipients(bcc),
-        // The newest message I have seen: a colleague's reply after it stops mine.
         afterMessageId: lastMessage?.id ?? null,
         force,
         ...(needsAck ? { needsAck: true } : {}),
@@ -594,7 +563,6 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
 
       {thread && (
         <>
-          {/* Subject header */}
           <div className="space-y-2 border-b border-border pb-3">
             <h1 className="text-xl font-semibold leading-snug text-ink">
               {thread.subject || "(no subject)"}
@@ -635,7 +603,6 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
               <ReadByLine readers={data.readers} />
             </div>
 
-            {/* Labels */}
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="inline-flex items-center gap-1 text-xs text-ink-muted">
                 <Tag className="h-3.5 w-3.5" />
@@ -687,7 +654,6 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
               </div>
             </div>
 
-            {/* Assign */}
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-1.5 text-xs text-ink-muted">
                 <UserPlus className="h-3.5 w-3.5" />
@@ -714,7 +680,6 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
             </div>
           </div>
 
-          {/* Messages */}
           <div className="space-y-3">
             {messages.map((m) => {
               const outbound = m.direction === "outbound";
@@ -794,7 +759,6 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
                                   4000,
                                 )}px`;
                             } catch {
-                              /* cross-origin guard — keep the min height */
                             }
                           }}
                         />
@@ -831,7 +795,6 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
             )}
           </div>
 
-          {/* Reply composer */}
           <div className="rounded-xl border border-accent/30 bg-surface p-4 shadow-sm">
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2">
@@ -974,7 +937,6 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
         </>
       )}
 
-      {/* Forward — reuses the compose flow (POST /compose). */}
       {thread && (
         <ComposeDialog
           open={forwardOpen}
@@ -993,10 +955,8 @@ export function MailThread({ id: idProp, embedded = false }: MailThreadProps = {
   );
 }
 
-// Default export for the lazy route.
 export default MailThread;
 
-// A toolbar button used in the detail header. `primary` paints the brand tone.
 function ToolbarButton({
   onClick,
   disabled,
@@ -1030,9 +990,6 @@ function ToolbarButton({
   );
 }
 
-// One attachment chip — resolves the authed blob: URL on mount (api.fetchBlobUrl
-// attaches the bearer; <img>/<a> can't). Image types render a thumbnail; others
-// render a download pill. While loading / on failure, a quiet disabled chip.
 function AttachmentChip({ att }: { att: MailAttachment }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -1116,7 +1073,6 @@ function AttachmentChip({ att }: { att: MailAttachment }) {
   );
 }
 
-// "Fwd: <subject>" without double-prefixing an already-forwarded subject.
 function forwardSubject(subject: string): string {
   const s = subject || "(no subject)";
   return /^fwd:/i.test(s) ? s : `Fwd: ${s}`;
@@ -1130,8 +1086,6 @@ function looksLikeHtml(s: string | undefined): boolean {
 
 const THREAD_EMAIL_HEAD = `<style>html,body{margin:0;padding:10px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;color:#1f1d1b;word-break:break-word;overflow-x:hidden}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
 
-// Build a quoted forward body from the conversation's messages (newest first),
-// each prefixed with a small header line. Plain text only — never raw HTML.
 function forwardBody(thread: MailThread, messages: MailMessage[]): string {
   const lines: string[] = ["", "---------- Forwarded message ----------"];
   const ordered = messages

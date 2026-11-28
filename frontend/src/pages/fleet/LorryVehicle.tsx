@@ -1,7 +1,3 @@
-// The Vehicle tab of a lorry record: what it can carry on a delivery run, and
-// the vehicle's own dates and purchase. Read first, Edit to change; both write
-// the lorry master (PATCH /lorries/:id) exactly as the Coverage & Fleet editors
-// do. Fleet Health keeps own-fleet lorries only, so there is no 3PL choice here.
 import { useMemo, useState } from "react";
 import {
   CAPACITY_LAYERS, CAPACITY_LAYER_LABEL, useUpdateLorry,
@@ -11,7 +7,7 @@ import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { writeFailedAs } from "../../vendor/scm/lib/mutation-error";
 import { DateField } from "../../vendor/scm/components/DateField";
-import { fmtDate, fmtSen } from "../../vendor/shared/format";
+import { fmtDate, fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { BTN_PRI, BTN_SEC, Fact, FactGrid, FleetCard, INPUT, LABEL } from "./FleetUi";
 
@@ -20,7 +16,6 @@ const numOrNull = (v: string): number | null => (v.trim() === "" || !Number.isFi
 const boxM3 = (l: number | null, w: number | null, h: number | null): number | null =>
   l != null && w != null && h != null ? Math.round(l * w * h * FT3_TO_M3 * 100) / 100 : null;
 const str = (v: number | string | null | undefined) => (v == null ? "" : String(v));
-/* Mig 0245 columns the LorryRow type does not declare. */
 const col = (l: LorryRow, key: string): string | null => {
   const v = (l as unknown as Record<string, unknown>)[key];
   return typeof v === "string" && v ? v : null;
@@ -143,8 +138,6 @@ export function PurchaseCard({ lorry }: { lorry: LorryRow }) {
   const update = useUpdateLorry();
   const [editing, setEditing] = useState(false);
   const [bad, setBad] = useState<string | null>(null);
-  /* Four DIFFERENT dates (mig 0245): a reconditioned import is registered years
-     after it was built, and a lorry can start work before its transfer clears. */
   const initial = () => ({
     model: lorry.model ?? "",
     manufactureDate: col(lorry, "manufacture_date") ?? "",
@@ -169,7 +162,6 @@ export function PurchaseCard({ lorry }: { lorry: LorryRow }) {
       registrationDate: form.registrationDate || null,
       inServiceDate: form.inServiceDate || null,
       purchaseDate: form.purchaseDate || null,
-      // Math.round: 1234.56 * 100 is 123455.99999 in floating point.
       purchasePriceSen: rm ? Math.round(Number(rm) * 100) : null,
       costPerKmSen: perKm ? Math.round(Number(perKm) * 100) : null,
     }, { onSuccess: () => setEditing(false), onError: writeFailedAs("Vehicle details were not saved") });
@@ -211,7 +203,6 @@ export function PurchaseCard({ lorry }: { lorry: LorryRow }) {
             <Field label="First day in service"><DateField fullWidth className={INPUT} value={form.inServiceDate} onChange={(iso) => set("inServiceDate", iso)} aria-label="First day in service" /></Field>
             <Field label="Purchase date"><DateField fullWidth className={INPUT} value={form.purchaseDate} onChange={(iso) => set("purchaseDate", iso)} aria-label="Purchase date" /></Field>
             <Field label="Purchase price (RM)"><input className={INPUT} inputMode="decimal" value={form.price} onChange={(e) => set("price", e.target.value)} placeholder="e.g. 128000" /></Field>
-            {/* Fuel, tyres, service, driver: whatever the company counts as running cost, per km. */}
             <Field label="Running cost per km (RM)"><input className={INPUT} inputMode="decimal" value={form.perKm} onChange={(e) => set("perKm", e.target.value)} placeholder="e.g. 0.85" /></Field>
           </div>
           {bad && <p role="alert" className="text-[13px] font-semibold text-err">{bad}</p>}

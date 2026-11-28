@@ -1,8 +1,3 @@
-// The document filename is customer-facing: it is what lands in Downloads, what
-// gets attached to a mail, and (via the named preview tab) what the browser
-// suggests on Save. It used to be scrubbed to `[A-Za-z0-9_-]`, which turned a
-// Chinese customer into a row of underscores on the file sent to that customer.
-// These pin the replacement so nobody "tidies" the regex back.
 import { describe, expect, test } from 'vitest';
 import { safeName } from './pdf-common';
 
@@ -24,8 +19,6 @@ describe('safeName', () => {
   });
 
   test('never returns something a path can break on', () => {
-    // Trailing space: Windows silently drops it. A trailing dot is fine — the
-    // caller appends ".pdf" — and keeping it is what saves "Sdn. Bhd.".
     expect(safeName('Foo   ')).toBe('Foo');
     expect(safeName('  ')).toBe('doc');
     expect(safeName('')).toBe('doc');
@@ -40,7 +33,6 @@ describe('safeName', () => {
   });
 
   test('a doc number passes through unchanged', () => {
-    // Guards the range-vs-list mistake: `[ -<...]` would eat digits and hyphens.
     expect(safeName('2990-DO-2608-006')).toBe('2990-DO-2608-006');
     expect(safeName('PO-2606-001_R2')).toBe('PO-2606-001_R2');
   });

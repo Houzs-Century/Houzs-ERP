@@ -1,15 +1,3 @@
-/* ----------------------------------------------------------------------------
-   po-line-rederive — what a purchase-order line bound to a sales-order line
-   becomes once that sales-order line has been revised.
-
-   The one derivation `reviseBoundPo` (so-revision.ts, step 12a) applies to every
-   surviving bound line when a sales-order amendment's follow-up is confirmed. It
-   lives on its own so a repair that has to put a line back where an approved
-   amendment should have left it (backend/scripts/realign-po-line-to-so-line.mjs)
-   runs THIS code, not a second copy of it.
-
-   Returns the column patch; the caller writes it. Reads only.
-   -------------------------------------------------------------------------- */
 
 import { buildVariantSummary } from '../shared';
 import { variantsForCompare } from './amendment-noop-lines';
@@ -29,7 +17,6 @@ export type RevisedSoLine = {
 
 export type PoLineRederive = {
   patch: Record<string, unknown>;
-  /** The code the line carried before, so a caller can tell a SKU move. */
   priorCode: string;
   warnings: string[];
 };
@@ -38,18 +25,14 @@ export async function rederivePoLineFromSoLine(
   sb: Sb,
   args: {
     poLineId: string;
-    /** The line's stored qty — kept when the revised SO line carries none. */
     currentQty: number | null;
     po: { po_number: string; supplier_id: string | null; company_id: number | null };
-    /** The SO's company, used only when the PO carries none. */
     soCompanyId: number | null;
     revised: RevisedSoLine;
   },
 ): Promise<PoLineRederive> {
   const { po, revised } = args;
   const warnings: string[] = [];
-  // Read the existing PO line's discount + item_code (the SKU the
-  // supplier binding is keyed on).
   const { data: existing, error: exErr } = await sb
     .from('purchase_order_items')
     .select('item_code, material_name, discount_sen, photo_urls, supplier_sku, unit_price_sen, variants')
@@ -60,20 +43,8 @@ export async function rederivePoLineFromSoLine(
   const qty = revised.qty != null ? Math.max(1, revised.qty) : Number(args.currentQty ?? 1);
   const itemGroup = revised.item_group;
   const variants = revised.variants;
-  // Re-derive the revised PO line's supplier cost from the NOW-REVISED SO
-  // line's spec (SAME cost-anchor "Create PO from SO" runs). The SKU the cost
-  // is keyed on = the revised SO line's item_code (a SPEC change may swap it),
-  // falling back to the PO line's existing item_code.
   const itemCode = (revised.item_code || '').trim()
     || String((existing as { item_code?: string } | null)?.item_code ?? '');
-  // Persist the revised SKU + name onto the PO line, not just use them for
-  // costing (docs/bugs). Before this, reviseBoundPo re-derived cost/variants
-  // but left item_code untouched, so an SO SPEC swap (e.g. an LHF->RHF sofa
-  // swap that swaps the code) left the PO ordering -- and PRINTING (the PDF
-  // derives the sofa orientation from item_code) -- the OLD SKU, and its
-  // so_drift never cleared. material_name follows the SO description like the
-  // convert / ADD paths, never downgrading to the bare code when the revised
-  // SO line has no description.
   const itemName =
     (revised.description || '').trim()
     || String((existing as { material_name?: string } | null)?.material_name ?? '').trim()

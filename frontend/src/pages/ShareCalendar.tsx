@@ -30,10 +30,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { correlatedFetch } from "../lib/requestCorrelation";
-import { fmtDate, fmtDateTime } from "../vendor/shared/format";
+import { fmtDate, fmtDateTime } from "../../../shared/src/vendor/shared/format";
 import { formatCurrency } from "../lib/utils";
 import { todayMyt } from "../vendor/scm/lib/dates";
-import { PDF_COMPRESS } from "../vendor/scm/lib/pdf-options";
+import { PDF_COMPRESS } from "../../../shared/src/vendor/scm/lib/pdf-options";
 
 export type ShareMode = "contractor" | "brand";
 
@@ -48,8 +48,6 @@ type ShareEvent = {
   endDate: string | null;
   name: string | null;
 };
-/** `exportScope` (contractor links): what one press of Export covers — the month
- *  on screen, or the whole year for the contractors the office marked so. */
 type ShareData = { contractor?: string; brand?: string; exportScope?: "month" | "year"; events: ShareEvent[] };
 type ShareFile = { fileId: string; fileName: string; contentType: string | null; sizeBytes: number | null };
 /** A brand gets both; a contractor's route answers size only (owner 2026-09-09). */
@@ -77,7 +75,6 @@ type PlanEvent = {
   files: ShareFile[];
 };
 type PlanManifest = { brand: string; generatedAt: string; events: PlanEvent[] };
-/** One page of the floorplan PDF: the event, the image and its pixel size. */
 type PlanPage = { ev: PlanEvent; format: "JPEG" | "PNG" | "WEBP"; buf: ArrayBuffer; size: { w: number; h: number } | null };
 
 const EXPORT_FAIL = "Could not prepare the export just now. Please try again in a moment.";
@@ -94,42 +91,32 @@ const PLAN_LABEL: Record<ShareMode, string> = {
   contractor: "Unfilled floorplan",
   brand: "Display floorplan",
 };
-// Polling is the realtime mechanism here (no WebSockets); one minute is the
-// cadence the ERP's own lists use.
 const POLL_MS = 60_000;
 const DAY = 86400000;
 
-/** Parse the date part of a 'YYYY-MM-DD[...]' string to a local Date, or null. */
 function parseDay(s: string | null): Date | null {
   if (!s) return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
   if (!m) return null;
   return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 }
-/** Local-midnight epoch ms, so day arithmetic is exact across DST. */
 function dayNum(d: Date): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
-/** The Monday-first week containing `d`. */
 function weekOf(d: Date): Date[] {
   const start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const dow = (start.getDay() + 6) % 7; // Mon=0 … Sun=6
+  const dow = (start.getDay() + 6) % 7;
   start.setDate(start.getDate() - dow);
   return Array.from({ length: 7 }, (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + i));
 }
-/** 6 Monday-first weeks (42 cells) covering the month. */
 function monthGrid(year: number, month: number): Date[] {
   const first = weekOf(new Date(year, month, 1))[0];
   return Array.from({ length: 42 }, (_, i) => new Date(first.getFullYear(), first.getMonth(), first.getDate() + i));
 }
 
 type EventRange = { e: ShareEvent; start: number; end: number };
-/** One event's bar within a single week row (its label shown once, spanning its days). */
 type Seg = { e: ShareEvent; startCol: number; span: number; lane: number; roundL: boolean; roundR: boolean };
 
-// Lay a week's events out as SPANNING bars — one bar per event across the days
-// it covers, its details shown ONCE — packed into lanes so overlapping events
-// stack instead of repeating on every day.
 function layoutWeek(week: Date[], ranges: EventRange[]): { segs: Seg[]; laneCount: number } {
   const weekStart = dayNum(week[0]);
   const weekEnd = dayNum(week[6]);
@@ -177,20 +164,16 @@ function fileKind(f: ShareFile): "image" | "pdf" | "other" {
   return "other";
 }
 
-/** The bare "YYYY-MM-DD" of a stored date, as the ERP's project export writes it. */
 function isoDay(s: string | null): string {
   return s ? s.slice(0, 10) : "";
 }
 
-/** "16/08/2026" or "16/08/2026 – 18/08/2026". */
 function fmtSpan(start: string | null, end: string | null): string {
   const s = start ? fmtDate(start) : "";
   const e = end ? fmtDate(end) : "";
   return e && e !== s ? `${s} – ${e}` : s;
 }
 
-/** The jsPDF image format for a floorplan file, or null when it is not an image
- *  jsPDF can place (a PDF upload, say) — such a file is skipped, not guessed. */
 function pdfImageFormat(f: ShareFile): PlanPage["format"] | null {
   const t = (f.contentType ?? "").toLowerCase();
   if (t === "image/jpeg" || t === "image/jpg" || /\.jpe?g$/i.test(f.fileName)) return "JPEG";
@@ -199,8 +182,6 @@ function pdfImageFormat(f: ShareFile): PlanPage["format"] | null {
   return null;
 }
 
-/** Pixel size, so the page can take the image's orientation and keep its
- *  aspect; null where the browser cannot decode it (the page then assumes 4:3). */
 async function imageSize(buf: ArrayBuffer, contentType: string): Promise<{ w: number; h: number } | null> {
   try {
     if (typeof createImageBitmap !== "function") return null;
@@ -213,8 +194,6 @@ async function imageSize(buf: ArrayBuffer, contentType: string): Promise<{ w: nu
   }
 }
 
-/** One PDF page: event title and dates on top, the floorplan large below,
- *  aspect kept, centred in what is left of the page. */
 function drawPlanPage(doc: import("jspdf").jsPDF, p: PlanPage): void {
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
@@ -243,7 +222,6 @@ function drawPlanPage(doc: import("jspdf").jsPDF, p: PlanPage): void {
 }
 
 export function ShareCalendar({ mode }: { mode: ShareMode }) {
-  // Read from the location — this surface is chosen before any <Routes> exists.
   const token = window.location.pathname.split("/")[2] || "";
   const base = useMemo(
     () => `${apiBase()}/api/public/${API_SEGMENT[mode]}/${encodeURIComponent(token)}`,
@@ -254,14 +232,12 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
   const [error, setError] = useState<string | null>(null);
   const today = useMemo(() => parseDay(todayMyt()) ?? new Date(), []);
   const [cursor, setCursor] = useState<{ y: number; m: number }>({ y: today.getFullYear(), m: today.getMonth() });
-  // The event whose panel is open, and what the server said about it.
   const [open, setOpen] = useState<ShareEvent | null>(null);
   const [files, setFiles] = useState<ShareFile[] | null>(null);
   const [figures, setFigures] = useState<ShareFigures | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
-  // The brand link's Export menu (Event List / Display Floorplan).
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -273,8 +249,6 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
     return () => document.removeEventListener("mousedown", onDown);
   }, [menuOpen]);
 
-  // `silent` = the minute poll: never flash the loading screen or wipe the grid
-  // over a blip; a failed poll keeps the last good schedule on screen.
   const load = useCallback(
     async (silent: boolean) => {
       if (!silent) {
@@ -317,8 +291,6 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
 
   useEffect(() => {
     if (!open) return;
-    // A ref-shaped flag, not a `let`: the closure reads it after an await, and a
-    // plain boolean is narrowed to its initial value there.
     const live = { current: true };
     setFiles(null);
     setFigures(null);
@@ -372,8 +344,6 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
     return out;
   }, [cells]);
   const todayKey = dayNum(today);
-  // Derived, not literal arrays, so the month/weekday names have one home in the
-  // platform instead of a duplicated-decision copy of the ERP's own lists.
   const monthLabel = new Date(cursor.y, cursor.m, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const weekdayNames = weeks[0].map((d) => d.toLocaleDateString("en-US", { weekday: "short" }));
 
@@ -431,7 +401,6 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
       }
       const party = body.brand ?? body.contractor ?? "";
       if (mode === "brand") {
-        // Sales is sensitive: the sheet says whose it is and when it was cut.
         aoa.push([], [`Brand: ${party}`], [`Generated: ${fmtDateTime(body.generatedAt)}`], ["Confidential"]);
       }
       const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -445,10 +414,6 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
     }
   }
 
-  // PDF (brand links only): the server lists the month's display floorplans,
-  // already scoped to this brand; the browser fetches each image through the
-  // same per-event route the panel's View button uses and lays one per page,
-  // oldest event first. Nothing from the event list goes in here.
   async function exportFloorplanPdf() {
     setExporting(true);
     setExportError(null);
@@ -648,8 +613,6 @@ export function ShareCalendar({ mode }: { mode: ShareMode }) {
   );
 }
 
-/** The only detail a link holder can open. Contractor: the unfilled floorplan.
- *  Brand: the display floorplan plus its own size and total sales. */
 function EventPanel({
   mode,
   event,

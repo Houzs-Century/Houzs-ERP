@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { formatPhone } from "../vendor/shared/phone";
+import { formatPhone } from "../../../shared/src/vendor/shared/phone";
 import { type Any, cellEllipsis, get } from "./assr-case-fields";
 import "./mobile.css";
 
@@ -10,13 +10,6 @@ const MUTED = "#767b6e";
 const GREY = "#9aa093";
 const DIM = "#e3e6e0";
 
-/* SO typeahead — mirrors desktop CreatePanel: GET /api/assr/search-so?q=…
-   returns { results: [{ doc_no, ref, debtor_name, phone, doc_date,
-   sales_agent }] } (min 2 chars server-side). Debounced client-side.
-
-   Lives here rather than in MobileServiceCase because that screen is AT its
-   recorded size ceiling; both the create sheet and the detail's SO field
-   import it. */
 export type SoHit = Any;
 
 export function useSoSearch(q: string): { results: SoHit[]; loading: boolean; error: string | null } {
@@ -35,11 +28,6 @@ export function useSoSearch(q: string): { results: SoHit[]; loading: boolean; er
   };
 }
 
-/* SO input with the create-sheet's typeahead (Nick 2026-07-14 — editing
-   the SO must search like the create form). Picking a hit fills the
-   draft; EditableAcc's Save then PATCHes doc_no and the backend
-   re-matches customer info. Unknown values (post-disconnect SOs) still
-   save as typed. */
 export function SoSearchField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [focused, setFocused] = useState(false);
   const { results, loading } = useSoSearch(focused ? value : "");

@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// /lorries — CRUD for the lorries table (TMS fleet master, migration 0053).
-// Cloned from drivers.ts. is_internal is the In-house / Outsource marker
-// (Houzs parity); the list accepts a ?fleet=internal|outsourced filter.
-//
-// Houzs adaptation of 2990's apps/api/src/routes/lorries.ts — same plumbing as
-// the sibling SCM routes (supabaseAuth bridge + scm-scoped client via
-// c.get('supabase')). scm.lorries already exists (migration 0053). Mounted at
-// '/lorries' in scm/index.ts.
-// ----------------------------------------------------------------------------
 
 import { idOrNull, lorryWarehouseColumns } from '../lib/lorry-warehouses';
 import { Hono } from 'hono';
@@ -16,63 +6,38 @@ import type { Env, Variables } from '../env';
 import { activeCompanyId } from '../lib/companyScope';
 import { normalizePlate } from '../lib/plate-normalize';
 import { carrierLinkForInsert, resolveCarrierLink } from '../lib/threepl-link';
-import { costSen, kmFromFixes, myDayWindow, type Fix } from '../lib/lorry-km';
+import { costSen, kmFromFixes, myDayWindow, oneTracker, type Fix } from '../lib/lorry-km';
+import { loadDrops } from '../lib/lorry-drops';
+import { daysInRange, kmForDay, KM_MAX_DAYS } from '../lib/lorry-km-range';
+import { mapBounded } from '../lib/concurrency';
 import { paginateAll } from '../lib/paginate-all';
 import { roadTrack, type ChunkCache, type Point } from '../lib/gps-road-track';
 
 export const lorries = new Hono<{ Bindings: Env; Variables: Variables }>();
 lorries.use('*', supabaseAuth);
 
-// Migration 0121 added the purchase record + the three compliance expiries.
-// They are NOT a revival of the old public.lorries columns (mig 0015): that
-// table was DROPPED by mig 0055, which explicitly discarded model /
-// road_tax_expiry / insurance_expiry / puspakom_expiry on the way out. These
-// are new columns on the table this route actually reads.
-//
-// No extra finance gate on purchase_price_sen, deliberately and by precedent:
-// this router is already behind scmAreaGuard('scm.transportation.drivers'), and
-// the sibling lorry-capacity route serves delivery revenue (revenue_sen) to
-// that same audience. Fleet money is visible to the fleet audience. If that
-// ruling ever changes it changes for both routes together, not just this one.
 const COLS = [
   'id', 'plate', 'type', 'is_internal', 'warehouse_id', 'warehouse_ids', 'capacity_m3', 'capacity_kg',
   'active', 'notes', 'created_at', 'updated_at',
   'model', 'purchase_date', 'purchase_price_sen',
   'purchase_invoice_key', 'purchase_invoice_name', 'purchase_invoice_mime', 'purchase_invoice_size',
   'road_tax_expiry', 'insurance_expiry', 'puspakom_expiry',
-  // Fleet A1 (mig 0205) — per-lorry delivery capacity ceilings the auto-propose
-  // packer reads. NULL max_* => the packer uses its config default (10 sets /
-  // RM30k). capacity_layer picks which ceiling(s) bind: SETS | REVENUE | BOTH.
   'max_sets', 'max_revenue_sen', 'capacity_layer',
-  // WS3 (mig 0209) — cargo-box dimensions (ft); capacity_m3 is derived from them.
   'length_ft', 'width_ft', 'height_ft',
-  // WS4a (mig 0210) — the 3PL carrier company this lorry belongs to (NULL = own
-  // fleet / not attached).
   'threepl_company_id',
-  /* Mig 0245 — the three dates a lorry's life is measured from, none of which
-     is purchase_date: when it was BUILT, when it was REGISTERED with JPJ (what
-     the road-tax / insurance / PUSPAKOM cycles anchor to), and the first day it
-     worked FOR US (the denominator for cost-per-day). */
   'manufacture_date', 'registration_date', 'in_service_date',
-  // Own-lorry running cost (km x this); NULL = not set.
   'cost_per_km_sen',
-  // The crew usually on it (mig 20261107T2000).
   'usual_driver_id', 'usual_helper_id',
 ].join(', ');
 
 const CAPACITY_LAYERS = new Set(['SETS', 'REVENUE', 'BOTH']);
 
-// WS3: derive the box capacity in m3 from L x W x H (ft). ft3 -> m3 = 0.0283168.
-// Returns null unless all three dimensions are present, so a partial box never
-// fabricates a capacity. Rounded to 2 dp to match the NUMERIC display.
 const FT3_TO_M3 = 0.0283168;
 export function boxCapacityM3(len: number | null, wid: number | null, hei: number | null): number | null {
   if (len == null || wid == null || hei == null) return null;
   return Math.round(len * wid * hei * FT3_TO_M3 * 100) / 100;
 }
 
-/** An integer >= 0 or null (a capacity ceiling). Rejects a negative for a clean
- *  field-named 400 rather than a raw constraint 500. */
 function toCapacityOrNull(v: unknown): { ok: true; value: number | null } | { ok: false } {
   if (v === null || v === undefined || v === '') return { ok: true, value: null };
   const n = Number(v);
@@ -80,26 +45,18 @@ function toCapacityOrNull(v: unknown): { ok: true; value: number | null } | { ok
   return { ok: true, value: n };
 }
 
-// Mirrors the lorry_type enum in migration 0053. Reject anything else so a bad
-// client can't write a value Postgres would 22P02 on.
 const LORRY_TYPES = new Set([
   'LORRY_10FT', 'LORRY_14FT', 'LORRY_17FT', 'LORRY_21FT', 'VAN', 'OUTSOURCE', 'OTHER',
 ]);
 
-/** numeric(.,.) capacity — accept a number/string, store null when blank/invalid. */
 function toNumericOrNull(v: unknown): number | null {
   if (v === undefined || v === null || v === '') return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
 
-/* A `date` column — accept YYYY-MM-DD, store null when blank. Anything that is
-   not that exact shape is REJECTED rather than coerced: these are compliance
-   dates, and a silently-mangled road-tax expiry is worse than a 400. Postgres
-   would 22007 on garbage anyway; this turns that 500 into an honest 400. */
 const warehouseColumns = lorryWarehouseColumns;
 
-/* usualDriverId / usualHelperId: undefined = untouched, else a uuid or a clear. */
 function crewColumns(body: Record<string, unknown>): { ok: true; cols: Record<string, string | null> } | { ok: false; field: string } {
   const cols: Record<string, string | null> = {};
   for (const [wire, col] of [['usualDriverId', 'usual_driver_id'], ['usualHelperId', 'usual_helper_id']] as const) {
@@ -118,9 +75,6 @@ function toDateOrNull(v: unknown): { ok: true; value: string | null } | { ok: fa
   return ISO_DATE.test(s) ? { ok: true, value: s } : { ok: false };
 }
 
-/* An integer cents / km field. Rejects a negative (the table CHECKs cost_sen
-   >= 0 and odometer_km >= 0 — reject here so the operator gets a field-named
-   400 instead of a raw constraint-violation 500). */
 function toIntOrNull(v: unknown): { ok: true; value: number | null } | { ok: false } {
   if (v === null || v === undefined || v === '') return { ok: true, value: null };
   const n = Number(v);
@@ -128,11 +82,6 @@ function toIntOrNull(v: unknown): { ok: true; value: number | null } | { ok: fal
   return { ok: true, value: n };
 }
 
-/* The date columns a client may set on a lorry, and the wire name each maps
-   from. Kept as an explicit list rather than a generic loop-over-body: this
-   repo's BUG-HISTORY logs a generic client-field map as the exact mechanism
-   that made a server-owned column client-writable (the paid_sen back-door,
-   2026-07-16). Every entry here is genuine operator-entered data. */
 const LORRY_DATE_FIELDS: [wire: string, col: string][] = [
   ['purchaseDate', 'purchase_date'],
   ['manufactureDate', 'manufacture_date'],
@@ -145,14 +94,12 @@ const LORRY_DATE_FIELDS: [wire: string, col: string][] = [
 
 lorries.get('/', async (c) => {
   const sb = c.get('supabase');
-  const onlyActive = c.req.query('active') !== 'false';   // default: active only
-  const fleet = c.req.query('fleet');                     // 'internal' | 'outsourced' | undefined (=all)
+  const onlyActive = c.req.query('active') !== 'false';
+  const fleet = c.req.query('fleet');
   let q = sb.from('lorries').select(COLS).order('plate');
   if (onlyActive) q = q.eq('active', true);
   if (fleet === 'internal') q = q.eq('is_internal', true);
   if (fleet === 'outsourced') q = q.eq('is_internal', false);
-  // UNIFIED FLEET: one shared lorry fleet across ALL companies (see drivers.ts).
-  // Not scoped by company — every company's TMS page shows the same lorries.
   const { data, error } = await q;
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ lorries: data ?? [] });
@@ -161,10 +108,6 @@ lorries.get('/', async (c) => {
 lorries.post('/', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  /* Plates are stored CANONICAL (letters+digits, uppercase). `AKF 8100` and
-     `AKF8100` were two rows for one lorry in production because the UNIQUE index
-     is over the raw string - normalising on the way in is what stops the next
-     one. See scm/lib/plate-normalize.ts. */
   const plate = normalizePlate(body.plate as string | null | undefined);
   if (!plate) return c.json({ error: 'plate_required' }, 400);
   const type = String(body.type ?? 'OTHER').trim();
@@ -189,13 +132,10 @@ lorries.post('/', async (c) => {
     ? 'SETS' : String(body.capacityLayer).toUpperCase();
   if (!CAPACITY_LAYERS.has(layerRaw)) return c.json({ error: 'invalid_layer', reason: 'capacityLayer must be SETS, REVENUE or BOTH' }, 400);
 
-  // WS3: box dimensions -> derived capacity_m3. When all three dims are given the
-  // derived value wins; otherwise fall back to an explicit capacityM3.
   const lengthFt = toNumericOrNull(body.lengthFt);
   const widthFt = toNumericOrNull(body.widthFt);
   const heightFt = toNumericOrNull(body.heightFt);
   const derivedM3 = boxCapacityM3(lengthFt, widthFt, heightFt);
-  /* A lorry registered under a 3PL carrier is outsource, whatever was ticked. */
   const link = carrierLinkForInsert({
     threeplCompanyId: body.threeplCompanyId as string | null | undefined,
     ownFlag: body.isInternal === undefined ? undefined : body.isInternal !== false,
@@ -227,20 +167,9 @@ lorries.post('/', async (c) => {
     max_revenue_sen: maxRevenue.value,
     capacity_layer: layerRaw,
     ...dates,
-    // The purchase invoice is NOT settable here — it arrives as a file via
-    // PUT /lorries/:id/purchase-invoice, so the R2 key is server-minted and a
-    // client can never point the row at an arbitrary bucket key.
   }).select(COLS).single();
   if (error) {
     if (error.code === '23505') return c.json({ error: 'duplicate_plate' }, 409);
-    /* DEAD BRANCH -- here and at EVERY other 42501 site in this file. 42501 is
-       Postgres permission-denied, i.e. RLS, and RLS cannot fire on this path: mig
-       0061 enabled RLS on every scm table with NO policies, and the SCM client is
-       the SERVICE-ROLE client (scm/middleware/auth.ts:93 -> db/supabase.ts
-       getSupabaseService), which bypasses RLS by design. No scm function RAISEs
-       42501 either -- the live tree's only ERRCODE is 22023. Do NOT read this as a
-       permission check and do NOT treat it as scoping: the only boundary is this
-       route's own predicate. (docs/audit-2026-08-13-ledger.md K1) */
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message }, 403);
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
@@ -263,7 +192,7 @@ lorries.patch('/:id', async (c) => {
 
   const updates: Record<string, unknown> = {};
   if (body.plate !== undefined) {
-    const plate = normalizePlate(body.plate as string | null | undefined);   // canonical on the way in - see POST
+    const plate = normalizePlate(body.plate as string | null | undefined);
     if (!plate) return c.json({ error: 'plate_required' }, 400);
     updates.plate = plate;
   }
@@ -278,9 +207,6 @@ lorries.patch('/:id', async (c) => {
   Object.assign(updates, crew.cols);
   if (body.capacityM3 !== undefined) updates.capacity_m3 = toNumericOrNull(body.capacityM3);
   if (body.capacityKg !== undefined) updates.capacity_kg = toNumericOrNull(body.capacityKg);
-  // WS3: box dimensions (ft). When the edit carries all three, capacity_m3 is
-  // re-derived from them (the edit form always sends the trio together), so the
-  // stored capacity stays in sync with the box the user typed.
   if (body.lengthFt !== undefined) updates.length_ft = toNumericOrNull(body.lengthFt);
   if (body.widthFt !== undefined) updates.width_ft = toNumericOrNull(body.widthFt);
   if (body.heightFt !== undefined) updates.height_ft = toNumericOrNull(body.heightFt);
@@ -346,11 +272,6 @@ lorries.patch('/:id', async (c) => {
     if (!CAPACITY_LAYERS.has(layer)) return c.json({ error: 'invalid_layer', reason: 'capacityLayer must be SETS, REVENUE or BOTH' }, 400);
     updates.capacity_layer = layer;
   }
-  // purchase_invoice_* are server-owned (minted by the upload route). NOT in
-  // this map on purpose — a client-writable R2 key would let any caller point a
-  // lorry row at another tenant's object, and all four R2 bindings share ONE
-  // physical bucket (wrangler.toml:72-102), so the key IS the only boundary.
-  // Touch updated_at on any edit (the master has an updated_at column).
   if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
   updates.updated_at = new Date().toISOString();
 
@@ -386,24 +307,16 @@ lorries.delete('/:id', async (c) => {
   return c.json({ ok: true });
 });
 
-// DEV-42: each lorry's latest Velocity fix in the last 24 h (scm/lib/velocity-poll.ts
-// writes them every 5 min). Unified fleet like GET / — not scoped by company.
 export type LatestFix = {
   lorry_id: string; lat: number; lng: number; speed_kmh: number | null; heading: number | null;
   ignition: boolean | null; street: string | null; recorded_at: string; received_at: string | null;
 };
 
-/* Newest fix per lorry since `since`. PAGED: a moving lorry writes 12 fixes an
-   hour, so the newest 1,000 rows (all one plain select returns) covered only the
-   last few hours of a 4+ lorry fleet, and a lorry parked since the morning
-   silently dropped off the map. `truncated` = more than 50,000 fixes in the
-   window (about 170 lorries), reported, not hidden. */
 export async function latestFixPerLorry(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scm-scoped supabase-js client
   sb: any,
   since: string,
 ): Promise<{ data: LatestFix[]; error: string | null; truncated: boolean }> {
-  // ponytail: reads 24 h of rows (288 per tracked lorry); a DISTINCT ON view if the fleet grows large.
   const { data, error, truncated } = await paginateAll<LatestFix>((f, t) => sb.from('lorry_positions')
     .select('lorry_id, lat, lng, speed_kmh, heading, ignition, street, recorded_at, received_at')
     .gte('recorded_at', since)
@@ -432,57 +345,69 @@ lorries.get('/positions/latest', async (c) => {
   return c.json({ positions });
 });
 
-// Own-lorry running cost for one Malaysia day: km from the Velocity fixes x
-// cost_per_km_sen. Unified fleet like /positions/latest. Fixes exist from
-// 15 Oct 2026 only (the poller's start), so earlier days return no rows.
 lorries.get('/km-cost', async (c) => {
   const date = c.req.query('date') ?? new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
   const day = ISO_DATE.test(date) ? myDayWindow(date) : null;
   if (!day) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
-  const { from, to } = day;
   const sb = c.get('supabase');
-  // ~288 fixes per lorry per day, so this is several pages past the 1000-row cap.
-  const { data, error } = await paginateAll<Fix & { lorry_id: string }>((f, t) => sb.from('lorry_positions')
-    .select('lorry_id, lat, lng, recorded_at')
-    .gte('recorded_at', from).lt('recorded_at', to)
-    .order('recorded_at').order('id')
-    .range(f, t));
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const byLorry = new Map<string, Fix[]>();
-  for (const r of data ?? []) {
-    const list = byLorry.get(r.lorry_id) ?? [];
-    list.push(r);
-    byLorry.set(r.lorry_id, list);
-  }
-  if (!byLorry.size) return c.json({ date, lorries: [] });
+  const d = await kmForDay(sb, date);
+  if (d.error) return c.json({ error: 'load_failed', reason: d.error }, 500);
+  if (d.truncated) return c.json({ error: 'too_many_fixes', reason: `Too many GPS fixes on ${date} to read in full.` }, 500);
+  if (!d.km.size) return c.json({ date, lorries: [] });
   const { data: rows, error: lErr } = await sb.from('lorries')
-    .select('id, plate, cost_per_km_sen').in('id', [...byLorry.keys()]);
+    .select('id, plate, cost_per_km_sen').in('id', [...d.km.keys()]);
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
   const out = rows.map((l) => {
-    const km = kmFromFixes(byLorry.get(l.id as string) ?? []);
+    const km = d.km.get(l.id as string) ?? 0;
     const rate = (l.cost_per_km_sen ?? null) as number | null;
     return { lorry_id: l.id as string, plate: l.plate as string, km, cost_per_km_sen: rate, cost_sen: costSen(km, rate) };
   }).sort((a, b) => a.plate.localeCompare(b.plate));
   return c.json({ date, lorries: out });
 });
 
-// One lorry's driven track for a Malaysia day — its Velocity fixes in time order
-// (Fleet Health's lorry page draws them as the route it actually drove), plus the
-// km they add up to. Unified fleet like /positions/latest.
+lorries.get('/km-daily', async (c) => {
+  // company-scope: UNIFIED FLEET — one shared fleet across all companies (lorries.ts:132), same as /km-cost.
+  const from = c.req.query('from') ?? '';
+  const to = c.req.query('to') ?? '';
+  const days = ISO_DATE.test(from) && ISO_DATE.test(to) ? daysInRange(from, to) : [];
+  if (!days.length || days.some((d) => !myDayWindow(d))) return c.json({ error: 'invalid_range', reason: 'from and to must be real YYYY-MM-DD dates, from <= to' }, 400);
+  if (days.length > KM_MAX_DAYS) return c.json({ error: 'range_too_long', reason: `at most ${KM_MAX_DAYS} days` }, 400);
+  const sb = c.get('supabase');
+  const perDay = await mapBounded(days, 4, (day) => kmForDay(sb, day));
+  for (let i = 0; i < perDay.length; i++) {
+    const d = perDay[i]!;
+    if (d.error) return c.json({ error: 'load_failed', reason: d.error }, 500);
+    if (d.truncated) return c.json({ error: 'too_many_fixes', reason: `Too many GPS fixes on ${days[i]} to read in full.` }, 500);
+  }
+  const ids = [...new Set(perDay.flatMap((d) => [...d.km.keys()]))];
+  if (!ids.length) return c.json({ days, lorries: [] });
+  const { data: rows, error } = await sb.from('lorries').select('id, plate').in('id', ids);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const out = rows.map((l) => ({
+    id: l.id as string,
+    plate: l.plate as string,
+    km: perDay.map((d) => d.km.get(l.id as string) ?? null),
+    odoKm: perDay.map((d) => d.odoKm.get(l.id as string) ?? null),
+  }))
+    .sort((a, b) => a.plate.localeCompare(b.plate));
+  return c.json({ days, lorries: out });
+});
+
 lorries.get('/:id/track', async (c) => {
   // company-scope: UNIFIED FLEET — one shared fleet across all companies (lorries.ts:132), same as /positions/latest and /km-cost.
   const date = c.req.query('date') ?? new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
   const day = ISO_DATE.test(date) ? myDayWindow(date) : null;
   if (!day) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
-  const { data, error } = await paginateAll<Fix & { speed_kmh: number | null; street: string | null }>((f, t) => c.get('supabase').from('lorry_positions')
-    .select('lat, lng, recorded_at, speed_kmh, street')
+  const { data, error } = await paginateAll<Fix & { device_id: string | null; speed_kmh: number | null; street: string | null }>((f, t) => c.get('supabase').from('lorry_positions')
+    .select('device_id, lat, lng, recorded_at, speed_kmh, street')
     .eq('lorry_id', c.req.param('id'))
     .gte('recorded_at', day.from).lt('recorded_at', day.to)
     .order('recorded_at').order('id')
     .range(f, t));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const fixes = data ?? [];
-  return c.json({ date, km: kmFromFixes(fixes), fixes });
+  const fixes = oneTracker(data ?? []).map(({ device_id: _d, ...f }) => f);
+  const { drops, error: dErr } = await loadDrops(c.get('supabase'), c, c.req.param('id'), date);
+  return c.json({ date, km: kmFromFixes(fixes), fixes, drops, dropsError: dErr });
 });
 
 // The same day's fixes drawn along the roads (owner 2026-11-10), for the live map and
@@ -505,7 +430,7 @@ function edgeChunkCache(origin: string): ChunkCache {
         await caches.default.put(url(key), new Response(JSON.stringify(road), {
           headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${ROAD_CACHE_DAYS * 86_400}` },
         }));
-      } catch { /* best effort: a miss only costs one more Directions call */ }
+      } catch { }
     },
   };
 }
@@ -515,14 +440,14 @@ lorries.get('/:id/track/road', async (c) => {
   const date = c.req.query('date') ?? new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
   const day = ISO_DATE.test(date) ? myDayWindow(date) : null;
   if (!day) return c.json({ error: 'invalid_date', reason: 'date must be YYYY-MM-DD' }, 400);
-  const { data, error } = await paginateAll<Fix>((f, t) => c.get('supabase').from('lorry_positions')
-    .select('lat, lng, recorded_at')
+  const { data, error } = await paginateAll<Fix & { device_id: string | null }>((f, t) => c.get('supabase').from('lorry_positions')
+    .select('device_id, lat, lng, recorded_at')
     .eq('lorry_id', c.req.param('id'))
     .gte('recorded_at', day.from).lt('recorded_at', day.to)
     .order('recorded_at').order('id')
     .range(f, t));
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const track = await roadTrack(c.env, data ?? [], edgeChunkCache(new URL(c.req.url).origin));
+  const track = await roadTrack(c.env, oneTracker(data ?? []), edgeChunkCache(new URL(c.req.url).origin));
   return c.json({ date, ...track });
 });
 

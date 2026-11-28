@@ -1,15 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { nextCode, isMintedShape, CODE_PREFIX } from './fleet-code-mint';
 
-/**
- * The minter has to survive what hand-typed codes already left behind.
- *
- * Production, 2026-08-02: DRV-001..DRV-007 alongside DRV-05, DRV-06, DRV-07,
- * DRV-08, DRV-09 AND DRV-050 — two numbering schemes in one table, with the
- * same driver entered three times. A minter that only understood its own
- * output would read DRV-050 as unparseable, mint DRV-001, and collide with a
- * row that has been there for months.
- */
 
 describe('nextCode', () => {
   it('starts at 001 on an empty roster', () => {
@@ -17,7 +8,6 @@ describe('nextCode', () => {
   });
 
   it('reads BOTH padding schemes and takes the real highest', () => {
-    // The exact live data: DRV-05 is 5, DRV-050 is 50. Next is 51.
     const live = ['DRV-001', 'DRV-002', 'DRV-003', 'DRV-004', 'DRV-005', 'DRV-006', 'DRV-007',
                   'DRV-05', 'DRV-050', 'DRV-06', 'DRV-07', 'DRV-08', 'DRV-09'];
     expect(nextCode('DRV', live)).toBe('DRV-051');
@@ -46,8 +36,6 @@ describe('nextCode', () => {
   });
 
   it('refuses to be pushed past a safe integer by a silly code', () => {
-    // 'DRV-99999999999999999999' parses to a non-safe number; it must be
-    // ignored rather than producing a nonsense (or NaN) successor.
     expect(nextCode('DRV', ['DRV-99999999999999999999', 'DRV-004'])).toBe('DRV-005');
   });
 });
@@ -65,8 +53,6 @@ describe('the four-wide prefixes (mig 0248)', () => {
     expect(nextCode(CODE_PREFIX.WORKSHOP, [])).toBe('WS-001');
   });
   it('reads a differently-padded existing code rather than restarting', () => {
-    // The parser has always been padding-blind; this proves widening the OUTPUT
-    // did not change that, so a hand-made WO-7 cannot reset the register.
     expect(nextCode(CODE_PREFIX.WORK_ORDER, ['WO-7'])).toBe('WO-0008');
   });
   it('past the pad width the number simply gets longer', () => {

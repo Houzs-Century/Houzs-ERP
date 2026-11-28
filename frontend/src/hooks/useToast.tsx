@@ -22,8 +22,6 @@ const ToastContext = createContext<ToastContextValue | null>(null);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
-  // A dismiss timer outliving the provider would set state after unmount (a
-  // test's torn-down window: "window is not defined"), so unmount clears them.
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   useEffect(() => {
     const pending = timers.current;
@@ -33,7 +31,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const show = useCallback((kind: ToastKind, message: string) => {
     const id = Date.now() + Math.random();
     setItems((prev) => [...prev, { id, kind, message }]);
-    // Errors hang around a touch longer so users can read them.
     const ttl = kind === "error" ? 5000 : 3000;
     const timer = setTimeout(() => {
       timers.current.delete(timer);
@@ -50,9 +47,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     warning: (m) => show("warning", m),
   };
 
-  // Surface every 403 as a toast. Some callers also catch + toast the
-  // raw "403: …" error themselves, so we dedupe identical messages
-  // inside a 1.5s window to avoid the same denial showing twice.
   useEffect(() => {
     let last = "";
     let lastAt = 0;
@@ -68,9 +62,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      {/* Top-center stack — slides in from above. Pinned to top so
-          it doesn't collide with floating action bars or the PWA
-          install banner pinned to the bottom. */}
       <div
         className="pointer-events-none fixed left-1/2 top-4 z-[200] flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-3 sm:top-6"
         aria-live="polite"

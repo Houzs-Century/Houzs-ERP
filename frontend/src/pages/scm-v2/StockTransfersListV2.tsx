@@ -1,7 +1,3 @@
-// StockTransfersListV2 — Theme C redesign of the Stock Transfers listing.
-// Stock movement doc: qty moves warehouse-to-warehouse. Atomic (POSTED on
-// create), so filter buckets collapse to Posted / Cancelled only. Not a
-// money doc — the framing is line-count + warehouse pairings.
 
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -31,15 +27,13 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { cancelledDocNoClass, cancelledRowClass } from "../../lib/scm";
-import { fmtDate } from "../../vendor/shared/format";
+import { fmtDate } from "../../../../shared/src/vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
-import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
+import { withStatusLabels } from "../../../../shared/src/vendor/scm/lib/status-pill";
 import { stockTransferRowMenu } from "./row-menus";
 
 type StatusTab = "all" | "posted" | "cancelled";
 
-/* Code first, then name — the one warehouse rule (vendor/scm/lib/warehouse-label.ts).
-   The raw id stays as the last resort so an unresolved embed still says something. */
 const fromWarehouseOf = (r: StockTransferRow): string =>
   warehouseLabel(r.from_warehouse) || r.from_warehouse_id || "—";
 const toWarehouseOf = (r: StockTransferRow): string =>
@@ -143,7 +137,6 @@ export function StockTransfersListV2() {
 
   const { data, isLoading, error } = useStockTransfers();
   const cancelTransfer = useCancelStockTransfer();
-  // created_by is a scm.staff uuid — resolve it, never print the id.
   const { actorNameOf } = useStaffLookup();
 
   const allRows = useMemo<StockTransferRow[]>(() => data ?? [], [data]);
@@ -206,15 +199,7 @@ export function StockTransfersListV2() {
   const goNew = () => navigate("/scm/stock-transfers/new");
   const goWarehouses = () => navigate("/scm/warehouses");
   const goDetail = (r: StockTransferRow) => navigate(`/scm/stock-transfers/${r.id}`);
-  /* Print opens the detail page's preview via ?print=1 — the same contract the
-     other eight documents' row menus use, and the reason it works is that the
-     detail page now consumes the param (useOpenPrintPreviewFromUrl). Rendering
-     the PDF from a LIST row is not possible here anyway: the row carries the
-     warehouse pair and a line COUNT, never the lines. */
   const goPrint = (r: StockTransferRow) => navigate(`/scm/stock-transfers/${r.id}?print=1`);
-  // Same ?edit=1 contract as ?print=1: the detail page opens straight into the
-  // notes-edit state (owner: an Edit entry reachable from the main list, not
-  // just from inside the detail page).
   const goEdit = (r: StockTransferRow) => navigate(`/scm/stock-transfers/${r.id}?edit=1`);
   const doCancel = async (r: StockTransferRow) => {
     if (await askConfirm({
@@ -331,8 +316,6 @@ export function StockTransfersListV2() {
         </button>
       ),
     },
-    // Re-added from the legacy StockTransfers list (data already on the row).
-    // Default-hidden so the chooser exposes it without changing the default view.
     {
       key: "created_by",
       label: "Created By",

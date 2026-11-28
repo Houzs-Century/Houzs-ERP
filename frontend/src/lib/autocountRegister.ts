@@ -31,11 +31,10 @@
 // row unclicked, the page still opens on what is stuck, and a document already
 // in the account book still has nothing to open. Those are rulings, not layout.
 // ----------------------------------------------------------------------------
-import { fmtDate, fmtTime } from "../vendor/shared/format";
+import { fmtDate, fmtTime } from "../../../shared/src/vendor/shared/format";
 
 import type { AcDocGroup, AcOutboxRow } from "./autocountOutbox";
 
-/** `yyyy/mm/dd`, which is what `fmtDate` produces for anything it can read. */
 const AC_DMY = /^(\d{4})\/(\d{2})\/(\d{2})$/;
 
 /** The mark for a cell with no value. One constant so no column picks its own,
@@ -104,33 +103,13 @@ export type AcBookVerdict = "same" | "prefixed" | "different" | "not-recorded" |
 
 export interface AcBookNumber {
   verdict: AcBookVerdict;
-  /** What the account book answered with. Null when it has not answered. */
   number: string | null;
-  /** Whether the row must be loud about it. True for `different` only. */
   flagged: boolean;
 }
 
-/* Trimmed and case-folded: a document number travels as text through two
-   systems and a difference of case or a trailing space is not a different
-   document. A mismatch this comparison MISSES is far cheaper than one it
-   invents — a false flag on a healthy row teaches everyone to ignore the flag,
-   and then the real one is invisible too. */
 const acSameNumber = (a: string, b: string): boolean =>
   a.trim().toLowerCase() === b.trim().toLowerCase();
 
-/**
- * Is `bookNo` the same document as `erpNo`, wearing no company prefix?
- *
- * DERIVED FROM THE PAIR, never from a hard-coded list of prefixes. `HC-` and
- * `2990-` are this company set today and the next one is a migration away;
- * a rule that names them would be wrong the day a company is added, silently
- * and in the direction that cries wolf.
- *
- * The part in front must END AT A SEPARATOR, which is what stops a bare suffix
- * qualifying: `SO-013361` ends with `13361`, and treating that as "the same
- * document without its prefix" would quietly excuse a book number that really
- * is a different, shorter document. A real prefix ends in `-`.
- */
 const acPrefixedNumber = (erpNo: string, bookNo: string): boolean => {
   const erp = erpNo.trim().toLowerCase();
   const book = bookNo.trim().toLowerCase();
@@ -142,8 +121,6 @@ const acPrefixedNumber = (erpNo: string, bookNo: string): boolean => {
 export function acBookNumber(row: AcOutboxRow): AcBookNumber {
   const answered = row.ac_doc_no === null ? "" : row.ac_doc_no.trim();
   if (answered === "") {
-    /* `sent` is the ERP saying the document reached the book, so "not yet"
-       would contradict the Status pill sitting on the same row. */
     return {
       verdict: row.state === "sent" ? "not-recorded" : "not-yet",
       number: null,
@@ -153,10 +130,6 @@ export function acBookNumber(row: AcOutboxRow): AcBookNumber {
   if (acSameNumber(answered, row.doc_no)) {
     return { verdict: "same", number: answered, flagged: false };
   }
-  /* QUIET, BUT NOT `same` — the two strings genuinely are not equal, and saying
-     they are would be the kind of small lie that makes the next reader distrust
-     the column. The cell still SHOWS the book's number, because that is the
-     string somebody has to type into AutoCount to find the document. */
   if (acPrefixedNumber(row.doc_no, answered)) {
     return { verdict: "prefixed", number: answered, flagged: false };
   }
@@ -205,8 +178,6 @@ export const acDayKey = (row: AcOutboxRow): string => fmtDate(acWhenIso(row));
  */
 export function acWhenText(row: AcOutboxRow): string {
   const key = acDayKey(row);
-  // The separator above the row carries the full date; the cell shows month/day
-  // (the year-first key with its leading "yyyy/" trimmed) + the time.
   return AC_DMY.test(key) ? `${key.slice(5)} ${fmtTime(acWhenIso(row))}` : AC_NO_VALUE;
 }
 
@@ -267,8 +238,6 @@ export function acRegisterItems(
     const key = acDayKey(g.current);
     if (key !== day) {
       day = key;
-      /* Prefixed, because `acDocumentKey` is free to produce any string and a
-         separator sharing a key with a document would unmount one of them. */
       out.push({ kind: "day", key: `day ${key}`, label: acDayLabel(key, now) });
     }
     out.push({ kind: "document", key: g.key, group: g });
@@ -294,9 +263,6 @@ export const AC_SORTED_BY_LINE: Record<AcSort, string> = {
   oldest: "Sorted by When, oldest first",
 };
 
-/* An unreadable or absent timestamp is treated as oldest — the same convention
-   `sendTime` above already uses — so the two orderings in this file cannot
-   disagree about a row neither of them can date. */
 const acWhenTime = (row: AcOutboxRow): number => {
   const iso = acWhenIso(row);
   const t = iso === null ? NaN : new Date(iso).getTime();
@@ -336,12 +302,7 @@ export function acGroupsInRange(
 ): AcDocGroup[] {
   if (range === "all") return groups;
   const today = fmtDate(new Date(now));
-  /* Compared as the app's own `dd/mm/yyyy` strings rather than as instants, so
-     the range, the day separator and the When cell are one rule and cannot
-     disagree at a day boundary. A row whose timestamp cannot be read matches no
-     window and is honestly dropped from every range except All time. */
   if (range === "month") {
-    // The year-first key's "yyyy/mm" prefix is the calendar month.
     const mm = today.slice(0, 7);
     return groups.filter((g) => acDayKey(g.current).slice(0, 7) === mm);
   }

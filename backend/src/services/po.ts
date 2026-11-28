@@ -1,27 +1,3 @@
-// ── AutoCount Purchase Order pulls ──────────────────────────────────
-// Restored from dfa1111~1 (strip-to-core removed it) with the batch shape
-// updated to the multi-row INSERT the DO mirror uses.
-//
-// WHY THIS MATTERS beyond the migration reconciliation: both target tables are
-// still read on main and both have been frozen since 2026-06-12, because the
-// 2026-07-14 restore brought back the SO pull only.
-//   * `purchase_orders`      → ASSR's supplier-PO lookup by SO number
-//   * `purchase_order_docs`  → Finance / P&L purchase-cost roll-up
-// Finance has therefore been costing against a two-month-old mirror. The first
-// successful run WILL move those numbers — that is the bug being fixed, not a
-// regression.
-//
-// Two endpoints, two different questions:
-//   * /PurchaseOrder/getOutstanding → LINE level, already filtered by the
-//     middleware to `Qty - TransferedQty > 0`. Every row is outstanding by
-//     construction; cancelled and fully-delivered docs never appear.
-//   * /PurchaseOrder/getAll         → DOC level, everything, including
-//     cancelled and completed.
-//
-// Both are wipe-and-reload, and both fetch BEFORE deleting so a failed fetch
-// leaves the existing mirror untouched. Locally-edited fields (overdue_days,
-// manual amount overrides) are read back and restored across the reload —
-// a sync must never silently eat somebody's typing.
 
 import type { Env } from "../types";
 import { AutoCountClient, dateOnly } from "./autocount";
@@ -90,10 +66,8 @@ export async function runPOPull(
   const client = new AutoCountClient(env, rid);
 
   try {
-    // Fetch FIRST — a failure here must leave the mirror alone.
     const data = await client.getOutstandingPOs();
 
-    // Back up the fields a human may have edited, keyed by doc_no|item_code.
     const existing = await env.DB.prepare(
       `SELECT doc_no, item_code, overdue_days,
               amount, amount_source, amount_updated_at, amount_updated_by, unit_price
@@ -148,10 +122,6 @@ export async function runPOPull(
       )
         .bind(...rows.flat())
         .run();
-      // ON CONFLICT DO NOTHING drops duplicate (doc_no,item_code) lines, so the
-      // batch length overcounts. meta.changes is the true inserted-row count
-      // (RETURNING-backed on pg, native on D1), so a dropped line no longer
-      // inflates the reported count and the fetched-vs-inserted gap surfaces it.
       inserted += res.meta.changes;
     };
 
@@ -161,7 +131,6 @@ export async function runPOPull(
       const restoredOverdue = overdueMap.get(key) || null;
       if (restoredOverdue) preserved++;
 
-      // A manual override always wins; otherwise take what the sync derives.
       const manual = manualMap.get(key);
       let unit_price: number | null;
       let amount: number | null;
@@ -306,9 +275,6 @@ export async function runPODocsPull(
       )
         .bind(...rows.flat())
         .run();
-      // ON CONFLICT DO NOTHING drops duplicate doc_no rows; meta.changes is the
-      // true inserted-row count (RETURNING-backed on pg, native on D1), so a
-      // dropped duplicate no longer inflates the reported count.
       inserted += res.meta.changes;
     };
 
@@ -316,7 +282,6 @@ export async function runPODocsPull(
       if (!o.DocNo) continue;
 
       const cancelled = isCancelled(o.Cancelled);
-      // DocStatus 'C' = Closed/Completed; anything else is still active.
       const isDelivered = !cancelled && String(o.DocStatus || "").toUpperCase() === "C";
       if (cancelled) cancelledCount++;
       else if (isDelivered) delivered++;
@@ -335,8 +300,6 @@ export async function runPODocsPull(
         amount_updated_by = manual.amount_updated_by;
         preserved++;
       } else {
-        // Ex-tax local subtotal is what cost analysis wants; fall back
-        // through the with-tax and foreign-currency totals.
         for (const c of [o.LocalExTax, o.LocalNetTotal, o.FinalTotal, o.Total]) {
           const n = num(c);
           if (n != null && n !== 0) {

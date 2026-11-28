@@ -1,11 +1,4 @@
 // @vitest-environment node
-// (No DOM here — pure builders + a write-excel-file round-trip read back with
-// SheetJS. The node env gives a Blob with .arrayBuffer(), which jsdom's lacks.)
-// MRP Stock Status Report — v7 Excel export. Pins the layout the owner approved
-// (MRP-Export-Layout-Mockup-v7.xlsx) and that each sheet mirrors what the tab
-// shows on screen: sheet-per-category, sofa grouped by SO vs others by SKU, the
-// coverage-chip string, the shortage-row flag, and following the page filters
-// over the WHOLE set.
 import { describe, expect, test } from 'vitest';
 import { read, utils } from 'xlsx';
 import type { MrpSku, MrpLine, MrpResponse, SofaSet } from '../../vendor/scm/lib/mrp-queries';
@@ -66,10 +59,8 @@ describe('coverage / status / supplier / spec cells', () => {
   test('PO Outstanding: the covering PO string, blank off a PO-covered line', () => {
     expect(poOutstandingText({ source: 'stock', poNumber: null, poEta: null })).toBe('');
     expect(poOutstandingText({ source: 'shortage', poNumber: null, poEta: null })).toBe('');
-    // PO number, two spaces, U+00B7, two spaces, ETA dd/mm/yyyy.
     expect(poOutstandingText({ source: 'po', poNumber: 'HC-PO-2609-018', poEta: '2026-09-25' }))
       .toBe('HC-PO-2609-018  ·  ETA 2026/09/25');
-    // A covering PO with no ETA is just the number.
     expect(poOutstandingText({ source: 'po', poNumber: 'HC-PO-009942', poEta: null })).toBe('HC-PO-009942');
   });
 
@@ -88,7 +79,7 @@ describe('coverage / status / supplier / spec cells', () => {
 
   test('sofa spec strips the "<code> · " prefix, leaving only the fabric/spec', () => {
     expect(sofaSpec('5535-L(LHF)', '5535-L(LHF) · BO315-21 PEARL / SEAT 32')).toBe('BO315-21 PEARL / SEAT 32');
-    expect(sofaSpec('5535-L(LHF)', '5535-L(LHF)')).toBe(''); // itemCode only → no spec
+    expect(sofaSpec('5535-L(LHF)', '5535-L(LHF)')).toBe('');
     expect(sofaSpec('X', null)).toBe('');
   });
 });
@@ -116,10 +107,10 @@ describe('buildSheetRows — SKU-grouped (non-sofa)', () => {
     expect(g.cells[idx('Description')]).toBe('AKEMI MATTRESS (Q)');
     expect(g.cells[idx('Qty Needed')]).toBe(2);
     expect(g.cells[idx('Stock')]).toBe(2);
-    expect(g.cells[idx('Coverage')]).toBeNull(); // blank on the header — only a demand row carries the word
-    expect(g.cells[idx('PO Outstanding')]).toBe(1); // rollup — how much of it is below on a PO
+    expect(g.cells[idx('Coverage')]).toBeNull();
+    expect(g.cells[idx('PO Outstanding')]).toBe(1);
     expect(g.cells[idx('Shortage')]).toBe(1);
-    expect(g.cells[idx('Warehouse')]).toBeNull(); // A blank on a non-sofa group header
+    expect(g.cells[idx('Warehouse')]).toBeNull();
     expect(g.cells[idx('SO No')]).toBeNull();
   });
 
@@ -127,17 +118,17 @@ describe('buildSheetRows — SKU-grouped (non-sofa)', () => {
     const demand = demandRows(rows);
     expect(demand).toHaveLength(2);
     const po = demand[0]!;
-    expect(po.cells[idx('Item Code')]).toBeNull(); // code lives on the header
+    expect(po.cells[idx('Item Code')]).toBeNull();
     expect(po.cells[idx('Warehouse')]).toBe('KL');
     expect(po.cells[idx('SO No')]).toBe('HC-SO-013411');
-    expect(po.cells[idx('Processing Date')]).toBe('2026-09-02'); // ISO (sorts as text)
+    expect(po.cells[idx('Processing Date')]).toBe('2026-09-02');
     expect(po.cells[idx('Delivery Date')]).toBe('2026-10-01');
-    expect(po.cells[idx('Stock')]).toBeNull(); // SKU-level total lives on the header, not repeated per line
-    expect(po.cells[idx('Coverage')]).toBe(''); // a PO-covered line leaves Coverage blank
+    expect(po.cells[idx('Stock')]).toBeNull();
+    expect(po.cells[idx('Coverage')]).toBe('');
     expect(po.cells[idx('PO Outstanding')]).toBe('HC-PO-2609-018  ·  ETA 2026/09/25');
     expect(po.cells[idx('Status')]).toBe('IN PRODUCTION');
     expect(po.cells[idx('Supplier')]).toBe('DIGLANT MANUFACTURING SDN BHD');
-    expect(po.cells[idx('Shortage')]).toBeNull(); // a covered line leaves Shortage blank, not 0
+    expect(po.cells[idx('Shortage')]).toBeNull();
   });
 
   test('a shortage demand row is flagged (whole row goes red) and shows needs PO', () => {
@@ -159,7 +150,6 @@ describe('buildSheetRows — SO-grouped (sofa)', () => {
       sofaSet({ itemCode: '5535-2A(RHF)', variantLabel: 'BO315-21 PEARL / SEAT 32', qty: 1, soItemId: 'si2', lineNo: 2,
         poNumber: 'HC-PO-009942', poEta: '2026-09-25', poSupplierName: 'OHANA STUDIO SDN BHD' }),
     ],
-    // An ACCESSORY shortage line on the same SO → a cover rider under the sofa.
     skus: [sku({
       itemCode: 'PILLOW', description: 'SQUARE PILLOW', category: 'ACCESSORY', variantLabel: null,
       shortage: 3, stock: 0, mainSupplierName: 'OHANA STUDIO SDN BHD',
@@ -173,8 +163,8 @@ describe('buildSheetRows — SO-grouped (sofa)', () => {
   test('the group header is the SALES ORDER: SO no + set composition + customer/dates', () => {
     const g = rows.find((r) => r.kind === 'group')!;
     expect(g.cells[idx('Warehouse')]).toBe('KL');
-    expect(g.cells[idx('Item Code')]).toBe('HC-SO-013230');      // the SO doc no
-    expect(g.cells[idx('Description')]).toBe('5535: L(LHF) + 2A(RHF)'); // composition
+    expect(g.cells[idx('Item Code')]).toBe('HC-SO-013230');
+    expect(g.cells[idx('Description')]).toBe('5535: L(LHF) + 2A(RHF)');
     expect(g.cells[idx('Customer')]).toBe('Yumiko');
     expect(g.cells[idx('State')]).toBe('Johor');
     expect(g.cells[idx('Delivery Date')]).toBe('2026-10-09');
@@ -227,7 +217,6 @@ describe('computeTabModels — grouping, filters, whole set', () => {
       ],
     });
     const { displayModels } = computeTabModels(sofaData, viewOf('sofa'), NO_FILTERS);
-    // Two SOs → two groups; the first has both modules under it.
     expect(displayModels.map((g) => g.itemCode).sort()).toEqual(['HC-SO-100', 'HC-SO-200']);
     const so100 = displayModels.find((g) => g.itemCode === 'HC-SO-100')!;
     expect(so100.variants.map((v) => v.itemCode)).toEqual(['M-L', 'M-R']);
@@ -253,20 +242,17 @@ describe('buildMrpWorkbookBlob — the rendered workbook', () => {
     const blob = await buildMrpWorkbookBlob(sheets, { asOf: '2026-09-16T00:00:00Z', warehouseLabel: 'All', filters: NO_FILTERS });
     const wb = read(new Uint8Array(await blob.arrayBuffer()), { type: 'array' });
 
-    // Sheet per category, in tab order.
     expect(wb.SheetNames).toEqual(['Sofa', 'Bedframe', 'Mattress', 'Accessories', 'Others']);
 
-    // Read the Mattress sheet's values (styles are asserted visually / by the
-    // pure buildSheetRows tests above; SheetJS reads values, not fills).
     const cell = (addr: string) => wb.Sheets.Mattress![addr]?.v;
-    expect(cell('A1')).toBe('MRP Stock Status  -  Mattress');   // merged title
-    expect(cell('A3')).toBe('Warehouse');                       // header row 3
+    expect(cell('A1')).toBe('MRP Stock Status  -  Mattress');
+    expect(cell('A3')).toBe('Warehouse');
     expect(cell('O3')).toBe('Supplier');
-    expect(cell('P3')).toBe('Customer');                        // moved to the last column
-    expect(cell('B4')).toBe('AK-MATT (Q)');                     // group header code
-    expect(cell('K5')).toBe('needs PO');                        // shortage coverage
-    expect(cell('L5')).toBeUndefined();                         // PO Outstanding blank off a shortage row
-    expect(cell('N5')).toBe('CONFIRMED');                       // shortage status
-    expect(cell('M5')).toBe(1);                                 // shortage figure
+    expect(cell('P3')).toBe('Customer');
+    expect(cell('B4')).toBe('AK-MATT (Q)');
+    expect(cell('K5')).toBe('needs PO');
+    expect(cell('L5')).toBeUndefined();
+    expect(cell('N5')).toBe('CONFIRMED');
+    expect(cell('M5')).toBe(1);
   });
 });

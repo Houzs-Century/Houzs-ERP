@@ -32,18 +32,14 @@ type Sb = any;
 export type LineEditPrice = {
   unitCost: number;
   lineCost: number;
-  /** Set when this edit priced the line on the change day (rule 2). */
   costDay: string | null;
-  /** The order's days when this is a rule-2 change, else null. */
   later: OrderDays | null;
   changeDay: string;
 };
 
 export async function priceLineEdit(sb: Sb, c: Parameters<typeof openDirectChangeWindow>[0], docNo: string, a: {
   prev: { item_code: string | null; item_group: string | null; variants: unknown; qty: number | null; unit_cost_sen: number | null; total_sen?: number | null };
-  /** The request's unitCostSen, 0 when none. */
   explicitUnitCostSen: number;
-  /** The request's item code when it sent one. */
   newItemCode: string | null;
   qty: number;
   unit: number;
@@ -58,14 +54,12 @@ export async function priceLineEdit(sb: Sb, c: Parameters<typeof openDirectChang
   const { prev, qty, unit } = a;
   const prevUnitCost = senOrZero(prev.unit_cost_sen);
   const prevQty = Math.max(1, Number(prev.qty) || 1);
-  /* What the edit is to the PRODUCT, whatever the line's cost. */
   const shape = lineEditCostKind(
     { itemCode: String(prev.item_code ?? ''), variants: canonicalizeVariants(prev.item_group, prev.variants as Record<string, unknown> | null), unitCostSen: 1 },
     { itemCode: a.itemCodeAfter, variants: canonicalizeVariants(a.itemGroupAfter, a.variantsAfter as Record<string, unknown> | null) },
   );
   const sellingMoved = senOrZero((qty * unit) - a.discount) !== senOrZero(prev.total_sen);
   const companyId = activeCompanyId(c);
-  /* Today's own unit cost of a spec: the recompute's when one ran for it, else the product's. */
   const todaysUnitCost = async (spec: { code: string; group: string; variants: MfgItemForRecompute['variants'] }, useRecomputed: boolean): Promise<number> => (
     useRecomputed && a.recomputed && a.recomputed.unit_cost_sen > 0
       ? a.recomputed.unit_cost_sen
@@ -94,6 +88,5 @@ export async function priceLineEdit(sb: Sb, c: Parameters<typeof openDirectChang
     : a.newItemCode != null && a.newItemCode !== prev.item_code
       ? await snapshotUnitCostSen(sb, a.newItemCode, 0, c)
       : prevUnitCost;
-  /* A real product change, not a line that merely had no cost yet. */
   return { unitCost, lineCost: senOrZero(unitCost * qty), costDay: later && shape !== 'keep' ? changeDay : null, later, changeDay };
 }

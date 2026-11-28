@@ -11,7 +11,10 @@
 //   PATCH  /:id                 the requester changes it — or sends a returned one again
 //   POST   /:id/balance         申请付余额 — the next instalment of the same bill
 //   POST   /:id/withdraw        the requester takes it back
-//   POST   /:id/return          Finance sends it back, saying why
+//   POST   /:id/return          Finance sends it back, saying why — a refund request
+//                                waiting for its approval, its approver too
+//   GET    /refund-approvals    refund requests for their one approval (?scope=all: every refund request)
+//   POST   /:id/approve-refund  that approval — the cancel level-2 key's holder, never the requester
 //   POST|GET /:id/files, GET|DELETE /:id/files/:fileId — the bill
 //   POST   /read-bill, GET /bill-matches — the bill READ as it is attached
 //                                (routes/payment-request-bill.ts)
@@ -53,6 +56,10 @@
 // every caller who reaches this router, their own requests only (option A: 只看到
 // 自己的退款申请); raising one here still takes the key or Finance's. A refund
 // request is never edited and takes no balance; Finance's Return is its refusal.
+// Since 2026-11-27 (owner: 「只要一级，但这一级的权限和cancel 的第二级一样」) it
+// is approved once before Finance may answer it — by a holder of the cancel
+// level-2 key (lib/payment-request.ts REFUND_APPROVE_KEY), who may also reject
+// it while it waits; whoever raised it never approves it.
 
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
@@ -70,8 +77,8 @@ import { checklistSourceCheck, parseChecklistItemId } from '../lib/pms-checklist
 import { eventOptionsHandler } from './acc-events';
 import { billMatchesHandler, readRequestBillHandler, uploadOfficialDocHandler, enqueueRequestBillReadHandler, pollRequestBillReadHandler } from './payment-request-bill';
 import {
-  PAYMENT_REQUEST_KEY, bankConfirmedVoucherNumbers, callerUserId, familyFigures, familyRootId, isRequestFinance, liveAnswerOf, requestStage,
-  requesterMayChange, type FamilyMember, type InvoiceFacts, type VoucherFacts,
+  PAYMENT_REQUEST_KEY, awaitsRefundApproval, bankConfirmedVoucherNumbers, callerUserId, familyFigures, familyRootId, isRequestFinance, liveAnswerOf,
+  mayApproveRefund, requestStage, requesterMayChange, type FamilyMember, type InvoiceFacts, type RequestStage, type VoucherFacts,
 } from '../lib/payment-request';
 
 type Row = Record<string, any>;
@@ -79,11 +86,10 @@ type Row = Record<string, any>;
 export const paymentRequests = new Hono<{ Bindings: Env; Variables: Variables }>();
 paymentRequests.use('*', supabaseAuth);
 
-const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason, parent_request_id, installment_no, pay_pct, note, checklist_item_id, refund_source_type, refund_source_doc_no';
+const COLS = 'id, company_id, request_no, requested_by, requested_by_name, payee_name, amount_sen, due_date, purpose, project_id, bank_name, bank_account_no, bank_account_name, status, pv_id, ap_invoice_id, finance_note, decided_by, decided_at, created_at, updated_at, bill_no, bill_date, bill_total_sen, event_bill, no_event_reason, parent_request_id, installment_no, pay_pct, note, checklist_item_id, refund_source_type, refund_source_doc_no, refund_approved_by, refund_approved_by_name, refund_approved_at';
 const NO_PERM = { error: "You don't have permission to do that." };
 
 const mayRequest = (c: any): boolean => hasHouzsPerm(c, PAYMENT_REQUEST_KEY);
-/** Raises a request here — the key, or Finance's own. */
 const mayOpen = (c: any): boolean => mayRequest(c) || isRequestFinance(c);
 /** Reads and withdraws their OWN requests: anyone signed in (a salesperson's
     refund request, owner 2026-10-14 option A); Finance reads all. */
@@ -95,26 +101,25 @@ const text = (v: unknown): string | null => {
   return s ? s : null;
 };
 
-/** The request under the active company that the caller may see — the
-    requester's own, or any for Finance — else a 404 that names nothing. */
 async function loadVisible(c: any, id: string): Promise<{ req: Row } | { resp: Response }> {
   const sb = c.get('supabase');
   const { data, error } = await scopeToCompany(sb.from('acc_payment_requests').select(COLS).eq('id', id), c).maybeSingle();
   if (error) return { resp: c.json({ error: 'load_failed', reason: error.message }, 500) };
   const me = callerUserId(c);
-  if (!data || (!isRequestFinance(c) && Number(data.requested_by) !== me)) {
+  const approver = !!data && isRefundRequest(data as Row) && mayApproveRefund(c);
+  if (!data || (!isRequestFinance(c) && Number(data.requested_by) !== me && !approver)) {
     return { resp: c.json({ error: 'not_found', message: 'That payment request is not one you can open.' }, 404) };
   }
   return { req: data as Row };
 }
+
+const stageOf = (r: Row, stage: RequestStage): RequestStage => (awaitsRefundApproval(r, stage) ? 'AWAITING_APPROVAL' : stage);
 
 /** 欠正式单 (owner 2026-10-01, item 3) as the requester reads it: the answering
     document's mark — OWED, RECEIVED (to check) or CHECKED — and the reader's note. */
 const officialOf = (doc: Row): { state: string; note: string | null } | null =>
   doc.official_doc ? { state: String(doc.official_doc), note: doc.official_doc_note ?? null } : null;
 
-/** Each request with its answering document's facts — the voucher's, or the
-    AP invoice's and the AP Payments' that paid it — and the stage they say. */
 async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
   const sb = c.get('supabase');
   const pvIds = [...new Set(rows.map((r) => r.pv_id).filter(Boolean))] as string[];
@@ -127,7 +132,6 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
   }
   const invoiceIds = [...new Set(rows.map((r) => r.ap_invoice_id).filter(Boolean))] as string[];
   let invoices = new Map<string, InvoiceFacts>();
-  /* An invoice's payers: the posted AP Payments with an allocation on it. */
   const payersOf = new Map<string, string[]>();
   if (invoiceIds.length > 0) {
     const { data, error } = await sb.from('ap_invoices').select('id, invoice_number, status, total_sen, paid_sen, supplier_id, official_doc, official_doc_note')
@@ -163,7 +167,6 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
       const inv = r.ap_invoice_id ? invoices.get(String(r.ap_invoice_id)) ?? null : null;
       if (inv) {
         const payers = payersOf.get(inv.id) ?? [];
-        /* Bank-confirmed once EVERY AP Payment that paid it is on a statement. */
         const confirmed = payers.length > 0 && payers.every((no) => bank.confirmed.has(no));
         return {
           ...r,
@@ -181,7 +184,7 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
       const confirmed = !!pv?.pv_number && bank.confirmed.has(String(pv.pv_number));
       return {
         ...r,
-        stage: requestStage(String(r.status), pv, confirmed),
+        stage: stageOf(r, requestStage(String(r.status), pv, confirmed)),
         officialDoc: pv && pv.status !== 'CANCELLED' ? officialOf(pv) : null,
         voucher: pv ? { id: pv.id, pvNumber: pv.pv_number, status: pv.status, approvedAt: pv.approved_at, postedAt: pv.posted_at, bankConfirmed: confirmed } : null,
         invoice: null,
@@ -190,11 +193,6 @@ async function withStages(c: any, companyId: number, rows: Row[]): Promise<{ row
   };
 }
 
-/** Each request with its bill's instalments (item 2): the first request and
-    every balance raised from it, each with its stage, and the figures the
-    requester reads — total, paid, pending, left to ask (lib/payment-request.ts
-    familyFigures). The first request's answer rides along: a balance of a bill
-    booked as an AP invoice is paid ON that invoice. */
 async function withFamilies(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
   const roots = [...new Set(rows.map(familyRootId))];
   if (roots.length === 0) return { rows };
@@ -231,10 +229,6 @@ async function withFamilies(c: any, companyId: number, rows: Row[]): Promise<{ r
   };
 }
 
-/** Each request with the OTHER live documents carrying its bill's number and
-    date (lib/bill-matches.ts) — said out loud on the list and on the request,
-    never refused. A request is never a match of its own answer, nor of the
-    other instalments of its own bill (item 2). */
 async function withBillMatches(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
   const found = await findBillMatches(c.get('supabase'), companyId, rows.map((r) => ({
     key: String(r.id), billNo: r.bill_no, billDate: r.bill_date,
@@ -247,14 +241,10 @@ async function withBillMatches(c: any, companyId: number, rows: Row[]): Promise<
   return { rows: rows.map((r) => ({ ...r, billMatches: found.matches.get(String(r.id)) ?? ([] as BillMatch[]) })) };
 }
 
-/** Whether the company runs events (2990 does not): the form hides the Event
-    field without them. Unreadable reads as "yes" — a field shown in vain beats
-    one hidden from a company that needs it. */
 async function hasEventsOf(c: any): Promise<boolean> {
   try { return await companyHasEvents(c.env.DB, activeCompanySql(c, 'p.company_id')); } catch { return true; }
 }
 
-/* ── GET / ─────────────────────────────────────────────────────────────────── */
 export const listPaymentRequestsHandler = async (c: any): Promise<Response> => {
   if (!mayRead(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -273,7 +263,6 @@ export const listPaymentRequestsHandler = async (c: any): Promise<Response> => {
   if ('resp' in families) return families.resp;
   const matched = await withBillMatches(c, co.companyId, families.rows);
   if ('resp' in matched) return matched.resp;
-  /* mayRaise: whether this caller may raise a request here (New request). */
   return c.json({ requests: matched.rows, finance, mayRaise: mayOpen(c), hasEvents: await hasEventsOf(c) });
 };
 paymentRequests.get('/', listPaymentRequestsHandler);
@@ -320,31 +309,49 @@ export const waitingCountHandler = async (c: any): Promise<Response> => {
   if (!co.ok) return c.json({ count: 0 });
   const sb = c.get('supabase');
   const requests = (cols: string) => scopeToCompany(sb.from('acc_payment_requests').select(cols, { count: 'exact', head: true }), c);
-  const [submitted, invoiceGone, voucherGone, nothing] = await Promise.all([
-    requests('id').eq('status', 'SUBMITTED'),
+  /* A refund request waiting for its approval (owner 2026-11-27) is not Finance's yet. */
+  const counts = await Promise.all([
+    requests('id').eq('status', 'SUBMITTED').is('refund_source_doc_no', null),
+    requests('id').eq('status', 'SUBMITTED').not('refund_source_doc_no', 'is', null).not('refund_approved_at', 'is', null),
     requests('id, inv:ap_invoices!inner(status)').eq('status', 'VOUCHERED').eq('inv.status', 'CANCELLED'),
     requests('id, pv:payment_vouchers!inner(status)').eq('status', 'VOUCHERED').is('ap_invoice_id', null).eq('pv.status', 'CANCELLED'),
     requests('id').eq('status', 'VOUCHERED').is('ap_invoice_id', null).is('pv_id', null),
   ]);
-  const failed = [submitted, invoiceGone, voucherGone, nothing].find((r) => r.error);
+  const failed = counts.find((r) => r.error);
   if (failed) return c.json({ error: 'load_failed', reason: failed.error.message }, 500);
-  return c.json({ count: [submitted, invoiceGone, voucherGone, nothing].reduce((n, r) => n + Number(r.count ?? 0), 0) });
+  return c.json({ count: counts.reduce((n, r) => n + Number(r.count ?? 0), 0) });
 };
 paymentRequests.get('/waiting-count', waitingCountHandler);
 
-/* ── GET /event-options — the picker for a requester, who has no Finance area ── */
+/** The approver's list (owner 2026-11-27): refund requests waiting for their
+    one approval, oldest first — or, with ?scope=all, the latest refund requests
+    of every state. A caller who may not approve reads an empty list. */
+export const REFUND_APPROVALS_MAX = 200;
+export const refundApprovalsHandler = async (c: any): Promise<Response> => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  if (!mayApproveRefund(c)) return c.json({ requests: [], mayApprove: false });
+  const all = c.req.query('scope') === 'all';
+  let q = scopeToCompany(c.get('supabase').from('acc_payment_requests').select(COLS), c).not('refund_source_doc_no', 'is', null);
+  if (!all) q = q.eq('status', 'SUBMITTED').is('refund_approved_at', null);
+  const { data, error } = await q.order('created_at', { ascending: !all }).order('id').limit(REFUND_APPROVALS_MAX);
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const staged = await withStages(c, co.companyId, (data ?? []) as Row[]);
+  if ('resp' in staged) return staged.resp;
+  return c.json({ requests: staged.rows, mayApprove: true, me: callerUserId(c) });
+};
+paymentRequests.get('/refund-approvals', refundApprovalsHandler);
+
 paymentRequests.get('/event-options', async (c) => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   return eventOptionsHandler(c);
 });
 
-/* ── The bill read as it is attached, and its matches (before GET /:id) ────── */
 paymentRequests.post('/read-bill', readRequestBillHandler);
 paymentRequests.post('/read-bill/enqueue', enqueueRequestBillReadHandler);
 paymentRequests.get('/read-bill/jobs', pollRequestBillReadHandler);
 paymentRequests.get('/bill-matches', billMatchesHandler);
 
-/* ── The bill — the factory's four handlers, fed this document's rules ────── */
 export const PAYMENT_REQUEST_FILES: DocFilesSpec = {
   table: 'acc_payment_request_files',
   fkColumn: 'request_id',
@@ -355,7 +362,6 @@ export const PAYMENT_REQUEST_FILES: DocFilesSpec = {
     const found = await loadVisible(c, c.req.param('id'));
     if ('resp' in found) return found;
     const r = found.req;
-    /* The bill stays once Finance has answered: its voucher carries a copy. */
     return { doc: { id: String(r.id), closed: r.status === 'WITHDRAWN', locked: r.status === 'VOUCHERED' } };
   },
   closedRefusal: { error: 'request_withdrawn', message: 'A withdrawn request takes no more files.' },
@@ -374,7 +380,6 @@ paymentRequests.get('/:id/files', listPaymentRequestFilesHandler);
 paymentRequests.get('/:id/files/:fileId', streamPaymentRequestFileHandler);
 paymentRequests.delete('/:id/files/:fileId', deletePaymentRequestFileHandler);
 
-/* ── GET /:id ──────────────────────────────────────────────────────────────── */
 export const getPaymentRequestHandler = async (c: any): Promise<Response> => {
   if (!mayRead(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -391,20 +396,16 @@ export const getPaymentRequestHandler = async (c: any): Promise<Response> => {
 };
 paymentRequests.get('/:id', getPaymentRequestHandler);
 
-/* ── The requester's fields, as the body sends them ───────────────────────── */
 type Fields = {
   payee_name: string; amount_sen: number; due_date: string | null; purpose: string;
   project_id: number | null; bank_name: string | null; bank_account_no: string | null; bank_account_name: string | null;
-  /** The percent of the bill this instalment is, as the requester typed it (item 2). */
   pay_pct: number | null;
-  /** The requester's note to Finance (2026-10-02) — optional. */
   note: string | null;
 } & RequestBillFacts;
 
 /** A note is a few lines to Finance, not a document. */
 export const REQUEST_NOTE_MAX = 2000;
 
-/** A percent as typed: more than 0, at most 100, two decimals — or none. */
 function readPayPct(v: unknown): number | null | 'invalid' {
   if (v === undefined || v === null || v === '') return null;
   const n = Number(v);
@@ -431,22 +432,17 @@ function readFields(body: Row): { fields: Fields } | { error: string; message: s
       payee_name: payee, amount_sen: amount, due_date: dateOrNull(body.dueDate), purpose, project_id: project, pay_pct: pct, note,
       bank_name: text(body.bankName), bank_account_no: text(body.bankAccountNo), bank_account_name: text(body.bankAccountName),
       ...bill.facts,
-      /* With its Event picked, the reason why there is none is moot. */
       ...(project != null ? { no_event_reason: null } : {}),
     },
   };
 }
 
-/** An event bill goes to Finance with its Event, or with the requester's reason
-    why there is none (lib/bill-matches.ts) — asked only of a company that runs
-    events; anywhere else the flag is dropped. */
 async function eventBillCheck(c: any, f: Fields): Promise<{ error: string; message: string } | null> {
   if (!f.event_bill) return null;
   if (!(await hasEventsOf(c))) { f.event_bill = false; return null; }
   return eventBillRefusal(f);
 }
 
-/* ── POST / ────────────────────────────────────────────────────────────────── */
 export const createPaymentRequestHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -503,7 +499,6 @@ export const createPaymentRequestHandler = async (c: any): Promise<Response> => 
 };
 paymentRequests.post('/', createPaymentRequestHandler);
 
-/* ── PATCH /:id — the requester's change; a returned request goes back in ─── */
 export const updatePaymentRequestHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -631,8 +626,6 @@ export const requestBalanceHandler = async (c: any): Promise<Response> => {
     bank_account_no: root.bank_account_no ?? null,
     bank_account_name: root.bank_account_name ?? null,
     status: 'SUBMITTED',
-    /* The same bill: its number, date and total, for reading and for the
-       same-bill check (which leaves a bill's own instalments out). */
     bill_no: root.bill_no ?? null,
     bill_date: dateOrNull(root.bill_date),
     bill_total_sen: root.bill_total_sen ?? null,
@@ -657,7 +650,6 @@ export const requestBalanceHandler = async (c: any): Promise<Response> => {
   return c.json({
     ok: true,
     request: { ...row, stage: 'SUBMITTED', voucher: null },
-    /* Said, not refused: more asked on the bill than it totals. */
     overTotal: total != null && asked + amount > total,
   }, 201);
 };
@@ -665,7 +657,6 @@ paymentRequests.post('/:id/balance', requestBalanceHandler);
 /* 补正式单 (item 3): the official invoice, after a proforma was paid (routes/payment-request-bill.ts). */
 paymentRequests.post('/:id/official-doc', uploadOfficialDocHandler);
 
-/* ── POST /:id/withdraw ────────────────────────────────────────────────────── */
 export const withdrawPaymentRequestHandler = async (c: any): Promise<Response> => {
   if (!mayRead(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -693,9 +684,9 @@ export const withdrawPaymentRequestHandler = async (c: any): Promise<Response> =
 };
 paymentRequests.post('/:id/withdraw', withdrawPaymentRequestHandler);
 
-/* ── POST /:id/return — Finance sends it back, with the why ────────────────── */
 export const returnPaymentRequestHandler = async (c: any): Promise<Response> => {
-  if (!isRequestFinance(c)) return c.json(NO_PERM, 403);
+  const finance = isRequestFinance(c);
+  if (!finance && !mayApproveRefund(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   let body: Row;
@@ -705,6 +696,9 @@ export const returnPaymentRequestHandler = async (c: any): Promise<Response> => 
   const found = await loadVisible(c, c.req.param('id'));
   if ('resp' in found) return found.resp;
   const r = found.req;
+  if (!finance && (!isRefundRequest(r) || r.refund_approved_at)) {
+    return c.json({ error: 'not_yours_to_return', message: `${r.request_no} is with Finance now — only Finance can return it.` }, 403);
+  }
   const sb = c.get('supabase');
   if (r.status === 'VOUCHERED') {
     const live = await liveAnswerOf(c, r);
@@ -731,3 +725,49 @@ export const returnPaymentRequestHandler = async (c: any): Promise<Response> => 
   return c.json({ ok: true });
 };
 paymentRequests.post('/:id/return', returnPaymentRequestHandler);
+
+/** The refund request's one approval (owner 2026-11-27: 只要一级，但这一级的权限和
+    cancel 的第二级一样): a holder of the cancel level-2 key, never the one who
+    raised it, while nothing answers it. Finance may answer it from then on. */
+export const approveRefundRequestHandler = async (c: any): Promise<Response> => {
+  if (!mayApproveRefund(c)) return c.json(NO_PERM, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const me = callerUserId(c);
+  if (me == null) return c.json(NO_PERM, 403);
+  const found = await loadVisible(c, c.req.param('id'));
+  if ('resp' in found) return found.resp;
+  const r = found.req;
+  if (!isRefundRequest(r)) return c.json({ error: 'not_a_refund', message: `${r.request_no} is not a refund request — it takes no approval.` }, 409);
+  if (r.refund_approved_at) return c.json({ ok: true, already: true });
+  if (r.status !== 'SUBMITTED' && r.status !== 'VOUCHERED') {
+    return c.json({ error: 'request_closed', message: `${r.request_no} is ${String(r.status).toLowerCase()} — there is nothing to approve.` }, 409);
+  }
+  if (Number(r.requested_by) === me) {
+    return c.json({ error: 'self_approval', message: 'You raised this refund request — someone else has to approve it.' }, 403);
+  }
+  if (r.status === 'VOUCHERED') {
+    const live = await liveAnswerOf(c, r);
+    if ('resp' in live) return live.resp;
+    if (live.answer) return c.json({ error: 'request_has_voucher', message: `${r.request_no} is already answered by ${live.answer.number}.` }, 409);
+  }
+  const sb = c.get('supabase');
+  const pf = await assertAuditWritable(sb, { entityType: 'PAYMENT_REQUEST', entityId: String(r.id), action: 'APPROVE', companyId: co.companyId });
+  if (!pf.ok) return c.json(auditUnavailableBody(), 409);
+  const who = c.get('houzsUser') as { name?: string | null; email?: string | null } | undefined;
+  const name = String(who?.name ?? who?.email ?? '').trim() || null;
+  const now = new Date().toISOString();
+  const { data: row, error } = await sb.from('acc_payment_requests')
+    .update({ refund_approved_by: me, refund_approved_by_name: name, refund_approved_at: now, updated_at: now })
+    .eq('company_id', co.companyId).eq('id', r.id).eq('status', String(r.status)).is('refund_approved_at', null)
+    .select('id').maybeSingle();
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  if (!row) return c.json({ error: 'request_moved', message: `${r.request_no} changed a moment ago — open it again.` }, 409);
+  await recordEntityAudit(sb, {
+    entityType: 'PAYMENT_REQUEST', entityId: String(r.id), entityDocNo: r.request_no, action: 'APPROVE',
+    actor: c.get('houzsUser'), companyId: co.companyId, statusSnapshot: String(r.status),
+    fieldChanges: compactChanges([fieldChange('refundApprovedBy', null, name)]),
+  });
+  return c.json({ ok: true });
+};
+paymentRequests.post('/:id/approve-refund', approveRefundRequestHandler);

@@ -82,6 +82,16 @@ const isRefusal = (e: Exit) => e.status !== '200' && e.status !== '201';
    nothing survives. Each needs a reason a reader can check, because getting one
    of these wrong is how a corrected resubmit receives the same goods twice. */
 const RELEASES_PAST_A_WRITE: Record<string, string> = {
+  "if (!wrote.ok) return refuseWithoutWriting(c, { error: 'relocate_failed', message: 'The stock could not be moved to the new warehouse, so the warehouse was NOT changed. Please try again.', reason: wrote.reason ?? 'unknown' }, 500);":
+    "PATCH /:id: the relocation is ONE inventory_movements insert (OUT old + IN new; each batch_no / correction_seq / movement_date retry is also one insert), and this exit runs only when it failed, before the header update - so nothing was written and the warehouse is unchanged.",
+  "if (!recount.ok) return refuseWithoutWriting(c, { error: 'po_recount_failed', message: 'The PO received quantity could not be recounted, so the line was NOT removed. Please try again.', reason: recount.reason ?? 'unknown' }, 500);":
+    "DELETE /:id/items/:itemId: runs inside runScmPgCommand, and a non-2xx return throws CommandRollback, so the line delete and audit row above roll back with it.",
+  "if (grnHeaderErr) return refuseWithoutWriting(c, { error: 'lookup_failed', message: 'The GRN could not be re-read, so the line was NOT removed. Please try again.', reason: grnHeaderErr.message }, 500);":
+    "DELETE /:id/items/:itemId: runs inside runScmPgCommand, and a non-2xx return throws CommandRollback, so the line delete and audit row above roll back with it.",
+  "if (!warehouseId) return refuseWithoutWriting(c, { error: 'warehouse_required', message: 'This GRN has no warehouse to take the received stock back out of, so the line was NOT removed. Set the GRN warehouse first.' }, 409);":
+    "DELETE /:id/items/:itemId: runs inside runScmPgCommand, and a non-2xx return throws CommandRollback, so the line delete and audit row above roll back with it.",
+  "if (!wrote.ok) return refuseWithoutWriting(c, { error: 'stock_reversal_failed', message: 'The received stock could not be taken back out, so the line was NOT removed. Please try again.', reason: wrote.reason ?? 'unknown' }, 500);":
+    "DELETE /:id/items/:itemId: runs inside runScmPgCommand, and a non-2xx return throws CommandRollback, so the line delete and audit row above roll back with it.",
   'return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });':
     'POST / and POST /from-pos: both delete their grn_items and grns rows in the two lines above, and the zero-cost gate returns before postGrnAndRollup flips status or moves stock.',
   'if (res.zeroCost) return refuseZeroCostReceipt(c, res.zeroCost, { nothingWritten: true });':

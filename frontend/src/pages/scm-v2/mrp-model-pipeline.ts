@@ -11,9 +11,7 @@ import { rowBelongsToView, type MrpView } from './mrp-views';
 import { sofaAccessoryRowsPerSo } from './mrp-sofa-accessory';
 
 export type ModelGroup = {
-  /* Commander 2026-05-31 — a Model is now scoped to ONE warehouse. The same
-     SKU in two warehouses is two groups (per-WH MRP, no cross-WH pooling). */
-  groupKey: string;          // `${warehouseId ?? 'NOWH'}|${itemCode}` — identity
+  groupKey: string;
   warehouseId: string | null;
   warehouseCode: string | null;
   warehouseName: string | null;
@@ -25,11 +23,6 @@ export type ModelGroup = {
   stock: number;
   poOutstanding: number;
   shortage: number;
-  /* NO `suppliers` HERE, DELIBERATELY. All three groupers built this field the
-     same way — from whichever child happened to be first — and a Model or a
-     Sales Order does not have suppliers: each VARIANT does, and on the Sofa tab
-     each variant is a different module SKU with its own bindings. Supplier lives
-     on MrpSku and is read there (mrp-tree-rows.tsx). */
 };
 
 export const WH_NONE = 'NOWH';
@@ -60,8 +53,6 @@ export function groupByModel(skus: MrpSku[]): ModelGroup[] {
   for (const g of groups) {
     g.variants.sort((a, b) => (a.variantLabel ?? '') < (b.variantLabel ?? '') ? -1 : 1);
   }
-  // Shortage models float to the top (the orange ones to act on), then by
-  // warehouse, then by code — so each warehouse's rows cluster together.
   groups.sort((a, b) => {
     if ((b.shortage > 0 ? 1 : 0) !== (a.shortage > 0 ? 1 : 0)) {
       return (b.shortage > 0 ? 1 : 0) - (a.shortage > 0 ? 1 : 0);
@@ -74,17 +65,10 @@ export function groupByModel(skus: MrpSku[]): ModelGroup[] {
   return groups;
 }
 
-/* Adapter (F5, Wei Siang 2026-06-15) — fold sofa SETS into PER-SO module SKUs so
-   the Sofa tab groups by SO (groupBySo below): one parent row per SO, its sofa
-   modules as the variant sub-rows. NOT pooled across SOs (each module SKU belongs
-   to one SO), and the variantKey is prefixed with the SO doc no so the render's
-   per-variant expand key (rowKey) stays unique across SO rows. Ordering is
-   unchanged — selection + Proceed PO still key off each line's soItemId. */
 export function sofaSetsToSkus(sets: SofaSet[]): MrpSku[] {
   const map = new Map<string, MrpSku>();
   for (const s of sets) {
     const realVariant = s.variantLabel ?? s.colour ?? '';
-    // One row per (warehouse, SO, module, variant).
     const key = `${s.warehouseId ?? WH_NONE}|${s.soDocNo}|${s.itemCode}|${realVariant}`;
     let sku = map.get(key);
     if (!sku) {
@@ -92,8 +76,6 @@ export function sofaSetsToSkus(sets: SofaSet[]): MrpSku[] {
       sku = {
         warehouseId: s.warehouseId, warehouseCode: s.warehouseCode, warehouseName: s.warehouseName,
         itemCode: s.itemCode,
-        // soDocNo-prefixed so the same module+variant in two SOs gets distinct
-        // rowKeys; the visible label shows the module (+ its fabric/colour).
         variantKey: `${s.soDocNo}::${realVariant}`,
         variantLabel: realVariant ? `${s.itemCode} · ${realVariant}` : s.itemCode,
         description: s.description, category: 'SOFA',
@@ -104,24 +86,16 @@ export function sofaSetsToSkus(sets: SofaSet[]): MrpSku[] {
       map.set(key, sku);
     }
     sku.qtyNeeded += s.qty;
-    /* orderedQty is "covered by the set's batch" — its stock slice is on hand,
-       the rest is still on the PO. Split them so the SO header row reads the
-       same Stock / PO Outstanding the module chips do. */
     sku.stock += s.stockQty ?? 0;
     sku.poOutstanding += s.orderedQty - (s.stockQty ?? 0);
     sku.shortage += s.shortageQty;
     sku.lines.push({
       soItemId: s.soItemId, soDocNo: s.soDocNo,
-      // Carry the SO line's canonical stored sequence so groupBySo can order
-      // an SO's module rows LHF → NA → RHF (same order as the SO PDF/detail).
       lineNo: s.lineNo, createdAt: s.createdAt,
       debtorName: s.debtorName,
       customerState: s.customerState,
       soDate: s.soDate, deliveryDate: s.deliveryDate, processingDate: s.processingDate,
       orderByDate: s.orderByDate, qty: s.qty,
-      /* THE SHARED RULE, not a second copy of it — allocSourceOf is the one
-         three-way source function (stock | po | shortage), mirrored byte-for-byte
-         with the backend. */
       source: allocSourceOf(s.shortageQty, s.poNumber), poNumber: s.poNumber, poEta: s.poEta,
       shortageQty: s.shortageQty,
       poSupplierId: s.poSupplierId, poSupplierName: s.poSupplierName,
@@ -131,8 +105,6 @@ export function sofaSetsToSkus(sets: SofaSet[]): MrpSku[] {
   return [...map.values()];
 }
 
-/* "BOOQIT-1B(LHF)", "BOOQIT-CNR" → "BOOQIT: 1B(LHF) + CNR" when every module
-   shares one base model; otherwise the full codes joined. */
 function sofaComposition(codes: string[]): string {
   const parts = codes.map((c) => {
     const i = c.indexOf('-');
@@ -143,23 +115,16 @@ function sofaComposition(codes: string[]): string {
   return codes.join(' + ');
 }
 
-/* Canonical stored-sequence comparator for two SO lines (migration 0165): order
-   by line_no (NULLS LAST), then created_at, then leave equal. Mirrors the
-   backend read order `(line_no NULLS LAST, created_at)` that the SO detail + SO
-   PDF derive their LHF → NA → RHF order from, so the Sofa tab matches them. */
 const soLineSeqCmp = (a: MrpLine | undefined, b: MrpLine | undefined): number => {
   const an = a?.lineNo, bn = b?.lineNo;
   const aHas = typeof an === 'number', bHas = typeof bn === 'number';
   if (aHas && bHas && an !== bn) return an! - bn!;
-  if (aHas !== bHas) return aHas ? -1 : 1;          // numbered lines first (NULLS LAST)
+  if (aHas !== bHas) return aHas ? -1 : 1;
   const ac = a?.createdAt ?? '', bc = b?.createdAt ?? '';
   if (ac !== bc) return ac < bc ? -1 : 1;
   return 0;
 };
 
-/* F5 — group the per-SO sofa module SKUs into ONE parent row per SO (the SO doc
-   no is the "serial"); the modules become the variant sub-rows. Mirrors
-   groupByModel's totals + shortage-first sort. */
 export function groupBySo(skus: MrpSku[]): ModelGroup[] {
   const map = new Map<string, ModelGroup>();
   for (const s of skus) {
@@ -183,12 +148,7 @@ export function groupBySo(skus: MrpSku[]): ModelGroup[] {
   }
   const groups = [...map.values()];
   for (const g of groups) {
-    /* Order each SO's module rows by the CANONICAL stored sequence (line_no,
-       migration 0165) so they read LHF → NA → RHF exactly as the SO detail +
-       SO PDF do — NOT an alphabetical item_code sort. */
     g.variants.sort((a, b) => soLineSeqCmp(a.lines[0], b.lines[0]) || (a.itemCode < b.itemCode ? -1 : a.itemCode > b.itemCode ? 1 : 0));
-    // Composition only — no customer name on the parent row (Wei Siang
-    // 2026-06-16); the customer still shows in the expanded child order lines.
     g.description = sofaComposition(g.variants.map((v) => v.itemCode));
   }
   groups.sort((a, b) => {
@@ -203,19 +163,14 @@ export function groupBySo(skus: MrpSku[]): ModelGroup[] {
   return groups;
 }
 
-/* BF-FLAT (Commander 2026-06-16) — bedframe is flattened like the Sofa tab:
-   each colour VARIANT becomes its own top row (its Description 2 read straight
-   at L1), and expanding jumps straight to the SO orders. */
 export function groupByVariant(skus: MrpSku[]): ModelGroup[] {
   const groups: ModelGroup[] = skus.map((s) => ({
-    groupKey: rowKey(s),               // warehouse|itemCode|variantKey — unique per variant
+    groupKey: rowKey(s),
     warehouseId: s.warehouseId, warehouseCode: s.warehouseCode, warehouseName: s.warehouseName,
     itemCode: s.itemCode, description: s.description, category: s.category,
-    variants: [s],                     // single → its SO lines open directly under the row
+    variants: [s],
     qtyNeeded: s.qtyNeeded, stock: s.stock, poOutstanding: s.poOutstanding, shortage: s.shortage,
   }));
-  // Same ordering as the other groupers: shortage (orange) first, then warehouse,
-  // then code, then the variant label so a model's colours cluster together.
   groups.sort((a, b) => {
     if ((b.shortage > 0 ? 1 : 0) !== (a.shortage > 0 ? 1 : 0)) {
       return (b.shortage > 0 ? 1 : 0) - (a.shortage > 0 ? 1 : 0);
@@ -229,13 +184,9 @@ export function groupByVariant(skus: MrpSku[]): ModelGroup[] {
   return groups;
 }
 
-/* One sofa-cover rider: an ACCESSORY shortage line on a sofa SO, carried with
-   its owning SKU so it can be shown under the sofa's modules. */
 export type AccessoryRider = { sku: MrpSku; line: MrpLine };
 export type AccessoryBySoDoc = Map<string, AccessoryRider[]>;
 
-/* The date-window filter the page's From–To control applies. `dateBasis`
-   chooses which of the SO line's four dates the window tests. */
 export type DateBasis = 'delivery' | 'orderBy' | 'processing' | 'soDate';
 export type MrpFilters = {
   dateFrom: string;
@@ -321,9 +272,6 @@ export function computeTabModels(
       ? groupByVariant(viewSkus)
       : groupByModel(viewSkus);
 
-  // Sofa-cover riders — the sofa order's ACCESSORY shortage lines, keyed by SO
-  // doc no (= groupBySo's itemCode). Only shortage (orderable) lines, honouring
-  // the active date window — exactly the set gatherSofa orders.
   const sofaDocsInView = isSofa
     ? new Set(viewSkus.flatMap((s) => s.lines.map((l) => l.soDocNo)))
     : null;
@@ -342,12 +290,8 @@ export function computeTabModels(
     }
   }
 
-  // Only-shortages focus filter — affects which ROWS render.
   const shortModels = filters.onlyShort ? models.filter((m) => m.shortage > 0) : models;
 
-  // Search — narrow the rows in view to a query over code, description, variant/
-  // module label, and each SO line's doc no + customer; a sofa row also matches
-  // its cover riders. Empty query = everything.
   const searchQ = filters.search.trim().toLowerCase();
   const matchModel = (g: ModelGroup): boolean => {
     if (!searchQ) return true;

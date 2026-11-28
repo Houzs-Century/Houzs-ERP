@@ -5,7 +5,7 @@
    answers the same split (GET /:docNo/payment-backdate-requests), so this only
    decides which buttons to draw. Renders nothing while the order has none. */
 import type { CSSProperties } from 'react';
-import { fmtDate, fmtMoneySen } from '../../shared/format';
+import { fmtDate, fmtMoneySen } from '../../../../../shared/src/vendor/shared/format';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { usePrompt } from './ConfirmDialog';
 import { useNotify } from './NotifyDialog';
@@ -29,9 +29,6 @@ export function useBackdateDecisions() {
   const decide = useDecideBackdateRequest();
   const prompt = usePrompt();
   const notify = useNotify();
-  /** Resolves true once the decision is recorded, false when the admin backed
-   *  out of the prompt or the server refused — so a caller that opened the row
-   *  somewhere (the inbox drawer) knows whether to close it. */
   const run = async (row: BackdateRequestRow, action: 'approve' | 'reject' | 'withdraw'): Promise<boolean> => {
     let note: string | undefined;
     if (action === 'approve') {
@@ -95,7 +92,6 @@ export function BackdateRequestsPanel({ docNo, style }: { docNo: string; style?:
             </div>
             {open && (
               <div style={{ display: 'flex', gap: 6 }}>
-                {/* Nobody decides their own request — the server refuses it too. */}
                 {isAdmin && Number(r.requested_by) !== myId && <button type="button" style={btn} disabled={busy} onClick={() => void run(r, 'approve')}>Approve</button>}
                 {isAdmin && Number(r.requested_by) !== myId && <button type="button" style={btn} disabled={busy} onClick={() => void run(r, 'reject')}>Reject</button>}
                 {Number(r.requested_by) === myId && <button type="button" style={btn} disabled={busy} onClick={() => void run(r, 'withdraw')}>Withdraw</button>}

@@ -1,15 +1,7 @@
-// ----------------------------------------------------------------------------
-// DailyBankClose — the Daily Bank's Daily close (the owner's Claude Design
-// redesign, batch 3): count what is in hand against the system. Only cash
-// posts — a difference books to Cash Over/Short (946-0000) dated the day; card
-// and transfer differences are timing and settle in Merchant reports and Bank
-// statements. Same reads and writes as before (GET/PUT /accounting/daily-close,
-// POST /daily-close/confirm); a day still to come is read-only.
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react';
 import { Lock } from 'lucide-react';
-import { fmtDate, fmtDateTime, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import styles from './DailyBank.module.css';
 import { useConfirmDailyClose, useDailyClose, useSaveDailyClose, type DailyCloseRow } from './accounting-phase1-queries';
 
@@ -52,7 +44,6 @@ export function DailyBankClose({ date, today }: { date: string; today: string })
   const [counts, setCounts] = useState<Partial<Record<string, string>>>({});
   const [said, setSaid] = useState<string | null>(null);
 
-  /* Re-seed the inputs whenever the day (or its saved counts) change. */
   useEffect(() => {
     const seed: Record<string, string> = {};
     for (const r of rows) seed[r.bucket] = r.countedSen == null ? '' : (r.countedSen / 100).toFixed(2);
@@ -76,7 +67,6 @@ export function DailyBankClose({ date, today }: { date: string; today: string })
       { onSuccess: () => setSaid(`Counts saved for ${fmtDate(date)} · the day is still open`) },
     );
   };
-  /* The counts on screen are saved first — the close confirms what is saved. */
   const confirm = () => {
     saveM.mutate({ date, buckets: rows.map((r) => ({ bucket: r.bucket, countedSen: toSen(counts[r.bucket] ?? '') })) }, { onSuccess: () => confirmM.mutate({ date }, {
       onSuccess: (r) => {

@@ -1,0 +1,857 @@
+{
+  "/": {
+    "kind": "open"
+  },
+  "/agents": {
+    "kind": "perm",
+    "any": [
+      "*"
+    ]
+  },
+  "/ai-connector": {
+    "kind": "open"
+  },
+  "/ai-usage": {
+    "kind": "itPages"
+  },
+  "/announcements": {
+    "kind": "open"
+  },
+  "/assistant": {
+    "kind": "assistant"
+  },
+  "/assr": {
+    "kind": "page",
+    "page": "service_cases",
+    "allowSales": true
+  },
+  "/assr/:id": {
+    "kind": "page",
+    "page": "service_cases",
+    "allowSales": true
+  },
+  "/autocount-sync": {
+    "kind": "perm",
+    "any": [
+      "*",
+      "scm.autocount.read",
+      "settings.manage"
+    ]
+  },
+  "/change-log": {
+    "kind": "perm",
+    "any": [
+      "*",
+      "scm.changelog.read",
+      "settings.manage"
+    ]
+  },
+  "/fair-report-fill": {
+    "kind": "page",
+    "page": "projects"
+  },
+  "/fleet-health": {
+    "kind": "perm",
+    "any": [
+      "fleet.read"
+    ]
+  },
+  "/fleet-health/:lorryId": {
+    "kind": "perm",
+    "any": [
+      "fleet.read"
+    ]
+  },
+  "/hr/employees": {
+    "kind": "perm",
+    "any": [
+      "*",
+      "hr.employees.read",
+      "hr.employees.manage",
+      "hr.attendance.read",
+      "hr.ot.confirm"
+    ]
+  },
+  "/it-support": {
+    "kind": "open"
+  },
+  "/mail-center": {
+    "kind": "perm",
+    "any": [
+      "mail_center.read"
+    ]
+  },
+  "/mail-center/:id": {
+    "kind": "perm",
+    "any": [
+      "mail_center.read"
+    ]
+  },
+  "/meetings": {
+    "kind": "open"
+  },
+  "/my-cases": {
+    "kind": "page",
+    "page": "service_cases",
+    "allowSales": true
+  },
+  "/my-cases/:id": {
+    "kind": "page",
+    "page": "service_cases",
+    "allowSales": true
+  },
+  "/notifications": {
+    "kind": "perm",
+    "any": [
+      "projects.read"
+    ]
+  },
+  "/ocr": {
+    "kind": "itPages"
+  },
+  "/pos-admin": {
+    "kind": "perm",
+    "any": [
+      "*",
+      "pos.manage"
+    ]
+  },
+  "/profile": {
+    "kind": "open"
+  },
+  "/projects": {
+    "kind": "page",
+    "page": "projects"
+  },
+  "/projects/:id": {
+    "kind": "page",
+    "page": "projects.list"
+  },
+  "/reports/fair-report": {
+    "kind": "fairReport"
+  },
+  "/sales": {
+    "kind": "page",
+    "page": "sales"
+  },
+  "/schedule-reconcile": {
+    "kind": "page",
+    "page": "projects"
+  },
+  "/scm": {
+    "kind": "scm",
+    "area": "scm",
+    "allowDirector": true
+  },
+  "/scm/accounting": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/amendments": {
+    "kind": "scm",
+    "area": "scm.sales.orders",
+    "allowSales": true
+  },
+  "/scm/amendments/:id": {
+    "kind": "scm",
+    "area": "scm.sales.orders",
+    "allowSales": true
+  },
+  "/scm/ap-invoices": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/ap-invoices/:id": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/ap-invoices/duplicates": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/ap-invoices/scan": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/ar-invoices": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/ar-invoices/bills/:id": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/ar-invoices/deposit/:id": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/ar-invoices/sales/:id": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/auto-schedule": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/bank-recon": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/cancel-requests": {
+    "kind": "scm",
+    "area": "scm",
+    "allowDirector": true
+  },
+  "/scm/categories": {
+    "kind": "scm",
+    "area": "scm.procurement.products"
+  },
+  "/scm/chart-of-accounts": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/consignment": {
+    "kind": "scm",
+    "area": "scm"
+  },
+  "/scm/consignment-notes": {
+    "kind": "scm",
+    "area": "scm.consignment.notes"
+  },
+  "/scm/consignment-notes/:id": {
+    "kind": "scm",
+    "area": "scm.consignment.notes"
+  },
+  "/scm/consignment-notes/from-order": {
+    "kind": "scm",
+    "area": "scm.consignment.notes"
+  },
+  "/scm/consignment-notes/new": {
+    "kind": "scm",
+    "area": "scm.consignment.notes"
+  },
+  "/scm/consignment-orders": {
+    "kind": "scm",
+    "area": "scm.consignment.orders"
+  },
+  "/scm/consignment-orders/:docNo": {
+    "kind": "scm",
+    "area": "scm.consignment.orders"
+  },
+  "/scm/consignment-orders/new": {
+    "kind": "scm",
+    "area": "scm.consignment.orders"
+  },
+  "/scm/consignment-returns": {
+    "kind": "scm",
+    "area": "scm.consignment.returns"
+  },
+  "/scm/consignment-returns/:id": {
+    "kind": "scm",
+    "area": "scm.consignment.returns"
+  },
+  "/scm/consignment-returns/from-note": {
+    "kind": "scm",
+    "area": "scm.consignment.returns"
+  },
+  "/scm/consignment-returns/new": {
+    "kind": "scm",
+    "area": "scm.consignment.returns"
+  },
+  "/scm/credit-notes": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/credit-notes/:id": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/currencies": {
+    "kind": "perm",
+    "any": [
+      "*",
+      "scm.currency.manage"
+    ]
+  },
+  "/scm/daily-bank": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/daily-bank-cashbook": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/delivery-maintenance": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/delivery-orders": {
+    "kind": "scm",
+    "area": "scm.sales.delivery",
+    "allowSales": true
+  },
+  "/scm/delivery-orders/:id": {
+    "kind": "scm",
+    "area": "scm.sales.delivery",
+    "allowSales": true
+  },
+  "/scm/delivery-orders/from-so": {
+    "kind": "scm",
+    "area": "scm.sales.delivery"
+  },
+  "/scm/delivery-orders/new": {
+    "kind": "scm",
+    "area": "scm.sales.delivery"
+  },
+  "/scm/delivery-planning": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/delivery-planning-driver": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/delivery-planning-regions": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/delivery-rate-cards": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/delivery-residence-rules": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/delivery-returns": {
+    "kind": "deliveryReturns"
+  },
+  "/scm/delivery-returns/:id": {
+    "kind": "deliveryReturns"
+  },
+  "/scm/delivery-returns/from-do": {
+    "kind": "deliveryReturns"
+  },
+  "/scm/delivery-returns/new": {
+    "kind": "deliveryReturns"
+  },
+  "/scm/delivery-zones": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/do-load": {
+    "kind": "scm",
+    "area": "scm.sales.delivery",
+    "allowSales": true
+  },
+  "/scm/dp-orders": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/driver-leave": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/fabric-tracking": {
+    "kind": "scm",
+    "area": "scm.procurement.products"
+  },
+  "/scm/fair-pending": {
+    "kind": "scm",
+    "area": "scm",
+    "allowDirector": true
+  },
+  "/scm/finance": {
+    "kind": "open"
+  },
+  "/scm/finance-dashboard": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/finance/deposit-invoices": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/finance/rules": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/fleet": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/fleet-day": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/fleet-run-sheet": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/forecast": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/grns": {
+    "kind": "scm",
+    "area": "scm.procurement.grn"
+  },
+  "/scm/grns/:id": {
+    "kind": "scm",
+    "area": "scm.procurement.grn"
+  },
+  "/scm/grns/from-po": {
+    "kind": "scm",
+    "area": "scm.procurement.grn"
+  },
+  "/scm/grns/new": {
+    "kind": "scm",
+    "area": "scm.procurement.grn"
+  },
+  "/scm/hr/commission": {
+    "kind": "perm",
+    "any": [
+      "*",
+      "scm.hr.read",
+      "scm.hr.manage"
+    ]
+  },
+  "/scm/hr/settings": {
+    "kind": "perm",
+    "any": [
+      "*",
+      "scm.hr.manage"
+    ]
+  },
+  "/scm/inventory": {
+    "kind": "scm",
+    "area": "scm.warehouse.inventory"
+  },
+  "/scm/inventory/stock-card/:itemCode": {
+    "kind": "scm",
+    "area": "scm.warehouse.inventory"
+  },
+  "/scm/loading-list": {
+    "kind": "scm",
+    "area": "scm.warehouse.inventory"
+  },
+  "/scm/logistic-overview": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/maintenance": {
+    "kind": "scm",
+    "area": "scm.procurement.products"
+  },
+  "/scm/merchant-recon": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/mrp": {
+    "kind": "scm",
+    "area": "scm.procurement.mrp"
+  },
+  "/scm/official-docs": {
+    "kind": "perm",
+    "any": [
+      "*",
+      "scm.payment_voucher.create"
+    ]
+  },
+  "/scm/opening-balance": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/other-debtors": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/other-debtors/:id": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/outstanding": {
+    "kind": "scm",
+    "area": "scm.finance.outstanding"
+  },
+  "/scm/payment-backdate-requests": {
+    "kind": "perm",
+    "any": [
+      "*",
+      "scm.payment.backdate",
+      "scm.payment.backdate.approve"
+    ]
+  },
+  "/scm/payment-listing": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/payment-requests": {
+    "kind": "perm",
+    "any": [
+      "*",
+      "scm.payment_request.create",
+      "scm.payment_voucher.create"
+    ],
+    "anyAccess": [
+      "scm.sales.orders"
+    ],
+    "allowSales": true
+  },
+  "/scm/payment-vouchers": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/payment-vouchers/:id": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/payment-vouchers/new": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/payment-vouchers/scan": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/po-amendments": {
+    "kind": "scm",
+    "area": "scm.procurement.po"
+  },
+  "/scm/po-amendments/:id": {
+    "kind": "scm",
+    "area": "scm.procurement.po"
+  },
+  "/scm/procurement": {
+    "kind": "scm",
+    "area": "scm"
+  },
+  "/scm/procurement-overview": {
+    "kind": "scm",
+    "area": "scm.procurement.po",
+    "allowSalesDirector": true
+  },
+  "/scm/product-models": {
+    "kind": "scm",
+    "area": "scm.procurement.products"
+  },
+  "/scm/product-models/:id": {
+    "kind": "scm",
+    "area": "scm.procurement.products"
+  },
+  "/scm/product-requests": {
+    "kind": "scm",
+    "area": "scm",
+    "allowSales": true
+  },
+  "/scm/products": {
+    "kind": "scm",
+    "area": "scm.procurement.products"
+  },
+  "/scm/purchase-consignment-orders": {
+    "kind": "scm",
+    "area": "scm.consignment.po_orders"
+  },
+  "/scm/purchase-consignment-orders/:id": {
+    "kind": "scm",
+    "area": "scm.consignment.po_orders"
+  },
+  "/scm/purchase-consignment-orders/new": {
+    "kind": "scm",
+    "area": "scm.consignment.po_orders"
+  },
+  "/scm/purchase-consignment-receives": {
+    "kind": "scm",
+    "area": "scm.consignment.po_receives"
+  },
+  "/scm/purchase-consignment-receives/:id": {
+    "kind": "scm",
+    "area": "scm.consignment.po_receives"
+  },
+  "/scm/purchase-consignment-receives/from-pc-order": {
+    "kind": "scm",
+    "area": "scm.consignment.po_receives"
+  },
+  "/scm/purchase-consignment-receives/new": {
+    "kind": "scm",
+    "area": "scm.consignment.po_receives"
+  },
+  "/scm/purchase-consignment-returns": {
+    "kind": "scm",
+    "area": "scm.consignment.po_returns"
+  },
+  "/scm/purchase-consignment-returns/:id": {
+    "kind": "scm",
+    "area": "scm.consignment.po_returns"
+  },
+  "/scm/purchase-consignment-returns/from-receive": {
+    "kind": "scm",
+    "area": "scm.consignment.po_returns"
+  },
+  "/scm/purchase-consignment-returns/new": {
+    "kind": "scm",
+    "area": "scm.consignment.po_returns"
+  },
+  "/scm/purchase-invoices": {
+    "kind": "scm",
+    "area": "scm.procurement.pi"
+  },
+  "/scm/purchase-invoices/:id": {
+    "kind": "scm",
+    "area": "scm.procurement.pi"
+  },
+  "/scm/purchase-invoices/from-grn": {
+    "kind": "scm",
+    "area": "scm.procurement.pi"
+  },
+  "/scm/purchase-invoices/new": {
+    "kind": "scm",
+    "area": "scm.procurement.pi"
+  },
+  "/scm/purchase-orders": {
+    "kind": "scm",
+    "area": "scm.procurement.po"
+  },
+  "/scm/purchase-orders/:id": {
+    "kind": "scm",
+    "area": "scm.procurement.po"
+  },
+  "/scm/purchase-orders/from-so": {
+    "kind": "scm",
+    "area": "scm.procurement.po"
+  },
+  "/scm/purchase-orders/new": {
+    "kind": "scm",
+    "area": "scm.procurement.po"
+  },
+  "/scm/purchase-returns": {
+    "kind": "scm",
+    "area": "scm.procurement.pr"
+  },
+  "/scm/purchase-returns/:id": {
+    "kind": "scm",
+    "area": "scm.procurement.pr"
+  },
+  "/scm/purchase-returns/new": {
+    "kind": "scm",
+    "area": "scm.procurement.pr"
+  },
+  "/scm/receipts": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/receipts/debtor/:id": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/receipts/official/:id": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/receipts/sundry/:id": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/reports/delivery-order-detail-listing": {
+    "kind": "scm",
+    "area": "scm.sales.delivery"
+  },
+  "/scm/reports/delivery-return-detail-listing": {
+    "kind": "deliveryReturns"
+  },
+  "/scm/reports/sales-invoice-detail-listing": {
+    "kind": "scm",
+    "area": "scm.sales.invoices"
+  },
+  "/scm/reports/sales-order-detail-listing": {
+    "kind": "scm",
+    "area": "scm.sales.orders"
+  },
+  "/scm/sales-invoices": {
+    "kind": "scm",
+    "area": "scm.sales.invoices",
+    "allowSales": true
+  },
+  "/scm/sales-invoices/:id": {
+    "kind": "scm",
+    "area": "scm.sales.invoices",
+    "allowSales": true
+  },
+  "/scm/sales-invoices/from-do": {
+    "kind": "scm",
+    "area": "scm.sales.invoices"
+  },
+  "/scm/sales-invoices/new": {
+    "kind": "scm",
+    "area": "scm.sales.invoices"
+  },
+  "/scm/sales-order": {
+    "kind": "scm",
+    "area": "scm"
+  },
+  "/scm/sales-orders": {
+    "kind": "scm",
+    "area": "scm.sales.orders",
+    "allowSales": true
+  },
+  "/scm/sales-orders/:docNo": {
+    "kind": "scm",
+    "area": "scm.sales.orders",
+    "allowSales": true
+  },
+  "/scm/sales-orders/generate": {
+    "kind": "scm",
+    "area": "scm.sales.orders",
+    "allowSales": true
+  },
+  "/scm/sales-orders/maintenance": {
+    "kind": "soMaintenance"
+  },
+  "/scm/sales-orders/new": {
+    "kind": "scm",
+    "area": "scm.sales.orders",
+    "allowSales": true
+  },
+  "/scm/sales-orders/new/from-products": {
+    "kind": "scm",
+    "area": "scm.sales.orders",
+    "allowSales": true
+  },
+  "/scm/sales-orders/new/guided": {
+    "kind": "scm",
+    "area": "scm.sales.orders",
+    "allowSales": true
+  },
+  "/scm/saved-locations": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/settlement-setup": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/stock-adjustments": {
+    "kind": "scm",
+    "area": "scm.warehouse.adjustments"
+  },
+  "/scm/stock-adjustments/:id": {
+    "kind": "scm",
+    "area": "scm.warehouse.adjustments"
+  },
+  "/scm/stock-adjustments/:id/edit": {
+    "kind": "scm",
+    "area": "scm.warehouse.adjustments"
+  },
+  "/scm/stock-adjustments/new": {
+    "kind": "scm",
+    "area": "scm.warehouse.adjustments"
+  },
+  "/scm/stock-take-approvals": {
+    "kind": "perm",
+    "any": [
+      "*",
+      "scm.stock_take.supervise"
+    ]
+  },
+  "/scm/stock-takes": {
+    "kind": "scm",
+    "area": "scm.warehouse.stock_take"
+  },
+  "/scm/stock-takes/:id": {
+    "kind": "scm",
+    "area": "scm.warehouse.stock_take"
+  },
+  "/scm/stock-takes/new": {
+    "kind": "scm",
+    "area": "scm.warehouse.stock_take"
+  },
+  "/scm/stock-transfers": {
+    "kind": "scm",
+    "area": "scm.warehouse.transfers"
+  },
+  "/scm/stock-transfers/:id": {
+    "kind": "scm",
+    "area": "scm.warehouse.transfers"
+  },
+  "/scm/stock-transfers/new": {
+    "kind": "scm",
+    "area": "scm.warehouse.transfers"
+  },
+  "/scm/supplier-maintenance": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/supplier-notes": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/supplier-notes/:id": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/suppliers": {
+    "kind": "scm",
+    "area": "scm.procurement.suppliers"
+  },
+  "/scm/suppliers/:id": {
+    "kind": "scm",
+    "area": "scm.procurement.suppliers"
+  },
+  "/scm/threepl-companies": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/transportation": {
+    "kind": "scm",
+    "area": "scm"
+  },
+  "/scm/trips": {
+    "kind": "scm",
+    "area": "scm.transportation.drivers"
+  },
+  "/scm/unbilled-deliveries": {
+    "kind": "scm",
+    "area": "scm.finance.outstanding"
+  },
+  "/scm/unmatched-payments": {
+    "kind": "scm",
+    "area": "scm.finance.accounting"
+  },
+  "/scm/warehouse": {
+    "kind": "scm",
+    "area": "scm"
+  },
+  "/scm/warehouses": {
+    "kind": "scm",
+    "area": "scm.warehouse.inventory"
+  },
+  "/scm/warehouses/racks": {
+    "kind": "scm",
+    "area": "scm.warehouse.inventory"
+  },
+  "/settings": {
+    "kind": "page",
+    "page": "settings",
+    "minLevel": "full"
+  },
+  "/setup-invoice": {
+    "kind": "page",
+    "page": "projects"
+  },
+  "/system-health": {
+    "kind": "itPages"
+  },
+  "/team": {
+    "kind": "page",
+    "page": "team",
+    "allowSalesDirector": true
+  },
+  "/venture-portal-feed": {
+    "kind": "perm",
+    "any": [
+      "*",
+      "scm.venture_portal.read",
+      "settings.manage"
+    ]
+  }
+}

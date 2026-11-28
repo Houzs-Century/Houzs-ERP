@@ -1,26 +1,3 @@
-// DeliveryOrderDetailV2 — Theme C ("Ink & Petrol") design of the Delivery
-// Order detail page, matching the 2026-07-08 design handoff prototypes.
-//
-// The 4 primary actions in the sticky header all open real modal overlays:
-//   · History         — the recorded change log (scm.entity_audit_log)
-//   · Relationship Map — a node-graph modal showing the document chain
-//     PO → SO → DO (current) → GRN → Invoice, NOT an inline pipeline
-//   · Print PDF       — print-preview card + Download/Print
-//   · Edit            — navigate to the New DO form
-//
-// Stateful DO transitions (Cancel DO / Mark signed / Transfer to Sales Invoice) are
-// kept as CONDITIONAL secondary buttons within the same header, positioned
-// between Print PDF and Edit so they don't hide from ops but also don't
-// dominate the primary action bar.
-//
-// Aside dark hero flips from the earlier "Dispatch" (driver-info-forward)
-// version to a "Delivery status" card — status label + scheduled date +
-// Total items + Warehouse — because ops opens a DO detail asking "is it
-// on the road yet?", not "who's driving". Driver info moves INTO the
-// Delivery info section as an ink-tinted sub-card.
-//
-// Route: /scm/delivery-orders/:id. Data: useMfgDeliveryOrderDetail /
-// useUpdateMfgDeliveryOrderStatus (unchanged from prior V2).
 
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -98,13 +75,12 @@ import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders, canRevertDelivery } from "../../auth/salesAccess";
 import { DO_SHIPPED_STATES, doHasArrived } from '../../vendor/shared/do-shipped-states';
 import { HoldChip, type HoldFields } from "../../vendor/scm/components/HoldChip";
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 
 import { DocumentHistoryDrawer } from "./DocumentHistoryDrawer";
 import { isFocLine } from '../../vendor/scm/lib/foc-line';
 import { CollectedOnOrderCard } from "../../vendor/scm/components/CollectedOnOrderCard";
 import { shortRackLabels } from "../../vendor/scm/lib/rack-label";
-// ─── Header + item shapes (subset — full 40-field row lives in the list V2) ─
 
 type DoLifecycle = "shipped" | "invoiced" | "returned";
 
@@ -150,10 +126,6 @@ type DoHeader = HoldFields & {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
-  /* Proof of delivery, as stored. Both are on the detail payload already
-     (delivery-orders-mfg.ts:305 selects `pod_r2_key, signature_data`); this
-     page simply never declared them, which is part of why it could close a
-     delivery without noticing there was no evidence on the row. */
   signature_data?: string | null;
   pod_r2_key?: string | null;
   departure_at?: string | null;
@@ -166,10 +138,6 @@ type DoHeader = HoldFields & {
   created_at?: string;
   created_by?: string | null;
   issued_by_name?: string | null;
-  // Finance-gated cost / margin analytics (migration 0079). The DO header
-  // rolls line prices/costs up in recomputeTotals; present on the DETAIL
-  // payload for every caller (only the LIST endpoint strips these — #574).
-  // The UI gates the Totals·Margin card behind project_finance_viewer.
   local_total_sen?: number | null;
   total_cost_sen?: number | null;
   total_margin_sen?: number | null;
@@ -197,12 +165,8 @@ type DoItem = {
   cancelled?: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
-  /* REC P4 — per-line source rack + storekeeper resolution (stamped by the
-     detail GET: warehouse_id = ship-from warehouse, racks = candidate labels,
-     rack_id = the operator's explicit pick). */
   rack_id?: string | null;
   racks?: string[];
-  /* 'locked' = PO / rack stamped when the line shipped; 'worked_out' = re-derived. */
   source_state?: 'locked' | 'worked_out' | null;
   warehouse_id?: string | null;
   /* Mig 0230 — the incoming PO batch this line committed to at DO creation
@@ -219,15 +183,10 @@ type DoItem = {
      deliberately carries NO so_item_id, so this flag is the only thing that
      tells it apart from an ordinary ad-hoc line. Owner ruling 2026-09-07. */
   ac_substituted?: boolean;
-  /* Per-line delivery date + whether an operator typed it (as opposed to it
-     following the header). Both have been on the detail GET's ITEM select since
-     the column existed; this page had no field for them, which is why the date
-     was editable in the form and invisible on the document. */
   line_delivery_date?: string | null;
   line_delivery_date_overridden?: boolean | null;
 };
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
 // The DO document is quantity-only for customers. The centi money formatter
 // (fmtMoneySen) that fed the finance-gated Totals·Margin card is gone with
@@ -321,7 +280,6 @@ const shipTo = (h: DoHeader): string[] =>
     [h.customer_state, h.customer_country].filter(Boolean).join(", "),
   ].filter((s): s is string => !!s && s.trim().length > 0);
 
-// ─── Field cell ────────────────────────────────────────────────────────────
 
 function Field({
   label,
@@ -354,7 +312,6 @@ function Field({
   );
 }
 
-// ─── Aside primitives ──────────────────────────────────────────────────────
 
 function AsideCard({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -372,11 +329,6 @@ function AsideCard({ title, children }: { title: string; children: ReactNode }) 
 // view for EVERYONE; costing moves to the separate Finance "Fulfillment
 // Costing" module. The customer-facing totals are untouched.
 
-// REC P4 — Source rack picker. Per goods line, choose which physical rack the
-// stock ships FROM; the backend logs a rack STOCK_OUT on dispatch (honouring
-// the pick, else auto-picking the rack holding the product). Lines whose
-// warehouse has no racks are hidden. Once the DO has shipped the pick is
-// locked (the stock-out already ran) and shown read-only.
 function SourceRackCard({
   items,
   doId,
@@ -507,7 +459,6 @@ function PersonRow({
   );
 }
 
-// ─── Recent activity timeline (mirrors SalesOrderDetailV2) ─────────────────
 type ActivityDot = "success" | "primary" | "muted";
 const DOT_CLS: Record<ActivityDot, string> = {
   success: "bg-synced",
@@ -539,11 +490,6 @@ function ActivityRow({
   );
 }
 
-// ─── Delivery-status aside hero (dark slab) ────────────────────────────────
-//
-// Replaces the earlier "Dispatch" driver-focused hero. Now surfaces the four
-// signals ops opens a DO for: state label · scheduled date · total items ·
-// warehouse. Matches the design handoff card exactly.
 
 function DeliveryStatusCard({
   header,
@@ -552,7 +498,6 @@ function DeliveryStatusCard({
 }: {
   header: DoHeader;
   totalQty: number;
-  /** The ship-from warehouse label, else the sales-location text (shipFromLabel below). */
   shipFrom: string | null;
 }) {
   const eff = effectiveOf(header);
@@ -605,7 +550,6 @@ function DeliveryStatusCard({
   );
 }
 
-// ─── Driver sub-card (embedded inside Delivery info) ───────────────────────
 
 function DriverSubCard({ header }: { header: DoHeader }) {
   return (
@@ -628,31 +572,11 @@ function DriverSubCard({ header }: { header: DoHeader }) {
   );
 }
 
-// ModalOverlay is now imported from the shared component so the SO/DO/SI/DR
-// detail pages don't drift on modal chrome. HistoryModal + PrintPdfModal
-// below both consume it.
 
 
-/* The synthesized "Change history" modal that stood here until 2026-09-13 is
-   gone. It built its timeline out of the header's own columns — created_at, the
-   driver name, the delivery date, the status, the line count — so it showed the
-   delivery order as it is NOW, dressed as a list of things that happened. Edit a
-   date and the "history" changed retrospectively with it; nothing that was
-   actually done to the document ever appeared. Its own comment said a real
-   history endpoint should replace it, and that endpoint has been recording this
-   document all along. It is now the shared History drawer. */
 
-// Relationship map — the inline node-graph + ModalOverlay copies that used
-// to live here were moved to a shared component (see the imports at the top
-// of the file) so SO/DO/SI/DR detail pages share one renderer. Nodes are
-// built in the main component below (chainNodes memo) and passed in as
-// props; onNodeClick handles navigation to linked cross-docs.
 
-// Print preview — this page's private PrintPdfModal was the app's ONLY print
-// preview; it is now components/scm-v2/PrintPreviewModal, shared by every
-// printable document (see that file's header).
 
-// ─── Main page ─────────────────────────────────────────────────────────────
 
 export function DeliveryOrderDetailV2() {
   const { id } = useParams<{ id: string }>();
@@ -667,13 +591,6 @@ export function DeliveryOrderDetailV2() {
   const { cancelDo, isPending: cancelPending } = useDoCancelAction();
   const revert = useRevertMfgDeliveryOrder();
   const { user, can, pageAccess } = useAuth();
-  // showCustomerPo + node click handling now live inside useDoRelationshipMap.
-  // Mutation gate — a salesperson opens this DO read-only via the sales inherit
-  // hatch (allowSales; backend readInheritsFrom scm.sales.orders) and cannot
-  // edit/cancel/convert it. Hide those controls (owner off-not-hide rule); Print
-  // PDF stays so the rep can still send the document.
-  // ONE gate, shared with the lists, the SO drawer and mobile — this was a
-  // hand-copied `["edit","full"].includes(...)`, and the copies disagreed.
   const canWriteDo = canOperateDeliveryOrders(user, can, pageAccess);
   /* Ship-from branch. The header's own warehouse_id is the canonical binding
      (it is also step 2 of resolveDoLineWarehouses, the answer for any line with
@@ -695,9 +612,6 @@ export function DeliveryOrderDetailV2() {
     () => items.reduce((sum, l) => sum + Number(l.qty ?? 0), 0),
     [items]
   );
-  /* ONE answer for "which warehouse", used by the status card, the header chip
-     and the Ship-from field: the DO's own warehouse (stored at create), else the
-     SO's sales-location text for an older DO that never recorded one. */
   const shipFromLabel: string | null = deliveryOrder
     ? warehouseLabel((warehousesQ.data ?? []).find((w) => w.id === deliveryOrder.warehouse_id) ?? null)
       || deliveryOrder.sales_location
@@ -733,13 +647,6 @@ export function DeliveryOrderDetailV2() {
      the order stays the one place a payment is taken (docs/bugs/0850). */
   const soPaymentsQ = useSalesOrderPayments(deliveryOrder?.so_doc_no ?? null);
 
-  // Chain nodes for the shared Relationship Map modal, read from the LIVE
-  // `/document-flow` graph (the SO map's source) instead of a hand-built chain.
-  // This is what fixes the DO's old hard-coded GRN "Not created" — the graph
-  // resolves the real GRN(s) the DO's source SO was received on — and makes the
-  // Sales Invoice + Sales Order nodes reflect the actual downstream/upstream
-  // documents. Display-only: NONE of the DO status / delivery-planning state is
-  // read here (audit R8; see sales-doc-relationship-map.ts).
   const relMapHeader = useMemo(
     () =>
       deliveryOrder
@@ -774,13 +681,6 @@ export function DeliveryOrderDetailV2() {
   const doCancel = () => {
     if (deliveryOrder) void cancelDo(deliveryOrder.id, deliveryOrder.do_number);
   };
-  /* The Ops-lead REVERT — the safety net for a wrong scan (LOADED) or an
-     accidental dispatch (DISPATCHED). The plan is derived from the current
-     status so the one control never changes meaning ambiguously: a LOADED order
-     undoes the load (→ Draft, stock returns), a DISPATCHED one undoes the
-     dispatch (→ Loaded, stock stays out — a full reset is then a second click).
-     The server owns the legal transitions, the downstream lock and the stock
-     reversal; a reason is mandatory (it lands in the audit trail). */
   const doStatusUpper = (deliveryOrder?.status || "").toUpperCase();
   const revertPlan: { to: "DISPATCHED" | "LOADED" | "DRAFT"; label: string; body: string } | null =
     doHasArrived(doStatusUpper)
@@ -800,7 +700,7 @@ export function DeliveryOrderDetailV2() {
       multiline: true,
       validate: (v) => (v.trim() ? null : "A reason is required."),
     });
-    if (reason == null) return; // cancelled
+    if (reason == null) return;
     revert.mutate({ id: deliveryOrder.id, toStatus: revertPlan.to, reason: reason.trim() });
   };
   /* The ONE status-advance control. Its verb and its target both come from
@@ -823,27 +723,14 @@ export function DeliveryOrderDetailV2() {
   const goConvertToSi = () =>
     deliveryOrder && navigate(convertToLink('doToSi', deliveryOrder.id));
 
-  // Render the DO PDF via the SAME generator the list's Export PDF and the V1
-  // detail page use (jspdf, client-side). The old `?print=1` navigation was dead
-  // — nothing consumed that param — so the button did nothing. Reuse the shared
-  // helper instead of re-implementing.
-  //
-  // `action` is the preview dialog's three exits. "Print now" used to be a bare
-  // window.print(), which prints a BLANK sheet here (index.css's @media print
-  // reveals only .org-print-area); it now prints the real document.
   const doDeliverPdf = (action: PdfAction) => {
     if (!deliveryOrder) return Promise.resolve();
-    // Resolve the salesperson name the SAME way the on-screen field does (the PDF
-    // cannot run the staff lookup); blank ⇒ the DO omits the row rather than
-    // printing "Unassigned".
     const salesperson =
       deliveryOrder.salesperson_name ||
       salespersonNameOf(deliveryOrder.agent, deliveryOrder.salesperson_id, "") ||
       null;
     return import("../../vendor/scm/lib/delivery-order-pdf")
       .then(async ({ generateDeliveryOrderPdf }) => {
-        // armDoScanToken puts the PUBLIC scan token on the header — the print's
-        // QR encodes /d/<token>, which opens with no login.
         const { armDoScanToken } = await import("../../vendor/scm/lib/do-scan-token-arm");
         const header = await armDoScanToken(
           deliveryOrder as Record<string, unknown>,
@@ -852,8 +739,6 @@ export function DeliveryOrderDetailV2() {
         return generateDeliveryOrderPdf({ ...header, salesperson } as never, items as never, { action });
       })
       .then(() => {
-        // Downloads and prints are terminal — close behind them. A new-tab
-        // preview leaves the dialog up so the operator can print after looking.
         if (action !== "preview") closeModal();
       })
       .catch((e) =>
@@ -865,8 +750,6 @@ export function DeliveryOrderDetailV2() {
       );
   };
 
-  // Summary lines for the print preview card — enough to confirm this is the
-  // document you meant before it goes to a printer or a customer.
   const printRows: PrintPreviewRow[] = deliveryOrder
     ? [
         { label: "Deliver to", value: deliveryOrder.debtor_name },
@@ -895,7 +778,6 @@ export function DeliveryOrderDetailV2() {
       ]
     : [];
 
-  // ── DO line item columns — Item (with variant chips) · Type (FOC/Sale) · Qty ─
   const lineColumns: Column<DoItem>[] = [
     {
       key: "item",
@@ -924,13 +806,6 @@ export function DeliveryOrderDetailV2() {
                 </span>
               </div>
             )}
-            {/* SUBSTITUTED AT DISPATCH (mig 20260907T2340). The delivered code
-                is not on this document's sales order — the warehouse shipped a
-                different product. Shown because the alternative is the system
-                presenting a code that silently does not match the order, which
-                is exactly what the owner's ruling was about. The line carries no
-                so_item_id, so the order's outstanding quantity is unchanged
-                until a person decides which line this replaces. */}
             {l.ac_substituted && (
               <div className="mt-1">
                 <Badge tone="warning" size="xs">
@@ -938,9 +813,6 @@ export function DeliveryOrderDetailV2() {
                 </Badge>
               </div>
             )}
-            {/* Committed batch (mig 0230) — the hard-from-DO anchor. Renders
-                ONLY when the line stored a commitment at DO creation; most
-                lines never commit, so absence renders nothing (no dash). */}
             {l.committed_po_batch_no && (
               <div className="mt-1">
                 <CommittedBatchCell poNo={l.committed_po_batch_no} />
@@ -1014,10 +886,6 @@ export function DeliveryOrderDetailV2() {
           <span className="text-[13px] text-ink-muted">—</span>
         ),
     },
-    /* Photos (mig 20260828T0746) — the line's carried SO reference shots,
-       openable. Same column idiom as the SO detail's Photos column: getValue is
-       the COUNT so the column sorts/filters/exports as a number; a `render`
-       with no getValue is invisible to all three. */
     {
       key: "photos",
       label: "Photos",
@@ -1033,7 +901,6 @@ export function DeliveryOrderDetailV2() {
     },
   ];
 
-  // ── Loading / error states ───────────────────────────────────────────
   if (!id) {
     return (
       <div className="p-8 text-center text-ink-muted">
@@ -1074,11 +941,6 @@ export function DeliveryOrderDetailV2() {
   };
 
   const rawStatus = (deliveryOrder.status || "").toLowerCase();
-  /* Both questions this page asks about status now come from ONE module, which
-     the list drawer, the phone bar below and the native mobile shell also
-     import. They used to be re-derived here by hand, and the copies disagreed:
-     on DISPATCHED this page offered "Mark signed" while the mobile shell offered
-     "Mark In Transit" for the same document. See vendor/scm/lib/do-next-step.ts. */
   const advanceStep = doAdvanceStep(deliveryOrder.status);
   const advanceReason = doAdvanceBlockReason(deliveryOrder.status);
   const siReason = siTransferBlockReason(deliveryOrder.status);
@@ -1089,7 +951,6 @@ export function DeliveryOrderDetailV2() {
 
   return (
     <div className="pb-56 md:pb-0">
-      {/* ─── Mobile-only dark sticky header ─────────────────────────── */}
       <div className="sticky top-0 z-20 -mx-4 -mt-4 bg-sidebar text-sidebar-ink shadow-slab md:hidden">
         <div className="flex items-center justify-between gap-3 px-4 pt-3">
           <button
@@ -1120,16 +981,12 @@ export function DeliveryOrderDetailV2() {
               <Badge tone={badgeTone} variant="solid" size="xs">
                 {stageLabel}
               </Badge>
-              {/* mig 0324 — the Delivery Order's first hold marker, BESIDE
-                  the stage rather than instead of it: the warehouse still
-                  needs to know where the goods are. */}
               <HoldChip onHold={deliveryOrder.on_hold} reason={deliveryOrder.hold_reason} />
             </span>
           </div>
         </div>
       </div>
 
-      {/* ─── Desktop sticky header ─────────────────────────────────── */}
       <div className="sticky top-0 z-10 -mx-4 hidden border-b border-border bg-bg/95 px-4 py-4 backdrop-blur-sm sm:-mx-6 sm:px-6 md:block">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
@@ -1150,9 +1007,6 @@ export function DeliveryOrderDetailV2() {
                   <Badge tone={badgeTone} size="sm">
                     {stageLabel}
                   </Badge>
-                  {/* mig 0324 — the Delivery Order's first hold marker, BESIDE
-                      the stage rather than instead of it: the warehouse still
-                      needs to know where the goods are. */}
                   <HoldChip onHold={deliveryOrder.on_hold} reason={deliveryOrder.hold_reason} />
                 </span>
               </div>
@@ -1213,9 +1067,6 @@ export function DeliveryOrderDetailV2() {
                 Cancel DO
               </Button>
             )}
-            {/* Ops-lead exception power (scm.do.revert): undo a wrong scan or an
-                accidental dispatch. Shown only when a revert is legal (LOADED or
-                DISPATCHED); the server re-checks the capability and the rules. */}
             {canRevertDelivery(user) && revertPlan && (
               <Button
                 variant="secondary"
@@ -1279,9 +1130,6 @@ export function DeliveryOrderDetailV2() {
               </Button>
             )}
           </div>
-          {/* The reasons, as TEXT. A `title` tooltip needs a hover and would
-              have said nothing on a touch screen — and the ids below are what
-              the disabled buttons point at with aria-describedby. */}
           {canWriteDo && (
             <div className="flex max-w-[420px] flex-col items-end gap-0.5 text-right">
               <NextStepNote id="do-advance-reason" reason={advanceReason} />
@@ -1292,9 +1140,7 @@ export function DeliveryOrderDetailV2() {
         </div>
       </div>
 
-      {/* ─── Detail body ────────────────────────────────────────────── */}
       <div className="py-5">
-        {/* Mobile-only Delivery status hero */}
         <div className="mb-3 rounded-lg border border-border bg-surface p-4 shadow-stone md:hidden">
           <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
             Delivery status
@@ -1319,7 +1165,6 @@ export function DeliveryOrderDetailV2() {
 
         <DetailGrid>
           <DetailMain>
-            {/* Customer info — Customer SO No. first, per design */}
             <Section title="Customer info">
               <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-3">
                 <Field
@@ -1389,7 +1234,6 @@ export function DeliveryOrderDetailV2() {
               </div>
             </Section>
 
-            {/* Delivery address + Emergency contact */}
             <Section title="Delivery address">
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-[1.4fr_1fr] sm:divide-x sm:divide-border-subtle">
                 <div className="sm:pr-6">
@@ -1438,7 +1282,6 @@ export function DeliveryOrderDetailV2() {
               </div>
             </Section>
 
-            {/* Delivery info (with embedded Driver sub-card) */}
             <Section title="Delivery info">
               <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-3">
                 <Field label="DO date" value={fmtDate(deliveryOrder.do_date)} />
@@ -1456,9 +1299,6 @@ export function DeliveryOrderDetailV2() {
                   }
                   muted={!deliveryOrder.customer_delivery_date}
                 />
-                {/* Which branch shipped it. Resolved id first, then the stored
-                    text snapshot; a document whose location the book could not
-                    answer says so rather than borrowing a default. */}
                 <Field
                   label="Ship-from warehouse"
                   value={shipFromLabel || "Not recorded"}
@@ -1468,7 +1308,6 @@ export function DeliveryOrderDetailV2() {
                 />
               </div>
 
-              {/* Driver sub-card — moved into Delivery info per the new design */}
               <DriverSubCard header={deliveryOrder} />
 
               {foldedNote && (
@@ -1483,7 +1322,6 @@ export function DeliveryOrderDetailV2() {
               )}
             </Section>
 
-            {/* Line items */}
             <Section
               title={`Line items · ${items.length}`}
               actions={
@@ -1594,11 +1432,6 @@ export function DeliveryOrderDetailV2() {
                 />
               </AsideCard>
 
-              {/* Collected on the ORDER — its own card rather than extra rows
-                  anywhere else, because these receipts were banked against the
-                  sales order and not against this delivery, and merging the two
-                  would lose exactly the fact the office needs: which document
-                  took the money. Read-only here; it is edited on the order. */}
               {deliveryOrder.so_doc_no && (
                 <AsideCard title={`Collected on ${deliveryOrder.so_doc_no}`}>
                   <CollectedOnOrderCard
@@ -1611,9 +1444,6 @@ export function DeliveryOrderDetailV2() {
                 </AsideCard>
               )}
 
-              {/* Recent activity — synthesized from the header's status +
-                  origin info (same source as the History modal; no new
-                  fetch), mirroring SalesOrderDetailV2's aside card. */}
               <AsideCard title="Recent activity">
                 <ActivityRow
                   title={`Status · ${EFFECTIVE_TONE[effectiveOf(deliveryOrder)].label}`}
@@ -1653,17 +1483,6 @@ export function DeliveryOrderDetailV2() {
         </DetailGrid>
       </div>
 
-      {/* Fixed bottom action bar (phone only).
-
-          THE SAME TWO CONTROLS AS THE DESKTOP HEADER, and for the same reason.
-          This bar used to carry Edit / Print / Call and nothing else: at phone
-          width this page offered no next step at ANY status — not even a
-          disabled one — so a storeman looking at a signed delivery order saw a
-          finished document and the Sales Invoice was never raised. A fix that
-          lands on one breakpoint of one page reproduces exactly the defect it
-          was written to end, which is how DateField came to be wired into 14 of
-          189 date inputs. The reason renders as TEXT here because a `title`
-          tooltip cannot be summoned on a touch screen. */}
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">
         {canWriteDo && (
           <div className="mb-1.5 flex flex-col gap-0.5">
@@ -1731,7 +1550,6 @@ export function DeliveryOrderDetailV2() {
         </div>
       </div>
 
-      {/* Modals */}
       {historyOpen && (
         <DocumentHistoryDrawer doc="DELIVERY_ORDER" id={String(deliveryOrder.id)}
           label={deliveryOrder.do_number} onClose={() => setHistoryOpen(false)} />
@@ -1741,15 +1559,10 @@ export function DeliveryOrderDetailV2() {
         onClose={closeModal}
         nodes={chainNodes}
         onNodeClick={(n) => {
-          // The hook returns TRUE when the click navigated away, so the map
-          // closes; an in-app notice keeps it open (renders over the map).
           if (onChainNodeClick(n)) closeModal();
         }}
         pairing={chainPairing}
       />
-      {/* A chain slot standing for several documents opens this chooser instead
-          of a notice that only named them. The picked one opens in its own tab of the
-          in-app strip. */}
       <DocumentChoiceDialog
         prompt={chainChoice}
         onClose={closeChainChoice}

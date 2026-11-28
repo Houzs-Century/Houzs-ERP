@@ -1,25 +1,3 @@
-// ----------------------------------------------------------------------------
-// allowed-options-check — server-side enforcement of per-Model variant chips.
-//
-// PR #216 (Commander 2026-05-27 follow-up to the pricing-engine PR #205):
-// allowedCompartments / allowedSeatSizes / allowedDivanHeights / etc.
-// used to gate the UI only — commander could still hand-craft a POST that
-// dropped a 2C(LHF) variant onto a Model that explicitly allowed only
-// 1A(LHF) + 2A(LHF). The pricing engine would happily price it; the SO
-// would persist; nobody complained until the production floor pushed back
-// "this Model can't actually be built in 2C". Enforce here so the API is
-// the source of truth, matching the "server-side pricing recompute"
-// non-negotiable in 2990s-readonly/CLAUDE.md.
-//
-// Rule: empty / null `allowed_options.<key>` = NO restriction (pre-PR #50
-// rows simply never set the pool — must keep working). A non-empty array
-// means "only these values are accepted on a line item under this Model".
-// Variants the line didn't send are ignored (only what the line sends is
-// validated — the UI may legitimately omit divanHeight on a sofa SO line).
-//
-// Pure projection of (allowed_options × product × line.variants) → ok | err.
-// No DB calls — caller pre-loads the model row via `loadModelForCode` so
-// tests can hit this without Supabase. ----------------------------------------
 
 import { normalizeCompartmentCode } from '../shared/sofa-build';
 import { normaliseTypographicQuotes } from '../shared/mfg-pricing';
@@ -32,8 +10,6 @@ export type AllowedOptionsLite = {
   compartments?:          string[] | null;
   divan_heights?:         string[] | null;
   total_heights?:         string[] | null;
-  /** BEDFRAME — gap (mattress-gap) inches pool. No price contribution, but
-   *  per-Model on/off-able like divan/leg (ticked in the Modular drawer). */
   gaps?:                  string[] | null;
   leg_heights?:           string[] | null;
   specials?:              string[] | null;
@@ -48,7 +24,7 @@ export type AllowedOptionsLite = {
  *  validation is skipped entirely in that case. */
 export type ProductForCheck = {
   code:        string;
-  category:    string;             // 'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE'
+  category:    string;
   model_id:    string | null;
   size_code:   string | null;
 };
@@ -68,23 +44,11 @@ export type VariantsLite = {
   gap?:           string | null;
   seatHeight?:    string | null;
   sofaLegHeight?: string | null;
-  /** SOFA multi-module build layout. When present the line's `itemCode` is only
-   *  the catalog ANCHOR SKU (e.g. TELLUC-1S) — the real built modules live here
-   *  and the server later splits them into per-module SO lines. The compartment
-   *  gate validates THESE, not the anchor's own suffix. Each entry is a cell
-   *  carrying a `moduleId` (`'2A(LHF)'`); other geometry keys (x/y/rot) ignored. */
   cells?:         Array<{ moduleId?: string | null } | unknown> | null;
   specials?:      string[] | string | null;
   special?:       string[] | string | null;
-  /** The chosen fabric colour code — fabricCode is the canonical field; colourId
-   *  carries the same code from the POS picker. Validated against opts.fabrics. */
   fabricCode?:    string | null;
   colourId?:      string | null;
-  /** The fabric SERIES behind that colour (`fabric_library.id`, e.g. 'BO315'
-   *  for the colour 'BO315-23'). SoLineCard's pickFabricColour has written it on
-   *  every pick since the selling fabric-tier add-on needed it, and 3,732 live
-   *  sales-order lines carry it. The fabric gate reads it because the Modular
-   *  drawer's pool is a list of SERIES, not colours — see the block below. */
   fabricId?:      string | null;
 } | null | undefined;
 
@@ -97,18 +61,6 @@ export type AllowedCheckError = {
   field:   string;
   value:   string;
   allowed: string[];
-  /** ADDITIVE (2026-08-18), and the reason the bedframe message can be written
-   *  at all. `total_height` is not something the salesperson types — it is
-   *  divan + leg + gap, computed by the editor (SoLineCard.tsx:430-437) and
-   *  written into the draft; the form has NO Total Height input. So a refusal
-   *  that names only `total_height` names a field he cannot reach, and the
-   *  client cannot invent the decomposition because the body never carried it.
-   *
-   *  Present ONLY on a computed field, and always with EVERY input behind it
-   *  (value `''` when the line didn't send that one), so the client can name
-   *  all three boxes even when only one is filled. Absent on every field the
-   *  operator types directly — its absence is what tells the client "this one
-   *  IS the box to change". No existing key changes meaning. */
   derivedFrom?: AllowedCheckErrorPart[];
 };
 
@@ -116,35 +68,6 @@ const hasRestriction = (pool: string[] | null | undefined): pool is string[] => 
   return Array.isArray(pool) && pool.length > 0;
 };
 
-/* ─── Pool membership ─────────────────────────────────────────────────────
-   EXACT FIRST, THEN QUOTE-INSENSITIVE, and that ordering is the whole safety
-   argument — it is the same one `findOption` in mfg-pricing.ts:198-205 makes,
-   reusing that module's single `normaliseTypographicQuotes` definition rather
-   than growing a second one.
-
-   THE MEASUREMENT (prod, 2026-08-17, probe run 32048732641). All 10 BEDFRAME
-   Models that restrict `total_heights` share ONE 16-value pool, and it is
-   glyph-inconsistent: the even values 10..28 carry an ASCII inch mark (U+0022)
-   while 17/19/23/27 carry U+201C and 21/25 carry U+201D. The `gaps` pool on the
-   same Models splits the same way — 7 ASCII, 10 curly. The editor can only ever
-   emit ASCII (SoLineCard.tsx:436 is a template literal ending `"`), and this
-   gate compared with a raw `Array.includes`, i.e. `===` on strings. So EVERY
-   ODD TOTAL was refused by a pool that visibly lists that number. Counting only
-   the gaps the picker can actually offer, 94 of 280 divan x leg x gap
-   combinations refused ON THE QUOTE CHARACTER ALONE — a permanent 400 on a
-   line the operator had no way to correct, and a message that would have read
-   `17" is not allowed. Allowed: …, 17“, …`.
-
-   `17"` and `17“` are the same physical height. Refusing one is a typing
-   accident in a maintenance row, not a business rule, so folding them is not a
-   weakening: an exact hit is still preferred, so nothing that matches today can
-   change meaning, and only a value that matches NOTHING today — and therefore
-   already 400s — can start matching. WHICH values a Model permits is untouched.
-
-   Deliberately narrow, exactly as the pricing engine chose: quote characters
-   only. No trim, no case folding — those are separate behaviour changes, and
-   this same string family also composes `variant_key`, the inventory bucket
-   identity. */
 /* Folds the GLYPH and TRIMS, because both sides of this comparison are typed by
    different hands: a pool is typed by a person into the Modular drawer (Windows
    turns an inch mark into U+201C/U+201D, and a stray space survives a paste),
@@ -163,42 +86,19 @@ const inPool = (pool: string[], value: string): boolean => {
   return pool.some((p) => foldForPool(p) === wanted);
 };
 
-/* The save gate's total_height rule, shared so a scan can pre-check the same
-   thing instead of tripping variant_not_allowed. DIVAN ONLY models are not
-   checked (see the gate below). */
 export const isTotalHeightAllowed = (
   totalHeights: string[] | null | undefined,
   productCode: string,
   value: string,
 ): boolean => !hasRestriction(totalHeights) || isDivanOnly(productCode) || inPool(totalHeights, value);
 
-/* Leg height carries TWO vocabularies for the same "no leg" build: the label
-   "No Leg" that the Modular drawer lists, and the zero-inch glyph 0" that
-   imported / legacy bedframe lines store (1,149 lines / 765 orders on prod,
-   2026-09-22 — the single most common leg value, none of it in a pool that
-   spells zero "No Leg"). They are the same physical build, so a line holding one
-   must pass a pool that offers the other.
-
-   Same fold-safety argument as inPool: 0" matches no leg pool today, so it
-   already 400s, and this only lets it start matching a pool that offers "No Leg"
-   — nothing that matches today changes meaning, and WHICH heights a Model
-   permits is untouched. Symmetric, so a pool that spells zero 0" also accepts a
-   line's "No Leg". Scoped to leg height alone: "No Leg" is the zero label only
-   here; divan / total / gap have no such second word. */
 const isZeroLeg = (s: string): boolean => {
   const f = foldForPool(s).toLowerCase().replace(/\s+/g, '');
   return f === 'noleg' || /^0(?:\.0+)?"?$/.test(f);
 };
-/* "Default" is the standing sofa leg, offered on every Model whatever its own list says. */
 const legInPool = (pool: string[], value: string): boolean =>
   inPool(pool, value) || (isZeroLeg(value) && pool.some(isZeroLeg)) || /^\s*default\s*$/i.test(value);
 
-/* Compartment codes are identifiers, not labels, and the catalogue spells the
-   same module both ways: 2026-09-30, company 1 carried `8030-Console` AND
-   `8030-CONSOLE` (plus 5535/8050/8051/9028 with only the upper-case SKU) against
-   a pool that lists `Console`. Every scan resolving to the upper-case SKU was
-   refused, and so was a manual pick of it. Case-folded for compartments ONLY —
-   fabric / height pools keep their exact spelling. */
 const compartmentInPool = (pool: string[], value: string): boolean =>
   inPool(pool, value)
   || pool.some((p) => foldForPool(p).toUpperCase() === foldForPool(value).toUpperCase());
@@ -233,8 +133,6 @@ export function checkAllowedOptions(
   if (!model) return null;
   const opts = model.allowed_options ?? {};
 
-  // ── Product-level checks (SKU's own size_code / compartment) ─────────
-  // BEDFRAME + MATTRESS — size_code lives on mfg_products.
   if (
     (product.category === 'BEDFRAME' || product.category === 'MATTRESS')
     && product.size_code
@@ -249,19 +147,6 @@ export function checkAllowedOptions(
     };
   }
 
-  // SOFA — compartment validation.
-  //
-  // A POS sofa is sent as ONE line whose `itemCode` is only the catalog ANCHOR
-  // SKU (the Model's representative product, e.g. TELLUC-1S) — the ACTUAL build
-  // lives in `variants.cells[]`, which the server later splits into per-module
-  // SO lines ({MODEL}-{moduleId}). So when cells are present we must validate
-  // THOSE module codes against the pool, NOT the anchor's own suffix: the anchor
-  // can be a compartment the Model doesn't offer standalone (Telluc's anchor is
-  // 1S, but Telluc only allows 2A/L), which wrongly blocked EVERY Telluc 2A+L
-  // build with `compartment "1S"` even though the customer never picked 1S
-  // (Loo, 2026-06-08). Cells absent (legacy / hand-keyed single-SKU line) →
-  // fall back to the anchor suffix check (commander's sofaCodeFormat
-  // '{model_code}-{compartment}'; empty / no-dash codes are skipped).
   if (product.category === 'SOFA' && hasRestriction(opts.compartments)) {
     const cells = Array.isArray((variants ?? {})?.cells) ? (variants ?? {})!.cells! : null;
     if (cells && cells.length > 0) {
@@ -294,7 +179,6 @@ export function checkAllowedOptions(
     }
   }
 
-  // ── Variant-level checks (live on the SO line's variants blob) ───────
   const v = variants ?? {};
 
   if (v.divanHeight && hasRestriction(opts.divan_heights)
@@ -345,7 +229,6 @@ export function checkAllowedOptions(
     };
   }
 
-  // gap (BEDFRAME) — no price contribution, but on/off-able per Model.
   if (v.gap && hasRestriction(opts.gaps)
       && !inPool(opts.gaps, v.gap)) {
     return {
@@ -356,9 +239,6 @@ export function checkAllowedOptions(
     };
   }
 
-  // legHeight (bedframe) AND sofaLegHeight (sofa) both validate against
-  // the same leg_heights pool — commander has only one leg-height list per
-  // Model regardless of category.
   const legPick = v.legHeight ?? v.sofaLegHeight ?? null;
   if (legPick && hasRestriction(opts.leg_heights)
       && !legInPool(opts.leg_heights, legPick)) {
@@ -370,8 +250,6 @@ export function checkAllowedOptions(
     };
   }
 
-  // Sofa: seatHeight maps to allowed_options.sizes (sofa "size" = seat
-  // height in commander's parlance — same chip list).
   if (product.category === 'SOFA' && v.seatHeight && hasRestriction(opts.sizes)
       && !inPool(opts.sizes, v.seatHeight)) {
     return {
@@ -382,12 +260,6 @@ export function checkAllowedOptions(
     };
   }
 
-  // Specials — multi-pick. Reject on the first unmatched pick. Compare
-  // trim-normalised on BOTH sides: `toSpecialsArray` already trims each pick,
-  // but a Model's pool value (and the special_addons.code it mirrors) can carry
-  // a trailing space from data entry (e.g. "Hydraulic "). Trimming only the
-  // pick made the picker send a value that round-trips fine in the UI but 400s
-  // here as variant_not_allowed.
   if (hasRestriction(opts.specials)) {
     const allowedTrimmed = opts.specials.map((s) => String(s).trim());
     const picks = toSpecialsArray(v.specials ?? v.special);
@@ -456,17 +328,6 @@ export type ProductAndModel = ProductAndModelPair & { lookupError: string | null
  *  Keeping the I/O here lets the SO route hand a clean (product, model)
  *  tuple into checkAllowedOptions without the test having to mock two
  *  table builds. */
-/*  `code` is NOT unique — both companies keep their own SKU master and 17 codes
- *  collided on production 2026-08-01. Unscoped, the `.maybeSingle()` below
- *  ERRORS on a duplicated code (PGRST116). That error is now RETURNED as
- *  `lookupError` (2026-08-13 swallowed-error sweep); it used to be discarded,
- *  and the resulting `product = null` read to this gate as "allowed" — it
- *  stopped checking rather than stopping the line, so the exact case the
- *  company scope was added to fix wrote a line with an unvalidated variant. A
- *  failed read must never read as an absence when the absence is what
- *  authorises the write: callers refuse on `lookupError` instead of proceeding.
- *  Callers pass `activeCompanyId(c)`; null/undefined degrades to no predicate,
- *  as everywhere else. */
 export async function loadProductAndModel(
   sb:        any,
   itemCode:  string | null | undefined,

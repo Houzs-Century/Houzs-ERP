@@ -1,20 +1,3 @@
-// ----------------------------------------------------------------------------
-// PurchaseConsignmentReceives — Purchase Consignment Receive list, cloned from
-// the polished Goods Received list (GoodsReceivedList.tsx). Same DataGrid UX:
-//   • double-click a row → open the detail page
-//   • right-click → context menu (View · Edit · Cancel)
-//   • click a row → drill-down with full line items
-//
-// Reuses the shared DataGrid + fmtDateOrDash + buildVariantSummary UNCHANGED;
-// only the queries are repointed at `/purchase-consignment-receives`
-// (pc-receive hooks) and navigation points at /purchase-consignment-receive.
-//
-// Dropped from the GRN clone (per scope): the From-PO header button + the
-// right-click transfer-to-Purchase-Invoice / Purchase-Return actions (consignment receiving doesn't feed
-// real purchase-invoice / purchase-return flows — the parallel Purchase
-// Consignment Return flow handles returns). The Transfer-From (PO) column is
-// relabelled to the source Purchase Consignment Order.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -34,7 +17,7 @@ import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import { statusLabel } from '../../vendor/scm/lib/status-pill';
+import { statusLabel } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { fmtDateOrDash, buildVariantSummary, fmtMoneySen, fmtQty, fmtSen } from '@2990s/shared';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -44,7 +27,6 @@ import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-// Colours + labels come from the canonical lib/status-pill map via <StatusPill>.
 const STATUS_CHIPS = ['all', 'POSTED', 'CLOSED', 'CANCELLED'] as const;
 
 const fmtMoney = (centi: number, currency = 'MYR'): string =>
@@ -70,7 +52,6 @@ const buildColumns = (): GridColumn<GrnRow>[] => [
     key: 'receive_number', label: 'Receive No.', width: 150, sortable: true,
     accessor: (g) => <span style={{ fontWeight: 700, color: 'var(--hz-c-primary)', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(g.status)}>{g.receive_number}</span>,
     searchValue: (g) => g.receive_number,
-    /* Accessor is JSX → export the raw doc-no string or the cell exports blank. */
     exportValue: (g) => g.receive_number,
     sortFn: (a, b) => a.receive_number.localeCompare(b.receive_number),
   },
@@ -97,7 +78,6 @@ const buildColumns = (): GridColumn<GrnRow>[] => [
     key: 'pc_number', label: transferFromColumnLabel('pco'), width: 160, sortable: true, groupable: true,
     accessor: (g) => <span style={{ fontWeight: 700, color: 'var(--hz-c-primary)', fontVariantNumeric: 'tabular-nums' }}>{g.purchase_consignment_order?.pc_number ?? '—'}</span>,
     searchValue: (g) => g.purchase_consignment_order?.pc_number ?? '',
-    /* Accessor is JSX → export the source order doc-no string. */
     exportValue: (g) => g.purchase_consignment_order?.pc_number ?? '',
     groupValue: (g) => g.purchase_consignment_order?.pc_number ?? '(none)',
   },
@@ -121,7 +101,6 @@ const buildColumns = (): GridColumn<GrnRow>[] => [
       </span>
     ),
     searchValue: (g) => fmtMoney(Number(g.total_sen ?? 0), g.currency),
-    /* Accessor is JSX → export the NUMBER in ringgit so Excel can SUM it. */
     exportValue: (g) => Number(g.total_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
@@ -130,14 +109,12 @@ const buildColumns = (): GridColumn<GrnRow>[] => [
     key: 'status', label: 'Status', width: 130, sortable: true, groupable: true,
     accessor: (g) => <StatusPill docType="grn" status={g.status} />,
     searchValue: (g) => statusLabel('grn', g.status),
-    /* Accessor is JSX → export the human status label, not blank. */
     exportValue: (g) => statusLabel('grn', g.status),
     groupValue: (g) => statusLabel('grn', g.status),
     sortFn: (a, b) => a.status.localeCompare(b.status),
   },
 ];
 
-/* ── Drill-down — per-line breakdown for one receive ── */
 type GrnItem = Record<string, unknown> & {
   id: string;
   item_code?: string | null;
@@ -259,17 +236,10 @@ const ExpandedLines = ({ grn }: { grn: GrnRow }) => {
   );
 };
 
-/* Status TONE for the drawer badge: CLOSED = success, CANCELLED = error,
-   DRAFT = neutral, the live receipt (POSTED) = warning. A function, not a
-   status map, so the grn_status vocabulary keeps its one home. LABEL is the
-   shared statusLabel('grn'). */
 const pcrTone = (s: string): DrawerTone =>
   s === 'CLOSED' ? 'success' : s === 'CANCELLED' ? 'error' : s === 'DRAFT' ? 'neutral' : 'warning';
 const PCR_LINE_COLS = 'grid-cols-[minmax(0,1fr)_44px_96px]';
 
-/* Quick-view drawer — row click opens the same right slide-over the Sales
-   Order / Goods Received lists have. Lines ride the SAME detail query the
-   expand chevron uses. */
 export function PurchaseConsignmentReceiveDrawer({
   row, onClose, onOpenFull, onEdit, onCreateReturn, onCancel,
 }: {
@@ -361,7 +331,6 @@ export function PurchaseConsignmentReceiveDrawer({
 
 export const PurchaseConsignmentReceives = () => {
   const navigate = useNavigate();
-  /* Row click → quick-view drawer. */
   const [selected, setSelected] = useState<GrnRow | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const statusChip = searchParams.get('status') ?? 'all';

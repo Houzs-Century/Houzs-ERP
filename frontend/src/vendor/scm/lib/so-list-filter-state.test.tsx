@@ -1,8 +1,3 @@
-// The SO list's second-level filters as URL state — the ONE layer the phone
-// sheet and the desktop bar both read and write (owner rule: one shared logic
-// layer, surfaces differ only in presentation; URL is state). Pinned here:
-// what reaches the URL, what reaches the API, and that a stale page index and
-// half-built rows never leak into either.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';

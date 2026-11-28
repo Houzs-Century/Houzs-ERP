@@ -1,23 +1,9 @@
-/* Trip Pay reads Delivery Planning (and the Projects module's Setup / Dismantle)
- * into hr_trip_rows without destroying anything HR did:
- *   - a stop not yet in the month becomes a row;
- *   - a row whose stop changed is brought up to date, unless HR edited it;
- *   - a row whose stop was cancelled or deleted is flagged for HR, never removed;
- *   - a row HR removed stays removed (it is kept, paid nothing, so no read adds it back);
- *   - a month whose payroll is approved is never touched.
- * Every night at 00:05 MYT (index.ts, "5 16 * * *") the read adds YESTERDAY and
- * re-reads only older days of the open trip months whose source changed since the
- * company's last run (updated_at on trips / dp_orders / delivery_orders / delivery_order_crew /
- * projects, created_at on trip_stops) or whose set of stops differs from the
- * rows. "Read Delivery Planning" runs the same rules over the whole month at once.
- * A month filled by pasting the Trip Report is left alone by the nightly read.
- * Money is never stored: it is worked out on read from the rows and the rates. */
 import { and, eq, inArray } from "drizzle-orm";
 import type { Env } from "../../types";
 import { getDb } from "../../db/client";
 import { companies, hr_employees, hr_trip_rows, hr_trip_sync_state } from "../../db/schema";
 import { tripMonthBounds, tripMonthOf } from "../../scm/shared/hr-trip-pay";
-import { changedSourceDays, planningRows, rowHrEdited, tripMonthLocked, type Person, type SourceRow } from "./hr-trip-store";
+import { changedSourceDays, planningRows, rowHrEdited, tripMonthLocked, tripPaySisterCompanies, type Person, type SourceRow } from "./hr-trip-store";
 
 type Db = ReturnType<typeof getDb>;
 type RowRecord = typeof hr_trip_rows.$inferSelect;
@@ -85,9 +71,7 @@ export function selectSyncDays(input: {
 export type SyncPlan = {
   inserts: SourceRow[];
   updates: { id: number; row: SourceRow }[];
-  /** Rows whose source is gone: flag for HR. */
   flag: number[];
-  /** Flagged rows whose source is back. */
   unflag: number[];
 };
 
@@ -149,11 +133,18 @@ export async function syncTripMonth(
   if (await tripMonthLocked(db, companyId, month)) return none("locked");
   const stored = await db.select().from(hr_trip_rows).where(and(eq(hr_trip_rows.company_id, companyId), eq(hr_trip_rows.trip_month, month)));
   if (opts.mode === "nightly" && stored.some((r) => r.source === "SHEET")) return none("pasted");
-  const source = await planningRows(db, companyId, month, await companyPeople(db, companyId));
+  const people = await companyPeople(db, companyId);
+  const companies = [companyId, ...tripPaySisterCompanies(companyId)];
+  const source = (await Promise.all(companies.map((cid) => planningRows(db, cid, month, people)))).flat();
   const { first, last } = tripMonthBounds(month);
   let days: Set<string> | null = null;
   if (opts.mode === "nightly") {
-    const changed = opts.since ? await changedSourceDays(db, companyId, first, last, opts.since) : "all";
+    let changed: ReadonlySet<string> | "all" = "all";
+    if (opts.since) {
+      const since = opts.since;
+      const sets = await Promise.all(companies.map((cid) => changedSourceDays(db, cid, first, last, since)));
+      changed = new Set(sets.flatMap((s) => [...s]));
+    }
     days = selectSyncDays({ first, last, yesterday: opts.yesterday, changed, stored: stored.filter((r) => r.source === "PLANNING"), source });
   }
   const plan = planSync(stored, source, days);

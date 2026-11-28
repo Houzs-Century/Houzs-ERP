@@ -19,25 +19,15 @@ import {
   statusLabel as scmStatusLabel,
   type StatusDocType,
   type StatusTone,
-} from "../vendor/scm/lib/status-pill";
+} from "../../../shared/src/vendor/scm/lib/status-pill";
 import type { FormSchema } from "./MobileModuleForm";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { warehouseLabel } from "../vendor/scm/lib/warehouse-label";
-import { mfgCategoryLabel } from "../vendor/shared/product-categories";
+import { mfgCategoryLabel } from "../vendor/scm/lib/product-categories-store";
 import { supplierEmailList } from "../vendor/shared/supplier-emails";
 import { byStr } from "./mobile-list-compare";
 import "./mobile.css";
 
-// ---------------------------------------------------------------------------
-// MobileModuleList — ONE generic, config-driven mobile list screen that backs
-// the many simple SCM modules (Suppliers, Delivery Orders, Sales Invoices,
-// GRN, Purchase Orders, Warehouse, Inventory, Drivers, Helpers, …). It is a
-// deliberate 1:1 visual match of MobileSalesOrders (same header eyebrow + big
-// title + optional action button, same search bar, same card list, same
-// .hz-m scoping / tokens / .money / dm() date helper / loading-error-empty
-// states / bottom-safe scroll). A parent renders any module by passing a
-// ModuleConfig (see MODULE_CONFIGS below for ready-made ones).
-// ---------------------------------------------------------------------------
 
 /** A shorthand hint the caller can use to build `secondary`/`right` — kept for
  *  documentation; configs below use the function forms directly. */
@@ -66,114 +56,49 @@ export type ChipDef = { key: string; label: string; match: (row: any) => boolean
 export type SortDef = { key: string; label: string; cmp: (a: any, b: any) => number };
 
 export type ModuleConfig = {
-  /** Big title, e.g. "Suppliers". */
   title: string;
-  /** Small uppercase eyebrow above the title, e.g. "Supply chain". */
   eyebrow?: string;
-  /** Path relative to /api/scm, e.g. "/suppliers?limit=200". When `core` is
-   *  true the path is relative to the core "/api" instead (e.g. "/api/users"). */
   endpoint: string;
-  /** Hit the core /api client instead of the SCM authedFetch base. */
   core?: boolean;
-  /** Key in the response object holding the array. Auto-detected if omitted. */
   listKey?: string;
-  /** Main (bold) line, e.g. row => row.name. */
   primary: (row: any) => string;
-  /** Muted sub line, e.g. row => `${row.code} · ${row.phone}`. */
   secondary?: (row: any) => string;
-  /** Right-aligned value (money total or status). */
   right?: (row: any) => string;
-  /** When true, `right` returns a *_sen value → rendered as RM x/100. */
   rightMoney?: boolean;
-  /** Haystack for the search box; falls back to primary + secondary. */
   search?: (row: any) => string;
 
-  // ── Design-style config (optional, backward compatible) ────────────────────
-  /** Search box placeholder; falls back to `Search <title>`. */
   placeholder?: string;
-  /** When present, each card renders the design template: title (primary) +
-   *  status pill (pill) + a compact grid of these labelled field rows (so-k /
-   *  so-v pairs). When absent, the card falls back to primary/secondary/right. */
   fields?: FieldDef[];
-  /** The row's status/category text → the pill above the card grid. Also drives
-   *  the detail-header status, so keep it stable even when the list badge differs
-   *  (override the list-only badge via `badgeText`). */
   pill?: (row: any) => string;
-  /** Canonical document type for the shared status map (vendor/scm/lib/status-
-   *  pill.ts). When set, the list card resolves the pill's TONE (and thus badge
-   *  colour) from `resolveStatusPill(statusDocType, row.status)` so a document's
-   *  status colour matches its desktop scm-v2 list. The `pill` accessor should
-   *  return the matching canonical label via `scmStatusLabel(statusDocType, …)`
-   *  so list + detail read identically. Leave unset for non-document pills
-   *  (category / code / role) that have no canonical status map. */
   statusDocType?: StatusDocType;
-  /** List-card badge override. When set, the list card's status badge uses this
-   *  instead of `pill` (e.g. Positions shows "N members" while `pill` stays the
-   *  department for the detail header). */
   badgeText?: (row: any) => string;
-  /** Primary chip filter row (status/level/category) with live counts. */
   chips?: ChipDef[];
-  /** Optional secondary chip filter (supplier / warehouse). */
   chips2?: ChipDef[];
-  /** Sort options; the first is the default. */
   sorts?: SortDef[];
 
-  // ── Build-spec card layout (docs/mobile-build-spec.html) ────────────────────
-  /** Which spec card template the list renders. When omitted the module falls
-   *  back to the generic `fields[]` grid. Each variant mirrors one spec screen:
-   *   • "doc"       — name + status badge, doc_no·date sub-line, optional note
-   *                    line, top-bordered footer (left meta + right money).
-   *   • "product"   — .ph thumbnail + name/SKU·category + right price/uom.
-   *   • "inventory" — name + stock badge, SKU·warehouse sub-line, 3-KPI footer.
-   *   • "warehouse" — name + code grey badge, address line, SKU/Units footer.
-   *   • "mrp"       — name + state badge, SKU sub-line, 4-col KPI grid.
-   *   • "person"    — avatar initials + name/sub + status badge (row layout). */
   variant?: "doc" | "product" | "inventory" | "warehouse" | "mrp" | "person";
-  /** Muted `.tnum` sub-line under the card name (spec: "{{doc_no}} · {{date}}"). */
   subline?: (row: any) => string;
-  /** Optional brand chip trailing the doc sub-line. Reuses the neutral status
-   *  pill (`.badge .b-grey`) and sits flex:none so the sub-line text truncates
-   *  before the brand does — the brand stays readable at phone width. Blank →
-   *  no chip. */
   brand?: (row: any) => string;
-  /** Optional third line in --ink2 (items summary / reason). Hidden when blank. */
   note?: (row: any) => string;
-  /** Footer-row left meta as [label, value] — value bolded. Hidden when blank. */
   footL?: (row: any) => [string, string] | null;
-  /** Footer-row right value. When `footMoney`, it's a *_sen total → RM x/100. */
   footR?: (row: any) => string;
   footMoney?: boolean;
-  /** KPI cells for the inventory / mrp footers: [label, value] pairs. */
   kpis?: (row: any) => Array<[string, string]>;
-  /** Avatar seed for the "person" variant — initials come from this string. */
   avatar?: (row: any) => string;
-  /** Right price (product variant) → *_sen rendered RM x/100 when priceMoney. */
   price?: (row: any) => string;
   priceMoney?: boolean;
-  /** Unit-of-measure caption under a product price (spec: "/{{uom}}"). */
   uom?: (row: any) => string;
 
-  /** When present, this module supports CREATE (+ New button) and — when the
-   *  schema declares an updatePath — EDIT (from the detail screen). The parent
-   *  (MobileApp) wires onNew/onEdit → MobileModuleForm with this schema. See
-   *  FORM_SCHEMAS below for the ready-made ones. */
   form?: FormSchema;
 };
 
-// Bare 2dp amount; callers print their own "RM " prefix. The shared fmtAmt
-// keeps a non-finite from reaching the user as "RM NaN".
 const rm = fmtAmt;
 
-// Numeric DD/MM/YYYY via the shared formatter (house rule — no month names).
 const dm = (d: string | null | undefined) => formatDate(d);
 
-/** Format a *_sen/_sen value as `RM x,xxx.00` for a field cell. Blank input
- *  (null / undefined / "") → "—" so an absent amount is not shown as RM 0.00. */
 const rmField = (centi: number | null | undefined) =>
   centi == null || centi === ("" as unknown) ? "—" : `RM ${rm(centi)}`;
 
-/** Read a value that may arrive camelCase (PostgREST driver / computed JS) or
- *  snake_case (raw). Returns the first defined of the candidates. */
 const pick = (row: any, ...keys: string[]) => {
   for (const k of keys) {
     const v = row?.[k];
@@ -182,14 +107,8 @@ const pick = (row: any, ...keys: string[]) => {
   return undefined;
 };
 
-/** Case-insensitive equality against a value that may be null. */
 const eq = (a: unknown, b: string) => String(a ?? "").trim().toLowerCase() === b.toLowerCase();
 
-/** Generic Title-Case humanizer for a raw enum ("partially_received",
- *  "IN_STOCK") — used ONLY for non-document fields that have no canonical status
- *  map: product category, account type, user account status. Document statuses
- *  go through the shared `scmStatusLabel(docType, status)` instead so a doc reads
- *  identically on phone and desktop. */
 const humanize = (raw: unknown): string => {
   const t = String(raw ?? "").trim();
   if (!t) return "";
@@ -199,40 +118,26 @@ const humanize = (raw: unknown): string => {
     .replace(/\b\w/g, (m) => m.toUpperCase());
 };
 
-// ── Build-spec status → badge class (docs/mobile-build-spec.html per-screen
-// STATES map). Resolves a humanized/raw status label to one of the canonical
-// .b-* palette classes; unknown → neutral grey. Keys are matched case-
-// insensitively against the label's collapsed form (spaces & underscores gone).
 const BADGE_CLASS: Record<string, string> = {
-  // greens (confirmed / paid / delivered / received / in-stock / active)
   delivered: "b-green", paid: "b-green", posted: "b-green", received: "b-green",
   signed: "b-green", completed: "b-green", refunded: "b-green", instock: "b-green",
   available: "b-green", active: "b-green", inhouse: "b-green",
-  // ambers (pending / partial / open / sent / dispatched / low / on-po)
   dispatched: "b-amber", sent: "b-amber", open: "b-amber", unpaid: "b-amber",
   partiallypaid: "b-amber", partiallyreceived: "b-amber", low: "b-amber",
   onpo: "b-amber", ontrip: "b-amber", intransit: "b-amber", loaded: "b-amber",
   invited: "b-amber", outsource: "b-amber",
-  // reds (cancelled / overdue / shortage / zero / maintenance)
   cancelled: "b-red", voided: "b-red", void: "b-red", overdue: "b-red",
   shortage: "b-red", zero: "b-red", negative: "b-red", maintenance: "b-red",
-  // brand (approved / submitted)
   approved: "b-brand", submitted: "b-brand",
-  // greys (draft / closed / inactive / off)
   draft: "b-grey", closed: "b-grey", inactive: "b-grey", off: "b-grey",
   disabled: "b-grey", invoiced: "b-grey",
 };
 
-/** Collapse a status label to its BADGE_CLASS lookup key. */
 const badgeClass = (label: string): string => {
   const k = String(label ?? "").trim().toLowerCase().replace(/[\s_-]+/g, "");
   return BADGE_CLASS[k] ?? "b-grey";
 };
 
-// Canonical status TONE (vendor/scm/lib/status-pill.ts) → mobile .b-* badge
-// class, so a document badge's colour is driven by the SAME tone the desktop
-// scm-v2 pill uses instead of a label-keyed guess. info/progress map to the
-// brand/amber accents; pending (draft) reads amber like the desktop gold pill.
 const TONE_BADGE_CLASS: Record<StatusTone, string> = {
   neutral: "b-grey",
   info: "b-brand",
@@ -242,9 +147,6 @@ const TONE_BADGE_CLASS: Record<StatusTone, string> = {
   pending: "b-amber",
 };
 
-/** Canonical spec status badge (`.badge .b-*`). Empty label → nothing. When a
- *  `tone` is given (document pills), the colour comes from the shared status
- *  map; otherwise it falls back to the label-keyed BADGE_CLASS. */
 function Badge({ label, tone }: { label: string; tone?: StatusTone }) {
   const clean = (label ?? "").trim();
   if (!clean) return null;
@@ -252,7 +154,6 @@ function Badge({ label, tone }: { label: string; tone?: StatusTone }) {
   return <span className={`badge ${cls}`}>{clean}</span>;
 }
 
-/** Circle avatar with initials on #15161a / gold (spec drivers/members). */
 function Avatar({ seed, size = 40 }: { seed: string; size?: number }) {
   const initials = String(seed ?? "")
     .trim()
@@ -284,8 +185,6 @@ const stockLevel = (qty: unknown): string => {
   return "In stock";
 };
 
-/** MRP row state pill (design: In stock / Shortage / On PO), derived from the
- *  computed shortage / poOutstanding fields. Shortage wins, then incoming PO. */
 const mrpState = (r: any): string => {
   const shortage = Number(pick(r, "shortage") ?? 0);
   const incoming = Number(pick(r, "poOutstanding", "po_outstanding") ?? 0);
@@ -294,7 +193,6 @@ const mrpState = (r: any): string => {
   return "In stock";
 };
 
-/** Invoice balance in sen. SI nets off its order's deposit; a PI row has no such key. */
 const balanceSen = (r: any): number => siIsCancelled(pick(r, "status") as string | null) ? 0 : siOutstandingSen(
   Number(pick(r, "totalSen", "total_sen", "localTotalSen", "local_total_sen") ?? 0),
   Number(pick(r, "paidSen", "paid_sen") ?? 0),
@@ -306,15 +204,9 @@ const byDate = (a: unknown, b: unknown) => {
   const tb = b ? +new Date(String(b)) : 0;
   return (isNaN(tb) ? 0 : tb) - (isNaN(ta) ? 0 : ta);
 };
-/* Member lifecycle order for the Status sort — mirrors the desktop grid's
-   rank (active first, then invited, then disabled). */
 const MEMBER_STATUS_RANK: Record<string, number> = { active: 0, invited: 1, disabled: 2 };
-/* Nulls-last sentinel for ascending string sorts (a member with no
-   department sorts after the named ones, not before). */
 const LAST = "￿";
 
-/** Pick the array out of a keyed response, or return it if already an array.
- *  With no listKey, take the first array-valued property of the object. */
 function pickList(data: unknown, listKey?: string): any[] {
   if (Array.isArray(data)) return data;
   if (!data || typeof data !== "object") return [];
@@ -326,32 +218,18 @@ function pickList(data: unknown, listKey?: string): any[] {
 
 const PAGE_SIZE = 30;
 
-/** SCM list endpoints whose backend handler supports server-side pagination +
- *  search (accepts `page`/`pageSize`/`q`, returns `{ <key>, total, page,
- *  pageSize, statusCounts }`). Matched on the endpoint's base path (query
- *  string stripped). Everything NOT in here — the core `/api` lists and the
- *  SCM lists without a paged handler — loads as a single page and filters
- *  client-side, exactly as before. The runtime `total`-absent guard below is a
- *  second safety net: even a listed endpoint that returns no `total` (e.g. an
- *  older deploy) degrades to single-page behaviour instead of looping. */
 const SERVER_PAGINATED = new Set<string>([
   "/delivery-orders-mfg",
   "/sales-invoices",
   "/grns",
   "/mfg-purchase-orders",
   "/purchase-invoices",
-  // Backends return { <key>, total, page, pageSize } (page-param opt-in) — same
-  // as the five above, so mobile can drop the limit=500 fetch-then-slice and
-  // truly server-window. delivery-returns / purchase-returns are intentionally
-  // absent: their list handlers are NOT paginated (no `total`), and opting them
-  // in would collapse each to a single 30-row page.
   "/consignment-orders",
   "/consignment-notes",
   "/consignment-returns",
   "/suppliers",
 ]);
 
-/** Split an endpoint string into its base path + parsed query params. */
 function splitEndpoint(endpoint: string): { base: string; params: URLSearchParams } {
   const qi = endpoint.indexOf("?");
   if (qi === -1) return { base: endpoint, params: new URLSearchParams() };
@@ -379,37 +257,20 @@ export function MobileModuleList({
   config: ModuleConfig;
   onBack?: () => void;
   onOpen?: (row: any) => void;
-  /** Wired by the parent when config.form is present — opens MobileModuleForm
-   *  in create mode. The "+ New" header button calls this. */
   onNew?: () => void;
-  /** Module-specific block rendered at the top of the scroll area, above the
-   *  cards (e.g. the Members list's Pending Invitations accordion). */
   aboveList?: ReactNode;
 }) {
   const { q, setQ, chip, setChip, chip2, setChip2, sortKey, setSortKey } = useMobileListView(config.endpoint, config.sorts?.[0]?.key ?? "");
 
-  /* Debounced search term — the value actually sent to the server (and keyed
-     into the infinite query) so a keystroke doesn't fire a request per
-     character. 300ms after typing stops the paged query re-runs from page 0 and
-     the server searches the WHOLE table, not just the rows already loaded. */
   const { requestTerm: debouncedQ } = useDebouncedSearchTerm(q);
 
-  /* Whether THIS config's endpoint has a server-paginated handler. Core /api
-     lists and un-paged SCM lists fall back to a single page + client-side
-     filtering (the pre-pagination behaviour). */
   const { base, params: baseParams } = useMemo(() => splitEndpoint(config.endpoint), [config.endpoint]);
   const wantsPagination = !config.core && SERVER_PAGINATED.has(base);
   const endpointLimit = Number(baseParams.get("limit"));
 
-  /* Scroll container + sentinel for the IntersectionObserver infinite scroll. */
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  /* Paged URL for a given page index: keep the endpoint's own params but drop
-     `limit` (the server windows via page/pageSize) and
-     fold in the debounced search. Sort is left to the server default (each
-     handler already orders newest-first) — the configs don't expose the server
-     column name, so we omit `sort` rather than send a wrong one. */
   const buildUrl = (page: number): string => {
     const p = new URLSearchParams(baseParams);
     p.delete("limit");
@@ -424,9 +285,6 @@ export function MobileModuleList({
     data, isLoading, isFetching, isPlaceholderData, error,
     fetchNextPage, hasNextPage, isFetchingNextPage, refetch,
   } = useInfiniteQuery({
-    // Paged lists key on the debounced search so changing it restarts at page 0
-    // and the server re-searches the whole table. Un-paged lists keep the old
-    // single-fetch key (search/chip/sort stay client-side).
     queryKey: wantsPagination
       ? ["mobile-module-paged", base, debouncedQ]
       : ["mobile-module", config.core ? "core" : "scm", config.endpoint],
@@ -440,7 +298,7 @@ export function MobileModuleList({
     getNextPageParam: (last: any, pages) => {
       if (!wantsPagination) return undefined;
       const total = typeof last?.total === "number" ? last.total : null;
-      if (total == null) return undefined; // un-paged / stale backend → one page
+      if (total == null) return undefined;
       const loaded = pages.reduce((n, pg) => n + pickList(pg, config.listKey).length, 0);
       return loaded < total ? pages.length : undefined;
     },
@@ -457,14 +315,11 @@ export function MobileModuleList({
   });
   const listLoading = isLoading || searchTransition.isSearching;
 
-  // All rows loaded so far, flat-mapped through the config's listKey extractor.
   const all = useMemo(
     () => (data?.pages ?? []).flatMap((pg) => pickList(pg, config.listKey)),
     [data, config.listKey],
   );
 
-  // Did the server actually paginate? (first page carries a numeric `total`).
-  // Drives whether search is server-side and how the record count is shown.
   const serverTotal = typeof (data?.pages?.[0] as any)?.total === "number"
     ? ((data!.pages[0] as any).total as number)
     : undefined;
@@ -477,10 +332,6 @@ export function MobileModuleList({
         ? endpointLimit
         : undefined;
 
-  // Chip / chip2 / sort stay client-side over the LOADED rows (see report note).
-  // Search: server-side for paginated lists (already applied via the `q` param),
-  // client-side otherwise — never both, so the loaded set is not re-filtered for
-  // a search the server already ran.
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const chipDef = chip !== "all" ? config.chips?.find((c) => c.key === chip) : undefined;
@@ -499,18 +350,9 @@ export function MobileModuleList({
     return out;
   }, [all, q, chip, chip2, sortKey, config, serverPaginated]);
 
-  // Record-count note: the server's real total for a paginated list (when no
-  // client-only chip is narrowing it), otherwise the count actually shown.
   const clientFilterActive = chip !== "all" || chip2 !== "all";
   const recordCount = serverPaginated && !clientFilterActive ? (serverTotal ?? rows.length) : rows.length;
 
-  /* Infinite-scroll trigger — an IntersectionObserver watches a 1px sentinel
-     near the list bottom and pulls the next page when it nears the viewport
-     (rootMargin 600px pre-load). Observer callbacks run on the event loop, not
-     rAF, so this fires reliably even under rAF throttling (mirrors the merged,
-     prod-verified MobileSalesOrders). Guarded by hasNextPage && !isFetchingNextPage
-     so it can't double-fire; re-observing when those flip re-pulls until the
-     sentinel scrolls out or the pages are exhausted. */
   useEffect(() => {
     const target = sentinelRef.current;
     if (!target || !hasNextPage) return;
@@ -536,16 +378,12 @@ export function MobileModuleList({
             </button>
           </div>
         )}
-        {/* header lockup: gold eyebrow + big title (spec T3 + T1), + New action */}
         <div className="hdr-row">
           <div>
             {config.eyebrow && <div className="eyebrow">{config.eyebrow}</div>}
             <div className="scr-title">{config.title}</div>
           </div>
           {onNew && (
-            // Render whenever the parent wires onNew — a module with a `form`
-            // opens MobileModuleForm; a doc module (DO/SI/GRN/PO) opens the
-            // convert wizard. Both go through the same "+ New" affordance.
             <button onClick={onNew} className="iconbtn" aria-label={`New ${config.title}`}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2.2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
             </button>
@@ -615,8 +453,6 @@ export function MobileModuleList({
 
       <div ref={scrollRef} className="hz-scroll" style={{ flex: 1, overflowY: "auto", padding: 14, paddingBottom: 120 }}>
         {aboveList}
-        {/* Variable-count note pill (spec § list-note): server total for a
-            paginated list, else the count of shown records. */}
         {!listLoading && !error && rows.length > 0 && (
           <span className="list-note">
             {recordCount} {recordCount === 1 ? "record" : "records"}
@@ -624,7 +460,6 @@ export function MobileModuleList({
           </span>
         )}
 
-        {/* LOADING: skeleton cards (spec § Foundations — 3 skeletons). */}
         {listLoading && (
           <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
             {[0, 1, 2].map((i) => (
@@ -636,7 +471,6 @@ export function MobileModuleList({
           </div>
         )}
 
-        {/* ERROR: retry strip (spec § Foundations). */}
         {!!error && !listLoading && (
           <div className="empty">
             <div className="empty-t">Couldn't load {config.title.toLowerCase()}.</div>
@@ -651,22 +485,12 @@ export function MobileModuleList({
             renderItem={(r) => <ListCard config={config} row={r} onOpen={onOpen} />}
           />
         )}
-        {/* Infinite-scroll sentinel — the IntersectionObserver watches this 1px
-            marker and pulls the next page as it nears view. Rendered whenever
-            more pages exist (even if a client chip filtered the loaded rows to
-            zero, so the loader keeps pulling until a match appears or pages run
-            out). Absent for un-paged lists (hasNextPage is always false). */}
         {!listLoading && !error && hasNextPage && (
           <div ref={sentinelRef} aria-hidden style={{ height: 1 }} />
         )}
-        {/* "Loading more…" while the next page is in flight; nothing once every
-            page is loaded. */}
         {isFetchingNextPage && (
           <div style={{ textAlign: "center", padding: "14px 0 2px", fontSize: 11.5, color: "var(--mut)" }}>Loading more…</div>
         )}
-        {/* EMPTY state (spec § Foundations — empty block). Held back while more
-            pages are still loading so a client-filtered-to-zero page doesn't
-            flash "No records" before the next page arrives. */}
         {!listLoading && !error && !rows.length && !hasNextPage && !isFetchingNextPage && (
           <div className="empty">
             <div className="empty-t">No {config.title.toLowerCase()}</div>
@@ -678,14 +502,6 @@ export function MobileModuleList({
   );
 }
 
-// ---------------------------------------------------------------------------
-// ListCard — renders ONE spec-aligned list card, routed on config.variant. Each
-// branch mirrors the corresponding Build-Spec screen markup (docs/mobile-build-
-// spec.html), using the canonical .card / .card-b / .badge classes. When no
-// variant is set, falls back to the generic fields[] grid so untouched modules
-// keep working. All accessors are read through safe()/pick — a missing value is
-// an em-dash, never undefined.
-// ---------------------------------------------------------------------------
 function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onOpen?: (row: any) => void }) {
   /* Owner 2026-07-17 — cost is director-only, phone and desktop alike. */
   const { user: cardUser } = useAuth();
@@ -695,10 +511,6 @@ function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onO
   const cardStyle: React.CSSProperties = clickable ? { cursor: "pointer" } : { cursor: "default" };
   const pillStatus = config.pill ? safe(config.pill, row) : "";
   const status = config.badgeText ? safe(config.badgeText, row) : pillStatus;
-  // Document modules carry a canonical docType → the badge colour comes from the
-  // shared status map's tone (same as desktop), not a label-keyed guess. The
-  // badgeText override (positions / departments / accounting) is never a status,
-  // so it keeps the label-keyed colour.
   const statusTone: StatusTone | undefined =
     config.statusDocType && !config.badgeText
       ? resolveStatusPill(config.statusDocType, pick(row, "status")).tone
@@ -709,7 +521,6 @@ function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onO
   const brandText = config.brand ? safe(config.brand, row) : "";
   const noteLine = config.note ? safe(config.note, row) : "";
 
-  // ── person: avatar + name/sub + status badge (drivers / members) ────────────
   if (config.variant === "person") {
     return (
       <div className="card" onClick={open} style={cardStyle}>
@@ -725,7 +536,6 @@ function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onO
     );
   }
 
-  // ── product: thumbnail + name/SKU + right price / uom ────────────────────────
   if (config.variant === "product") {
     const priceRaw = config.price ? config.price(row) : "";
     const priceText = config.priceMoney ? `RM ${rm(priceRaw as unknown as number)}` : priceRaw;
@@ -747,10 +557,9 @@ function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onO
     );
   }
 
-  // ── inventory / mrp / warehouse: name + badge, sub-line, KPI footer ──────────
   if (config.variant === "inventory" || config.variant === "mrp" || config.variant === "warehouse") {
     const kpis = config.kpis ? config.kpis(row) : [];
-    const isGrid = config.variant === "mrp"; // 4-col centred grid vs inline row
+    const isGrid = config.variant === "mrp";
     return (
       <div className="card" onClick={open} style={cardStyle}>
         <div className="card-b" style={{ padding: "12px 13px" }}>
@@ -785,7 +594,6 @@ function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onO
     );
   }
 
-  // ── doc: name + status badge, doc_no·date sub-line, optional note, footer ─────
   if (config.variant === "doc") {
     const fl = config.footL ? config.footL(row) : null;
     const frRaw = config.footR ? config.footR(row) : "";
@@ -818,11 +626,6 @@ function ListCard({ config, row, onOpen }: { config: ModuleConfig; row: any; onO
     );
   }
 
-  // ── fallback: generic list card — LAYOUT ported VERBATIM from the owner's
-  //    MobileList.tsx: clickable .card (padding 12px 13px), a header row with the
-  //    bold title + status Badge, then a two-column grid of stacked labelled
-  //    fields (uppercase mut label over the value). Data still comes from our
-  //    ModuleConfig (primary / pill / fields), so all wiring is preserved.
   return (
     <div className="card" onClick={open} style={{ ...cardStyle, padding: "12px 13px", ...(cancelled ? { opacity: 0.6 } : null) }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
@@ -854,27 +657,11 @@ const safeMatch = (fn: ((row: any) => boolean) | undefined, row: any): boolean =
   try { return !!fn(row); } catch { return false; }
 };
 
-// ---------------------------------------------------------------------------
-// MODULE_CONFIGS — ready-made configs for the simple SCM modules. Field names +
-// response array keys were read from backend/src/scm/routes/*.ts (the SELECT
-// column lists and the c.json({ … }) response wrappers), not guessed.
-// ---------------------------------------------------------------------------
 
 const join = (...parts: Array<string | null | undefined>) =>
   parts.map((p) => (p == null ? "" : String(p)).trim()).filter(Boolean).join(" · ");
 
-// ---------------------------------------------------------------------------
-// FORM_SCHEMAS — CREATE / EDIT form definitions, one per module that supports
-// writes. Field keys are the camelCase body keys the backend routes accept
-// (read from backend/src/scm/routes/*.ts + backend/src/routes/*.ts), NOT the
-// snake_case DB columns. Money fields carry a moneyScale (100 = sen). Only
-// fields the endpoints actually accept are exposed. Exported so MobileApp can
-// reference a schema directly when wiring onNew/onEdit.
-// ---------------------------------------------------------------------------
 
-/* suppliers — POST /suppliers (code+name required), PATCH /suppliers/:id; reply
-   { supplier }. The everyday subset of the AutoCount master; credit_limit is SEN
-   (money scale 100). Bindings (SKUs + price matrix) are a separate endpoint. */
 export const FORM_SUPPLIERS: FormSchema = {
   title: "Supplier",
   eyebrow: "Procurement",
@@ -903,12 +690,6 @@ export const FORM_SUPPLIERS: FormSchema = {
     { key: "status", label: "Status", type: "select", options: [
       { value: "ACTIVE", label: "Active" }, { value: "INACTIVE", label: "Inactive" }, { value: "BLOCKED", label: "Blocked" },
     ], placeholder: "Active" },
-    // Currency options come from the live currency MASTER (migration 0193 —
-    // /api/scm/currencies, the same source useActiveCurrencies reads and every
-    // desktop currency <select> uses), NOT a hardcoded list, so adding a
-    // currency is fully UI. Loaded via the form's async optionsSource (same
-    // mechanism as roles/departments). Falls back to the placeholder if the
-    // master hasn't loaded.
     { key: "currency", label: "Currency", type: "select", placeholder: "MYR",
       optionsSource: { base: "scm", path: "/currencies?active=true", listKey: "currencies", value: (r) => r.code, label: (r) => r.code } },
     { key: "creditLimitSen", label: "Credit Limit (RM)", type: "money", moneyScale: 100 },
@@ -919,11 +700,6 @@ export const FORM_SUPPLIERS: FormSchema = {
   ],
 };
 
-/* drivers — POST /drivers (name+phone required), PATCH /drivers/:id.
-   Response wraps as { driver: {...} }; id = driver.id.
-   The Driver Code field is GONE (2026-08-02): the server mints DRV-### now, and
-   a required text box for a value the system allocates is how DRV-05 ended up
-   beside DRV-050 with the same person under both. */
 export const FORM_DRIVERS: FormSchema = {
   title: "Driver",
   eyebrow: "Transportation",
@@ -945,9 +721,6 @@ export const FORM_DRIVERS: FormSchema = {
   ],
 };
 
-/* fleet — POST /lorries (plate required, type enum), PATCH /lorries/:id.
-   Response wraps as { lorry: {...} }; id = lorry.id. capacityM3 / capacityKg
-   are numeric(.,.) → plain numbers (NOT money). */
 export const FORM_FLEET: FormSchema = {
   title: "Lorry",
   eyebrow: "Transportation",
@@ -974,11 +747,6 @@ export const FORM_FLEET: FormSchema = {
   ],
 };
 
-/* warehouse — CREATE ONLY. There is no base POST /warehouse; a warehouse row
-   has no per-record edit route. The write surface is racks: POST
-   /warehouse/racks (warehouseId + rack label required). We pre-fill warehouseId
-   from the tapped warehouse row when the parent seeds `initial`, else the
-   operator types it. No updatePath → the detail screen shows no Edit button. */
 export const FORM_WAREHOUSE: FormSchema = {
   title: "Rack",
   eyebrow: "Storage",
@@ -994,10 +762,6 @@ export const FORM_WAREHOUSE: FormSchema = {
   ],
 };
 
-/* departments — CORE. POST /api/departments (name required), PATCH
-   /api/departments/:id. Create returns the record flat ({ id, name, ... });
-   PATCH returns { ok:true } so edit keeps the row's own id. color = 6-char hex
-   (no '#'); sort_order = integer. */
 export const FORM_DEPARTMENTS: FormSchema = {
   title: "Department",
   eyebrow: "Team",
@@ -1013,10 +777,6 @@ export const FORM_DEPARTMENTS: FormSchema = {
   ],
 };
 
-/* positions — CORE. POST /api/positions (name required), PATCH
-   /api/positions/:id. Create returns { id, slug, name }; PATCH returns
-   { ok:true }. department_id is a real record → runtime select from
-   GET /api/departments. level / sort_order = integers. */
 export const FORM_POSITIONS: FormSchema = {
   title: "Position",
   eyebrow: "Team",
@@ -1033,13 +793,6 @@ export const FORM_POSITIONS: FormSchema = {
   ],
 };
 
-/* members — CORE. CREATE = INVITE: POST /api/users/invite (email + role_id
-   required; optional name / department_id / position_id / phone). Returns
-   { token, ... } or { active, email } — no user id, so onSaved gets "".
-   EDIT: PATCH /api/users/:id (role_id / status / name / phone / department_id /
-   position_id / email). role_id, department_id, position_id are real records →
-   runtime selects. status enum on the routes is active|disabled. Note: invite
-   requires users.manage (permission-gated — a 403 surfaces inline). */
 export const FORM_MEMBERS: FormSchema = {
   title: "Member",
   eyebrow: "Team",
@@ -1061,10 +814,6 @@ export const FORM_MEMBERS: FormSchema = {
   ],
 };
 
-/* members EDIT — PATCH /api/users/:id. The invite create-form above can't carry
-   `status` (invite has no status field), so edit mode swaps in a status select.
-   MobileApp uses FORM_MEMBERS_EDIT for the Edit button and FORM_MEMBERS for
-   + New. Shares the same base/paths/idKey. */
 export const FORM_MEMBERS_EDIT: FormSchema = {
   ...FORM_MEMBERS,
   fields: [
@@ -1084,10 +833,6 @@ export const FORM_MEMBERS_EDIT: FormSchema = {
 };
 
 export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
-  // suppliers.get('/') → { suppliers: [...] }; cols: code, name, contact_person,
-  // phone, mobile, whatsapp_number, derived_category, status…
-  // Design m-suppliers: Code/Contact/Phone/Supplies + category pill. "Supplies"
-  // has NO column (it's a bindings join) → OMITTED.
   suppliers: {
     title: "Suppliers",
     eyebrow: "Procurement",
@@ -1109,11 +854,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     form: FORM_SUPPLIERS,
   },
 
-  // delivery-orders-mfg.get('/') → { deliveryOrders: [...] }; header cols:
-  // do_number, debtor_name, status, do_date, local_total_sen…
-  // Design m-do: Customer/DO No/Date/Driver/Items/Value + status pill. Real cols:
-  // debtor_name, do_number, do_date, driver_name, line_count, local_total_sen,
-  // status. All present → all fields bound.
   "delivery-orders-mfg": {
     title: "Delivery Orders",
     eyebrow: "Logistics",
@@ -1127,9 +867,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     search: (r) => join(r.debtor_name, r.do_number, r.so_doc_no, r.ref, r.phone),
     statusDocType: "do",
     pill: (r) => scmStatusLabel("do", pick(r, "status")),
-    // Spec #do-list: name + status badge, "{{doc_no}} · {{delivery_date}}" sub-
-    // line, footer "Driver {{name}}" + RM {{total_sen}}. items_summary has no
-    // list column → line-count shown in the footer left instead.
     variant: "doc",
     subline: (r) => {
       const so = pick(r, "soDocNo", "so_doc_no");
@@ -1153,7 +890,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
     chips: [
       { key: "all", label: "All", match: () => true },
-      { key: "Loaded", label: "Loaded", match: (r) => eq(pick(r, "status"), "dispatched") }, // stored value unchanged; DISPATCHED reads "Loaded" since 2026-08-26. Key moves with the label — `chip` lives only in this tab's session (useMobileListView), so an old key just reads as no chip.
+      { key: "Loaded", label: "Loaded", match: (r) => eq(pick(r, "status"), "dispatched") },
       { key: "Delivered", label: "Delivered", match: (r) => eq(pick(r, "status"), "delivered") },
       { key: "Cancelled", label: "Cancelled", match: (r) => eq(pick(r, "status"), "cancelled") },
     ],
@@ -1163,11 +900,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
   },
 
-  // sales-invoices.get('/') → { salesInvoices: [...] }; header cols:
-  // invoice_number, debtor_name, invoice_date, total_sen, status…
-  // Design m-si: Inv No/Date/Due/Amount/Balance + status pill. Real cols:
-  // invoice_number, invoice_date, due_date, total_sen, paid_sen, status.
-  // Balance is computed total − paid.
   "sales-invoices": {
     title: "Sales Invoices",
     eyebrow: "Finance",
@@ -1181,8 +913,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     search: (r) => join(r.debtor_name, r.invoice_number, r.so_doc_no, r.ref, r.phone),
     statusDocType: "si",
     pill: (r) => scmStatusLabel("si", pick(r, "status")),
-    // Spec #si-list: "{{doc_no}} · due {{due_date}}" sub-line, footer
-    // "Balance RM {{balance_sen}}" + RM {{total_sen}} (balance computed).
     variant: "doc",
     subline: (r) => join(pick(r, "invoiceNumber", "invoice_number"), dm(pick(r, "dueDate", "due_date")) !== "—" ? `due ${dm(pick(r, "dueDate", "due_date"))}` : ""),
     brand: (r) => pick(r, "branding") ?? "",
@@ -1214,11 +944,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
   },
 
-  // grns.get('/') → { grns: [...] }; header cols: grn_number, received_at,
-  // status, total_sen + nested supplier:{code,name}.
-  // Design m-gr: GR No/PO/Date/Items + status pill. Real cols: grn_number,
-  // nested purchase_order.po_number, received_at, status. Items count has NO
-  // column on the list row (items are a separate table) → OMITTED.
   grns: {
     title: "Goods Received",
     eyebrow: "Warehouse",
@@ -1232,8 +957,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     search: (r) => join(r.grn_number, r.supplier?.name, r.supplier?.code, r.delivery_note_ref),
     statusDocType: "grn",
     pill: (r) => scmStatusLabel("grn", pick(r, "status")),
-    // Spec #grn-list: name + status, "{{doc_no}} · {{received_date}} · PO
-    // {{po_doc_no}}" sub-line, no money footer. items_summary has no list column.
     variant: "doc",
     subline: (r) => {
       const po = r.purchase_order?.po_number ?? r.purchaseOrder?.poNumber;
@@ -1254,10 +977,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "receivedAt", "received_at"), pick(b, "receivedAt", "received_at")) }],
   },
 
-  // mfg-purchase-orders.get('/') → { purchaseOrders: [...] }; header cols:
-  // po_number, status, po_date, total_sen + nested supplier:{code,name}.
-  // Design m-po: Supplier/PO No/Date/Expected/Value + status pill. Real cols:
-  // po_number, po_date, expected_at, total_sen, status, nested supplier.name.
   "mfg-purchase-orders": {
     title: "Purchase Orders",
     eyebrow: "Procurement",
@@ -1271,8 +990,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     search: (r) => join(r.po_number, r.supplier?.name, r.supplier?.code),
     statusDocType: "po",
     pill: (r) => scmStatusLabel("po", pick(r, "status")),
-    // Spec #po-list: name + status, "{{doc_no}} · exp {{expected_date}}" sub-line,
-    // footer "{{line_count}} lines" + RM {{total_sen}}.
     variant: "doc",
     subline: (r) => join(pick(r, "poNumber", "po_number"), dm(pick(r, "expectedAt", "expected_at")) !== "—" ? `exp ${dm(pick(r, "expectedAt", "expected_at"))}` : ""),
     footL: (r) => { const n = pick(r, "lineCount", "line_count"); return ["", n == null ? "" : `${n} lines`]; },
@@ -1284,10 +1001,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
       [(r) => dm(pick(r, "expectedAt", "expected_at")), "Expected"],
       [(r) => rmField(pick(r, "totalSen", "total_sen")), "Value"],
     ],
-    // Mirrors the desktop PO list (PurchaseOrders.tsx): the buyer's 95% view is
-    // "Outstanding" = SUBMITTED ∪ PARTIALLY_RECEIVED (still inbound), plus a
-    // Draft review queue; All is the escape hatch for closed/cancelled history.
-    // PoStatus has no "open" — the old chip never matched (audit #2).
     chips: [
       { key: "all", label: "All", match: () => true },
       { key: "outstanding", label: "Outstanding", match: (r) => { const st = String(pick(r, "status") ?? "").toUpperCase(); return st === "SUBMITTED" || st === "PARTIALLY_RECEIVED"; } },
@@ -1299,10 +1012,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
   },
 
-  // warehouse.get('/') → { racks, warehouses }; warehouses row = {id,code,name}
-  // ONLY. Design m-warehouse wants Code/State/Items/Utilisation — State, Items
-  // and Utilisation have NO per-warehouse column → OMITTED; only Code is bound.
-  // Pill = the warehouse code (design pillKey:'code').
   warehouse: {
     title: "Warehouses",
     eyebrow: "Network",
@@ -1313,10 +1022,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     secondary: (r) => join(r.code),
     search: (r) => join(r.name, r.code),
     pill: (r) => pick(r, "code") ?? "",
-    // Spec #warehouse: name + grey code badge, "{{address}}, {{state}}" line,
-    // "SKUs {{sku_count}} · Units {{unit_count}}" footer. warehouses row is
-    // {id,code,name} ONLY → address / state / counts have no column (line hidden,
-    // KPI values em-dash).
     variant: "warehouse",
     subline: () => "",
     note: (r) => join(pick(r, "address"), pick(r, "state")),
@@ -1332,13 +1037,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     form: FORM_WAREHOUSE,
   },
 
-  // inventory.get('/')?showAll=true → { balances, warehouses }; balances cols
-  // (v_inventory_all_skus): item_code, product_name, category, qty,
-  // warehouse_name, value_sen…
-  // Design m-inventory: SKU/Warehouse/On hand/Reserved + stock-level pill. Real
-  // v_inventory_all_skus cols: item_code, product_name, warehouse_code/_name,
-  // qty, category. Reserved has NO column on this view → OMITTED. Level pill
-  // (In stock / Low / Zero) is computed client-side from qty.
   inventory: {
     title: "Inventory",
     eyebrow: "Stock",
@@ -1350,14 +1048,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     right: (r) => (r.qty == null ? "" : `${r.qty}`),
     search: (r) => join(r.product_name, r.item_code, r.category, r.warehouse_name),
     pill: (r) => stockLevel(pick(r, "qty")),
-    // Spec #inventory: name + stock badge, "{{warehouse_name}}" sub-line, 3-KPI
-    // footer (On hand / Reserved / Available). v_inventory_all_skus has only qty
-    // → Reserved / Available have no column and render em-dash.
-    // Description ONCE, code NOT displayed — the shared rule
-    // (vendor/shared/line-identity.ts): the sub-line's "SKU {{sku}}" repeated the
-    // identity `primary` already names. WAREHOUSE is not a duplicate and stays.
-    // The code still BINDS — `search` above still matches on item_code, so a
-    // rep can still find a row by typing its SKU.
     variant: "inventory",
     subline: (r) => join(pick(r, "warehouseCode", "warehouse_code", "warehouseName", "warehouse_name")),
     kpis: (r) => {
@@ -1381,12 +1071,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
   },
 
-  // drivers.get('/') → { drivers: [...] }; cols: driver_code, name, phone,
-  // vehicle, in_house, active…
-  // Design m-drivers: Phone/Lorry/Trips/Zone + status. Real cols: driver_code,
-  // name, phone, vehicle, in_house, active. Lorry, Trips-today and Zone have NO
-  // column (drivers are not linked to lorries/trips) → OMITTED; Phone + Vehicle
-  // bound. Pill = In-house / Outsource (design "status").
   drivers: {
     title: "Drivers",
     eyebrow: "Fleet",
@@ -1398,9 +1082,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     right: (r) => (r.in_house ? "In-house" : "Outsource"),
     search: (r) => join(r.name, r.driver_code, r.phone, r.vehicle),
     pill: (r) => (pick(r, "inHouse", "in_house") ? "In-house" : "Outsource"),
-    // Spec #drivers: avatar initials + name + "{{phone}} · {{today_stops}} stops"
-    // + status badge. today_stops / AVAILABLE-ON_TRIP-OFF status have no column →
-    // sub-line shows phone · code; badge keeps the In-house/Outsource fleet flag.
     variant: "person",
     avatar: (r) => r.name ?? "",
     subline: (r) => join(formatPhone(pick(r, "phone")), pick(r, "driverCode", "driver_code")),
@@ -1413,10 +1094,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     form: FORM_DRIVERS,
   },
 
-  // helpers.get('/') → { helpers: [...] }; cols: helper_code, name, contact,
-  // in_house, active… (note: `contact`, not `phone`).
-  // Not in the design module map; mirror the drivers template. Real cols:
-  // helper_code, name, contact (note: `contact`, not `phone`), in_house.
   helpers: {
     title: "Helpers",
     eyebrow: "Transportation",
@@ -1435,10 +1112,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "name", label: "Name", cmp: (a, b) => byStr(a.name, b.name) }],
   },
 
-  // CORE api (not SCM): GET /api/users → { users: [...] }; cols name, email,
-  // phone, role_name, department_name, position_name, status.
-  // Design m-members: Email/Position/Department/Role + status pill. Real cols:
-  // name, email, position_name, department_name, role_name, status.
   members: {
     title: "Members",
     eyebrow: "Organisation",
@@ -1451,16 +1124,12 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     right: (r) => r.status ?? "",
     search: (r) => join(r.name, r.email, r.phone, r.position_name, r.department_name, r.role_name),
     pill: (r) => humanize(pick(r, "status")),
-    // Spec #members: avatar initials + name + "{{position}} · {{department}}"
-    // sub-line + status badge (ACTIVE=green / INACTIVE=grey; Invited=amber here).
     variant: "person",
     avatar: (r) => r.name || r.email || "",
     subline: (r) => join(pick(r, "positionName", "position_name"), pick(r, "departmentName", "department_name")),
     fields: [
       [(r) => pick(r, "email") ?? "—", "Email"],
       [(r) => pick(r, "positionName", "position_name") ?? "—", "Position"],
-      // Reporting line (Upline). /api/users returns manager_name; it was never
-      // surfaced on the member card, so a member's upline read as blank.
       [(r) => pick(r, "managerName", "manager_name") ?? "—", "Reports to"],
       [(r) => pick(r, "departmentName", "department_name") ?? "—", "Department"],
       [(r) => pick(r, "roleName", "role_name") ?? "—", "Role"],
@@ -1515,11 +1184,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     form: FORM_MEMBERS,
   },
 
-  // CORE api: GET /api/positions → { positions: [...] }; cols id, name,
-  // department_id (+ department name where joined).
-  // Design m-positions: Department/Members/Key access + department pill. Real
-  // cols: name, department_name, member_count. "Key access" lives in a separate
-  // /positions/:id/page-access endpoint → OMITTED. Pill = department name.
   positions: {
     title: "Positions",
     eyebrow: "Organisation",
@@ -1531,9 +1195,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     secondary: (r) => join(r.department_name, r.division),
     search: (r) => join(r.name, r.department_name),
     pill: (r) => pick(r, "departmentName", "department_name") ?? "",
-    // Spec #positions: title + "{{member_count}} members" grey badge,
-    // "{{department_name}}" sub-line, "{{permission_summary}}" note (no column →
-    // hidden). badgeText overrides the list badge; pill stays the dept for detail.
     variant: "doc",
     badgeText: (r) => { const n = pick(r, "memberCount", "member_count"); return n == null ? "" : `${n} members`; },
     subline: (r) => pick(r, "departmentName", "department_name") ?? "",
@@ -1545,10 +1206,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     form: FORM_POSITIONS,
   },
 
-  // CORE api: GET /api/departments → { departments: [...] }; cols id, name, color.
-  // Design m-departments: Head/Members/Positions (no pill). Real cols: name,
-  // member_count, color. Head and Positions count have NO column → OMITTED;
-  // only Members bound.
   departments: {
     title: "Departments",
     eyebrow: "Organisation",
@@ -1559,8 +1216,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     primary: (r) => r.name,
     secondary: (r) => join(r.division),
     search: (r) => join(r.name),
-    // Spec #departments: name + "{{member_count}}" grey badge, "Head ·
-    // {{head_name}}" sub-line (head has no column → em-dash).
     variant: "doc",
     badgeText: (r) => { const n = pick(r, "memberCount", "member_count"); return n == null ? "" : String(n); },
     subline: (r) => `Head · ${pick(r, "headName", "head_name") ?? "—"}`,
@@ -1571,9 +1226,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     form: FORM_DEPARTMENTS,
   },
 
-  // delivery-returns.get('/') → { deliveryReturns: [...] }; search = the desktop's (so-ref-search).
-  // Design m-pr (Sales Returns): Return No/Date/Reason/Value + status pill. Real
-  // cols: return_number, return_date, reason, refund_sen, status. All present.
   "delivery-returns": {
     title: "Delivery Returns",
     eyebrow: "Finance",
@@ -1587,9 +1239,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     search: (r) => deliveryReturnSearchText(r),
     statusDocType: "dr",
     pill: (r) => scmStatusLabel("dr", pick(r, "status")),
-    // Spec #sr-list: name + status, "{{doc_no}} · {{return_date}} · ref
-    // {{so_doc_no}}" sub-line, "{{reason}}" note (hidden when blank), right-only
-    // RM {{refund_sen}} footer.
     variant: "doc",
     subline: (r) => {
       const ref = pick(r, "soDocNo", "so_doc_no", "doDocNo", "do_doc_no");
@@ -1614,10 +1263,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "returnDate", "return_date"), pick(b, "returnDate", "return_date")) }],
   },
 
-  // purchase-invoices.get('/') → { purchaseInvoices: [...] }; cols invoice_number,
-  // invoice_date, status, total_sen + nested supplier:{code,name}.
-  // Design m-pi: PI No/Date/Due/Amount + status pill. Real cols: invoice_number,
-  // invoice_date, due_date, total_sen, status, nested supplier.name.
   "purchase-invoices": {
     title: "Purchase Invoices",
     eyebrow: "Procurement",
@@ -1631,13 +1276,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     search: (r) => join(r.invoice_number, r.supplier?.name, r.supplier_invoice_ref),
     statusDocType: "pi",
     pill: (r) => scmStatusLabel("pi", pick(r, "status")),
-    // Spec #pi-list: name + status, "{{doc_no}} · due {{due_date}}" sub-line,
-    // footer "Balance RM {{balance_sen}}" + RM {{total_sen}}.
     variant: "doc",
-    // PI can carry due + a GRN + a PO — showing all three crams the sub-line at
-    // phone width, so surface the single most-useful source: the GRN it invoices
-    // (the direct 3-way-match basis) when present, else the PO. Both remain on
-    // the detail screen.
     subline: (r) => {
       const due = dm(pick(r, "dueDate", "due_date"));
       const grn = r.grn?.grn_number ?? r.grn?.grnNumber;
@@ -1666,10 +1305,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
   },
 
-  // purchase-returns.get('/') → { purchaseReturns: [...] }; cols return_number,
-  // return_date, status, refund_sen + nested supplier:{code,name}.
-  // Design m-preturn: Return No/Date/Reason/Value + status pill. Real cols:
-  // return_number, return_date, reason, refund_sen, status, nested supplier.
   "purchase-returns": {
     title: "Purchase Returns",
     eyebrow: "Procurement",
@@ -1683,9 +1318,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     search: (r) => join(r.return_number, r.supplier?.name, r.credit_note_ref),
     statusDocType: "pr",
     pill: (r) => scmStatusLabel("pr", pick(r, "status")),
-    // Spec #preturn-list: name + status, "{{doc_no}} · {{return_date}} · PO
-    // {{po_doc_no}}" sub-line, "{{reason}}" note (hidden when blank), right-only
-    // RM {{refund_sen}} footer.
     variant: "doc",
     subline: (r) => {
       const po = pick(r, "poDocNo", "po_doc_no", "sourcePoDocNo", "source_po_doc_no");
@@ -1710,8 +1342,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "returnDate", "return_date"), pick(b, "returnDate", "return_date")) }],
   },
 
-  // purchase-consignment-orders.get('/') → { purchaseOrders: [...] }; cols
-  // pc_number, po_date, status, total_sen + nested supplier:{code,name}.
   "purchase-consignment-orders": {
     title: "Purchase Consignment Orders",
     eyebrow: "Consignment",
@@ -1732,8 +1362,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "poDate", "po_date"), pick(b, "poDate", "po_date")) }],
   },
 
-  // purchase-consignment-receives.get('/') → { grns: [...] }; cols
-  // receive_number, received_at, status, total_sen + nested supplier + pc_order_no.
   "purchase-consignment-receives": {
     title: "Purchase Consignment Receives",
     eyebrow: "Consignment",
@@ -1757,8 +1385,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "receivedAt", "received_at"), pick(b, "receivedAt", "received_at")) }],
   },
 
-  // purchase-consignment-returns.get('/') → { purchaseReturns: [...] }; cols
-  // return_number, return_date, status, refund_sen.
   "purchase-consignment-returns": {
     title: "Purchase Consignment Returns",
     eyebrow: "Consignment",
@@ -1780,8 +1406,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "returnDate", "return_date"), pick(b, "returnDate", "return_date")) }],
   },
 
-  // consignment-orders.get('/') → { salesOrders: [...] }; cols doc_no,
-  // debtor_name, so_date, status, local_total_sen.
   "consignment-orders": {
     title: "Consignment Orders",
     eyebrow: "Consignment",
@@ -1808,8 +1432,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "soDate", "so_date"), pick(b, "soDate", "so_date")) }],
   },
 
-  // consignment-notes.get('/') → { deliveryOrders: [...] } (consignment note
-  // headers). §38 Consignment Notes (doc card): partner + status, doc_no · date.
   "consignment-notes": {
     title: "Consignment Notes",
     eyebrow: "Consignment",
@@ -1826,8 +1448,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "noteDate", "note_date", "doDate", "do_date"), pick(b, "noteDate", "note_date", "doDate", "do_date")) }],
   },
 
-  // consignment-returns.get('/') → { deliveryReturns: [...] }; cols
-  // return_number, debtor_name, return_date, status, refund_sen.
   "consignment-returns": {
     title: "Consignment Returns",
     eyebrow: "Consignment",
@@ -1849,13 +1469,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "returnDate", "return_date"), pick(b, "returnDate", "return_date")) }],
   },
 
-  // mfg-products.get('/') → { products: [...] }; the SKU MASTER (mfg_products),
-  // NOT the retail /products view. Repointed here (from /products) so the mobile
-  // list, detail, CREATE and EDIT all share ONE surface whose row id is the
-  // mfg_products text PK the PATCH /mfg-products/:id keys on. Cols: id, code,
-  // name, category (string enum), base_price_sen, sell_price_sen, status,
-  // size_label, branding, barcode.
-  // Design m-products: SKU/Brand/Price + category pill. Prices are SEN.
   products: {
     title: "Products & Maintenance",
     eyebrow: "Catalogue",
@@ -1868,13 +1481,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     rightMoney: true,
     search: (r) => join(r.name, pick(r, "code", "sku"), pick(r, "category"), pick(r, "branding"), pick(r, "barcode")),
     pill: (r) => mfgCategoryLabel(pick(r, "category")),
-    // Spec #products: .ph thumbnail + name + "{{category}}" sub-line + right
-    // "RM {{price_sen}}". base_price_sen is the base selling price (SEN); uom
-    // has no mfg column → omitted.
-    // Description ONCE, code NOT displayed — the shared line-identity rule. The
-    // browse twin of the MobileSkuPicker rows converged in #626 ("description
-    // only — one scannable line per SKU"), so it reads the same. CATEGORY stays
-    // (not a duplicate); the code still BINDS via `search` (code / sku / barcode).
     variant: "product",
     subline: (r) => join(mfgCategoryLabel(pick(r, "category"))),
     price: (r) => pick(r, "basePriceSen", "base_price_sen") ?? "",
@@ -1900,10 +1506,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
   },
 
-  // Design m-mrp: SKU/Required/On hand/Shortage/Incoming + state pill. MrpSku
-  // is a COMPUTED type (camelCase keys): itemCode, description, qtyNeeded,
-  // stock, shortage, poOutstanding, category, warehouseCode/Name. State pill
-  // (In stock / Shortage / On PO) is derived from shortage/poOutstanding.
   mrp: {
     title: "MRP · Stock Status",
     eyebrow: "Planning",
@@ -1918,15 +1520,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     secondary: (r) => join(pick(r, "itemCode", "item_code"), mfgCategoryLabel(pick(r, "category")), pick(r, "warehouseCode", "warehouse_code", "warehouseName", "warehouse_name")),
     search: (r) => join(pick(r, "description"), pick(r, "itemCode", "item_code"), pick(r, "category")),
     pill: (r) => mrpState(r),
-    // Spec #mrp: name + state badge, 4-col KPI grid (Demand / On hand /
-    // Incoming / Shortage). Maps to qtyNeeded / stock / poOutstanding /
-    // shortage on the computed MrpSku row.
-    // Description ONCE, code NOT displayed — the shared rule
-    // (vendor/shared/line-identity.ts). The sub-line was ONLY "SKU {{sku}}", the
-    // identity `primary` already names, so it now renders nothing rather than a
-    // duplicate; a row whose description is missing still shows its code,
-    // because `primary` falls back to it. The code still BINDS — `search` above
-    // still matches item_code.
     variant: "mrp",
     subline: () => "",
     kpis: (r) => {
@@ -1952,10 +1545,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     ],
   },
 
-  // Design m-fleet: Type/Capacity/Driver/Region + status pill. Real cols: plate,
-  // type, is_internal, capacity_m3, capacity_kg, active. Driver and Region have
-  // NO column on a lorry (lorries aren't linked to drivers) → OMITTED. Status
-  // pill: Off (inactive) / In-house / Outsource.
   fleet: {
     title: "Lorries",
     eyebrow: "Fleet",
@@ -1967,9 +1556,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     right: (r) => (r.active === false ? "Off" : r.is_internal ? "In-house" : "Outsource"),
     search: (r) => join(r.plate, r.type),
     pill: (r) => (pick(r, "active") === false ? "Off" : pick(r, "isInternal", "is_internal") ? "In-house" : "Outsource"),
-    // Spec #lorries: plate + status badge, "{{lorry_type}} · {{capacity}}" sub-
-    // line, "Assigned {{driver}}" footer. Lorries aren't linked to drivers →
-    // Unassigned; AVAILABLE/ON_TRIP/MAINTENANCE has no column → keep fleet flag.
     variant: "doc",
     subline: (r) => join(pick(r, "type"), capacityLabel(r) !== "—" ? capacityLabel(r) : ""),
     footL: () => ["Assigned", "Unassigned"],
@@ -1987,13 +1573,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     form: FORM_FLEET,
   },
 
-  // ── §38 generic read-only SCM modules (2990-verbatim rules) ────────────────
-  // stock-transfers.get('/') → { transfers: [...] }; HEADER: id, transfer_no,
-  // status, from_warehouse_id, to_warehouse_id, transfer_date, notes,
-  // posted_at, cancelled_at + nested from_warehouse/to_warehouse:{code,name} +
-  // computed line_count. Design "Stock Transfers": route (From → To) + status,
-  // "{{doc_no}} · {{date}}" sub-line, "{{line_count}} lines" footer. No money.
-  // NOTE: header has no per-row sku/qty (those are lines) → not shown on card.
   "stock-transfers": {
     title: "Stock Transfers",
     eyebrow: "Warehouse",
@@ -2019,11 +1598,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "transferDate", "transfer_date"), pick(b, "transferDate", "transfer_date")) }],
   },
 
-  // stock-takes.get('/') → { takes: [...] }; HEADER: id, take_no, status,
-  // warehouse_id, scope_type, scope_value, take_date, notes, posted_at,
-  // cancelled_at + nested warehouse:{code,name} + computed line_count,
-  // variance_total. Design "Stock Take": warehouse + status, "{{doc_no}} ·
-  // {{date}}" sub-line, "{{line_count}} counted / {{variance_total}}" footer.
   "stock-takes": {
     title: "Stock Take",
     eyebrow: "Warehouse",
@@ -2050,11 +1624,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "date", label: "Date", cmp: (a, b) => byDate(pick(a, "takeDate", "take_date"), pick(b, "takeDate", "take_date")) }],
   },
 
-  // delivery-planning-regions.get('/') → { regions: [...] }; shaped rows:
-  // id, code, name, sortOrder, active, createdAt. Design "Regions": region name
-  // + code (grey badge), Zone/Postcodes/Drivers footer — none of Zone /
-  // postcode_range / driver_count exist on the region master → OMITTED; only
-  // name + code bound. Pill = the region code.
   "delivery-planning-regions": {
     title: "Regions",
     eyebrow: "Transportation",
@@ -2072,11 +1641,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     sorts: [{ key: "name", label: "Name", cmp: (a, b) => byStr(pick(a, "name"), pick(b, "name")) }],
   },
 
-  // accounting.get('/accounts') → { accounts: [...] }; cols account_code,
-  // account_name, account_type, parent_code, is_active. Design "Accounting":
-  // Chart of Accounts list — account name + type badge, "{{account_code}} ·
-  // {{parent_code}}" sub-line. Journal entries are a separate endpoint
-  // (/accounting/journal-entries) not surfaced in this flat list.
   accounting: {
     title: "Accounting",
     eyebrow: "Finance",
@@ -2093,7 +1657,6 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
   },
 };
 
-/** Lorry capacity display — prefer kg, fall back to m3, else em-dash. */
 const capacityLabel = (r: any): string => {
   const kg = pick(r, "capacityKg", "capacity_kg");
   if (kg != null) return `${Number(kg).toLocaleString("en-MY")} kg`;

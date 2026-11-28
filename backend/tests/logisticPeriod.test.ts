@@ -142,3 +142,16 @@ describe('logistic period', () => {
     expect(r.chargesSen).toBe(150_00);
   });
 });
+
+describe('runs today, for the home Overview card', () => {
+  const fleet = [{ plate: 'L1', internal: true }, { plate: 'L2', internal: true }];
+  test('counts today\'s trips by the trip rule and ignores other days', () => {
+    const r = logisticPeriod([...full('2026-11-26', 3000_00), ...full('2026-11-25', 3000_00), d({ id: 'h', doDate: '2026-11-26', lorry: 'L2' })], [],
+      '2026-11-01', '2026-11-26', fleet, '2026-11-26', new Map(), [{ plate: 'L2', date: '2026-11-26', kind: 'setup' }]);
+    expect(r.runsToday).toBe(2.5);
+  });
+  test('is null when the period does not hold today', () => {
+    const r = logisticPeriod(full('2026-10-01', 3000_00), [], '2026-10-01', '2026-10-31', fleet, '2026-11-26', new Map(), []);
+    expect(r.runsToday).toBeNull();
+  });
+});

@@ -1,28 +1,3 @@
-/* A PHONE-ONLY MEMBER MUST BE ABLE TO TURN 2FA OFF AGAIN.
- *
- * `MobileLogin` already answers the TOTP challenge, so a member with 2FA on can
- * SIGN IN from a phone. Everything else about 2FA lived on the desktop Profile
- * page only (`pages/Profile.tsx`, TwoFactorSection) — status, enrol, backup-code
- * count, and DISABLE. The last one is the lockout: lose the authenticator with
- * no PC to hand and there is no way back into the account, from any screen the
- * phone can reach.
- *
- * These are the assertions for the phone surface. They drive the SAME endpoints
- * the desktop drives (/api/totp/status | setup | enable | disable) through the
- * shared `useTotpEnrollment` hook, because a second implementation of an auth
- * flow is how the two drift.
- *
- * Three things are security-load-bearing and each has its own `it`:
- *   1. DISABLE IS GATED. The desktop demands a current 6-digit code (or a backup
- *      code) and posts it to /api/totp/disable. The phone must demand the same
- *      thing — a Disable button that posts without a code would be a downgrade
- *      shipped in the name of parity.
- *   2. BACKUP CODES SURVIVE A RE-RENDER. They are shown exactly once. A parent
- *      re-render (a settling query, an orientation change) must not take them
- *      away — only the operator's own acknowledgement may.
- *   3. NOTHING PERSISTS. No secret and no backup code may reach localStorage,
- *      sessionStorage, or the console. They live in component state and die there.
- */
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -91,7 +66,6 @@ beforeEach(() => {
   };
 });
 
-/** The four TOTP endpoints, reduced to what the phone must be able to drive. */
 function fakeTotpServer(initial: { enabled: boolean; remaining: number }) {
   const state = {
     enabled: initial.enabled,
@@ -144,7 +118,6 @@ const wrap = () => {
   );
 };
 
-/** Home → the account-security sub-screen that carries the 2FA card. */
 async function openSecurity(user: ReturnType<typeof userEvent.setup>) {
   const row = await screen.findByText(/^(Password|Password & security|Security)$/i);
   await user.click(row);
@@ -158,7 +131,6 @@ describe("MobileProfile — the phone can manage two-factor authentication", () 
     await openSecurity(user);
 
     expect(await screen.findByText("Two-Factor Authentication")).toBeTruthy();
-    // The count is the thing a member checks before a trip.
     expect(await screen.findByText(/5 backup codes? left/i)).toBeTruthy();
   });
 
@@ -170,8 +142,6 @@ describe("MobileProfile — the phone can manage two-factor authentication", () 
 
     await user.click(await screen.findByRole("button", { name: /turn off|disable/i }));
 
-    /* THE GATE. Revealing the field must not itself post — the code has to be
-       supplied and travel to the server, exactly as the desktop's prompt does. */
     expect(server.disableCalls.length).toBe(0);
 
     const field = await screen.findByLabelText(/code/i);
@@ -189,7 +159,6 @@ describe("MobileProfile — the phone can manage two-factor authentication", () 
     await openSecurity(user);
 
     await user.click(await screen.findByRole("button", { name: /enable 2fa/i }));
-    // The setup key has to be readable — it is how the authenticator is seeded.
     expect(await screen.findByText("JBSWY3DPEHPK3PXP")).toBeTruthy();
 
     await user.type(await screen.findByLabelText(/6-digit code/i), "654321");
@@ -198,8 +167,6 @@ describe("MobileProfile — the phone can manage two-factor authentication", () 
     await waitFor(() => expect(server.enableCalls).toBe(1));
     expect(await screen.findByText("AAAA-1111")).toBeTruthy();
 
-    /* SHOWN ONCE MEANS SHOWN UNTIL SAVED. Anything that re-renders the tree —
-       a settling query, an orientation change — must leave them on screen. */
     window.dispatchEvent(new Event("resize"));
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.getByText("AAAA-1111")).toBeTruthy();

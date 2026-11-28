@@ -1,12 +1,3 @@
-/* The Cash Flow's Trade finance table (step 5 of the forecast port). Pinned:
-   the facility's tenor, rate and what is owed today; the chosen suppliers'
-   dues ticked, an unticked one not drawn; the drawdown, the repayment a tenor
-   later (an owed draw past due this month), its interest and what is owed at
-   month end, worked out as the plan changes; a supplier added or removed; a
-   tenor or rate out of range said; Save sends the whole plan; a refused save
-   shows the server's sentence; without the write key the table only reads.
-   The server half is backend/tests/cashFlowForecast.test.ts. Made-up names
-   and figures. */
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { TradeFinance } from '../../../vendor/scm/lib/cash-flow-forecast-queries';
@@ -75,7 +66,6 @@ describe('the Trade finance table', () => {
     expect(rowText('Drawdown')).toEqual(['', '10,000.00', '', '', '']);
     fireEvent.change(screen.getByLabelText('460-0009 tenor in days'), { target: { value: '90' } });
     fireEvent.change(screen.getByLabelText('460-0009 interest per draw'), { target: { value: '0.5' } });
-    /* Three months now: August's owed draw in November, November's in February, December's drawdown in March. */
     expect(rowText('Repayment')).toEqual(['400.00', '', '', '500.00', '10,000.00']);
     expect(screen.getByText('Unsaved changes')).toBeTruthy();
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })); });

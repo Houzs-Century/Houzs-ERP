@@ -1,10 +1,5 @@
-/* HR · Leave calendar — a month wall-calendar of who is on leave, for the Leave
- * page's Calendar view. Built from the leave read the page already has (approved
- * team + own leave, plus pending shown dashed), so there is no extra fetch and
- * no backend change. Approved leave is what payroll acts on; pending is a
- * preview until a supervisor reviews it. */
 import { useMemo, useState } from "react";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 import { DAY_NAMES } from "../../lib/meetings";
 
 export type CalEntry = { id: number; name: string; type: string; startDate: string; endDate: string; status: string };

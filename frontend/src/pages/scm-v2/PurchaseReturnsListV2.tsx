@@ -1,8 +1,3 @@
-// PurchaseReturnsListV2 — Theme C redesign of the Purchase Return listing.
-// Procurement-side mirror of DR (Delivery Return): goods flow BACK to the
-// supplier and money is expected back from them (usually via a credit note
-// booked on Complete). Money-IN framing — a rare thing on the procurement
-// side where every other doc is money-out.
 
 import { useMemo, useState, type ReactNode } from "react";
 import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
@@ -44,7 +39,7 @@ import {
   useCancelPurchaseReturn,
 } from "../../vendor/scm/lib/purchase-return-queries";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
-import { withStatusLabels } from "../../vendor/scm/lib/status-pill";
+import { withStatusLabels } from "../../../../shared/src/vendor/scm/lib/status-pill";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
@@ -82,7 +77,6 @@ type PrRow = {
   grn?: { id: string; grn_number: string; currency?: string | null; warehouse_id?: string | null } | null;
   credit_note_ref?: string | null;
   line_count?: number;
-  /** The return's lines, as GET /purchase-returns and its export send them. */
   lines?: PrListLine[];
 };
 
@@ -97,8 +91,6 @@ type PrItem = {
   qty?: number;
   qty_returned?: number;
   condition?: string | null;
-  /* Per-line reason (backend purchase_return_items.reason) — nullable; when
-     unset the header-level reason (shown as a callout above) is the fallback. */
   reason?: string | null;
   unit_price_sen?: number;
   line_total_sen?: number;
@@ -136,9 +128,6 @@ const STATUS_TONE = withStatusLabels("pr", STATUS_OWN);
 const statusFor = (s: string) =>
   STATUS_TONE[(s || "").toUpperCase()] ?? { tone: "neutral" as const, label: s || "—", bucket: "posted" as StatusTab };
 
-/* The tab + search the list applies in the browser — to the screen read AND to
-   the export's rows, so the file holds exactly what the tab would show without
-   the 300-row screen cap. */
 function purchaseReturnsInView(rows: PrRow[], status: StatusTab, search: string): PrRow[] {
   const inTab = status === "all" ? rows : rows.filter((r) => statusFor(r.status).bucket === status);
   if (!search.trim()) return inTab;
@@ -155,8 +144,6 @@ function purchaseReturnsInView(rows: PrRow[], status: StatusTab, search: string)
 const currencyOfPr = (r: PrRow): string | null => r.grn?.currency ?? null;
 const isLocalCurrency = (r: PrRow): boolean => (currencyOfPr(r) ?? "").toUpperCase() === "MYR";
 
-/* A line as the grid holds it: the server's line plus the two document facts a
-   line column reads (the shared line cells pass a column only its line). */
 type PrGridLine = PrListLine & { doc_local: boolean; doc_reason: string | null };
 const gridLinesCache = new WeakMap<PrRow, PrGridLine[]>();
 const linesOfPr = (r: PrRow): readonly PrGridLine[] => {
@@ -484,12 +471,6 @@ function TotalRow({ k, v, strong, tone }: { k: string; v: string; strong?: boole
   );
 }
 
-// ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
-// Inline per-line breakdown for one PR, lazy-fetched via the SAME
-// usePurchaseReturnDetail hook the drawer uses (TanStack-cached). Group + item
-// code/variant + Qty (returned) + Amount, via the shared DocumentLinesExpansion.
-// A purchase return is a purchase-side doc with no MRP coverage on its lines, so
-// the SO/DO-only Stock + Incoming PO columns are absent.
 function PrLinesExpansion({ id }: { id: string }) {
   const detailQ = usePurchaseReturnDetail(id);
   const items =
@@ -506,7 +487,7 @@ function PrLinesExpansion({ id }: { id: string }) {
   return (
     <DocumentLinesExpansion
       isLoading={detailQ.isLoading}
-      coverage="ready" /* one query fills this drill-down — coverage-state.tsx */
+      coverage="ready"
       isError={Boolean(detailQ.error)}
       errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
       lines={lines}
@@ -532,9 +513,6 @@ export function PurchaseReturnsListV2() {
   const [printingDocs, setPrintingDocs] = useState(false);
 
   const { data, isLoading, error, refetch } = usePurchaseReturns();
-  // These tiles are reduces over a row set that is [] until the fetch lands (and
-  // stays [] if it fails), so a settled-looking "Refund Value RM 0.00" would
-  // describe a list nobody has read yet.
   const statsFailed = Boolean(error);
   const statsPending = isLoading || Boolean(error);
   const postPr = usePostPurchaseReturn();
@@ -603,7 +581,6 @@ export function PurchaseReturnsListV2() {
   const printDocument = usePrintDocument();
   const goFullPage = (r: PrRow) => navigate(`/scm/purchase-returns/${r.id}`);
 
-  // ─── Multi-select → batch "Print all" ─────────────────────────────────────
   const toggleSelect = (rowId: string) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -620,8 +597,6 @@ export function PurchaseReturnsListV2() {
     });
   const clearSelection = () => setSelectedIds(new Set());
 
-  // One PR's full detail for the PDF generator, via the vendored authedFetch
-  // (→ /api/scm); same endpoint + shape as the single-row detail page.
   const fetchPrBundle = async (
     row: PrRow
   ): Promise<{ header: unknown; items: unknown[] }> => {
@@ -631,8 +606,6 @@ export function PurchaseReturnsListV2() {
     return { header: json.purchaseReturn, items: json.items };
   };
 
-  // Batch "Print all" — one ticked PR downloads straight; several prompt
-  // combined-vs-separate.
   const deliverSelectedPrs = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = filtered.filter((r) => selectedIds.has(r.id));
@@ -647,9 +620,6 @@ export function PurchaseReturnsListV2() {
         clearSelection();
         return;
       }
-      /* View / Print always render ONE document — a preview or a print run
-         is about the stack, not N separate files. Only the download exit
-         still asks combined-vs-separate. */
       const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} purchase returns`,
         options: [

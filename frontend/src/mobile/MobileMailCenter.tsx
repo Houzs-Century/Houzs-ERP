@@ -47,41 +47,13 @@ import type { AckState, ThreadReaders } from "../pages/MailCenter/mail-acks";
 import { MobileVisibility } from "./MobileMailPersonal";
 import { reachTagOf, useMailVisibility } from "../pages/MailCenter/mail-sidebar";
 import "./mobile.css";
-import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
+import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../../../shared/src/vendor/shared/format";
 import { mytDayOf, todayMyt } from "../vendor/scm/lib/dates";
 import { openLoadedTab } from "../lib/openLoadedTab";
 import { Paperclip } from "lucide-react";
 import { isImageAttachment, useAttachmentPreviewUrl } from "../pages/MailCenter/mail-attach-preview";
 import type { ThreadFilePreview } from "../pages/MailCenter/ThreadFileChips";
 
-// Mobile Mail Center — the email client, wired to /api/mail-center. Kept at
-// desktop feature parity (MailCenter/Inbox.tsx + Thread.tsx) minus the desktop-
-// only split reading pane (single-column push nav is correct for mobile).
-//   List:   GET /api/mail-center/threads  (?status= / ?starred=1 / ?mailbox= / ?q=)
-//           GET /api/mail-center/addresses (mailbox switcher + compose From)
-//           GET /api/mail-center/labels    (label catalogue: name + colour)
-//   Reader: GET /api/mail-center/threads/:id  ({ thread, messages[] })  — marks read
-//   Send:   POST /api/mail-center/threads/:id/reply  (reply / reply-all)
-//           POST /api/mail-center/compose             (new / forward)
-//   Mutate: PATCH /api/mail-center/threads/:id  { starred | status:"open"|"closed"
-//                                                | trashed | unread | labels }
-//   Labels: POST /api/mail-center/labels { name, color } (create-if-new on apply)
-//   Attach: GET /api/mail-center/attachments/:id (authed stream -> blob URL)
-//
-// Presentation is a verbatim port of the owner's mobile design (Houzs Mobile.html
-// #m-mail / #mail-thread / #mail-compose) using the .hz-m design classes
-// (.hdr .ey .card .avatar .spill .sochip .cal-sel .tinybtn .so-card .so-hd .so-ti
-// .so-bd .fld .fld-l .fld-i .actbar .btn .scroll .rbadge). All data + actions are
-// unchanged from the live wiring.
-//
-// Folder -> backend query (mirrors the desktop MailCenter/Inbox mapping):
-//   Inbox    -> status=open
-//   Starred  -> starred=1
-//   Sent     -> status=all, narrowed client-side by hasOutbound
-//   Auto-sent-> GET /api/mail-center/outbox (read-only system log, no threads)
-//   Drafts   -> local-only on desktop (no backend draft table); shown as empty
-//   Archive  -> status=closed
-//   Trash    -> status=trashed
 
 type Thread = {
   id: string;
@@ -147,7 +119,6 @@ type Message = {
 
 type ThreadDetail = { thread: Thread; readers?: ThreadReaders; messages: Message[]; replying?: ReplyingPerson[] };
 
-// A colleague a thread can be handed to. Shape as GET /api/users serves it.
 type UserOption = { id: string | number; name?: string; email?: string };
 
 type MailAddress = {
@@ -155,8 +126,6 @@ type MailAddress = {
   address: string;
   label: string;
   active: boolean;
-  // Served by GET /api/mail-center/addresses — the user this mailbox is assigned
-  // to. Used to default the From to the logged-in user's own mailbox.
   assignedUserId?: string | number | null;
 };
 
@@ -171,9 +140,6 @@ type Folder =
   | "trash";
 type ComposeMode = "new" | "reply" | "replyall" | "forward";
 
-// Folder order mirrors the prototype (Inbox · Starred · Sent · Drafts ·
-// Archive); Trash is an extra live-only folder kept at the end. "Auto-sent"
-// sits after Sent, the same slot the desktop sidebar gives it.
 const FOLDERS: [Folder, string][] = [
   ["inbox", "Inbox"],
   ["starred", "Starred"],
@@ -185,7 +151,6 @@ const FOLDERS: [Folder, string][] = [
   ["trash", "Trash"],
 ];
 
-// Deterministic avatar colour + initials, matching the design's mailAv/mailIni.
 const AV_COLORS = ["#16695f", "#a16a2e", "#2a6f9e", "#7a5c86", "#b45309", "#0e7490"];
 const avColor = (s: string) => AV_COLORS[(s || "?").charCodeAt(0) % AV_COLORS.length];
 const initials = (s: string) =>
@@ -197,18 +162,11 @@ const initials = (s: string) =>
     .join("")
     .toUpperCase() || "?";
 
-// Chip colours come from the SHARED label module, so a label is the same colour
-// on the phone as on the desktop and an uncatalogued name falls back to the same
-// brand default rather than to a private five-name table this file used to keep.
-// `chipStyle` derives the soft pill wash from the dot colour; this adapter only
-// reshapes its result into the [background, foreground] pair the rows here take.
 function chipColors(label: string, catalog: Map<string, string>): [string, string] {
   const s = chipStyle(colorForLabel(label, catalog));
   return [s.backgroundColor, s.color];
 }
 
-// List-row time: HH:mm today, "Yesterday", else numeric DD/MM/YYYY (owner
-// standard — desktop-parity numeric dates, never short-month names).
 const fmtTime = (iso: string | null | undefined): string => {
   if (!iso) return "";
   const d = new Date(iso);
@@ -219,7 +177,6 @@ const fmtTime = (iso: string | null | undefined): string => {
   return fmtDate(d);
 };
 
-// Message-bubble time: numeric DD/MM/YYYY + HH:mm.
 const fmtMsgTime = (m: Message): string => {
   const iso = m.direction === "outbound" ? m.sentAt || m.createdAt : m.receivedAt || m.createdAt;
   if (!iso) return "";
@@ -239,27 +196,16 @@ const fmtBytes = (n: number): string => {
 export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
   const { user } = useAuth();
   const [folder, setFolder] = useState<Folder>("inbox");
-  const [mailbox, setMailbox] = useState<string>("all"); // "all" or an address
+  const [mailbox, setMailbox] = useState<string>("all");
   const vis = useMailVisibility();
   const myAddress = vis?.myAddress ?? null;
   const [q, setQ] = useState("");
-  /* The label the list is narrowed to, or null for all. Applying a label was
-     already possible from the phone and LISTING by one was not, so "Urgent"
-     could be put on a conversation that nobody could then find from a phone.
-     Server-side, same `?label=` the desktop sidebar sets (Inbox.tsx). */
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [compose, setCompose] = useState<{ mode: ComposeMode } | null>(null);
 
-  // Mailbox switcher options (scope-bound by the backend) + the label catalogue
-  // (name -> colour) so chips render in their managed colours.
   const { data: addresses } = useQuery<MailAddress[]>("/api/mail-center/addresses", () => api.get("/api/mail-center/addresses"), []);
 
-  // The signed-in member's OWN outward alias (users.email_alias). Under the
-  // free-alias model this is their personal sending identity and it may not
-  // appear in /addresses at all (that lists shared/dept mailboxes), so it is
-  // spliced in here — same as desktop Compose.tsx. Without it a member whose
-  // only identity is an alias has an EMPTY From list and cannot send at all.
   const ownAlias = (user?.email_alias ?? "").trim().toLowerCase();
 
   const activeAddresses = useMemo(() => {
@@ -282,10 +228,6 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
     return list;
   }, [addresses, ownAlias, user?.id]);
 
-  // The mailbox that belongs to the logged-in user. /addresses is ORDER BY
-  // address ASC, so "the first one" is alphabetical, not personal — someone
-  // holding finance@, hr@ and their own zoe@ used to compose from finance@.
-  // pickDefaultFromAddress is the shared, unit-tested rule desktop already uses.
   const userDefaultFrom = useMemo(
     () => ownAlias || pickDefaultFromAddress(activeAddresses, user),
     [activeAddresses, user, ownAlias],
@@ -293,13 +235,8 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
   const { data: labelCatalog } = useQuery<MailLabel[]>("/api/mail-center/labels", () => api.get("/api/mail-center/labels"), []);
   const colorMap = useMemo(() => labelColorMap(labelCatalog ?? []), [labelCatalog]);
 
-  // Mobile uses the backend's existing paginated search contract, just like
-  // desktop. The previous bare-array request was capped at 300 rows and then
-  // filtered locally, so mail #301 could never be found from this screen.
   const LIST_PAGE_SIZE = 50;
   const debouncedQ = useDebouncedValue(q, 300);
-  // Drafts are local-only and Auto-sent reads the outbox log, so neither folder
-  // uses the thread list. Same split desktop makes (Inbox.tsx usesThreadList).
   const usesThreadList = folder !== "drafts" && folder !== "autosent";
   const listQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -462,12 +399,6 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
     );
   }
 
-  // Designer list layout (#m-mail): a "Menu" (hamburger + label, left) that
-  // returns to the module menu via onBack + a "New" pencil button (right) that
-  // opens compose, then the "Mail Center" title below, the mailbox switcher, a
-  // search bar and the horizontal folder chip strip. Rows are avatar + name /
-  // subject / snippet / labels with a trailing unread dot. NO compose FAB — the
-  // "New" header button is the single compose entry point (matches the design).
   return (
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", position: "relative", background: "var(--app-bg)" }}>
       <header className="hdr">
@@ -523,8 +454,6 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
             </span>
           )}
         </div>
-        {/* resultCount is the THREAD total — on Auto-sent it would report a
-            count for a list that is not on screen, so the hint is hidden there. */}
         {folder !== "autosent" && (
           <SearchScopeHint
             scope="server"
@@ -544,10 +473,6 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
           ))}
         </div>
 
-        {/* Label filter — the phone could TAG a conversation and never list the
-            tagged ones. Tapping a chip narrows the server query; tapping it
-            again clears it. Hidden on the two folders that do not read the
-            thread list at all (Drafts is local-only, Auto-sent is the outbox). */}
         {usesThreadList && (labelCatalog ?? []).length > 0 && (
           <div className="chips" style={{ display: "flex", gap: 7, overflowX: "auto", marginTop: 7 }}>
             {(labelCatalog ?? []).map((l) => {
@@ -622,11 +547,6 @@ export function MobileMailCenter({ onBack }: { onBack?: () => void }) {
   );
 }
 
-// Designer list row (#m-mail / renderMail): a leading counterparty AVATAR
-// (deterministic colour + initials), the name + star + received time, the
-// subject (bold when unread) with the thread message count, a one-line snippet,
-// label chips, and a TRAILING teal unread dot. The unread border tint + weight
-// come from the live thread.unread. Star + reply direction stay from the wiring.
 function ThreadFileNames({ firstFile, fileCount }: { firstFile: ThreadFilePreview; fileCount: number }) {
   const otherFileCount = fileCount - 1;
   return (
@@ -717,9 +637,6 @@ function MailThread({
     () => api.get(`/api/mail-center/threads/${threadId}`),
     [threadId],
   );
-  /* Colleagues for the Assign picker. Same read desktop Thread.tsx makes, same
-     envelope ({ users: [] }, see routes/users). A member without `users.read`
-     gets nothing back and the picker disables itself, exactly as on desktop. */
   const { data: usersResp } = useQuery<{ users: UserOption[] }>("/api/users",
     () => api.get("/api/users"),
     [],
@@ -728,14 +645,11 @@ function MailThread({
 
   const thread = data?.thread;
   const messages = data?.messages ?? [];
-  // Re-read every 20 s while open: a colleague's reply or "is writing" shows up.
   useEffect(() => {
     const t = setInterval(reload, 20_000);
     return () => clearInterval(t);
   }, [reload]);
 
-  // Reply / reply-all reuse the same in-thread reply endpoint. Forward starts a
-  // new conversation (compose) with a prefilled subject/body.
   if (composeFor && (composeFor.mode === "reply" || composeFor.mode === "replyall")) {
     return (
       <MailReply
@@ -796,10 +710,6 @@ function MailThread({
 
   const markUnread = () => patch({ unread: true }, "Marked as unread.", "Couldn't update.");
 
-  /* Hand the conversation to a colleague. Writes BOTH fields through the shared
-     `patchThreadAssignment` desktop uses — the id is what the thread is filtered
-     by and the NAME is what every list row renders, so writing one without the
-     other leaves a thread that is assigned and shows nobody. */
   const assign = async (value: string) => {
     if (!thread || busy) return;
     const picked = users.find((u) => String(u.id) === value);
@@ -846,14 +756,6 @@ function MailThread({
     }
     setBusy(true);
     try {
-      /* Create the catalogue entry first if it is a brand-new name, so the chip
-         gets a managed colour — through the same `createLabel` + palette desktop
-         uses. The colour MUST come off LABEL_PALETTE: the backend's
-         normalizeColor() maps anything outside its nine-entry allow-list to the
-         brand brown, so the teal this used to post came back a different colour
-         than the phone had just shown while creating it. createLabel swallows
-         its own failure by design here — a catalogue row is a nicety and the
-         thread label still applies without one. */
       if (!colorMap.has(clean.toLowerCase())) {
         await createLabel(clean, LABEL_PALETTE[0].value);
       }
@@ -943,10 +845,6 @@ function MailThread({
           </div>
         )}
 
-        {/* Assign — a dropdown of colleagues, the same control desktop
-            Thread.tsx renders. The phone carried assignedToUserId and
-            assignedToName in its thread type and never showed or wrote either,
-            so a mail could only be handed over from a desk. */}
         {thread && (
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 8 }}>
             <span style={{ fontSize: 11, fontWeight: 700, color: "var(--mut)", flex: "none" }}>Assign to</span>
@@ -1015,9 +913,6 @@ function MailThread({
   );
 }
 
-// Bottom-sheet label picker — apply an existing catalogue label (or type a new
-// one). Applying is a single PATCH of the thread's label set. Colour-manager
-// CRUD is desktop-only; here we display + apply/remove, per the mobile scope.
 function LabelPicker({
   catalog,
   applied,
@@ -1084,9 +979,6 @@ function MessageBubble({ m, onAcked }: { m: Message; onAcked: () => void }) {
   const out = m.direction === "outbound";
   const who = out ? m.fromName || "You" : m.fromName || m.fromAddress || "Sender";
   const atts = m.attachments ?? [];
-  // Prefer real HTML (htmlBody, or a textBody that is actually HTML) rendered in
-  // a sandboxed iframe; fall back to escaped plain text otherwise. Mirrors the
-  // desktop Thread.tsx rawHtml/plain split.
   const rawHtml = m.htmlBody?.trim() || (looksLikeHtml(m.textBody) ? (m.textBody || "").trim() : "");
   const plain = rawHtml ? "" : m.textBody?.trim() || stripHtml(m.htmlBody);
   return (
@@ -1127,11 +1019,6 @@ function MessageBubble({ m, onAcked }: { m: Message; onAcked: () => void }) {
   );
 }
 
-// Render an email's HTML in a sandboxed iframe (sandbox="" — no scripts, no
-// same-origin), auto-sizing to content on load. Inline images referenced by
-// cid: are rewritten to authed blob: URLs resolved from the message's
-// attachments (contentId), matching the desktop reader. Anything that can't be
-// resolved falls back to the untouched HTML.
 function HtmlBody({ html, attachments }: { html: string; attachments: Attachment[] }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [doc, setDoc] = useState<string>(() => emailSrcDoc(html, MOBILE_EMAIL_HEAD));
@@ -1157,11 +1044,9 @@ function HtmlBody({ html, attachments }: { html: string; attachments: Attachment
               return;
             }
             made.push(url);
-            // Replace every cid:<id> reference (quoted or not) with the blob URL.
             const esc = cid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             out = out.replace(new RegExp(`cid:${esc}`, "gi"), url);
           } catch {
-            /* leave the cid reference as-is; the image just won't load */
           }
         }
       }
@@ -1177,8 +1062,6 @@ function HtmlBody({ html, attachments }: { html: string; attachments: Attachment
     <iframe
       ref={frameRef}
       title="Email"
-      // allow-same-origin (NOT allow-scripts) — scripts stay blocked, but the
-      // frame can be measured on load so it auto-sizes to its content.
       sandbox={EMAIL_FRAME_SANDBOX_MEASURABLE}
       srcDoc={doc}
       style={{ width: "100%", border: "none", background: "transparent", minHeight: 60 }}
@@ -1187,7 +1070,6 @@ function HtmlBody({ html, attachments }: { html: string; attachments: Attachment
           const d = e.currentTarget.contentWindow?.document;
           if (d) e.currentTarget.style.height = `${Math.min(d.body.scrollHeight + 16, 4000)}px`;
         } catch {
-          /* keep the min height if measurement is blocked */
         }
       }}
     />
@@ -1198,7 +1080,6 @@ function AttachmentChip({ a }: { a: Attachment }) {
   const toast = useToast();
   const open = async () => {
     try {
-      // Attachments are served through an authed stream route, not a public URL.
       await openLoadedTab(() => api.fetchBlobUrl(a.url), 60_000);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't open attachment.");
@@ -1219,15 +1100,6 @@ function AttachmentChip({ a }: { a: Attachment }) {
   );
 }
 
-/** Reply / reply-all — POST /api/mail-center/threads/:id/reply. The backend
- *  addresses the counterparty and prefixes Re: itself; the From defaults to the
- *  thread's mailbox but can be overridden with a mailbox in scope.
- *
- *  `replyAll` is REQUIRED, not optional: it is the whole difference between the
- *  two buttons in the thread footer, and an omitted flag silently answers ONE
- *  person on a mail that Cc'd several — the exact bug the owner reported on
- *  2026-08-03 and that was fixed on desktop only. The backend rebuilds Cc from
- *  the newest inbound message's To + Cc when, and only when, it sees this key. */
 function MailReply({
   thread,
   replyAll,
@@ -1397,14 +1269,6 @@ function MobilePickedAttachment({ file, onRemove }: { file: OutboundAttachment; 
   );
 }
 
-/** Attach images / PDFs to an outbound mail. Used by BOTH the reply box and the
- *  composer, and the rule it enforces — 10 files, 5 MB decoded, images + PDF —
- *  is the SHARED one (`mail-attach-files.ts` over `mail-attachments.ts`), so the
- *  operator is refused here in the exact words the server would have used.
- *
- *  A plain `<input type="file">` is deliberate on the phone: it is what opens
- *  the native Take Photo / Photo Library / Browse sheet, and the camera is the
- *  best attachment source in this business. */
 function AttachRow({
   files,
   error,
@@ -1468,13 +1332,6 @@ function AttachRow({
   );
 }
 
-/** New / Forward — POST /api/mail-center/compose. Requires fromAddress, to,
- *  subject and body. Forward seeds subject + quoted body but leaves To blank.
- *
- *  `defaultFrom` is REQUIRED: it carries the shared pickDefaultFromAddress rule
- *  from the container. Making it optional would let a caller silently fall back
- *  to `addresses[0]`, which is the ALPHABETICALLY first mailbox — the defect
- *  this parameter exists to remove. */
 function MailCompose({
   mode,
   addresses,
@@ -1492,19 +1349,11 @@ function MailCompose({
 }) {
   const toast = useToast();
   const [to, setTo] = useState("");
-  /* Cc/Bcc start hidden — most mail is to one person, and two empty fields on a
-     phone screen cost more than the tap to reveal them. They were MISSING here
-     entirely: the backend has always honoured both, and a salesperson on the
-     road could not copy their manager on a customer reply. */
   const [showCopies, setShowCopies] = useState(false);
   const [cc, setCc] = useState("");
   const [bcc, setBcc] = useState("");
   const [files, setFiles] = useState<OutboundAttachment[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
-  // Derived, not state: the address list arrives from a query, so a value
-  // captured at mount would freeze whatever was loaded at that instant.
-  // Precedence mirrors desktop Compose.tsx — an explicit pick, then the user's
-  // own mailbox, then the first available one as a last resort.
   const [fromOverride, setFromOverride] = useState("");
   const from =
     (fromOverride &&
@@ -1519,8 +1368,6 @@ function MailCompose({
   const [needsAck, setNeedsAck] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
-  // Same shared parser desktop uses: comma/semicolon separated, trimmed,
-  // de-duplicated case-insensitively — and the same shape check on each entry.
   const toList = parseRecipients(to);
   const ccList = parseRecipients(cc);
   const bccList = parseRecipients(bcc);
@@ -1534,8 +1381,6 @@ function MailCompose({
       toast.error("Enter a recipient.");
       return;
     }
-    // Name the bad address rather than refusing the whole field — over a list,
-    // "enter a valid recipient" tells the operator nothing they can act on.
     const badAddress = firstInvalid(to) ?? firstInvalid(cc) ?? firstInvalid(bcc);
     if (badAddress) {
       toast.error(`Not a valid email address: ${badAddress}`);
@@ -1588,7 +1433,6 @@ function MailCompose({
           </button>
         )}
       </div>
-      {/* One send carrying everyone, never one send each. */}
       {showCopies && (
         <>
           <label className="fld">
@@ -1689,13 +1533,6 @@ function ComposeShell({
   );
 }
 
-// ── Auto-sent (outbox) ──────────────────────────────────────────────────────
-// The system's own customer notices — Delivery Order dispatched, Invoice,
-// document report — go out from a no-reply sender, so there is no human "Sent"
-// copy anywhere in the thread list. When one FAILS, nothing on the phone said
-// so: a salesperson on the road saw no error and assumed the customer had the
-// invoice. This is the same read-only log the desktop "Auto-sent" folder shows,
-// over the same shared fetchers (mail-actions.ts) and the same endpoint.
 const OUTBOX_PAGE = 60;
 
 function outboxTone(status: string): [string, string] {
@@ -1705,7 +1542,7 @@ function outboxTone(status: string): [string, string] {
     case "FAILED":
       return ["#f8eaea", "#B91C1C"];
     default:
-      return ["#f6efd9", "#B45309"]; // PENDING
+      return ["#f6efd9", "#B45309"];
   }
 }
 
@@ -1845,8 +1682,6 @@ function OutboxList({ q }: { q: string }) {
   );
 }
 
-// Read-only reader for one auto-sent email. Bottom sheet, matching the phone's
-// existing sheet idiom (LabelPicker) rather than the desktop modal.
 function OutboxSheet({ id, onClose }: { id: string; onClose: () => void }) {
   const [data, setData] = useState<OutboxDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1923,8 +1758,6 @@ function Muted({ children, tone }: { children: React.ReactNode; tone?: "error" }
   );
 }
 
-// True when a string carries real HTML markup (so a textBody that is actually
-// HTML still renders in the iframe). Ported from the desktop Thread.tsx.
 function looksLikeHtml(s: string | undefined): boolean {
   return /<(?:!doctype|html|body|head|div|table|tr|td|p|br|span|a|img|style|font|center|ul|ol|li|h[1-6])[\s>/]/i.test(
     s || "",
@@ -1933,7 +1766,6 @@ function looksLikeHtml(s: string | undefined): boolean {
 
 const MOBILE_EMAIL_HEAD = `<meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:10px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:14px;line-height:1.5;color:#11140f;word-break:break-word;overflow-x:hidden;background:transparent}img{max-width:100%;height:auto}table{max-width:100%}</style>`;
 
-// Strip HTML to a readable plain-text fallback when a message has no textBody.
 function stripHtml(html: string): string {
   if (!html) return "";
   return html
@@ -1950,8 +1782,6 @@ function stripHtml(html: string): string {
     .trim();
 }
 
-// Forward seed: Fwd: subject + a quoted transcript of the thread. To stays blank
-// so the user picks a new recipient (compose requires a valid To).
 function buildForwardSeed(thread: Thread | undefined, messages: Message[]): { subject: string; body: string } {
   const base = thread?.subject ?? "";
   const subject = /^fwd:/i.test(base) ? base : `Fwd: ${base}`;

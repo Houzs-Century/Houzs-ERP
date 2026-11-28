@@ -17,7 +17,7 @@ import { FinanceDocLink } from '../finance/FinanceDocLink';
 import type { SiHeader, SiItem } from '../../../vendor/scm/lib/sales-invoice-pdf';
 import { useAccounts } from '../../../vendor/scm/lib/accounting-queries';
 import type { PdfAction } from '../../../vendor/scm/lib/pdf-common';
-import { fmtDate, fmtSen, todayMY } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen, todayMY } from '../../../../../shared/src/vendor/shared/format';
 import { DataTable, type Column } from '../../../components/DataTable';
 import {
   DocBooks, DocSection, DocState, MoneyInDocPage, PaperPreview, byTime, journalTrail, personOf,
@@ -33,9 +33,6 @@ const errText = (e: unknown): string => (e instanceof Error && e.message ? e.mes
 
 type Header = SiHeader & { id?: string; created_at?: string | null; created_by?: string | null };
 
-/* The notes on it (the design's Credit notes section): each knock-off, and each
-   close-out of its order's deposit invoices — said for what it is, the deposit
-   having lowered the invoice already. */
 const NOTE_COLUMNS: Column<SalesInvoiceCreditNote>[] = [
   { key: 'note', label: 'Note', getValue: (n) => n.number, render: (n) => <FinanceDocLink to={moneyInDocHref('note', n.id)}>{n.number}</FinanceDocLink> },
   { key: 'date', label: 'Date', render: (n) => <span className={ui.muted}>{fmtDate(n.date)}</span>, getValue: (n) => n.date ?? '' },
@@ -84,9 +81,6 @@ export const SalesInvoiceDoc = () => {
     } catch (e) { setFailure(errText(e)); } finally { setPrinting(false); }
   };
 
-  /* The AR list's own figures: paid = the invoice's receipts plus the order's
-     deposit applied; the credit notes knocked off it apart; outstanding = what
-     is left (backend ar-invoices.ts shapeSi). */
   const total = Number(header.total_sen);
   const own = Number(header.paid_sen);
   const deposit = Number(header.so_deposit_applied_sen ?? 0);
@@ -117,7 +111,6 @@ export const SalesInvoiceDoc = () => {
       sub="raised in Sales · edit or cancel it there"
       taskLink={{ type: 'Sales invoice', no: header.invoice_number, name: header.debtor_name, to: moneyInDocHref('salesInvoice', id) }}
       printJob={{
-        /* f4: Sales' own print — the paper the customer gets does not change. */
         title: 'Sales invoice', docNo: header.invoice_number, papers: ['A4'],
         rows: [{ label: 'Bill to', value: header.debtor_name }, { label: 'Amount', value: fmtSen(total) }],
         deliver,

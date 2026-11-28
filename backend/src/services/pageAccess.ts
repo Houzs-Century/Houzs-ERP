@@ -1,61 +1,17 @@
-/**
- * Per-page access model — page catalogue + helpers.
- *
- * Each page has a per-role access entry in `role_page_access`:
- * one of 'none' / 'partial' / 'full'. The `*` wildcard on a role
- * short-circuits the matrix lookup ('full' on every page).
- *
- * Pages with sub-tabs (Projects, Team, Logistics, ASSR, Orders) are
- * modelled as a parent page plus child sub-page entries. The parent's
- * level cascades to children:
- *   parent = "full"    → all children granted at full
- *   parent = "none"    → all children denied
- *   parent = "partial" → child rows take effect; admins pick per child
- *
- * The flattening happens in `loadPageAccessForRole`. Consumers read
- * the flat map `user.page_access` keyed by the leaf page_key
- * (e.g. `projects.calendar`).
- *
- * Phase 1 of the rollout (Sales pilot) shipped. Sub-page splitting
- * shipped 2026-05-12 — Projects' 4 top-level views are wired through
- * `requirePageAccess(...)`; other parents have catalogue entries but
- * their tab-level UI gating lands in follow-up slices.
- */
 
 import type { Env } from "../types";
 
-// Two vocabularies share one union. The legacy ROLE matrix (role_page_access)
-// is 3-level: none/partial/full. The POSITION matrix (position_page_access) is
-// 4-level: none/view/edit/full. 'partial' is kept and ranked equal to 'view'
-// (rank 1) so both coexist in one page_access map + one meetsLevel comparator
-// with NO migration of existing role rows.
 export type AccessLevel = "none" | "partial" | "view" | "edit" | "full";
 
-// Writable level set for the ROLE editor (unchanged — 3-level).
 export const ACCESS_LEVELS: readonly AccessLevel[] = ["none", "partial", "full"] as const;
-// Writable level set for the POSITION editor (4-level).
 export const POSITION_ACCESS_LEVELS: readonly AccessLevel[] = ["none", "view", "edit", "full"] as const;
 
 export interface PageDef {
-  /** Stable identifier stored in `role_page_access.page_key`.
-   *  Sub-pages use dotted form `<parent>.<leaf>` (e.g. `projects.calendar`). */
   key: string;
-  /** Human label for the admin UI. */
   label: string;
-  /** Short description of what "partial" means for this page —
-   *  rendered as a tooltip on the Partial radio in the admin UI. */
   partialMeaning: string;
-  /** Whether the partial level is a meaningful state for this page.
-   *  Settings and Sales Team Maintenance, for example, are full-or-
-   *  none. The admin UI hides the Partial radio when this is false. */
   supportsPartial: boolean;
-  /** If set, this page is a sub-page of `parent`. The parent's level
-   *  cascades to children (full → all children full; none → all
-   *  children none; partial → per-child config). */
   parent?: string;
-  /** One-shot backfill rule: given a role's permission set, decide
-   *  the level. Used by `pageAccessFromPermissions`
-   *  and as a fallback when no explicit matrix row exists yet. */
   backfill: (perms: ReadonlySet<string>) => AccessLevel;
 }
 
@@ -64,9 +20,6 @@ const has = (perms: ReadonlySet<string>, ...keys: string[]): boolean =>
 
 const isOwner = (perms: ReadonlySet<string>): boolean => perms.has("*");
 
-// ── Backfill helpers — replaces `projects.read/write/manage` etc. into
-//    a level estimation per sub-page. Used by the admin UI's "computed"
-//    defaults and by `computeBackfillLevel` on first session load.
 const projectsBackfill = (p: ReadonlySet<string>): AccessLevel =>
   isOwner(p) || has(p, "projects.manage")
     ? "full"
@@ -89,7 +42,6 @@ const serviceCasesBackfill = (p: ReadonlySet<string>): AccessLevel =>
       : "none";
 
 export const PAGES: PageDef[] = [
-  // ── Standalone pages (no sub-tabs) ──────────────────────────
   {
     key: "sales",
     label: "Sales Entries",
@@ -110,7 +62,6 @@ export const PAGES: PageDef[] = [
     backfill: (p) => (isOwner(p) || has(p, "settings.manage") ? "full" : "none"),
   },
 
-  // ── Service Cases / ASSR (parent + sub-tabs) ────────────────
   {
     key: "service_cases",
     label: "ASSR / Service Cases",
@@ -161,7 +112,6 @@ export const PAGES: PageDef[] = [
       isOwner(p) || has(p, "service_cases.manage") ? "full" : "none",
   },
 
-  // ── Projects (parent + sub-tabs) — wired end-to-end ─────────
   {
     key: "projects",
     label: "Projects",
@@ -203,7 +153,6 @@ export const PAGES: PageDef[] = [
       isOwner(p) || has(p, "projects.manage") ? "full" : "none",
   },
 
-  // ── Team (parent + sub-tabs) ────────────────────────────────
   {
     key: "team",
     label: "Team",
@@ -275,17 +224,6 @@ export const PAGES: PageDef[] = [
     backfill: (p) => (isOwner(p) || has(p, "mail_center.manage") ? "full" : "none"),
   },
 
-  // ── Supply Chain (parent + area children) ───────────────────
-  // ADDITIVE per-position gating for the ported 2990 SCM. These page
-  // keys only GRANT access to a position explicitly given them in the
-  // matrix; they NEVER remove the existing access path. SCM is still
-  // unconditionally unlocked by the `*` wildcard and the `scm.access`
-  // permission at the /api/scm/* gate (index.ts) + the frontend nav /
-  // route guards — those checks are ORed with these page keys, so no
-  // current SCM user loses access. A position with no SCM row resolves
-  // to "none" here (safe default) and falls back to whatever permission
-  // path it already had. Backfill is owner-only (the role matrix relies
-  // on scm.access, NOT on these keys), so legacy roles are unaffected.
   {
     key: "scm",
     label: "Supply Chain Management",
@@ -293,13 +231,6 @@ export const PAGES: PageDef[] = [
     supportsPartial: true,
     backfill: (p) => (isOwner(p) ? "full" : "none"),
   },
-  // ── L1 areas (parents of the L2 sub-pages below). Each L1 area is itself
-  //    a child of `scm` and a parent to its own per-sub-page L2 keys. Setting
-  //    an L1 area = full grants its whole sub-tree (inherit, pass-2 of
-  //    loadPageAccessForPosition); overriding a single L2 child to "none"
-  //    hides just that one sub-page. Every L2 key defaults to "none" + inherits
-  //    its L1 parent, and backfill stays owner-only — so this is purely
-  //    additive: no current SCM user (via `*` / `scm.access`) loses access.
   {
     key: "scm.sales",
     parent: "scm",
@@ -560,10 +491,6 @@ export const PAGES: PageDef[] = [
     backfill: (p) => (isOwner(p) ? "full" : "none"),
   },
   {
-    // One key for the Maintenance sub-group: Coverage & Fleet
-    // (/scm/delivery-maintenance) + Delivery Zones + Carriers & Rates. Fleet
-    // Health sits in the same sub-group but keeps its OWN gate (fleet.read) —
-    // repointing it would NOT be zero-change, so it is left untouched.
     key: "scm.transportation.coverage",
     parent: "scm.transportation.drivers",
     label: "Coverage, Zones & Carriers",
@@ -580,8 +507,6 @@ export const PAGES: PageDef[] = [
     backfill: (p) => (isOwner(p) ? "full" : "none"),
   },
   {
-    // Inventory L2 also covers the Stock Card drill-down + the Warehouses
-    // master (both live under the Warehouse nav group, no finer nav split).
     key: "scm.warehouse.inventory",
     parent: "scm.warehouse",
     label: "Inventory",
@@ -590,9 +515,6 @@ export const PAGES: PageDef[] = [
     backfill: (p) => (isOwner(p) ? "full" : "none"),
   },
   {
-    // Stock ADJUSTMENT — split OFF Inventory because adjusting changes stock
-    // valuation. view = open the adjustment page; edit = perform an adjustment
-    // (POST /inventory/adjustments, its own guard in scm/index.ts).
     key: "scm.warehouse.adjustments",
     parent: "scm.warehouse",
     label: "Adjustments",
@@ -718,10 +640,6 @@ export const PAGES: PageDef[] = [
     backfill: (p) => (isOwner(p) ? "full" : "none"),
   },
 
-  // ── System Health (infra health + org-wide audit trail) ─────
-  // High-privilege admin page (was Owner-only). Now configurable per position
-  // so an IT/ops position can be granted it; default stays Owner-only via the
-  // backfill (no role row → only `*` resolves to full).
   {
     key: "system_health",
     label: "System Health",
@@ -776,20 +694,17 @@ export function isValidPageKey(key: string): boolean {
  * `pageCatalogueDrift.test.ts` pins that inertness rather than trusting it.
  */
 export const RETIRED_PAGE_KEYS: ReadonlySet<string> = new Set([
-  // All 14 removed by 6e59f071 on 2026-06-18. The six marked (orphan) are the
-  // ones the owner had saved rows for — verified against the prod photograph in
-  // positionAccessSnapshot.ts, which counts exactly these six and no others.
   "delivery_orders",
   "logistics",
   "logistics.fleet",
   "logistics.trips",
-  "orders", // (orphan) Finance Manager = view
-  "orders.balance", // (orphan) Finance Manager = view
-  "orders.overdue", // (orphan) Finance Manager = view
-  "orders.pnl", // (orphan) Finance Manager = full
+  "orders",
+  "orders.balance",
+  "orders.overdue",
+  "orders.pnl",
   "orders.sales_orders",
-  "overview", // (orphan) Finance Manager = full
-  "petty_cash", // (orphan) Finance Manager = view
+  "overview",
+  "petty_cash",
   "purchase_orders",
   "sales_team",
   "sales_team_maintenance",
@@ -900,9 +815,9 @@ export function levelRank(level: AccessLevel): number {
     case "view":
       return 1;
     case "partial":
-      return 1; // legacy alias of view (role matrix)
+      return 1;
     default:
-      return 0; // none
+      return 0;
   }
 }
 
@@ -963,7 +878,6 @@ export function computeBackfillLevel(
  * don't care simply omit it.
  */
 export interface PageAccessMeta {
-  /** True iff at least one explicit row had a page_key starting with "scm". */
   explicitScm: boolean;
 }
 
@@ -1026,18 +940,9 @@ export function resolvePositionAccessFromRows(
     }
   }
 
-  // Pass 1: every page resolves to its explicit row or "none".
   const raw: Record<string, AccessLevel> = {};
   for (const p of PAGES) raw[p.key] = explicit[p.key] ?? "none";
 
-  // Pass 2: children inherit the parent's RESOLVED level unless they have an
-  // explicit row of their own (inherit model — see docstring). Reading the
-  // already-resolved `out[p.parent]` (not the pass-1 `raw[p.parent]`) lets the
-  // inherit cascade through grandchildren too: PAGES is ordered parents-before-
-  // children, so by the time we reach a grandchild (e.g. scm.sales.orders) its
-  // parent (scm.sales) has already inherited from the grandparent (scm). This
-  // makes "set scm = full" grant the whole 3-level SCM sub-tree, while an
-  // explicit override on any node (parent or leaf) still stands.
   const out: Record<string, AccessLevel> = { ...raw };
   for (const p of PAGES) {
     if (!p.parent) continue;

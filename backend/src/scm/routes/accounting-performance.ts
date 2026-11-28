@@ -34,20 +34,14 @@ const who = (c: Ctx): string | null =>
   (c.get('houzsUser') as { name?: string } | undefined)?.name ?? (c.get('user') as { id?: string } | undefined)?.id ?? null;
 const failed = (e: unknown): string => String((e as { message?: string })?.message ?? e);
 
-/* ── Where the report reads from (the route: the database; the Dashboard: its preloaded window) ── */
-/* The PostgREST client is untyped throughout the acc layer; borrow its type rather than write any. */
 type Sb = Parameters<typeof loadSums>[0];
 export type PerfSources = {
   sums: (from: string | null, to: string | null) => Promise<{ ok: true; sums: SumRow[] } | { ok: false; reason: string }>;
   accounts: () => Promise<{ ok: true; accounts: AccountRow[] } | { ok: false; reason: string }>;
   layout: () => Promise<({ ok: true } & ResolvedLayout) | { ok: false; reason: string }>;
-  /** The company's rate and account. */
   settings: () => Promise<{ ok: true; settings: PerformanceSettings } | { ok: false; reason: string }>;
-  /** Every sales order dated in [from, to], any status, by SO date then doc_no. */
   orders: (from: string, to: string) => Promise<{ ok: true; orders: PerfOrder[] } | { ok: false; reason: string }>;
-  /** The lines of the named orders. */
   lines: (docNos: string[]) => Promise<{ ok: true; lines: PerfLine[] } | { ok: false; reason: string }>;
-  /** The account the rate stands in for, as the chart names it; null when the chart has no such code. */
   rateAccount: (code: string) => Promise<{ ok: true; account: { code: string; name: string } | null } | { ok: false; reason: string }>;
   /** The commission bills on the prepayment and what the release booked (owner 2026-11-25); null facts = none kept. */
   commission: () => Promise<{ ok: true; facts: CommissionFacts | null } | { ok: false; reason: string }>;
@@ -57,7 +51,6 @@ export type PerfSources = {
     (2026-09-22, the owner's "loading 很慢": the orders, their lines, the
     settings and the rate's account were read again for every period). */
 export const perfDbSources = (sb: Sb, companyId: number, layoutIds: number[]): PerfSources => {
-  /* Read once per source: the By-month view asks for every month. */
   let commission: ReturnType<PerfSources['commission']> | null = null;
   return {
   sums: (from, to) => loadSums(sb, companyId, from, to),
@@ -65,8 +58,6 @@ export const perfDbSources = (sb: Sb, companyId: number, layoutIds: number[]): P
   layout: () => resolveLayout(sb, layoutIds, 'performance'),
   settings: () => loadPerformanceSettings(sb, companyId),
   orders: async (from, to) => {
-    /* The orders of the period, by SO date. Status is an enum the fake client
-       cannot be trusted to compare; the DRAFT/CANCELLED filter is in code. */
     const sos = await paginateAll<PerfOrder>((f, t) =>
       sb.from('mfg_sales_orders')
         .select('doc_no, so_date, status, delivery_fee_sen')
@@ -76,7 +67,6 @@ export const perfDbSources = (sb: Sb, companyId: number, layoutIds: number[]): P
     return { ok: true, orders: (sos.data ?? []) as PerfOrder[] };
   },
   lines: async (docNos) => {
-    /* Their lines, in chunks — PostgREST's `in` list has a length limit. */
     const its = await chunkIn<PerfLine>(docNos, (batch, f, t) =>
       sb.from('mfg_sales_order_items')
         .select('doc_no, item_group, item_code, qty, total_sen, unit_cost_sen, line_cost_sen, cancelled')
@@ -112,8 +102,6 @@ export async function buildPerformance(companyId: number, from: string, to: stri
   if (!its.ok) return { ok: false, reason: its.reason };
   const lines = its.lines;
 
-  /* The expense side: the ledger's EXPENSES section for the same dates, the
-     way the standard P&L reads it (one source, one section rule). */
   const [sums, accs] = await Promise.all([src.sums(from, to), src.accounts()]);
   if (!sums.ok) return { ok: false, reason: sums.reason };
   if (!accs.ok) return { ok: false, reason: accs.reason };
@@ -121,23 +109,19 @@ export async function buildPerformance(companyId: number, from: string, to: stri
   const expenses: PerfExpense[] = sums.sums
     .filter((r) => secOf(r) === 'EXPENSES')
     .map((r) => ({ code: r.code, name: r.name, amountSen: r.drSen - r.crSen }));
-  /* The other income the standard P&L shows — the same two sections, credit-positive. */
   const otherIncome: PerfExpense[] = sums.sums
     .filter((r) => ['OTHER INCOMES', 'EXTRA-ORDINARY INCOME'].includes(secOf(r)))
     .map((r) => ({ code: r.code, name: r.name, amountSen: r.crSen - r.drSen }));
 
-  /* The account the rate stands in for, as the chart names it. */
   const acct = await src.rateAccount(st.settings.account);
   if (!acct.ok) return { ok: false, reason: acct.reason };
 
   /* The account part on the report's own layout (docs/bugs/0912). */
   const laid = await src.layout();
   if (!laid.ok) return { ok: false, reason: laid.reason };
-  /* The other accounts the rate covers, with every account under them in the chart. */
   const alsoCodes = accountsUnder(st.settings.also, accs.accounts);
   const nameOf = new Map(accs.accounts.map((a) => [a.account_code, a.account_name ?? null]));
   const alsoNamed = st.settings.also.map((code) => ({ code, name: nameOf.get(code) ?? null }));
-  /* The commission: the bills for the period's months in place of the release. */
   const cf = await src.commission();
   if (!cf.ok) return { ok: false, reason: cf.reason };
   const commission = commissionForPeriod(cf.facts, from, to);
@@ -145,7 +129,6 @@ export async function buildPerformance(companyId: number, from: string, to: stri
   return { ok: true, report: { ...report, layout: performanceLayout(report, laid.layout, companyId, laid.stored) } };
 }
 
-/* ── GET /accounting/reports/performance?from=YYYY-MM-DD&to=YYYY-MM-DD ───── */
 export const performanceReport = async (c: Ctx): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -161,14 +144,6 @@ export const performanceReport = async (c: Ctx): Promise<Response> => {
   return c.json(r.report);
 };
 
-/* ── GET /accounting/reports/performance/months?from=YYYY-MM&to=YYYY-MM ──────
-   The Performance P&L's chart (the owner's Claude Design, batch 6 read c6):
-   per month, the report's own sales, cost of sales, gross profit, other
-   income, expenses (operating expense at the rate + as booked) and net
-   performance — buildPerformance month by month, its inputs read ONCE for
-   the window (twelve calls to the full report would read and rebuild every
-   order twelve times; the ledger's sums are read per month, as the report
-   reads them). Reads only. */
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 /** The longest window the chart asks for (24 months; the screen asks 12). */
 export const PERFORMANCE_MONTHS_MAX = 24;
@@ -176,7 +151,6 @@ export const PERFORMANCE_MONTHS_MAX = 24;
 export type PerformanceMonth = {
   month: string; from: string; to: string;
   salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null;
-  /** Sales less the service group's: what the Department P&L's rates are of. */
   salesExServiceSen: number;
   otherIncomeSen: number; expensesSen: number; netSen: number; netPct: number | null;
   /** The month's orders, its product groups' sales and cost, and its commission bills — the
@@ -280,7 +254,6 @@ export const performanceMonthsHandler = async (c: Ctx): Promise<Response> => {
   return c.json({ from, to, months: r.months });
 };
 
-/* ── POST /accounting/reports/performance/settings {rateBp, account} ─────── */
 export const savePerformanceSettingsHandler = async (c: Ctx): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);

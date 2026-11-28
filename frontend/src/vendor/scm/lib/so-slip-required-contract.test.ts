@@ -1,22 +1,3 @@
-/* The payment slip is REQUIRED on every Sales-Order keying path (owner
-   2026-10-13, after Admin: "please make sure when collect payment is attached
-   with slip"). This reverses the 2026-08-13 slip-optional ruling.
-
-   ── TWO HALVES, BOTH MONEY ──────────────────────────────────────────────────
-   1. Every surface that keys a payment GATES on the one shared rule
-      (lib/payment-slip-required via PaymentsTable.slipMissingProblem) — the
-      desktop panel, the phone sheet, and both New SO screens. One surface
-      enforcing it and another not is this repo's oldest bug class.
-   2. The WRITERS still post every amount-bearing row and never filter on the
-      slip. The last time a slip requirement existed, both create surfaces
-      posted only the rows that carried one, so a slip-less row was silently
-      dropped and the SO read unpaid (BUG-HISTORY). The gate is BEFORE the
-      save; the writer stays blind to the slip.
-
-   Source-text assertions rather than render tests: these are 2,600- and
-   3,700-line screens whose save paths are unreachable without mounting the
-   whole form, and what matters is precisely WHICH predicate feeds which
-   gate. Same idiom as payment-proof-contract.test.ts. */
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -28,12 +9,10 @@ const read = (rel: string): string =>
   readFileSync(resolve(process.cwd(), rel), 'utf8');
 
 const desktopSource = read('src/pages/scm-v2/SalesOrderNew.tsx');
-// The phone New SO is two files: the form, and its payment row (MobileSoPayCard).
 const mobileSource = read('src/mobile/MobileNewSO.tsx') + read('src/mobile/MobileSoPayCard.tsx');
 const sheetSource = read('src/mobile/RecordedPayments.tsx');
 const tableSource = read('src/vendor/scm/components/PaymentsTable.tsx');
 
-/** Body of a top-level anchor up to the next one. */
 const sliceFrom = (source: string, startAnchor: string, endAnchor: string): string => {
   const start = source.indexOf(startAnchor);
   expect(start, `anchor not found: ${startAnchor}`).toBeGreaterThan(-1);
@@ -69,7 +48,6 @@ describe('every keying surface gates on the one rule', () => {
     const button = sliceFrom(tableSource, 'const noAmount = d.amountSen <= 0;', 'onClick={() => commitDraft(d)}');
     expect(button).toContain('const noSlip   = slipMissingProblem(d);');
     expect(button).toContain('noSlip !== null');
-    /* A late slip is not sent for approval without its photo either. */
     expect(button).toContain('!noSlip && needsRequest(d)');
   });
 
@@ -95,8 +73,6 @@ describe('every keying surface gates on the one rule', () => {
   test('the uploaders say so', () => {
     const uploaders = tableSource.match(/<SlipUploadField[\s\S]{0,160}?required=[^\n]*/g) ?? [];
     expect(uploaders.length).toBe(3);
-    /* Attaching a proof to an already-booked row stays optional (it has one or
-       is getting one); the two uploaders on NEW rows are required-marked. */
     expect(uploaders.filter((u) => u.includes('required={false}')).length).toBe(1);
     expect(uploaders.some((u) => u.includes('required={!d.editingPersistedId}'))).toBe(true);
     expect(uploaders.some((u) => u.includes('required={d.methodLabel !== CONVERT_LABEL}'))).toBe(true);

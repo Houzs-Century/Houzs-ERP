@@ -55,7 +55,8 @@ import { ensureModelForSku } from '../lib/ensure-model-for-sku';
 import { makeDocFileHandlers, type DocFilesSpec } from '../lib/doc-files';
 import { callerUserId } from '../lib/payment-request';
 import { notifyProductRequest } from '../../services/productRequestNotify';
-import { MFG_PRODUCT_CATEGORIES } from '../shared/product-categories';
+import { activeProductCategories, isMfgProductCategory, type ProductCategory } from '../shared/product-categories';
+import { loadProductCategories } from '../lib/product-category-registry';
 import {
   PRODUCT_REQUEST_APPLICATIONS, PRODUCT_REQUEST_TYPES, canTransition, defaultSkuCode, linesRefusal, orderFromRequestRefusal, productRefusal, requesterMayChange,
   type ProductRequestStatus,
@@ -77,7 +78,6 @@ export const REMARKS_MAX = 2000;
 /** A line remark is one line. */
 export const LINE_REMARKS_MAX = 500;
 
-/** The Purchaser, for a request: whoever holds the approve key. */
 const isApprover = (c: any): boolean => hasHouzsPerm(c, PRODUCT_REQUEST_APPROVE_KEY);
 /** Sales 都能提: any Sales caller, or a holder of the create key. */
 const mayRequest = (c: any): boolean => hasHouzsPerm(c, PRODUCT_REQUEST_CREATE_KEY) || isSalesCaller(c);
@@ -90,8 +90,6 @@ const text = (v: unknown): string | null => {
 const actorName = (c: any): string => String(c.get('houzsUser')?.name ?? c.get('houzsUser')?.email ?? '');
 const statusWords = (s: unknown): string => String(s).toLowerCase().replace('_', ' ');
 
-/** The request under the active company that the caller may see — the
-    requester's own, or any for the Purchaser — else a 404 that names nothing. */
 async function loadVisible(c: any, id: string): Promise<{ req: Row } | { resp: Response }> {
   const sb = c.get('supabase');
   const { data, error } = await scopeToCompany(sb.from('product_requests').select(COLS).eq('id', id), c).maybeSingle();
@@ -103,7 +101,6 @@ async function loadVisible(c: any, id: string): Promise<{ req: Row } | { resp: R
   return { req: data as Row };
 }
 
-/** The lines of these requests, company-scoped, in line order, grouped by request. */
 async function loadLines(c: any, companyId: number, requestIds: string[]): Promise<{ byRequest: Map<string, Row[]> } | { resp: Response }> {
   const byRequest = new Map<string, Row[]>();
   if (requestIds.length === 0) return { byRequest };
@@ -119,9 +116,6 @@ async function loadLines(c: any, companyId: number, requestIds: string[]): Promi
   return { byRequest };
 }
 
-/** Each request with its lines and what it links to: the PC Order or the
-    Purchase Order raised from it, the delivery location's name, the supplier,
-    and each line's Model. */
 async function withLinks(c: any, companyId: number, rows: Row[]): Promise<{ rows: Row[] } | { resp: Response }> {
   const sb = c.get('supabase');
   const lines = await loadLines(c, companyId, rows.map((r) => String(r.id)));
@@ -185,7 +179,6 @@ async function withLinks(c: any, companyId: number, rows: Row[]): Promise<{ rows
   };
 }
 
-/* ── GET / ─────────────────────────────────────────────────────────────────── */
 export const listProductRequestsHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -204,11 +197,6 @@ export const listProductRequestsHandler = async (c: any): Promise<Response> => {
 };
 productRequests.get('/', listProductRequestsHandler);
 
-/* ── GET /supplier-options — the supplier picker for a requester ───────────────
-   A salesperson holds no procurement area, so /suppliers (scm.procurement.
-   suppliers) is closed to them; this answers id / code / name of the ACTIVE
-   suppliers of the active company and nothing else (no terms, no bank, no
-   finance part). Before GET /:id so the path is not read as an id. */
 export const productRequestSupplierOptionsHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -242,7 +230,6 @@ export const productRequestPendingCountHandler = async (c: any): Promise<Respons
 };
 productRequests.get('/pending-count', productRequestPendingCountHandler);
 
-/* ── GET /:id ──────────────────────────────────────────────────────────────── */
 export const getProductRequestHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -276,7 +263,6 @@ export const PRODUCT_REQUEST_FILES: DocFilesSpec = {
       doc: {
         id: String(r.id),
         closed: status === 'WITHDRAWN' || status === 'CLOSED',
-        /* Decided: the requester's evidence stays as the Purchaser read it. */
         locked: !isApprover(c) && !requesterMayChange(status),
       },
     };
@@ -295,7 +281,6 @@ productRequests.get('/:id/files', listProductRequestFilesHandler);
 productRequests.get('/:id/files/:fileId', streamProductRequestFileHandler);
 productRequests.delete('/:id/files/:fileId', deleteProductRequestFileHandler);
 
-/* ── The requester's fields, as the body sends them ───────────────────────── */
 type HeaderFields = {
   request_type: string; application: string;
   special_remarks: string | null; delivery_location_id: string | null; expected_delivery_date: string | null;
@@ -311,14 +296,14 @@ type LineFields = {
   qty: number; unit_price_sen: number | null; remarks: string | null;
 };
 
-function readLine(body: Row, lineNo: number, requestType: string): { line: LineFields } | { error: string; message: string } {
+function readLine(body: Row, lineNo: number, requestType: string, categories: readonly ProductCategory[]): { line: LineFields } | { error: string; message: string } {
   const itemCode = text(body.itemCode);
   const proposed = text(body.proposedModelName);
   const product = productRefusal(requestType, { item_code: itemCode, proposed_model_name: proposed }, lineNo);
   if (product) return product;
   const category = String(body.category ?? 'SOFA').trim().toUpperCase();
-  if (!(MFG_PRODUCT_CATEGORIES as readonly string[]).includes(category)) {
-    return { error: 'invalid_category', message: `Line ${lineNo}: category must be one of ${MFG_PRODUCT_CATEGORIES.join(', ')}.` };
+  if (!isMfgProductCategory(categories, category)) {
+    return { error: 'invalid_category', message: `Line ${lineNo}: category must be one of ${categories.map((r) => r.name).join(', ')}.` };
   }
   const qty = body.qty === undefined || body.qty === null || body.qty === '' ? 1 : Number(body.qty);
   if (!Number.isInteger(qty) || qty <= 0) return { error: 'qty_invalid', message: `Line ${lineNo}: the quantity must be a whole number above zero.` };
@@ -329,7 +314,6 @@ function readLine(body: Row, lineNo: number, requestType: string): { line: LineF
   return {
     line: {
       line_no: lineNo,
-      /* An existing SKU names the product; the proposed name is then moot. */
       item_code: itemCode, proposed_model_name: itemCode ? null : proposed, model_id: null, category,
       compartment: text(body.compartment), fabric_code: text(body.fabricCode), seat_size: text(body.seatSize), leg_size: text(body.legSize),
       qty, unit_price_sen: price, remarks,
@@ -337,7 +321,7 @@ function readLine(body: Row, lineNo: number, requestType: string): { line: LineF
   };
 }
 
-function readFields(body: Row): { header: HeaderFields; lines: LineFields[] } | { error: string; message: string } {
+function readFields(body: Row, categories: readonly ProductCategory[]): { header: HeaderFields; lines: LineFields[] } | { error: string; message: string } {
   const requestType = String(body.requestType ?? '').trim().toUpperCase();
   if (!(PRODUCT_REQUEST_TYPES as readonly string[]).includes(requestType)) {
     return { error: 'request_type_invalid', message: 'Is this a new product or a repack?' };
@@ -351,7 +335,7 @@ function readFields(body: Row): { header: HeaderFields; lines: LineFields[] } | 
   if (count) return count;
   const lines: LineFields[] = [];
   for (let i = 0; i < rawLines.length; i += 1) {
-    const read = readLine(rawLines[i] ?? {}, i + 1, requestType);
+    const read = readLine(rawLines[i] ?? {}, i + 1, requestType, categories);
     if ('error' in read) return read;
     lines.push(read.line);
   }
@@ -369,9 +353,6 @@ function readFields(body: Row): { header: HeaderFields; lines: LineFields[] } | 
   };
 }
 
-/** What the fields name must exist in this company: each line's SKU (which
-    also fixes the line's category and Model) and fabric; the delivery
-    location; the supplier. */
 async function resolveFields(c: any, companyId: number, header: HeaderFields, lines: LineFields[]): Promise<{ error: string; message: string } | null> {
   const sb = c.get('supabase');
   for (const l of lines) {
@@ -402,11 +383,9 @@ async function resolveFields(c: any, companyId: number, header: HeaderFields, li
   return null;
 }
 
-/** The lines in one line, for the audit trail: `5530-3S ×2; Aurora (new) ×1`. */
 const linesSummary = (lines: ReadonlyArray<{ item_code: string | null; proposed_model_name: string | null; qty: number }>): string =>
   lines.map((l) => `${l.item_code ?? `${l.proposed_model_name ?? '?'} (new)`} ×${l.qty}`).join('; ');
 
-/* ── POST / ────────────────────────────────────────────────────────────────── */
 export const createProductRequestHandler = async (c: any): Promise<Response> => {
   if (!mayRequest(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -415,7 +394,7 @@ export const createProductRequestHandler = async (c: any): Promise<Response> => 
   if (me == null) return c.json({ error: 'no_user', message: 'Sign in again — the request needs to know who is asking.' }, 409);
   let body: Row;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const read = readFields(body);
+  const read = readFields(body, activeProductCategories(await loadProductCategories(c.get('supabase'))));
   if ('error' in read) return c.json(read, 400);
   const resolved = await resolveFields(c, co.companyId, read.header, read.lines);
   if (resolved) return c.json(resolved, resolved.error === 'load_failed' ? 500 : 400);
@@ -436,8 +415,6 @@ export const createProductRequestHandler = async (c: any): Promise<Response> => 
   const { error: lErr } = await sb.from('product_request_lines')
     .insert(read.lines.map((l) => ({ ...l, company_id: co.companyId, request_id: row.id })));
   if (lErr) {
-    /* The header without its lines is not a request: take it back so the
-       number is not spent on an empty document. */
     await sb.from('product_requests').delete().eq('company_id', co.companyId).eq('id', row.id);
     return c.json({ error: 'save_failed', reason: lErr.message }, 500);
   }
@@ -459,10 +436,6 @@ export const createProductRequestHandler = async (c: any): Promise<Response> => 
 };
 productRequests.post('/', createProductRequestHandler);
 
-/* ── PATCH /:id — the requester's change; a rejected request goes back in ───
-   Header fields not in the body keep their stored value; `lines`, when sent,
-   REPLACES the set (every line re-read and re-resolved), when absent the stored
-   lines stay. */
 export const updateProductRequestHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -483,6 +456,7 @@ export const updateProductRequestHandler = async (c: any): Promise<Response> => 
   const beforeLines = storedLines.byRequest.get(String(before.id)) ?? [];
   const replaceLines = body.lines !== undefined;
   const keep = (k: string, stored: unknown) => (body[k] !== undefined ? body[k] : stored);
+  const categories = await loadProductCategories(c.get('supabase'));
   const read = readFields({
     requestType: keep('requestType', before.request_type), application: keep('application', before.application),
     specialRemarks: keep('specialRemarks', before.special_remarks),
@@ -492,7 +466,7 @@ export const updateProductRequestHandler = async (c: any): Promise<Response> => 
       itemCode: l.item_code, proposedModelName: l.proposed_model_name, category: l.category, compartment: l.compartment,
       fabricCode: l.fabric_code, seatSize: l.seat_size, legSize: l.leg_size, qty: l.qty, unitPriceSen: l.unit_price_sen, remarks: l.remarks,
     })),
-  });
+  }, replaceLines ? activeProductCategories(categories) : categories);
   if ('error' in read) return c.json(read, 400);
   const resolved = await resolveFields(c, co.companyId, read.header, read.lines);
   if (resolved) return c.json(resolved, resolved.error === 'load_failed' ? 500 : 400);
@@ -533,8 +507,6 @@ export const updateProductRequestHandler = async (c: any): Promise<Response> => 
 };
 productRequests.patch('/:id', updateProductRequestHandler);
 
-/* ── One status move, guarded on the status the row was read in ─────────────
-   so two decisions at once cannot both land. */
 async function moveStatus(c: any, companyId: number, r: Row, to: ProductRequestStatus, extra: Row): Promise<{ ok: true } | { resp: Response }> {
   const sb = c.get('supabase');
   const { data, error } = await sb.from('product_requests')
@@ -545,7 +517,6 @@ async function moveStatus(c: any, companyId: number, r: Row, to: ProductRequestS
   return { ok: true };
 }
 
-/* ── POST /:id/withdraw ────────────────────────────────────────────────────── */
 export const withdrawProductRequestHandler = async (c: any): Promise<Response> => {
   if (!mayOpen(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -571,7 +542,6 @@ export const withdrawProductRequestHandler = async (c: any): Promise<Response> =
 };
 productRequests.post('/:id/withdraw', withdrawProductRequestHandler);
 
-/* ── POST /:id/approve — the Purchaser's yes, to the whole request ─────────── */
 export const approveProductRequestHandler = async (c: any): Promise<Response> => {
   if (!isApprover(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -597,13 +567,11 @@ export const approveProductRequestHandler = async (c: any): Promise<Response> =>
     actor: c.get('houzsUser'), companyId: co.companyId, statusSnapshot: 'APPROVED',
     fieldChanges: compactChanges([fieldChange('decisionNote', r.decision_note ?? null, note)]),
   });
-  /* How many lines still need a Model built before a PC Order can be raised. */
   const pendingModels = (lines.byRequest.get(String(r.id)) ?? []).filter((l) => !l.item_code).length;
   return c.json({ ok: true, needsModel: pendingModels > 0, pendingModels });
 };
 productRequests.post('/:id/approve', approveProductRequestHandler);
 
-/* ── POST /:id/reject — the Purchaser's no, with the why ───────────────────── */
 export const rejectProductRequestHandler = async (c: any): Promise<Response> => {
   if (!isApprover(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -632,13 +600,6 @@ export const rejectProductRequestHandler = async (c: any): Promise<Response> => 
 };
 productRequests.post('/:id/reject', rejectProductRequestHandler);
 
-/* ── POST /:id/lines/:lineId/create-model — a line's new Model + its first SKU ─
-   Body: { modelCode, skuCode?, name? }. The Model is found-or-created on
-   (company, model_code, category) through the ONE helper every SKU-create
-   path shares (lib/ensure-model-for-sku.ts); the SKU lands ACTIVE and
-   pos_active=false — the catalogue has it, POS does not offer it until someone
-   turns it on. The line then names the SKU (item_code / model_id); once every
-   line does, a PC Order can be raised from the request. */
 export const createModelFromRequestLineHandler = async (c: any): Promise<Response> => {
   if (!isApprover(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -671,9 +632,6 @@ export const createModelFromRequestLineHandler = async (c: any): Promise<Respons
   const pf = await assertAuditWritable(sb, { entityType: 'PRODUCT_REQUEST', entityId: String(r.id), action: 'UPDATE', companyId: co.companyId });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  /* A sofa / bedframe / mattress SKU is a variant of its Model (base_model); a
-     flat product is its own 1:1 Model — mfg-products.ts POST / draws the line the
-     same way through ensureModelForSku. */
   const variantCategory = category === 'SOFA' || category === 'BEDFRAME' || category === 'MATTRESS';
   const ensured = await ensureModelForSku(sb, { companyId: co.companyId, code: skuCode, name, category, baseModel: variantCategory ? modelCode : null });
   if (!ensured.ok) return c.json({ error: 'model_ensure_failed', reason: ensured.reason }, 500);
@@ -689,8 +647,6 @@ export const createModelFromRequestLineHandler = async (c: any): Promise<Respons
     if (String(sErr.code) === '23505') return c.json({ error: 'duplicate_code', message: `${skuCode} was taken a moment ago — give the new SKU another code.` }, 409);
     return c.json({ error: 'sku_insert_failed', reason: sErr.message }, 500);
   }
-  /* Guarded on the line still having no SKU, so two builds at once cannot both
-     name it — the second one's SKU stands in the catalogue, unattached. */
   const { data: updated, error } = await sb.from('product_request_lines')
     .update({ item_code: skuCode, model_id: ensured.modelId, updated_at: new Date().toISOString() })
     .eq('company_id', co.companyId).eq('id', line.id).is('item_code', null).select('id').maybeSingle();
@@ -710,11 +666,6 @@ export const createModelFromRequestLineHandler = async (c: any): Promise<Respons
 };
 productRequests.post('/:id/lines/:lineId/create-model', createModelFromRequestLineHandler);
 
-/* ── POST /:id/lines/:lineId/link-sku — a new-Model line takes a SKU that exists ─
-   Body: { itemCode }. 2990-0025 (Sim): the SKUs were imported through SKU
-   Master before the request was approved, so Create Model + SKU could only
-   refuse the code or make a second SKU beside it. The line takes the SKU's
-   category and Model, as a line that named the SKU when raised does. */
 export const linkSkuToRequestLineHandler = async (c: any): Promise<Response> => {
   if (!isApprover(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -760,7 +711,6 @@ export const linkSkuToRequestLineHandler = async (c: any): Promise<Response> => 
 };
 productRequests.post('/:id/lines/:lineId/link-sku', linkSkuToRequestLineHandler);
 
-/* ── POST /:id/close — the Purchaser ends it ───────────────────────────────── */
 export const closeProductRequestHandler = async (c: any): Promise<Response> => {
   if (!isApprover(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -789,12 +739,6 @@ export const closeProductRequestHandler = async (c: any): Promise<Response> => {
 };
 productRequests.post('/:id/close', closeProductRequestHandler);
 
-/* ── POST /:id/link-po — a Purchase Order raised from it claims it ────────────
-   Body: { poId }. Called by PO New (?fromProductRequest=) once the PO stands:
-   the PO route is not touched, so the PO is created first and claims the
-   request after. The same rules as the PC Order's door (approved, every line a
-   SKU, no order yet); a refusal leaves the PO standing, unlinked, and says so.
-   Guarded on APPROVED, so a PC Order and a PO raised at once cannot both claim it. */
 export const linkPurchaseOrderHandler = async (c: any): Promise<Response> => {
   if (!isApprover(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);

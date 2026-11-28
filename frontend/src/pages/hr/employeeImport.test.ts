@@ -39,7 +39,6 @@ describe("mapImportGrid", () => {
     const r = rows[0];
     expect(r.problem).toBeNull();
     expect(r.row).toMatchObject({ name: "Rahman", empNo: "HCFW0001", accountEmail: null, position: "Warehouse Crew", passportNumber: "A1234567", epfEnabled: false });
-    // A blank cell is left off the wire, so a re-import patches only what was filled.
     expect("phone" in r.row).toBe(false);
     expect("icNumber" in r.row).toBe(false);
     expect("socsoEnabled" in r.row).toBe(false);
@@ -59,11 +58,11 @@ describe("mapImportGrid", () => {
   test("flags a missing name, an unknown department, a bad salary and a daily row with no rate", () => {
     const grid = [
       ["Name", "Department", "Pay Basis", "Basic Salary (RM)", "Daily Rate (RM)"],
-      ["", "Sales", "Monthly", "1800", ""],        // no name
-      ["Bob", "Marketing", "Monthly", "1800", ""],  // unknown dept
-      ["Cat", "Sales", "Monthly", "abc", ""],       // bad salary
-      ["Dee", "Sales", "Daily", "", ""],            // daily, no rate
-      ["", "", "", "", ""],                          // blank -> skipped
+      ["", "Sales", "Monthly", "1800", ""],
+      ["Bob", "Marketing", "Monthly", "1800", ""],
+      ["Cat", "Sales", "Monthly", "abc", ""],
+      ["Dee", "Sales", "Daily", "", ""],
+      ["", "", "", "", ""],
     ];
     const { rows } = mapImportGrid(grid, DEPTS, TODAY);
     expect(rows.map((r) => r.problem)).toEqual([

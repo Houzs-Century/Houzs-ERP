@@ -16,14 +16,6 @@ import { scopeSalesReportsForUser } from "../services/orgScope";
 import { hasPermission } from "../services/permissions";
 import { fmtDate, fmtDateTime } from "../scm/shared/format";
 
-/**
- * Post-event summary — A4 printable sheet.
- *
- * Matches the ASSR print view's formal black-and-white style so the
- * same letterhead/footer conventions apply. Content is data-dense:
- * one page for short events, two for busy ones. Intended to be used
- * as a debrief artifact after the event closes.
- */
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -36,18 +28,7 @@ function esc(s: unknown): string {
     .replace(/"/g, "&quot;");
 }
 
-// All printed dates/timestamps render in Malaysia wall-clock time
-// (UTC+8). The Worker runs in UTC and the old getUTC* formatting
-// printed instants 8 hours behind the office clock (Nick 2026-07-14:
-// the printed "Generated" stamp read 8h early). Date-only strings (YYYY-MM-DD)
-// parse as UTC midnight, so the +8h shift never moves their calendar day.
 
-// fmtDate / fmtDateTime come from scm/shared/format — the one date rule. The
-// hand-rolled +8h copies that used to live here produced the same DD/MM/YYYY,
-// which is exactly why they survived: agreeing today is not the same as being
-// one rule, and the ASSR copy of fmtDateTime had ALREADY drifted (it lacked the
-// naive-wall-clock branch the Projects copy grew on 2026-08-12, so a crew time
-// typed as 11:00 printed as 19:00).
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -135,8 +116,6 @@ function parseCrew(raw: unknown): Crew {
     });
   }
   if (!lorries.length) {
-    // Flat shape: one lorry carrying every driver / helper, then any extra
-    // plates as their own row so nothing is dropped.
     const plates = (Array.isArray(data.lorries) ? data.lorries : [])
       .map((l: any) => String(typeof l === "string" ? l : (l?.plate ?? "")).trim())
       .filter(Boolean);
@@ -152,8 +131,6 @@ function parseCrew(raw: unknown): Crew {
   const o = data.outsourced;
   if (o && typeof o === "object") {
     const rows = Array.isArray(o.entries) ? o.entries : o.name || o.phone || o.plate ? [o] : [];
-    // `enabled: false` with rows still present means the user turned the block
-    // off — respect that rather than printing crew they removed.
     if (o.enabled !== false) {
       for (const r of rows) {
         const name = String(r?.name ?? "").trim();
@@ -172,8 +149,6 @@ function parseCrew(raw: unknown): Crew {
   };
 }
 
-// Legacy fallback: the projects.* crew columns, still the only source on ~220
-// older projects.
 function legacyCrew(
   plate: unknown,
   driver: unknown,
@@ -194,7 +169,6 @@ function legacyCrew(
   return { lorries: [{ plate: p || undefined, drivers, helpers }], outsourced: [] };
 }
 
-// One crew column: the phase header, then a row per lorry / driver / helper.
 function crewColumn(crew: Crew): string {
   const rows: string[] = [];
   const row = (k: string, v: string) =>
@@ -239,7 +213,6 @@ function crewColumn(crew: Crew): string {
   return rows.join("");
 }
 
-// Ledger category → printed label. cogs_matt_sofa reads "COGS · Matt Sofa".
 function costLabel(cat: string): string {
   const c = String(cat || "");
   if (c === "cogs") return "COGS";
@@ -304,8 +277,6 @@ app.get("/:id", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.text("Invalid ID", 400);
 
-  // Multi-company: same active-company gate as the detail JSON — a
-  // cross-company id prints "Not found".
   const detail = await getProjectDetail(c.env, id, activeCompanyId(c));
   if (!detail) return c.text("Not found", 404);
 
@@ -314,15 +285,8 @@ app.get("/:id", async (c) => {
   // cross-company id already printed "Not found"). Section-level finance /
   // sensitive stripping below is a separate axis and still applies.
   const user = (c as any).get("user");
-  // Section-level finance/payment gate (Sales-department visibility, rules 3 &
-  // 5). Non-director positions must not see money in the printable debrief
-  // either — the JSON endpoint strips it, so must this. Gated on position_id
-  // to match the detail-GET rollout rule (un-migrated users keep legacy access).
   const pmsPrint = getPmsAccess(user, detail.project as any);
   const hideMoney = !!user && user.position_id != null && !pmsPrint.canFinancial;
-  // Quotation / Agreement (WF_SENSITIVE) are DIRECTOR-only (rule 5) — strip
-  // those checklist rows from the debrief for a non-director position, the
-  // same server-side backstop as the detail JSON.
   const hideSensitive = !!user && user.position_id != null && !pmsPrint.canSensitive;
   // Setup & Dismantle (owner 2026-07-15) — the crew JSON + "SETUP & DISMANTLE
   // DOCUMENTS" checklist rows are hidden from non-director Sales (even the PIC)
@@ -336,10 +300,6 @@ app.get("/:id", async (c) => {
   const lines = (detail.finance_lines as any[]) ?? [];
   const checklist = (scoped.checklist as any[]) ?? [];
   const defects = (detail.defects as any[]) ?? [];
-  // Sales-reports row scoping (owner 2026-07) — mirror the detail-GET rule so
-  // the printable debrief never leaks another rep's sale amounts. Non-director
-  // sales users see only their own + downline rows (rep identity = uploaded_by);
-  // directors + service-case managers see all. Fail closed on unresolved reps.
   const printGranted = user?.permissions_set ?? user?.permissions ?? [];
   const canSeeAllSalesReports =
     isFinanceViewer(user) || hasPermission(printGranted, "service_cases.manage");
@@ -351,10 +311,6 @@ app.get("/:id", async (c) => {
   );
   const stockTransfers = (detail.stock_transfers as any[]) ?? [];
 
-  // ── Company identity (per-company branding) ─────────────────
-  // Letterhead / footer come from the DOCUMENT's company. `projects` has no
-  // company_id column yet (PMS is Houzs-only today) — read it if the row ever
-  // grows one, else fall back to the request's active company, then HOUZS.
   const companyCode = await resolveCompanyCode(
     c.env,
     p.company_id ?? c.get("companyCode"),
@@ -363,10 +319,6 @@ app.get("/:id", async (c) => {
   const coShort = shortCompanyName(branding.companyName);
   const coAddressLines = brandingAddressLines(composeBrandingAddress(branding));
 
-  // Uploaded per-company letterhead logo wins; the bundled Houzs wordmark is
-  // HOUZS-only; otherwise the text fallback renders the company name.
-  // letterheadLogoKey: the dedicated print logo when one is uploaded, else the
-  // on-screen one (the app chrome is dark, paper is white — see Branding).
   const printLogoKey = letterheadLogoKey(branding);
   const logoUri = printLogoKey
     ? await fetchAsDataUri(c.env, printLogoKey)
@@ -374,7 +326,6 @@ app.get("/:id", async (c) => {
       ? await fetchAsDataUri(c.env, "static/logo-wordmark.png")
       : null;
 
-  // ── Finance rollups from the ledger ─────────────────────
   const incomeLines = lines.filter((l) => l.kind === "income");
   const costLines = lines.filter((l) => l.kind === "cost");
   const totalIncome = incomeLines.reduce((s, l) => s + (l.amount || 0), 0);
@@ -392,8 +343,6 @@ app.get("/:id", async (c) => {
   // months only have the lump), so take the larger rather than adding them —
   // summing would double-count every project that has both.
   const salesTotal = Math.max(totalIncome, Number(finance?.total_sales) || 0);
-  // Gross profit stops at cost of goods; net profit carries every cost line
-  // (rental, contractor, transport…), which is why the two differ on the sheet.
   const cogsTotal = costLines
     .filter((l) => String(l.category || "").startsWith("cogs"))
     .reduce((s, l) => s + (l.amount || 0), 0);
@@ -408,7 +357,6 @@ app.get("/:id", async (c) => {
   const checklistDone = checklist.filter((c) => c.status === "done").length;
   const checklistNa = checklist.filter((c) => c.status === "na").length;
 
-  // Group cost lines by category for the finance table
   const costByCategory = new Map<string, number>();
   for (const l of costLines) {
     costByCategory.set(l.category, (costByCategory.get(l.category) ?? 0) + (l.amount || 0));
@@ -417,27 +365,23 @@ app.get("/:id", async (c) => {
   for (const l of incomeLines) {
     incomeByCategory.set(l.category, (incomeByCategory.get(l.category) ?? 0) + (l.amount || 0));
   }
-  // Cost ladder for the Finance Snapshot: cogs buckets, then everything else.
   const cogsRows = [...costByCategory.entries()].filter(([cat]) =>
     String(cat || "").startsWith("cogs"),
   );
   const otherRows = [...costByCategory.entries()].filter(
     ([cat]) => !String(cat || "").startsWith("cogs"),
   );
-  // Rental reads better as a rate — "(RM 158/m²/day)" beside the amount.
   const rentalRate =
     rentalTotal > 0 && p.size_sqm > 0 && p.duration_days > 0
       ? rentalTotal / (p.size_sqm * p.duration_days)
       : null;
   const rentalNote = rentalRate != null ? `${fmtMoney(rentalRate)}/m²/day` : null;
 
-  // Defect counts
   const setupDefects = defects.filter((d) => d.phase === "setup");
   const dismantleDefects = defects.filter((d) => d.phase === "dismantle");
   const salesDefects = defects.filter((d) => d.reported_by_role === "sales");
   const logisticDefects = defects.filter((d) => d.reported_by_role === "logistic");
 
-  // Sales report sum
   const salesReportTotal = salesReports.reduce((s, r) => s + (r.sales_amount || 0), 0);
 
   function catLabel(cat: string): string {
@@ -447,8 +391,6 @@ app.get("/:id", async (c) => {
       .join(" ");
   }
 
-  // Raw enum values (done / in_review / na / setup / logistic …) printed as
-  // words — the sheet used to carry the database spelling straight through.
   function nice(v: unknown): string {
     const t = String(v ?? "").trim();
     if (!t) return "—";
@@ -475,17 +417,9 @@ app.get("/:id", async (c) => {
       : [],
   );
   const want = (key: string): boolean => wanted.size === 0 || wanted.has(key);
-  // Sections are numbered as they RENDER, so hiding one no longer leaves a gap
-  // (the report used to read 1, 2, 3, 7 because the numbers were hardcoded and
-  // empty sections just vanished). Each h2 calls this once, in document order.
   let _secNo = 0;
   const secNo = (): number => ++_secNo;
 
-  // ── Checklist grouped by its sections (mig 050) ─────────────────
-  // The sheet used to print one flat 6-column table; the owner's reference
-  // layout groups tasks under their section band with a per-section count.
-  // Sections that end up empty (all rows stripped by a permission gate, or
-  // simply unused on this project) are skipped, so no orphan bands print.
   const sectionRows = ((scoped as any).sections as any[]) ?? [];
   const clGroups: Array<{ name: string; items: any[]; done: number; denom: number }> = [];
   const pushGroup = (name: string, items: any[]) => {
@@ -507,8 +441,6 @@ app.get("/:id", async (c) => {
     checklist.filter((ci) => !ci.section_id || !knownSectionIds.has(ci.section_id)),
   );
 
-  // Crew for both phases: the JSON blob the logistics form writes, falling back
-  // to the older projects.* columns when it is empty.
   const setupCrewJson = parseCrew(p.setup_crew);
   const dismantleCrewJson = parseCrew(p.dismantle_crew);
   const setupCrew = setupCrewJson.lorries.length || setupCrewJson.outsourced.length
@@ -570,7 +502,6 @@ app.get("/:id", async (c) => {
       : null,
   ]);
 
-  // Status pill palette — done green, waiting amber, blocked red, n/a grey.
   function pillClass(status: string, review?: string | null): string {
     const s = String(status || "").toLowerCase();
     if (s === "done") return "ok";

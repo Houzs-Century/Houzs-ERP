@@ -40,13 +40,9 @@ import styles from './Suppliers.module.css';
 import look from './BankStatements.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DataTable, type Column } from '../../components/DataTable';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { parseMoneyToSen } from '../../lib/money';
 
-/* The redesign (owner's Claude Design, batch 3): the page is "Bank statements"
-   — a card per account, its months, one month at a time — and the card-money
-   views it always carried sit beside it in a small switch, unchanged. The view
-   lives in the address (?view=), so To do and Daily Bank can link straight in. */
 type View = 'statements' | 'files' | 'money' | 'transit';
 const VIEWS: Array<[View, string]> = [
   ['statements', 'Statements'], ['files', 'Files'], ['money', 'Money to come in'], ['transit', 'Still with the merchants'],
@@ -61,9 +57,6 @@ export const BankRecon = () => {
     if (next === 'statements') p.delete('view'); else p.set('view', next);
     return p;
   });
-  /* The Upload drawer lives in the address (?upload=1) so To do can open it,
-     on the account asked for; once a file is read the page lands on that
-     account's month. */
   const uploading = params.get('upload') != null;
   const openUpload = () => setParams((prev) => { const p = new URLSearchParams(prev); p.set('upload', '1'); return p; });
   const closeUpload = (done: BankUploaded | null) => setParams((prev) => {
@@ -98,7 +91,6 @@ export const BankRecon = () => {
   );
 };
 
-/* ── The statements that are still owed money ─────────────────────────────── */
 
 const WaitingForMoney = () => {
   const batches = useSettlementBatches();
@@ -119,7 +111,6 @@ const WaitingForMoney = () => {
   const shown = showSettled ? [...owed, ...settled] : owed;
   const total = owed.reduce((s, b) => s + outstandingOf(b), 0);
 
-  /* ONE THING AT A TIME: working a statement replaces the list. */
   if (batchId != null) return <BatchReceipts batchId={batchId} onBack={() => setBatchId(null)} />;
 
   const toggleStatement = (id: number) =>
@@ -259,7 +250,6 @@ const WaitingForMoney = () => {
    folded away, and `useSettlementBatch(null)` means the query for them does
    not run at all until he opens one. */
 
-/* The statement's transactions, read only once it is opened. */
 const StatementTransactions = ({ batchId }: { batchId: number }) => {
   const q = useSettlementBatch(batchId);
   const rows = q.data?.rows ?? [];
@@ -277,8 +267,6 @@ const StatementTransactions = ({ batchId }: { batchId: number }) => {
                 </thead>
                 <tbody>
                   {rows.map((r) => {
-                    /* One line settling several orders stacks inside its cell —
-                       the rare case, and the only honest shape for it. */
                     const links = r.linked;
                     const stack = (pick: (l: typeof links[number]) => React.ReactNode) => (
                       links.length === 0
@@ -302,7 +290,6 @@ const StatementTransactions = ({ batchId }: { batchId: number }) => {
   );
 };
 
-/* ── One statement: the credits banked against it, and the next one ───────── */
 
 const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => void }) => {
   const q = useSettlementBatch(batchId);
@@ -324,8 +311,6 @@ const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => voi
   const bank = batch.receiving_bank ?? null;
 
   const send = () => {
-    /* Blank = the rest of it. The ordinary payout is one credit for the whole
-       statement, and nobody should retype a number the statement knows. */
     const parsed = parseMoneyToSen(amount, 'The amount of this credit', { allowNegative: true });
     if (!parsed.ok) { setAmountError(parsed.message); return; }
     setAmountError(null);
@@ -407,9 +392,6 @@ const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => voi
         </div>
       )}
 
-      {/* The list already refuses to show an unreconciled report; this is the
-          same rule at the second gate, for a report that was opened and then
-          re-opened for edits on the other screen. */}
       {openLines > 0 && (
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
           {openLines} line(s) on this report are back to undecided. Finish{' '}
@@ -440,8 +422,6 @@ const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => voi
    balance. It is the brief's 在途结算款账龄 (§3.7) and it is the readable form
    of the 320-0000 balance — same money, named to the document. */
 
-/* Three states, because each one is somebody else's job: chase the acquirer,
-   finish the reconciling, or wait for the payout. */
 const IN_TRANSIT_STATE: Record<string, string> = {
   NOT_ON_A_STATEMENT: 'The acquirer has not reported it yet',
   MATCHED_NOT_POSTED: 'On a statement, waiting to be confirmed',
@@ -510,7 +490,6 @@ const InTransitTab = () => {
         </button>
       </div>
 
-      {/* Ageing by acquirer — how long each one has been holding the money. */}
       {data && Object.keys(data.ageing).length > 0 && (
         <table style={table}>
           <thead>
@@ -527,8 +506,6 @@ const InTransitTab = () => {
                 <tr key={acq} style={rowLine}>
                   <td style={cell}><span className={styles.codeChip}>{acq}</span></td>
                   {AGE_BUCKETS.map((b) => {
-                    /* A bucket with nothing in it is simply absent from the
-                       server's tally, so this is a lookup, not a guaranteed key. */
                     const inBucket = buckets[b];
                     return (
                       <td key={b} style={{ ...num, color: b === 'over-30' && inBucket ? danger : undefined }}>

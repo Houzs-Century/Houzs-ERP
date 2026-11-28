@@ -6,19 +6,16 @@ import {
   shortCompanyName,
 } from "../lib/branding";
 
-/** Footer product label — HOUZS keeps the historic literal. */
 function appFooterLabel(): string {
   return getBrandingCompanyCode() === HOUZS_COMPANY_CODE
     ? "Houzs ERP"
     : `${shortCompanyName(getBrandingCache().companyName)} ERP`;
 }
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { formatPhone } from "../vendor/shared/phone";
+import { formatPhone } from "../../../shared/src/vendor/shared/phone";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { useThemePreference, type ThemePreference } from "../lib/theme";
-// useSystemNoticeUnread was renamed useAnnouncementUnread on main; the body
-// below already calls the new name.
 import { useAnnouncementUnread } from "./useAnnouncementUnread";
 import { useToast } from "../hooks/useToast";
 import { validatePasswordStrength } from "../lib/passwordStrength";
@@ -117,9 +114,6 @@ import "./mobile.css";
 
 type Screen = "home" | "personal" | "notif" | "language" | "appearance" | "help" | "team" | "security";
 
-// The owner's directory (People > User Management) can carry a staff code
-// under any of these keys depending on backend vintage. We read-through them
-// all; if none is present we DO NOT invent one (the identity line is dropped).
 const staffCodeOf = (r: (MemberRow & Record<string, unknown>) | null | undefined): string | null => {
   if (!r) return null;
   const cand = r.staff_code ?? r.staffCode ?? r.employee_code ?? r.employeeCode ?? r.staff_no ?? r.staffNo;
@@ -127,8 +121,6 @@ const staffCodeOf = (r: (MemberRow & Record<string, unknown>) | null | undefined
   return s || null;
 };
 
-// Subset of the /api/users row (TeamMember) we consume here. Every field
-// optional so a leaner/older backend never crashes the screen.
 type MemberRow = {
   id: number;
   email: string;
@@ -149,8 +141,6 @@ type MemberRow = {
      docs/modules/document-conversion.md 6a names for picker rows, in its other
      half: the data was on the row, the component was not. */
   profile_pic_r2_key?: string | null;
-  // Staff code is not part of the shipped /api/users contract; these keys are
-  // read opportunistically (FLAGGED missing — see header comment). All optional.
   staff_code?: string | null;
   staffCode?: string | null;
   employee_code?: string | null;
@@ -159,13 +149,7 @@ type MemberRow = {
   staffNo?: string | null;
 };
 
-// ── Shared formatters / helpers ──
-/* The local `initials` helper is gone: both call sites now render through
-   `MobileAvatar`, which falls back to `avatarInitials` — one rule for a
-   person's initials instead of this file's copy and the desktop Avatar's. */
 
-// A stable colour per person for the initial avatar (matches the design's
-// teal-family palette).
 const AVATAR_COLORS = ["#16695f", "#2f7d70", "#3d6b8a", "#8a6a3d", "#7a5c86", "#4d7a55"];
 const avatarColor = (seed: string): string => {
   let h = 0;
@@ -173,8 +157,6 @@ const avatarColor = (seed: string): string => {
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
 };
 
-// Roles that see My Team (upline + downline) — salespeople & managers, per §34.
-// A manager is anyone who has direct reports; sales roles are matched by name.
 const isSalesish = (roleName: string | null | undefined): boolean =>
   /sales|manager|lead|head|director|admin|owner|super/i.test(roleName || "");
 
@@ -186,12 +168,9 @@ const isSalesish = (roleName: string | null | undefined): boolean =>
 // the old menu entries.
 type OrgItem = { to: string; label: string };
 
-// ── Component ──
 export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
   onLogout: () => void;
-  /** Organisation destinations, pre-filtered by MobileApp's `allowed` gate. */
   orgItems?: OrgItem[];
-  /** MobileApp's openRoute(to, label) — same navigation the menu items used. */
   onOpenOrg?: (to: string, label: string) => void;
 }) {
   const [screen, setScreen] = useState<Screen>("home");
@@ -199,14 +178,9 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
   const confirm = useConfirm();
   const browserNotificationsEnabled = useBrowserNotificationPreference();
   const browserNotificationPermission = useBrowserNotificationPermission();
-  // Drives the "Language" row's right-hand value; re-renders on change.
   const activeLang = useMobileLang();
   const [themePref] = useThemePreference();
 
-  // The full team roster — used both for the richer Personal-details fields
-  // (phone / department / position) and for My Team. Gated by users.read on
-  // the backend: a 403 lands in `error`, which every consumer treats as
-  // "no team directory available" rather than a crash.
   const teamQ = useQuery({
     queryKey: ["mobile-profile-users"],
     queryFn: () => api.get<{ users: MemberRow[] }>("/api/users"),
@@ -219,20 +193,11 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
     [roster, user?.id],
   );
 
-  // Un-acked announcement count — human broadcasts AND the actionable system
-  // notices (scan / service-case). Drives the red pill on the Organisation >
-  // Announcements row; the SAME hook badges the Profile bottom tab (MobileApp)
-  // so the two agree and share one poll (owner B2 global badge).
   const annUnread = useAnnouncementUnread();
-  // IT has replied on a request the person has not opened yet (IT Support row).
   const itUnread = useItSupportUnread();
   const mailWaiting = useMailWaiting();
   const meetingsUnread = useMeetingsUnread();
 
-  // Salesperson MTD scoreboard (Orders MTD / Sales MTD) — the caller's OWN
-  // sales orders this Malaysia-calendar month, from the SCM backend.
-  // Self-scoped server-side (salesperson_id === caller). A non-sales user
-  // simply sees 0 / RM 0.00 (honest zero).
   const mtdQ = useQuery({
     queryKey: ["mobile-profile-mtd"],
     queryFn: () =>
@@ -245,9 +210,6 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
   const mtdOrders = Number(mtdQ.data?.mtd_orders ?? 0);
   const mtdSalesSen = Number(mtdQ.data?.mtd_sales_sen ?? 0);
 
-  // Open service cases assigned to the caller (third stat tile) — the same
-  // self-scoped list the desktop "My Cases" page reads. "Open" = any stage
-  // that isn't completed. 403 / empty → honest 0.
   const casesQ = useQuery({
     queryKey: ["mobile-profile-mycases"],
     queryFn: () => api.get<{ cases: { stage: string }[] }>("/api/assr/my-cases"),
@@ -256,9 +218,6 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
   });
   const openCases = (casesQ.data?.cases ?? []).filter((c) => c.stage !== "completed").length;
 
-  // My Team is role-gated (§34): salespeople / managers, or anyone with an
-  // upline / downline in the directory. Computed BEFORE the sub-screen early
-  // returns so the hook order stays stable across renders.
   const hasDownline = useMemo(
     () => roster.some((r) => r.manager_id === user?.id && r.id !== user?.id),
     [roster, user?.id],
@@ -300,17 +259,11 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
     return <SecurityScreen onBack={() => setScreen("home")} />;
   }
 
-  // ── Home ──
   const name = user?.name || myRow?.name || "—";
   const role = user?.role_name || myRow?.role_name || null;
   const dept = myRow?.department_name || null;
   const position = myRow?.position_name || null;
-  // Prototype sub-line: "{position} · {department}" (real org placement; the
-  // README's "{position} · {venue}" has no venue on /me, so department is the
-  // honest analogue).
   const roleLine = [position || role, dept].filter(Boolean).join(" · ") || "Team member";
-  // Identity card's gold third line "STAFF · {staff_code}". Rendered ONLY when a
-  // real code exists (FLAGGED: no staff_code in the backend contract today).
   const staffCode = staffCodeOf(myRow as (MemberRow & Record<string, unknown>) | null);
   const showTeam = isSalesish(role) || !!myRow?.manager_id || hasDownline;
 
@@ -325,11 +278,6 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
 
   const mtdSales = fmtSen(mtdSalesSen);
 
-  // Prototype #profile VERBATIM: DARK header eyebrow "Account" + "Profile" +
-  // a settings icon button, DARK identity card (#15161a) with a radial-glow
-  // ring, 58px initials avatar, name, "{position} · {dept}", and a gold
-  // "STAFF · {code}" line; a THREE-tile stat row; Account rows WITH leading
-  // icons + right value; App section; danger Log out (in-app confirm); footer.
   return (
     <div className="hz-m" style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
       <header className="hdr">
@@ -344,14 +292,9 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
         </div>
       </header>
       <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 120 }}>
-        {/* Dark identity card */}
         <div style={{ position: "relative", overflow: "hidden", borderRadius: 18, background: "#15161a", padding: "20px 18px", boxShadow: "0 12px 32px -16px rgba(17,24,16,.45)" }}>
           <div style={{ position: "absolute", right: -50, top: -60, width: 200, height: 200, borderRadius: "50%", background: "radial-gradient(circle,rgba(22,105,95,.55),transparent 70%)", pointerEvents: "none" }} />
           <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 14 }}>
-            {/* The photo, or initials when there isn't one. The circle is the
-                prototype's token either way; only the fill changes. The camera
-                badge sits on it — this is the device with a camera, and until
-                now it was the only one that could not use it. */}
             <div style={{ position: "relative", flex: "none" }}>
               <MobileAvatar
                 userId={user?.id}
@@ -373,7 +316,6 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
           </div>
         </div>
 
-        {/* Three stat tiles (all wired to real, self-scoped sources) */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 9, marginTop: 13 }}>
           <StatTile value={mtdOrders.toLocaleString("en-US")} label="Orders MTD" />
           <StatTile value={mtdSales} label="Sales MTD" color="#a16a2e" />
@@ -390,18 +332,11 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
             right={browserNotificationPermission === "unsupported" ? "Unavailable" : notifOn ? "On" : "Off"}
             onClick={() => setScreen("notif")}
           />
-          {/* Row label stays English (this screen is not translated yet — a
-              half-translated screen reads as broken). The VALUE is the chosen
-              language in its own script, which is the bit a Bengali reader
-              needs to recognise. */}
           <Item icon="list" label="Language" right={LANG_LABELS[activeLang]} onClick={() => setScreen("language")} />
           <Item icon="list" label="Appearance" right={THEME_LABELS[themePref]} onClick={() => setScreen("appearance")} />
           {showTeam && <Item icon="users" label="My Team" onClick={() => setScreen("team")} />}
         </div>
 
-        {/* Organisation — moved here from the module menu (owner 2026-07).
-            Same routes + permission gating as the old menu entries; rows use
-            the SAME Item pattern (icon + label + chevron) as Account above. */}
         {onOpenOrg && (orgItems?.length ?? 0) > 0 && (
           <>
             <div className="ey" style={{ color: "var(--hz-c-ink-muted)", margin: "18px 2px 9px" }}>Organisation</div>
@@ -426,8 +361,6 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
   );
 }
 
-// One stat tile in the profile's 3-up row (prototype #profile). White card,
-// big tabular number, uppercase caption.
 function StatTile({ value, label, color }: { value: string; label: string; color?: string }) {
   return (
     <div style={{ background: "var(--hz-c-surface)", border: "1px solid var(--hz-c-border)", borderRadius: 12, padding: 13, textAlign: "center" }}>
@@ -437,8 +370,6 @@ function StatTile({ value, label, color }: { value: string; label: string; color
   );
 }
 
-// Leading SVG icons for the Account / Organisation / App rows (prototype
-// `micon` glyphs + same-style glyphs for the Organisation rows).
 const ROW_ICONS: Record<string, React.ReactNode> = {
   users: (<><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.9" /></>),
   mega: (<><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1Z" /><path d="M16 8a4 4 0 0 1 0 8" /></>),
@@ -452,8 +383,6 @@ const ROW_ICONS: Record<string, React.ReactNode> = {
   building: (<><rect x="4" y="3" width="16" height="18" rx="1.5" /><path d="M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2M10 21v-3h4v3" /></>),
 };
 
-// Route → row icon for the Organisation section (falls back to a plain list
-// glyph for any future route without a bespoke icon).
 const ORG_ROW_ICONS: Record<string, keyof typeof ROW_ICONS> = {
   "/activity-inbox": "inbox",
   "/mail-center": "mail",
@@ -466,8 +395,6 @@ const ORG_ROW_ICONS: Record<string, keyof typeof ROW_ICONS> = {
 };
 const orgIconOf = (to: string): keyof typeof ROW_ICONS => ORG_ROW_ICONS[to] ?? "list";
 
-// Prototype `profRow`: leading icon chip + label + optional right value +
-// chevron. Wired to our sub-screen navigation.
 function Item({ icon, label, right, onClick, first, badge }: { icon: keyof typeof ROW_ICONS; label: string; right?: string; onClick: () => void; first?: boolean; badge?: number }) {
   return (
     <button
@@ -479,7 +406,6 @@ function Item({ icon, label, right, onClick, first, badge }: { icon: keyof typeo
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#16695f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{ROW_ICONS[icon]}</svg>
       </span>
       <span style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: "var(--hz-c-ink)" }}>{label}</span>
-      {/* Unread count pill — notification-style. Only rendered when > 0. */}
       {badge != null && badge > 0 && (
         <span style={{ flex: "none", minWidth: 18, height: 18, padding: "0 5px", borderRadius: 9, background: "#c0392b", color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>
           {badge > 99 ? "99+" : badge}
@@ -491,7 +417,6 @@ function Item({ icon, label, right, onClick, first, badge }: { icon: keyof typeo
   );
 }
 
-// ── Reusable sub-screen shell (back header) ──
 function SubScreen({ title, sub, onBack, right, children }: {
   title: string;
   sub?: string;
@@ -518,7 +443,6 @@ function SubScreen({ title, sub, onBack, right, children }: {
   );
 }
 
-// ── Personal details ──
 function PersonalScreen({ onBack, myRow }: { onBack: () => void; myRow: MemberRow | null }) {
   const { user, reload } = useAuth();
   const qc = useQueryClient();
@@ -611,12 +535,6 @@ function PersonalScreen({ onBack, myRow }: { onBack: () => void; myRow: MemberRo
   );
 }
 
-// ── Password & security — self-service change password (mirrors the desktop
-// Profile page's PasswordSection). The screen the header comment promised but
-// was never built: owner ask "change password on every channel". Backend POST
-// /api/auth/me/password { current, next } verifies the current password and
-// signs out other sessions on success (see routes/auth.ts). Same strength
-// validation as desktop (validatePasswordStrength). ──
 function SecurityScreen({ onBack }: { onBack: () => void }) {
   const { user } = useAuth();
   const toast = useToast();
@@ -626,10 +544,6 @@ function SecurityScreen({ onBack }: { onBack: () => void }) {
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Face ID / Touch ID unlock — rendered only inside the native app on a device
-  // with a biometric enrolled (nativeBiometricSupported ignores the opt-in flag,
-  // or the toggle could never appear to be turned on). In a browser this stays
-  // false and the card simply never exists.
   const [bioSupported, setBioSupported] = useState(false);
   const [bioOn, setBioOn] = useState(biometricSessionEnabled());
   useEffect(() => {
@@ -638,16 +552,12 @@ function SecurityScreen({ onBack }: { onBack: () => void }) {
 
   const toggleBiometric = () => {
     if (bioOn) {
-      // Order matters: the flag gates rememberNativeSession but NOT
-      // forgetNativeSession — erase first, then drop the flag.
       forgetNativeSession();
       setBiometricSessionEnabled(false);
       setBioOn(false);
       toast.success("Biometric unlock off — saved session erased");
     } else {
       setBiometricSessionEnabled(true);
-      // Vault the CURRENT session immediately, or the feature only starts
-      // working after the next password login.
       rememberNativeSession(readAuthToken());
       setBioOn(true);
       toast.success("Biometric unlock on");
@@ -696,10 +606,6 @@ function SecurityScreen({ onBack }: { onBack: () => void }) {
       <div style={{ fontSize: 11, color: "var(--hz-c-ink-soft)", marginTop: 11, lineHeight: 1.5, padding: "0 2px" }}>
         Requires your current password. You'll stay signed in here; other devices will be signed out.
       </div>
-      {/* Two-factor: enrol, backup-code count, and DISABLE. The last one is why
-          this is here — without it a member who loses the authenticator and has
-          no PC is locked out of the account for good. Shared state machine, so
-          the phone and the desktop cannot drift. */}
       <MobileTwoFactorCard />
       {bioSupported && (
         <>
@@ -730,7 +636,6 @@ function SecurityScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-// ── Notifications — one real browser capability, shared with desktop ──
 function NotificationsScreen({ onBack, enabled, permission }: {
   onBack: () => void;
   enabled: boolean;
@@ -818,8 +723,6 @@ function LanguageScreen({ onBack }: { onBack: () => void }) {
               type="button"
               onClick={() => setMobileLang(code)}
               aria-pressed={selected}
-              // lang on the row itself so the browser picks the right font for
-              // this label even while the app is still in another language.
               lang={code}
               style={{
                 display: "flex", alignItems: "center", gap: 12, width: "100%",
@@ -829,8 +732,6 @@ function LanguageScreen({ onBack }: { onBack: () => void }) {
               }}
             >
               <div style={{ flex: 1, minWidth: 0 }}>
-                {/* line-height 1.5 (not the usual 1.25) so বাংলা's matra and
-                    descenders are not clipped in its own row. */}
                 <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--ink)", lineHeight: 1.5 }}>
                   {LANG_LABELS[code]}
                 </div>
@@ -859,8 +760,6 @@ function LanguageScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-// ── Appearance ──
-// Light / dark / follow the phone. Stored on this device only (lib/theme.ts).
 const THEME_LABELS: Record<ThemePreference, string> = { light: "Light", dark: "Dark", system: "Auto" };
 const THEME_SUBLABELS: Record<ThemePreference, string> = {
   light: "Always light",
@@ -907,18 +806,11 @@ function AppearanceScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-// ── Help & support (static) ──
 function HelpScreen({ onBack }: { onBack: () => void }) {
   return (
     <SubScreen title="Help & support" onBack={onBack}>
       <div style={sectionLabel}>Get in touch</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 18 }}>
-        {/* Shared/default support desk. Intentionally NOT swapped to the active
-            company's branding.email: that field is the general contact
-            (hello@houzscentury.com), not this ops support mailbox, and 2990's
-            is blank (would break the mailto). This operations desk backs both
-            companies in the unified ERP; revisit if a per-company support
-            address is ever configured in branding. */}
         <a
           href="mailto:operation@houzscentury.com"
           style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 13, padding: "13px 14px", textDecoration: "none" }}
@@ -964,7 +856,6 @@ function HelpScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
-// ── My Team (reporting line + downline) ──
 function TeamScreen({ onBack, roster, me, loading, denied }: {
   onBack: () => void;
   roster: MemberRow[];
@@ -1024,9 +915,6 @@ function PersonCard({ person, caption }: { person: MemberRow; caption?: string }
   const seed = String(person.id) + (person.email || "");
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 11, background: "var(--hz-c-surface)", border: "1px solid var(--line)", borderRadius: 13, padding: "11px 13px" }}>
-      {/* The teammate's photo when they have one, their initials on the stable
-          per-person colour when they do not. Same shared read as the identity
-          card and the desktop Avatar. */}
       <MobileAvatar
         userId={person.id}
         hasImage={person.profile_pic_r2_key}
@@ -1053,7 +941,6 @@ function KV({ label, value, span, mono }: { label: string; value: string; span?:
   );
 }
 
-// ── Shared style objects ──
 const pgrid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 };
 const sectionLabel: React.CSSProperties = { fontSize: 9.5, fontWeight: 700, letterSpacing: ".13em", textTransform: "uppercase", color: "var(--muted)", margin: "0 2px 8px" };
 const kvLabel: React.CSSProperties = { fontSize: 8.5, fontWeight: 700, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--hz-c-ink-soft)" };

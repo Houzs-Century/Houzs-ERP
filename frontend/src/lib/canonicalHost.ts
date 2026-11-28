@@ -85,9 +85,6 @@ export function canonicalRedirectUrl(rawUrl: string): string | null {
     return null;
   }
 
-  // Exact host match only. `houzs-erp-staging.pages.dev` does not match;
-  // neither does `<hash>.houzs-erp.pages.dev`, `erp.2990shome.com`, the
-  // canonical domain itself, or localhost.
   if (url.hostname.toLowerCase() !== LEGACY_PROD_HOST) return null;
 
   return `${CANONICAL_PROD_ORIGIN}${url.pathname}${url.search}${url.hash}`;

@@ -1,10 +1,3 @@
-/* The sales report a project's chat carries, inside its Sales section (owner
-   2026-10-14). Pinned: the header counts bills, opened and not opened (red),
-   lists no per-person row (the red sum is under Sales Attending), links an opened
-   bill to its order, shows a "+ (T)" extra apart from the amount, offers the
-   latest summary's Total for Total Sales only to someone who may and only when
-   the figures differ (with its days when they do not add up), and reports —
-   never concludes — when nothing is counted. */
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, test, vi } from "vitest";
@@ -60,8 +53,6 @@ const mount = (q: QueryState<ProjectSalesBillsResponse>, finalTotalRm: number | 
 describe("ProjectSalesBillsBlock", () => {
   test("counts the report, names each person with their red number, and links opened bills to their orders", () => {
     mount(query({ data: RESPONSE }), 48_185);
-    /* The header strip carries the labels; the table below repeats the words
-       as status pills, so the tiles are read inside the strip. */
     const strip = within(screen.getByText("Sales report (chat)").parentElement!);
     expect(strip.getByText("Bills").nextSibling?.textContent).toBe("3 · RM 13,499.00");
     expect(strip.getByText("Opened").nextSibling?.textContent).toBe("2 · RM 8,500.00");
@@ -75,15 +66,12 @@ describe("ProjectSalesBillsBlock", () => {
     expect(screen.queryByText("Melvin Tan")).toBeNull();
     expect(screen.queryByText("all opened")).toBeNull();
 
-    /* Only the bills still to act on: HC8993 is opened under this event and is
-       in the Sales Orders list, so the report does not repeat it. */
     const table = screen.getByRole("table");
     expect(within(table).queryByText("HC8993")).toBeNull();
     expect(within(table).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual(["/scm/sales-orders/HC-SO-2609-324"]);
     expect(within(table).getByText("Opened under another event")).toBeTruthy();
     expect(within(table).getByText("under JOHOR [ZANOTTI] MLE @ MVEC SOUTHKEY")).toBeTruthy();
     expect(within(table).getByText("+ RM 710.00 (T)")).toBeTruthy();
-    /* Nothing to edit here: the report is the chat. */
     expect(screen.queryByTitle(/Remove this bill/)).toBeNull();
   });
 
@@ -167,8 +155,7 @@ describe("ProjectSalesBillsBlock — transfer here (owner 2026-10-20)", () => {
     fireEvent.click(screen.getByLabelText("Tick HC-SO-2609-324 to transfer here"));
     fireEvent.click(screen.getByRole("button", { name: "Transfer ticked here (1)" }));
     expect(transferMutate.mock.calls[1]![0]).toEqual([{ docNo: "HC-SO-2609-324", projectId: 344 }]);
-    /* A bill not opened yet has nothing to move. */
-    expect(screen.getAllByRole("checkbox")).toHaveLength(2); // tick-all + the one order
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
   });
 
   test("says what moved and what did not", () => {

@@ -1,7 +1,3 @@
-/* Crew PIN sign-in — the lock, the two speed bumps, and the door the session
- * is stamped with. The database is a small in-memory stand-in that dispatches
- * on the statement text; the SQL itself is executed on real Postgres in
- * tests-pg/fieldPins.pg.test.ts. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../services/failedLogins", () => ({
@@ -139,7 +135,7 @@ describe("POST /api/auth/pin-login", () => {
     }
     expect(m.locked_until).not.toBeNull();
     expect(writeAudit).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ action: "auth.field_pin.locked" }));
-    f.kv.clear(); // KV down or expired: the durable lock on the row must still hold
+    f.kv.clear();
     const r = await attempt(f.env, "42", "482913", "10.9.9.9");
     expect(r.status).toBe(429);
     expect(r.body.error).toBe(LOCKED_MESSAGE);

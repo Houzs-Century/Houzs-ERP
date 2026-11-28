@@ -3,7 +3,7 @@
 // owner, a search, and the lorry drawer on a click.
 import { useMemo, useState } from "react";
 import { cn } from "../../../lib/utils";
-import { fmtSen } from "../../../vendor/shared/format";
+import { fmtSen } from "../../../../../shared/src/vendor/shared/format";
 import { expiryStatus, type ComplianceTone } from "../../../vendor/shared/lorry-compliance";
 import { LORRY_TYPE_LABEL, useLorries, useLorryPositions, type LorryRow } from "../../../vendor/scm/lib/lorries-queries";
 import { useDrivers } from "../../../vendor/scm/lib/drivers-queries";
@@ -28,7 +28,7 @@ export function LorriesBoard({ onNew }: { onNew: () => void }) {
   const drivers = useDrivers();
   const helpers = useHelpers();
   const carriers = useThreePLCompanies();
-  const positions = useLorryPositions();
+  const positions = useLorryPositions(true);
   const [home, setHome] = useState<string>("all");
   const [owner, setOwner] = useState<"all" | "own" | "3pl">("all");
   const [q, setQ] = useState("");

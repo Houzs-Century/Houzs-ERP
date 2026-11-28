@@ -1,52 +1,16 @@
-// ----------------------------------------------------------------------------
-// EffectiveDatedHistory — REUSABLE effective-dated history list (A4).
-//
-// Ported from HOOKKA's effective-dated history pattern. Any append-only,
-// effective-dated record (sofa combo prices, fabric-tier surcharges, delivery
-// fees, …) shares ONE history dialog body: a list of rows newest-first, each
-// tagged with where it sits on the effective-date timeline —
-//
-//   · Active      — the row whose effectiveFrom is the LATEST date that is
-//                   <= today. This is the row a NEW order would pick up now.
-//   · Pending·Nd  — effectiveFrom is in the FUTURE; shows a day countdown
-//                   ("Pending · 3d" = effective in 3 days; "·" when today but
-//                   computed Active wins, so 1d is the minimum future value).
-//   · Past        — a superseded older row (its effectiveFrom is <= today but a
-//                   newer row also <= today supersedes it).
-//   · Deleted     — soft-deleted rows are tagged separately (orthogonal to the
-//                   timeline state) so a removed row never reads as "Active".
-//
-// Plus a one-line reassurance banner that explains the append-only model in
-// plain language for the operator.
-//
-// GENERIC by design: the caller supplies the rows, a key extractor, the
-// effective-date extractor, and how to render each row's BODY (prices, notes,
-// whatever). This component owns only the timeline math, the status badge, the
-// banner, and the row chrome — never the row's domain content.
-//
-// No Tailwind — design tokens only (var(--…)), matching SofaComboTab's inline
-// CSSProperties + the StatusPill tone palette (lib/status-pill.ts).
-// ----------------------------------------------------------------------------
 
 import { type CSSProperties, type ReactNode } from 'react';
-import { STATUS_TONES } from '../lib/status-pill';
+import { STATUS_TONES } from '../../../../../shared/src/vendor/scm/lib/status-pill';
 import { todayMyt } from '../lib/dates';
 
-// ─── Timeline status ──────────────────────────────────────────────────
 
 export type EffectiveTimelineState = 'active' | 'pending' | 'past';
 
 export type EffectiveStatus = {
   state: EffectiveTimelineState;
-  /** Whole-day countdown until this row goes live. Only set when pending and
-   *  >= 1; null otherwise. "Pending · {daysUntil}d". */
   daysUntil: number | null;
 };
 
-/** Parse a `YYYY-MM-DD` date to a UTC-midnight epoch (ms). Returns NaN for a
- *  malformed value so callers can treat it as "no usable date". We anchor on
- *  UTC midnight so the day-difference is a clean integer regardless of the
- *  browser's own timezone — the same trick `todayMyt` uses. */
 function isoToUtcMidnight(iso: string): number {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return Number.NaN;
   return Date.parse(`${iso}T00:00:00Z`);
@@ -76,20 +40,15 @@ export function effectiveStatus(
   const todayMs = isoToUtcMidnight(today);
   const mineMs = isoToUtcMidnight(effectiveFrom);
 
-  // Unparseable own date → can't sit on the timeline; show as past.
   if (Number.isNaN(mineMs) || Number.isNaN(todayMs)) {
     return { state: 'past', daysUntil: null };
   }
 
-  // Future → pending, with a ceil'd day countdown (so "later today" still
-  // reads as 1d rather than 0d, and a row exactly = today is never pending).
   if (mineMs > todayMs) {
     const daysUntil = Math.max(1, Math.ceil((mineMs - todayMs) / DAY_MS));
     return { state: 'pending', daysUntil };
   }
 
-  // <= today. The single Active row is the one with the GREATEST date that is
-  // still <= today. Everything else <= today is Past.
   let latestPastOrTodayMs = Number.NEGATIVE_INFINITY;
   for (const d of allDates) {
     const ms = isoToUtcMidnight(d);
@@ -111,11 +70,7 @@ export function effectiveStatusLabel(s: EffectiveStatus): string {
   return s.state === 'active' ? 'Active' : 'Past';
 }
 
-// ─── Badge ────────────────────────────────────────────────────────────
 
-// Reuse the canonical StatusPill tone palette so these badges match every
-// other pill in the ERP: Active = success (green), Pending = pending (amber),
-// Past = neutral (grey). Deleted = danger (red).
 const badgeBase: CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
@@ -160,7 +115,6 @@ export function DeletedBadge() {
   );
 }
 
-// ─── Reassurance banner ───────────────────────────────────────────────
 
 const BANNER_TEXT =
   'Older orders keep the price/spec they were saved with — a new effective row only applies to NEW orders from its date.';
@@ -192,32 +146,17 @@ export function EffectiveHistoryBanner({ text = BANNER_TEXT }: { text?: string }
   );
 }
 
-// ─── The list ─────────────────────────────────────────────────────────
 
 export type EffectiveDatedHistoryProps<Row> = {
-  /** The effective-dated rows. Order doesn't matter — the component sorts
-   *  newest-first by effective date for display. */
   rows: readonly Row[];
-  /** Stable React key for a row. */
   rowKey: (row: Row) => string;
-  /** The row's effective date as `YYYY-MM-DD`. */
   effectiveFrom: (row: Row) => string;
-  /** Optional soft-delete flag → renders a Deleted badge. */
   isDeleted?: (row: Row) => boolean;
-  /** Render this row's BODY (domain content: prices, notes, …). The header
-   *  line (effective date + badges) is supplied by this component; renderRow
-   *  only owns what sits beneath it. */
   renderRow: (row: Row, status: EffectiveStatus) => ReactNode;
-  /** Today's calendar date (`YYYY-MM-DD`); defaults to Malaysia today. Pass
-   *  through when the caller already has a pinned "today" for consistency. */
   today?: string;
-  /** Loading flag — renders a quiet "Loading…" line. */
   loading?: boolean;
-  /** Override the reassurance banner copy, or pass null to hide it. */
   bannerText?: string | null;
-  /** Empty-state line when there are no rows (and not loading). */
   emptyLabel?: ReactNode;
-  /** Optional summary/subtitle line above the banner (e.g. the combo label). */
   header?: ReactNode;
 };
 
@@ -239,11 +178,8 @@ export function EffectiveDatedHistory<Row>({
   emptyLabel = 'No history rows.',
   header,
 }: EffectiveDatedHistoryProps<Row>) {
-  // All effective dates feed the "which row is Active" decision.
   const allDates = rows.map(effectiveFrom);
 
-  // Newest-first by effective date (string compare is correct for ISO
-  // `YYYY-MM-DD`). A stable sort keeps insertion order among equal dates.
   const sorted = [...rows].sort((a, b) => {
     const da = effectiveFrom(a);
     const db = effectiveFrom(b);
@@ -284,8 +220,6 @@ export function EffectiveDatedHistory<Row>({
                     status.state === 'active' && !deleted
                       ? '1px solid var(--c-secondary-a, #2F5D4F)'
                       : '1px solid var(--line)',
-                  // Subtle de-emphasis for superseded / removed rows so the eye
-                  // lands on the Active + Pending rows first.
                   opacity: deleted || status.state === 'past' ? 0.78 : 1,
                 }}
               >
@@ -306,8 +240,6 @@ export function EffectiveDatedHistory<Row>({
   );
 }
 
-// dd/mm/yyyy display, matching SofaComboTab's fmtDate. Kept local so the
-// component is self-contained; falls back to the raw string when not ISO.
 function fmtEffDate(iso: string): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
   const [y, m, d] = iso.split('-');

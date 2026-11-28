@@ -19,7 +19,6 @@ import userEvent from '@testing-library/user-event';
 import { humanApiError } from '../../vendor/scm/lib/authed-fetch';
 import { readVersionConflict, SoVersionConflictBanner } from './so-version-conflict';
 
-// The literal body backend/src/scm/routes/mfg-sales-orders.ts:356 builds.
 const CONFLICT_BODY = JSON.stringify({
   error: 'so_version_conflict',
   message: 'Someone else updated this order while you were editing. Your changes are still on this screen; review the latest order before saving again.',
@@ -39,8 +38,6 @@ describe('reading the server version off the 409 body', () => {
   });
 
   it('still reports the conflict when the body carries no usable version', () => {
-    // The refusal is real even if the recovery number is missing; the banner
-    // must still appear, just without the one-press continue.
     expect(readVersionConflict(JSON.stringify({ error: 'so_version_conflict' })))
       .toEqual({ serverVersion: null });
     expect(readVersionConflict(JSON.stringify({ error: 'so_version_conflict', currentVersion: 0 })))
@@ -56,8 +53,6 @@ describe('reading the server version off the 409 body', () => {
   });
 
   it('the SENTENCE stays clean while the BODY yields the version', () => {
-    // One body, two readers, two different jobs. This is the pairing that was
-    // missing: humanApiError was doing its job and nobody did the other one.
     expect(humanApiError(409, CONFLICT_BODY)).not.toMatch(/currentVersion|\b7\b/);
     expect(readVersionConflict(CONFLICT_BODY)?.serverVersion).toBe(7);
   });
@@ -88,7 +83,7 @@ describe('the conflict banner', () => {
     const { onReview, onProceed } = setup(7);
     await userEvent.click(screen.getByRole('button', { name: /see what changed/i }));
     expect(onReview).toHaveBeenCalledTimes(1);
-    expect(onProceed).not.toHaveBeenCalled();   // looking writes nothing
+    expect(onProceed).not.toHaveBeenCalled();
   });
 
   it('offers an explicit proceed — the adoption is never silent', async () => {

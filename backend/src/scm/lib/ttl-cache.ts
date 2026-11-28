@@ -1,7 +1,3 @@
-// Keeps a loaded value per key for ttlMs. Only the resolved value is stored, never
-// the in-flight promise: a Worker promise must not be awaited from another request.
-// A failed load, or one `keep` rejects (e.g. a degraded result), is not stored.
-// Isolate-local: a new isolate starts empty.
 export async function ttlCached<T>(
   store: Map<string, { at: number; v: T }>,
   key: string,

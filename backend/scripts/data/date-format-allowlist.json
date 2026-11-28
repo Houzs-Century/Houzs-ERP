@@ -3,7 +3,7 @@
     "REVIEWED date formatting. ONE DATE FORMAT, ONE PLACE THAT WRITES IT (owner",
     "2026-08-18: '全套系统的 date format 没有统一'). Every date a user reads is",
     "DD/MM/YYYY and comes from fmtDate/fmtDateTime in",
-    "frontend/src/vendor/shared/format.ts (mirrored in backend/src/scm/shared/",
+    "shared/src/vendor/shared/format.ts (mirrored in backend/src/scm/shared/",
     "format.ts). backend/scripts/check-date-formatting.mjs finds lines that SPELL a",
     "date by hand; a regex cannot read intent, so this file is where a person",
     "records the judgement. Every entry needs a `why` that would survive being read",

@@ -5,22 +5,9 @@ import { useDialog } from "../../hooks/useDialog";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
 import { cn } from "../../lib/utils";
-import { fmtDate } from "../../vendor/shared/format";
+import { fmtDate } from "../../../../shared/src/vendor/shared/format";
 import { Eyebrow } from "./teamShared";
 
-/* POS Access — the 2990 tablet credential, on the member's own profile.
- *
- * WHY IT LIVES HERE. The 2990 showroom POS signs a salesperson in with a
- * 6-digit PIN, not a password. The classic Members screen had a "Set PIN"
- * button; the redesigned Directory profile shipped without one, so from the
- * moment an admin gave a Houzs salesperson access to 2990's Home there was no
- * way to issue the credential that access needs. This card is that way back,
- * and it says what the old button could not: whether a PIN is already on file,
- * and whether the tablet will list this person at all.
- *
- * It renders only when the assignment on screen is 2990's Home + a Sales title
- * (posPinEligibility.showsPosPinCard). It never displays a PIN — the server
- * stores a hash and answers only "set / not set". */
 
 export type PinStatus = {
   hasStaffRow: boolean;
@@ -43,14 +30,7 @@ export function PosPinCard({
   userId: number;
   memberName: string;
   canManage: boolean;
-  /** True when the 2990 + Sales combination is only in the unsaved draft. The
-   *  PIN endpoints read the SAVED row, so the card explains itself rather than
-   *  failing a write the admin cannot diagnose. */
   pendingSave: boolean;
-  /** Open the entry box on mount. The profile passes this straight after a save
-   *  that made this member POS-eligible with no PIN on file, so issuing one is
-   *  the thing already in front of the admin instead of a step they must know
-   *  about. */
   autoOpen: boolean;
 }) {
   const toast = useToast();
@@ -61,8 +41,6 @@ export function PosPinCard({
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Fires once per member, and only once the status says there is no PIN —
-  // otherwise a re-render would keep reopening a box the admin just closed.
   const autoOpened = useRef(false);
 
   async function refresh() {
@@ -71,8 +49,6 @@ export function PosPinCard({
       setStatus(await api.get<PinStatus>(`/api/pos/admin-pin-status/${userId}`));
       setLoadError(false);
     } catch {
-      // A failed READ must not read as "no PIN" — that would invite an admin to
-      // overwrite a working credential. Say the check failed and offer nothing.
       setStatus(null);
       setLoadError(true);
     }

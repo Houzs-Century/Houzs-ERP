@@ -61,21 +61,16 @@ export const SUGGESTED: Record<string, ItemGroupBinding> = {
   DIFFUSER:  { purchase: '601-0004', sales: '501-0000', salesReturn: '510-0000', purchaseReturn: '612-0000' },
   CARPET:    { purchase: '601-0004', sales: '501-0000', salesReturn: '510-0000', purchaseReturn: '612-0000' },
   SERVICE:   { purchase: '601-0004', sales: '501-0000', salesReturn: '510-0000', purchaseReturn: '612-0000' },
-  /* Sofa Accessory (2026-09-14): still an accessory in the books — same accounts as ACCESSORY. */
   FABRIC_ACCESSORY: { purchase: '601-0004', sales: '502-0000', salesReturn: '510-0000', purchaseReturn: '612-0000' },
 };
 
 const EMPTY: ItemGroupBinding = { purchase: '', sales: '', salesReturn: '', purchaseReturn: '' };
 
-/* Index reads through here so a missing key TYPES as undefined — the compiler
-   has noUncheckedIndexedAccess off, and "absent binding" is this screen's
-   whole subject matter. */
 const pick = <T,>(rec: Record<string, T>, key: string): T | undefined => rec[key];
 
 const complete = (b: ItemGroupBinding): boolean => SLOTS.every((s) => b[s.key].trim() !== '');
 const differs = (a: ItemGroupBinding, b: ItemGroupBinding): boolean => SLOTS.some((s) => a[s.key] !== b[s.key]);
 
-/** Where a row stands, in the design's words and tones. */
 type RowState = { label: string; tone: Tone; suggested: boolean; canSave: boolean; canUndo: boolean };
 function rowState(saved: ItemGroupBinding | undefined, own: ItemGroupBinding | undefined, suggestion: ItemGroupBinding | undefined): RowState {
   const base = saved ?? suggestion ?? EMPTY;
@@ -101,18 +96,12 @@ export const ItemGroupsTab = () => {
   const activeCo = getActiveCompanyId() ?? companies.at(0)?.id ?? null;
   const coKey = activeCo == null ? '' : String(activeCo);
 
-  /* One option list per ledger side, sectioned the AutoCount way: a purchase
-     slot sees only EXPENSE accounts (Cost of goods sold first, then
-     Expenses), a sales slot only INCOME (Sales / Sales adjustments / Other
-     incomes). 397 accounts collapse to the relevant page. */
   const optionsByWants = useMemo(() => {
     const order = (accountsQ.data?.sections ?? []).map((s) => s.section);
     const rank = (section: string): number => {
       const i = order.indexOf(section);
       return i < 0 ? order.length : i;
     };
-    /* Postable only (Conts #338): never a header (a group bound to one fails
-       every posting) nor a control account — the server refuses both too. */
     const build = (wants: 'EXPENSE' | 'INCOME'): ComboOption[] => postableAccounts(accountsQ.data?.accounts ?? [])
       .filter((a) => a.account_type === wants)
       .map((a) => ({
@@ -124,14 +113,10 @@ export const ItemGroupsTab = () => {
     return { EXPENSE: build('EXPENSE'), INCOME: build('INCOME') };
   }, [accountsQ.data]);
 
-  /* Unsaved edits per group. A group with no saved binding starts from the
-     SUGGESTED defaults (marked as such) — the sign-off flow. */
   const [drafts, setDrafts] = useState<Record<string, ItemGroupBinding>>({});
   const [showNew, setShowNew] = useState(false);
   const [menu, setMenu] = useState<{ group: ItemGroup; x: number; y: number } | null>(null);
 
-  /* The design's header line: what the page is, and New group at the right
-     (the Accounting page above owns the title). */
   const lead = (withNew: boolean) => (
     <div className={css.lead}>
       <span className={css.leadSub}>Each product group’s ledger accounts · nothing is written until a row is saved</span>
@@ -271,14 +256,11 @@ export const ItemGroupsTab = () => {
         <PopMenu x={menu.x} y={menu.y} label={`${menu.group.code} menu`} items={menuOf(menu.group)} onClose={() => setMenu(null)} />
       )}
 
-      {/* Bindings feed the backfill — the historical PIs repost right where
-          the groups were just signed off (item 3's door, owner-pressed). */}
       <PiBackfillCard />
     </div>
   );
 };
 
-/* ── New item group — born bound ─────────────────────────────────────────── */
 const NewGroupDialog = ({
   optionsByWants, taken, pending, onClose, onCreate,
 }: {

@@ -1,18 +1,3 @@
-/* "Delivered with issue" routes — the crew's problem report at POD and the
-   office's reads of it. The work lives in scm/lib/delivery-issue.ts; each router
-   here is mounted on the prefix whose area guard already says who may reach it
-   (scm/index.ts):
-
-     POST /delivery-orders-mfg/:id/delivery-issue       report on a DO (the DO's
-          crew, or anyone whose delivery scope is 'all')
-     GET  /delivery-orders-mfg/:id/delivery-issues      the DO detail page
-     GET  /mfg-sales-orders/:docNo/delivery-issues      the SO detail page
-     POST /delivery-jobs/:sourceType/:sourceId/:leg/issue   report on a non-DO job
-     GET  /delivery-planning/delivery-issues?so=&do=&jobs=  Last Mile rows, the
-          driver's POD / job screens
-
-   Reporting never changes the DO or job status: the delivery is recorded
-   delivered either way; the issue is a separate row plus a Service Case. */
 import { Hono, type Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { supabaseAuth } from '../middleware/auth';
@@ -31,7 +16,6 @@ async function readBody(c: Ctx): Promise<unknown> {
   try { return await c.req.json(); } catch { return null; }
 }
 
-/* ── On the DO router ─────────────────────────────────────────────────────── */
 export const doDeliveryIssues = new Hono<{ Bindings: Env; Variables: Variables }>();
 doDeliveryIssues.use('*', supabaseAuth);
 
@@ -76,7 +60,6 @@ doDeliveryIssues.get('/:id/delivery-issues', async (c) => {
   }
 });
 
-/* ── On the SO router ─────────────────────────────────────────────────────── */
 export const soDeliveryIssues = new Hono<{ Bindings: Env; Variables: Variables }>();
 soDeliveryIssues.use('*', supabaseAuth);
 
@@ -88,7 +71,6 @@ soDeliveryIssues.get('/:docNo/delivery-issues', async (c) => {
   }
 });
 
-/* ── On the delivery-jobs router (a non-DO stop) ──────────────────────────── */
 export const jobDeliveryIssues = new Hono<{ Bindings: Env; Variables: Variables }>();
 jobDeliveryIssues.use('*', supabaseAuth);
 
@@ -97,11 +79,9 @@ jobDeliveryIssues.post('/:sourceType/:sourceId/:leg/issue', async (c) => {
   if ('error' in job) return c.json({ error: 'invalid_job', reason: job.error }, 400);
   const parsed = parseDeliveryIssueBody(await readBody(c));
   if (!parsed.ok) return c.json({ error: parsed.error, reason: parsed.reason }, 400);
-  // loadJob applies the company predicate and the crew's own-job rule.
   const loaded = await loadJob(c, job.sourceType, job.sourceId, job.leg);
   if (!loaded.ok) return c.json({ error: loaded.error, reason: loaded.reason }, loaded.status);
   const row = loaded.row;
-  // A service-case leg's SO is the case's doc_no; a project / DP job has none.
   const soDocNo = job.sourceType === 'assr' && row.doc_no ? String(row.doc_no) : null;
   try {
     const r = await reportDeliveryIssue(c, {
@@ -118,7 +98,6 @@ jobDeliveryIssues.post('/:sourceType/:sourceId/:leg/issue', async (c) => {
   }
 });
 
-/* ── On the delivery-planning router (Last Mile + the crew's screens) ─────── */
 export const lastMileDeliveryIssues = new Hono<{ Bindings: Env; Variables: Variables }>();
 lastMileDeliveryIssues.use('*', supabaseAuth);
 

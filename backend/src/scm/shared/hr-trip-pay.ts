@@ -29,13 +29,13 @@
  * (check-shared-mirrors.mjs).
  */
 
-/* ── Job types: Delivery Planning's own (DP_ENTRY_MENU), plus No allowance ── */
 
 export const TRIP_JOB_TYPES = [
   "DELIVERY_ORDER",
   "SETUP",
   "DISMANTLE",
   "SUPPLIER",
+  "SUPPLIER_HOOKKA",
   "TRANSFER",
   "LORRY_SERVICE",
   "ASSR_INSPECTION",
@@ -50,6 +50,7 @@ export const TRIP_JOB_LABEL: Record<TripJobType, string> = {
   SETUP: "Setup",
   DISMANTLE: "Dismantle",
   SUPPLIER: "Supplier",
+  SUPPLIER_HOOKKA: "Supplier (Hookka)",
   TRANSFER: "Transfer item",
   LORRY_SERVICE: "Lorry service",
   ASSR_INSPECTION: "ASSR - Inspection",
@@ -60,6 +61,9 @@ export const TRIP_JOB_LABEL: Record<TripJobType, string> = {
 
 /** The job types whose allowance also depends on the project's event type, and which can be a 2nd trip. */
 export const isFairJob = (j: TripJobType): boolean => j === "SETUP" || j === "DISMANTLE";
+
+/** A Supplier pickup whose supplier is Hookka (its own factories), paid at the "Supplier (Hookka)" rate, not the generic Supplier rate. */
+export const isHookkaSupplierName = (name: string | null | undefined): boolean => /hookka/i.test(name ?? "");
 
 export const TRIP_EVENT_TYPES = ["EXHIBITION", "ROADSHOW"] as const;
 export type TripEventType = (typeof TRIP_EVENT_TYPES)[number];
@@ -73,7 +77,6 @@ export function eventTypeOf(slug: string | null | undefined, name: string | null
   return /solo|roadshow|road show/.test(s) ? "ROADSHOW" : "EXHIBITION";
 }
 
-/* ── States ─────────────────────────────────────────────────────────────── */
 
 export const TRIP_STATES = [
   "Johor",
@@ -121,14 +124,11 @@ export function tripStateOf(raw: string | null | undefined): string {
   return "";
 }
 
-/* ── Rates (schema 2) ───────────────────────────────────────────────────── */
 
 export type TripJobAllowance = {
   jobType: TripJobType;
-  /** Only for Setup / Dismantle; null for every other job type. */
   eventType: TripEventType | null;
   perTripSen: number;
-  /** Setup / Dismantle 2nd trip of the day; null = same as per trip. */
   secondTripSen: number | null;
 };
 export type TripOutstationGroup = { states: string[]; driverSen: number; helperSen: number };
@@ -137,22 +137,17 @@ export type TripOvernightTier = { after: string; driverSen: number; helperSen: n
 
 export type TripRates = {
   schema: 2;
-  /** Commission in basis points (40 = 0.40%) of a Delivery order's Local Total. */
   commission2Bps: number;
   commission3Bps: number;
-  /** Rate cut, in basis points (5 = 0.05 percentage points), for the 1st, 2nd, 3rd... missed working day; each later day cuts leaveCutAfterBps. Cuts add up. */
   leaveCutBps: number[];
   leaveCutAfterBps: number;
   jobAllowances: TripJobAllowance[];
   outstation: TripOutstationGroup[];
   overnight: {
     tiers: TripOvernightTier[];
-    /** Only a night after a day on which the person ran one of these; empty = every night, trip or not. */
     jobTypes: TripJobType[];
-    /** Only when the shift lasted over this many hours; 0 = no condition. */
     minHours: number;
   };
-  /** Set only for a version saved before the redesign: it is computed by the old rules, exactly as before. Never saved. */
   legacy: LegacyTripRates | null;
 };
 
@@ -170,6 +165,7 @@ export const DEFAULT_TRIP_RATES: TripRates = {
     fair("DISMANTLE", "EXHIBITION", 10000, 13500),
     fair("DISMANTLE", "ROADSHOW", 10000, 13500),
     { jobType: "SUPPLIER", eventType: null, perTripSen: 1500, secondTripSen: null },
+    { jobType: "SUPPLIER_HOOKKA", eventType: null, perTripSen: 3000, secondTripSen: null },
     { jobType: "TRANSFER", eventType: null, perTripSen: 1500, secondTripSen: null },
     { jobType: "ASSR_INSPECTION", eventType: null, perTripSen: 1500, secondTripSen: null },
     { jobType: "ASSR_PICKUP", eventType: null, perTripSen: 1500, secondTripSen: null },
@@ -283,10 +279,13 @@ export function resolveTripRatesAsOf(versions: ReadonlyArray<{ effectiveFrom: st
 
 /** The allowance a driver earns for one job: the exact job type + event type,
  *  else (Setup / Dismantle with an unknown event) the Exhibition rate, else the
- *  job type's first row. Null when the job type has no rate. */
+ *  job type's first row. A Supplier (Hookka) job with no rate of its own falls
+ *  back to the generic Supplier rate, so an older rate version never drops it to
+ *  nothing. Null when the job type has no rate. */
 export function jobAllowanceFor(rates: Pick<TripRates, "jobAllowances">, jobType: TripJobType, eventType: TripEventType | null): TripJobAllowance | null {
   if (jobType === "NONE") return null;
   const of = rates.jobAllowances.filter((a) => a.jobType === jobType);
+  if (jobType === "SUPPLIER_HOOKKA" && !of.length) return jobAllowanceFor(rates, "SUPPLIER", null);
   if (!isFairJob(jobType)) return of.length ? of[0] : null;
   return of.find((a) => a.eventType === (eventType ?? "EXHIBITION")) ?? (of.length ? of[0] : null);
 }
@@ -319,7 +318,6 @@ export function leaveCutFor(missedDays: number, rates: Pick<TripRates, "leaveCut
   return cut;
 }
 
-/* ── Rows ───────────────────────────────────────────────────────────────── */
 
 /** The kinds a row carried before the redesign; still stored (hr_trip_rows.kind) and read by the legacy rules. */
 export const TRIP_KINDS = [
@@ -389,6 +387,7 @@ export function kindOfJobType(j: TripJobType): TripKind {
     SETUP: "FAIR",
     DISMANTLE: "FAIR",
     SUPPLIER: "SUPPLIER",
+    SUPPLIER_HOOKKA: "SUPPLIER",
     TRANSFER: "TRANSFER",
     LORRY_SERVICE: "NONE",
     ASSR_INSPECTION: "SERVICE_INSPECTION",
@@ -404,20 +403,16 @@ export type TripRow = {
   docNo: string;
   transferTo: string;
   refNo: string;
-  /** The old kind, read by a pre-redesign rates version. */
   kind: TripKind;
   jobType: TripJobType;
-  /** Setup / Dismantle only: the project's event type; null = unknown (pays the Exhibition rate). */
   eventType: TripEventType | null;
   localTotalSen: number;
+  allowanceOverrideSen: number | null;
   state: string;
   postcode: string;
   lorryPlate: string;
-  /** The lorry run the row rode (Delivery Planning trip id); "" when unknown. */
   tripRef: string;
-  /** The venue / project the row served; "" = the Doc No. stands for it. */
   venueKey: string;
-  /** Up to two drivers and two helpers; the employee id when known, else matched by name. */
   drivers: { name: string; employeeId: number | null }[];
   helpers: { name: string; employeeId: number | null }[];
 };
@@ -495,6 +490,7 @@ export function parseTripReport(text: string): { rows: TripRow[]; skipped: { lin
       jobType,
       eventType: isFairJob(jobType) && /\bSOLO\b|ROADSHOW/i.test(docNo) ? "ROADSHOW" : null,
       localTotalSen: amount ?? 0,
+      allowanceOverrideSen: null,
       state: c[5] ?? "",
       postcode: "",
       lorryPlate: c[6] ?? "",
@@ -510,7 +506,6 @@ export function parseTripReport(text: string): { rows: TripRow[]; skipped: { lin
 /** Upper-case, single-spaced: how names and aliases are compared. */
 export const normName = (s: string) => s.replace(/\s+/g, " ").trim().toUpperCase();
 
-/* ── The month's pay per person ──────────────────────────────────────────── */
 
 export type TripLineCategory = "JOB" | "OUTSTATION" | "OVERNIGHT";
 /** One job / day behind a pay line, for the person drawer. */
@@ -524,12 +519,10 @@ export type TripPayLine = {
   unitSen: number;
   amountSen: number;
   dates: string[];
-  /** What each count was; empty under a pre-redesign rates version. */
   items: TripLineItem[];
 };
 
 export type TripCommission = {
-  /** One line per crew size carried. */
   lines: { crew: 2 | 3; baseSen: number; rateBps: number; amountSen: number }[];
   baseSen: number;
   missedDays: number;
@@ -543,7 +536,6 @@ export type TripPay = {
   helped: boolean;
   commission: TripCommission;
   lines: TripPayLine[];
-  /** Every allowance line: job + outstation + overnight. */
   allowanceSen: number;
   jobAllowanceSen: number;
   outstationSen: number;
@@ -561,7 +553,6 @@ export type TripMonthInput = {
   rates: TripRates;
   employeeOf: (p: { name: string; employeeId: number | null }) => number | null;
   missedDaysOf: (employeeId: number) => number;
-  /** Each employee's punches with a clock-out, for the overnight allowance. */
   punches: ReadonlyMap<number, readonly TripPunch[]>;
 };
 
@@ -607,7 +598,6 @@ export function computeTripMonth(input: TripMonthInput): { pay: Map<number, Trip
     return { driverIds, helperIds, crew: (row.drivers.length + row.helpers.length >= 3 ? 3 : 2) as 2 | 3, state: tripStateOf(row.state) };
   });
 
-  /* 2nd trip: per driver + lorry + day, each distinct (lorry run, venue) of a Setup / Dismantle is a trip; the first pays the per-trip rate, every later one the 2nd-trip rate. The same run and venue again is the same job. */
   const seenUnits = new Map<string, Map<string, 1 | 2>>();
   input.rows.forEach((row, i) => {
     if (!isFairJob(row.jobType)) return;
@@ -627,7 +617,19 @@ export function computeTripMonth(input: TripMonthInput): { pay: Map<number, Trip
     rowPay[i].tripOfDay = ord;
   });
 
-  /* Commission and the allowance per job. */
+  /* A Transfer item (a Singapore delivery the lorry only carries to the border /
+     transporter) pays its flat allowance once per driver per day, however many
+     transfer stops that driver ran that day (owner 2026-11-27). Mark the day's
+     later transfers as the same job so the allowance loop pays them nothing. */
+  const transferSeen = new Set<string>();
+  input.rows.forEach((row, i) => {
+    if (row.jobType !== "TRANSFER") return;
+    const who = resolved[i].driverIds.length ? `#${resolved[i].driverIds[0]}` : normName(row.drivers.length ? row.drivers[0].name : "");
+    const key = `${who}|${row.tripDate}`;
+    if (transferSeen.has(key)) rowPay[i].sameJob = true;
+    else transferSeen.add(key);
+  });
+
   input.rows.forEach((row, i) => {
     const { driverIds, helperIds, crew, state } = resolved[i];
     for (const id of helperIds) acc(id).helped = true;
@@ -637,19 +639,31 @@ export function computeTripMonth(input: TripMonthInput): { pay: Map<number, Trip
       if (row.jobType === "DELIVERY_ORDER") a.base[crew] += row.localTotalSen;
     }
     if (rowPay[i].sameJob) return;
-    const rate = jobAllowanceFor(rates, row.jobType, row.eventType);
-    if (!rate) return;
+    /* HR can hand-set a row's job allowance on the edit drawer (owner 2026-11-27);
+       when set, that amount is the allowance instead of the rate card. A Delivery
+       order is paid by commission (local_total_sen), never a flat allowance, so an
+       override on one is ignored. */
+    const override = row.jobType === "DELIVERY_ORDER" ? null : row.allowanceOverrideSen;
     const second = rowPay[i].tripOfDay === 2;
-    const unit = second ? (rate.secondTripSen ?? rate.perTripSen) : rate.perTripSen;
+    let unit: number;
+    if (override != null) {
+      unit = override;
+    } else {
+      const rate = jobAllowanceFor(rates, row.jobType, row.eventType);
+      if (!rate) return;
+      unit = second ? (rate.secondTripSen ?? rate.perTripSen) : rate.perTripSen;
+    }
     if (unit <= 0) return;
-    const key = `JOB_${row.jobType}${isFairJob(row.jobType) ? `_${row.eventType ?? "EXHIBITION"}_${second ? 2 : 1}` : ""}`;
+    const key =
+      override != null
+        ? `JOB_${row.jobType}_SET_${unit}`
+        : `JOB_${row.jobType}${isFairJob(row.jobType) ? `_${row.eventType ?? "EXHIBITION"}_${second ? 2 : 1}` : ""}`;
     for (const id of driverIds) {
       add(acc(id), key, jobName(row, rowPay[i].tripOfDay), "JOB", { date: row.tripDate, docNo: row.docNo, job: jobName(row, rowPay[i].tripOfDay), state, amountSen: unit });
       rowPay[i].allowanceSen += unit;
     }
   });
 
-  /* Per person per day: the rows they were on, as driver or helper. */
   type DayRow = { i: number; role: "D" | "H" };
   const days = new Map<number, Map<string, DayRow[]>>();
   input.rows.forEach((row, i) => {
@@ -662,7 +676,6 @@ export function computeTripMonth(input: TripMonthInput): { pay: Map<number, Trip
     resolved[i].helperIds.forEach((id) => put(id, "H"));
   });
 
-  /* Outstation: once per person per day, the highest-priced group reached. */
   const groupOf = new Map<string, number>();
   rates.outstation.forEach((g, gi) => g.states.forEach((s) => groupOf.set(s, gi)));
   for (const [id, byDay] of days) {
@@ -690,7 +703,6 @@ export function computeTripMonth(input: TripMonthInput): { pay: Map<number, Trip
     }
   }
 
-  /* Overnight: once per night, the highest tier the clock-out reached. */
   const tiers = rates.overnight.tiers.map((t) => ({ ...t, at: nightMinutes(t.after) })).sort((x, y) => y.at - x.at);
   for (const [id, list] of input.punches) {
     const nights = new Map<string, (typeof tiers)[number]>();
@@ -800,11 +812,6 @@ export function missedWorkingDays(input: {
   return out;
 }
 
-/* ── Before the redesign: the rules of Nico's sheet (2026-10-22) ────────────
- * Kept verbatim so a rates version saved before 2026-11-17 pays exactly what
- * it paid: commission on every row's Local Total; a fair allowance per fair
- * day by sheet code; RM15 a service case, supplier trip or transfer; outstation
- * per day per area; overnight once per punch past midnight lasting over N hours. */
 
 export const OUTSTATION_AREAS = ["MIS", "JP", "TP", "KEL"] as const;
 export type OutstationArea = (typeof OUTSTATION_AREAS)[number];
@@ -941,7 +948,6 @@ export function computeLegacyTripPay(input: {
   rates: LegacyTripRates;
   employeeOf: (p: { name: string; employeeId: number | null }) => number | null;
   missedDaysOf: (employeeId: number) => number;
-  /** Each employee's overnight work dates (overnightDates). */
   overnight: ReadonlyMap<number, readonly string[]>;
 }): Map<number, TripPay> {
   const { rates } = input;

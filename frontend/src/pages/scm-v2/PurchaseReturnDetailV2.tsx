@@ -1,7 +1,3 @@
-// PurchaseReturnDetailV2 — Theme C redesign of the Purchase Return detail
-// page. Procurement-side mirror of DR (Delivery Return): the biz sends goods
-// BACK to the supplier and expects a credit (money-in framing). Aside hero =
-// Credit expected (synced/green because it's money coming back).
 
 import { lazy, useMemo, type ReactNode } from "react";
 import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity, fmtQty } from "@2990s/shared";
@@ -45,7 +41,7 @@ import { usePrompt } from "../../vendor/scm/components/PromptDialog";
 import { RelationshipMapButton } from "../../vendor/scm/components/RelationshipMapButton";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
-import { statusLabel } from "../../vendor/scm/lib/status-pill";
+import { statusLabel } from "../../../../shared/src/vendor/scm/lib/status-pill";
 import { cn } from "../../lib/utils";
 import { supplierEmailList } from "../../vendor/shared/supplier-emails";
 import { FlowDocFilesCard } from "../../vendor/scm/components/FlowDocFilesCard";
@@ -58,8 +54,6 @@ type PrHeader = {
   status: PrStatus;
   return_date: string | null;
   reason: string | null;
-  /* CREDIT (goods gone, credit note owed) or REPAIR (goods at the supplier,
-     coming back). Absent from a pre-2026-09-28 response, so read defensively. */
   kind?: string | null;
   repair_warehouse_id?: string | null;
   /* HC-0221: false = no replacement coming, the PO stays received. */
@@ -245,29 +239,14 @@ function HeroLine({ k, v, strong }: { k: string; v: string; strong?: boolean }) 
   );
 }
 
-// ─── Legacy inline editor (lazy) ───────────────────────────────────────────
-// V2 is READ-ONLY by design. The draft editor (editable supplier / return date /
-// reason / credit-note ref / notes + inline Qty / Unit price per line, and the
-// T12 variant editor on non-GRN lines) lives in the legacy ./PurchaseReturnDetail
-// page — we forward to it whenever ?edit=1 lands on this route so the Edit
-// button actually opens editable fields. Mirrors how PurchaseInvoiceDetailV2 /
-// GoodsReceivedDetailV2 / PurchaseOrderDetailV2 forward ?edit=1 to their legacy
-// editor. Lazy-loaded so the editor bundle only ships when someone clicks Edit.
 const PurchaseReturnDetailInlineEditor = lazy(() =>
   import("./PurchaseReturnDetail").then((m) => ({ default: m.PurchaseReturnDetail })),
 );
 
-/* Thin router — the only hooks it calls are useSearchParams and useLocation
-   (both unconditional, at the top), so Rules of Hooks are respected when the
-   ?edit=1 flip swaps between the read-only body and the lazy inline editor
-   (the two children have different hook counts). */
 export function PurchaseReturnDetailV2() {
   const [params] = useSearchParams();
   const location = useLocation();
   if (params.get("edit") === "1") {
-    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
-       so a failed editor chunk shows the panel in place of the editor and
-       clears when the operator moves to another document (lazySlotAudit). */
     return (
       <LazySlot
         resetKey={`pr-editor:${location.pathname}`}
@@ -295,8 +274,6 @@ function PurchaseReturnDetailV2ReadOnly() {
   const askPrompt = usePrompt();
 
   const purchaseReturn = (detail.data as { purchaseReturn?: PrHeader } | undefined)?.purchaseReturn ?? null;
-  /* A repair return waits for GOODS, not money: the credit-note chase would
-     send the operator looking for a document that is never coming. */
   const isRepairReturn = (purchaseReturn?.kind ?? 'CREDIT') === 'REPAIR';
   const items: PrItem[] = useMemo(
     () => ((detail.data as { items?: PrItem[] } | undefined)?.items ?? []),
@@ -318,14 +295,9 @@ function PurchaseReturnDetailV2ReadOnly() {
   // browser history happens to point). The list restores its own sticky
   // filters, so the prior filtered view comes back — no context lost.
   const goBack = () => navigate(scmListReturnTo("/scm/purchase-returns"));
-  // Only a POSTED ("Confirmed") return is editable — the legacy editor locks
-  // COMPLETED / CANCELLED, so don't offer a button that opens a locked page.
   const canEdit = eff === "posted";
   const goEdit = () => id && navigate(`/scm/purchase-returns/${id}?edit=1`);
   const goHistory = () => id && navigate(`/scm/purchase-returns/${id}?tab=history`);
-  // Render + download the PR PDF via the shared jspdf generator (client-side),
-  // mirroring the V1 PurchaseReturnDetail handler. The old `?print=1`
-  // navigation was dead — nothing consumed that param — so the button did nothing.
   const deliverPrintPdf = (action: PdfAction) => {
     if (!purchaseReturn) return;
     return import("../../vendor/scm/lib/purchase-return-pdf")
@@ -354,8 +326,6 @@ function PurchaseReturnDetailV2ReadOnly() {
   };
   const doComplete = async () => {
     if (!purchaseReturn) return;
-    /* The reference is OPTIONAL — an empty confirm still completes, so only a
-       Cancel (null) aborts. This mirrors the old window.prompt contract. */
     const ref = await askPrompt({
       title: "Complete return",
       body: "Enter the supplier's credit note reference (optional):",
@@ -547,10 +517,6 @@ function PurchaseReturnDetailV2ReadOnly() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {/* R8 — wire the Purchase Return into the /document-flow graph so its
-                convert-from chain (GRN -> PO -> SO) is visible, matching the other
-                purchase-side details (PO / GRN / PI). Reads the real backend graph
-                (type 'pr'), not a hand-built chain. */}
             <RelationshipMapButton type="pr" id={purchaseReturn.id} style={{ height: 34 }} />
             <Button variant="ghost" icon={<History size={14} />} onClick={goHistory}>History</Button>
             <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>Print PDF</Button>
@@ -587,8 +553,6 @@ function PurchaseReturnDetailV2ReadOnly() {
             {purchaseReturn.reason && (
               <div className="mb-4 rounded-lg border-l-4 border-primary bg-primary-soft px-4 py-3">
                 <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Return reason</div>
-                {/* Stored as a CODE since 2026-09-28; the helper prints an older
-                    row’s free text verbatim rather than hiding it. */}
                 <div className="mt-1 text-[14px] font-semibold italic text-ink">“{purchaseReturnReasonLabel(purchaseReturn.reason)}”</div>
                 {isRepairReturn && (
                   <div className="mt-1.5 text-[12px] text-ink-muted">

@@ -1,33 +1,5 @@
-// ----------------------------------------------------------------------------
-// so-add-lines — the STAGED new lines of the Sales Order editor, and the
-// settling rules for the line writes a page-level Save fans out.
-//
-// WHY THIS IS A MODULE AND NOT MORE STATE IN SalesOrderDetail.tsx.
-// SalesOrderDetail.tsx sits under a file-size ceiling that may only fall
-// (scripts/file-size-ceilings.json), so the list-shaped replacement for its
-// single `addingDraft` had to land somewhere. Everything here is pure — no
-// React, no fetch — which is also what makes the behaviour testable without
-// mounting a 4,000-line page.
-//
-// THE KEY PER ROW IS THE DOCUMENTED PATTERN, NOT AN INVENTION.
-// lib/idempotency.ts: "Callers whose intent is a DATA row rather than a mount
-// (a PaymentsTable draft) should instead mint with newIdempotencyKey() and
-// store it on the row, which dies with the row on success." One staged line is
-// exactly that — one ADD intent — so its key rides on the row. A single
-// page-level key would have been rule (2) inverted: several genuinely distinct
-// inserts colliding on one key, and the middleware replaying the first response
-// for all of them, i.e. lines silently swallowed.
-// ----------------------------------------------------------------------------
 
 import type { SoLineDraft } from '../../vendor/scm/components/SoLineCard';
-/* THE FAILURE VOCABULARY MOVED, it did not fork. `LineWriteFailure`, the
-   capture and the naming half of the message now live in
-   vendor/scm/lib/line-write-failures.ts so the PHONE editor can share them —
-   MobileNewSO.applyLineDiff was throwing every server refusal away and
-   rebuilding a sentence out of the count, which is how an AutoCount-locked
-   order told the owner to "try Save again" forever. Desktop's behaviour is
-   unchanged except that several lines refused by ONE cause now say that cause
-   once instead of once per line. */
 import {
   lineWriteFailure,
   namedFailures,
@@ -41,10 +13,7 @@ export { SOFA_PIECES_SPLIT_DIALOG } from '../../vendor/scm/lib/sofa-piece-lines'
 
 /** One new line the operator has staged but not yet saved. */
 export type StagedAddLine = {
-  /** React key, and the handle every patch / remove callback addresses. */
   key: string;
-  /** ONE ADD intent. Survives a retry so a timeout replays instead of
-   *  inserting the same line twice. Retired with the row, never on success. */
   idempotencyKey: string;
   draft: SoLineDraft;
 };
@@ -59,15 +28,6 @@ export function patchStagedAdd(
   key: string,
   patch: Partial<SoLineDraft>,
 ): StagedAddLine[] {
-  /* "Did anything move" is read off the RESULT, not off a flag the callback
-     sets. A `let changed = false` mutated inside .map is invisible to
-     TypeScript's control-flow analysis — it still narrows the variable to the
-     literal `false` at the return, so `changed ? out : list` is reported as
-     always-falsy and the identity check reads as dead code. Annotating the
-     type does not help; CFA narrows from the only assignment it can see.
-     Comparing references is what the caller actually cares about (React
-     bails out of a re-render when the array is the same object), and it is
-     something the compiler can follow. */
   const out = list.map((row) => (
     row.key === key ? { ...row, draft: { ...row.draft, ...patch } } : row
   ));
@@ -85,8 +45,6 @@ export function cascadeStagedDeliveryDate(
   list: StagedAddLine[],
   next: string | null,
 ): StagedAddLine[] {
-  /* Same identity rule as patchStagedAdd above — read the change off the
-     result, not off a flag .map mutates. */
   const out = list.map((row) => {
     const d = row.draft;
     if (d.lineDeliveryDateOverridden || (d.lineDeliveryDate ?? null) === next) return row;
@@ -112,17 +70,10 @@ export function firstBlankStagedAdd(list: StagedAddLine[]): number | null {
   return i === -1 ? null : i + 1;
 }
 
-/* ── Line-write settling ────────────────────────────────────────────────────
-   The page Save used to run every stage under Promise.all and let the FIRST
-   rejection reject the chain. Two costs, both paid by the owner: the siblings
-   stayed in flight while the catch tore the edit lease down, and the operator
-   was shown one message that named nothing — a refused price edit read as
-   "failed to save" while the new line it aborted was never mentioned. */
 
 export type SettledLineWrites<T> = { done: T[]; failures: LineWriteFailure[] };
 
 export type LineWriteJob<T> = {
-  /** What the operator will read: the item code, or the staged line's label. */
   label: string;
   value: T;
   run: () => Promise<unknown>;

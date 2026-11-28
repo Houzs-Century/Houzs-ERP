@@ -11,11 +11,6 @@ import {
   type TitlePolicyPayload,
 } from "./titlePolicyModel";
 
-/* The one logic layer the desktop Titles table and the phone Titles editor both
- * build on. These pin the two pure transforms so a change reaches both surfaces
- * identically: draftOf (row over name), and normalise (the body the API accepts
- * for each cohort — profile only where the cohort takes one, flags only where it
- * owns them). */
 
 function payload(over: Partial<TitlePolicyPayload> = {}): TitlePolicyPayload {
   return {

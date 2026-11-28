@@ -25,7 +25,6 @@ export const ACCOUNTING_TAB_TITLES = {
   corrections: 'Corrections',
   collection: 'Collection',
   charges: 'Merchant charges',
-  performance: 'Performance P&L',
   events: 'Event costs',
   commission: 'Event commission',
   products: 'Product profit',

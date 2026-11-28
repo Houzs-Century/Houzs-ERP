@@ -13,7 +13,7 @@
 // beside them.
 
 import { Link } from 'react-router-dom';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { ledgerHref } from '../../vendor/scm/lib/report-layout';
 import { useLedger } from '../../vendor/scm/lib/ledger-queries';
 import type { MonthColumn } from '../../vendor/scm/lib/report-monthly';
@@ -31,19 +31,14 @@ const rowClass = `${styles.row} ${styles.lines}`;
 type Props = {
   code: string;
   columns: MonthColumn[];
-  /** The whole range the columns cover — one read, whichever month is open. */
   from: string;
   to: string;
-  /** A month key (YYYY-MM) to show alone, or null for every line of the range. */
   month: string | null;
-  /** The figure the row prints for the range — the lines are signed to sum to it. */
   rowSen: number;
   fmt: (sen: number) => string;
-  /** Whether the amounts print with a % beside them — the lines keep that slot empty, so a figure sits under the amount. */
   pctSlot: boolean;
 };
 
-/** Whether a line dated `date` belongs under a column. */
 const inColumn = (c: MonthColumn, date: string): boolean => (c.cumulative ? date >= c.from && date <= c.to : date.slice(0, 7) === c.key);
 
 export const AccountMonthRows = ({ code, columns, from, to, month, rowSen, fmt, pctSlot }: Props) => {
@@ -51,8 +46,6 @@ export const AccountMonthRows = ({ code, columns, from, to, month, rowSen, fmt, 
   const block = q.data?.blocks.find((b) => b.code === code) ?? null;
   const all = block?.lines ?? [];
   const lines = month ? all.filter((l) => l.date.slice(0, 7) === month) : all;
-  /* Debit less credit, turned to read the way the row does: an expense's
-     debits print positive, a receipt account's credits print positive. */
   const net = all.reduce((s, l) => s + (l.debitSen - l.creditSen), 0);
   const sign = net !== 0 && rowSen !== 0 && Math.sign(net) !== Math.sign(rowSen) ? -1 : 1;
   const amountOf = (l: { debitSen: number; creditSen: number }): number => sign * (l.debitSen - l.creditSen);

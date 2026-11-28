@@ -173,7 +173,14 @@ distinguished by `purpose`. Used by Finance/AP staff; desktop only.
   (`refundAnswerRefusal`: `refund_request_needs_refund`, and
   `request_not_a_refund` the other way round), and its own amount is left out
   of the headroom (`excludeRequestId`; PV New `?type=refund&fromRequest=`);
-  Finance's Return is the rejection. It is never edited
+  Finance's Return is the rejection. Before Finance may answer it, it is
+  approved once (owner 2026-11-27) by a holder of `scm.so_cancel.approve_l2`
+  (`REFUND_APPROVE_KEY`), never its requester (`self_approval`), on the
+  Cancellation Requests inbox, the SO Amendment queue (desktop and phone, its
+  badge counts them) — `refund_not_approved` until then; that approver may
+  reject it while it waits. The voucher pays no more than the requests asked
+  (`refund_over_request`, create and edit), and a Sales Order's Customer
+  Refund voucher always answers a request (`refund_needs_request`). It is never edited
   (`refund_request_fixed`) and takes no balance (`refund_no_balance`). Its
   requester reads it on Payment Requests without the key — every caller reads
   their own requests there, a Sales caller reaches the router

@@ -1,12 +1,3 @@
-// grn-rack-sync — bridge goods-receipt into the warehouse RACK (physical
-// placement) ledger. The rack module (migration 0094) is deliberately separate
-// from the FIFO inventory ledger; this module syncs the two ONLY at receipt:
-//   - placeGrnLinesOnRacks: on GRN post, each accepted line gets one
-//     warehouse_rack_items row + STOCK_IN movement per rack it goes on — its
-//     split (scm.grn_item_racks) when it has one, else its single rack_id.
-//   - reverseGrnRacks: on GRN cancel, pull every rack item this GRN placed +
-//     log a STOCK_OUT movement.
-// Both are best-effort and idempotent (keyed on warehouse_rack_items.source_grn_id).
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { todayMyt } from './my-time';
@@ -39,14 +30,12 @@ export async function placeGrnLinesOnRacks(
   if (all.length === 0) return;
   const { data: splitRows, error: splitErr } = await sb.from('grn_item_racks')
     .select('grn_item_id, rack_id, qty').in('grn_item_id', all.map((l) => l.id));
-  if (splitErr) return; // best-effort, like the inserts below; the post check already read it
+  if (splitErr) return;
   const lines = planGrnPlacements(all, (splitRows ?? []) as SplitRow[]);
   if (lines.length === 0) return;
-  // Multi-company (mig 0061): rack items/movements inherit the GRN's company.
   const companyId = all[0].company_id ?? null;
   const companyCol = companyId != null ? { company_id: companyId } : {};
 
-  // Idempotency — already placed for this GRN?
   const { count: already } = await sb.from('warehouse_rack_items')
     .select('id', { head: true, count: 'exact' }).eq('source_grn_id', grnId);
   if ((already ?? 0) > 0) return;
@@ -69,7 +58,7 @@ export async function placeGrnLinesOnRacks(
     notes: 'Goods receipt',
   }));
   const { error: insErr } = await sb.from('warehouse_rack_items').insert(itemRows);
-  if (insErr) return; // best-effort
+  if (insErr) return;
 
   const moveRows = lines.map((l) => {
     const r = rackMap.get(l.rack_id) as { rack?: string; warehouse_id?: string } | undefined;
@@ -99,7 +88,6 @@ export async function reverseGrnRacks(
     .select('id, rack_id, item_code, product_name, qty, company_id')
     .eq('source_grn_id', grnId);
   if (!items || items.length === 0) return;
-  // Multi-company (mig 0061): STOCK_OUT movements inherit the placed items' company.
   const companyId = (items[0] as { company_id?: number | null }).company_id ?? null;
   const companyCol = companyId != null ? { company_id: companyId } : {};
 

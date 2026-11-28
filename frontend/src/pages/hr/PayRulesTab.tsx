@@ -1,12 +1,9 @@
-/* Employees & Attendance > Pay Rules (from Hookka's "Pay Rules (Maintenance)"
- * panel): the rules in force today, the dated changes, and the editor that
- * schedules one, with a worked example that recomputes as you type. */
 import { useState } from "react";
 import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatCurrency, formatDate } from "../../lib/utils";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { DEFAULT_PAY_RULES, hhmmToMin, minToHhmm, normalizePayRules, payRulesProblem, type PayRulesConfig } from "../../vendor/shared/hr-pay-rules";
 import { Empty, Field, Toggle, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
@@ -68,8 +65,6 @@ const hourLabel = (r: PayRulesConfig) =>
   r.hourRateDivisorMode === "fixed" ? `${r.rateHoursPerDay} (fixed)` : r.hourRateDivisorMode === "hoursOnly" ? "the employee's hours" : `(hours + ${r.lunchMin / 60}h lunch)`;
 const rm = (v: number) => formatCurrency(v);
 
-/* Worked example, RM2,050 on a 9h day in the current month, recomputed from
- * the draft on every keystroke so the effect of a setting is seen before saving. */
 export function Explainer({ r }: { r: PayRulesConfig }) {
   const S = 2050;
   const today = todayMyt();

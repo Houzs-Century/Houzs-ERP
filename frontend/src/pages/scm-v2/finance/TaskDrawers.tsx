@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// TaskDrawers — Add task, and one task with its remarks (the owner's Claude
-// Design redesign, Finance-1a-To-do, batch 2). A task is for you or a teammate
-// in Finance; it may repeat, be linked to a document or a page, and carry
-// remarks — an edited remark keeps its earlier wording. Nothing here posts to
-// the books.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -12,7 +5,7 @@ import { ChevronDown, ChevronUp, Info, Paperclip, Plus, Search, X } from 'lucide
 import { ResizableDetailDrawer } from '../../../components/ResizableDetailDrawer';
 import { DateField } from '../../../vendor/scm/components/DateField';
 import { todayMyt } from '../../../vendor/scm/lib/dates';
-import { fmtDate, fmtDateTime } from '../../../vendor/shared/format';
+import { fmtDate, fmtDateTime } from '../../../../../shared/src/vendor/shared/format';
 import styles from './FinanceTasks.module.css';
 import {
   useAddGroup, useAddRemark, useCreateTask, useDeleteTask, useEditRemark, useLinkSearch, useMarkTask, useTodoPeople, useTodoTask,
@@ -27,7 +20,6 @@ export const BUILT_IN_GROUPS: TodoGroupDef[] = [
   { id: 'misc', label: 'Others' },
 ];
 
-/** Pages a task can point at, besides documents — the design's "any ERP page". */
 const PAGES: Array<[string, string, string]> = [
   ['To do', '/scm/finance', 'Finance'],
   ['Daily Bank', '/scm/daily-bank', 'Finance › Bank & cards'],
@@ -82,7 +74,6 @@ function Field({ label, optional = false, children }: { label: string; optional?
 
 /* ── The task form — Add task, and Edit task (owner 2026-11-09) ─────────── */
 
-/** Where the form starts: a new task's defaults, or the task as it is. */
 type TaskStart = {
   title: string; assigneeId: number | null; dueDate: string; repeat: NewTask['repeat']; dayMode: 'all' | 'wk' | 'ms';
   weekdays: number[]; monthDay: string; everyMonths: number; groupKey: string; link: TaskLink | null;
@@ -92,9 +83,6 @@ const startOfTask = (t: TodoTask): TaskStart => ({
   monthDay: t.monthDay ?? '', everyMonths: t.everyMonths, groupKey: t.groupKey, link: t.link,
 });
 
-/** The fields, body and foot of a task drawer. Mounted only while its drawer is open, so it
-    starts afresh each time. Edit sends the whole task and has no remark box — the change is
-    its own line in the thread. */
 function TaskForm({ start, today, groups, mode, busy, onSubmit, onCancel }: {
   start: TaskStart; today: string; groups: TodoGroupDef[]; mode: 'add' | 'edit'; busy: boolean;
   onSubmit: (task: TaskEdit, remark: string) => void; onCancel: () => void;
@@ -122,7 +110,6 @@ function TaskForm({ start, today, groups, mode, busy, onSubmit, onCancel }: {
   const dueDay = Number(due.slice(8, 10));
   const pickRepeat = (r: NewTask['repeat']) => {
     setRepeat(r);
-    /* The repeat starts from the due day: its weekday, its day of the month. */
     if (r === 'week' && weekdays.length === 0) setWeekdays([new Date(`${due}T00:00:00Z`).getUTCDay()]);
     if (r === 'month' && !monthDay) setMonthDay(String(dueDay));
   };
@@ -282,7 +269,6 @@ function TaskForm({ start, today, groups, mode, busy, onSubmit, onCancel }: {
   );
 }
 
-/* ── Add task ──────────────────────────────────────────────────────────── */
 
 /** `initialLink` opens the drawer with a document already linked (a voucher's own Add task). */
 export function AddTaskDrawer({ open, onClose, today, groups, initialLink = null }: { open: boolean; onClose: () => void; today: string; groups: TodoGroupDef[]; initialLink?: TaskLink | null }) {
@@ -310,18 +296,15 @@ export function AddTaskDrawer({ open, onClose, today, groups, initialLink = null
   );
 }
 
-/* ── One task ──────────────────────────────────────────────────────────── */
 
 const initials = (name: string): string => name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w.charAt(0).toUpperCase()).join('') || '?';
 
-/** The chip a remark the buttons left carries. */
 const TAG_WORDS: Record<NonNullable<TaskRemark['tag']>, string> = {
   done: 'Marked done', reopen: 'Reopened', edit: 'Changed', deleted: 'Deleted',
 };
 
 function RemarkItem({ r, taskId }: { r: TaskRemark; taskId: string }) {
   const edit = useEditRemark();
-  /* A change to the task, or its delete, is the task's history: nobody rewrites it. */
   const isChangeLine = r.tag === 'edit' || r.tag === 'deleted';
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(r.body);
@@ -395,7 +378,6 @@ export function TaskDrawer({ open, onClose, target, groups }: {
   const update = useUpdateTask();
   const del = useDeleteTask();
   const [draft, setDraft] = useState('');
-  /* Edit task swaps the drawer's body for the form; Delete asks first, in the foot. */
   const [editing, setEditing] = useState(false);
   const [asking, setAsking] = useState(false);
   const d = q.data;

@@ -24,7 +24,7 @@ import { DELIVERY_STATES, DELIVERY_STATE_LABEL, type PlanningOrder } from "../..
 import { useBandedBoard } from "../../vendor/scm/lib/delivery-board-bands";
 import { useBoardRefresh } from "../../vendor/scm/lib/board-change-poll";
 import { BoardLoadStatus } from "../../vendor/scm/components/BoardLoadStatus";
-import { fmtSen, todayMY } from "../../vendor/shared/format";
+import { fmtSen, todayMY } from "../../../../shared/src/vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, SELECT_CLS, Toggle } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, periodEnd, useDashboardPeriod } from "../../components/scm-v2/DashboardPeriod";
@@ -38,9 +38,6 @@ import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawe
 import { Columns, SplitBar, Tile, TONE, PALETTE } from "../../components/scm-v2/Charts";
 import { deliveryProgressBreakdown, messageStatusBreakdown, ordersOfSlice, progressKeyOf, topWithOther, NO_MESSAGE_STATUS, OUT_NOT_CLOSED } from "./logisticStatus";
 
-/* Progress tile tone per state, in DELIVERY_STATES order (pending-delivery,
-   pending-schedule, overdue, delivered) — derived from that one list so the
-   state vocabulary keeps its single home and cannot drift. */
 const PROGRESS_TONES = ["main", "warn", "bad", "good"] as const;
 const PROGRESS_TONE: Record<string, keyof typeof TONE> = Object.fromEntries(
   [...DELIVERY_STATES.map((s, i) => [s, PROGRESS_TONES[i] ?? "muted"]), [OUT_NOT_CLOSED, "warn"]],
@@ -48,7 +45,6 @@ const PROGRESS_TONE: Record<string, keyof typeof TONE> = Object.fromEntries(
 
 type Week = { from: string; to: string; doCount: number; doAmountSen: number; delivered: number; current: boolean };
 type History = {
-  /** When the server computed these figures (its kept copy can be up to 2 h old). */
   cachedAt?: string;
   today: string; thisMonday: string; weeks: Week[]; deliveredMonths: Array<{ month: string; doCount: number; doAmountSen: number }>;
   months: Array<{ month: string; doCount: number; doAmountSen: number }>;
@@ -65,8 +61,6 @@ const dd = (d: string) => d.slice(5).replace("-", "/");
 // Money reads like AutoCount everywhere: "RM 15,000.00" (owner 2026-09-15).
 const rm = fmtSen;
 const n = (v: number) => v.toLocaleString();
-/* The customer follow-up an open order is waiting on, from its message status
-   on Delivery Planning. */
 const FOLLOW_UP: Array<[string, RegExp]> = [
   ["Waiting for the customer to reply", /Done Send|Done Amend|To Remind Customer Reply/i],
   ["To reschedule", /Pending Reschedule|Postpone/i],
@@ -90,13 +84,9 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
     if (w) next.set("warehouse", w); else next.delete("warehouse");
     return next;
   }, { replace: true });
-  // The board in date bands, within 15 days first, the rest after (delivery-board-bands.ts).
   const board = useBandedBoard({ state: "ALL", first: 1 });
   const boardRefresh = useBoardRefresh({ changeFeed: false, countsState: null });
   const boardRows = board.orders;
-  /* Delivery Planning is the shared queue of every company the caller may see;
-     this page reports the active company, like its DO figures, so board rows
-     of another company are left out. A row with no company tag stays. */
   const companies = useQuery({ queryKey: ["companies"], queryFn: () => api.get<{ activeCompanyCode: string | null }>("/api/companies"), staleTime: 300_000 });
   const activeCode = companies.data?.activeCompanyCode ?? null;
   const histUrl = `/logistic-overview?from=${period.from}&to=${period.to}${warehouse ? `&warehouse=${warehouse}` : ""}`;
@@ -107,7 +97,6 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
     staleTime: 60_000,
   });
   const onTime = useOnTime(period.from, period.to, warehouse || null);
-  /* The period figures and on-time come from a copy up to 2 h old (the board below is live). */
   const { refresh, refreshing } = useCacheRefresh();
   const onRefresh = () => void refresh([
     { queryKey: histKey, load: () => authedFetch<History>(withFresh(histUrl)) },
@@ -123,8 +112,6 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   const allRows: PlanningOrder[] = useMemo(() => boardRows
     .filter((o) => !activeCode || !o.company_code || o.company_code === activeCode)
     .filter((o) => !warehouse || o.warehouse_id === warehouse), [boardRows, warehouse, activeCode]);
-  /* A region clicked on By region: every figure in this page's first and third
-     parts follows it. It lives in the URL, so a refresh or a shared link keeps it. */
   const region = params.get("region");
   const setRegion = (r: string | null) => setParams((prev) => {
     const next = new URLSearchParams(prev);
@@ -173,9 +160,6 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
 
   const h = hist.data;
   const focus = useMemo(() => (h?.period ? focusPeriod(h.period, region, day) : null), [h, region, day]);
-  /* The weekly and bi-weekly reports read Delivery Planning, not issued DOs (owner
-     2026-11-07): every order by its delivery date, confirmed with the customer or
-     not, so a week ahead is a forecast and moves as dates move on the board. */
   const [reportSize, setReportSize] = useState<"week" | "fortnight" | "month">("week");
   const weeks = useMemo(() => {
     const orders = regionRows.filter((o) => o.row_type === "so");
@@ -208,8 +192,6 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
     ],
   });
   const [lorryDrill, setLorryDrill] = useState<string | null>(null);
-  /* Everything on the lorry: its delivery orders, and every other board job whose crew
-     names it, on the job's date. */
   const lorryWork = (plate: string): LorryWorkRow[] => {
     const from = day ?? period.from;
     const to = day ?? period.to;
@@ -244,7 +226,6 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
   /* Order-status breakdowns (owner 2026-11-04): every sales order on the board,
      by delivery progress and by the customer-message status. */
   const progress = useMemo(() => deliveryProgressBreakdown(rows, (o) => jobDone(o, progressMap)), [rows, progressMap]);
-  /* A delivery progress card picks the orders the message table below reads. */
   const [progressPick, setProgressPick] = useState<string | null>(null);
   const pickedRows = useMemo(() => (progressPick ? rows.filter((o) => progressKeyOf(o, (x) => jobDone(x, progressMap)) === progressPick) : rows), [rows, progressPick, progressMap]);
   const msgStatus = useMemo(() => topWithOther(messageStatusBreakdown(pickedRows), 7), [pickedRows]);
@@ -346,7 +327,6 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
       <Panel title="Order status breakdown" hint={`${n(rows.length)} sales orders on the board${warehouse ? " · this warehouse" : ""} · delivered shown are those recently closed`}>
         {rows.length === 0 ? <p className="text-[12.5px] text-ink-muted">No orders on the board.</p> : (
           <div className="space-y-4">
-            {/* Delivery progress — a colour card per state (click opens its orders). */}
             <div>
               <div className="mb-2 text-[12px] font-semibold text-ink">By delivery progress</div>
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -359,7 +339,6 @@ export function LogisticOverview({ embedded }: { embedded: boolean }) {
                 ))}
               </div>
             </div>
-            {/* Message status — top few, the long tail folded into "Other". */}
             <div>
               <div className="mb-1.5 flex flex-wrap items-center gap-2 text-[12px] font-semibold text-ink">
                 By message status{pickedLabel ? ` · ${pickedLabel}` : " · all orders"}

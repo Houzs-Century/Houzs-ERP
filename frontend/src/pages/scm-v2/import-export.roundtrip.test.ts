@@ -17,7 +17,6 @@ import * as XLSX from 'xlsx';
 const written = vi.hoisted(() => ({ wb: null as unknown }));
 vi.mock('../../lib/xlsx-runtime', async (orig) => {
   const actual = await orig<typeof import('../../lib/xlsx-runtime')>();
-  /* Catch the workbook the export would download. */
   return { ...actual, writeFileXLSX: (wb: unknown) => { written.wb = wb; } };
 });
 
@@ -108,7 +107,6 @@ describe('Supplier bindings: Export CSV imports back', () => {
 
     const bytes = await new Promise<Uint8Array>((ok) => { const r = new FileReader(); r.onload = () => ok(new Uint8Array(r.result as ArrayBuffer)); r.readAsArrayBuffer(blob!); });
     expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
-    /* Keep the BOM in the text: the importer's parser is what must drop it. */
     const grid = parseCSV(new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes));
     expect(grid[0]![0]).toBe('internal_code');
     expect(grid[1]![0]).toBe(code);
@@ -131,8 +129,6 @@ describe('PO lines: the line export imports back', () => {
   const po = { po_number: 'PO-000100', lines } as unknown as PoGridRow;
 
   test('Line ID, Doc No and every editable field come back with the same value', async () => {
-    /* The grid's Doc No column is a doc-level getValue under PO_LINE_LABELS.docNo
-       (PurchaseOrdersListV2.tsx); the line columns are the grid's own. */
     const docNo: LineExportColumn<PoGridRow, PoListLine> = {
       key: 'po_number', label: PO_LINE_LABELS.docNo, getValue: (r) => (r as unknown as { po_number: string }).po_number,
     };
@@ -176,9 +172,6 @@ describe('Chart of Accounts: the AutoCount chart report imports', () => {
     { code: '900-A003', name: 'ADVERTISEMENT - ONLINE', accountType: 'EXPENSE', section: 'EXPENSES', parentCode: '900-A002', accMoney: false, specialType: null, shared: true },
   ];
 
-  /* AutoCount's layout: letterhead, column captions, a one-cell section line,
-     then a row per account with 4 spaces of indent per level and the special
-     type in column I. */
   const autoCountReport = (rows: ChartImportRow[]): unknown[][] => {
     const depth = (r: ChartImportRow): number => (r.parentCode ? 1 + depth(rows.find((p) => p.code === r.parentCode)!) : 0);
     const out: unknown[][] = [['HOUZS CENTURY SDN BHD (1476832-W)'], ['Acc. No.', 'Description', null, 'Currency']];

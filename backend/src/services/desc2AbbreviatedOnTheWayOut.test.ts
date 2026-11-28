@@ -1,8 +1,3 @@
-// The obvious fix — shorten what the ERP stores — was built and abandoned when
-// the plan showed it would reprice live sales orders: `variants.specials` is
-// matched BY NAME in mfg-pricing.ts (`findOption(pool, p)`, "Unknown picks
-// contribute 0"), and recomputeOneLine runs on save. So the abbreviation happens
-// on the way OUT, and these are the cases that keep it honest.
 import { describe, expect, it } from 'vitest';
 import {
   abbreviateDesc2,
@@ -18,8 +13,6 @@ const PREFIX_2609 = 'PC151-11 / DIVAN 8" + LEG 0" / GAP 12" / T.Heights 20" / SP
 
 describe('a Description 2 is abbreviated only on its way to the account book', () => {
   it('leaves a string that already fits EXACTLY as it was', () => {
-    /* The rule that makes this safe to ship: nothing that reaches AutoCount
-       today reaches it differently tomorrow. */
     const ok = `${PREFIX_2609}HB Fully Cover`;
     expect(ok.length).toBeLessThanOrEqual(AC_DESC2_MAX);
     expect(abbreviateDesc2(ok, AC_DESC2_MAX)).toBe(ok);
@@ -41,25 +34,14 @@ describe('a Description 2 is abbreviated only on its way to the account book', (
   });
 
   it('stops at the LEAST abbreviation that fits', () => {
-    /* A line needing only one word shortened does not also lose the others —
-       the shortest text is not the goal, the fitting one is. */
     const over = `${PREFIX_12312}HB Fully Cover + Divan Full Cover + X`;
     expect(over.length).toBeGreaterThan(AC_DESC2_MAX);
     const out = abbreviateDesc2(over, AC_DESC2_MAX);
     expect(out.length).toBeLessThanOrEqual(AC_DESC2_MAX);
-    /* The FIRST rule alone (Divan Full Cover -> Divan FC) is enough, so the
-       second phrase must come through untouched. */
     expect(out, 'went further than it needed to').toContain('HB Fully Cover');
   });
 
   it('NEVER truncates — a string it cannot fit keeps every word', () => {
-    /* REWRITTEN 2026-09-10, and the rewrite is the point. This used to use the
-       106-character add-on note on HC-SO-007678, which the owner's pointer rung
-       now fits — so that string no longer tests this property at all.
-
-       The property still holds and still matters: when the length is NOT in the
-       special order, nothing here can reach it, and the caller must refuse
-       rather than send half a specification. A colour name is the case. */
     const huge = `A VERY LONG FABRIC NAME ${'X'.repeat(120)} / DIVAN 8" + LEG 0"`;
     const out = abbreviateDesc2(huge, AC_DESC2_MAX);
     expect(out.length).toBeGreaterThan(AC_DESC2_MAX);
@@ -67,13 +49,6 @@ describe('a Description 2 is abbreviated only on its way to the account book', (
   });
 
   it('never reaches into the prose of an add-on note', () => {
-    /* A bare `Drawer` rule did exactly that — "one drawer on the left" became
-       "one Dwr on the left" — and was removed. Every rule names a whole phrase
-       somebody picked.
-
-       ASKED OF THE ABBREVIATIONS THEMSELVES, not of the whole ladder: the
-       pointer rung below replaces the entire special segment when nothing else
-       fits, so running the ladder here would prove nothing about the rules. */
     const note = 'HB Fully Cover + one drawer on the left and one drawer on the right';
     let out = note;
     for (const [pattern, short] of DESC2_ABBREVIATIONS) out = out.replace(pattern, short);
@@ -83,8 +58,6 @@ describe('a Description 2 is abbreviated only on its way to the account book', (
   });
 
   it('does not eat a longer phrase with a shorter one inside it', () => {
-    /* `Divan Full Cover` must not be reached by the rule for `Fully Cover`, and
-       `Right Drawer` must not be reached by the bare `Drawer` rule first. */
     const over = `${PREFIX_12312}Divan Full Cover + Right Drawer + Divan Full Cover`;
     const out = abbreviateDesc2(over, AC_DESC2_MAX);
     expect(out).not.toContain('Divan Full Cover');
@@ -109,9 +82,6 @@ describe('a Description 2 is abbreviated only on its way to the account book', (
 // furniture; a sentence that says where the specification lives cannot.
 // ----------------------------------------------------------------------------
 describe('a special order that will not fit points at the ERP instead', () => {
-  /* The two lines of HC-SO-007678, verbatim off production on 2026-09-09. They
-     are 207 and 212 characters against a column that holds 100, and no
-     abbreviation reaches them: the length is free prose on a paid add-on. */
   const HC_SO_007678_LINE_2 = 'KS-16 ICE STEEL / DIVAN 8" + LEG 0" / GAP 12" / T.Heights 20" / SPECIAL: Left Drawer'
     + ' + Right Drawer + Customer would like to customize the front divan with one drawer on the'
     + ' left and one drawer on the right.';
@@ -123,7 +93,6 @@ describe('a special order that will not fit points at the ERP instead', () => {
     const out = abbreviateDesc2(HC_SO_007678_LINE_2, AC_DESC2_MAX);
     expect(out.length).toBeLessThanOrEqual(AC_DESC2_MAX);
     expect(out).toContain(SPECIAL_ORDER_POINTER);
-    /* Everything that is NOT the special order still travels. */
     expect(out).toContain('KS-16 ICE STEEL');
     expect(out).toContain('T.Heights 20"');
   });
@@ -134,15 +103,11 @@ describe('a special order that will not fit points at the ERP instead', () => {
   });
 
   it('is the LAST rung — a line the abbreviations can save keeps its specials', () => {
-    /* HC-SO-012312, which the abbreviations alone bring from 115 to 98. Reaching
-       for the pointer here would throw away three real customisations that fit. */
     const line = 'PC151-11 / DIVAN 10" + NO LEG / GAP 14" / T.Heights 24"'
       + ' / SPECIAL: HB Fully Cover + Divan Full Cover + Right Drawer';
     const out = abbreviateDesc2(line, AC_DESC2_MAX);
     expect(out.length).toBeLessThanOrEqual(AC_DESC2_MAX);
     expect(out).not.toContain(SPECIAL_ORDER_POINTER);
-    /* All three customisations still travel, and `Right Drawer` is not even
-       abbreviated: the ladder stops at the least change that fits. */
     expect(out).toContain('HB FC');
     expect(out).toContain('Divan FC');
     expect(out).toContain('Right Drawer');
@@ -156,8 +121,6 @@ describe('a special order that will not fit points at the ERP instead', () => {
 
 describe('the pointer replaces a SEGMENT, never the tail of the string', () => {
   it('keeps a FREE campaign segment that prints after the special one', () => {
-    /* buildVariantSummary prints `FREE - <campaign>` LAST, after SPECIAL. Cutting
-       to the end of the string would delete a different fact about the line. */
     const line = 'PC151-11 / SPECIAL: Left Drawer + Right Drawer / FREE - Raya 2026';
     expect(pointSpecialsAtTheErp(line))
       .toBe(`PC151-11 / ${SPECIAL_ORDER_POINTER} / FREE - Raya 2026`);
@@ -174,16 +137,11 @@ describe('the pointer replaces a SEGMENT, never the tail of the string', () => {
   });
 
   it('is the owner\'s sentence, not a paraphrase', () => {
-    /* Pinned because it is text a person in the office reads and acts on. */
     expect(SPECIAL_ORDER_POINTER).toBe('Special Order: Refer to ERP');
   });
 });
 
 describe('the composer is what calls the ladder — the wiring, not the rule', () => {
-  /* A rule nothing calls changes nothing. `composeDescription2` is the one
-     function that turns an ERP line into the string AutoCount is handed, and
-     these ask IT rather than the ladder, so a future edit that drops the call
-     fails here instead of silently un-shipping the whole thing. */
   const line = (variants: Record<string, unknown>) => ({
     item_code: 'HOK-1003 (A) (K)',
     item_group: 'bedframe',

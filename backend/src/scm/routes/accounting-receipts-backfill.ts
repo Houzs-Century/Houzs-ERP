@@ -1,13 +1,3 @@
-// /accounting/receipts/backfill — the official receipts history is owed.
-//
-// Every sales-order payment births a receipt (acc/receipts.ts), but the rows
-// recorded before the module, and the SO-create rows before the hook moved,
-// have none. The plan (GET) lists what is missing per payment month with the
-// numbers the run would take; the run (POST) creates each receipt through the
-// same call the live path uses, in payment-date order, and then turns the
-// card payments merchant reconciliation has already confirmed formal on their
-// payout bank — exactly what a confirm does today. Idempotent: a payment with
-// a receipt is never touched, so a second press does nothing.
 
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
@@ -26,16 +16,12 @@ const requirePerm = (c: Ctx): boolean =>
 
 type Missing = {
   id: string; docNo: string; paidAt: string; method: string; amountSen: number; createdBy: string | null;
-  /** The acquirer whose confirmed settlement covers this card payment, if any. */
   acquirer: string | null;
 };
 
 const str = (v: unknown): string | null => (v == null ? null : String(v));
 const dayOf = (v: unknown): string => String(v ?? '').slice(0, 10);
 
-/** Sales-order payments of the company with no receipt, oldest paid first.
-    A converted row moved money that was receipted when first received; a
-    zero row has nothing to receipt. */
 async function loadMissing(sb: any, companyId: number): Promise<{ ok: true; rows: Missing[] } | { ok: false; reason: string }> {
   const pays = await paginateAll<Row>((from, to) => sb.from('mfg_sales_order_payments')
     .select('id, so_doc_no, paid_at, method, amount_sen, created_by, created_at')
@@ -58,7 +44,6 @@ async function loadMissing(sb: any, companyId: number): Promise<{ ok: true; rows
     }));
   if (missing.length === 0) return { ok: true, rows: [] };
 
-  /* Which of them merchant reconciliation has confirmed, and on whose report. */
   const ids = missing.map((m) => m.id);
   const links: Row[] = [];
   for (let i = 0; i < ids.length; i += 150) {
@@ -88,7 +73,6 @@ async function loadMissing(sb: any, companyId: number): Promise<{ ok: true; rows
   return { ok: true, rows: missing };
 }
 
-/** The acquirer → payout-bank letter map, and the banks with no letter yet. */
 async function lettersByAcquirer(sb: any, companyId: number): Promise<{ ok: true; letters: Map<string, string | null> } | { ok: false; reason: string }> {
   const { data: acqs, error: aErr } = await sb.from('acc_acquirers').select('code, bank_account_code').eq('company_id', companyId);
   if (aErr) return { ok: false, reason: `acquirers: ${aErr.message}` };
@@ -104,9 +88,6 @@ async function lettersByAcquirer(sb: any, companyId: number): Promise<{ ok: true
   return { ok: true, letters: out };
 }
 
-/** The highest number already taken on a monthly series, from the live rows.
-    A read that fails is not an empty series: the plan would name numbers
-    the run then cannot take. */
 async function seriesFloor(sb: any, companyId: number, monthPrefix: string): Promise<{ ok: true; max: number } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('acc_official_receipts').select('or_number').eq('company_id', companyId).like('or_number', `${monthPrefix}-%`);
   if (error) return { ok: false, reason: `${monthPrefix}: ${error.message}` };
@@ -124,8 +105,6 @@ export type BackfillPlan = { total: number; months: BackfillMonth[] };
 
 const pad = (n: number, digits: number): string => String(n).padStart(digits, '0');
 
-/** What the run would mint, month by month, from the live maxima — the numbers
-    the owner sees before he presses. */
 async function planFor(sb: any, companyId: number, companyCode: string, rows: Missing[]): Promise<{ ok: true; plan: BackfillPlan } | { ok: false; reason: string }> {
   const letters = await lettersByAcquirer(sb, companyId);
   if (!letters.ok) return letters;
@@ -225,8 +204,6 @@ export const receiptsBackfillRun = async (c: Ctx) => {
     if (made.ok) created += 1; else failed.push({ paymentId: r.id, docNo: r.docNo, reason: made.reason });
   }
 
-  /* Formal on the payout bank, per acquirer, in payment-date order — the
-     confirm's own step, run for the confirmations that predate the receipt. */
   const { data: acqs, error: aErr } = await sb.from('acc_acquirers').select('code, bank_account_code').eq('company_id', co.companyId);
   if (aErr) return c.json({ error: 'load_failed', reason: `acquirers: ${aErr.message}` }, 500);
   const bankOf = new Map<string, string | null>((acqs as Row[]).map((a) => [String(a.code), str(a.bank_account_code)]));

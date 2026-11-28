@@ -29,42 +29,26 @@ import {
   type CancelRequestRow,
 } from './document-cancel-queries';
 import { AMENDMENT_APPROVER_LABEL, AMENDMENT_APPROVER_TONE, soAmendmentApprover } from './amendment-approver';
-import { customerRefOf } from '../../../lib/customer-ref';
-import { amendmentBucketOf, compareAmendmentsForList, simplifiedAmendmentPill, type AmendmentBucket } from './status-pill';
+import { customerRefOf } from '../../../../../shared/src/lib/customer-ref';
+import { amendmentBucketOf, compareAmendmentsForList, simplifiedAmendmentPill, type AmendmentBucket } from '../../../../../shared/src/vendor/scm/lib/status-pill';
 
 export type AmendmentQueueKind = 'AMENDMENT' | 'CANCEL';
 
 export type AmendmentQueueRow = {
-  /** Unique across both kinds — an amendment id and a request id are both uuids
-   *  from different tables, so neither alone can key the merged list. */
   key: string;
   kind: AmendmentQueueKind;
-  /** What the row is, in the queue's own words. */
   kindLabel: string;
   soDocNo: string;
-  /** The SO's customer reference, by the Sales Order list's own rule — carried
-   *  for BOTH kinds of row since the cancellation endpoint began sending it. */
   reference: string;
-  /** "A3" for an amendment, the SO's number for a cancellation. */
   numberLabel: string;
-  /** Whose signature it waits on, and the badge colour for it. `approverKey`
-   *  is the amendment lane's approver enum, or CANCEL_L1 / CANCEL_L2 / CANCEL:
-   *  it identifies the desk in the DOM and is never shown. */
   approverKey: string;
   approverLabel: string;
   approverTone: { bg: string; fg: string };
-  /** Amendments name a scm.staff uuid the surface resolves through the roster;
-   *  a cancellation carries the name the API already resolved. */
   requestedByStaffId: string | null;
   requestedByName: string | null;
   reason: string;
-  /** What the cancellation's approvers wrote when signing (DEV-17); '' for an
-   *  amendment, whose approver works on its job card. */
   approvalRemarks: string;
-  /** Requested / Approved / Rejected — the queue's three chips. */
   bucket: AmendmentBucket;
-  /** The precise state, for the status cell: an amendment's simplified pill
-   *  word, a cancellation's "waiting for level-2 approval (1 of 2)" sentence. */
   statusLabel: string;
   createdAt: string | null;
   amendment: AmendmentRow | null;

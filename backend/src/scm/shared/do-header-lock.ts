@@ -36,11 +36,8 @@
 import { normalizePhone } from './phone';
 
 export type DoHeaderLockField = {
-  /** DB column on scm.delivery_orders. */
   col: string;
-  /** The PATCH body key(s) that write it. */
   body: readonly string[];
-  /** What the refusal and the screen call it. */
   label: string;
 };
 

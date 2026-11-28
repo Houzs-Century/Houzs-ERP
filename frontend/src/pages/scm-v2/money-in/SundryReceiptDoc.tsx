@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// SundryReceiptDoc — /scm/receipts/sundry/:id, a sundry-income receipt as a
-// page (the owner's Claude Design, batch 5 §8; no page had it before). Who
-// paid, into which account, the lines and the accounts they credit, its
-// journal — and its steps: Copy as new and Edit (the form in place of the
-// page, `?form=copy|edit`), Void… asked inline. Edit re-posts and Void
-// reverses through the same routes as the Receipts page; nothing posts
-// differently.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -15,7 +6,7 @@ import {
   postableAccounts, useAccounts, useCreateReceipt, useReceiptDetail, useUpdateReceipt, useVoidReceipt,
   type ReceiptDetail,
 } from '../../../vendor/scm/lib/accounting-queries';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
 import { DataTable, type Column } from '../../../components/DataTable';
@@ -50,12 +41,10 @@ export const SundryReceiptDoc = () => {
   const journals = useDocJournals('RCT', r?.receipt_number);
   const accountsQ = useAccounts();
   const create = useCreateReceipt();
-  /* One key per Copy opened on this receipt; this screen stays mounted when the copy opens, so a later copy gets its own. */
   const copyKey = useIdempotencyKeyFor(`${form ?? ''}:${id}`);
   const update = useUpdateReceipt();
   const voidIt = useVoidReceipt();
   const { can } = useHouzsAuth();
-  /* The Receipts page's own keys (Receipts.tsx). */
   const canCreate = can('scm.payment_voucher.create');
   const canEdit = can('scm.payment_voucher.write') || canCreate;
   const canCancel = can('scm.payment_voucher.cancel');

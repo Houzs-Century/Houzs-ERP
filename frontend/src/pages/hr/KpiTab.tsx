@@ -1,15 +1,8 @@
-/* HR · KPI (v3 design — monthly scorecard overview). One row per active
- * employee: their position, each KPI metric as a progress bar, the final score
- * (0-100, the real 1-5 weighted score / 5), and the payout grade (tier). Four
- * stat cards summarise the month. A row opens the scoring drawer, where the real
- * weekly 1-5 scoring, save / confirm / reopen are unchanged — the score, tier and
- * RM it shows are exactly what the server books (computeKpi). "Edit KPI weights"
- * opens the metric/tier settings. Scores come from the real KPI config + reviews. */
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useToast } from "../../hooks/useToast";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
-import { fmtSen, todayMY } from "../../vendor/shared/format";
+import { fmtSen, todayMY } from "../../../../shared/src/vendor/shared/format";
 import { computeKpi, finalScoreX100, KPI_WEEKS, resolveTier, type KpiMetricDef, type KpiRating, type KpiRole, type KpiTierDef } from "../../vendor/shared/hr-kpi";
 import { errText } from "../pos-admin/posAdminUi";
 import { HrPageHeader, hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";
@@ -20,7 +13,6 @@ import { confirmKpiReview, saveKpiReview, seedKpiDefault, unconfirmKpiReview, us
 const WEEKS = Array.from({ length: KPI_WEEKS }, (_, i) => i + 1);
 const keyOf = (week: number, metricId: number) => `${week}-${metricId}`;
 const fmtScore = (x: number | null) => (x === null ? "—" : (x / 100).toFixed(2));
-// The real final/metric score is 1-5 x100 (100-500); the scorecard shows it 0-100.
 const to100 = (x100: number | null) => (x100 === null ? null : Math.round(x100 / 5));
 const METRIC_TONES = ["bg-synced", "bg-time", "bg-learning", "bg-primary", "bg-accent"];
 const barTone = (v: number | null): string => (v === null ? "bg-surface-2" : v >= 80 ? "bg-synced" : v >= 70 ? "bg-time" : "bg-err");

@@ -49,27 +49,10 @@ export interface NavFilterCtx {
  */
 export function makeNavVisible({ user, can, pageAccess }: NavFilterCtx) {
   return function navVisible(t: NavTab): boolean {
-    // Sales-access model HIDE gate — cut entirely for ALL Sales users
-    // (director included; checked first so it wins over any show-gate below).
-    // Non-sales staff pass through unchanged.
     if (t.hideForSales && isSalesStaff(user)) return false;
-    // Rep HIDE gate — cut from a NON-director Sales rep only (SCM trim +
-    // Service-Cases board/metrics). Director/office pass through.
     if (t.hideForSalesRep && isSalesNonDirector(user)) return false;
-    /* HIDE UNLESS THE SERVER SAID YES — evaluated BEFORE the sales bypasses
-       below, so no `showFor*` flag can re-open an entry the capability denies.
-       Used for the Assistant (org.assistant.use): the backend 403s a denied
-       caller regardless, this only stops offering a menu item that would fail
-       when tapped. capability() fails closed, so a stale shell with no resolved
-       set hides the entry rather than leaking it. */
     if (t.requireCapability && !capability(user, t.requireCapability)) return false;
-    // Rep-only entry — visible ONLY to a non-director Sales rep; everyone else
-    // (office/director) never sees it.
     if (t.salesRepOnly && !isSalesNonDirector(user)) return false;
-    // Sales-access model SHOW bypass — Sales staff see `showForSales` entries
-    // even without the usual permission / page-access gate (keyed off the org
-    // department, NOT the config matrix). HIDE gates (above + hidePerm /
-    // requireFinanceViewer below) still apply.
     const salesBypass =
       (!!t.showForSales && isSalesStaff(user)) ||
       (!!t.showForSalesDirector && isSalesDirectorUser(user)) ||
@@ -78,15 +61,7 @@ export function makeNavVisible({ user, can, pageAccess }: NavFilterCtx) {
       (!!t.salesRepOnly && isSalesNonDirector(user));
     if (!salesBypass) {
       if (t.perm && !can(t.perm)) return false;
-      // `anyPerm` + `anyAccess` are ORed: when both are present the tab shows
-      // if EITHER a listed permission OR a listed page-access key passes. This
-      // keeps the SCM nav ADDITIVE — `scm.access`/`*` still grant everything,
-      // and a per-position SCM page-access grant ALSO unlocks its area.
       if (t.anyPerm || t.anyAccess) {
-        // For users with an explicit SCM L2 config, `scm.access` no longer
-        // auto-shows every SCM nav item — visibility falls to the granular
-        // page_access (anyAccess), mirroring the backend area-guard. `*` still
-        // shows everything; scm.access-only users (no L2) are unaffected.
         const navPerms =
           user?.scm_l2_configured && t.anyPerm
             ? t.anyPerm.filter((p) => p !== "scm.access")
@@ -97,17 +72,12 @@ export function makeNavVisible({ user, can, pageAccess }: NavFilterCtx) {
           : false;
         if (!permOk && !accessOk) return false;
       }
-      // Page-access (mig 073) — `pageAccess` requires >= partial; the
-      // -Full variant requires "full". Wildcard short-circuits to full
-      // inside `pageAccess(...)`.
       if (t.pageAccess && pageAccess(t.pageAccess) === "none") return false;
       if (t.pageAccessFull && pageAccess(t.pageAccessFull) !== "full")
         return false;
     }
     if (t.hidePerm && can(t.hidePerm)) return false;
     if (t.requireFinanceViewer && !user?.project_finance_viewer) return false;
-    // Fair Report cohort — management + the Sales Director only (mirrors the
-    // backend fairReportAccess). A hard gate: no show-bypass can re-open it.
     if (t.requireFairReport && !canViewFairReport(user)) return false;
     return true;
   };
@@ -118,9 +88,6 @@ export function makeNavFilter(ctx: NavFilterCtx) {
   const navVisible = makeNavVisible(ctx);
   return function filterTab(t: NavTab): NavTab | null {
     if (!navVisible(t)) return null;
-    // Rep click-target override — a non-director Sales rep's group headers point
-    // at a reachable leaf (Supply Chain -> /scm/sales-orders, Service Cases ->
-    // /my-cases) instead of the /scm or board hub that would 403 them.
     const to = t.salesRepTo && isSalesNonDirector(user) ? t.salesRepTo : t.to;
     if (t.children) {
       const kids = t.children
@@ -157,8 +124,6 @@ export type NavLocation = { pathname: string; search: string };
 export function navToIsActive(to: string, loc: NavLocation, end?: boolean, notWithParam?: string): boolean {
   const [path, search] = to.split("?");
   if (end ? loc.pathname !== path : !loc.pathname.startsWith(path)) {
-    // For non-end matches, allow startsWith for nested routes (e.g.
-    // /projects/123 still highlights /projects).
     if (loc.pathname !== path) return false;
   }
   const have = new URLSearchParams(loc.search);

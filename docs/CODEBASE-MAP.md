@@ -49,6 +49,7 @@ Two independently deployed apps in one repo, plus two small side services.
 | `backend/` | Cloudflare Worker (`autocount-sync-api`), Hono. The ONLY writer of business data. | `.github/workflows/deploy.yml` on push to `main` |
 | `frontend/` | React + Vite SPA on Cloudflare Pages, served at `erp.houzscentury.com`. | same workflow, separate job |
 | `pos/` | Houzs POS, the cash & carry booth app: its own Vite + React PWA on Cloudflare Pages (`houzs-pos`, `pos.houzscentury.com`), same Worker backend. Guide: `docs/modules/pos.md`. | `.github/workflows/deploy-pos.yml` on push to `main` |
+| `shared/` | Code BOTH apps bundle, imported by neither app's `src` from the other's (`scripts/check-layout.mjs`). Today: the Sales Order, Purchase Order, Sales Invoice and GRN PDF layouts and what they read (`shared/src/`, mirroring the `frontend/src/` paths it came from; the frontend keeps one-line re-exports at the old paths). The Worker reaches it only through `backend/src/lib/shared-pdf.ts` (AI Connector `get_pdf`). Kept DOM-free by the backend typecheck; `backend/tests/pdfSharedBoundary.test.ts` holds the graph and the workflows to it. Not covered by either app's ESLint config yet. | both jobs (`ci.yml` changes and `deploy.yml` filters list `shared/**` for both halves) |
 | `e2e/` | Playwright specs run against STAGING, not prod. | `staging-e2e.yml` |
 | `mail-sync/` | Standalone IMAP poller that POSTs received mail into the Mail Center ingest. | `mail-sync.yml` |
 | `reference/` | Non-code: the legacy Google Apps Script exports and brand assets. Never imported. | — |
@@ -273,6 +274,16 @@ symmetry was bought by a bug and should not be undone.
 secret-guarded ingest fed by the standalone `mail-sync/` poller;
 `routes/mail-center.ts` is the authed read/reply/compose surface; the pages are
 `pages/MailCenter/*` and `mobile/MobileMailCenter.tsx`.
+
+**AI Connector (MCP).** Staff connect Claude / ChatGPT with their own login at `/api/mcp`
+(`routes/mcp.ts`, admin `routes/mcpAdmin.ts`, logic `services/mcp-*.ts`). Every read is an
+in-process GET as the person; the only writes are confirm-first actions through
+`services/mcp-inner.ts ACTION_ALLOWLIST` (meeting, email, Mail Center reply, service-case
+note), each behind an admin switch. Tool list, prompts and output schemas per role:
+`services/mcp-round4c.ts`; actions: `services/mcp-write-actions.ts`. Morning brief / urgent alert
+emails (cron `*/15` and `*/30`, built as the person): `services/mcp-proactive*.ts`, unsubscribe
+`routes/mcpBrief.ts`. Help tools (how_to, module_overview, glossary, explain_error, onboarding): `services/mcp-howto*.ts`; screen map + explain_screen / where_is: `services/mcp-screen*.ts`; `?highlight=` helper `components/HighlightFromUrl.tsx`, index `docs/modules/how-to-guides.md`. Page `pages/AiConnector.tsx` (+ `AiConnectorBrief.tsx`).
+Rules: `docs/modules/ai-connector.md`.
 
 **Meetings.** Meeting rooms shared by every company and ERP. Rooms, meetings and guest
 links live in the Houzs IT Hub; `routes/meetings.ts` relays to it (staff at `/api/meetings`,

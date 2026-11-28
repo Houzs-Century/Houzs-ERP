@@ -1,29 +1,3 @@
-/* ----------------------------------------------------------------------------
-   assrOrderPos — "Order PO" on a service case: the supplier purchase orders
-   raised from the case's SALES ORDER.
-
-   WHY A NEW FIELD AND NOT po_no. Staff reported "create service case no have PO
-   no record in the column". Two facts made that column the wrong home:
-     · the ERP create path hard-codes SOUDF_ToPONo: null (fetchScmSoContext in
-       services/assr.ts), so po_no is only ever filled by hand or by the old
-       AutoCount getSingle path;
-     · po_no is the case's OWN service purchase order. POST /:id/generate-po
-       refuses once it is set, and cost resolution reads it as the PO to price
-       the repair from. Writing the SO's purchase orders into it would block
-       the service PO and misprice the case.
-   So this is a read-only enrichment beside do_numbers, never stored.
-
-   Source: the one SO -> PO walk the Sales Orders list already uses
-   (scm/lib/so-converted-po.ts): SO line -> purchase_order_items.so_item_id ->
-   purchase_orders, CANCELLED dropped, DRAFT kept.
-
-   COMPANY. Service Cases are a cross-company queue, so one page can hold cases
-   of both companies. Each case is resolved inside ITS OWN company_id — doc
-   numbers are not a company boundary. A case with no company_id gets an empty
-   list rather than an unscoped read.
-
-   Fail-soft like do_numbers: a failed read leaves [] and the case still loads.
-   ---------------------------------------------------------------------------- */
 import { soConvertedPos, type SoConvertedPo } from "../scm/lib/so-converted-po";
 
 export type AssrOrderPo = SoConvertedPo;
@@ -96,7 +70,6 @@ export async function attachExchangePurchaseOrders(
         }
         for (const r of group) r.exchange_pos = byCase.get(Number(r.id)) ?? [];
       } catch {
-        /* fail-soft: the case still loads with exchange_pos = [] */
       }
     }),
   );
@@ -226,7 +199,7 @@ export async function applyErpSupplierNames(
         r.creditor_attention = s.contact_person ?? null;
         for (const t of trips ?? []) if (t.creditor_code === r.creditor_code) t.creditor_name = s.name;
       }
-    } catch { /* fail-soft: the creditors name stays */ }
+    } catch { }
   }));
 }
 
@@ -261,9 +234,6 @@ export async function supplierPickerResults(
 
 export const poKey =(companyId: unknown, docNo: unknown, itemCode: unknown) => `${Number(companyId)}|${docNo}|${itemCode}`;
 
-/* Batched: which (company, SO, item) triples have a non-cancelled PO raised for
-   that SO line. 3 reads per company, whatever the number of cases. Read error
-   -> empty set (the fill just does not run). */
 export async function itemsWithLivePo(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
@@ -297,7 +267,7 @@ export async function itemsWithLivePo(
         const line = lineOf.get(l.so_item_id);
         if (line && live.has(l.purchase_order_id)) out.add(poKey(cid, line.doc_no, line.item_code));
       }
-    } catch { /* fail-soft */ }
+    } catch { }
   }));
   return out;
 }

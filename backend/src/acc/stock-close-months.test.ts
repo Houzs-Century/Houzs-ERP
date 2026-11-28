@@ -1,9 +1,3 @@
-// The months the stock close has booked, as Books › Stock close lists them
-// (batch 6 c4). Pinned: each month's ACTIVE closing entry, its value per bucket
-// (customer, display, service, showroom, others) from the bucket accounts'
-// debits, posted once or re-posted (an earlier closing entry reversed), the
-// opening entry beside it, newest month first; another company's entries and
-// a REV document never count as a month of their own.
 
 import { describe, expect, test } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
@@ -62,7 +56,6 @@ describe('closedStockMonths', () => {
     const sb = world([mv({ warehouse_id: 'wh-main', movement_date: '2026-07-10', created_at: '2026-07-10T02:00:00Z' })]);
     await closeStockMonth(sb, CO, '2026-07', 'cron');
     await closeStockMonth(sb, CO, '2026-08', 'cron');
-    /* A late GRN dated in August: the August close re-posts. */
     sb.tables.inventory_movements.push(mv({ warehouse_id: 'wh-disp', total_cost_sen: 3_480, movement_date: '2026-08-29', created_at: '2026-09-12T02:00:00Z' }));
     expect((await closeStockMonth(sb, CO, '2026-08', 'manual')).action).toBe('reposted');
     const r = await closedStockMonths(sb, CO);

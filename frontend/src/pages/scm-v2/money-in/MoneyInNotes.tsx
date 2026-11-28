@@ -43,7 +43,7 @@ import { cancelledDocNoClass, cancelledRowClass } from '../../../lib/scm';
 import { useOpenDocInTab } from '../../../lib/openDocInTab';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { FinanceDocLink } from '../finance/FinanceDocLink';
 import { NoteForm, emptyForm, noteEditValues } from '../CreditNotes';
 import { fromReturnValues, nothingToCredit, skippedReturnLines } from '../credit-note-from-return';
@@ -74,7 +74,6 @@ const accountNamer = async (): Promise<(code: string) => string | null> => {
   return (code) => names.get(code) ?? null;
 };
 
-/** The note kind a new note's switch names (an other debtor's debit note is a bill, not a note). */
 const kindOf = (type: NoteType, party: NoteParty): NoteKind => (type === 'debit' ? 'DN' : party === 'debtor' ? 'OCN' : 'CN');
 
 export function MoneyInNotes() {
@@ -84,7 +83,6 @@ export function MoneyInNotes() {
   const qc = useQueryClient();
   const toast = useToastOptional();
   const { can } = useHouzsAuth();
-  /* The server's keys (credit-notes.ts; a debit note to an other debtor is a bill — other-debtors.ts). */
   const canCreate = can('scm.payment_voucher.create');
   const canWrite = can('scm.payment_voucher.write') || canCreate;
   const canPost = can('scm.payment_voucher.post');
@@ -122,8 +120,6 @@ export function MoneyInNotes() {
     void qc.invalidateQueries({ queryKey: ['journal-entries'] });
   };
 
-  /* Post to ledger (one or a batch): the note's own post route, one by one;
-     the first refusal stops the run, verbatim. */
   const postNotes = async (rows: NoteItem[]) => {
     const drafts = rows.filter((x) => x.source === 'note' && x.status === 'draft');
     if (drafts.length === 0 || busy) return;
@@ -146,9 +142,6 @@ export function MoneyInNotes() {
     }
   };
 
-  /* Print: the notes as ONE document in list order (credit-note-pdf); an other
-     debtor's debit note prints as the bill it is (ar-invoice-print) — through
-     the print dialog (batch 5 step 10). */
   const deliverPrint = async (rows: NoteItem[], action: PdfAction) => {
     if (rows.length === 0 || busy) return;
     setBusy('print'); setFailure(null);
@@ -186,8 +179,6 @@ export function MoneyInNotes() {
     });
   };
 
-  /* Cancel, asked inline: a note's (a contra once posted, its knock-off given
-     back first), or an other debtor's debit note — a bill, refused once money came in. */
   const [asking, setAsking] = useState<NoteItem | null>(null);
   const [askError, setAskError] = useState<string | null>(null);
   const askCancel = (x: NoteItem) => { setAskError(null); setAsking(x); };
@@ -235,7 +226,6 @@ export function MoneyInNotes() {
         ...(!x.cancelled && canWrite ? [{ label: 'Edit', onClick: () => openForm('edit', x) }] : []),
         ...(canCreate ? [{ label: 'Copy as new', onClick: () => openForm('copy', x) }] : []),
         DIVIDER, printIt, DIVIDER,
-        /* Money received on it keeps it (the bill's own rule, said on its page). */
         ...(!x.cancelled && !received && canCancel ? [{ label: 'Cancel note…', danger: true, onClick: () => askCancel(x) }] : []),
       ]);
     }
@@ -244,13 +234,10 @@ export function MoneyInNotes() {
       open,
       ...(x.status === 'draft' && canWrite ? [{ label: 'Edit', onClick: () => openForm('edit', x) }] : []),
       ...(x.status === 'draft' && canPost ? [{ label: 'Post to ledger', onClick: () => { void postNotes([x]); } }] : []),
-      /* An other debtor's credit comes off their bills on the note's page (its knock-off); a
-         customer's off their sales invoices on its Knock off form — never a deposit invoice's note. */
       ...(x.status === 'posted' && kind === 'OCN' ? [{ label: 'Knock off', onClick: () => openRow(x) }] : []),
       ...(x.status === 'posted' && kind === 'CN' && !x.note?.depositPaper && canPost ? [{ label: 'Knock off', onClick: () => openForm('knock', x) }] : []),
       ...(canCreate ? [{ label: 'Copy as new', onClick: () => openForm('copy', x) }] : []),
       DIVIDER, printIt, DIVIDER,
-      /* An opening paper is changed on Opening Balance — the server refuses a cancel here. */
       ...(!x.cancelled && !x.note?.opening && canCancel ? [{ label: 'Cancel note…', danger: true, onClick: () => askCancel(x) }] : []),
     ]);
   };
@@ -282,8 +269,6 @@ export function MoneyInNotes() {
       total: (rows) => fmtSen(rows.filter((x) => !x.cancelled).reduce((s, x) => s + x.totalSen, 0)),
     },
     {
-      /* What an other debtor's posted credit came off; a customer's note knocks
-         off nothing yet (the sales-invoice knock-off waits for the owner, f2). */
       key: 'knock_off_amount', label: 'Knocks off',
       render: (x) => (x.closesInvoice ? <span className={ui.muted} title="Closes a deposit invoice at the final invoice">{x.closesInvoice}</span>
         : !x.knocks ? <span className={ui.muted}>—</span>
@@ -297,7 +282,6 @@ export function MoneyInNotes() {
     { key: 'actions', label: '', align: 'right', width: '150px', disableSort: true, disableFilter: true, render: actionsOf },
   ];
 
-  /* A posted customer note's knock-off (the design's Knock off <no>). From the note's page, back to it. */
   if (form === 'knock' && params.get('id')) {
     const id = params.get('id') ?? '';
     const fromNote = params.get('back') === 'note';
@@ -306,13 +290,11 @@ export function MoneyInNotes() {
   }
   if (form === 'new' || form === 'copy' || form === 'edit') {
     const id = params.get('id');
-    /* An other debtor's debit note is a bill: Invoices' bill form, its debit-note kind. */
     if (params.get('src') === 'bill' && id) {
       return <BillFormPage mode={form === 'edit' ? 'edit' : 'copy'} id={id} debtorId="" docKind="DN" backLabel={BACK} onClose={closeForm} openDoc={openInTab} />;
     }
     const type: NoteType = params.get('type') === 'debit' ? 'debit' : 'credit';
     const party: NoteParty = params.get('party') === 'debtor' ? 'debtor' : 'customer';
-    /* From a delivery return (backlog A1): a customer credit note, so no type switch. */
     const fromReturn = form === 'new' ? params.get('fromReturn') : null;
     const switches = form === 'new' && !fromReturn
       ? <NoteTypeSwitch type={type} party={party} onChange={(t, p) => setUrl({ type: t === 'credit' ? null : t, party: p === 'customer' ? null : p })} />
@@ -397,7 +379,6 @@ export function MoneyInNotes() {
   );
 }
 
-/** A new note's two switches: Credit note / Debit note, and Customer / Other debtor. */
 function NoteTypeSwitch({ type, party, onChange }: { type: NoteType; party: NoteParty; onChange: (type: NoteType, party: NoteParty) => void }) {
   return (
     <span className={ui.topRow}>
@@ -409,16 +390,11 @@ function NoteTypeSwitch({ type, party, onChange }: { type: NoteType; party: Note
   );
 }
 
-/* ── The note form, in place of the list (`?form=new|copy|edit`) ────────────
-   CreditNotes.tsx's NoteForm, inline: POST /credit-notes (a draft) or PATCH
-   /credit-notes/:id, then POST /credit-notes/:id/post on Save & post. Copy as
-   new starts from the note's party and lines, dated today, nothing knocked off. */
 function NoteFormPage({ mode, id, kind, switches, fromReturn, onClose, onSaved, openDoc }: {
   mode: 'new' | 'copy' | 'edit';
   id: string | null;
   kind: NoteKind;
   switches: ReactNode;
-  /** A delivery return's id: the new note is filled from it. Null for every other new note. */
   fromReturn: string | null;
   onClose: () => void;
   onSaved: () => void;
@@ -426,7 +402,6 @@ function NoteFormPage({ mode, id, kind, switches, fromReturn, onClose, onSaved, 
 }) {
   const toast = useToastOptional();
   const { touched: formTouched, markTouched } = useFormTouched();
-  // The form shares the list's path; `?form=` is what addresses it.
   const { allowLeave } = useLeaveGuard(formTouched, ['form']);
   const detailQ = useCreditNoteDetail(mode === 'new' ? null : id);
   const prefillQ = useCreditNoteFromReturn(mode === 'new' ? fromReturn : null);
@@ -443,7 +418,6 @@ function NoteFormPage({ mode, id, kind, switches, fromReturn, onClose, onSaved, 
   const blocked = mode === 'new' && fromReturn && prefill ? nothingToCredit(prefill) : null;
   const skipped = mode === 'new' && fromReturn && prefill ? skippedReturnLines(prefill) : [];
   const title = mode === 'edit' ? `Edit ${n?.note_number ?? ''}` : mode === 'copy' ? `New note · copy of ${n?.note_number ?? ''}` : 'New note';
-  /* A posted or cancelled note is not edited here (the server refuses it too). */
   const locked = mode === 'edit' && n != null && n.status !== 'DRAFT';
 
   return (

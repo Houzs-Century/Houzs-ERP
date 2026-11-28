@@ -21,14 +21,8 @@
    -------------------------------------------------------------------------- */
 
 export type ShippedProgress = {
-  /** How many units have left. */
   shipped: number;
-  /** How many the order is committed to deliver — shipped + still owed, net of
-   *  cancellation, taken from the same deliverable engine the picker uses. */
   deliverable: number;
-  /** 'none' before the first delivery, 'partial' while any is owed, 'full' when
-   *  none is. `unknown` when the payload predates these fields — NOT 'none',
-   *  which would claim nothing has shipped. */
   state: 'none' | 'partial' | 'full' | 'unknown';
 };
 
@@ -47,9 +41,6 @@ export function shippedProgressOf(r: ShippedProgressFields): ShippedProgress {
   if (typeof shipped !== 'number' || typeof deliverable !== 'number') {
     return { shipped: 0, deliverable: 0, state: 'unknown' };
   }
-  /* A deliverable of 0 means there is nothing to ship (every line cancelled, or
-     a service-only order). That is 'none', never 'full' — calling it fully
-     delivered would put a DELIVERED badge on an order nobody ever shipped. */
   if (deliverable <= 0) return { shipped, deliverable, state: 'none' };
   if (shipped <= 0) return { shipped, deliverable, state: 'none' };
   return { shipped, deliverable, state: shipped >= deliverable ? 'full' : 'partial' };
@@ -63,9 +54,6 @@ export function shippedProgressLabel(p: ShippedProgress): string | null {
   return `${p.shipped} / ${p.deliverable}`;
 }
 
-/* A LINE carries the same two facts under the names the SO detail has always
-   used. Adapting here rather than at the call site is the point: one rule, so
-   the row and the line can never disagree about the same order. */
 export type ShippedProgressLineFields = {
   delivered_qty?: number | null;
   remaining_qty?: number | null;

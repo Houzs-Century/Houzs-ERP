@@ -4,7 +4,7 @@ import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { AnnouncementMedia } from "../../components/AnnouncementMedia";
 import { AnnouncementRichBody } from "../../components/AnnouncementRichBody";
 import { cn, relativeTime } from "../../lib/utils";
-import { fmtDateTime } from "../../vendor/shared/format";
+import { fmtDateTime } from "../../../../shared/src/vendor/shared/format";
 import {
   CATEGORY_META,
   INBOX_FILTERS,
@@ -46,9 +46,7 @@ export type ReceiptsSummary = { total: number; ackedCount: number } | null;
 export type InboxViewProps = {
   items: Announcement[];
   loading: boolean;
-  /** Ids ADDRESSED to me (the /banner human slice) — only these can be pending. */
   addressedIds: ReadonlySet<string>;
-  /** Ids I have acknowledged (server + this session). */
   ackedIds: ReadonlySet<string>;
   currentUserId: number | null;
   companies: Company[];
@@ -59,16 +57,13 @@ export type InboxViewProps = {
   onFilter: (f: InboxFilter) => void;
   search: string;
   onSearch: (q: string) => void;
-  /** May this reader manage the notice (receipts card, remind, hide)? */
   canManage: (a: Announcement) => boolean;
-  /** Is "Remind later" still available for this notice? */
   canPostpone: (a: Announcement) => boolean;
   onAck: (a: Announcement) => void;
   onPostpone: (a: Announcement) => void;
   onOpenManage: (a: Announcement) => void;
   onRemindPending: (a: Announcement) => void;
   onHide: (a: Announcement) => void;
-  /** Read receipts for the SELECTED notice (writers only). */
   receipts: ReceiptsSummary;
   receiptsLoading: boolean;
   className?: string;
@@ -90,12 +85,8 @@ export function listWidthStorageKey(userId: number | null): string {
   return `announcements:inbox-width:u${userId ?? 0}`;
 }
 
-// Every list row: a 3px category rail + content that may SHRINK below its
-// intrinsic width (minmax(0,1fr)), so long titles wrap instead of pushing the
-// column into a horizontal scroll.
 const ROW_GRID = "grid shrink-0 cursor-pointer grid-cols-[3px_minmax(0,1fr)] border-b border-border-subtle";
 
-// Pill geometry shared by the list rows and the reading pane.
 const PILL =
   "inline-flex items-center rounded-full px-[7px] py-[2px] text-[9.5px] font-bold uppercase tracking-[.06em]";
 const EYEBROW = "font-mono text-[10px] font-bold uppercase tracking-wider";
@@ -121,7 +112,6 @@ export function InboxView(p: InboxViewProps) {
     ? p.items.find((a) => a.id === p.selectedId) ?? null
     : null;
 
-  // ── Resizable list column ──────────────────────────────────────────────
   const [listWidth, setListWidth] = useLocalStorage<number>(
     listWidthStorageKey(p.currentUserId),
     LIST_WIDTH_DEFAULT,
@@ -175,7 +165,6 @@ export function InboxView(p: InboxViewProps) {
       className={cn("grid min-h-0", p.className)}
       style={{ gridTemplateColumns: `${listWidth}px 7px minmax(0,1fr)` }}
     >
-      {/* ── Left list ──────────────────────────────────────────────────── */}
       <div
         className="flex min-h-0 min-w-0 flex-col overflow-y-auto overflow-x-hidden bg-surface"
         data-testid="inbox-list"
@@ -296,7 +285,6 @@ export function InboxView(p: InboxViewProps) {
         )}
       </div>
 
-      {/* ── Drag handle: the list's right edge ─────────────────────────── */}
       <div
         role="separator"
         aria-orientation="vertical"
@@ -317,7 +305,6 @@ export function InboxView(p: InboxViewProps) {
         />
       </div>
 
-      {/* ── Reading pane ───────────────────────────────────────────────── */}
       <div className="flex min-h-0 min-w-0 flex-col bg-bg">
         {selected ? (
           <ReadingPane
@@ -345,7 +332,6 @@ export function InboxView(p: InboxViewProps) {
   );
 }
 
-// ── List pieces ────────────────────────────────────────────────────────────
 
 function GroupHeader({
   label,
@@ -371,8 +357,6 @@ function GroupHeader({
   );
 }
 
-// `author · audience`; just the audience while the author's name is unknown
-// (older payloads without createdByName) — never a placeholder dash.
 function byLine(a: Announcement, lookups: NameLookups): string {
   const who = a.createdByName?.trim();
   const audience = audienceLabel(a, lookups);
@@ -460,8 +444,6 @@ function RecentRow({
       <div className="flex flex-col gap-1 px-3.5 py-2.5">
         <div className="flex items-center gap-1.5">
           <span className={cn(PILL, meta.pillCls)}>{meta.label}</span>
-          {/* Confirmed / Unread only for a notice addressed to ME — a manager
-              reading someone else's audience has nothing to confirm. */}
           {addressed && (
             <span
               className={cn(
@@ -519,7 +501,6 @@ function SopRow({
   );
 }
 
-// ── Reading pane ───────────────────────────────────────────────────────────
 
 function ReadingPane({
   a,

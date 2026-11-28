@@ -5,15 +5,42 @@ import { mytClock, stopStatusByRef } from "./delivery-stop-status";
 const fix = (tripId: string, recordedAt: string, lat = 3.1) =>
   ({ tripId, driverId: null, lat, lng: 101.6, accuracyM: 10, recordedAt, receivedAt: recordedAt });
 
+const NOW = Date.parse("2026-10-08T02:10:00Z");
+const tracker = (recorded_at: string) => ({ lorry_id: "l1", plate: "VAA1234", lat: 4, lng: 102, speed_kmh: null, heading: null, ignition: null, street: null, recorded_at, received_at: recorded_at });
+
 describe("vehiclePositionsFrom", () => {
+  const runs = [{ id: "t1", status: "IN_PROGRESS", lorry: { id: "l1", plate: "VAA1234" } }];
+  test("a fresh tracker fix beats the phone", () => {
+    const out = vehiclePositionsFrom([fix("t1", "2026-10-08T02:09:00Z", 3.0)], runs, [tracker("2026-10-08T02:05:00Z")], NOW, true);
+    expect(out).toEqual([expect.objectContaining({ lat: 4, source: "gps" })]);
+  });
+  test("a stale tracker fix loses to the phone", () => {
+    const out = vehiclePositionsFrom([fix("t1", "2026-10-08T02:09:00Z", 3.0)], runs, [tracker("2026-10-08T01:00:00Z")], NOW, true);
+    expect(out).toEqual([expect.objectContaining({ lat: 3.0, source: "phone" })]);
+  });
+  test("a past day or a run not in progress never takes the tracker", () => {
+    const t = [tracker("2026-10-08T02:05:00Z")];
+    expect(vehiclePositionsFrom([], runs, t, NOW, false)).toEqual([]);
+    expect(vehiclePositionsFrom([], [{ ...runs[0]!, status: "PLANNED" }], t, NOW, true)).toEqual([]);
+  });
+  test("two runs on one lorry: the newest fix wins, a fresh phone beats a stale tracker", () => {
+    const two = [...runs, { id: "t9", status: "IN_PROGRESS", lorry: { id: "l1", plate: "VAA1234" } }];
+    const out = vehiclePositionsFrom([fix("t9", "2026-10-08T02:09:00Z", 3.0)], two, [tracker("2026-10-08T01:00:00Z")], NOW, true);
+    expect(out).toEqual([expect.objectContaining({ lat: 3.0, source: "phone" })]);
+  });
+  test("no phone fix: the stale tracker fix still shows", () => {
+    const out = vehiclePositionsFrom([], runs, [tracker("2026-10-08T01:00:00Z")], NOW, true);
+    expect(out).toEqual([expect.objectContaining({ lat: 4, source: "gps" })]);
+  });
+
   test("one marker per run, at its newest fix, labelled with the plate", () => {
-    const runs = [{ id: "t1", lorry: { id: "l1", plate: "VAA1234" } }, { id: "t2", lorry: null, driver: { name: "Ali" } }];
+    const runs = [{ id: "t1", status: "IN_PROGRESS", lorry: { id: "l1", plate: "VAA1234" } }, { id: "t2", status: "IN_PROGRESS", lorry: null, driver: { name: "Ali" } }];
     const out = vehiclePositionsFrom([
       fix("t1", "2026-10-08T02:00:00Z", 3.0),
       fix("t1", "2026-10-08T02:05:00Z", 3.2),
       fix("t2", "2026-10-08T02:01:00Z"),
-      fix("t-other", "2026-10-08T02:01:00Z"), // a run not on this page is not drawn
-    ], runs);
+      fix("t-other", "2026-10-08T02:01:00Z"),
+    ], runs, [], NOW, true);
     expect(out).toHaveLength(2);
     expect(out.find((v) => v.tripId === "t1")).toMatchObject({ key: "l1", lorryId: "l1", label: "VAA1234", lat: 3.2, source: "phone" });
     expect(out.find((v) => v.tripId === "t2")).toMatchObject({ lorryId: null, label: "Ali" });
@@ -22,7 +49,6 @@ describe("vehiclePositionsFrom", () => {
 
 describe("stopStatusByRef", () => {
   test("uses Malaysia's clock, not the browser's", () => {
-    // 16:30 UTC is 00:30 the next day in Malaysia
     expect(mytClock(new Date("2026-10-07T16:30:00Z"))).toEqual({ today: "2026-10-08", nowMinutes: 30 });
   });
 

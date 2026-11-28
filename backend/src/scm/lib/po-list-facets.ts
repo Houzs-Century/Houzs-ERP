@@ -1,9 +1,3 @@
-/* Column-funnel option counts for the Purchase Orders list, over EVERY order the
-   list's filters match (all pages), not just the loaded page (DEV-13: the Doc
-   Date funnel said 34 before a click and 42 after). Faceted like the grid's own
-   rule: a column is counted under every OTHER active filter, never its own, so
-   its unticked options stay visible. Only the server-filterable funnels are
-   counted here; line-level funnels stay counted on the loaded page. */
 
 import type { CompanyScopeCtx } from './companyScope';
 import { pageWithTruncation } from './outstanding-po-lines';
@@ -22,8 +16,6 @@ const OWN_FILTER: Record<PoFacetCol, 'creditorNames' | 'creditorCodes' | 'curren
 
 type FacetRow = { supplier_id: string | null; po_date: string | null; currency: string | null; supplier: { name: string | null; code: string | null } | null };
 
-/* The same keys the grid's funnel shows (PurchaseOrdersListV2 getValue +
-   dataTableRows.filterKeyOf), so a server count lands on the option it names. */
 function keyOf(col: PoFacetCol, r: FacetRow): string {
   const v =
     col === 'supplier' ? r.supplier?.name || r.supplier_id

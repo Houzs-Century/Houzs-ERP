@@ -46,19 +46,10 @@ import css from './ChartOfAccounts.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/* ── The AutoCount export, parsed (the scan page's discipline) ───────────── */
 
 const CODE_RE = /^(\s*)(\d{3}-[A-Za-z0-9]{4})\s*$/;
 
-/* The section headings → type map is NOT written here: the server hands the
-   vocabulary down (GET /accounting/chart `sections`, one home in backend
-   lib/account-sections.ts) and the parser takes it as an argument, so the
-   import, the page headers and the Section pickers can never disagree. */
 
-/* Company-specific by nature: banks and cash are THIS company's accounts
-   (SBK/SCH), and the related-party/director/HP/borrowing series name real
-   counterparties of one company. Everything else defaults to shared — the
-   tick columns are where a person narrows afterwards. */
 const isExclusive = (code: string, special: string): boolean =>
   ['SBK', 'SCH'].includes(special) || /^(350|351|430|450|451|460|406)-/.test(code);
 
@@ -78,8 +69,6 @@ export function parseChartXlsx(wb: XLSX.WorkBook, known: ReadonlyArray<AccountSe
     const m = c0.match(CODE_RE);
     if (!m) {
       const label = c0.trim().toUpperCase();
-      /* Section headings are short single-cell lines. The company letterhead
-         and page furniture are not sections. */
       if (label && r.length <= 2 && !label.includes('ACC')
         && !label.includes('SDN') && !label.includes('BHD') && !label.includes('PAGE')) {
         section = label;
@@ -106,7 +95,6 @@ export function parseChartXlsx(wb: XLSX.WorkBook, known: ReadonlyArray<AccountSe
   return { rows, sections, unknownSections };
 }
 
-/* ── The tree order: parents first, children under them ──────────────────── */
 function treeOrder(accounts: ChartRow[]): ChartRow[] {
   const byParent = new Map<string | null, ChartRow[]>();
   for (const a of accounts) {
@@ -123,28 +111,21 @@ function treeOrder(accounts: ChartRow[]): ChartRow[] {
     }
   };
   walk(null);
-  /* Orphans (parent not in the union — should not happen, but a broken tree
-     must still RENDER) trail at the end rather than vanishing. */
   const seen = new Set(out.map((a) => a.code));
   for (const a of accounts) if (!seen.has(a.code)) out.push(a);
   return out;
 }
 
-/* The shelf for a row the server has not sectioned (predates the migration). */
 const UNSECTIONED = 'UNSECTIONED';
 
-/** An account code the server takes: NNN-XXXX. */
 const ACCOUNT_CODE = /^\d{3}-[A-Za-z0-9]{4}$/;
 
-/** The server's section words in sentence case: CURRENT ASSETS → Current assets. */
 const sectionLabel = (section: string): string => (section === UNSECTIONED
   ? 'Not sectioned'
   : (section.charAt(0) + section.slice(1).toLowerCase()).replace(/\ba\/c\b/g, 'A/C'));
-/** ASSET → Asset. */
 const typeLabel = (type: string): string => type.charAt(0) + type.slice(1).toLowerCase();
 const plural = (n: number, one: string, many: string): string => (n === 1 ? `1 ${one}` : `${n} ${many}`);
 
-/* AutoCount's special-account kinds, in the design's words. */
 const SPECIAL_TYPES: Array<[string, string]> = [
   ['SBK', 'SBK · bank'], ['SCH', 'SCH · cash'], ['SOP', 'SOP · e-wallet / other'],
   ['SFA', 'SFA · fixed asset, with its depreciation pair'], ['SAD', 'SAD · accumulated depreciation'],
@@ -179,7 +160,6 @@ export const ChartOfAccounts = () => {
   const doCreate = useChartCreate();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  /* Needs event / PMS row (item 4) / Logistics row: one field at a time, a refusal said out loud. */
   const setEventFields = async (code: string, patch: { needsEvent?: boolean; pmsRow?: string | null; logisticsRow?: string | null; departmentRow?: string | null }) => {
     try { await doUpdate.mutateAsync({ code, ...patch }); } catch (e) {
       void notify({ title: `${code} not saved`, body: errText(e, 'Try again.'), tone: 'error' });
@@ -247,8 +227,6 @@ export const ChartOfAccounts = () => {
   };
   const [parsed, setParsed] = useState<(ParsedChart & { file: string }) | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  /* Quick mode — session-only, never persisted: every visit starts with the
-     confirms back on (see the switch's title). */
   const [quickMode, setQuickMode] = useState(false);
   const [query, setQuery] = useState('');
   const needle = query.trim().toLowerCase();
@@ -303,8 +281,6 @@ export const ChartOfAccounts = () => {
       return next;
     });
   };
-  /* Every descendant still active in one company — what an untick there takes
-     with it (the server walks the same way: active children, then theirs). */
   const activeBelow = (code: string, companyId: number): number => {
     let n = 0;
     const walk = (c: string, depth: number) => {
@@ -433,7 +409,6 @@ export const ChartOfAccounts = () => {
       setEdit(null);
       toast?.success(codeChanged ? `${row.code} renamed to ${code} everywhere${moved ? ` · moved ${moved}` : ''}` : `${code} saved`);
     } catch (e) {
-      /* A rename that went through stays; the form now stands on the new code. */
       patchEdit({ ...(renamed ? { row: { ...row, code } } : {}), error: errText(e, 'Something went wrong.') });
     }
   };
@@ -448,8 +423,6 @@ export const ChartOfAccounts = () => {
     depOn: true, depCode: '', depName: '', companies: companies.map((co) => co.id), error: null,
   });
   const patchForm = (patch: Partial<NewForm>) => setForm((f) => (f ? { ...f, error: null, ...patch } : f));
-  /* His chart's own SFA/SAD convention: the twin is the asset's code with the
-     last digit +5 (201-1000 → 201-1005), named ACCUM. DEPRN. - <asset>. */
   const derivedDep = (assetCode: string, assetName: string): Pick<NewForm, 'depCode' | 'depName'> => {
     const m = /^(\d{3}-\d{3})(\d)$/.exec(assetCode.trim());
     return {
@@ -466,8 +439,6 @@ export const ChartOfAccounts = () => {
     });
   };
   const formParent = form?.parent ? byCode.get(form.parent) : undefined;
-  /* A child sits where its header sits — the section follows the parent (a
-     parent older than the sections leaves the pick to the form). */
   const parentSection = formParent?.section ?? null;
   const formSection = parentSection ?? form?.section ?? '';
   const saveNew = async () => {
@@ -515,9 +486,6 @@ export const ChartOfAccounts = () => {
       if (toast) toast.warning(said); else void notify({ title: said, tone: 'error' });
       return;
     }
-    /* Quick mode goes straight through — safely: the SERVER's 11-probe guard
-       still refuses any account with a record or reference anywhere, so the
-       only thing a stray click can delete is a never-used code. */
     if (!quickMode) {
       const ok = await askConfirm({
         title: `Delete ${row.code} ${row.name}?`,
@@ -539,9 +507,6 @@ export const ChartOfAccounts = () => {
     const co = coCode(companyId);
     if (!next) {
       const below = activeBelow(row.code, companyId);
-      /* Quick mode silences the LEAF untick only — a header sweep still
-         asks, whatever the switch says (its children do not come back by
-         re-ticking the header). */
       if (!quickMode || below > 0) {
         const ok = await askConfirm({
           title: `Untick ${row.code} ${row.name} for ${co}?`,
@@ -801,7 +766,7 @@ export const ChartOfAccounts = () => {
                               draggable={canManage}
                               onDragStart={(e) => {
                                 setDragCode(a.code);
-                                try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', a.code); } catch { /* no dataTransfer outside a browser */ }
+                                try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', a.code); } catch { }
                               }}
                               onDragOver={(e) => {
                                 if (!canManage || !dragCode || dragCode === a.code) return;
@@ -841,7 +806,6 @@ export const ChartOfAccounts = () => {
                                 {typeLabel(a.type)}
                                 {a.type === 'INCOME' && isOtherIncome(a.code) && ' · other'}
                               </td>
-                              {/* Needs event and the PMS row: a money account a line can debit — not a header. */}
                               <td className={css.mid}>
                                 {!isParent && (a.type === 'EXPENSE' || a.type === 'ASSET') && (
                                   <input type="checkbox" className={css.tick} checked={a.needsEvent === true} disabled={!canManage || doUpdate.isPending}
@@ -859,7 +823,6 @@ export const ChartOfAccounts = () => {
                                   </select>
                                 )}
                               </td>
-                              {/* The Logistics row: an account a line can carry — not a header — of the type the row reads. */}
                               <td>
                                 {!isParent && logisticsRows.some((r) => r.type === a.type) && (
                                   <select value={a.logisticsRow ?? ''} disabled={!canManage || doUpdate.isPending} aria-label={`${a.code} Logistics row`}
@@ -870,7 +833,6 @@ export const ChartOfAccounts = () => {
                                   </select>
                                 )}
                               </td>
-                              {/* The Department: an expense account a line can carry — not a header — that no Logistics row claims. */}
                               <td>
                                 {!isParent && a.type === 'EXPENSE' && departmentRows.length > 0 && (
                                   <select value={a.departmentRow ?? ''} disabled={!canManage || doUpdate.isPending || (!!a.logisticsRow && !a.departmentRow)} aria-label={`${a.code} Department`}
@@ -1054,8 +1016,6 @@ export const ChartOfAccounts = () => {
   );
 };
 
-/** Whether `code` hangs anywhere under `ancestor` — a parent may not come from
-    its own subtree. */
 function isBelow(code: string, ancestor: string, parentOf: Map<string, string | null>): boolean {
   let cursor = parentOf.get(code) ?? null;
   for (let depth = 0; cursor && depth < 7; depth += 1) {

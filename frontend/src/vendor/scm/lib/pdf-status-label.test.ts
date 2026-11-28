@@ -44,10 +44,6 @@ import { statusLabel, statusVocabulary, type StatusDocType } from './status-pill
 
 type JsPdf = import('jspdf').jsPDF;
 
-/* Every text draw, with the x/y it landed on. x is what tells the right-hand
-   detail rail's value apart from a left-column row that happens to share a
-   baseline — drawInfoColumns advances both columns by the same 4mm step, so
-   sharing a y is normal and reading the wrong one would be silent. */
 type TextDraw = { text: string; x: number; y: number };
 
 function captureTextDraws(doc: JsPdf): TextDraw[] {
@@ -64,18 +60,6 @@ function captureTextDraws(doc: JsPdf): TextDraw[] {
   return draws;
 }
 
-/* The status word this document actually PUT ON PAPER.
- *
- * Both shapes are read here and neither is guessed at: eight generators put the
- * status in drawInfoColumns' right-hand rail, which paints the label at midX
- * and the value as ": <value>" at midX+33 on the SAME baseline; the delivery
- * order paints a chip instead, label then UPPERCASED chip text, also on one
- * baseline. So: find the one "Status" label, take the one draw to its right on
- * that baseline.
- *
- * It THROWS rather than returns a miss. An assertion built on "no status was
- * found" would pass a document that stopped printing its status at all, which
- * is CLAUDE.md's "a verdict computed over nothing must never read as a pass". */
 function printedStatus(draws: TextDraw[]): string {
   const labels = draws.filter((d) => d.text === 'Status');
   if (labels.length !== 1) {
@@ -96,9 +80,6 @@ function printedStatus(draws: TextDraw[]): string {
   return raw.startsWith(':') ? raw.slice(1).trim() : raw;
 }
 
-/* Ordinary ASCII, no variants, no supplier id: no CJK font fetch, no logo
-   fetch, and every fabric / supplier-binding loader early-returns an empty map
-   without a request. These renders touch no network. */
 const setUpBranding = () => setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
 
 afterEach(() => {
@@ -121,11 +102,6 @@ afterEach(() => {
 type PrintedDoc = {
   docType: StatusDocType;
   title: string;
-  /** The delivery order paints its status into an UPPERCASE pill; every other
-   *  document prints the label as written. Set here so the comparison stays
-   *  EXACT for the eight — an .toUpperCase() on both sides to accommodate the
-   *  one chip would have hidden `Ready To Ship` against the screen's
-   *  `Ready to Ship`, which is a real mismatch of this same class. */
   uppercaseChip?: true;
   render: (status: string) => Promise<string>;
 };
@@ -280,9 +256,6 @@ const PRINTED_DOCS: PrintedDoc[] = [
 ];
 
 describe('the harness itself', () => {
-  /* THE ENUMERATION MUST NOT BE EMPTY. Every assertion below is a for-loop over
-     statusVocabulary(); if that ever returned [] the whole file would pass
-     having compared nothing. */
   test('every printed document has a non-empty vocabulary to check', () => {
     expect(PRINTED_DOCS.length).toBe(8);
     for (const d of PRINTED_DOCS) {
@@ -290,16 +263,9 @@ describe('the harness itself', () => {
     }
   });
 
-  /* The reader must be able to FAIL. If printedStatus() silently returned the
-     label instead of the drawn value, every assertion here would be
-     tautological. Feeding it a status the maps do not carry proves it is
-     reading paper: an unmapped key prints humanised, and the check below sees
-     that humanised word rather than anything statusLabel decided in advance. */
   test('printedStatus reads the drawn word, not the expected one', async () => {
     const d = PRINTED_DOCS[0];
     const printed = await d.render('SOME_LEGACY_VALUE');
-    // An unmapped key humanises (status-pill.ts): title-cased, or upper-cased
-    // again for a chip document. Read from the drawn word, not from statusLabel.
     expect(printed).toBe(d.uppercaseChip ? 'SOME LEGACY VALUE' : 'Some Legacy Value');
   });
 });
@@ -339,17 +305,9 @@ describe('the delivery order trap the owner was holding', () => {
       { item_code: 'DO-A', description: 'Bedframe', qty: 1, m3_milli: null, unit_price_sen: 0 },
     ]);
     expect(draws.some((d) => d.text === 'Status')).toBe(false);
-    // Stored DISPATCHED used to read "Loaded"; that word must not appear either.
     expect(draws.some((d) => d.text === 'Loaded')).toBe(false);
   });
 
-  /* The confirm step prints WHAT THE SCREEN SAYS, which is the whole assertion,
-     so the expected word is READ from status-pill.ts rather than typed here.
-     It used to be typed as 'CONFIRMED' for all eight, and on 2026-09-13 the
-     owner moved five of them to "Submitted"; a hand-typed expectation would
-     have made the paper half of that ruling look like a regression. The three
-     he did not name still print Confirmed, and this loop proves both halves
-     without having to know which is which. */
   test('every document\'s confirm step prints the word its screen shows', async () => {
     const CONFIRM_STEP: Array<[StatusDocType, string]> = [
       ['grn', 'POSTED'], ['pi', 'POSTED'], ['pr', 'POSTED'],
@@ -363,7 +321,6 @@ describe('the delivery order trap the owner was holding', () => {
     }
   });
 
-  /* And the split itself, spelled out, so the ruling is legible from here too. */
   test('five documents print Submitted; the three he did not name print Confirmed', async () => {
     const SUBMITTED: Array<[StatusDocType, string]> = [
       ['grn', 'POSTED'], ['pi', 'POSTED'], ['si', 'SENT'], ['so', 'CONFIRMED'],
@@ -382,29 +339,19 @@ describe('the delivery order trap the owner was holding', () => {
   });
 });
 
-/* The nine renders above cover the nine documents that exist TODAY. The scan
-   below covers the tenth, which is the one that will drift: a generator written
-   next month, for a document type nobody has added to the table, hand-rolling
-   the caser again because that is what every neighbour file did. It reads the
-   sources, so it fails on a file that has no test of its own yet. */
 describe('no PDF generator hand-rolls a status label', () => {
   const HERE = dirname(fileURLToPath(import.meta.url));
-  const GENERATORS = readdirSync(HERE)
-    .filter((f) => f.endsWith('-pdf.ts') && !f.endsWith('.test.ts'))
+  const SHARED = join(HERE, '../../../../../shared/src/vendor/scm/lib');
+  const GENERATORS = [HERE, SHARED]
+    .flatMap((dir) => readdirSync(dir).map((f) => join(dir, f)))
+    .filter((f) => /-pdf(-render)?\.ts$/.test(f) && !f.endsWith('.test.ts'))
     .sort();
 
-  /* A `.status` fed through `replace(/_/g,' ')…`, or through a file-local
-     titleCase(), on one line or spread over several. */
   const HAND_ROLLED = [
     /\.status[^;]{0,80}?replace\(\/_\/g/s,
     /titleCase\(\s*[A-Za-z_$][\w$]*\.status/s,
   ];
 
-  /* THE MATCHER SELF-TESTS. This is an assertion of ABSENCE across nine files:
-     a pattern that had quietly stopped matching would report every generator
-     clean for ever and nobody would know. The positives are the exact lines
-     this change removed; the negatives are what a fixed generator legitimately
-     contains. CLAUDE.md: "a checker that cannot match reports a clean run". */
   test('the matcher fires on the code this change removed', () => {
     const REMOVED = [
       `  const statusText = header.status.replace(/_/g, ' ').toLowerCase().replace(/\\b\\w/g, (c) => c.toUpperCase());`,
@@ -429,7 +376,7 @@ describe('no PDF generator hand-rolls a status label', () => {
   test('every generator in this directory is clean', () => {
     expect(GENERATORS.length).toBeGreaterThan(9);
     for (const file of GENERATORS) {
-      const src = readFileSync(join(HERE, file), 'utf8');
+      const src = readFileSync(file, 'utf8');
       for (const re of HAND_ROLLED) {
         expect(re.test(src), `${file} hand-rolls a status label — use statusLabel(docType, status)`).toBe(false);
       }

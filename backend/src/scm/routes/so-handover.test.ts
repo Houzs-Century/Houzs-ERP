@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { HANDOVER_BATCH_MAX, SHARE_STAFF_MAX, parseHandoverBody, parseShareBody } from './so-handover';
 
-/* The apply endpoint rewrites who owns an order — and SO visibility keys off
-   that column, so a bad payload does not just write junk, it makes orders
-   disappear from the list of whoever should see them. This pins the guard; the
-   per-order "still theirs?" re-check lives in the handler around it. */
 
 const ok = (body: Record<string, unknown>) => {
   const r = parseHandoverBody(body);
@@ -98,10 +94,6 @@ describe('parseShareBody — the people being given access', () => {
       .toHaveLength(SHARE_STAFF_MAX);
   });
 
-  /* Unlike the handover there is no same_staff rule: sharing an order with the
-     person already attributed to it is harmless (the derived access column
-     de-duplicates), and refusing it would make a bulk grant fail because one
-     order in the batch happened to be theirs already. */
   it('allows sharing with the person the order is already attributed to', () => {
     expect(okShare({ ...shareBase, staffIds: ['staff-a'] }).staffIds).toEqual(['staff-a']);
   });

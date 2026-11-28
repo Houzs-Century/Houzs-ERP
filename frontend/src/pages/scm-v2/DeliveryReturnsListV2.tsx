@@ -1,19 +1,3 @@
-// DeliveryReturnsListV2 — Theme C redesign of the Delivery Returns listing.
-// Third + final piece of the three-headed sales chain sweep (SO/DO/SI/DR):
-// same PageHeader + StatCard + FilterPills + Table/Cards + right slide-over
-// drawer template as MfgDeliveryOrdersListV2 / SalesInvoicesListV2. Data is
-// the vendored delivery-return-queries slice, unchanged. See the DO V2 file
-// for the deep dive on primitives + Theme C conventions.
-//
-// Route: /scm/delivery-returns (App.tsx flips ScmDeliveryReturnsV2 here).
-//
-// A Delivery Return = goods coming BACK from the customer → creating one
-// INCREASES stock server-side. Money moves OUT of the business, so the
-// chrome leans hard on that: the money stat card + drawer totals both use
-// the error tone to signal "refund pending" versus the DO/SI green-when-good
-// idiom. Return-reason is promoted to a first-class table column and a
-// prominent meta row in the drawer — it's the field ops actually cares
-// about when triaging a return.
 
 import { useMemo, useState, type ReactNode } from "react";
 import { brandingToneForLabel } from "../../lib/brandingTone";
@@ -72,7 +56,7 @@ import { deliveryReturnRowMenu } from "./row-menus";
 import { usePrintDocument } from "../../components/scm-v2/PrintChainProvider";
 import { deliveryReturnPrintChain } from "../../lib/printChain";
 import { deliveryReturnPdfBundle } from "../../lib/printDocumentPdf";
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 import { deliveryReturnMatchesSearch } from '../../lib/so-ref-search';
 import {
   DR_LINE_COLUMNS,
@@ -85,18 +69,12 @@ import { fetchDeliveryReturnExportRows } from "../../vendor/scm/lib/return-list-
 import { returnGridColumns, type ReturnColumnValues } from "./return-list-line-columns";
 import { todayMyt } from "../../vendor/scm/lib/dates";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
-// Subset of the DR header (see DeliveryReturnsList.tsx for the full 40-field
-// row). Fields not listed still exist on the API payload — V2 just doesn't
-// render them.
 
 type DrRow = {
   id: string;
   return_number: string;
   do_doc_no: string | null;
   delivery_order_id: string | null;
-  /** Convert-from relation (display-only, audit R8): the Sales Order behind this
-   *  return's DO, server-resolved via delivery_order_id → delivery_orders. */
   so_doc_no?: string | null;
   return_date: string;
   debtor_name: string;
@@ -120,13 +98,8 @@ type DrRow = {
   local_total_sen: number;
   line_count?: number;
   note: string | null;
-  // ── Phase 2: NON-finance fields already on the DR list payload (HEADER).
-  //    (venue + note are declared above from Phase 1.)
   customer_type: string | null;
   building_type: string | null;
-  // ── Phase 2 FINANCE: backend OMITS these keys for non-finance callers
-  //    (canViewScmFinance), so each is optional. The DR header carries FOUR
-  //    categories (no service_*). margin_pct_basis = basis points.
   mattress_sofa_sen?: number;
   bedframe_sen?: number;
   accessories_sen?: number;
@@ -138,19 +111,14 @@ type DrRow = {
   total_cost_sen?: number;
   total_margin_sen?: number;
   margin_pct_basis?: number;
-  /** The account book's spellings, stamped by the server
-   *  (lib/delivery-return-list-read.ts stampDrListBookSpellings). */
   ac_agent?: string | null;
   ac_branding?: string | null;
   ac_venue?: string | null;
-  /** The return's lines, as GET /delivery-returns and its export send them. */
   lines?: DrListLine[];
 };
 
 type StatusTab = "all" | "open" | "inspected" | "refunded" | "cancelled";
 
-/* A line as the grid holds it: the server's line plus the one document fact a
-   line column reads (the shared line cells pass a column only its line). */
 type DrGridLine = DrListLine & { doc_so_doc_no: string | null };
 const gridLinesCache = new WeakMap<DrRow, DrGridLine[]>();
 const linesOfDr = (r: DrRow): readonly DrGridLine[] => {
@@ -161,33 +129,19 @@ const linesOfDr = (r: DrRow): readonly DrGridLine[] => {
   return out;
 };
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtRm = (centi: number): string => fmtSen(centi);
 
-// margin_pct_basis is basis points (margin/total x 10000) → percent string.
 const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
-// Customer's PO / Ref. Same fallback chain as SO / DO V2.
 const refOf = (r: DrRow): string => customerRefOf(r) || "—";
 
 const doOf = (r: DrRow): string => r.do_doc_no || "—";
 
 const brandOf = (r: DrRow): string => r.branding || "—";
-/* Colour says WHAT THE LINE IS; the label says whose brand it is.
-   ../../lib/brandingTone is the one home for both. This copy had also lost
-   the BEDFRAME arm — a THIRD spelling across the five lists. */
 const brandTone = brandingToneForLabel;
 
-// DR status flow: PENDING → RECEIVED (goods back, stock IN) → INSPECTED →
-// REFUNDED / CREDIT_NOTED, plus REJECTED / CANCELLED. Compress into 4
-// buckets for the pills; the row Badge still carries the raw stage label.
-// The everyday chips finance / ops watch:
-//   Open       = Pending + Received  (goods back, awaiting QC)
-//   Inspected  = QC done, awaiting refund action
-//   Refunded   = Refunded + Credit noted (loop closed)
-//   Cancelled  = Rejected + Cancelled (loop closed unhappily)
 const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
@@ -210,7 +164,6 @@ const statusFor = (
     bucket: "open",
   };
 
-// ─── Split-menu dropdown (mirrors DO V2) ───────────────────────────────────
 
 function SplitDropdown({
   onFromDo,
@@ -303,7 +256,6 @@ function ViewToggle({
   );
 }
 
-// ─── Cards grid (shared shape with DO V2 — DR shows reason + refund) ───────
 
 function CardsGrid({ rows, onOpen }: { rows: DrRow[]; onOpen: (r: DrRow) => void }) {
   if (rows.length === 0) {
@@ -374,7 +326,6 @@ function CardsGrid({ rows, onOpen }: { rows: DrRow[]; onOpen: (r: DrRow) => void
   );
 }
 
-// ─── Detail drawer ─────────────────────────────────────────────────────────
 
 function DetailDrawer({
   row,
@@ -472,8 +423,6 @@ function DetailDrawer({
                 </span>
               </div>
 
-              {/* Reason banner — DR's most distinctive field, pulled out
-                  above the meta grid so triage doesn't have to scan for it. */}
               {row.reason && (
                 <div className="mt-4 rounded-lg border-l-4 border-err bg-err-soft px-4 py-3">
                   <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
@@ -591,7 +540,6 @@ function DetailDrawer({
                 })}
               </div>
 
-              {/* Refund total — err-tinted since money leaves the biz. */}
               <div className="mt-4 rounded-lg border-l-4 border-err bg-err-soft px-5 py-4">
                 <TotalRow k="Refund total" v={fmtRm(totalSen)} strong tone="err" />
               </div>
@@ -629,8 +577,6 @@ function DetailDrawer({
                     </Button>
                   );
                 }
-                // Reopen a cancelled return back to RECEIVED (2990
-                // DeliveryReturnsList "Reopen Return" parity).
                 if (s === "cancelled" || s === "cancel") {
                   return (
                     <Button
@@ -724,13 +670,6 @@ function TotalRow({
   );
 }
 
-// ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
-// Inline per-line breakdown for one DR, lazy-fetched via the SAME
-// useDeliveryReturnDetail hook the drawer uses (TanStack-cached). Group + item
-// code/variant + Qty (returned) + Amount, via the shared DocumentLinesExpansion.
-// A delivery return is a sales-side doc but its detail payload carries no
-// per-line MRP coverage (that rides the SO detail, not this one), so the
-// SO/DO-only Stock + Incoming PO columns are absent.
 function DrLinesExpansion({ id }: { id: string }) {
   const detailQ = useDeliveryReturnDetail(id);
   const items =
@@ -749,7 +688,7 @@ function DrLinesExpansion({ id }: { id: string }) {
   return (
     <DocumentLinesExpansion
       isLoading={detailQ.isLoading}
-      coverage="ready" /* one query fills this drill-down — coverage-state.tsx */
+      coverage="ready"
       isError={Boolean(detailQ.error)}
       errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
       lines={lines}
@@ -758,7 +697,6 @@ function DrLinesExpansion({ id }: { id: string }) {
   );
 }
 
-// ─── Main page ──────────────────────────────────────────────────────────────
 
 export function DeliveryReturnsListV2() {
   const navigate = useNavigate();
@@ -768,9 +706,6 @@ export function DeliveryReturnsListV2() {
   const askChoice = useChoice();
   const askConfirm = useConfirm();
   const { nameOf: salespersonNameOf } = useStaffLookup();
-  // Finance-viewer gate (auth/me = isFinanceViewer). Finance columns below are
-  // DECLARED only for a finance-viewer; the backend also omits their keys from
-  // the payload for everyone else (canViewScmFinance).
   const { user } = useAuth();
   const canFinance = canViewScmCosting(user);
 
@@ -782,13 +717,7 @@ export function DeliveryReturnsListV2() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [printingDocs, setPrintingDocs] = useState(false);
 
-  // The backend delivery-returns endpoint accepts a status arg but not our
-  // compressed buckets — pull the full set and filter client-side (matches
-  // the DO V2 pattern).
   const { data, isLoading, error, refetch } = useDeliveryReturns(undefined);
-  // These tiles are reduces over a row set that is [] until the fetch lands (and
-  // stays [] if it fails), so a settled-looking "Refund Value RM 0.00" would
-  // describe a list nobody has read yet.
   const statsFailed = Boolean(error);
   const statsPending = isLoading || Boolean(error);
   const updateStatus = useUpdateDeliveryReturnStatus();
@@ -800,9 +729,6 @@ export function DeliveryReturnsListV2() {
 
   const filtered = useMemo(() => deliveryReturnsInView(allRows, status, search), [allRows, status, search]);
 
-  /* The tab + search the list applies in the browser — to the screen read AND to
-     the export's rows, so the file holds exactly what the tab would show without
-     the 500-row screen cap. */
   function deliveryReturnsInView(rows: DrRow[], tab: StatusTab, term: string): DrRow[] {
     const inTab = tab === "all" ? rows : rows.filter((r) => statusFor(r.status).bucket === tab);
     if (!term.trim()) return inTab;
@@ -821,9 +747,6 @@ export function DeliveryReturnsListV2() {
     return acc;
   }, [allRows]);
 
-  // KPI stats — scoped to filtered rows. DR chrome leans money-out:
-  //   Total returns · Refund value · Pending (open+inspected, needs action)
-  //   Refunded (loop closed)
   const stats = useMemo(() => {
     let refundSen = 0;
     let pendingCount = 0;
@@ -870,7 +793,6 @@ export function DeliveryReturnsListV2() {
     await queryClient.invalidateQueries({ queryKey: ["delivery-returns"] });
   };
 
-  // Wired actions
   const goNewDr = () => navigate("/scm/delivery-returns/new");
   const goFromDo = () => navigate("/scm/delivery-returns/from-do");
   const goDuplicate = () => navigate("/scm/delivery-returns?duplicate=1");
@@ -880,7 +802,6 @@ export function DeliveryReturnsListV2() {
   const printDocument = usePrintDocument();
   const goFullPage = (r: DrRow) => navigate(`/scm/delivery-returns/${r.id}`);
 
-  // ─── Multi-select → batch "Print all" ─────────────────────────────────────
   const toggleSelect = (rowId: string) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -897,10 +818,6 @@ export function DeliveryReturnsListV2() {
     });
   const clearSelection = () => setSelectedIds(new Set());
 
-  /* Delegated to lib/printDocumentPdf's `deliveryReturnPdfBundle`, the ONE home
-     for the DR-record → DR-generator mapping (the generator takes a shape the
-     record is not stored in, and migration 0102's address block has to be
-     threaded through by hand). The row menu's print reads the same function. */
   const fetchDrBundle = async (id: string): Promise<{ header: unknown; items: unknown[] }> =>
     deliveryReturnPdfBundle(
       await authedFetch<{ deliveryReturn: Record<string, unknown>; items: Array<Record<string, unknown>> }>(
@@ -908,8 +825,6 @@ export function DeliveryReturnsListV2() {
       ),
     );
 
-  // Batch "Print all" — one ticked DR downloads straight; several prompt
-  // combined-vs-separate.
   const deliverSelectedDrs = async (action: PdfAction) => {
     if (printingDocs) return;
     const chosen = filtered.filter((r) => selectedIds.has(r.id));
@@ -924,9 +839,6 @@ export function DeliveryReturnsListV2() {
         clearSelection();
         return;
       }
-      /* View / Print always render ONE document — a preview or a print run
-         is about the stack, not N separate files. Only the download exit
-         still asks combined-vs-separate. */
       const how = action !== "save" ? "one" : await askChoice({
         title: `Print ${chosen.length} delivery returns`,
         options: [
@@ -972,8 +884,6 @@ export function DeliveryReturnsListV2() {
           }),
       }
     );
-  /* Refunded is a money statement — a rejected write that says nothing leaves
-     the operator believing the customer has been refunded. */
   const doMarkRefunded = (r: DrRow) =>
     updateStatus.mutate(
       { id: r.id, status: "REFUNDED" },
@@ -987,8 +897,6 @@ export function DeliveryReturnsListV2() {
           }),
       }
     );
-  // Reopen a cancelled return → RECEIVED (2990 DeliveryReturnsList "Reopen
-  // Return" parity; reuses the status PATCH endpoint).
   const doReopen = async (r: DrRow) => {
     if (
       !(await askConfirm({
@@ -1047,9 +955,6 @@ export function DeliveryReturnsListV2() {
       }
     );
   };
-  /* No Confirm entry: a Delivery Return is RECEIVED on create and has no draft
-     step, so there is no confirm transition to offer. Cancelling is final — the
-     server refuses to un-cancel — so an already cancelled row gets no entry. */
   const drContextMenu = deliveryReturnRowMenu<DrRow>({
     open: goFullPage,
     edit: goEdit,
@@ -1131,7 +1036,6 @@ export function DeliveryReturnsListV2() {
     condition: { line: (l) => l.condition, width: "110px" },
     line_id: { line: (l) => l.id, width: "300px", mono: true },
   };
-  /* ERP columns AutoCount's grid has no place for. Money is exported in ringgit. */
   const moneyExport = (sen: (r: DrRow) => number | undefined) => ({
     exportValue: (r: DrRow) => senToRinggit(sen(r) ?? 0, 2),
     exportFormat: "money" as const,
@@ -1150,11 +1054,6 @@ export function DeliveryReturnsListV2() {
         </span>
       ),
     },
-    // ── Re-added columns (Phase 1) — data already on the DrRow payload, ported
-    //    from the legacy DeliveryReturnsList buildColumns (labels/widths). All
-    //    default-hidden so the column chooser exposes them without changing the
-    //    slim default view. This list sorts client-side, so getValue keeps them
-    //    sortable + CSV-exportable without a backend sort key.
     {
       key: "sales_location",
       label: "Sales Location",
@@ -1262,8 +1161,6 @@ export function DeliveryReturnsListV2() {
         <span className="text-[12.5px] text-ink-secondary">{r.customer_state || "—"}</span>
       ),
     },
-    // ── Re-added columns (Phase 2) — NON-finance fields already on the DR
-    //    payload (HEADER). venue + note already exist (Phase 1); add the rest.
     {
       key: "customer_type",
       label: "Customer Type",
@@ -1286,9 +1183,6 @@ export function DeliveryReturnsListV2() {
         <span className="text-[12.5px] text-ink-secondary">{r.building_type || "—"}</span>
       ),
     },
-    // ── Phase 2 FINANCE columns — cost / margin / per-category subtotals (DR
-    //    has FOUR categories, no service). DECLARED ONLY for a finance-viewer
-    //    (backend also omits the keys).
     ...(canFinance
       ? ([
           {
@@ -1458,16 +1352,12 @@ export function DeliveryReturnsListV2() {
 
   return (
     <PullToRefresh onRefresh={onPullToRefresh}>
-      {/* When the drawer is open the desktop shell reflows into the left
-          520 + gutter so stats/table are cleanly visible next to it instead
-          of being half-covered. Mobile keeps the full-width overlay. */}
       <div
         className={cn(
           "transition-[padding] duration-200",
           selected ? "md:pr-[540px]" : ""
         )}
       >
-      {/* Mobile-only compact header — hides at md+. */}
       <div className="mb-3 flex items-start justify-between gap-3 md:hidden">
         <div className="min-w-0">
           <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
@@ -1480,7 +1370,6 @@ export function DeliveryReturnsListV2() {
         </div>
       </div>
 
-      {/* Desktop sticky page chrome — matches SO/DO/SI listing pattern. */}
       <div className="-mx-4 hidden pb-3 sm:-mx-6 md:block">
         <div className="px-4 sm:px-6">
           <PageHeader
@@ -1565,7 +1454,6 @@ export function DeliveryReturnsListV2() {
         </div>
       </div>
 
-      {/* Mobile sticky search */}
       <div className="sticky top-0 z-10 -mx-4 mb-3 bg-bg/95 px-4 py-2 backdrop-blur-sm md:hidden">
         <input
           type="search"
@@ -1577,7 +1465,6 @@ export function DeliveryReturnsListV2() {
         <SearchScopeHint scope="loaded" loadedLimit={500} resultCount={filtered.length} term={search} className="mt-1 px-1" />
       </div>
 
-      {/* Mobile filter row */}
       <div className="mb-4 flex flex-wrap items-center gap-3 md:hidden">
         <FilterPills
           options={statusPillOptions}
@@ -1586,7 +1473,6 @@ export function DeliveryReturnsListV2() {
         />
       </div>
 
-      {/* Phone → Cards */}
       <div className="md:hidden">
         <CardsGrid rows={filtered} onOpen={(r) => setSelected(r)} />
         {filtered.length > 0 && (
@@ -1596,7 +1482,6 @@ export function DeliveryReturnsListV2() {
         )}
       </div>
 
-      {/* Desktop → Table / Cards */}
       <div className="hidden md:block">
         {view === "table" ? (
           <>

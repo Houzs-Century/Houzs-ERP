@@ -50,9 +50,6 @@ import { chunkIn } from './paginate-all';
 import { pageWithTruncation } from './outstanding-po-lines';
 import { normalizeCurrency, normalizeExchangeRate } from './fx';
 
-/** The note header the picker groups by. `supplier` and `purchase_order` are
- *  to-one embeds; supabase-js types them as arrays, which is why rows pass
- *  through `unknown` once, inside the reads below. */
 type NoteRow = {
   id: string; grn_number: string; received_at: string; supplier_id: string;
   purchase_order_id: string | null;
@@ -61,10 +58,6 @@ type NoteRow = {
   purchase_order: { po_number: string } | null;
 };
 
-/* Quantities are nullable in the TYPE on purpose: the value arrives through an
-   untyped client, and a hand-written `number` would make the `?? 0` guards read
-   as unnecessary conditions to the linter, which is the trap CLAUDE.md's lint
-   section describes. The handler has always coalesced them. */
 type LineRow = {
   id: string; grn_id: string; material_kind: string; item_code: string;
   material_name: string; item_group: string | null; description: string | null; supplier_sku: string | null;
@@ -132,11 +125,9 @@ export async function loadOutstandingGrnLines(args: {
   const noteIds = (ids.data ?? []).map((r) => r.id);
   if (noteIds.length === 0) return { error: null, items: [], truncated: ids.truncated };
 
-  /* The status and the hold marker are asked of the ROW, not trusted from the
-     view: the view carries no hold, and a note can change between two reads. */
   const notes = await chunkIn<NoteRow>(noteIds, (batch, from, to) =>
     scopeQuery(sb.from('grns').select(NOTE_SELECT).in('id', batch))
-      .eq('status', 'POSTED').eq('on_hold', false) // mig 0324: a held GRN reads POSTED — the hold is its own marker
+      .eq('status', 'POSTED').eq('on_hold', false)
       .order('id').range(from, to));
   if (notes.error) return { error: notes.error.message };
   const noteById = new Map(notes.data.map((n) => [n.id, n]));
@@ -161,12 +152,6 @@ export async function loadOutstandingGrnLines(args: {
 
 export type LinePo = { purchaseOrderId: string; poDocNo: string | null };
 
-/* purchase_order_item_id -> its PO id and number, both reads company-scoped and
-   batched like the lines. A failed read is an error, not "no PO": the picker
-   would otherwise fall back to the header PO this module exists not to trust.
-   Exported because a goods receipt's header names one PO while its lines can
-   come from several, and every reader that asks "which PO is this receipt
-   for" needs the same per-line answer (the invoice scanner's PO anchor too). */
 export async function loadPoByPoItem(args: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the untyped supabase-js client this tree passes around
   sb: any;
@@ -200,9 +185,6 @@ export async function loadPoByPoItem(args: {
   return { error: null, byPoItem };
 }
 
-/* A line linked to a PO item names THAT item's PO, and only a line with no link
-   falls back to the header. A link that did not resolve in this company reads
-   as no PO rather than borrowing the header's, which is the wrong-PO label. */
 function poForLine(h: NoteRow, r: LineRow, byPoItem: Map<string, LinePo>): { purchaseOrderId: string | null; poDocNo: string | null } {
   if (!r.purchase_order_item_id) {
     return { purchaseOrderId: h.purchase_order_id, poDocNo: h.purchase_order?.po_number ?? null };
@@ -210,11 +192,6 @@ function poForLine(h: NoteRow, r: LineRow, byPoItem: Map<string, LinePo>): { pur
   return byPoItem.get(r.purchase_order_item_id) ?? { purchaseOrderId: null, poDocNo: null };
 }
 
-/* NEWEST NOTE FIRST, and a total order. The picker renders one card per note
-   in the order lines arrive, and the old unpaged read had no ORDER BY at all,
-   so the card order was whatever the planner produced. Received date first
-   (what the old window meant by "newest"), then the note number, then the
-   line's own entry order with its id as the last word. */
 function compareForPicker(na: NoteRow, a: LineRow, nb: NoteRow, b: LineRow): number {
   if (na.received_at !== nb.received_at) return String(nb.received_at).localeCompare(String(na.received_at));
   if (na.grn_number !== nb.grn_number) return String(nb.grn_number).localeCompare(String(na.grn_number));

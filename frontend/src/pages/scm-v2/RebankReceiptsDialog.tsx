@@ -9,7 +9,7 @@
 // shown, the failures by name. Rules: backend/src/acc/receipt-rebank.ts.
 
 import { useState } from 'react';
-import { fmtDate, fmtSen } from '../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../shared/src/vendor/shared/format';
 import {
   REBANK_PER_CALL, useRebankCandidates, useRebankMove, type RebankOutcome, type RebankRow,
 } from '../../vendor/scm/lib/accounting-queries';
@@ -33,8 +33,6 @@ export function RebankReceiptsDialog({ targetName, defaultFrom, today, onClose }
   const q = useRebankCandidates(range);
   const move = useRebankMove();
   const [busy, setBusy] = useState(false);
-  /* The list as it stood when Move was pressed: the re-read after it comes back
-     without the moved ones, and each one's outcome must stay on screen. */
   const [moving, setMoving] = useState<RebankRow[] | null>(null);
 
   const rows: RebankRow[] = moving ?? q.data?.rows ?? [];

@@ -1,21 +1,4 @@
-// ----------------------------------------------------------------------------
-// pdf-qr — draw a QR code into a jsPDF document as VECTOR rects.
-//
-// Frontend twin of backend/src/services/printQr.ts (the ASSR print's qrSvg):
-// same library (qrcode-generator), same error-correction trade-off ('M'), same
-// hand-built module walk. Rects instead of an embedded image because jsPDF
-// rasterises images at addImage time — a vector QR prints crisp at any size
-// and survives the print dialog's own scaling, which is exactly why the ASSR
-// print chose inline SVG over a data URI.
-//
-// First consumer: the Delivery Order print's "scan to mark loaded" block
-// (2026-08-21) — the warehouse scans the paper that travels with the goods,
-// and the scan lands on /scm/do-load. Keep this helper document-agnostic; the
-// URL is the caller's business.
-// ----------------------------------------------------------------------------
 // @ts-ignore — qrcode-generator ships its own .d.ts but the typings don't
-// always resolve cleanly under the bundler resolver. Library is pure JS and
-// stable; the backend twin carries the same pragma for the same reason.
 import qrcode from 'qrcode-generator';
 
 type Doc = {
@@ -34,7 +17,7 @@ export function drawQrIntoPdf(doc: Doc, text: string, x: number, y: number, size
   qr.addData(text);
   qr.make();
   const count = qr.getModuleCount();
-  const quiet = 2; // modules of quiet zone on each side
+  const quiet = 2;
 
   /* THE REQUESTED SIZE IS A FLOOR TO GROW FROM, NOT A PROMISE TO SHRINK INTO.
      A QR's readability is its MODULE size, not its overall size, and the module

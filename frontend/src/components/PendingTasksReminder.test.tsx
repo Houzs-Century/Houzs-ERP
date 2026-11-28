@@ -1,6 +1,3 @@
-// The reminder modal's BEHAVIOUR, with the data hook mocked — what it shows,
-// what it refuses to let you postpone, and that ✕-less dismissal is deliberate.
-// The digest arithmetic itself is pinned separately in hooks/pendingDigest.test.ts.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
@@ -61,7 +58,6 @@ describe("PendingTasksReminder", () => {
     show();
     expect(screen.getByText(/26 events with work waiting/i)).toBeTruthy();
     const items = screen.getAllByRole("listitem");
-    // Worst first — an event that already finished must not sit below a future one.
     expect(items[0].textContent).toMatch(/already finished/i);
     expect(items[1].textContent).toMatch(/within 7 days/i);
     expect(screen.getByText(/Stock In Transfer Record/)).toBeTruthy();
@@ -91,7 +87,6 @@ describe("PendingTasksReminder", () => {
   it("tapping the body arms the My Pending filter before navigating", () => {
     show();
     fireEvent.click(screen.getByText(/events? with work waiting/i));
-    // Order matters: arming after navigation would land on an unfiltered list.
     expect(armMyPendingFilter).toHaveBeenCalledTimes(1);
     expect(acknowledge).toHaveBeenCalledTimes(1);
   });

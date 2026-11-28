@@ -1,8 +1,3 @@
-// The transaction-workflow header-lock rulebook (document-policy.ts) is the ONE
-// place "which header columns freeze once a child exists" is defined, so every
-// document reads the same truth. These tests pin the registry (a wrong error code
-// or a dropped column would be a silent regression across all callers) and
-// exercise the engine API (changedHeaderLockCols / headerLockRefusal).
 import { describe, expect, it } from 'vitest';
 import {
   TXN_HEADER_LOCK, changedHeaderLockCols, headerLockRefusal,
@@ -34,10 +29,8 @@ describe('TXN_HEADER_LOCK registry', () => {
     for (const col of ['driver_name', 'vehicle', 'arrival_at', 'expected_delivery_at']) {
       expect(DO_LOCK_COLS.has(col), `DO must leave ${col} editable`).toBe(false);
     }
-    /* CN is NOT changed by that ruling (out of scope, 2026-09-14): it keeps the
-       2026-08-20 minimal set it used to share with the DO. */
     expect([...CN_LOCK_COLS].sort()).toEqual(['branding', 'currency', 'debtor_code', 'debtor_name', 'sales_location']);
-    expect([...PCO_LOCK_COLS]).toEqual([...PO_LOCK_COLS]); // PCO mirrors PO
+    expect([...PCO_LOCK_COLS]).toEqual([...PO_LOCK_COLS]);
     expect([...PCR_LOCK_COLS].sort()).toEqual(['currency', 'supplier_id']);
   });
 
@@ -55,7 +48,6 @@ describe('engine API', () => {
     const before = { supplier_id: 's1', currency: 'MYR', purchase_location_id: 'l1', notes: 'x' };
     expect(changedHeaderLockCols('PO', { notes: 'y' }, before)).toEqual([]);
     expect(changedHeaderLockCols('PO', { supplier_id: 's2' }, before)).toEqual(['supplier_id']);
-    // an unchanged blank re-send does not read as a change
     expect(changedHeaderLockCols('PO', { supplier_id: 's1' }, before)).toEqual([]);
   });
 

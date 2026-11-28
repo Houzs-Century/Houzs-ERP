@@ -1,24 +1,14 @@
-// ---------------------------------------------------------------------------
-// /api/mcp-admin — the AI Connector page (frontend pages/AiConnector.tsx) and
-// the "Allow?" screen (frontend pages/AiConnect.tsx). Mounted BELOW the auth gate.
-//
-//   staff:  GET /me, POST /me/request, POST /me/revoke
-//           GET /consent/:id, POST /consent/:id      (the OAuth "Allow?" step)
-//   admin:  GET /admin/overview, POST /admin/requests/:id/:decision,
-//           POST /admin/access, DELETE /admin/access/:userId, POST /admin/revoke,
-//           POST /admin/leak-check, POST /admin/actions  ("Allow AI actions", default OFF)
-// Admin = holds ai_connector.manage (the Owner via "*").
-// ---------------------------------------------------------------------------
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { Env } from "../types";
 import { audit } from "../services/audit";
+import { NO_GUIDE_NOTE } from "../services/mcp-howto";
 import { getUserById } from "../services/auth";
 import { usersHoldingPermission } from "../services/permissionHolders";
 import { postPersonalNotice } from "../services/personalNotice";
 import { jsonKeys, leakCheckPaths, SECRET_KEY, SENSITIVE_KEY } from "../services/mcp-access";
 import {
-  actionsEnabled,
+  actionSwitches,
   appLabel,
   createCode,
   getAuthRequest,
@@ -30,8 +20,12 @@ import {
   revokeToken,
   revokeUserTokens,
   setActionsEnabled,
+  setActionSwitch,
   takeAuthRequest,
 } from "../services/mcp-store";
+import { RATE_PER_DAY, RATE_PER_MINUTE } from "../services/mcp-ratelimit";
+import { ALERT_THRESHOLDS, BRIEF_SETTINGS, DEFAULT_PREFS, parseBriefPrefs } from "../services/mcp-proactive";
+import { cronOrigin, getSubscription, recentTestBrief, saveSubscription, sendBriefFor, type Subscription } from "../services/mcp-proactive-run";
 import { isMcpAdmin, mcpAppRoutes, publicOrigin, readEndpoint } from "./mcp";
 
 type HonoEnv = { Bindings: Env };
@@ -48,7 +42,6 @@ function denyUnlessAdmin(c: Context<HonoEnv>): Response | null {
 const connectorUrl = (c: Context<HonoEnv>): string =>
   `${publicOrigin(c.req.header("x-forwarded-host"), (c.env as Env & { MCP_PUBLIC_ORIGIN?: string }).MCP_PUBLIC_ORIGIN || new URL(c.req.url).origin)}/api/mcp`;
 
-// ── staff ───────────────────────────────────────────────────────────────────
 
 app.get("/me", async (c) => {
   const u = c.get("user");
@@ -60,7 +53,7 @@ app.get("/me", async (c) => {
     .prepare(
       `SELECT t.id, t.created_at, t.last_used_at, cl.client_name
          FROM mcp_tokens t LEFT JOIN mcp_oauth_clients cl ON cl.client_id = t.client_id
-        WHERE t.user_id = ? AND t.revoked_at IS NULL AND t.refresh_expires_at > ? AND t.client_id <> 'mcpc_leak_check'
+        WHERE t.user_id = ? AND t.revoked_at IS NULL AND t.refresh_expires_at > ? AND t.client_id NOT IN ('mcpc_leak_check', 'mcpc_brief')
         ORDER BY t.created_at DESC`,
     )
     .bind(u.id, new Date().toISOString())
@@ -87,7 +80,6 @@ app.post("/me/request", async (c) => {
     .bind(id, u.id, typeof body.reason === "string" ? body.reason.slice(0, 300) : null, new Date().toISOString())
     .run();
   await audit(c, { action: "ai_connector.request", entityType: "ai_connector", entityId: u.id, summary: `${u.name} asked for AI Connector access` });
-  // Bell notice to every AI Connector admin (literal key holders + the Owner's "*"). Never fails the request.
   try {
     const [lit, wild] = await Promise.all([usersHoldingPermission(c.env, MCP_ADMIN_PERMISSION, {}), usersHoldingPermission(c.env, "*", {})]);
     const audience = [...new Set([...lit, ...wild].map(Number))].filter((n) => n > 0 && n !== u.id);
@@ -113,9 +105,57 @@ app.post("/me/revoke", async (c) => {
   return c.json({ ok: true, revoked: n });
 });
 
-// ── the OAuth "Allow?" step ─────────────────────────────────────────────────
+const briefView = (sub: Subscription | null, admin: boolean, email: string, allowed: boolean) => ({
+  allowed,
+  email,
+  prefs: sub ? sub.prefs : DEFAULT_PREFS,
+  lastBriefDay: sub?.lastBriefDay ?? null,
+  schedule: { brief: "Checked every 15 minutes; sent at or after your time (Malaysia time), at most once a day. Monday adds the data-gaps list.", alerts: "Checked every 30 minutes; each item is emailed at most once." },
+  ...(admin ? { thresholds: { ...ALERT_THRESHOLDS }, briefSettings: { ...BRIEF_SETTINGS } } : {}),
+});
 
-/** Only an ordinary signed-in session may approve (not a POS / crew PIN session). */
+app.get("/me/brief", async (c) => {
+  const u = c.get("user");
+  const admin = isMcpAdmin(u);
+  const allowed = await hasMcpAccess(c.env.DB, u.id, admin);
+  return c.json(briefView(await getSubscription(c.env.DB, u.id), admin, u.email, allowed));
+});
+
+app.put("/me/brief", async (c) => {
+  const u = c.get("user");
+  const db = c.env.DB;
+  const admin = isMcpAdmin(u);
+  const allowed = await hasMcpAccess(db, u.id, admin);
+  const current = await getSubscription(db, u.id);
+  const parsed = parseBriefPrefs(await c.req.json().catch(() => ({})), current?.prefs ?? DEFAULT_PREFS);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const turningOn = (parsed.prefs.briefEnabled && !current?.prefs.briefEnabled) || (parsed.prefs.alertsEnabled && !current?.prefs.alertsEnabled);
+  if (turningOn && !allowed) return c.json({ error: "Ask for AI Connector access first: the brief is built with the connector, as you." }, 403);
+  if (turningOn && !u.email.includes("@")) return c.json({ error: "Your ERP account has no email address." }, 400);
+  const saved = await saveSubscription(db, u.id, parsed.prefs);
+  await audit(c, { action: "ai_connector.brief", entityType: "ai_connector", entityId: u.id, summary: `Brief email ${saved.prefs.briefEnabled ? `on (${saved.prefs.time} MYT, ${saved.prefs.days})` : "off"}, alerts ${saved.prefs.alertsEnabled ? "on" : "off"}` });
+  return c.json(briefView(saved, admin, u.email, allowed));
+});
+
+app.post("/me/brief/test", async (c) => {
+  const u = c.get("user");
+  const db = c.env.DB;
+  if (!(await hasMcpAccess(db, u.id, isMcpAdmin(u)))) return c.json({ error: "Ask for AI Connector access first." }, 403);
+  const now = Date.now();
+  if (await recentTestBrief(db, u.id, now)) return c.json({ error: `A test brief was sent in the last ${BRIEF_SETTINGS.testCooldownMinutes} minutes. Check your inbox.` }, 429);
+  const sub = (await getSubscription(db, u.id)) ?? (await saveSubscription(db, u.id, DEFAULT_PREFS));
+  let ctx: unknown;
+  try {
+    ctx = c.executionCtx;
+  } catch {
+    ctx = undefined;
+  }
+  const r = await sendBriefFor({ env: c.env, ctx, origin: cronOrigin(c.env) }, sub, now, true);
+  if (r.status !== "sent") return c.json({ error: `Not sent: ${r.note || r.status}` }, r.status === "skipped" ? 409 : 502);
+  return c.json({ ok: true, sentTo: u.email, items: r.items });
+});
+
+
 function ordinarySession(c: Context<HonoEnv>): boolean {
   return !c.get("sessionOrigin");
 }
@@ -162,7 +202,6 @@ app.post("/consent/:id", async (c) => {
   return c.json({ redirect: back.toString() });
 });
 
-// ── admin ───────────────────────────────────────────────────────────────────
 
 app.get("/admin/overview", async (c) => {
   const denied = denyUnlessAdmin(c);
@@ -170,7 +209,7 @@ app.get("/admin/overview", async (c) => {
   const db = c.env.DB;
   const nowIso = new Date().toISOString();
   const dayAgo = new Date(Date.now() - 24 * 3600_000).toISOString();
-  const [requests, connected, allowed, calls, staff, stats, actionsOn] = await Promise.all([
+  const [requests, connected, allowed, calls, staff, stats, actionsOn, noGuide] = await Promise.all([
     db
       .prepare(
         `SELECT r.id, r.user_id, r.reason, r.created_at, u.name, u.email, p.name AS position_name
@@ -184,7 +223,7 @@ app.get("/admin/overview", async (c) => {
            FROM mcp_tokens t JOIN users u ON u.id = t.user_id
            LEFT JOIN mcp_oauth_clients cl ON cl.client_id = t.client_id
            LEFT JOIN positions p ON p.id = u.position_id
-          WHERE t.revoked_at IS NULL AND t.refresh_expires_at > ? AND t.client_id <> 'mcpc_leak_check'
+          WHERE t.revoked_at IS NULL AND t.refresh_expires_at > ? AND t.client_id NOT IN ('mcpc_leak_check', 'mcpc_brief')
           ORDER BY t.last_used_at DESC NULLS LAST, t.created_at DESC`,
       )
       .bind(nowIso)
@@ -213,22 +252,32 @@ app.get("/admin/overview", async (c) => {
       .prepare(
         `SELECT (SELECT COUNT(*) FROM mcp_calls WHERE created_at > ?) AS calls_24h,
                 (SELECT COUNT(*) FROM mcp_calls WHERE created_at > ? AND ok = 0) AS refused_24h,
-                (SELECT COUNT(DISTINCT user_id) FROM mcp_tokens WHERE revoked_at IS NULL AND refresh_expires_at > ? AND client_id <> 'mcpc_leak_check') AS people`,
+                (SELECT COUNT(DISTINCT user_id) FROM mcp_tokens WHERE revoked_at IS NULL AND refresh_expires_at > ? AND client_id NOT IN ('mcpc_leak_check', 'mcpc_brief')) AS people`,
       )
       .bind(dayAgo, dayAgo, nowIso)
       .first<Record<string, unknown>>(),
-    actionsEnabled(db),
+    actionSwitches(db),
+    db
+      .prepare(
+        `SELECT tool, target, COUNT(*) AS n, MAX(created_at) AS last_at FROM mcp_calls
+          WHERE note = ? GROUP BY tool, target ORDER BY n DESC, last_at DESC LIMIT 50`,
+      )
+      .bind(NO_GUIDE_NOTE)
+      .all<Record<string, unknown>>(),
   ]);
   const pos = (r: Record<string, unknown>) => s(r, "position_name") || "—";
   return c.json({
     connectorUrl: connectorUrl(c),
-    actionsEnabled: actionsOn,
+    actionsEnabled: actionsOn.master,
+    actionSwitches: { mailReply: actionsOn.mail_reply, note: actionsOn.note },
+    limits: { perMinute: RATE_PER_MINUTE, perDay: RATE_PER_DAY },
     stats: { connectedPeople: num(stats ?? {}, "people"), callsToday: num(stats ?? {}, "calls_24h"), refusedToday: num(stats ?? {}, "refused_24h"), waiting: requests.results.length },
     requests: requests.results.map((r) => ({ id: s(r, "id"), userId: num(r, "user_id"), name: s(r, "name"), position: pos(r), reason: s(r, "reason"), createdAt: iso(r.created_at) })),
     connected: connected.results.map((r) => ({ tokenId: s(r, "id"), userId: num(r, "user_id"), name: s(r, "name"), position: pos(r), app: appLabel(s(r, "client_name")), connectedAt: iso(r.created_at), lastUsedAt: iso(r.last_used_at) })),
     allowed: allowed.results.map((r) => ({ userId: num(r, "user_id"), name: s(r, "name"), position: pos(r), approvedAt: iso(r.approved_at) })),
     calls: calls.results.map((r) => ({ id: s(r, "id"), userId: num(r, "user_id"), name: s(r, "name"), app: appLabel(s(r, "client_name")), tool: s(r, "tool"), target: s(r, "target"), status: num(r, "status"), ok: num(r, "ok") === 1, note: s(r, "note"), ms: num(r, "ms"), at: iso(r.created_at) })),
     staff: staff.results.map((r) => ({ userId: num(r, "id"), name: s(r, "name"), position: pos(r) })),
+    noGuide: noGuide.results.map((r) => ({ tool: s(r, "tool"), question: s(r, "target"), times: num(r, "n"), lastAt: iso(r.last_at) })),
   });
 });
 
@@ -293,22 +342,23 @@ app.post("/admin/revoke", async (c) => {
   return c.json({ ok: true, revoked: n });
 });
 
-// "Allow AI actions (meetings, email)": propose_* / confirm_action answer
-// "switched off" until this is on (routes/mcp.ts). Default OFF.
 app.post("/admin/actions", async (c) => {
   const denied = denyUnlessAdmin(c);
   if (denied) return denied;
-  const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as { enabled?: unknown; kind?: unknown };
   if (typeof body.enabled !== "boolean") return c.json({ error: "enabled must be true or false" }, 400);
+  if (body.kind === "mail_reply" || body.kind === "note") {
+    await setActionSwitch(c.env.DB, body.kind, body.enabled);
+    const what = body.kind === "mail_reply" ? "Mail Center replies" : "service-case notes";
+    await audit(c, { action: `ai_connector.actions.${body.kind}`, entityType: "ai_connector", entityId: c.get("user").id, summary: `AI action (${what}) turned ${body.enabled ? "on" : "off"}` });
+    return c.json({ ok: true, kind: body.kind, enabled: body.enabled });
+  }
+  if (body.kind !== undefined) return c.json({ error: "kind must be mail_reply or note" }, 400);
   await setActionsEnabled(c.env.DB, body.enabled);
   await audit(c, { action: "ai_connector.actions", entityType: "ai_connector", entityId: c.get("user").id, summary: `AI actions (meetings, email) turned ${body.enabled ? "on" : "off"}` });
   return c.json({ ok: true, actionsEnabled: body.enabled });
 });
 
-// ── leak check ──────────────────────────────────────────────────────────────
-// Runs the connector's real read path AS the chosen staff account over every
-// parameter-free list endpoint, a page at a time (the page loops `offset`
-// until `done`). Field NAMES and outcomes only, never values.
 
 export type LeakRow = { path: string; outcome: "opened" | "refused" | "error"; status: number; hidden: string[]; sensitive: string[] };
 const LEAK_CLIENT_ID = "mcpc_leak_check";

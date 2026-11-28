@@ -28,10 +28,6 @@ function resolveDefaultSofaLeg(pools: ScanVariantPools): string | null {
   return pools.sofaLegHeights.find((v) => DEFAULT_SOFA_LEG_RE.test(v)) ?? null;
 }
 
-/* The pool's "No Leg" option, matched by NAME (same posture as
-   resolveDefaultSofaLeg). The maintenance value is the words "No Leg", NOT a
-   0" measurement — resolving it from the pool keeps a genuine no-leg read
-   instead of inventing an option that was never configured. */
 const NO_LEG_RE = /^\s*no\s*-?\s*leg\s*$/i;
 function resolveNoLeg(pool: string[]): string | null {
   return pool.find((v) => NO_LEG_RE.test(v)) ?? null;
@@ -64,24 +60,14 @@ function snapToMaintPool(value: string, pool: string[]): string | null {
   return ci ?? null;
 }
 
-/* Snap an OCR inch NUMBER to its pool value. The pools are not spelled
-   consistently — legHeights / divanHeights / gaps carry the inch mark (`4"`)
-   while sofaSizes carries the bare number (`28`) — so try BOTH spellings and
-   return whichever the pool actually holds. This is a spelling reconciliation,
-   never a value change: only an exact member of the pool is ever returned, and
-   a number the pool doesn't hold still yields null (axis left unset). */
 function snapInchesToMaintPool(inches: number, pool: string[]): string | null {
   return snapToMaintPool(`${inches}"`, pool) ?? snapToMaintPool(`${inches}`, pool);
 }
 
-/* The variants blob of a drafted scan line. See buildDraftSoBodyFromSlip for the
-   owner rules behind each axis; `category` is the matched SKU's lowercase
-   category ('others' for an unmatched line). */
 export interface ScanLineVariantContext {
   category: string;
   skuCode: string | null;
   pools: ScanVariantPools;
-  /** The line Model's total_heights pool; null or empty means unrestricted. */
   totalHeights: string[] | null;
 }
 
@@ -90,9 +76,6 @@ export function buildScanLineVariants(
   { category: cat, skuCode, pools, totalHeights }: ScanLineVariantContext,
 ): Record<string, unknown> {
   const variants: Record<string, unknown> = {};
-  // The sofa leg picker renders sofaLegHeights while the bedframe one renders
-  // legHeights, but BOTH write the same `legHeight` key (SoLineCard) — so the
-  // pool is chosen by the line's category, not by the key.
   if (skuCode != null) {
     const legPool = cat === 'sofa' ? pools.sofaLegHeights : pools.legHeights;
     if (line.divanHeightInches != null) {
@@ -100,8 +83,6 @@ export function buildScanLineVariants(
       if (snapped) variants.divanHeight = snapped;
     }
     if (line.noLeg) {
-      // "No Leg" is a configured pool WORD, not a 0" measurement. The old
-      // literal '0"' was itself an un-configured value on every pool.
       const noLeg = resolveNoLeg(legPool);
       if (noLeg) variants.legHeight = noLeg;
     } else if (line.legHeightInches != null) {
@@ -118,9 +99,6 @@ export function buildScanLineVariants(
     const specialCodes = (line.specialsMatch ?? []).map((s) => s.code).filter(Boolean);
     if (specialCodes.length > 0) variants.specials = specialCodes;
   }
-  // The create core reprices itemGroup='sofa' from the seat height, so this OCR
-  // figure MOVES the sofa price — an unconfigured read must never reach the
-  // line. Snapping also fixes the SPELLING: sofaSizes is seeded as bare numbers.
   if (cat === 'sofa' && line.seatHeightInches != null) {
     const snapped = snapInchesToMaintPool(line.seatHeightInches, pools.sofaSizes);
     if (snapped) variants.seatHeight = snapped;

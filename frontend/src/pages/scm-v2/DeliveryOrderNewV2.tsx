@@ -1,31 +1,3 @@
-// DeliveryOrderNewV2 — Theme C ("Ink & Petrol") design of the New Delivery
-// Order form, matching the 2026-07-08 handoff prototype.
-//
-// Composition mirrors the DO detail V2 chrome (sticky header, section cards,
-// same colour tokens) but every section is an editable form group. A DO is
-// created by CONVERTING a Sales Order: when the user opens the page with
-// ?fromSo=<SO-doc-no>, the SO detail hook prefills the customer, address,
-// emergency contact, and — when it arrived from the line-level SO→DO picker
-// (?fromPicks=1) — the picked LINES, variants and all, from the
-// the scoped `doFromSoPicks` handoff. Editing an existing DO with ?edit=<id>
-// prefills from the DO itself and SAVES IN PLACE (header PATCH + per-line
-// add/update/delete diff) instead of minting a duplicate.
-//
-// Line items use the SHARED SoLineCard (the same component SO New / Edit
-// mount) so bedframe (Fabrics / Gaps / Divan / Leg) + sofa (Fabrics / Seat /
-// Leg) + Special Orders carry the correct taxonomy — no hand-rolled picker.
-//
-// Section order (matches the prototype):
-//   1. Document flow — inline node card (5-node chain, current DO is brass)
-//   2. Customer info    — name / phone / email / customer type / salesperson +
-//                          Customer SO ref
-//   3. Delivery address — line1/2 + state/city/postcode/sales location
-//   4. Emergency contact — name / relationship / phone
-//   5. Delivery info     — DO date / driver / vehicle / building type + venue /
-//                          expected / customer delivery / note
-//   6. Line items        — shared SoLineCard list
-//
-// Route: /scm/delivery-orders/new (App.tsx flips ScmDeliveryOrderNewV2 here).
 
 import { DO_SPEC_LOCKED_MESSAGE, doSpecLocked } from '../../vendor/shared/do-spec-lock';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -82,12 +54,11 @@ import { SearchableSelect } from "../../vendor/scm/components/SearchableSelect";
 import { AddressPostcodeField } from "../../vendor/scm/components/AddressPostcodeField";
 import { sortByText } from "../../vendor/scm/lib/sort-options";
 
-/* The address boxes share the order form's widgets, drawn in this page's style. */
 const ADDRESS_SELECT_CLS =
   "h-10 w-full rounded-lg border border-border bg-surface px-3 pr-8 text-[13.5px] text-ink outline-none focus:border-primary";
-import { splitE164, combineE164 } from "../../vendor/shared/phone";
+import { splitE164, combineE164 } from "../../../../shared/src/vendor/shared/phone";
 import { DateField } from "../../vendor/scm/components/DateField";
-import { fmtDate } from "../../vendor/shared/format";
+import { fmtDate } from "../../../../shared/src/vendor/shared/format";
 import { warehouseLabel } from "../../vendor/scm/lib/warehouse-label";
 import { buildDoHeaderBody, seedDoHeaderForm, DO_HEADER_LOCKED_NOTICE } from "../../vendor/scm/lib/do-header-form";
 import { doHeaderLocked, isDoHeaderKeyLocked } from "../../vendor/shared/do-header-lock";
@@ -101,19 +72,12 @@ import { todayMyt } from "../../vendor/scm/lib/dates";
 import { FormTouchScope } from "../../components/FormTouchScope";
 import { useFormTouched, useLeaveGuard } from "../../hooks/useLeaveGuard";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
 
-/* One DO line draft = the SHARED SoLineDraft (same variant taxonomy the SO
-   uses) plus a stable React id and, in edit mode, the persisted item id used
-   to diff add / update / delete against the loaded DO. */
 type DoDraftLine = SoLineDraft & { rid: string; itemId?: string; soItemId?: string | null };
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
 const isoToDmy = fmtDate;
 
-/* Fresh empty DO line — the shared empty SO line + a stable rid so the local
-   list can add / edit / diff inline (mirrors SalesOrderNew.newLine). */
 const newDoLine = (deliveryDate: string | null = null): DoDraftLine => ({
   ...emptySoLine(),
   lineDeliveryDate: deliveryDate,
@@ -121,7 +85,6 @@ const newDoLine = (deliveryDate: string | null = null): DoDraftLine => ({
   rid: `dl${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
 });
 
-// ─── Section card shell ────────────────────────────────────────────────────
 
 function SectionCard({
   title,
@@ -150,7 +113,6 @@ function SectionCard({
   );
 }
 
-// ─── Form field ────────────────────────────────────────────────────────────
 
 function Label({
   text,
@@ -182,10 +144,6 @@ function TextInput({
   className?: string;
   disabled?: boolean;
 }) {
-/* type="date" routes to DateField, not to a native date input: the native
-   one renders in the OPERATING SYSTEM's locale, so the same field read
-   DD/MM/YYYY on one machine and MM/DD/YYYY on another. Same ISO contract
-   in and out. */
   if (type === "date") {
     return (
       <DateField value={value} onChange={onChange} placeholder={placeholder} disabled={disabled} className={className} fullWidth/>
@@ -279,11 +237,6 @@ function PhoneInput({
   placeholder?: string;
   disabled?: boolean;
 }) {
-  // The prefix box owns the country code, so the input holds only the national
-  // digits. Seeded values arrive E.164 ("+60169691009"); showing them verbatim
-  // rendered a double "+60 +60169691009". splitE164 strips the code for display,
-  // combineE164 puts it back into storage form, so the stored value stays E.164
-  // and the submit path is unchanged.
   const national = splitE164(value).national;
   return (
     <div className="flex items-stretch gap-1.5">
@@ -301,8 +254,6 @@ function PhoneInput({
   );
 }
 
-// ─── Document flow inline card (matches the detail Relationship Map modal
-// layout scaled down for the form page's inline treatment) ─────────────────
 
 function DocumentFlowStrip({ soDocNo }: { soDocNo: string | null }) {
   const nodes: Array<{
@@ -426,7 +377,6 @@ function DocumentFlowStrip({ soDocNo }: { soDocNo: string | null }) {
   );
 }
 
-// ─── From SO picker modal ──────────────────────────────────────────────────
 
 function FromSoPickerModal({
   open,
@@ -444,10 +394,6 @@ function FromSoPickerModal({
     if (open) setValue(currentValue ?? "");
   }, [open, currentValue]);
 
-  // Portal to <body> so `fixed` positioning latches to the viewport instead of
-  // getting trapped inside an ancestor with `transform` / `filter` /
-  // `will-change` (the Layout's overflow-hidden main pane triggers this on
-  // mobile browsers).
   return createPortal(
     <>
       <div
@@ -509,25 +455,16 @@ function FromSoPickerModal({
   );
 }
 
-// ─── Main page ─────────────────────────────────────────────────────────────
 
 export function DeliveryOrderNewV2() {
   const navigate = useNavigate();
   const { touched: formTouched, markTouched } = useFormTouched();
   const { allowLeave } = useLeaveGuard(formTouched, null);
   const [params] = useSearchParams();
-  /* This page carried seven window.alert/confirm calls, two of which
-     concatenated a raw error message into an OS-chrome box. The house dialog
-     system is the standing rule for anything that reports an error. (Plain
-     confirmation window.confirm's survive on a handful of other screens —
-     clean copy, no error text — left for a dedicated dialog sweep.) */
   const askConfirm = useConfirm();
   const notify = useNotify();
-  // Sales staff for the Salesperson picker (id-keyed, same source as the SO
-  // form). We store the id (a Code), not the name string, so the DO matches SO/SI.
   const staffQ = usePickableStaff({ onlySales: true });
   const salesStaff = staffQ.data ?? [];
-  // Populate the Sales-location picker from the real warehouse list (not hardcoded demos).
   const stateWarehousesQ = useStateWarehouseMappings();
 
   useSetBreadcrumbs([
@@ -540,13 +477,7 @@ export function DeliveryOrderNewV2() {
   const editId = params.get("edit") ?? "";
 
   const [soDocNo, setSoDocNo] = useState<string>(fromSoParam);
-  /* The converter's OWN read of the source SO — cross-company, same columns and
-     same mapping as POST /from-sos. Replaces useMfgSalesOrderDetail, which is
-     company-scoped and 404'd for a mirrored 2990- SO, silently blanking every
-     header field while the "Converted from" badge kept rendering. */
   const soSource = useSoConversionSource(soDocNo || null);
-  /* Lines fallback for a bare ?fromSo= (no line-picker stash). Also cross-company,
-     and semantically the right set: what is still UNDELIVERED on that SO. */
   /* In edit mode the SO doc no. is the DO's own, seeded on load, so it cannot
      be the trigger: only an explicit "Pull from SO" appends lines (HC-0146). */
   const [editPullDoc, setEditPullDoc] = useState<string | null>(null);
@@ -565,33 +496,19 @@ export function DeliveryOrderNewV2() {
   const specLockedReason = editId && doSpecLocked((doDetail.data as { deliveryOrder?: { status?: string | null } } | undefined)?.deliveryOrder?.status ?? null)
     ? DO_SPEC_LOCKED_MESSAGE : null;
   const createDo = useCreateMfgDeliveryOrder();
-  /* One key for the one DO this page is open to raise (lib/idempotency.ts).
-     This is the ROUTED desktop DO create (App.tsx:543 → /scm/delivery-orders/
-     new); the V1 page above shares the same hook and mints its own key — a hook
-     is not a call site, and protecting only one caller of a shared hook protects
-     nobody who uses the other.
-
-     Route-level form, navigates to the DO detail (or the list) on success, so
-     the MOUNT is exactly one DO. Unused by the editId branch below, which
-     PATCHes one existing DO and cannot duplicate. */
   const idemKey = useIdempotencyKey();
   const updateHeader = useUpdateMfgDeliveryOrderHeader();
   const addItem = useAddMfgDeliveryOrderItem();
   const updateItem = useUpdateMfgDeliveryOrderItem();
   const deleteItem = useDeleteMfgDeliveryOrderItem();
 
-  // ── Form state ─────────────────────────────────────────────────────
   const [customerName, setCustomerName] = useState("");
-  // The customer's CODE, captured by the debtor picker (like SO/SI). The name is
-  // the human label beside it; the code is what the DO now stores.
   const [debtorCode, setDebtorCode] = useState("");
   const [customerSoRef, setCustomerSoRef] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [customerType, setCustomerType] = useState("");
-  // Customer type from the live maintenance catalog (same as SO), not hardcoded.
   const customerTypeOpts = optionsOrFallback("customer_type", useSoDropdownOptions("customer_type").data);
-  // Salesperson stored by ID (a Code), not a free-text name — matches SO/SI.
   const [salespersonId, setSalespersonId] = useState("");
   const [addr1, setAddr1] = useState("");
   const [addr2, setAddr2] = useState("");
@@ -620,11 +537,6 @@ export function DeliveryOrderNewV2() {
   const [asDraft, setAsDraft] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Sales-location options come from the real state->warehouse mappings (each maps
-  // to a warehouse code), not the two hardcoded demo rows the field used to carry —
-  // those never matched the prefilled warehouse code, so a carried value rendered
-  // as the empty placeholder. Keep any already-set value visible even if it is not
-  // in the mapping list.
   const salesLocationOpts = useMemo(() => {
     const byValue = new Map<string, { value: string; label: string }>();
     for (const m of stateWarehousesQ.data?.mappings ?? []) {
@@ -637,20 +549,12 @@ export function DeliveryOrderNewV2() {
     return Array.from(byValue.values());
   }, [stateWarehousesQ.data, salesLocation]);
 
-  /* The same State -> City -> Postcode cascade the Sales Order and Sales Invoice
-     forms use (address-cascade.ts). These three were free-text boxes here, the
-     only document form left that way, so a DO could carry an address the order
-     form would never accept. A carried value the locality list lacks stays
-     visible rather than rendering as the empty placeholder. */
   const loc = useLocalities();
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
   const { cities, postcodes } = useAddressCascade(locRows, state, city);
   const applyTriple = (next: { state: string; city: string; postcode: string }) => {
     setState(next.state); setCity(next.city); setPostcode(next.postcode);
   };
-  /* A State PICK fills Sales Location from its mapping, as on the order form.
-     Done in the handler, not an effect, so a location carried from the order
-     is never overwritten on load. */
   const onStatePick = (next: string) => {
     applyTriple(pickState(next));
     const code = stateWarehousesQ.data?.mappings.find((m) => m.state === next)?.warehouse?.code;
@@ -660,24 +564,17 @@ export function DeliveryOrderNewV2() {
     (current && !opts.includes(current) ? [current, ...opts] : opts);
   const country = (state ? countryForState(locRows, state) : null) ?? "Malaysia";
 
-  // One-shot seed guards + the original-line signatures used to diff an edit.
   const [stashSeeded, setStashSeeded] = useState(false);
   const [editSeeded, setEditSeeded] = useState(false);
   const originalLinesRef = useRef<Map<string, string>>(new Map());
 
-  // Flash toast
   useEffect(() => {
     if (!flash) return;
     const t = setTimeout(() => setFlash(null), 1900);
     return () => clearTimeout(t);
   }, [flash]);
 
-  // ── Item body — the shared shape create-items + add/update-item all send.
   const toDoItemBody = (l: DoDraftLine) => ({
-    // Carry the SO line id so the backend links the DO line to its SO line —
-    // the key the remaining-qty guard, the sofa batch guard and the drop-ship
-    // batch stamping all resolve on. Dropping it made every SO-sourced sofa DO
-    // that needs drop-ship hard-block (offenders resolved soItemId=null -> no PO).
     soItemId: l.soItemId ?? null,
     itemCode: l.itemCode,
     itemGroup: l.itemGroup,
@@ -689,10 +586,6 @@ export function DeliveryOrderNewV2() {
     unitCostSen: l.unitCostSen,
     variants: l.variants,
     remark: l.remark,
-    /* Backend reads `lineDeliveryDate` (do-item-row.ts:136), never
-       `deliveryDate` — an owner-observed bug had this key silently dropped on
-       every DO create/edit. `lineDeliveryDateOverridden` carries the operator
-       intent so a header-change cascade skips lines they typed by hand. */
     lineDeliveryDate: l.lineDeliveryDate ?? "",
     lineDeliveryDateOverridden: l.lineDeliveryDateOverridden ?? false,
   });
@@ -712,12 +605,6 @@ export function DeliveryOrderNewV2() {
     setLines((prev) => cascadeLineDeliveryDate(prev, customerDelDate) ?? prev);
   }, [customerDelDate]);
 
-  // ── SO→DO line stash (from the line-level picker) ──────────────────
-  // DeliveryOrderFromSo stashes the picked SO lines — variants and all — under
-  // `doFromSoPicks` and navigates here with ?fromPicks=1. Seed the line editors
-  // from that stash so fabric / gaps / divan / leg / seat / specials survive the
-  // hand-off (the old code re-prefilled variants:[] from the raw SO items and
-  // dropped them). One-shot + consumed so a refresh starts clean.
   useEffect(() => {
     if (!fromPicks || stashSeeded) return;
     setStashSeeded(true);
@@ -750,12 +637,6 @@ export function DeliveryOrderNewV2() {
     }
   }, [fromPicks, stashSeeded]);
 
-  // ── Prefill customer/delivery header from the SO (when converting) ─────
-  // Reads the converter's own cross-company soSource (see the hook above), NOT
-  // the company-scoped SO detail — otherwise a 2990-mirrored SO converted while
-  // browsing as Houzs 404s and every customer field stays blank. Skipped in edit
-  // mode — an existing DO prefills from itself, not from its parent SO.
-  // Customer-name typeahead → captures the debtor CODE on pick (SO's pattern).
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
   const debtorInputRef = useRef<HTMLInputElement>(null);
   const debouncedCustomer = useDebouncedValue(customerName, 200);
@@ -776,11 +657,6 @@ export function DeliveryOrderNewV2() {
     if (editId) return;
     const so = soSource.data?.source;
     if (!so || !soDocNo) return;
-    /* `?? ""` here is a WRITE into a form field, not a cover for an unread value:
-       soSource has already distinguished "absent at the source" (null, and named
-       in `missing` below) from "we could not read the SO" (the query errors, and
-       the banner says so). An empty input is the honest rendering of a field the
-       source order genuinely does not carry. */
     setCustomerName(so.customerName ?? "");
     setDebtorCode(so.debtorCode ?? "");
     setCustomerSoRef(so.customerSoRef ?? "");
@@ -803,22 +679,12 @@ export function DeliveryOrderNewV2() {
        the operator's own field: blank posts as null and the server falls back
        to the customer date, exactly as /from-sos does. */
     setCustomerDelDate((so.customerDeliveryDate ?? "").slice(0, 10));
-    /* Owner 2026-09-11: the DO date on this form also defaults to the SO's
-       delivery date (not today), so the whole form opens carrying one date
-       across DO date + header customer delivery date + every line. A blank
-       DO with no SO source keeps today, seeded by the useState initial. */
-    if (so.customerDeliveryDate) setDoDate(String(so.customerDeliveryDate).slice(0, 10));
+    /* Owner 2026-11-27: the DO date stays TODAY (the useState initial); the
+       delivery date is the planned one (/so-source sends amended ?? customer). */
     setFlash(`Prefilled from ${soDocNo}`);
   }, [soSource.data, soDocNo, editId]);
 
-  /* The old raw-UUID-in-the-salesperson-field hazard is gone: the field is now a
-     SELECT keyed on salespersonId, so a uuid can never leak into a name string
-     the way the free-text input allowed. `agent` (legacy name) is derived from
-     the picked staff on submit, never typed. */
 
-  // Lines fallback — only when the line-level picker didn't hand a stash over.
-  // Sourced from the SO's still-undeliverable remainder (cross-company, same as
-  // the header), so a bare ?fromSo= on a mirrored 2990 SO carries its lines too.
   const soRowToLine = (it: NonNullable<typeof soLines.data>[number]): DoDraftLine => ({
     /* Owner ruling 2026-09-11: default the line delivery date to the
        SO's, same as the ?fromPicks= path above. */
@@ -830,7 +696,6 @@ export function DeliveryOrderNewV2() {
     uom: it.uom ?? "UNIT",
     qty: it.remaining,
     unitPriceSen: it.unitPriceSen,
-    // The remainder's share of the SO line discount, not all of it.
     discountSen: lineDiscountShare(it.discountSen, it.qty, it.qty - it.remaining, it.remaining),
     unitCostSen: it.unitCostSen,
     variants:
@@ -848,9 +713,6 @@ export function DeliveryOrderNewV2() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soLines.data, editId, fromPicks]);
 
-  /* Edit mode: append what is still undelivered on the picked SO, beside the
-     DO's own lines. A DRAFT DO's lines do not count as delivered yet, so they
-     come back in the remainder and are skipped by their SO line. */
   useEffect(() => {
     if (!editId || !editPullDoc || !soLines.data) return;
     const items = (doDetail.data as { items?: Array<{ so_item_id?: string | null }> } | undefined)?.items ?? [];
@@ -871,15 +733,11 @@ export function DeliveryOrderNewV2() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soLines.data, editId, editPullDoc]);
 
-  // ── Prefill from DO detail (when editing) ──────────────────────────
-  // Seeds header + lines (with their persisted item id) once, and snapshots
-  // each line's signature so the Save can diff add / update / delete.
   useEffect(() => {
     if (!editId || editSeeded) return;
     const doo = (doDetail.data as { deliveryOrder?: Record<string, unknown> } | undefined)?.deliveryOrder;
     if (!doo) return;
     setEditSeeded(true);
-    /* The seed is the shared layer's (do-header-form.ts), the one the phone's edit sheet uses. */
     const f = seedDoHeaderForm(doo, todayMyt());
     setCustomerName(f.customerName); setDebtorCode(f.debtorCode); setCustomerSoRef(f.customerSoRef);
     setPhone(f.phone); setEmail(f.email); setCustomerType(f.customerType); setSalespersonId(f.salespersonId);
@@ -924,20 +782,11 @@ export function DeliveryOrderNewV2() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doDetail.data, editId, editSeeded]);
 
-  // ── Totals ─────────────────────────────────────────────────────────
   const totalQty = useMemo(
     () => lines.reduce((sum, l) => sum + (Number.isFinite(l.qty) ? l.qty : 0), 0),
     [lines]
   );
 
-  // ── Sofa-set inherit — first line per category seeds followers on pick.
-  //    The rule lives in vendor/scm/lib/so-variant-cascade, which is also
-  //    where the never-inherited keys are named: a fresh line must not take
-  //    the master's `buildKey` (that forges a sofa compartment on an
-  //    unrelated line — free-gift trigger + PDF grouping) or its `remark`.
-  //    This page seeds ONLY; unlike the SO pages it does not run the live
-  //    cascade afterwards, and whether a delivery-order line should follow
-  //    line 1 at all is an owner decision, not a defect to fix quietly. ──
   const inheritVariantsByCategory = useMemo(
     () => seedableMasterVariants(
       lines.map((l) => ({
@@ -954,7 +803,6 @@ export function DeliveryOrderNewV2() {
     [lines]
   );
 
-  // ── Line ops ───────────────────────────────────────────────────────
   const addLine = () => {
     setLines((prev) => [...prev, newDoLine(customerDelDate || null)]);
   };
@@ -964,8 +812,6 @@ export function DeliveryOrderNewV2() {
   const updateLine = (rid: string, patch: Partial<SoLineDraft>) => {
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   };
-  // Desktop multi-add parity — SoLineCard commits the first pick to its own
-  // line and hands the rest here as fresh lines (same as SalesOrderNew).
   const addProducts = (rows: MfgProductRow[]) => {
     if (rows.length === 0) return;
     setLines((prev) => [
@@ -985,9 +831,6 @@ export function DeliveryOrderNewV2() {
     ]);
   };
 
-  // ── Submit — create ────────────────────────────────────────────────
-  /* The header body is the shared layer's (do-header-form.ts) — the phone's edit
-     sheet sends the same one. On a locked DO the locked keys are dropped. */
   const buildHeaderBody = () => buildDoHeaderBody({
     customerName, debtorCode, customerSoRef, phone, email, customerType, salespersonId,
     address1: addr1, address2: addr2, state, city, postcode, salesLocation,
@@ -1027,24 +870,10 @@ export function DeliveryOrderNewV2() {
     }
     setAsDraft(draft);
     createDo.mutate(
-      /* asDraft is the ONLY field the create route reads to park a DO
-         (`body.asDraft === true ? 'DRAFT' : 'LOADED'`); the `status` below is
-         ignored by it. Sending only `status` shipped the DO: stock deducted and
-         the SO synced delivered, while the flash said "Saved as draft". The
-         unrouted V1 page had this right (DeliveryOrderNew.tsx:294) and this one
-         never got it. The `status` value here has always been inert; since
-         2026-08-22 the server independently agrees with what it asks for. */
       { ...buildBody(), idempotencyKey: idemKey, asDraft: draft || undefined, status: draft ? "DRAFT" : "LOADED" },
       {
         onSuccess: async (res) => {
           setFlash(draft ? "Saved as draft" : "Delivery order created");
-          /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT. A DO raised from a
-             sales order is TRANSFERRED into AutoCount, and the transfer route
-             applies a narrower set of header fields than an edit does — so the
-             book can hold this delivery order with no reference and no date of
-             its own. Said here, BEFORE the navigation, for the reason
-             PurchaseOrderNew records: a route change tears the dialog down.
-             Never blocks; the DO exists and the goods have gone. */
           await notifyAcNotSent(notify, res, "Delivery order");
           allowLeave();
           if (res?.id) {
@@ -1054,11 +883,6 @@ export function DeliveryOrderNewV2() {
           }
         },
         onError: (err) => {
-          /* authedFetch has already run the response through humanApiError, so
-             this arrives as a plain sentence; re-mapping it here would be a
-             second copy of that rule. The reassurance about the entered data is
-             the part the operator actually needs — this create carries an
-             idempotency key, so trying again is safe. */
           void notify({
             title: "Couldn't create this delivery order",
             body: `${err instanceof Error ? err.message : "Something went wrong."} Nothing was saved and your entries are still on this screen — please try again.`,
@@ -1070,7 +894,6 @@ export function DeliveryOrderNewV2() {
     );
   };
 
-  // ── Submit — in-place edit (header PATCH + per-line add/update/delete) ─
   const doSaveEdit = async () => {
     if (!editId) return;
     if (!customerName.trim()) {
@@ -1084,7 +907,6 @@ export function DeliveryOrderNewV2() {
     }
     setSavingEdit(true);
     try {
-      // Diff the loaded DO's lines against the current editor state.
       const currentIds = new Set(
         lines.filter((l) => l.itemId).map((l) => l.itemId as string)
       );
@@ -1110,21 +932,13 @@ export function DeliveryOrderNewV2() {
           added.push(body);
         }
       }
-      // One request, so the server checks a sofa set over all its new modules.
       if (added.length > 0) ops.push(addItem.mutateAsync({ id: editId, items: added }));
-      // Lines first, then the header — mirrors SalesOrderDetail.saveEdit so a
-      // header guard that reads the live line rows sees the fresh variants.
       await Promise.all(ops);
       await updateHeader.mutateAsync({ id: editId, ...buildHeaderBody() });
       setFlash("Delivery order updated");
       allowLeave();
       navigate(`/scm/delivery-orders/${editId}`);
     } catch (err) {
-      /* NOT the same message as the create path. This save is a batch of line
-         add/update/delete calls followed by the header PATCH, so a failure part
-         way through means SOME line changes may already have landed. Telling the
-         operator "try again" would be a confident lie about a state we did not
-         verify — they must look before they re-save. */
       void notify({
         title: "Couldn't finish saving this delivery order",
         body: `${err instanceof Error ? err.message : "Something went wrong."} Some of your line changes may already have saved and some may not. Please refresh and check the delivery order before saving again.`,
@@ -1148,13 +962,6 @@ export function DeliveryOrderNewV2() {
           operator can see which SO this DO hangs off (and reach Create/Cancel)
           from anywhere down a long form. Keep them in ONE sticky box — two
           stacked sticky boxes would each pin at top:0 and overlap. */}
-      {/* top-12 / lg:top-[52px] z-20 is the house offset for a page-level sticky
-          (Layout.tsx, DetailLayout, AmendmentDetailV2, PoAmendmentDetailV2): the
-          workspace tab strip in TopNavbar is itself `sticky top-0 z-40 h-[52px]`
-          inside this same scroll container. This box was `top-0 z-10`, so it
-          parked UNDER that strip and the strip painted over its first 52px —
-          exactly the title row and the Cancel / Save as Draft / Create buttons.
-          Freezing more content only made that clearer. */}
       <div className="sticky top-12 lg:top-[52px] z-20 -mx-4 border-b border-border bg-bg/95 px-4 py-4 backdrop-blur-sm sm:-mx-6 sm:px-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
@@ -1185,11 +992,6 @@ export function DeliveryOrderNewV2() {
             </div>
           </div>
 
-          {/* THE FORM MUST NEVER LOOK FRESH WHEN IT IS ACTUALLY BROKEN.
-              The badge above renders off the ?fromSo= STRING, so it kept saying
-              "Converted from 2990-SO-2606-002" over a form whose every field was
-              blank because the source read had 404'd. These two states now say
-              which one they are. */}
           {!editId && soDocNo && soSource.isError && (
             <div
               role="alert"
@@ -1215,7 +1017,6 @@ export function DeliveryOrderNewV2() {
               {DO_HEADER_LOCKED_NOTICE}
             </div>
           )}
-          {/* Right actions — no-wrap */}
           <div className="flex flex-shrink-0 flex-nowrap items-center gap-2">
             <Button
               variant="ghost"
@@ -1266,15 +1067,12 @@ export function DeliveryOrderNewV2() {
           </div>
         </div>
 
-        {/* Document flow — frozen with the header (see note above) */}
         <div className="mt-4">
           <DocumentFlowStrip soDocNo={soDocNo || null} />
         </div>
       </div>
 
-      {/* Body */}
       <div className="flex flex-col gap-5 py-6">
-        {/* Customer info */}
         <SectionCard title="Customer info">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_340px]">
             <div>
@@ -1350,7 +1148,6 @@ export function DeliveryOrderNewV2() {
           </div>
         </SectionCard>
 
-        {/* Delivery address */}
         <SectionCard title="Delivery address">
           <div className="flex flex-col gap-4">
             <div>
@@ -1424,7 +1221,6 @@ export function DeliveryOrderNewV2() {
           </div>
         </SectionCard>
 
-        {/* Emergency contact */}
         <SectionCard
           title="Emergency contact"
           actions={
@@ -1463,7 +1259,6 @@ export function DeliveryOrderNewV2() {
           </div>
         </SectionCard>
 
-        {/* Delivery info */}
         <SectionCard title="Delivery info">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
             <div>
@@ -1545,7 +1340,6 @@ export function DeliveryOrderNewV2() {
           </div>
         </SectionCard>
 
-        {/* Line items — shared SoLineCard (bedframe / sofa / specials taxonomy) */}
         <SectionCard
           title={`Line items · ${lines.length}`}
           actions={<span>Pick a product, then set its variant</span>}
@@ -1561,9 +1355,6 @@ export function DeliveryOrderNewV2() {
                 canRemove={lines.length > 1}
                 inheritVariantsByCategory={inheritVariantsByCategory}
                 onAddProducts={addProducts}
-                /* A DO delivers items already specified on the SO, so the
-                   category-mandatory variants are NOT re-required here (they
-                   ride in from the SO stash / DO detail). */
                 variantsRequired={false}
                 specLockedReason={line.itemId ? specLockedReason : null}
                 lineDateLocked={false}
@@ -1586,7 +1377,6 @@ export function DeliveryOrderNewV2() {
           </div>
         </SectionCard>
 
-        {/* Bottom action strip — mirrors sticky header, for tall pages */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
           <div className="text-[11.5px] text-ink-muted">
             {lines.length} line{lines.length === 1 ? "" : "s"} · {totalQty} unit
@@ -1613,7 +1403,6 @@ export function DeliveryOrderNewV2() {
         </div>
       </div>
 
-      {/* From SO picker modal */}
       <FromSoPickerModal
         open={soPickerOpen}
         onClose={() => setSoPickerOpen(false)}
@@ -1625,7 +1414,6 @@ export function DeliveryOrderNewV2() {
         currentValue={soDocNo}
       />
 
-      {/* Flash toast */}
       {flash && (
         <div className="fixed bottom-6 left-1/2 z-[100] -translate-x-1/2 rounded-lg bg-sidebar px-4 py-2.5 text-[13px] font-semibold text-white shadow-slab">
           {flash}
@@ -1636,8 +1424,6 @@ export function DeliveryOrderNewV2() {
   );
 }
 
-// Unused imports guard — reference the icons that may not appear in every code
-// path so a future drift doesn't leave them dangling.
 void ArrowRightIcon;
 void ShoppingCart;
 void isoToDmy;

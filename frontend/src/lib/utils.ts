@@ -1,7 +1,4 @@
-// The module, NOT the `@2990s/shared` barrel: the barrel star-exports 15
-// modules and this file is in the app shell, so the barrel would pull all of
-// them into the initial chunk (+7.9 KB gzip, measured).
-import { fmtDate, fmtDateTime, fmtTimestamp } from "../vendor/shared/format";
+import { fmtDate, fmtDateTime, fmtTimestamp } from "../../../shared/src/vendor/shared/format";
 
 export function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
@@ -20,28 +17,10 @@ export function formatNumber(n: number | null | undefined): string {
   return n.toLocaleString("en-MY");
 }
 
-// ── Time zone ────────────────────────────────────────────────
-//
-// All audit timestamps in the DB are written via SQLite `datetime('now')`,
-// which returns UTC strings like `2026-05-28 17:30:00`. The team operates
-// in Malaysia / Singapore time (GMT+8) and everything that surfaces a
-// real-world moment must be displayed in that zone, not in whatever
-// timezone the user's browser happens to be set to.
-//
-// User-entered scheduling fields (setup_start_at, payment_date, …) take
-// a different shape — `YYYY-MM-DDTHH:MM`, sourced from `<input
-// type="datetime-local">` — and are stored as wall-clock strings with no
-// timezone implied. Those must NOT be converted; we display whatever
-// the user typed.
-//
-// The two cases are distinguishable by the string itself (see the
-// helpers below) so a single formatter picks the right branch.
 
 export const APP_TZ = "Asia/Kuala_Lumpur";
 
 function isWallClockDateTime(s: string): boolean {
-  // Format produced by datetime-local input. 16 chars, T separator,
-  // no seconds → we treat this as wall-clock-as-typed.
   return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s);
 }
 
@@ -65,7 +44,6 @@ function isDateOnly(s: string): boolean {
 export function parseDate(d: string | null | undefined): Date | null {
   if (!d) return null;
   let s = d;
-  // Bare SQLite timestamp: "YYYY-MM-DD HH:MM:SS[.fff]" → tag as UTC
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(s)) {
     s = s.replace(" ", "T") + "Z";
   }
@@ -73,17 +51,6 @@ export function parseDate(d: string | null | undefined): Date | null {
   return isNaN(date.getTime()) ? null : date;
 }
 
-/* THE DATE RULE LIVES IN ONE PLACE — `@2990s/shared`'s `fmtDate`.
-   These three names stay because 154 call sites use them, but they no longer
-   carry a copy of the rule: they forward to it. The rule (numeric yyyy/mm/dd
-   since 2026-09-25, no month names, date-only shown verbatim, instants
-   converted once into GMT+8) is the shared module's, comment and all, and
-   it is the same rule the SPA lists, the detail pages and the PDFs use.
-
-   The old bodies here were the BEST of the five spellings in the tree — they
-   were the only ones that branched on the input's shape instead of trusting
-   `new Date()`. That branching is what moved into the shared module; nothing
-   about what a user sees changes on this path. */
 export function formatDate(d: string | null | undefined): string {
   return fmtDate(d);
 }
@@ -109,7 +76,6 @@ export function relativeTime(d: string | null | undefined): string {
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const sec = Math.floor(diffMs / 1000);
-  // Negative diffs (clock skew) → treat as "just now" instead of "in 5s"
   if (sec < 5) return "just now";
   if (sec < 60) return `${sec}s ago`;
   const min = Math.floor(sec / 60);
@@ -118,8 +84,6 @@ export function relativeTime(d: string | null | undefined): string {
   if (hr < 24) return `${hr}h ago`;
   const day = Math.floor(hr / 24);
   if (day < 7) return `${day}d ago`;
-  // Past one week — fall back to the absolute date in yyyy/mm/dd (GMT+8),
-  // matching the rest of the SPA's date format.
   return fmtDate(date);
 }
 
@@ -143,25 +107,20 @@ export function todayInAppTz(): string {
 export function isExpired(d: string | null | undefined): boolean {
   if (!d) return false;
   const today = todayInAppTz();
-  // Date-only / wall-clock fields compare directly as strings.
   const datePart = isDateOnly(d) || isWallClockDateTime(d) ? d.slice(0, 10) : null;
   if (datePart) return datePart < today;
-  // Audit timestamp — compare its GMT+8 calendar date.
   const date = parseDate(d);
   if (!date) return false;
-  const inTz = fmtDate(d); // YYYY/MM/DD
+  const inTz = fmtDate(d);
   if (inTz === "—") return false;
-  // Convert YYYY/MM/DD → YYYY-MM-DD for lexicographic compare.
   return inTz.replace(/\//g, "-") < today;
 }
 
 export function isExpiringSoon(d: string | null | undefined, days = 3): boolean {
   if (!d) return false;
   const today = todayInAppTz();
-  // Compute cutoff in GMT+8 by anchoring midnight at this calendar date.
   const cutoff = new Date(`${today}T00:00:00+08:00`);
   cutoff.setDate(cutoff.getDate() + days);
-  // fmtDate is year-first (YYYY/MM/DD), so YYYY-MM-DD is just a separator swap.
   const cutoffIso = fmtDate(cutoff).replace(/\//g, "-");
 
   const datePart =
@@ -174,17 +133,6 @@ export function isExpiringSoon(d: string | null | undefined, days = 3): boolean 
   return iso >= today && iso <= cutoffIso;
 }
 
-// ── Search highlight ─────────────────────────────────────────
-//
-// Pure splitter used by BOTH the desktop Cmd+K palette and the mobile search
-// palette to BOLD the matched keyword in a result. Kept framework-free here (a
-// plain segment array) so this `.ts` module carries no JSX; the rendering
-// wrapper (<HighlightedText>) lives in lib/highlight.tsx.
-//
-// Case-insensitive, matches EVERY occurrence of `query` in `text`. The query is
-// regex-escaped so a term with special chars (a sofa code like `1A(LHF)`, a
-// phone with `+`) never breaks the split. Returns the original text as one
-// non-matching segment when the query is empty or absent.
 
 export interface HighlightSegment {
   text: string;
@@ -199,7 +147,6 @@ export function splitHighlight(
   const q = (query ?? "").trim();
   if (!s) return [];
   if (q.length === 0) return [{ text: s, match: false }];
-  // Escape regex metacharacters in the user's query.
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   let re: RegExp;
   try {

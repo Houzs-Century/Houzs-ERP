@@ -57,10 +57,5 @@ export function cascadeLineDeliveryDate<T extends CascadableLine>(
     if ((l.lineDeliveryDate ?? null) === target) return l;
     return { ...l, lineDeliveryDate: target };
   });
-  /* "Did anything move" is asked by IDENTITY, not by a flag the map sets. The
-     flag version is what the two inline copies used, and the linter is right to
-     call it out: TypeScript cannot see that a `.map` callback runs, so it
-     narrows the flag to `false` and the ternary reads as dead. Identity says the
-     same thing, and says it in a way the compiler can follow. */
   return next.some((l, i) => l !== lines[i]) ? next : null;
 }

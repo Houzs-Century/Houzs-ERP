@@ -69,7 +69,6 @@ function rowOut(r: Row) {
   };
 }
 
-// ── GET / — list this tenant's saved locations.
 savedLocations.get('/', async (c) => {
   const sb = c.get('supabase');
   const { data, error } = await paginateAll<Row>((from, to) =>
@@ -80,9 +79,6 @@ savedLocations.get('/', async (c) => {
   return c.json({ locations: (data ?? []).map(rowOut) });
 });
 
-/* Phones are NORMALISED to E.164, not merely checked (same rule as
-   threepl-companies.ts): a location contact may be a landline, so normalizePhone
-   reshapes both and returns null only for something that is not a number at all. */
 const optionalPhone = z.string().trim().max(40).nullable().optional().superRefine((v, ctx) => {
   if (v == null || v === '') return;
   if (!normalizePhone(v)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Contact phone is not a usable phone number.' });
@@ -116,7 +112,6 @@ const ADDRESS_REQUIRED = {
 const hasAddress = (a1: string | null | undefined, a2: string | null | undefined): boolean =>
   (a1 ?? '').trim() !== '' || (a2 ?? '').trim() !== '';
 
-// ── POST / — create. (company_id, name) is UNIQUE -> 409 on duplicate.
 savedLocations.post('/', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -151,8 +146,6 @@ savedLocations.post('/', async (c) => {
   return c.json({ location: rowOut(data as Row) }, 201);
 });
 
-// ── PATCH /:id — STRICT company scope (a blind-id WHERE would let tenant A edit
-//    tenant B's location by knowing its UUID).
 savedLocations.patch('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
@@ -178,8 +171,6 @@ savedLocations.patch('/:id', async (c) => {
   if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
 
   const sb = c.get('supabase');
-  /* An edit that touches the address must not blank it out — read the current row
-     (company-scoped) and check the merged result still has a street line. */
   if (updates.address1 !== undefined || updates.address2 !== undefined) {
     const { data: cur, error: curErr } = await scopeToCompanyId(
       sb.from('saved_locations').select('address1, address2').eq('id', id),
@@ -208,8 +199,6 @@ savedLocations.patch('/:id', async (c) => {
   return c.json({ location: rowOut(data as Row) });
 });
 
-// ── DELETE /:id — STRICT company scope. A DP order that used this location keeps
-//    its own snapshot (soft link), so removing a location never rewrites history.
 savedLocations.delete('/:id', async (c) => {
   const id = c.req.param('id');
   const co = requireActiveCompanyId(c);

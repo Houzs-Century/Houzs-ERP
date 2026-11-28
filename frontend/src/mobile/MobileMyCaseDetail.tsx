@@ -42,16 +42,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatCaseAddress } from "../vendor/scm/lib/assr-case-address";
 import { api } from "../api/client";
 import { formatDate, formatDateTime } from "../lib/utils";
-import { formatPhone } from "../vendor/shared/phone";
+import { formatPhone } from "../../../shared/src/vendor/shared/phone";
 import { orderDeliveryOf } from "../vendor/scm/lib/assr/order-delivery";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import "./mobile.css";
 
-/* No `any` here, deliberately: this is a new file and the linter's ceiling for
-   it is zero. `/api/assr/:id` returns loose rows (the Postgres driver camelCases
-   result columns, so the same field arrives either way depending on the path),
-   so the honest type is an index of `unknown` plus readers that narrow. */
 type Row = Record<string, unknown>;
 interface CaseDetailResponse {
   case?: Row;
@@ -68,10 +64,6 @@ const BROWN_FG = "#8a6a2e";
 const GREY = "#9aa093";
 const LINE_SOFT = "rgba(34,31,32,0.10)";
 
-/** Dual-read camelCase / snake_case — the Postgres driver camelCases result
- *  columns, so the same field arrives either way depending on the path. Same
- *  reader MobileServiceCase uses, restated rather than exported from a
- *  3,400-line screen this file must not import. */
 const read = (r: Row, ...keys: string[]): unknown => {
   for (const k of keys) {
     const v = r[k];
@@ -79,22 +71,14 @@ const read = (r: Row, ...keys: string[]): unknown => {
   }
   return undefined;
 };
-/** First present key, as display text. "" when absent — callers pick the dash. */
 const field = (r: Row, ...keys: string[]): string => {
   const v = read(r, ...keys);
   return v === undefined ? "" : String(v);
 };
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
-/** Read, never retyped — including `voided`, which the ordered stepper
- *  correctly has no row for. */
 const stageLabel = (stage: string) =>
   ASSR_STAGE_LABEL[stage] ?? (cap(stage.replace(/_/g, " ")) || "—");
 
-/** The rows a SALES rep is holding a conversation through: the customer's own
- *  portal comments, their replies, their nudges, and ops' notes. Auto-emitted
- *  events (stage_change, assignment, escalation) are ops' internal record and
- *  are deliberately not in the thread — same filter as the desktop
- *  `MyCaseDetail`. */
 const CONVERSATION_ACTIONS = new Set(["customer_comment", "sales_comment", "sales_nudge"]);
 const AUTHOR: Record<string, string> = {
   customer_comment: "Customer",
@@ -127,17 +111,11 @@ export function MobileMyCaseDetail({ id, onBack }: { id: number; onBack: () => v
   const notify = useNotify();
   const [comment, setComment] = useState("");
 
-  /* Same query key as the editable detail so the two views share one cache
-     entry — a rep and an admin opening the same case do not fetch twice, and an
-     invalidation from either reaches both. */
   const { data, isLoading, error } = useQuery({
     queryKey: ["mobile-assr-detail", id],
     queryFn: () => api.get<CaseDetailResponse>(`/api/assr/${id}`),
     staleTime: 15_000,
   });
-  /* `void`: the invalidation is fire-and-forget by design — the screen re-reads
-     when it lands and there is nothing to await. Explicit so no-floating-promises
-     sees a decision rather than an oversight. */
   const refetch = () => void qc.invalidateQueries({ queryKey: ["mobile-assr-detail", id] });
 
   const c: Row = data?.case ?? {};
@@ -149,11 +127,6 @@ export function MobileMyCaseDetail({ id, onBack }: { id: number; onBack: () => v
       .sort((a, b) => field(a, "created_at", "createdAt").localeCompare(field(b, "created_at", "createdAt")));
   }, [data]);
 
-  /* Both mutations render their refusal. A write that fails silently is the bug
-     class at the top of CLAUDE.md — the owner reports it as "the button does
-     nothing" — and the nudge in particular has a REAL expected failure: the
-     server rate-limits to one per hour per case and answers 429, which the rep
-     must be told about rather than left to press again. */
   const postComment = useMutation({
     mutationFn: (text: string) => api.post<Row>(`/api/assr/${id}/sales-comment`, { text }),
     onSuccess: () => {
@@ -198,8 +171,6 @@ export function MobileMyCaseDetail({ id, onBack }: { id: number; onBack: () => v
         <div className="scr-title" style={{ marginTop: 2 }}>
           {field(c, "customerName", "customer_name") || "—"}
         </div>
-        {/* Says why the edit controls are absent. A screen that is quietly
-            smaller than the one a colleague is using reads as a fault. */}
         <div style={{ fontSize: 10.5, color: GREY, marginTop: 4 }}>
           Read-only — ops handle the workflow. Comment or nudge them below.
         </div>

@@ -39,8 +39,8 @@ describe("matchesProductQuery", () => {
 
   test("null description and barcode are treated as empty, not crashed on", () => {
     const sparse = row({ description: null, barcode: null });
-    expect(matchesProductQuery(sparse, "sofa")).toBe(true); // still hits name
-    expect(matchesProductQuery(sparse, "chaise")).toBe(false); // description gone
+    expect(matchesProductQuery(sparse, "sofa")).toBe(true);
+    expect(matchesProductQuery(sparse, "chaise")).toBe(false);
   });
 
   test("the query is trimmed before matching", () => {

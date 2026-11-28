@@ -25,7 +25,6 @@ const note = (over: Partial<CreditNote>): CreditNote => ({
 });
 const NOTES: CreditNote[] = [
   note({}),
-  /* The note that closed a deposit invoice at the final invoice. */
   note({
     id: 'cn2', note_number: 'HC-CN-2611-002', source_doc_no: 'HC-DI-2611-001', sales_invoice_id: 'si-7', sales_invoice_number: 'HC-SI-2611-007',
     total_sen: 100_000, reason: 'Deposit invoice HC-DI-2611-001 closed by final invoice HC-SI-2611-007', appliedSen: 0, unusedSen: 0, depositPaper: 'closes',
@@ -40,7 +39,6 @@ const KO_ROWS: KnockOffRow[] = [
   { kind: 'SI', id: 'si-1', number: 'HC-SI-2611-001', invoiceRef: 'HC-SO-2611-004', invoiceDate: '2026-11-01', totalSen: 300_000, owedSen: 200_000, noteSen: 30_000, status: 'PARTIALLY_PAID' },
   { kind: 'SI', id: 'si-2', number: 'HC-SI-2611-002', invoiceRef: 'HC-SO-2611-009', invoiceDate: '2026-11-02', totalSen: 15_000, owedSen: 15_000, noteSen: 0, status: 'SENT' },
 ];
-/* ONE stable object per read, as react-query hands back — a fresh object each render loops the lists' filtered-rows effect. */
 const DETAILS = new Map<string, unknown>();
 const detailOf = (id: string | null) => {
   const n = NOTES.find((x) => x.id === id);
@@ -177,7 +175,6 @@ describe('the knock form — Knock off <no>', () => {
     const save = screen.getByRole('button', { name: 'Save knock-off' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
 
-    /* Ticked: in full as far as the credit left reaches — RM 150.00 of the RM 200.00 left. */
     fireEvent.click(screen.getByLabelText('Knock off HC-SI-2611-002'));
     expect(screen.getByText('Posts nothing · both sides sit in 300-0000 Trade Debtors · knocks off RM 450.00 · RM 50.00 stays as credit')).toBeTruthy();
     fireEvent.click(save);

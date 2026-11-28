@@ -17,7 +17,6 @@ import { fakeSb } from '../lib/fake-postgrest';
 import type { Env, Variables } from '../env';
 
 vi.mock('../middleware/auth', () => ({ supabaseAuth: async (_c: unknown, next: () => Promise<void>) => next() }));
-// The fake has no `.or(...lt...)` for the edit-lease guard; the version CAS is not under test here.
 vi.mock('../lib/so-generation', () => ({
   advanceSoGeneration: async (sb: SupabaseClient, docNo: string, patch: Record<string, unknown>) => {
     await sb.from('mfg_sales_orders').update(patch).eq('doc_no', docNo);

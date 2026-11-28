@@ -57,9 +57,6 @@ import {
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
-/* Header columns this read needs — all on the base table. `debtor_name` and
-   `phone` are the order's denormalised customer: an SO carries no customers
-   join (mfg-sales-orders.ts, the "customers table" note by its list). */
 const SO_COLS =
   "doc_no, so_date, ref, customer_so_no, debtor_name, phone, status, salesperson_id, " +
   "local_total_sen, total_revenue_sen, deposit_sen, service_sen, fair_match, linked_ac_docno, created_at, venue, branding";
@@ -68,8 +65,6 @@ type SoRow = {
   doc_no: string;
   so_date: string | null;
   ref: string | null;
-  /** The booklet number as the rep typed it in Ref No. on a new order; `ref`
-   *  is where an order migrated from AutoCount carries it. */
   customer_so_no: string | null;
   debtor_name: string | null;
   phone: string | null;
@@ -97,7 +92,6 @@ export type ProjectSalesOrderRow = {
   amount_sen: number;
   paid_sen: number;
   balance_sen: number;
-  /** The order's service lines, inside amount_sen. */
   service_sen: number;
   fair_match: string | null;
   linked_ac_docno: string | null;
@@ -107,7 +101,6 @@ export type ProjectSalesOrderRow = {
    *  Null when they agree, when the order carries no venue, or when this fair's
    *  evening report lists the order (2026-10-20: the report proves the link). */
   venue_differs: string | null;
-  /** The order's own venue and brand, for the transfer pick. */
   venue: string | null;
   branding: string | null;
   /** Another fair's evening report lists this order (owner 2026-10-20) — the
@@ -149,9 +142,6 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
   }
   const sb = c.get("supabase");
 
-  /* View-all = the entries list's own rule (page access `full` lifts its
-     ownership filter) OR the SO module's (scm.so.view_all / a director
-     position). Everyone else is held to the SO module's own + downline scope. */
   const viewAll = c.get("access_level") === "full" || canViewAllSales(c);
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get("houzsUser")?.id, viewAll);
 
@@ -165,15 +155,11 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
       .order("doc_no", { ascending: false });
     q = applySoScope(q, scopeIds);
     q = scopeToCompany(q, c);
-    /* The untyped scm client types a select string as an error row; the shape
-       is SO_COLS above. */
     return q.range(from, to) as unknown as PromiseLike<PageResult<SoRow>>;
   });
   if (error) return c.json({ error: "load_failed", reason: error.message }, 500);
   const headers = data ?? [];
 
-  /* Paid is the LEDGER, never the header's paid_sen / balance_sen (neither is
-     maintained — so-outstanding.ts). One batched read for the whole fair. */
   const ledger = new Map<string, { paidSen: number; depositInLedger: boolean }>();
   const docNos = headers.map((h) => h.doc_no);
   if (docNos.length > 0) {
@@ -194,7 +180,6 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
     }
   }
 
-  /* salesperson_id is an scm.staff uuid; the page wants the name. */
   const staffNames = new Map<string, string>();
   const staffIds = Array.from(new Set(headers.map((h) => h.salesperson_id).filter((v): v is string => !!v)));
   if (staffIds.length > 0) {
@@ -206,8 +191,6 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
     for (const s of staff) if (s.id && s.name) staffNames.set(s.id, s.name);
   }
 
-  /* The fair's own venue, for "Venue differs". A display hint only: when PMS
-     cannot be read the rows still list, with no flag rather than a wrong one. */
   const db = c.env?.DB as unknown as FairDb | undefined;
   const companySql = activeCompanySql(c, "p.company_id");
   const booth = db
@@ -263,7 +246,6 @@ export async function projectSalesOrdersHandler(c: Ctx): Promise<Response> {
     };
   });
 
-  /* Who may move an order from here: Finance or PMS, as on Fair Links. */
   return c.json({ data: rows, totals: projectSalesOrderTotals(rows), scoped: scopeIds !== null, can_transfer: canReassignFair(c) });
 }
 

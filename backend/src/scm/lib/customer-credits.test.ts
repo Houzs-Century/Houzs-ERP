@@ -1,17 +1,3 @@
-// Atomicity of "apply customer credit to a Sales Invoice".
-//
-// The credit payment row on the SI and the negative APPLIED_TO_SI ledger row are
-// two writes in different tables that MUST move together — a failure between them
-// pays the invoice from a credit that was never debited (the customer keeps the
-// balance and can spend it twice). PostgREST cannot span two statements in one
-// transaction, so applyCustomerCreditToSi now routes the write through the
-// scm.apply_customer_credit_to_si function (one implicit transaction) and only
-// falls back to the legacy two-write path when that function is absent.
-//
-// scm rides Supabase Postgres, which the D1 test harness does not rebuild, so
-// these drive a minimal fake PostgREST client and pin the CONTRACT: the primary
-// path is a single write unit (the RPC), the fallback is the two-write path, and
-// a live RPC error never silently degrades to the non-atomic path.
 import { describe, expect, test } from 'vitest';
 import { applyCustomerCreditToSi, creditFromCancelledSo, reverseCancelledSoCredit } from './customer-credits';
 
@@ -23,17 +9,13 @@ type Store = {
   inserts: Array<{ table: string; payload: Row }>;
   updates: Array<{ table: string; payload: Row }>;
   existingCreditPayments: Row[];
-  creditRows: Row[]; // customer_credits balance rows for the debtor
+  creditRows: Row[];
   companyId: number | null;
   paidSen: number;
-  /** scm.sales_invoices.migrated_no_stock for the SI under test (migration 0294). */
   migrated: boolean;
-  /** when set, the migrated pre-flight read fails with this message */
   migratedReadError: string | null;
 };
 
-/** Chainable, awaitable PostgREST stand-in covering the reads/writes the legacy
- *  fallback performs plus the .rpc() the primary path uses. */
 function fakeSb(store: Store) {
   class Q {
     table: string;
@@ -60,7 +42,6 @@ function fakeSb(store: Store) {
         store.updates.push({ table: this.table, payload: this.payload ?? {} });
         return { data: [{ id: this.filters.id ?? 'x' }], error: null };
       }
-      // selects
       if (this.table === 'sales_invoice_payments') {
         return { data: store.existingCreditPayments, error: null };
       }
@@ -68,9 +49,6 @@ function fakeSb(store: Store) {
         return { data: store.creditRows, error: null };
       }
       if (this.table === 'sales_invoices') {
-        /* The migrated pre-flight (migration 0280) reads this column alone. Its
-           own error channel is modelled too: the guard must FAIL CLOSED, and a
-           test that cannot produce the failure cannot prove that. */
         if (this.cols.includes('migrated_no_stock')) {
           if (store.migratedReadError) return { data: null, error: { message: store.migratedReadError } };
           const row = { migrated_no_stock: store.migrated };
@@ -129,7 +107,6 @@ describe('applyCustomerCreditToSi — atomic RPC path', () => {
     const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
 
     expect(res).toEqual({ applied: 3000 });
-    // The whole write is ONE unit — the payment row and ledger debit cannot diverge.
     expect(store.rpcCalls).toHaveLength(1);
     expect(store.rpcCalls[0].fn).toBe('apply_customer_credit_to_si');
     expect(store.inserts).toHaveLength(0);
@@ -164,7 +141,6 @@ describe('applyCustomerCreditToSi — atomic RPC path', () => {
     const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
     expect(res.applied).toBe(0);
     expect(res.reason).toBe('deadlock detected');
-    // The function ran and rolled back; we must not re-attempt via the racy path.
     expect(store.inserts).toHaveLength(0);
     expect(store.updates).toHaveLength(0);
   });
@@ -176,12 +152,11 @@ describe('applyCustomerCreditToSi — legacy fallback (function not yet applied)
   test('falls back to the two-write path when the RPC is absent', async () => {
     const store = baseStore({
       rpcResponse: { data: null, error: MISSING },
-      creditRows: [{ amount_sen: 8000 }], // balance 8000, due 5000 → apply 5000
+      creditRows: [{ amount_sen: 8000 }],
     });
     const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
 
     expect(res.applied).toBe(5000);
-    // The fallback IS the two separate cross-table writes the RPC replaces.
     const tables = store.inserts.map((i) => i.table).sort();
     expect(tables).toEqual(['customer_credits', 'sales_invoice_payments']);
     const ledger = store.inserts.find((i) => i.table === 'customer_credits');
@@ -223,22 +198,11 @@ describe('applyCustomerCreditToSi — guards (no DB touched)', () => {
   });
 });
 
-/* MIGRATED INVOICES SPEND NO CREDIT (migration 0294).
-   A migrated SI mirrors an invoice AutoCount already raised and already settled
-   in its own book. Paying it from the customer's ERP credit balance spends a
-   real balance a second time — the customer silently loses money still owed to
-   them. Migration 0280's column COMMENT promises this; these pin the promise to
-   behaviour, because 0276 shipped exactly such a comment with nothing enforcing
-   it. Today's three callers all miss migrated invoices by accident, so an
-   accident is all that stands here without the guard. */
 describe('applyCustomerCreditToSi — migrated source (migration 0280)', () => {
   test('migrated SI → applies nothing, and never reaches the write', async () => {
     const store = baseStore({ migrated: true, creditRows: [{ balance_sen: 900000 }] });
     const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
     expect(res).toEqual({ applied: 0, reason: 'migrated_source' });
-    /* The money assertions are the point: no RPC, no ledger row, no payment row.
-       A guard that returns the right shape after spending the credit is no
-       guard. */
     expect(store.rpcCalls).toHaveLength(0);
     expect(store.inserts).toHaveLength(0);
     expect(store.updates).toHaveLength(0);
@@ -264,33 +228,9 @@ describe('applyCustomerCreditToSi — migrated source (migration 0280)', () => {
   });
 });
 
-// ============================================================================
-// PURCHASE-INVOICE SETTLEMENT — the same defect class, the other direction.
-//
-// Lives in this file rather than its own because the backend vitest config runs
-// singleWorker after a capacity cliff, so each extra test FILE costs more than
-// the tests inside it. It belongs with the above in any case: both are "money
-// moved by a write PostgREST cannot make atomic", both ship their SQL in
-// scripts/scm-schema/ for manual application, and both fall back to a legacy
-// path until that SQL is applied.
-//
-// THE BUG: two payment vouchers settling the SAME purchase invoice each read
-// `outstanding = total - paid`, each applied their full share against it, and
-// the invoice ended up paid twice over. The stale value was the CAP, not the
-// addend — the optimistic gate made sure BOTH increments landed, which is
-// exactly why retrying harder never helped.
-//
-// Route-level tests are impossible here (scm rides Supabase Postgres through
-// Hyperdrive; the test harness is D1), so the pure rule is pinned directly and
-// the client interaction is driven through a fake PostgREST.
-// ============================================================================
 import { computePiSettlement, settlePiPaidSen } from './pi-settlement';
 
 describe('computePiSettlement — behaviour with no concurrency is unchanged', () => {
-  /* The old rule, verbatim from payment-vouchers.ts before this change. When
-     nothing races the caller pre-capped the allocation at `outstanding`, so
-     paid + delta never exceeded total and the new upper clamp cannot bite.
-     Asserted directly rather than left to inspection. */
   const oldRule = (paid: number, delta: number) => Math.max(0, paid + delta);
 
   const cases: Array<{ paid: number; total: number; delta: number }> = [
@@ -321,17 +261,14 @@ describe('computePiSettlement — behaviour with no concurrency is unchanged', (
 describe('computePiSettlement — the over-payment the clamp exists to stop', () => {
   test('two vouchers settling the same invoice: the second is refused, not absorbed', () => {
     const TOTAL = 10_000;
-    /* Both vouchers were raised against an unpaid invoice and both ask for the
-       full amount. Serialised by the row lock, they now run one after the other
-       instead of both reading paid_sen 0. */
     const first = computePiSettlement({ paidSen: 0, totalSen: TOTAL, status: 'POSTED', deltaSen: TOTAL });
     expect(first.appliedSen).toBe(TOTAL);
     expect(first.clampedSen).toBe(0);
 
     const second = computePiSettlement({ paidSen: first.newPaidSen, totalSen: TOTAL, status: 'POSTED', deltaSen: TOTAL });
-    expect(second.newPaidSen).toBe(TOTAL);   // NOT 20_000
-    expect(second.appliedSen).toBe(0);       // nothing moved
-    expect(second.clampedSen).toBe(TOTAL);   // and we can say exactly how much was refused
+    expect(second.newPaidSen).toBe(TOTAL);
+    expect(second.appliedSen).toBe(0);
+    expect(second.clampedSen).toBe(TOTAL);
   });
 
   test('a partial over-allocation applies what fits and reports the rest', () => {
@@ -352,20 +289,14 @@ describe('computePiSettlement — the over-payment the clamp exists to stop', ()
 
 describe('computePiSettlement — reversals are never clamped upward', () => {
   test('a cancel floors at zero, and says how much the floor absorbed', () => {
-    /* The floor lands on the same paid_sen the old rule did — but reversing
-       5,000 off an invoice carrying only 1,000 means the allocation and the
-       invoice disagree about what was ever applied. The old rule absorbed that
-       silently; a negative clamp is how it now gets said out loud. */
     const got = computePiSettlement({ paidSen: 1_000, totalSen: 10_000, status: 'PARTIALLY_PAID', deltaSen: -5_000 });
-    expect(got.newPaidSen).toBe(0);        // unchanged from the old rule
+    expect(got.newPaidSen).toBe(0);
     expect(got.newStatus).toBe('POSTED');
-    expect(got.appliedSen).toBe(-1_000);   // only 1,000 was actually there to take off
-    expect(got.clampedSen).toBe(-4_000);   // the other 4,000 never existed on this PI
+    expect(got.appliedSen).toBe(-1_000);
+    expect(got.clampedSen).toBe(-4_000);
   });
 
   test('an ALREADY over-paid invoice can still unwind completely', () => {
-    /* Rows the race already produced (paid > total) must stay reversible, or
-       the excess is stranded on the invoice with no way to take it off. */
     const got = computePiSettlement({ paidSen: 20_000, totalSen: 10_000, status: 'PAID', deltaSen: -20_000 });
     expect(got.newPaidSen).toBe(0);
     expect(got.appliedSen).toBe(-20_000);
@@ -374,7 +305,7 @@ describe('computePiSettlement — reversals are never clamped upward', () => {
 
   test('a positive settle never drags an already over-paid invoice DOWN to total', () => {
     const got = computePiSettlement({ paidSen: 20_000, totalSen: 10_000, status: 'PAID', deltaSen: 500 });
-    expect(got.newPaidSen).toBe(20_000); // unchanged, not silently corrected to 10_000
+    expect(got.newPaidSen).toBe(20_000);
     expect(got.appliedSen).toBe(0);
     expect(got.clampedSen).toBe(500);
   });
@@ -391,8 +322,6 @@ describe('computePiSettlement — a DRAFT or CANCELLED invoice is not a live lia
   }
 });
 
-/** Minimal PostgREST stand-in for the settle paths: one .rpc() and one
- *  purchase_invoices select/update chain. */
 function fakePiSb(opts: {
   rpc: { data: unknown; error: { code?: string; message?: string } | null };
   row?: { paid_sen: number; total_sen: number; status: string } | null;
@@ -442,7 +371,6 @@ describe('settlePiPaidSen — routes through the atomic function, falls back onl
     expect(f.calls.updates).toHaveLength(0);
     expect(res.ok).toBe(true);
     expect(res.appliedSen).toBe(2_000);
-    // 5_000 asked, 2_000 applied — the caller must be able to see the 3_000 gap.
     expect(res.clampedSen).toBe(3_000);
   });
 
@@ -464,7 +392,7 @@ describe('settlePiPaidSen — routes through the atomic function, falls back onl
     const res = await settlePiPaidSen(f.sb, 'pi-1', 5_000);
     expect(res.ok).toBe(false);
     expect(res.appliedSen).toBe(0);
-    expect(f.calls.updates).toHaveLength(0); // did NOT retry against the database that just refused
+    expect(f.calls.updates).toHaveLength(0);
   });
 
   test('a zero delta settles nothing and never reaches the database', async () => {
@@ -486,17 +414,6 @@ describe('settlePiPaidSen — routes through the atomic function, falls back onl
   });
 });
 
-// ============================================================================
-// SALES-ORDER CANCEL ↔ REOPEN — the deposit refund must net to zero across the
-// cycle, or a reopened order counts the customer's deposit twice (once as the
-// standing SO_CANCEL_REFUND credit, once as the restored live deposit).
-//
-// A cancel writes +deposit (SO_CANCEL_REFUND); a reopen writes −standing
-// (SO_REOPEN_CONTRA); a re-cancel credits again only because the net is back to
-// zero. These pin that ledger algebra directly — the route handler cannot be
-// driven here (scm rides Supabase Postgres, the harness is D1), same reason the
-// SI money rules above are pinned on their pure functions.
-// ============================================================================
 type SoCreditStore = {
   creditRows: Array<{ amount_sen: number; company_id?: number | null }>;
   payRows: Array<{ amount_sen: number; company_id?: number | null }>;

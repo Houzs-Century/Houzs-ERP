@@ -34,7 +34,7 @@ import { useQuery } from "../hooks/useQuery";
    it is imported into the LOGIC layer rather than each surface: "generated
    13/09/2026 15:40" is a sentence, and every sentence on this page lives here.
    backend/scripts/check-date-formatting.mjs gates the rule. */
-import { fmtDateTime } from "../vendor/shared/format";
+import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
 
 export const VP_STATUS_PATH = "/api/scm/venture-portal-feed/status";
 export const VP_ROWS_PATH = "/api/scm/venture-portal-feed/rows";
@@ -67,8 +67,6 @@ export interface VpMaskedSecret {
   set: boolean;
   length: number;
   tail: string;
-  /** When the key was last written, from scm.sync_config's own updated_at.
-   *  A timestamp, never a credential. */
   setAt: string | null;
 }
 
@@ -153,11 +151,6 @@ export function vpVerdict(s: VpStatus | null): VpVerdict {
     return {
       tone: "bad",
       headline: `An order has been waiting ${Math.floor(stale)}h to be delivered`,
-      /* DESCRIBES THE MECHANISM, not a measured duration. A delivery is sent
-         from the save itself, and a sweep every five minutes catches whatever
-         that missed — so an hour-old row means BOTH have stopped, which is the
-         thing worth saying. Naming a number here would be claiming a latency
-         nobody has measured on this account yet. */
       detail: "An order is normally sent from the save itself, and a sweep every five minutes catches anything that missed. Waiting this long means neither is running.",
     };
   }
@@ -283,11 +276,6 @@ export function vpOutcomeLine(row: VpRow): string | null {
 export function vpRowTodo(row: VpRow): string | null {
   if (row.status !== "failed") return null;
   const e = row.last_error ?? "";
-  /* 401 and 503 both mean "the keys disagree", and the DIFFERENCE is which side
-     is empty — so each names its own next step. Since the portal reads a key
-     pasted on its own page (its PRs #117 + #118), both are now fixed from here
-     plus one paste, which is what these two sentences say and what they did not
-     say before: 503 used to read "nothing to fix on our side". */
   if (/401/.test(e)) return "The portal is holding a different key. Generate a new one here, paste it in the Venture Portal, then re-send.";
   if (/503/.test(e)) return "The portal has no key of its own yet. Generate one here, paste it in the Venture Portal, then re-send.";
   if (/4(00|22)/.test(e)) return "The portal could not read this delivery. Whoever looks after the feed needs to see this one.";
@@ -345,8 +333,6 @@ export interface VpProbeResult {
 export function vpProbeNote(res: VpProbeResult): VpNote {
   if (res.ok) return { tone: "good", text: `Reached the portal. It answered: ${res.body.slice(0, 160)}` };
   if (res.reason === "not_configured") return { tone: "wait", text: "The receiver address or the API key is still empty." };
-  /* A 401 and a 503 mean the same two things here as they do on a queue row, and
-     the operator is standing in front of the same one button either way. */
   if (res.status === 401) {
     return { tone: "bad", text: "The portal is holding a different key. Generate a new one here and paste it in the Venture Portal, then test again." };
   }
@@ -369,11 +355,6 @@ export function vpProbeNote(res: VpProbeResult): VpNote {
 export function useVpActions(onChanged: () => void) {
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<VpNote | null>(null);
-  /* THE ONE-TIME REVEAL LIVES HERE, not in either page, because "is the key
-     still on screen" is a decision and both surfaces must answer it the same
-     way. Component state only: it is never written to localStorage, never put in
-     the URL, and gone on a reload — the server will not answer it a second
-     time, and neither will this. */
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [keyCopied, setKeyCopied] = useState(false);
 
@@ -386,9 +367,6 @@ export function useVpActions(onChanged: () => void) {
         setNote(say(r));
         onChanged();
       } catch (e) {
-        /* The server's own sentence, when it sent one. Never swallowed and
-           never replaced with a generic apology that hides which field was
-           wrong — "secret_too_short" tells the operator what to do next. */
         const msg = (e as { message?: string } | undefined)?.message ?? String(e);
         setNote({ tone: "bad", text: `Not saved: ${msg}` });
       } finally {
@@ -408,14 +386,6 @@ export function useVpActions(onChanged: () => void) {
     [run],
   );
 
-  /**
-   * Mint a key and reveal it once.
-   *
-   * The reveal is set INSIDE the call, before `run` reports, so a successful
-   * generate cannot end with the key written to the database and nothing on
-   * screen — which would leave the feed holding a key nobody can paste anywhere,
-   * fixable only by generating another.
-   */
   const generateKey = useCallback(
     () =>
       run(
@@ -437,22 +407,11 @@ export function useVpActions(onChanged: () => void) {
     [run],
   );
 
-  /** Dismiss the reveal. Nothing to save — the key is already in the database. */
   const dismissKey = useCallback(() => {
     setRevealedKey(null);
     setKeyCopied(false);
   }, []);
 
-  /**
-   * Copy the revealed key.
-   *
-   * A CLIPBOARD REFUSAL MUST REACH SOMEBODY. navigator.clipboard throws on an
-   * insecure origin and on a denied permission, and this is the one moment on
-   * the page where silently doing nothing costs real work: the operator walks to
-   * the portal with an empty clipboard and the key is gone. CLAUDE.md's "a
-   * failure that reaches nobody is worse than a crash", at the exact call site
-   * that would have produced it.
-   */
   const copyKey = useCallback(async () => {
     const key = revealedKey;
     if (!key) return;
@@ -506,14 +465,6 @@ export function useVpActions(onChanged: () => void) {
           const res = r as { requeued: number; skipped?: string };
           if (res.skipped === "feed_off") return { tone: "off", text: "The feed is off, so nothing was queued." };
           if (res.skipped === "not_configured") return { tone: "wait", text: "The address or the secret is still empty." };
-          /* NOT "everything in scope has been delivered" — that sentence was
-             here and it was WRONG, and check-empty-state-claims is what found
-             it. `requeued: 0` means the sweep INSERTED nothing, which is also
-             true when undelivered orders are already queued, and true again
-             when they are parked as failed and this call was told to leave
-             those alone. Reporting a completion from a zero is the exact
-             mistake the gate exists to catch; the counts and the verdict above
-             are what actually say where things stand. */
           if (!res.requeued) return { tone: "good", text: "Nothing new to queue. Whatever is already waiting or parked stays as it is — the counts above say where things stand." };
           return { tone: "good", text: `${res.requeued} undelivered ${res.requeued === 1 ? "order" : "orders"} queued.` };
         },

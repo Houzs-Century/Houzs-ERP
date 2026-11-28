@@ -29,12 +29,8 @@ import { todayMyt } from '../../scm/lib/my-time';
 
 export const SI_AGENT_SETTING_KEY = 'agents.si';
 
-/** Look-back for the scorecard. */
 const WINDOW_DAYS = 30;
-/** A salesperson/venue needs at least this many orders before a cancellation rate
- *  is worth flagging — 1 cancelled out of 2 is noise, not a pattern. */
 const MIN_ORDERS_FOR_RATE = 5;
-/** Cancellation rate above this is flagged. */
 const CANCEL_RATE_WARN = 0.2;
 
 interface SoRow {
@@ -103,7 +99,7 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
   };
 
   interface Desired { kind: string; severity: 'CRIT' | 'WARN'; subjectType: string; metric: string; summary: string; payload: unknown }
-  const desired = new Map<string, Desired>(); // key = `${kind}\0${subject}`
+  const desired = new Map<string, Desired>();
 
   for (const r of rows) {
     const cancelled = String(r.status ?? '').toUpperCase() === 'CANCELLED';
@@ -118,10 +114,6 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
     bump(byVenue, key(r.venue), r, cancelled);
     bump(byState, key(r.customer_state), r, cancelled);
 
-    /* NEGATIVE MARGIN — an order whose cost exceeds its revenue. Only when BOTH
-       numbers are present and revenue > 0: a zero-revenue row is un-costed data,
-       not a loss, and calling it one would be the confident lie this codebase
-       keeps recording. */
     if (!cancelled) {
       const rev = n(r.total_revenue_sen);
       const cost = n(r.total_cost_sen);
@@ -137,8 +129,6 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
     }
   }
 
-  /* HIGH CANCELLATION — by salesperson, only with enough orders to mean anything
-     (§8.3: comparing people without sample size is the unfair-ranking trap). */
   for (const [agent, roll] of byAgent) {
     if (agent === '(unassigned)' || roll.orders < MIN_ORDERS_FOR_RATE) continue;
     const rate = roll.cancelled / roll.orders;
@@ -152,7 +142,6 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
     }
   }
 
-  // ── upsert + auto-resolve (the Document/OF patrol shape) ───────────────────
   const openRes = await db
     .prepare(`SELECT id, kind, subject FROM si_agent_findings WHERE status = 'OPEN'`)
     .all<{ id: string; kind: string; subject: string }>();
@@ -193,7 +182,6 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
     resolved++;
   }
 
-  // ── the scorecard brief ────────────────────────────────────────────────────
   const top = (m: Map<string, Roll>, limit = 5) =>
     [...m.entries()]
       .filter(([k2]) => k2 !== '(unassigned)')
@@ -214,11 +202,9 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
     cancelled: all.cancelled,
     cancellationRate: all.orders ? all.cancelled / all.orders : 0,
     salesSen: all.sales,
-    // Margin sits NEXT TO sales everywhere — revenue growth must never read as
-    // profit growth (§8.3).
     marginSen: all.revenue - all.cost,
     topSalespeople: top(byAgent),
-    topVenues: top(byVenue),   // the roadshow / PMS view
+    topVenues: top(byVenue),
     topStates: top(byState),
     openAnomalies: desired.size,
   };

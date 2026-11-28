@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// mrp-snapshot — the stored MRP planning result per company (option B, owner
-// 2026-08-19). The MRP page reads the snapshot for the DEFAULT view (no
-// category / warehouse filter, undated hidden) so it opens instantly instead of
-// running computeMrp (~4s) on every load; any FILTERED or undated view computes
-// live, because catFilter/whFilter change the allocation inputs, not just the
-// output rows (mrp.ts computeMrp lines 549/863/991/1203), so the stored full
-// result cannot be safely post-filtered without a byte-identical proof. Serving
-// the snapshot only for a request that MATCHES the params it was computed with
-// is correct by construction.
-//
-// A ~15-min scheduled job and a manual Regenerate keep it fresh; the page shows
-// "as of <computedAt>". The snapshot is a CACHE, not a book of record (migration
-// 0313): when a company has no row, readMrpSnapshot returns null and the page
-// falls back to live compute — so this is a NO-OP until first populated.
-// ----------------------------------------------------------------------------
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the untyped supabase-js client this SCM tree passes around (see companyScope.ts header). */
 import type { Env } from '../../types';
@@ -23,15 +7,8 @@ import { computeMrp, type MrpResult } from '../routes/mrp';
 
 type Sb = any;
 
-/* The live companies whose MRP snapshot the scheduled job refreshes: Houzs
-   Century (1) + 2990's Home (2), the two tenants (the canonical pair, e.g.
-   companyScope.test.ts). A company NOT listed still gets a correct plan — the
-   MRP page falls back to live compute and Regenerate populates it on demand — so
-   an unlisted tenant degrades to "slow but right", never to a wrong plan. */
 export const MRP_REFRESH_COMPANY_IDS: readonly number[] = [1, 2];
 
-/** The lead-buffer input computeMrp takes — same shape the Worker loads from
-    c.env.DB and the refresh job loads from its own connection. */
 type LeadBuffers = Parameters<typeof computeMrp>[1]['leadBuffers'];
 
 /** The exact params the MRP page opens with (mrp.ts GET): no filters, undated
@@ -74,8 +51,6 @@ export async function refreshMrpSnapshot(
   const result = await computeMrp(sb, {
     catFilter: null, whFilter: null, includeUndated: false, companyId, leadBuffers,
   });
-  // Pass the object straight through — PostgREST json-encodes it ONCE into the
-  // jsonb column. Never JSON.stringify first (the jsonb double-encoding COE).
   const { error } = await sb.from('mrp_snapshots').upsert(
     { company_id: companyId, result, computed_at: nowIso, updated_at: nowIso },
     { onConflict: 'company_id' },
@@ -84,11 +59,6 @@ export async function refreshMrpSnapshot(
   return { result, computedAt: nowIso };
 }
 
-/* The LIST snapshot (scm.mrp_list_snapshots). The PO / GRN / PI / SO list
-   enrichments read the run with UNDATED demand included (includeUndated=true),
-   because an undated SO line still takes supply and still shows its Assigned PO.
-   The page snapshot above hides undated rows, so it cannot serve them; this one
-   is the same engine, same company, the other visibility flag. */
 export async function readListMrpSnapshot(
   sb: Sb,
   companyId: number | null,
@@ -108,7 +78,6 @@ export async function storeListMrpSnapshot(
   result: MrpResult,
   computedAtIso: string,
 ): Promise<void> {
-  // Object straight through, never JSON.stringify (the jsonb double-encoding COE).
   const { error } = await sb.from('mrp_list_snapshots').upsert(
     { company_id: companyId, result, computed_at: computedAtIso, updated_at: new Date().toISOString() },
     { onConflict: 'company_id' },
@@ -147,10 +116,8 @@ export function deferMrpSnapshotRefresh(c: any, sb: Sb, companyId: number, where
     // eslint-disable-next-line no-console
     console.error(`[mrp-snapshot] ${where} company=${companyId}`, e);
   });
-  /* c.executionCtx throws outside Workers (vitest); the floating promise is
-     already caught there. */
   try { c.executionCtx.waitUntil(run); }
-  catch { /* non-Workers runtime */ }
+  catch { }
 }
 
 /**

@@ -1,13 +1,8 @@
-/* Barcode labels (layout E1b): the same label (name, code, price, barcode,
- * number) three ways — an A4 sheet of 40 x 30 mm labels for the browser's
- * print dialog, a TSPL job for a TSC-style label printer, a ZPL job for a
- * Zebra. Pure: strings in, strings out. */
 import { ean13Svg, isValidEan13 } from "../../vendor/shared/ean13";
 
 export type LabelSpec = {
   name: string;
   code: string;
-  /** RM text, already formatted, or null to leave the price off. */
   price: string | null;
   barcode: string;
   qty: number;

@@ -1,13 +1,9 @@
-/* HR · Public Holidays (step-2 re-skin). The company's public-holiday list —
- * days nobody is docked for not working, on which hours count as public-holiday
- * OT. New design over HrTablePage, real /api/hr/holidays data, add via a modal
- * and remove with a confirm. (Ported from the old PublicHolidaysTab.) */
 import { useMemo, useState } from "react";
 import { api } from "../../api/client";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { errText } from "../pos-admin/posAdminUi";
 import { hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";

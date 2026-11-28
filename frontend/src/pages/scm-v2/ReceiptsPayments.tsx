@@ -51,7 +51,7 @@ import { mergeColumns, rpLines } from '../../vendor/scm/lib/report-monthly';
 import { cashFlowSheet, fmtRp } from '../../vendor/scm/lib/rp-report-pdf';
 import { flattenLaid, leafKeys, linesVisible, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { statementColumnsTable, type ReportSheet } from '../../vendor/scm/lib/report-sheet';
-import { fmtDate, fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDate, fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import { useReportTree, type Level } from './ReportLayoutTree';
 import { ReportLayoutEditor } from './ReportLayoutEditor';
 import { FinanceDateRange } from './reports/FinanceDateRange';
@@ -60,6 +60,7 @@ import {
   ReportExports, ReportHeaderActions, ReportMessage, ReportSwitch, ReportTool, ReportToolbar, Segmented, useReportSubtitle,
 } from './reports/reportParts';
 import { StatementSkeleton, StatementTable } from './reports/StatementTable';
+import { CodesSwitch, linesWithCodes, useShowCodes } from './reports/statementTools';
 import { MONTH_COUNTS, columnsSpan, monthColumns, monthName, type StatementColumn, type StatementLine } from './reports/statementColumns';
 import { splitColumns, splitLines } from './reports/cashFlowSplit';
 import { forecastColumns, forecastNote, isForecastKey, rollForecast } from './reports/cashFlowForecast';
@@ -88,8 +89,6 @@ const ROWS: ReadonlyArray<{ value: 'accounts' | 'party'; label: string }> = [
 ];
 const MONTH_OPTIONS = MONTH_COUNTS.map((n) => ({ value: n, label: String(n) }));
 
-/** Which entries a node's figure opens: an In line the receipts, an Out line
-    the payments, a Net line both — a category whatever its lines carry. */
 const sidesOf = (n: LaidNode): Array<'R' | 'P'> => {
   const flows = new Set<string>();
   const walk = (x: LaidNode): void => { if (x.children.length === 0) flows.add(x.flow ?? 'net'); else x.children.forEach(walk); };
@@ -100,7 +99,6 @@ const sidesOf = (n: LaidNode): Array<'R' | 'P'> => {
   return out;
 };
 
-/** Every node of the tree by its id — what a line's figure opens is read off its node. */
 const nodesById = (r: RpReport | undefined): Map<string, LaidNode> => {
   const out = new Map<string, LaidNode>();
   for (const top of r?.layout.tree ?? []) for (const { node } of flattenLaid(top.children)) out.set(node.id, node);
@@ -126,7 +124,6 @@ const DRILL_COLUMNS: Column<DrillEntry>[] = [
     getValue: (e) => e.sen, exportValue: (e) => e.sen / 100, exportFormat: 'money',
   },
 ];
-/** Where a forecast figure comes from: the Capex & financing table, an open order, a bill, or a Forecast P&L month. */
 const forecastFrom = (e: DrillEntry, month: (ym: string) => string): string => {
   const doc = e.sourceDocNo ?? '';
   if (e.sourceType === 'FORECAST_INPUT') return 'Capex & financing';
@@ -135,7 +132,6 @@ const forecastFrom = (e: DrillEntry, month: (ym: string) => string): string => {
   if (e.sourceType === 'FORECAST_TF') return 'Trade finance';
   return `Forecast P&L ${month(doc)}`;
 };
-/** A forecast figure's entries: where it comes from, who, how it was timed. */
 const FORECAST_DRILL_COLUMNS: Column<DrillEntry>[] = [
   { key: 'from', label: 'From', render: (e) => forecastFrom(e, (ym) => monthName(`${ym}-01`)), getValue: (e) => forecastFrom(e, (ym) => ym) },
   { key: 'party', label: 'Who', render: (e) => e.party ?? '—', getValue: (e) => e.party ?? '' },
@@ -146,7 +142,6 @@ const FORECAST_DRILL_COLUMNS: Column<DrillEntry>[] = [
   },
 ];
 
-/* ── The lines ────────────────────────────────────────────────────────────── */
 
 const EMPTY_IN = 'No money came in on these accounts in the period.';
 const EMPTY_OUT = 'No money went out of these accounts in the period.';
@@ -197,13 +192,11 @@ export function cashFlowMonthLines(columns: StatementColumn[], byKey: Partial<Re
   return mergeColumns(columns.filter((c) => byKey[c.key]).map((c) => ({ key: c.key, lines: rpLines(byKey[c.key]!) })));
 }
 
-/* ── The page ─────────────────────────────────────────────────────────────── */
 
 export const ReceiptsPaymentsTab = () => {
   const r = useReportRange();
   const [view, setView] = useState<CashView>('total');
   const [byParty, setByParty] = useState(false);
-  /* The forecasts beside each month — By month, by account. */
   const [forecast, setForecast] = useState(false);
   const [inputsOpen, setInputsOpen] = useState(false);
   const [tfOpen, setTfOpen] = useState(false);
@@ -211,9 +204,8 @@ export const ReceiptsPaymentsTab = () => {
   const [months, setMonths] = useState<number>(6);
   const [level, setLevel] = useState<Level>('all');
   const [showPct, setShowPct] = useState(true);
+  const [showCodes, setShowCodes] = useShowCodes();
   const [editing, setEditing] = useState(false);
-  /* The accounts whose OWN column shows beside Total — none by default. The
-     report itself always covers every money account. */
   const [ticked, setTicked] = useState<string[]>([]);
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
@@ -223,7 +215,6 @@ export const ReceiptsPaymentsTab = () => {
   const accountsQ = useAccounts();
   const money = useMemo(() => (accountsQ.data?.accounts ?? []).filter((a) => a.acc_money === true && a.is_active), [accountsQ.data]);
 
-  /* Total: one read, as today. By month and Settlement / Deposit: the same endpoint once per month. */
   const monthly = view !== 'total';
   const q = useRpReport(r.usable && view === 'total' ? r.from : '', r.usable && view === 'total' ? r.to : '', [], byParty);
   const columns = useMemo(() => (r.usable && monthly ? monthColumns(r.to, months, r.today, true) : []), [r.usable, monthly, r.to, months, r.today]);
@@ -241,7 +232,6 @@ export const ReceiptsPaymentsTab = () => {
   const periodKeys = columns.filter((c) => c.kind === 'period').map((c) => c.key);
   const fq = useCashFlowForecast(forecastOn ? (periodKeys[periodKeys.length - 1] ?? '') : '', forecastOn ? (periodKeys[0] ?? '') : '');
   const fcColumns = useMemo(() => (forecastOn && fq.data ? forecastColumns(columns, fq.data) : null), [forecastOn, fq.data, columns]);
-  /* The forecast's own reports beside the actual ones, their balances run on from the actual. */
   const allByKey: Partial<Record<string, RpReport>> = forecastOn && fq.data ? { ...byKey, ...rollForecast(fq.data, byKey) } : byKey;
 
   const report = q.data;
@@ -260,7 +250,6 @@ export const ReceiptsPaymentsTab = () => {
   const loading = view === 'total' ? q.isLoading : monthReads.some((x) => x.isLoading) || (forecastOn && fq.isLoading);
   const failed = view === 'total' ? (q.isError ? 1 : 0) : monthReads.filter((x) => x.isError).length + (forecastOn && fq.isError ? 1 : 0);
   const head = view === 'total' ? report : byKey.total;
-  /* The months read — a forecast-only month after them is beside the period, not in it. */
   const span = columnsSpan(monthly ? columns : shownColumns);
   const rowsWord = byParty ? 'by debtor / creditor' : "by the owner's accounts";
   const periodText = monthly ? `${monthName(span.from)} – ${monthName(span.to)} · ${months} months` : `${fmtDate(r.from)} – ${fmtDate(r.to)}`;
@@ -269,11 +258,7 @@ export const ReceiptsPaymentsTab = () => {
   const forecastWord = forecastOn ? (fq.data?.docs ? ' · each month Actual | Orders & bills | P&L forecast' : ' · each month Actual | P&L forecast') : '';
   useReportSubtitle(r.usable ? `${periodText} · every bank and cash account · ${rowsWord} · % of the side's total${splitWord}${forecastWord}${layoutWord}` : 'Pick dates.');
 
-  /* The entries behind a figure: the rows under it (one, or a whole category's), the column or the total. */
   const entriesFor = (l: StatementLine, col: StatementColumn | null): { entries: DrillEntry[]; label: string } => {
-    /* Total: the one read, an account's column filtering by account. By month:
-       the column's own read — the name opens the Total column's, the whole span.
-       Settlement / Deposit: a figure across a month opens that month's read. */
     const fromForecast = col != null && isForecastKey(col.key);
     const month = fromForecast ? col : (col?.group ?? col);
     const src = view === 'total' ? report : allByKey[month?.key ?? 'total'];
@@ -291,7 +276,7 @@ export const ReceiptsPaymentsTab = () => {
   };
 
   const sheet = (): ReportSheet | null => {
-    if (view === 'total') return report ? cashFlowSheet(report, { columns: codes, level, open: tree.open, pct: showPct }) : null;
+    if (view === 'total') return report ? cashFlowSheet(report, { columns: codes, level, open: tree.open, pct: showPct, codes: showCodes }) : null;
     if (columns.some((c) => !byKey[c.key])) return null;
     const split = view === 'split';
     const sheetCols = split ? splitCols : monthCols;
@@ -303,7 +288,7 @@ export const ReceiptsPaymentsTab = () => {
       meta: [{ label: 'Months', value: `${monthName(span.from)} – ${monthName(span.to)}` }, { label: 'Rows', value: rowsWord }],
       tables: [statementColumnsTable(sheetCols.map((c) => ({
         key: c.key, label: c.label, pct: showPct && c.pct, edge: c.kind === 'total', ...(c.group ? { group: c.group.label } : {}),
-      })), shown)],
+      })), linesWithCodes(shown, showCodes))],
       fmt: fmtRp,
     };
   };
@@ -349,6 +334,7 @@ export const ReceiptsPaymentsTab = () => {
           </ReportTool>
         )}
         <ReportSwitch on={showPct} onChange={setShowPct}>% beside</ReportSwitch>
+        <CodesSwitch on={showCodes} onChange={setShowCodes} />
         <button type="button" className={s.pickerButton} onClick={() => setOpeningOpen(true)}>Opening bills</button>
       </ReportToolbar>
       {editing && <ReportLayoutEditor report="rp" onClose={() => setEditing(false)} />}
@@ -376,6 +362,7 @@ export const ReceiptsPaymentsTab = () => {
           level={level}
           tree={tree}
           showPct={showPct}
+          showCodes={showCodes}
           fmt={fmtRp}
           finalId="bal:closing"
           strongIds={STRONG}
@@ -399,7 +386,6 @@ export const ReceiptsPaymentsTab = () => {
 
 const STRONG = new Set(['net:surplus']);
 
-/** The entries behind a figure, under its row: the six columns of today's list, its own Export. */
 function EntriesRow({ title, sub, entries, columns, colSpan, onClose }: { title: string; sub: string; entries: DrillEntry[]; columns: Column<DrillEntry>[]; colSpan: number; onClose: () => void }) {
   return (
     <tr className={st.linesRow}>
@@ -430,8 +416,6 @@ function EntriesRow({ title, sub, entries, columns, colSpan, onClose }: { title:
   );
 }
 
-/** "Add an account's column": Total always shows every bank and cash account
- *  together; a tick adds an account's own column beside it. */
 function AccountsPicker({ accounts, ticked, onTicked }: {
   accounts: Array<{ code: string; name: string }>;
   ticked: string[];
@@ -488,9 +472,6 @@ function AccountsPicker({ accounts, ticked, onTicked }: {
   );
 }
 
-/* ── The chart (batch 6 §4.1): money in and out of every bank and cash
-   account a month, the surplus or deficit under each, from the Dashboard's
-   one read of the Cash Flow builder's figures. ── */
 const CASH_SERIES: ChartBarSeries[] = [
   { key: 'in', label: 'Money in', color: REPORT_CHART_COLORS.petrol },
   { key: 'out', label: 'Money out', color: REPORT_CHART_COLORS.gold },

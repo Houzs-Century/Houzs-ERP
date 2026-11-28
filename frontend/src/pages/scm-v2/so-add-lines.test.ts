@@ -41,8 +41,6 @@ describe('staging several new lines', () => {
   });
 
   it('gives each staged line its OWN idempotency key', () => {
-    // One key shared across distinct inserts makes the middleware replay the
-    // first response for all of them, i.e. lines silently swallowed.
     const list = [staged('a'), staged('b'), staged('c')];
     expect(new Set(list.map((r) => r.idempotencyKey)).size).toBe(3);
   });
@@ -50,9 +48,9 @@ describe('staging several new lines', () => {
   it('patches only the addressed line and leaves the others identical', () => {
     const list = [staged('a', { qty: 1 }), staged('b', { qty: 1 })];
     const next = patchStagedAdd(list, 'b', { qty: 7 });
-    expect(next[0]).toBe(list[0]);            // untouched rows keep identity (React.memo)
+    expect(next[0]).toBe(list[0]);
     expect(next[1]!.draft.qty).toBe(7);
-    expect(list[1]!.draft.qty).toBe(1);       // no mutation of the previous state
+    expect(list[1]!.draft.qty).toBe(1);
   });
 
   it('returns the SAME array when the patch addresses nothing', () => {
@@ -115,7 +113,6 @@ describe('the amendment ADD diff', () => {
 
 describe('"Line Items (n)" counts what is on screen', () => {
   it('counts staged adds alongside the persisted rows in edit mode', () => {
-    // The reported symptom: three cards, header reading (2).
     expect(visibleLineCounts({
       isEditing: true,
       itemIds: ['i1', 'i2'],
@@ -164,7 +161,7 @@ describe('line writes settle instead of racing the first rejection', () => {
     let live = 0;
     const track = (label: string) => async () => {
       live += 1;
-      expect(live).toBe(1);            // never two adds in flight at once
+      expect(live).toBe(1);
       order.push(label);
       await Promise.resolve();
       live -= 1;
@@ -203,10 +200,6 @@ describe('the failure message names the line', () => {
     expect(msg).toContain('New line 2: variant missing');
   });
 
-  /* Desktop shares the phone's failure vocabulary now
-     (vendor/scm/lib/line-write-failures.ts), so ONE cause behind several
-     refused lines is stated once here too. It used to be repeated per line,
-     which buries the one sentence the operator can act on. */
   it('states a SHARED cause once instead of once per line', () => {
     const locked = 'This order came from AutoCount and is view-only for now.';
     const msg = lineWriteErrorMessage([
@@ -262,7 +255,6 @@ describe('runSoLineWrites — the page Save chain', () => {
       adds: [ok('New line 1', addRan)],
       onAddsLanded: () => {},
     })).rejects.toThrow(/SOFA-1: price refused.*1 new line is still on screen/s);
-    // The old chain's silent half: the add never ran and was never mentioned.
     expect(addRan).not.toHaveBeenCalled();
   });
 

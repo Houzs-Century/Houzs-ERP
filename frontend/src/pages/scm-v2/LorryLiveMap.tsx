@@ -1,21 +1,15 @@
-// ----------------------------------------------------------------------------
-// Lorry Live Map (DEV-42) — where every tracked lorry is now. Positions come from
-// the Velocity (Kinesis) trackers, stored every 5 min by the backend cron
-// (scm/lib/velocity-poll.ts), not from driver phones, so it works without trips.
-// Reuses the trip map component; one pin per lorry, amber when the fix is old.
-// ----------------------------------------------------------------------------
 
 import { fmtTime } from '@2990s/shared';
 import { Link } from 'react-router-dom';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import { useMemo } from 'react';
+import { LorryKmDaily } from './LorryKmDaily';
 import { LiveTripMap, type LiveMarker, type LiveTrail } from '../../vendor/scm/components/LiveTripMap';
 import { useLorryRoadTracks } from '../../vendor/scm/lib/lorry-road-track';
-import { todayMY } from '../../vendor/shared/format';
+import { todayMY } from '../../../../shared/src/vendor/shared/format';
 import { useLorryKmCost, useLorryPositions, type LorryKmCost, type LorryPosition } from '../../vendor/scm/lib/lorries-queries';
 
-/* Three missed polls = stale. */
 const STALE_MS = 15 * 60_000;
 
 function ago(iso: string): string {
@@ -27,8 +21,6 @@ function ago(iso: string): string {
 
 const isStale = (p: LorryPosition) => Date.now() - Date.parse(p.recorded_at) > STALE_MS;
 
-/* Km from today's Velocity fixes (Malaysia day) x the lorry's RM/km. No rate =
-   no cost shown: unknown is not zero. The rate is set on the Fleet page. */
 function KmCostCells({ kc }: { kc: LorryKmCost | undefined }) {
   return (
     <>
@@ -44,11 +36,10 @@ function KmCostCells({ kc }: { kc: LorryKmCost | undefined }) {
 
 /** `embedded`: shown inside Coverage & Fleet or Fleet Health (owner 2026-11-08), which carry their own header. */
 export function LorryLiveMap({ embedded }: { embedded: boolean }) {
-  const q = useLorryPositions();
+  const q = useLorryPositions(true);
   const positions = q.data ?? [];
   const kmCost = new Map((useLorryKmCost().data ?? []).map((k) => [k.lorry_id, k]));
   const mapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
-  /* Each lorry's path today along the roads; a lorry whose path has not loaded shows its pin only. */
   const roads = useLorryRoadTracks(mapsKey ? positions.map((p) => p.lorry_id) : [], todayMY());
   const roadsKey = roads.map((r) => r.dataUpdatedAt).join(',');
   const trails: LiveTrail[] = useMemo(
@@ -73,13 +64,13 @@ export function LorryLiveMap({ embedded }: { embedded: boolean }) {
   return (
     <div>
       {embedded ? (
-        <p className="text-[13px] text-ink-muted">Velocity trackers, updated every 5 min. Grey line: where each lorry drove today, along the roads. Lorries with no tracker, or no position in 24 h, are not shown.</p>
+        <p className="text-[13px] text-ink-muted">GPS trackers (Velocity and iTrack), updated every 5 min. Grey line: where each lorry drove today, along the roads. Lorries with no tracker, or no position in 24 h, are not shown.</p>
       ) : (
         <PageHeader
           dense
           eyebrow="Delivery · TMS"
           title="Lorry Live Map"
-          description="Velocity trackers, updated every 5 min. Grey line: where each lorry drove today, along the roads. Lorries with no tracker, or no position in 24 h, are not shown."
+          description="GPS trackers (Velocity and iTrack), updated every 5 min. Grey line: where each lorry drove today, along the roads. Lorries with no tracker, or no position in 24 h, are not shown."
         />
       )}
       <div className={embedded ? 'space-y-4 pt-3' : 'space-y-4 p-4'}>
@@ -139,6 +130,7 @@ export function LorryLiveMap({ embedded }: { embedded: boolean }) {
             </div>
           </>
         )}
+        <LorryKmDaily />
       </div>
     </div>
   );

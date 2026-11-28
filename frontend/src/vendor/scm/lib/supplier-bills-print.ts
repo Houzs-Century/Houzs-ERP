@@ -1,22 +1,3 @@
-// ----------------------------------------------------------------------------
-// supplier-bills-print — Money out › Supplier bills on paper (the owner's
-// Claude Design, batch 4 step 8). The ticked rows — or one row, or the bill
-// page — print as ONE document in the order given: an AP bill (or a
-// supplier's debit note) as the AP BILL (ap-bill-pdf.ts), a purchase invoice
-// as Procurement prints it (purchase-invoice-pdf.ts), a supplier credit note
-// as the CN / DN page prints it (credit-note-pdf.ts).
-//
-// With files, each document's stored files follow its page — the voucher
-// print's door (PaymentVouchers.tsx printVouchers): every document renders as
-// its own jsPDF, the Worker appends the files where they live
-// (POST /ap-invoices/print-bundle) and hands back one PDF. Without files
-// nothing needs the Worker: one shared jsPDF, a fresh page per document.
-//
-// Each document is read fresh at print time; one that cannot be read fails
-// the whole print with its number — a print quietly missing a document is the
-// dishonest branch. Reached only through import(), so jsPDF and the
-// generators stay out of the first load.
-// ----------------------------------------------------------------------------
 
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -27,20 +8,17 @@ import { renderCreditNoteInto, type CreditNotePdfHeader, type CreditNotePdfLine 
 import { renderPurchaseInvoiceInto } from './purchase-invoice-pdf';
 import { pdfBytesToBase64 } from './payment-voucher-pdf';
 import { fetchPrintBundle } from './payment-voucher-queries';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 /** One paper to print: what it is, its id, and its number (the file's name, and the refusal's). */
 export type BillPrintDoc = { kind: 'API' | 'PI' | 'SCN'; id: string; number: string };
 
-/* The print's namer reads the UNFILTERED chart — an old bill on a now-inactive
-   account must still print that account's name. */
 const chartNames = async (): Promise<AccountNamer> => {
   const r = await authedFetch<{ accounts: Array<{ account_code: string; account_name: string }> }>('/accounting/accounts');
   const names = new Map(r.accounts.map((a) => [a.account_code, a.account_name]));
   return (code) => names.get(code) ?? null;
 };
 
-/** Read one paper fresh and draw it into `doc` — on the page `doc` is at. */
 async function renderPaper(doc: jsPDF, d: BillPrintDoc, nameOf: AccountNamer): Promise<void> {
   try {
     switch (d.kind) {
@@ -51,7 +29,6 @@ async function renderPaper(doc: jsPDF, d: BillPrintDoc, nameOf: AccountNamer): P
       }
       case 'SCN': {
         const { note, lines } = await authedFetch<{ note: CreditNotePdfHeader; lines: CreditNotePdfLine[] }>(`/credit-notes/${encodeURIComponent(d.id)}`);
-        /* The note's own print embeds no CJK face; a supplier's Chinese name must not print as mojibake here. */
         await ensurePdfCjkFont(doc, [note, lines]);
         renderCreditNoteInto(doc, autoTable, note, lines, nameOf);
         return;
@@ -74,7 +51,6 @@ export async function printSupplierBills(docs: BillPrintDoc[], opts: { withFiles
   const nameOf = await chartNames();
   const fileName = docs.length === 1 ? `${docs[0]!.number}.pdf` : 'supplier-bills.pdf';
 
-  /* A purchase invoice keeps no files here, so a print of nothing else has none to fetch. */
   if (!opts.withFiles || docs.every((d) => d.kind === 'PI')) {
     const doc = new jsPDF({ ...PDF_COMPRESS, unit: 'mm', format: 'a4' });
     for (const [i, d] of docs.entries()) {

@@ -1,11 +1,3 @@
-// POST /warehouse/racks with alsoSiblingCompanies: the rows it INSERTS.
-//
-// The label fan-out across warehouse RECORDS was always per company. The flag
-// widens it to the other companies' records of the same building (same code),
-// and the one thing that must not slip is the stamp: a row created under
-// HOUZS's KL WAREHOUSE must carry HOUZS's company_id even though 2990's user
-// asked for it — the per-company scoping of every rack read and write depends
-// on that column telling the truth.
 import { describe, expect, it } from 'vitest';
 import { createWarehouseRacksHandler } from './warehouse';
 
@@ -18,9 +10,6 @@ const WAREHOUSES: Row[] = [
   { id: '2990-pj', code: 'PJ SHOWROOM', company_id: 2, is_active: true },
 ];
 
-/** A supabase-ish fake: filters applied through .eq / .in are honoured on
- *  `warehouses`; `warehouse_racks` starts with the rows given and records what
- *  the handler inserts. */
 function fakeSupabase(existingRacks: Row[]) {
   const inserted: Row[] = [];
   const query = (rows: Row[]) => {

@@ -25,7 +25,6 @@ export type Side = 'in' | 'out';
 export type LayoutAccount = {
   kind: 'account';
   code: string;
-  /** Cash Flow only: the line's direction. */
   flow?: Flow;
   /** Cash Flow only: the line's own Settlement / Deposit parts (owner 2026-11-25); absent = its group's. */
   split?: CashSplit;
@@ -34,16 +33,10 @@ export type LayoutCategory = {
   kind: 'category';
   id: string;
   label: string;
-  /** The header account the category was born from. */
   code?: string;
-  /** Companies that UNTICKED it — absent means every company shows it. */
   hiddenFor?: number[];
-  /** Cash Flow only: a TOP category's side (sub-categories follow their parent). */
   flow?: Side;
-  /** Cash Flow only: what the category's subtotal line prints; absent = "Total <label>". */
   totalLabel?: string;
-  /** Cash Flow only: how its money divides between the Settlement and the Deposit columns;
-      absent = it follows the category above (none above = not split). */
   split?: CashSplit;
   children: LayoutItem[];
 };
@@ -84,19 +77,12 @@ export type LaidNode = {
   id: string;
   label: string;
   code?: string;
-  /** The row's key on a line (Cash Flow: the drill-down's handle). */
   key?: string;
   amountSen: number;
   pct: number | null;
-  /** A figure per money column (Cash Flow), summed on a category. */
   cells?: Record<string, number>;
-  /** Cash Flow: an account line's direction; a top category's or unassigned group's side. */
   flow?: Flow;
-  /** Cash Flow: what a top category's subtotal line prints. */
   totalLabel?: string;
-  /** Cash Flow: the figure split into Settlement and Deposit — on a line whose group (or
-      its own payment) says which, a group whose every line splits, a running subtotal
-      whose every group above splits; absent = one figure. */
   sd?: SettleDeposit;
   children: LaidNode[];
 };
@@ -153,27 +139,42 @@ export type TotalsBelowLine = FoldableLine & { label: string; kind: string; tota
  *  level prints its figures on a "Total <name>" line after its rows, its own title
  *  line bare; a folded group keeps its figures on the title (its rows, and so its
  *  total, are folded away). `shown` is linesVisible's output for `all`. Top-level
- *  lines (depth 0: block titles, the report's own totals) are left as they are. */
+ *  lines (depth 0: block titles, the report's own totals) are left as they are. A group
+ *  whose one line already prints its figures gets no Total line (owner 2026-11-27: Total
+ *  PURCHASES and Total COST OF FUNDS read the same). */
 export function totalsBelow<L extends TotalsBelowLine>(
   shown: L[], all: L[], level: number | 'all', open: Record<string, boolean>,
 ): Array<L & { bare?: boolean; totalOf?: string }> {
   const out: Array<L & { bare?: boolean; totalOf?: string }> = [];
-  const stack: L[] = [];
-  const close = (f: L) => out.push({ ...f, id: `sub:${f.id}`, label: f.totalLabel ?? `Total ${f.label}`, kind: 'total', totalOf: f.id });
+  const stack: Array<{ folder: L; under: L[] }> = [];
+  const close = ({ folder: f, under }: { folder: L; under: L[] }) => {
+    if (under.length === 1 && sameFigures(f.cells, under[0]!.cells)) return;
+    out.push({ ...f, id: `sub:${f.id}`, label: f.totalLabel ?? `Total ${f.label}`, kind: 'total', totalOf: f.id });
+  };
   for (const l of shown) {
-    while (stack.length > 0 && stack[stack.length - 1]!.depth >= l.depth) close(stack.pop()!);
+    while (stack.length > 0 && stack[stack.length - 1]!.folder.depth >= l.depth) close(stack.pop()!);
+    stack[stack.length - 1]?.under.push(l);
     const i = all.indexOf(l);
     const folder = l.depth > 0 && (l.kind === 'category' || l.kind === 'unassigned') && i >= 0 && foldsChildren(all, i);
     if (folder && folderOpen(l, level, open)) {
       out.push({ ...l, bare: true });
-      stack.push(l);
+      stack.push({ folder: l, under: [] });
     } else out.push(l);
   }
   while (stack.length > 0) close(stack.pop()!);
   return out;
 }
 
-/* ── reads and writes ─────────────────────────────────────────────────────── */
+/** An account's name without the code a laid label carries before it (`900-I002 · NAME`). */
+export const nameWithoutCode = (label: string, code: string | null | undefined): string =>
+  (code && label.startsWith(`${code} · `) ? label.slice(code.length + 3) : label);
+
+const figureOf = (cell: unknown): number | undefined =>
+  (cell !== null && typeof cell === 'object' && 'amountSen' in cell ? Number(cell.amountSen) : undefined);
+
+const sameFigures = (a: TotalsBelowLine['cells'], b: TotalsBelowLine['cells']): boolean =>
+  [...new Set([...Object.keys(a), ...Object.keys(b)])].every((k) => figureOf(a[k]) === figureOf(b[k]));
+
 
 export const useReportLayout = (report: ReportKey, enabled = true) => useQuery({
   queryKey: ['report-layout', report],
@@ -184,7 +185,6 @@ export const useReportLayout = (report: ReportKey, enabled = true) => useQuery({
 
 type SaveResponse = { ok: boolean; stored: boolean; layout: Layout; updatedAt: string | null; updatedBy: string | null };
 
-/** The report queries that draw on the tree — every one re-reads after a save. */
 const REPORT_QUERY_KEYS: Record<ReportKey, string> = {
   pnl: 'report-pnl', balance_sheet: 'report-bs', performance: 'report-performance', rp: 'report-rp',
 };
@@ -212,7 +212,6 @@ export const useResetReportLayout = (report: ReportKey) => {
   });
 };
 
-/* ── figures ──────────────────────────────────────────────────────────────── */
 
 /** % of a base, one decimal, null when there is no base — the server's rounding. */
 export const pctOf = (sen: number, baseSen: number | null): number | null =>
@@ -224,7 +223,6 @@ export const fmtPct = (pct: number | null): string => (pct === null ? '—' : `$
 export const laidDepth = (nodes: LaidNode[]): number =>
   nodes.reduce((d, n) => Math.max(d, 1 + (n.children.length > 0 ? laidDepth(n.children) : 0)), 0);
 
-/* ── the editor's operations ──────────────────────────────────────────────── */
 
 /** One key per item: a category or a subtotal by its id, an account by its
     code — and on the Cash Flow by its direction too, since one account may
@@ -320,9 +318,9 @@ export function setCategoryTick(layout: Layout, id: string, companyId: number, s
 }
 
 export type DropTarget =
-  | { kind: 'into'; categoryId: string }   // the last child of that category
-  | { kind: 'before'; key: string }        // just above that item
-  | { kind: 'end' };                       // the end of the block's top level
+  | { kind: 'into'; categoryId: string }
+  | { kind: 'before'; key: string }
+  | { kind: 'end' };
 
 /**
  * Put an item somewhere in a block — dragged from elsewhere in the block, or
@@ -333,7 +331,6 @@ export function placeItem(layout: Layout, block: string, item: LayoutItem, targe
   const key = itemKey(item);
   if (target.kind === 'into' && (target.categoryId === key || contains(item, target.categoryId))) return layout;
   if (target.kind === 'before' && (target.key === key || contains(item, target.key))) return layout;
-  /* A subtotal line lives at the top level only — never inside a category. */
   if (item.kind === 'subtotal' && (target.kind === 'into' || (target.kind === 'before' && !(layout.blocks[block] ?? []).some((it) => itemKey(it) === target.key)))) return layout;
   const next = clone(layout);
   const items = next.blocks[block] ?? (next.blocks[block] = []);
@@ -362,7 +359,6 @@ export function unplaceAccount(layout: Layout, block: string, code: string, flow
   return next;
 }
 
-/** Every account code the block's tree places — as a leaf or as a category's header. */
 const placedCodes = (items: LayoutItem[], into = new Set<string>()): Set<string> => {
   for (const it of items) {
     if (it.kind === 'account') into.add(it.code);
@@ -371,9 +367,6 @@ const placedCodes = (items: LayoutItem[], into = new Set<string>()): Set<string>
   return into;
 };
 
-/** Cash Flow: the account codes whose money on `side` the tree already
-    places — an account line reading that way (or Net, which reads both), or a
-    category's header account on a top category of that side. */
 const placedOnSide = (items: LayoutItem[], wanted: Side): Set<string> => {
   const into = new Set<string>();
   const walk = (list: LayoutItem[], side: Side): void => {

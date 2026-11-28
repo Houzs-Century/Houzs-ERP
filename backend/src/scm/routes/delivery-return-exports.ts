@@ -29,7 +29,6 @@ type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
 export async function deliveryReturnExportRowsHandler(c: Ctx) {
   const sb = c.get('supabase');
-  // The REAL Houzs user id, as the list passes it (lib/salesScope.ts).
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
   const filters = readDeliveryReturnListFilters((k) => c.req.query(k));
   const out = await buildDeliveryReturnExportRows(sb, c, filters, scopeIds, canViewScmFinance(c));

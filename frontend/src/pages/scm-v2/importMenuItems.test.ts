@@ -12,7 +12,6 @@ import { dirname, join } from "node:path";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const pages = readdirSync(HERE).filter((f) => f.endsWith(".tsx") && !f.includes(".test."));
 const src = (f: string) => readFileSync(join(HERE, f), "utf8");
-// A page that offers the item must also read the param it navigates to.
 const readsImportParam = (s: string) => /\.get\(\s*["']import["']\s*\)/.test(s);
 
 test("every list offering 'Import from file' handles it", () => {

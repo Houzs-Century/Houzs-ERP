@@ -1,19 +1,11 @@
-// ----------------------------------------------------------------------------
-// FinanceTodoRules — Setup › To do rules (the owner's Claude Design redesign,
-// Finance-1a-To-do, batch 2): which built-in rules fill To do, the month's
-// routines (their amount and payee, which Finance fills; switched on or off),
-// and the groups Finance added beside the four. Nothing is deleted here — a
-// rule or routine is switched off.
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { PageHeader } from '../../../components/Layout';
-import { fmtSenPlain } from '../../../vendor/shared/format';
+import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
 import styles from './FinanceTasks.module.css';
 import { BUILT_IN_GROUPS } from './TaskDrawers';
 import { useAddGroup, useAddRule, useSaveRulesOff, useTodoSettings, useUpdateTask, type CustomRule, type TodoTask } from './finance-todo-queries';
 
-/** The design's RULES table: what each finds, where it lands, whose desk it is on. */
 const RULES: Array<[string, string, string, string, string]> = [
   ['card-missing', 'Merchant report missing', 'A card machine report not in by the next morning', 'recon', 'Finance'],
   ['card-matched', 'Merchant lines to confirm', 'Report lines matched to an order by reference', 'recon', 'Finance'],
@@ -30,7 +22,6 @@ const RULES: Array<[string, string, string, string, string]> = [
 
 const groupLabel = (id: string): string => BUILT_IN_GROUPS.find((g) => g.id === id)?.label ?? id;
 
-/** The design's TEMPLATES: what a rule Finance adds can look for. */
 const TEMPLATES: Record<CustomRule['tpl'], { name: string; finds: (n: string) => string; paramLabel: string; unit: string; def: number; group: string; button: string }> = {
   bills: { name: 'Supplier bills due soon', finds: (n) => `Supplier bills due within ${n} days and not paid`, paramLabel: 'Due within', unit: 'days', def: 7, group: 'pay', button: 'Opens Supplier bills' },
   drafts: { name: 'Drafts left too long', finds: (n) => `Finance documents still in Draft after ${n} days`, paramLabel: 'Older than', unit: 'days', def: 3, group: 'other', button: 'Opens Payment vouchers' },
@@ -83,7 +74,6 @@ function Switch({ on, label, disabled, onClick }: { on: boolean; label: string; 
 const whenOf = (t: TodoTask): string =>
   t.monthDay === 'last' ? 'Every month, last day' : `Every month ${t.byDay ? 'by' : 'on'} the ${t.monthDay ?? '—'}${['1', '21', '31'].includes(t.monthDay ?? '') ? 'st' : ['2', '22'].includes(t.monthDay ?? '') ? 'nd' : ['3', '23'].includes(t.monthDay ?? '') ? 'rd' : 'th'}`;
 
-/** RM typed as "4,800" or "4800.50" → whole sen; blank → none. */
 const senOf = (v: string): number | null | 'bad' => {
   const s = v.replace(/[,\s]|RM/gi, '');
   if (s === '') return null;

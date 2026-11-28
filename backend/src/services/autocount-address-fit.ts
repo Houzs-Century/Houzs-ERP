@@ -55,15 +55,10 @@ export function fitAddressLines(
   lines: ReadonlyArray<string | null>,
 ): { lines: (string | null)[]; dropped: string | null } {
   const kept = lines.map((l) => (l == null ? null : l));
-  /* THE COMMON CASE FIRST, and it returns the input by identity of value: no
-     address that already fits is ever re-flowed. More lines than the book has
-     do not fit either, however short each one is. */
   if (kept.length <= AC_ADDRESS_LINES && kept.every((l) => (l ?? '').length <= AC_ADDRESS_LINE_MAX)) {
     return { lines: kept, dropped: null };
   }
 
-  /* Every word, in order, across the lines. The original breaks become spaces
-     because the packing decides the new ones — which is the whole point. */
   const words: string[] = [];
   for (const l of kept) for (const w of (l ?? '').split(' ')) if (w) words.push(w);
 
@@ -72,8 +67,6 @@ export function fitAddressLines(
   const flush = () => { if (current) { out.push(current); current = ''; } };
   for (let i = 0; i < words.length; i += 1) {
     let w = words[i] as string;
-    /* A word wider than the line cannot be packed, only broken. Rare, and the
-       alternative is dropping it. */
     while (w.length > AC_ADDRESS_LINE_MAX) {
       flush();
       if (out.length >= AC_ADDRESS_LINES) break;
@@ -81,7 +74,6 @@ export function fitAddressLines(
       w = w.slice(AC_ADDRESS_LINE_MAX);
     }
     if (out.length >= AC_ADDRESS_LINES && !current) {
-      /* No room left: everything from here is the overflow. */
       return {
         lines: padLines(out),
         dropped: [w, ...words.slice(i + 1)].join(' ') || null,
@@ -99,8 +91,6 @@ export function fitAddressLines(
   return { lines: padLines(out), dropped: null };
 }
 
-/** Four entries always, so the caller can map them onto the four columns and a
- *  line the address no longer needs is BLANKED rather than left as it was. */
 function padLines(out: readonly string[]): (string | null)[] {
   const four: (string | null)[] = [];
   for (let i = 0; i < AC_ADDRESS_LINES; i += 1) four.push(out[i] ?? null);
@@ -114,38 +104,7 @@ export const tidy = (s: unknown): string | null => {
   return v || null;
 };
 
-/**
- * The customer's address, packed into AutoCount's FOUR numbered lines.
- *
- * FIVE ERP FIELDS, FOUR AUTOCOUNT LINES — this is the one decision that had to
- * be written down rather than derived, and this comment is where it lives (the
- * DO/SI note in `autocount-outbox.ts` declined to invent it and omitted the
- * keys instead; on a CREATE there is nothing to preserve, so the packing has to
- * be chosen).
- *
- * | AutoCount | ERP |
- * |---|---|
- * | `InvAddr1` | `address1` |
- * | `InvAddr2` | `address2` |
- * | `InvAddr3` | `address3`, else `postcode` + `city` |
- * | `InvAddr4` | `address4`, else `customer_state` |
- *
- * Unless `address3` / `address4` are the street running on (soStreetTail):
- * then they follow `address2` and the town and state come after them.
- *
- * `address3` / `address4` WIN when they are populated AND still name the stored
- * postcode (see soTownLines): only the cutover import ever wrote them, and that
- * text is AutoCount's own. An ERP-created order has
- * both blank and keeps the same facts in `city` / `postcode` / `customer_state`
- * — measured 2026-08-14 on production, 94 of 115 unpushed sales orders are in
- * exactly that shape, so AutoCount's document carried the street lines and no
- * town, no postcode and no state, on the address a delivery is printed from.
- *
- * Postcode before town, state on its own line, is the Malaysian postal order
- * ("43300 SERI KEMBANGAN" / "SELANGOR"). Free text, no master, no foreign key.
- */
 type SoAddressHead = {
-  /* `unknown` and optional for the same reason as soCustomerRef above. */
   address1?: unknown; address2?: unknown; address3?: unknown; address4?: unknown;
   city?: unknown; postcode?: unknown; customer_state?: unknown;
 };
@@ -205,10 +164,6 @@ export function soInvoiceAddress(h: SoAddressHead): {
   } {
   const [line3, line4] = soTownLines(h);
   const tail = soStreetTail(h);
-  /* FITTED TO THE BOOK'S OWN WIDTH before it leaves. AutoCount's four address
-     columns are 40 characters and it refuses the WHOLE document when one is
-     over — see fitAddressLines, which returns an address that already fits
-     untouched, so this changes nothing for the documents that were working. */
   const { lines } = fitAddressLines(tail.length > 0
     ? streetThenTown([tidy(h.address1), tidy(h.address2), ...tail], [line3, line4])
     : [tidy(h.address1), tidy(h.address2), line3, line4]);
@@ -220,8 +175,6 @@ export function soInvoiceAddress(h: SoAddressHead): {
   };
 }
 
-/** A street longer than two lines, then the town: town and state share the last
- *  line when they must, and only past that is every word re-packed. */
 function streetThenTown(street: (string | null)[], town: (string | null)[]): (string | null)[] {
   const s = street.filter((l): l is string => l != null);
   const t = town.filter((l): l is string => l != null);

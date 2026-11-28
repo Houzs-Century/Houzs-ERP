@@ -1,11 +1,3 @@
-/* READY audit F3 (2026-10-16): the allocator read the SO-line -> PO-receipt
- * links without checking the error. A failed read looked like "nothing has
- * been received", so a hard-bound READY line was written PENDING and its
- * READY_TO_SHIP order regressed, under { ok: true } with no retry. The read
- * now throws before anything is written, and the wrapper queues the retry.
- *
- * Fails pre-fix: the line went READY -> PENDING and the order to IN_PRODUCTION.
- */
 import { describe, expect, test } from 'vitest';
 import { recomputeSoStockAllocation } from './so-stock-allocation';
 
@@ -21,8 +13,6 @@ type Query = {
 };
 type FakeSb = { from(table: string): Query; tables: Record<string, Row[]> };
 
-/** A PostgREST stand-in. `failSelect` makes any read whose column list
- *  contains that text answer with an error, as a timed-out query would. */
 function fakeSb(tables: Record<string, Row[]>, failSelect?: string): FakeSb {
   const from = (table: string): Query => {
     const filters: Array<(r: Row) => boolean> = [];

@@ -37,7 +37,6 @@ export async function soStatusAfterProcessingDateChange(
 
   const had = !!(input.storedProcessingDate ?? '').trim();
   const has = !!(input.effectiveProcessingDate ?? '').trim();
-  /* Not a clearing — and therefore not worth a database round trip. */
   if (!had || has) return null;
 
   return statusAfterProcessingDateCleared({

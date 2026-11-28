@@ -12,7 +12,7 @@
 // THE TABLE (「表很乱，看的不是很清楚」, every cost kept: 「还是需要每个费用的明细」):
 // a two-line project name, amounts without "RM" and a dash for nothing.
 
-import { fmtDayMonthRange } from "../../vendor/shared/format";
+import { fmtDayMonthRange } from "../../../../shared/src/vendor/shared/format";
 import type { Drill, OvProject } from "./projectOverviewModel";
 
 export type SortKey = "start" | "sales" | "np" | "npPct";
@@ -137,7 +137,6 @@ function writeStore(all: Stored): void {
     for (const k of keys.slice(0, Math.max(0, keys.length - 20))) delete all[k];
     sessionStorage.setItem(SCROLL_STORE, JSON.stringify(all));
   } catch {
-    /* No storage (private mode): Back keeps the choices, just not the place. */
   }
 }
 
@@ -180,7 +179,6 @@ export function takeScroll(href: string): OverviewScroll | null {
   return fresh(hit.at) ? { page: Number(hit.page) || 0, table: Number(hit.table) || 0, tableLeft: Number(hit.tableLeft) || 0 } : null;
 }
 
-/* ── The project table ───────────────────────────────────────────────────── */
 
 /** "[AKEMI] MYHOME" over "SUNWAY PYRAMID CONVENTION CENTRE · Selangor ·
  *  10/16 - 10/18". A project missing its brand or organizer reads as its name. */

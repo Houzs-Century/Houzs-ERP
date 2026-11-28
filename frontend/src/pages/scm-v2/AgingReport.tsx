@@ -23,7 +23,7 @@ import {
 } from '../../vendor/scm/lib/aging-queries';
 import { AMOUNT_COLUMN, type ReportSheet, type SheetColumn, type SheetRow } from '../../vendor/scm/lib/report-sheet';
 import { DateField } from '../../vendor/scm/components/DateField';
-import { fmtDate, fmtDateOrDash, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtDateOrDash, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { isIsoDay } from '../../lib/dateRangePresets';
 import { DataTable, type Column } from '../../components/DataTable';
 import { FinanceDocLink } from './finance/FinanceDocLink';
@@ -44,10 +44,8 @@ const SIDE: Record<AgingSide, { title: string; party: string; parties: string; t
   ap: { title: 'AP aging', party: 'Creditor', parties: 'creditors', trade: 'Trade creditors', other: 'Other creditors' },
 };
 
-/** The columns' dots, the older the warmer — the tones of the design's tags. */
 const COLUMN_DOTS = ['var(--fin-calm-fg)', 'var(--fin-info-fg)', 'var(--fin-warn-fg)', 'var(--fin-late-fg)', 'var(--fin-late-fg)'];
 
-/** A figure as the statements print it: 1,234.56, a negative in brackets, nothing as a dash. */
 const money = (sen: number): string => (sen === 0 ? '—' : fmtSenPlain(sen));
 const sumOf = <T,>(rows: readonly T[], sen: (r: T) => number): number => rows.reduce((n, r) => n + sen(r), 0);
 
@@ -55,7 +53,6 @@ const partyLabel = (code: string | null, name: string): string => (code && code 
 const basisWords = (b: AgingBasis): string => (b === 'due' ? 'due date' : 'invoice date');
 const bucketWords = (b: AgingBuckets): string => (b === 'month' ? 'by month' : 'by days');
 const partyCount = (side: AgingSide, n: number): string => `${n} ${n === 1 ? SIDE[side].party.toLowerCase() : SIDE[side].parties}`;
-/** Days overdue as the table prints them: a bill not yet due shows a dash. */
 const daysText = (days: number | null): string | null => (days != null && days > 0 ? String(days) : null);
 
 /** The party view as the screen shows it, for Excel and PDF: the rows (in the
@@ -77,8 +74,6 @@ export function agingSheet(side: AgingSide, d: AgingReportData, rows: readonly A
       out.push({ kind: 'memo', depth: 1, label: `${u.docNo} · ${u.kind} · ${fmtDateOrDash(u.date)} · ${UNAPPLIED_LABEL}`, cells });
     }
   }
-  /* Every row shown: the report's own totals. Fewer (a tile or the find):
-     the total of the rows shown, as the table's foot prints it. */
   const every = rows.length === d.rows.length;
   const total = every
     ? [d.totals.balanceSen, ...d.totals.cells, d.totals.unappliedSen]
@@ -136,7 +131,6 @@ export function agingNotes(side: AgingSide, d: AgingReportData): string[] {
   return notes;
 }
 
-/** A party: its code over its name. */
 function PartyCell({ code, name }: { code: string | null; name: string }) {
   return (
     <span className={css.party}>
@@ -146,7 +140,6 @@ function PartyCell({ code, name }: { code: string | null; name: string }) {
   );
 }
 
-/** A bill's number: on AR, the order it belongs to opens in a tab of its own. */
 function BillNo({ side, docNo, so }: { side: AgingSide; docNo: string; so: string | null }) {
   return side === 'ar' && so ? <FinanceDocLink to={`/scm/sales-orders/${encodeURIComponent(so)}`}>{docNo}</FinanceDocLink> : <>{docNo}</>;
 }
@@ -157,7 +150,6 @@ function AgeTag({ bucket }: { bucket: AgingInvoiceLine['bucket'] }) {
   return <Tag tone={b.tone} dot={b.dot}>{b.label}</Tag>;
 }
 
-/** A party's bills and its unapplied money, under its row. */
 function PartyBills({ side, row, labels }: { side: AgingSide; row: AgingRow; labels: readonly string[] }) {
   return (
     <table className={css.bills} aria-label={`${row.name}'s bills`}>
@@ -207,7 +199,6 @@ export const AgingReport = ({ side }: { side: AgingSide }) => {
   const [find, setFind] = useState('');
   const [pick, setPick] = useState<AgingPick>(null);
   const [openRows, setOpenRows] = useState<Set<string>>(() => new Set());
-  /* What the tables show after their own funnels and sort — what the exports draw. */
   const [shownParties, setShownParties] = useState<AgingRow[] | null>(null);
   const [shownLines, setShownLines] = useState<AgingInvoiceLine[] | null>(null);
   const q = useAging(side, { asOf: asAt, basis, buckets, control });
@@ -216,7 +207,6 @@ export const AgingReport = ({ side }: { side: AgingSide }) => {
   const words = SIDE[side];
   const party = words.party.toLowerCase();
 
-  /* Worked out once, read by the tiles, both tables and the exports. */
   const found = useMemo(() => {
     const all = d?.rows ?? [];
     const needle = find.trim().toLowerCase();

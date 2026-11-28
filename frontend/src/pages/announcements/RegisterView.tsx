@@ -24,7 +24,7 @@ import { api } from "../../api/client";
 import { useAuth } from "../../auth/AuthContext";
 import { cn } from "../../lib/utils";
 import { DateField } from "../../vendor/scm/components/DateField";
-import { fmtDate, fmtDateTime } from "../../vendor/shared/format";
+import { fmtDate, fmtDateTime } from "../../../../shared/src/vendor/shared/format";
 import type { Department } from "../../types";
 import type { DocumentTypeOption } from "./announcementModel";
 import { todayMyt } from "../../vendor/scm/lib/dates";
@@ -49,9 +49,7 @@ export type RegisteredDocument = {
   voidReason: string | null;
 };
 
-/** The default family when the registry offers it; else the first offered. */
 const DEFAULT_TYPE = "MEMO";
-/** Composed in Announcements, never registered here. */
 const COMPOSED_TYPE = "ANN";
 
 const FIELD = "h-9 w-full rounded-md border border-border bg-surface px-2.5 text-[12.5px] text-ink outline-none focus:border-primary";
@@ -64,9 +62,6 @@ export function RegisterView({ docTypes, className }: { docTypes: DocumentTypeOp
   const canManage = can("memos.manage");
   const myDeptId = user?.department_id ?? null;
 
-  // The families a document written outside the ERP can be registered as:
-  // every ACTIVE registry type but ANN (the page's own /api/document-types
-  // read, so Settings → Documents governs this list too).
   const registrableTypes = useMemo(() => docTypes.filter((t) => t.code !== COMPOSED_TYPE), [docTypes]);
   const typeLabel = useMemo(() => new Map(docTypes.map((t) => [t.code, t.label])), [docTypes]);
 
@@ -83,7 +78,6 @@ export function RegisterView({ docTypes, className }: { docTypes: DocumentTypeOp
     [canManage, departments, myDeptId],
   );
 
-  // ── Register form ─────────────────────────────────────────────────────────
   const [open, setOpen] = useState(false);
   const [docType, setDocType] = useState<string>("");
   const [title, setTitle] = useState("");
@@ -94,7 +88,6 @@ export function RegisterView({ docTypes, className }: { docTypes: DocumentTypeOp
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // The picked type, or the default once the registry has answered.
   const typeChosen: DocumentTypeOption | null =
     registrableTypes.find((t) => t.code === docType) ??
     registrableTypes.find((t) => t.code === DEFAULT_TYPE) ??
@@ -125,7 +118,6 @@ export function RegisterView({ docTypes, className }: { docTypes: DocumentTypeOp
     !saving && !uploading && title.trim().length > 0 && !!typeChosen && !!deptChosen && deptHasCode && (!needsFile || !!file);
 
   async function register() {
-    // canRegister is an aliased condition: TS narrows typeChosen / deptChosen past it.
     if (!canRegister) return;
     setSaving(true);
     try {

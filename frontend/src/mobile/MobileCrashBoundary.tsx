@@ -26,7 +26,6 @@ export function MobileCrashBoundary({
   fallback,
   children,
 }: {
-  /** Derived from MobileApp's own `tab`/`screen` state, never from the URL. */
   resetKey: string;
   fallback: ReactNode;
   children: ReactNode;

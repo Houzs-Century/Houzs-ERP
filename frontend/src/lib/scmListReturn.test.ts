@@ -32,8 +32,8 @@ describe("scmListReturn", () => {
 
   it("only records LIST paths — a detail or action page must not overwrite the target", () => {
     rememberScmListReturn("/scm/purchase-orders", "?q=sofa");
-    rememberScmListReturn("/scm/purchase-orders/PO-123", ""); // detail — ignored
-    rememberScmListReturn("/scm/purchase-orders/new", ""); // action — ignored
+    rememberScmListReturn("/scm/purchase-orders/PO-123", "");
+    rememberScmListReturn("/scm/purchase-orders/new", "");
     expect(scmListReturnTo("/scm/purchase-orders")).toBe("/scm/purchase-orders?q=sofa");
   });
 
@@ -47,8 +47,6 @@ describe("scmListReturn", () => {
 
   it("a detail path resolves to its own section's remembered list", () => {
     rememberScmListReturn("/scm/sales-invoices", "?q=acme");
-    // scmListReturnTo is always called with the bare list path by the detail,
-    // but the section match tolerates either form.
     expect(scmListReturnTo("/scm/sales-invoices")).toBe("/scm/sales-invoices?q=acme");
   });
 

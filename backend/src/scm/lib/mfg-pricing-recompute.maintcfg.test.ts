@@ -2,9 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { loadMaintenanceConfig } from './mfg-pricing-recompute';
 import { todayMyt } from './my-time';
 
-// loadMaintenanceConfig must pick the same row as GET /maintenance-config/resolved:
-// newest effective_from <= today (a future-dated change must not price early),
-// latest created_at winning a same-day tie.
 
 function recordingSb(row: unknown) {
   const calls: unknown[][] = [];

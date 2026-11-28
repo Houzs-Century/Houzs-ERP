@@ -6,7 +6,7 @@
    chunks' answers are combined here into the one line the page shows. Pure, so
    desktop and mobile render the same words. */
 
-import { fmtTime } from "../vendor/shared/format";
+import { fmtTime } from "../../../shared/src/vendor/shared/format";
 
 export type ListMrpFallback = "missing" | "stale" | "refresh";
 
@@ -25,8 +25,6 @@ export type ListMrpStatus = {
   refreshing: boolean;
 };
 
-/* A stale / missing snapshot is the thing the page must say, so it wins over a
-   chunk that happened to read a fresh one. */
 const FALLBACK_RANK: Record<ListMrpFallback, number> = { stale: 3, missing: 2, refresh: 1 };
 
 /** One line for the page from every chunk's answer: the OLDEST time, live if any chunk was live. */

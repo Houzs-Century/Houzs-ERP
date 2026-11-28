@@ -74,7 +74,6 @@ export function useCancelRequestAction(docType: CancelDocType) {
       });
       return true;
     } catch (err) {
-      /* A refusal that reaches nobody is worse than a crash (CLAUDE.md). */
       void serviceNotify({
         title: "Could not request cancellation",
         body: err instanceof Error ? err.message : `Something went wrong with this ${NOUN[docType]}.`,

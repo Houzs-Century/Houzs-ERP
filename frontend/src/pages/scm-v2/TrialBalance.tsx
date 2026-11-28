@@ -1,13 +1,3 @@
-// ----------------------------------------------------------------------------
-// TrialBalance — Σ Dr / Σ Cr per account and the report's own self-check: the
-// difference is 0.00 or the ledger is broken (brief §3.7). In the owner's
-// Claude Design (batch 6, step 5): As at a day (the shared range's end, read
-// c1: GET /accounting/balances?asOf), the three tiles, the accounts by section
-// on the statement table (the owner's AccountCell: code over name), each
-// section totalled, the grand total last. A row opens its lines in a drawer —
-// the General ledger's own read of that account, from the first of the as-at
-// month to the day — with "Open in General ledger ›".
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
@@ -16,7 +6,7 @@ import { useAccountBalances, type AccountBalance } from '../../vendor/scm/lib/ac
 import { counterLabel, fmtLedger, fmtSide, useLedger, type LedgerLine } from '../../vendor/scm/lib/ledger-queries';
 import { ledgerHref, linesVisible } from '../../vendor/scm/lib/report-layout';
 import { statementColumnsTable, type ReportSheet } from '../../vendor/scm/lib/report-sheet';
-import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { isIsoDay, monthStart } from '../../lib/dateRangePresets';
 import { DataTable, type Column } from '../../components/DataTable';
 import { ResizableDrawer } from '../../components/ResizableDrawer';
@@ -31,7 +21,6 @@ import { StatementSkeleton, StatementTable } from './reports/StatementTable';
 import type { StatementColumn, StatementLine } from './reports/statementColumns';
 import s from './reports/Statement.module.css';
 
-/** The sections in statement order, each with the name its block prints. */
 const SECTIONS: ReadonlyArray<{ type: string; label: string }> = [
   { type: 'ASSET', label: 'Assets' },
   { type: 'LIABILITY', label: 'Liabilities' },
@@ -96,12 +85,6 @@ export const TrialBalanceTab = () => {
   const columns = COLUMNS(asAt);
   const shown = linesVisible(lines, 'all', tree.open);
 
-  /* A self-check folded over a list that is empty BECAUSE THE READ FAILED
-     computes dr === cr === 0, which reads as "the books balance" — in the green
-     frame, as a finding. It is not a finding about the ledger, it is the
-     absence of one. `isLoading` alone cannot tell them apart: it is FALSE after
-     a failed fetch, which is exactly when `rows` is emptiest. So the tiles show
-     the unknown marker and the failure is stated. */
   const unknown = q.isError || (!q.isSuccess && rows.length === 0);
   const NOT_KNOWN = '—';
   const tiles: ReportTile[] = [
@@ -152,6 +135,7 @@ export const TrialBalanceTab = () => {
           level="all"
           tree={tree}
           showPct={false}
+          showCodes
           finalId="net:total"
           accountCell
           onOpenRow={(l) => { if (l.code) setOpened({ code: l.code, name: l.label.slice(l.code.length + 3) }); }}
@@ -177,8 +161,6 @@ const DRILL_COLUMNS: Column<LedgerLine>[] = [
   { key: 'balance', label: 'Balance', align: 'right', getValue: (l) => l.balanceSen / 100, render: (l) => fmtLedger(l.balanceSen) },
 ];
 
-/** An account's lines from the first of the as-at month to the day, in a drawer
- *  — the General ledger's own read, so the two never disagree. */
 function TbLinesDrawer({ code, name, asAt, onClose }: { code: string; name: string; asAt: string; onClose: () => void }) {
   const from = monthStart(asAt);
   const q = useLedger({ from, to: asAt, accounts: [code] });

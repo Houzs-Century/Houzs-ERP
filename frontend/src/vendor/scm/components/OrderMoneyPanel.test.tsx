@@ -139,9 +139,10 @@ describe('OrderMoneyPanel', () => {
         money: money({
           requestedSen: 20_000, remainingSen: 50_000,
           refundRequests: [
-            { id: 'r1', requestNo: '2990-PRQ-2610-001', amountSen: 20_000, state: 'WAITING', reason: 'x', financeNote: null, requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null },
+            { id: 'r1', requestNo: '2990-PRQ-2610-001', amountSen: 20_000, state: 'WAITING', reason: 'x', financeNote: null, requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null, approvedBy: null, approvedOn: null },
             { id: 'r2', requestNo: '2990-PRQ-2610-002', amountSen: 10_000, state: 'RETURNED', reason: 'y', financeNote: 'Convert it instead', requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null },
             { id: 'r3', requestNo: '2990-PRQ-2610-003', amountSen: 5_000, state: 'WITHDRAWN', reason: 'z', financeNote: null, requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null },
+            { id: 'r4', requestNo: '2990-PRQ-2610-004', amountSen: 3_000, state: 'WAITING', reason: 'w', financeNote: null, requestedBy: 'Nancy', requestedOn: '2026-10-14', pvNumber: null, approvedBy: 'Purchaser A', approvedOn: '2026-10-15' },
           ],
         }),
         others: [],
@@ -149,10 +150,10 @@ describe('OrderMoneyPanel', () => {
       isError: false,
     });
     render(wrap(<OrderMoneyPanel docNo={OLD} />));
-    const waiting = screen.getByText('2990-PRQ-2610-001 · RM 200.00 (waiting for Finance)');
+    const waiting = screen.getByText('2990-PRQ-2610-001 · RM 200.00 (waiting for approval)');
     expect(waiting.getAttribute('href')).toBe('/scm/payment-requests?open=r1');
+    expect(screen.getByText('2990-PRQ-2610-004 · RM 30.00 (approved by Purchaser A, waiting for Finance)')).toBeTruthy();
     expect(screen.getByText('2990-PRQ-2610-002 · RM 100.00 (rejected: Convert it instead)')).toBeTruthy();
-    /* A withdrawn one says nothing. */
     expect(screen.queryByText(/2990-PRQ-2610-003/)).toBeNull();
     expect(screen.getByText('Paid RM 700.00 · Refund requested RM 200.00 · Remaining RM 500.00')).toBeTruthy();
   });
@@ -162,7 +163,6 @@ describe('OrderMoneyPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Convert' }));
     expect((screen.getByLabelText(`Take from ${OLD}`) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Take from 2990-SO-2607-024') as HTMLInputElement).checked).toBe(false);
-    /* Part of this order, all of the other. */
     const mine = screen.getByLabelText(`Amount from ${OLD}`) as HTMLInputElement;
     fireEvent.change(mine, { target: { value: '400.00' } });
     fireEvent.blur(mine);
@@ -183,7 +183,6 @@ describe('OrderMoneyPanel', () => {
   });
 
   it("another cancelled order by number — any customer's — joins the list ticked for what is left; a refused one says why", async () => {
-    /* The number is read through the transport: the order's own money answer. */
     fetchMock.mockImplementation(async (path: string) => {
       if (path === '/mfg-sales-orders/2990-SO-2608-028/money') return { money: money({ docNo: '2990-SO-2608-028', customer: { name: 'Larding Chen', phone: '0999', customerId: 'cust-2', debtorCode: null }, bookedSen: 143_300, remainingSen: 143_300, movableSen: 143_300 }), others: [] };
       if (path === '/mfg-sales-orders/2990-SO-2609-001/money') return { money: money({ docNo: '2990-SO-2609-001', cancelled: false, status: 'CONFIRMED', totalSen: 150_000, keepFraction: 0.5, keepSen: 75_000, bookedSen: 75_000, remainingSen: 75_000, movableSen: 0 }), others: [] };
@@ -198,7 +197,6 @@ describe('OrderMoneyPanel', () => {
     expect((screen.getByLabelText('Take from 2990-SO-2608-028') as HTMLInputElement).checked).toBe(true);
     expect(screen.getByText('Larding Chen')).toBeTruthy();
     expect(screen.getByTestId('convert-param').textContent).toBe(OLD + ':70000,2990-SO-2608-028:143300');
-    /* Enter adds too; a live order at its floor is refused with why, and stays out. */
     fireEvent.change(screen.getByLabelText('Another cancelled order'), { target: { value: '2990-SO-2609-001' } });
     fireEvent.keyDown(screen.getByLabelText('Another cancelled order'), { key: 'Enter' });
     await waitFor(() => expect(screen.getByText('2990-SO-2609-001 keeps RM 750.00 (50% of RM 1,500.00) while it stands — nothing can move.')).toBeTruthy());

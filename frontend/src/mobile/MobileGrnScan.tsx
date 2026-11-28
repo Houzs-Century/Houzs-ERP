@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// MobileGrnScan — the mobile twin of the desktop ScanGrnModal (one product, one
-// logic layer). Photo a supplier DELIVERY ORDER; the background scan pipeline
-// reads it and CONVERTS the matching open PO line(s) into a DRAFT goods receipt.
-// Never posts stock; never creates a standalone GRN. Same /scan-gr/* contract
-// and shared scan-jobs helpers the desktop uses.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";

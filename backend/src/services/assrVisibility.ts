@@ -42,8 +42,8 @@ export async function assrVisibleUserIds(c: {
   env: Env;
 }): Promise<number[] | undefined> {
   const user = c.get("user") as AuthUser | undefined;
-  if (assrUnrestricted(user)) return undefined; // unrestricted
-  if (user?.id == null) return []; // fail closed, never open
+  if (assrUnrestricted(user)) return undefined;
+  if (user?.id == null) return [];
   return subtreeUserIds(c.env, Number(user.id));
 }
 
@@ -119,30 +119,17 @@ export function assrVisibilityPredicateSql(
   ids: number[] | undefined,
   prefix: string,
 ): string | null {
-  if (ids === undefined) return null; // unrestricted — emit nothing
+  if (ids === undefined) return null;
   const clean = ids.map(Number).filter((n) => Number.isInteger(n) && n > 0);
-  if (clean.length === 0) return "1=0"; // fail closed
+  if (clean.length === 0) return "1=0";
   const idList = clean.join(",");
   const doc = `LOWER(COALESCE(${prefix}doc_no, ''))`;
-  // `status <> 'DRAFT' AND status <> 'CANCELLED'` is the SAME definition of
-  // "the ERP order for this doc_no" that `fetchScmSoContext` (services/assr.ts)
-  // uses when a case is created. Two different definitions of the ERP order
-  // inside one module is the drift this repo keeps paying for, so they match.
   const myErpDocs =
     `SELECT LOWER(eo.doc_no) FROM scm."mfg_sales_orders" eo` +
     ` JOIN scm.staff es ON es.id = eo.salesperson_id` +
     ` WHERE eo.doc_no IS NOT NULL AND eo.doc_no <> ''` +
     ` AND eo.status <> 'DRAFT' AND eo.status <> 'CANCELLED'` +
     ` AND es.user_id IN (${idList})`;
-  // Nth-person access list (mig 20260911T1600): a case is visible when any
-  // member of the caller's subtree holds an explicit grant - open-ended reach
-  // that keeps the salesperson (sales_agent) and the two assigned_to slots
-  // untouched. Read here as a 6th additive arm so it lives in ONE place with
-  // every other visibility term. UNCORRELATED, exactly like the doc arms above:
-  // the case's own column (`${prefix}id`) stays on the LEFT of the IN and the
-  // subquery names only its own alias - so it never hits the outer-column trap
-  // the header warns about, and Postgres evaluates it once. Backed by the PK
-  // (assr_id, user_id). Empty table = no id matches = no behaviour change.
   const accessGrant =
     `${prefix}id IN (SELECT assr_id FROM assr_case_access WHERE user_id IN (${idList}))`;
   // Legacy AutoCount reach, SELF-SCOPED (owner 2026-09-28): the case's
@@ -227,7 +214,7 @@ export function myCasesPredicateSql(
     arms.push(`LOWER(COALESCE(${prefix}sales_agent, '')) LIKE ?`);
     binds.push(`%${n}%`);
   }
-  if (arms.length === 0) return null; // fail closed — never an unfiltered list
+  if (arms.length === 0) return null;
   return { sql: arms.join(" OR "), binds };
 }
 
@@ -250,8 +237,6 @@ export async function listMyCases(
     .bind(userId)
     .first<{ name: string | null }>();
   const ownName = (userRow?.name || "").trim();
-  // ONE subtree expansion, both halves off it — ids for the creator arm, display
-  // names for the legacy agent-text arm.
   const ids = await subtreeUserIds(env, Number(userId));
   const names = await agentNamesForUserIds(env, ids);
   const pred = myCasesPredicateSql(ids, names);
@@ -327,8 +312,6 @@ export async function assrCaseRowInScope(
   if (!row) return false;
   const createdBy = Number(row.createdBy ?? row.created_by ?? NaN);
   const assignedTo = Number(row.assignedTo ?? row.assigned_to ?? NaN);
-  // Co-assignee (assigned_to_2) — the LIST scopes on it too (services/assr.ts),
-  // so a co-assignee who sees the case in their list must be able to open it.
   const assignedTo2 = Number(row.assignedTo2 ?? row.assigned_to_2 ?? NaN);
   if (
     (Number.isFinite(createdBy) && visibleIds.includes(createdBy)) ||
@@ -347,7 +330,7 @@ export async function assrCaseRowInScope(
       .first<{ ok: number }>();
     return !!hit;
   } catch {
-    return false; // scm schema unreachable — fail closed, never open
+    return false;
   }
 }
 

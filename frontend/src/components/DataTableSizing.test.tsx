@@ -27,7 +27,6 @@ beforeEach(() => {
       addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
     })),
   });
-  // jsdom lays nothing out; give every header a real width so the table measures.
   Element.prototype.getBoundingClientRect = function () {
     return { width: this.tagName === "TH" ? 150 : 0, height: 20, top: 0, left: 0, right: 150, bottom: 20, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
   };
@@ -45,7 +44,6 @@ describe("DataTable sizing", () => {
     render(<DataTable tableId="size-a" columns={columns} rows={rows} getRowKey={(r) => r.id} />);
     expect(table().style.tableLayout).toBe("fixed");
     expect(header(/^Customer Name/).style.width).toBe("150px");
-    // two real columns + the filler
     expect(document.querySelectorAll("thead th").length).toBe(3);
     expect(document.querySelector("thead th[aria-hidden]")).not.toBeNull();
   });

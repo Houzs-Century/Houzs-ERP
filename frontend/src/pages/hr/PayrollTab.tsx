@@ -14,7 +14,7 @@ import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { useDialog } from "../../hooks/useDialog";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
-import { fmtSen, todayMY } from "../../vendor/shared/format";
+import { fmtSen, todayMY } from "../../../../shared/src/vendor/shared/format";
 import { pcbHasFigure } from "../../vendor/shared/hr-pcb";
 import { errText, ghostBtn, primaryBtn } from "../pos-admin/posAdminUi";
 import { hrPrimaryBtn, hrSecondaryBtn } from "./HrPageHeader";

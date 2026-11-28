@@ -15,7 +15,6 @@ export const ASSR_LIST_FILTER_KEY = "houzs.assrListFilter.v1";
 
 export interface AssrListFilter {
   search: string;
-  /** "ALL" | AssrStage — kept as a plain string here; the page owns the enum. */
   stage: string;
 }
 
@@ -39,7 +38,6 @@ export function readAssrListFilter(): AssrListFilter {
 export function writeAssrListFilter(next: AssrListFilter): void {
   try {
     if (next.search === "" && (next.stage === "ALL" || next.stage === "")) {
-      // Nothing to remember — keep storage clean so a fresh session starts empty.
       sessionStorage.removeItem(ASSR_LIST_FILTER_KEY);
       return;
     }
@@ -48,6 +46,5 @@ export function writeAssrListFilter(next: AssrListFilter): void {
       JSON.stringify({ search: next.search, stage: next.stage }),
     );
   } catch {
-    // storage disabled (private mode) — the filter just won't survive Back
   }
 }

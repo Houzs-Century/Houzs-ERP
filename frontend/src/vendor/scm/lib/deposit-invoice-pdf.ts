@@ -27,24 +27,23 @@ import { docPageLabel,
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, drawHeader, drawInfoColumns, drawPaymentDetails, drawSignatureBoxes,
   deliverPdf, deliverPdfBlob, ensurePdfCjkFont, amountInWordsMyr, fmtRm, fmtDocDate, safeName, type PdfAction,
 } from './pdf-common';
-import { billToBlock } from './pdf-party-blocks';
-import { orderAddressLines, type OrderAddressFields } from './order-address';
+import { billToBlock } from '../../../../../shared/src/vendor/scm/lib/pdf-party-blocks';
+import { orderAddressLines, type OrderAddressFields } from '../../../../../shared/src/vendor/scm/lib/order-address';
 import { getBrandingCache } from '../../../lib/branding';
 import { PAYMENT_METHOD_DEFAULT_LABELS } from './payment-methods';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 /** The order behind a deposit invoice, as GET /deposit-invoices/sheets serves it. */
 export type DepositInvoiceOrder = OrderAddressFields & {
   phone: string | null;
   email: string | null;
   total_sen: number | null;
-  /** Received on the order up to and including this deposit; null when its payment is gone. */
   paid_to_date_sen: number | null;
 };
 
 export type DepositInvoicePdfData = {
   di_number: string;
-  status: string;            // ISSUED | CANCELLED
+  status: string;
   invoice_date: string;
   party_name: string | null;
   party_code: string | null;
@@ -59,7 +58,6 @@ export type DepositInvoicePdfData = {
 
 const labelOf: Record<string, string | undefined> = { ...PAYMENT_METHOD_DEFAULT_LABELS };
 const methodLabel = (m: string | null): string => (m ? labelOf[m] ?? m : '—');
-/* A customer id (2990 keys its customers by uuid) is no code to print. */
 const printableCode = (code: string | null): string | null =>
   code && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(code) ? code : null;
 
@@ -69,7 +67,6 @@ type AutoTable = any;
 
 /** Draw one deposit invoice from the CURRENT page of `doc` (A4 portrait). */
 export async function renderDepositInvoiceInto(doc: JsPdf, autoTable: AutoTable, d: DepositInvoicePdfData): Promise<void> {
-  /* A customer name or address in Chinese needs the font up front, or helvetica paints mojibake. */
   await ensurePdfCjkFont(doc, d);
   const startPage = doc.getNumberOfPages();
   const pageW = doc.internal.pageSize.getWidth();
@@ -118,15 +115,12 @@ export async function renderDepositInvoiceInto(doc: JsPdf, autoTable: AutoTable,
   });
   let ty = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 6;
 
-  /* The deposit, then — when the order is known — where the order stands with it. */
   const totalsX = pageW - margin - 70;
   const row = (label: string, value: string, at: number, bold = false) => {
     doc.setFont('helvetica', bold ? 'bold' : 'normal');
     doc.text(label, totalsX, at);
     doc.text(value, pageW - margin, at, { align: 'right' });
   };
-  /* The invoice is settled by the deposit it records: TOTAL, the deposit
-     received against it, nothing due. */
   doc.setFontSize(11);
   row('TOTAL', fmtRm(d.amount_sen), ty + 2, true);
   ty += 7;
@@ -141,7 +135,6 @@ export async function renderDepositInvoiceInto(doc: JsPdf, autoTable: AutoTable,
   if (o?.total_sen != null) { row('Order total', fmtRm(o.total_sen), ty); ty += 4.5; }
   if (o?.paid_to_date_sen != null) {
     row('Paid to date (this order)', fmtRm(o.paid_to_date_sen), ty); ty += 4.5;
-    /* Unfloored: money over the order's total prints negative, never a silent 0. */
     if (o.total_sen != null) { row('Balance on order', fmtRm(o.total_sen - o.paid_to_date_sen), ty, true); ty += 4.5; }
   }
   doc.setTextColor(0);
@@ -156,7 +149,6 @@ export async function renderDepositInvoiceInto(doc: JsPdf, autoTable: AutoTable,
   /* Where the customer pays (owner 2026-09-21): the CUSTOMER set from Settings › Branding; blank prints nothing. */
   ty = drawPaymentDetails(doc, ty, getBrandingCache().customerPaymentDetails, margin);
 
-  /* NOTE: why it is void, or what closed it — else what becomes of the deposit. */
   const cancelled = d.status === 'CANCELLED';
   const note = cancelled ? `Cancelled · ${d.cancel_reason || 'its payment changed'}`
     : d.credit_note_number ? `Closed by credit note ${d.credit_note_number} at the final invoice`
@@ -170,7 +162,6 @@ export async function renderDepositInvoiceInto(doc: JsPdf, autoTable: AutoTable,
 
   drawSignatureBoxes(doc, ty + 12, 'Issued by', 'Company chop');
 
-  /* The watermark LAST, over everything: a void invoice must read as void (VOID — the design's word, A4). */
   if (cancelled) {
     doc.saveGraphicsState();
     doc.setGState(doc.GState({ opacity: 0.14 }));
@@ -182,7 +173,6 @@ export async function renderDepositInvoiceInto(doc: JsPdf, autoTable: AutoTable,
     doc.setTextColor(0, 0, 0);
   }
 
-  /* The footer every invoice carries: its number and page n of m. */
   const pageCount = doc.getNumberOfPages();
   for (let p = startPage; p <= pageCount; p += 1) {
     doc.setPage(p);

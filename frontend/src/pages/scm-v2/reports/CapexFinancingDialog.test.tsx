@@ -1,10 +1,3 @@
-/* The Cash Flow's Capex & financing table (step 3 of the forecast port).
-   Pinned: the accounts in the layout's groups, twelve months from this one,
-   the stored amounts; a minus is money out and the net row follows; Save
-   sends the whole table, the months outside the twelve kept; an account no
-   longer on the layout is shown with Clear; a refused save shows the server's
-   sentence; without the write key the table only reads. The server half is
-   backend/tests/cashFlowForecast.test.ts. Made-up names and figures. */
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import type { ForecastInputs } from '../../../vendor/scm/lib/cash-flow-forecast-queries';
@@ -12,7 +5,6 @@ import type { ForecastInputs } from '../../../vendor/scm/lib/cash-flow-forecast-
 const SHOWN = ['2026-11', '2026-12', '2027-01', '2027-02', '2027-03', '2027-04', '2027-05', '2027-06', '2027-07', '2027-08', '2027-09', '2027-10'];
 const DATA: ForecastInputs = {
   currentMonth: '2026-11', shown: SHOWN,
-  /* October is before the twelve: kept as it is on a save. */
   months: { '2026-10': { '202-1000': -300_000 }, '2026-12': { '460-0001': 50_000_000 }, '2027-02': { '460-0009': -10_000 } },
   accounts: [
     { code: '202-1000', name: 'EQUIPMENT (OFFICE)', group: { id: 'cf:funding:capex', label: 'CAPITAL EXPENDITURE (CAPEX)' } },
@@ -44,7 +36,6 @@ describe('the Capex & financing table', () => {
     expect(screen.getByText('LOAN & HP DRAWDOWN / LOAN & HP REPAYMENT')).toBeTruthy();
     expect(cell('2026-12', '460-0001').value).toBe('500,000.00');
     expect(rowText('net')).toContain('500,000.00');
-    /* The account the layout dropped: shown, read only, with Clear. */
     expect(screen.getByText('No longer on the Cash Flow layout — clear before saving')).toBeTruthy();
     expect(cell('2027-02', '460-0009').readOnly).toBe(true);
     expect(cell('2027-02', '460-0009').value).toBe('-100.00');

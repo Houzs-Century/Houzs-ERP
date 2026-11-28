@@ -36,7 +36,6 @@ export interface OutstandingTaskRow {
 }
 
 interface OutstandingTaskQueryRow extends Omit<OutstandingTaskRow, "overdue_days"> {
-  /* overdue_days is derived below, not selected. */
 }
 
 export async function listOutstandingTasks(

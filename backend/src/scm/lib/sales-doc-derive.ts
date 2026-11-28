@@ -1,34 +1,3 @@
-/* Three derivations shared by the Sales Order and the Consignment Order, plus
- * the sen coercion two of them use.
- *
- * THE BODIES BELOW ARE THE SALES ORDER'S, COPIED VERBATIM. The CO router is a
- * clone and carried its own copy of all three; `deriveSalesLocationFromState`
- * was a straight duplicate, and the other two had DRIFTED. Both drifts were
- * PROVEN harmless before consolidating — not assumed:
- *
- *   deriveCountryFromState  The CO looked up the raw state; this one
- *     canonicalises first. Both fall back to 'Malaysia' on a miss, and every
- *     target `canonicalizeMyState` can produce is a Malaysian state name.
- *     Measured: the 16 canonical targets and the 38 non-Malaysia `state` values
- *     in `my_localities` (China + Singapore, seeded by mig 0181) share ZERO
- *     entries, so nothing can canonicalise into a row whose country is not
- *     Malaysia. Same output for every input.
- *
- *   snapshotUnitCostSen  The CO returned `explicit` raw and `Number()`d the DB
- *     read; this one wraps both in `senOrZero`. All three CO callsites already
- *     wrapped the argument in `Number(...)`, `NaN > 0` is false, and
- *     `mfg_products.cost_price_sen` is `integer DEFAULT 0 NOT NULL` — neither
- *     null nor non-numeric. The difference was unreachable.
- *
- * Both proofs are TESTS, not prose (`backend/tests/salesDocDerive.test.ts`).
- * They are facts about OTHER files — a locality table and a set of callsites —
- * and those can change.
- *
- * A FIRST DRAFT OF THIS FILE PARAPHRASED THE BODIES instead of copying them,
- * and quietly swapped the WP-KL alias for canonicalizeMyState and dropped a
- * selected column. Consolidating is only safe if the surviving copy is the one
- * that already ran.
- */
 import { canonicalizeMyState } from './canonical-state';
 import { scopeToCompany } from './companyScope';
 import { warehouseLabel } from './warehouse-label';
@@ -66,8 +35,6 @@ export const deriveSalesLocationFromState = async (
   c: any,
 ): Promise<string | null> => {
   if (!state) return null;
-  // state_warehouse_mappings keys on the canonical state name; map the common
-  // WP-KL alias the locality table doesn't carry under the WP prefix.
   const key = state === 'Wilayah Persekutuan Kuala Lumpur' ? 'Kuala Lumpur' : state;
   const { data: m } = await scopeToCompany(
     sb

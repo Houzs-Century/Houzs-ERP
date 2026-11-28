@@ -64,9 +64,6 @@ describe('the exemption reaches the CONFIRM rule, not just the full one', () => 
   });
 });
 
-/* The gate that was actually broken. adjustmentIncreaseErrors never passed an
-   item code — it could not, the parameter did not exist — so finding stock for
-   a DIVAN ONLY frame demanded a Gap that the product does not have. */
 describe('the stock-adjustment gate honours the same exemptions', () => {
   const complete = { divanHeight: '5"', legHeight: '6"', gap: '2"', fabricCode: 'BO315-22' };
 

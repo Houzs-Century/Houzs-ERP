@@ -27,13 +27,10 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const files = walk(ROOT);
+const files = walk('../shared/src', walk(ROOT));
 
 type Shape = { name: string; rx: RegExp };
 
-/* Each shape is money-specific on its own line: it names sen, `/ 100`, or the
-   RM/MYR prefix. A bare `maximumFractionDigits: 0` is a quantity formatter and
-   is not matched. */
 const SHAPES: Shape[] = [
   {
     name: 'a sen amount formatted to whole ringgit (0 decimals)',

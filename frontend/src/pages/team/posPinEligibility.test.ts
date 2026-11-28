@@ -6,9 +6,6 @@ import {
   showsPosPinCard,
 } from "./posPinEligibility";
 
-/* Adrian's real shape (screenshot, 2026-08-24): both companies, Sales
- * Executive. He is exactly the member the card exists for, so he is the
- * fixture rather than an invented one. */
 const COMPANIES = [
   { id: 1, code: "HOUZS" },
   { id: 2, code: "2990" },
@@ -33,7 +30,6 @@ describe("isPosPinPosition", () => {
 
 describe("inPosCompany", () => {
   it("matches on the company CODE, not on a hard-coded id", () => {
-    // Same code, different id — a fresh test DB numbers companies its own way.
     expect(inPosCompany([7], [{ id: 7, code: POS_COMPANY_CODE }])).toBe(true);
   });
 

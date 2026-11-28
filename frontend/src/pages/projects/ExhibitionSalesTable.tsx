@@ -1,7 +1,7 @@
 import { CheckSquare, Pencil, Send, Trash2, X } from "lucide-react";
 import { DataTable, type Column } from "../../components/DataTable";
 import { cn, formatCurrency, formatDate } from "../../lib/utils";
-import { formatPhone } from "../../vendor/shared/phone";
+import { formatPhone } from "../../../../shared/src/vendor/shared/phone";
 import {
   STATUS_BADGE as SALES_STATUS_BADGE,
   PAYMENT_TYPE_LABEL,
@@ -9,8 +9,6 @@ import {
   type EntryStatus as SalesEntryStatus,
 } from "../Sales";
 
-/* An exhibition's sales on the project page. Lives outside Projects.tsx, which
-   sits at its file-size ceiling. */
 
 const depositOf = (e: SalesEntry) => e.deposit_amount ?? e.amount;
 const balanceOf = (e: SalesEntry) => Math.max(0, e.amount - depositOf(e));

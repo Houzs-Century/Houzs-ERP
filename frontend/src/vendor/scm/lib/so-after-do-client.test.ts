@@ -70,16 +70,16 @@ describe('the super-admin line doors (owner 2026-11-21)', () => {
 
   test('product door: only a FROZEN product line (on a DO) reopens for qty/spec', () => {
     expect(afterDoProductLineEditable(true, prodFrozen)).toBe(true);
-    expect(afterDoProductLineEditable(true, prodLoose)).toBe(false); // not on a DO
-    expect(afterDoProductLineEditable(true, svcFrozen)).toBe(false); // a charge line is the DEV-32 door
-    expect(afterDoProductLineEditable(false, prodFrozen)).toBe(false); // no key
+    expect(afterDoProductLineEditable(true, prodLoose)).toBe(false);
+    expect(afterDoProductLineEditable(true, svcFrozen)).toBe(false);
+    expect(afterDoProductLineEditable(false, prodFrozen)).toBe(false);
   });
 
   test('fee door: only a NON-frozen charge line (on no DO) reopens for a plain edit/remove', () => {
     expect(afterDoFeeLineEditable(true, svcLoose)).toBe(true);
-    expect(afterDoFeeLineEditable(true, svcFrozen)).toBe(false); // on a DO -> the DEV-32 door, not this
-    expect(afterDoFeeLineEditable(true, prodLoose)).toBe(false); // a product line, not a charge
-    expect(afterDoFeeLineEditable(false, svcLoose)).toBe(false); // no key
+    expect(afterDoFeeLineEditable(true, svcFrozen)).toBe(false);
+    expect(afterDoFeeLineEditable(true, prodLoose)).toBe(false);
+    expect(afterDoFeeLineEditable(false, svcLoose)).toBe(false);
   });
 });
 
@@ -95,7 +95,6 @@ describe('the phone detail Edit button on a locked order (soEditOpensOnOverride)
   test('never a migrated order; a fully frozen all-invoiced order opens only for the super-admin lines key', () => {
     expect(soEditOpensOnOverride({ status: 'SHIPPED', downstream_fully_frozen: false }, { can: canAll, migrated: true })).toBe(false);
     const allInvoiced = { status: 'DELIVERED', downstream_fully_frozen: true, after_do_targets: [INVOICED] };
-    // DEV-32 / price persona: an all-invoiced order stays shut on the phone.
     const noLines = (k: string) => k !== 'scm.so.edit_lines_after_do';
     expect(soEditOpensOnOverride(allInvoiced, { can: noLines, migrated: false })).toBe(false);
     // Owner 2026-11-21 — a super admin still opens it to change a delivered line (the invoice follows).

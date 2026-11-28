@@ -15,7 +15,7 @@ import { useApInvoices } from '../../vendor/scm/lib/ap-invoice-queries';
 import type { KnockOffRow } from '../../vendor/scm/lib/credit-note-queries';
 import { useApplyAdvance, useSupplierAdvances } from '../../vendor/scm/lib/payment-voucher-queries';
 import { usePurchaseInvoices } from '../../vendor/scm/lib/purchase-invoice-queries';
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 import { KnockOffTable, pickSen, type KnockOffPick } from './CreditNoteKnockOff';
 import styles from './SalesOrderDetail.module.css';
 
@@ -25,8 +25,6 @@ export const AdvanceKnockOff = ({ pvId, supplierId }: { pvId: string; supplierId
   const advancesQ = useSupplierAdvances(supplierId);
   const applyM = useApplyAdvance();
   const piListQ = usePurchaseInvoices();
-  /* The other creditor's bills (2026-09-06): an advance to a 405-x supplier
-     lands on its AP INVOICES, which the purchase-invoice list never carries. */
   const apListQ = useApInvoices('API');
   const [pick, setPick] = useState<KnockOffPick>({});
   const [note, setNote] = useState<string | null>(null);

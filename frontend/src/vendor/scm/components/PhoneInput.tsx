@@ -63,7 +63,6 @@ const SEARCH_ALIAS: Record<string, string> = {
   US: '美国 加拿大 美',
 };
 
-// Palette (tailwind.config.js · "Ink & Petrol").
 const C = {
   surface: '#ffffff',
   surface2: '#f4f6f3',
@@ -102,20 +101,15 @@ export const PhoneInput = ({
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [active, setActive] = useState(0); // highlighted row in the filtered list
+  const [active, setActive] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const nationalRef = useRef<HTMLInputElement>(null);
 
-  /* Search header (~46px) + the ten-row country list this replaced a native
-     <select> with. The list itself flexes, so a cramped viewport shrinks the
-     rows rather than hiding the search box. */
   const panelPos = useAnchoredPanel(triggerRef, open, 300);
 
-  // Pull external value changes (a fresh row loads) into local state, without
-  // clobbering an in-progress edit (which updates lastSynced on every emit).
   useEffect(() => {
     if (lastSynced.current !== value) {
       const p = splitE164(value);
@@ -125,10 +119,6 @@ export const PhoneInput = ({
     }
   }, [value]);
 
-  // Close on click-outside while the panel is open. The panel is in a <body>
-  // portal, so it is NOT inside rootRef in the DOM — it has to be tested
-  // separately or a mousedown on a country would close the list before the
-  // button's click could pick it.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -141,7 +131,6 @@ export const PhoneInput = ({
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
-  // On open: clear the query, reset the highlight, focus the search box.
   useEffect(() => {
     if (open) {
       setQuery('');
@@ -172,7 +161,6 @@ export const PhoneInput = ({
     );
   }, [query]);
 
-  // Keep the highlight in range as the filtered list shrinks.
   useEffect(() => {
     if (active >= filtered.length) setActive(filtered.length ? filtered.length - 1 : 0);
   }, [filtered.length, active]);
@@ -181,7 +169,6 @@ export const PhoneInput = ({
     setDial(d);
     emit(d, national);
     setOpen(false);
-    // move the operator straight to the number field
     setTimeout(() => nationalRef.current?.focus(), 0);
   };
 
@@ -207,7 +194,6 @@ export const PhoneInput = ({
       ref={rootRef}
       style={{ position: 'relative', display: 'flex', gap: 6, alignItems: 'stretch', minWidth: 0 }}
     >
-      {/* Country trigger — opens the searchable panel. */}
       <button
         ref={triggerRef}
         type="button"
@@ -240,8 +226,6 @@ export const PhoneInput = ({
           role="listbox"
           style={{
             ...anchoredPanelStyle(panelPos),
-            // The trigger is a 96px chip; the list needs room for a country
-            // name, so it keeps its own width rather than the anchor's.
             width: 250,
             maxWidth: '80vw',
             display: 'flex',
@@ -344,11 +328,6 @@ export const PhoneInput = ({
         value={national}
         onChange={(e) => {
           let n = e.target.value.replace(/\D+/g, '');
-          // Dedup a leading dial-code inside the national digits (owner
-          // sighting 2026-07-22: operator typed "601161556133" with MY +60
-          // selected → stored "+60601161556133", a double country code that
-          // makes the number invalid). splitE164 already applies the same
-          // strip on the read path; the write path was missing it.
           if (dial && n.startsWith(dial)) n = n.slice(dial.length);
           setNational(n);
           emit(dial, n);

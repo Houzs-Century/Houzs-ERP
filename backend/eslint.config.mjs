@@ -18,7 +18,7 @@
 // neither can be type-checked by the parser without inventing a second project.
 // ----------------------------------------------------------------------------
 import tseslint from 'typescript-eslint';
-import { sharedRules } from '../scripts/eslint/houzs-lint-rules.mjs';
+import { sharedRules, houzsPlugin } from '../scripts/eslint/houzs-lint-rules.mjs';
 
 export default tseslint.config(
   {
@@ -48,6 +48,7 @@ export default tseslint.config(
       // earned its keep; the directives themselves are harmless.
       reportUnusedDisableDirectives: 'off',
     },
+    plugins: { houzs: houzsPlugin },
     rules: sharedRules,
   },
   {

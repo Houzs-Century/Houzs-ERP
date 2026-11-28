@@ -80,7 +80,6 @@ describe('Product changes, by month', () => {
     expect(rowOf('HC-SO-T3').querySelector('[title="Short by 1,120.00"]')).toBeTruthy();
     expect(t3).toContain('Amendment A1 + A2');
     expect(rowOf('HC-SO-T2').textContent).toContain('Covered');
-    /* Rebuilt from the order's history with a cost that history did not hold. */
     expect(rowOf('HC-SO-T4').textContent).toContain('Estimated');
     expect(rowOf('HC-SO-T3').textContent).not.toContain('Estimated');
   });

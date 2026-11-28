@@ -140,8 +140,6 @@ export function resolvePcb(input: {
       note: "Resident: LHDN computerised calculation on this month's normal remuneration.",
     };
   }
-  /* The most tax any resident profile could owe is SINGLE with no child
-     relief; if even that is nil, the missing declaration cannot matter. */
   if (residentPcbSen({ ...base, category: "SINGLE", childReliefSen: 0 }) === 0) {
     return { status: "ZERO_PROVEN", pcbSen: 0, missing: [], note: "No PCB is due at this pay level under any tax profile." };
   }

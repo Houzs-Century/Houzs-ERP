@@ -4,8 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { MrpAsOf } from "./MrpAsOf";
 import type { ListMrpMeta } from "../lib/listMrpStatus";
 
-/* The line above the PO / GRN / PI / SO lists: how old the stored MRP plan is,
-   a warning when the list had to compute live, and Refresh. */
 
 const at = (iso: string) => fmtTime(iso);
 const snap: ListMrpMeta = { asOf: "2026-11-10T06:05:00.000Z", source: "snapshot", fallback: null, failed: false };

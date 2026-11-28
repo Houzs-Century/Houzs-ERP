@@ -51,7 +51,7 @@ import {
   type MapFocus,
   type MapLatLng,
 } from '../../vendor/scm/lib/delivery-map-model';
-import { todayMY } from '../../vendor/shared/format';
+import { todayMY } from '../../../../shared/src/vendor/shared/format';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { cn } from '../../lib/utils';
@@ -100,13 +100,8 @@ import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-/* Run-detail ordering under the Time arranged tab (dispatchers watch running
-   trips first). CANCELLED is dropped entirely — a cancelled trip arranges
-   nothing (its orders are already back in the queue via the reverse
-   reconcile). */
 const TRIP_STATUS_ORDER: Record<string, number> = { IN_PROGRESS: 0, PLANNED: 1, COMPLETED: 2 };
 
-/** Resolve a driver uuid to its display name off the loaded master list. */
 const driverNameFor = (drivers: Array<{ id: string; name: string }>, id: string | null): string | null =>
   id ? (drivers.find((d) => d.id === id)?.name ?? null) : null;
 
@@ -114,7 +109,6 @@ const mins = (s: number | null | undefined): string =>
   s == null ? '—' : `${Math.round(s / 60)} min`;
 const km = (m: number | null | undefined): string =>
   m == null ? '—' : `${(m / 1000).toFixed(1)} km`;
-/** ETA offset (seconds from departure) → a readable "+1h 20m from depart". */
 const etaLabel = (s: number | null | undefined): string => {
   if (s == null) return '—';
   const h = Math.floor(s / 3600);
@@ -124,14 +118,10 @@ const etaLabel = (s: number | null | undefined): string => {
 
 export function Trips() {
   const navigate = useNavigate();
-  // Single click opens the job panel; double click goes to the document.
   const [jobPanel, setJobPanel] = useState<JobPanelTarget | null>(null);
   const notify = useNotify();
   const askConfirm = useConfirm();
 
-  /* ── The time-arrangement queue (the page body). Reuses the board's own
-     endpoint (GET /delivery-planning?region=<r>&state=PENDING_SCHEDULE) and the
-     server-derived arrangement stage — no new query, no new state logic. */
   const [pendingRegion, setPendingRegion] = useState<string>('ALL');
   const pending = useDeliveryPlanning({ region: pendingRegion, state: 'PENDING_SCHEDULE' });
   const pendingOrders = useMemo<PlanningOrder[]>(
@@ -159,38 +149,25 @@ export function Trips() {
     [pendingOrders, timeSide],
   );
 
-  /* Shared write path + option lists for the board's inline cells + bulk bar
-     (the manual crew path stays on the board everywhere). */
   const sched = useScheduleDelivery();
   const updateFields = useUpdateDeliveryFields();
   const { data: drivers = [] } = useDrivers();
   const { data: lorries = [] } = useLorries();
 
-  /* Multiselect → Schedule (manual drawer) or Propose time (sequence flow). */
   const [pendingSel, setPendingSel] = useState<Set<string>>(new Set());
   const [scheduling, setScheduling] = useState(false);
   const selectedDocNos = soDocNosFromSelection(pendingSel);
-  /* The SO order objects behind the selection — fed to the drawer as its stop
-     list (SO-only, like every board bulk action). */
   const pendingSelectedOrders = useMemo<PlanningOrder[]>(() => {
     const docs = new Set(soDocNosFromSelection(pendingSel));
     return pendingOrders.filter((o) => o.row_type === 'so' && docs.has(o.so_doc_no));
   }, [pendingOrders, pendingSel]);
 
-  /* ── Propose time — the per-date, per-zone stop-sequence proposal, under the
-     confirmed-date discipline. Crew-free by construction: the response is
-     folded to anonymous runs before anything renders. */
   const seqAssign = useSequenceAssign();
   const [departTime, setDepartTime] = useState<string>('09:00');
   const [proposing, setProposing] = useState(false);
   const [assign, setAssign] = useState<SequenceAssignResponse | null>(null);
-  /* Same silent-success gap as the Date page: the proposal renders below the
-     board, so success scrolls it into view. */
   const assignRef = useRef<HTMLDivElement | null>(null);
   const [applyingRun, setApplyingRun] = useState<string | null>(null);
-  /* Per-date window failures — a proposal with no computed route means NO
-     estimated delivery windows, and the owner wants that failure LOUD and
-     actionable (which warehouse, where to fix it), never a quiet "—" column. */
   const [windowGaps, setWindowGaps] = useState<Array<{ date: string; label: string | null }>>([]);
 
   const runs = useMemo<AnonymousRun[]>(
@@ -205,9 +182,6 @@ export function Trips() {
      the #1720 folds); otherwise the day's STAGED live trips draw off the
      server-stamped board rows (trip_id / trip_stop_no / trip_eta_offset_s). */
   const [mapOpen, setMapOpen] = useMapPanelOpen('time-arrangement');
-  /* Compact columns: a per-page-persisted DEFAULT, never a lock — the pill on
-     the panel header toggles it, and any explicit Columns-panel choice while
-     the map is open switches it off (the user's picks win instantly). */
   const [mapCompact, setMapCompact] = useMapCompactColumns('time-arrangement');
   const [mapDate, setMapDate] = useState<string>(todayMY());
   const [mapRegion, setMapRegion] = useState<string>('ALL');
@@ -231,20 +205,17 @@ export function Trips() {
     return stagedRoutesFromRows(pendingOrders, mapDate, pointByRef, mapDepot);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runs, mapDate, pointByRef, pendingOrders, geo.data?.depot]);
-  /* Trip focus: card or polyline click → dim the rest, zoom, filter the board. */
   const focusRoute = (routeId: string) => {
     const route = mapRoutes.find((r) => r.id === routeId);
     if (!route) return;
     setMapFocus((cur) => toggleFocus(cur, { routeId, refs: route.allRefs }));
   };
-  /* Two-way linkage (same shape as the Date page). */
   const [selectedPin, setSelectedPin] = useState<string | null>(null);
   const [scrollTo, setScrollTo] = useState<{ key: string; nonce: number } | null>(null);
   const onPinClick = (ref: string) => {
     setSelectedPin(ref);
     setScrollTo({ key: `so:${ref}`, nonce: Date.now() });
   };
-  /* The board under focus: only the focused trip's stops (unpinned included). */
   const boardRows = useMemo(
     () => (mapOpen && mapFocus ? focusFilterRows(timeRows, mapFocus) : timeRows),
     [timeRows, mapOpen, mapFocus],
@@ -255,14 +226,6 @@ export function Trips() {
       notify({ title: 'Nothing selected', body: 'Tick the orders to sequence first.', tone: 'error' });
       return;
     }
-    /* Dates first, sequence second: group the selection by each order's
-       CONFIRMED delivery date — the Date page owns dates, so the engine is
-       started AT each confirmed date and pinned to that one day. An order with
-       no confirmed date is reported and skipped, never dated here. The DEPOT is
-       derived from the group's own rows (majority warehouse) because the engine
-       computes routes — and therefore delivery windows — only when the request
-       names a depot to geocode. Capacity ceilings and max-trips still ride the
-       server defaults silently; the depart time applies to every day's runs. */
     const { groups, undated } = groupByConfirmedDate(pendingOrders, selectedDocNos);
     if (groups.length === 0) {
       notify({
@@ -286,8 +249,6 @@ export function Trips() {
           depotWarehouseId: depot?.warehouseId ?? null,
         });
         results.push(pinAssignToDate(r, g.date));
-        /* No depot on the orders, or the depot would not geocode → the engine
-           returned no route and no windows for this date. Name it. */
         if (!depot) gaps.push({ date: g.date, label: null });
         else if (r.configured && !r.depot) gaps.push({ date: g.date, label: depot.label });
       } catch (e) {
@@ -314,11 +275,6 @@ export function Trips() {
     }
   };
 
-  /* Apply ONE run: persist the stop sequence + dates exactly as before — one
-     schedule call per stop with stopNo / ETA / leg metrics. The run's opaque
-     vehicleSlotId rides along as PLUMBING only (a stop needs a trip; a trip
-     keys on (lorry, date)); NO driver or helper is written — naming the crew
-     is Last Mile Delivery's "Propose crew". */
   const applyRun = async (run: AnonymousRun) => {
     setApplyingRun(run.key);
     let ok = 0; let failed = 0;
@@ -333,8 +289,6 @@ export function Trips() {
           legDistanceM: s.legDistanceM ?? undefined,
           legDurationS: s.legDurationS ?? undefined,
         });
-        /* The estimated window becomes the order's Time Slot (what Delivery Planning
-           and the driver's phone show) unless someone already typed one. */
         const est = estWindowOf(s);
         if (est && !pendingOrders.find((o) => o.so_doc_no === s.ref)?.time_range) {
           await updateFields.mutateAsync({ type: 'so', id: s.ref, timeRange: est });
@@ -352,7 +306,6 @@ export function Trips() {
     list.refetch();
   };
 
-  /* ── Run detail — the "Time arranged" tab's content. ──────────────────────── */
   const [selected, setSelected] = useState<string | null>(null);
   const [preview, setPreview] = useState<OptimizeResult | null>(null);
   const list = useTrips({ status: 'ALL' });
@@ -368,13 +321,10 @@ export function Trips() {
   const stops = detail.data?.stops ?? [];
   const trip = detail.data?.trip ?? null;
 
-  // ── Live driver tracking (Phase 4) ─────────────────────────────────────────
-  // A trip only reports position while IN_PROGRESS. Poll the latest position per
-  // driver ONLY for a live selected trip (a closed / planned trip bills nothing).
   const mapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
   const isLive = trip ? String(trip.status).toUpperCase() === 'IN_PROGRESS' : false;
   const liveLocs = useTripLatestLocations(selected, isLive);
-  const STALE_MS = 90_000; // ~3 missed posts (25s cadence) = "last seen" goes amber
+  const STALE_MS = 90_000;
   const liveMarkers = useMemo<LiveMarker[]>(() => {
     const locs = liveLocs.data?.locations ?? [];
     return locs.map((loc) => ({
@@ -425,11 +375,9 @@ export function Trips() {
         description="For each delivery day, decide which zone goes first and the order of stops within it — crew and lorries are assigned next in Last Mile Delivery."
       />
 
-      {/* ── Option B split: board (left) / sticky map (right). ─────────────── */}
       <div className="lg:flex lg:items-start lg:gap-4">
       <div className="min-w-0 space-y-4 lg:flex-1">
 
-      {/* Split chips — the derived time side of the pipeline. */}
       <div className="flex flex-wrap items-center gap-1.5">
         {(['ALL', 'PENDING_TIME', 'TIME_ARRANGED'] as const).map((side) => (
           <button
@@ -483,7 +431,6 @@ export function Trips() {
         onRegionChange={setPendingRegion}
         isLoading={pending.isLoading}
         error={pending.error}
-        /* No stateTabs → the board is locked to the PENDING_SCHEDULE fetch. */
         selectedKeys={pendingSel}
         onToggle={(k) => setPendingSel((p) => {
           const n = new Set(p);
@@ -502,8 +449,6 @@ export function Trips() {
         lorries={lorries}
         storageKey="dg-trips-time-arrangement-v2"
         exportName="TripsTimeArrangement"
-        /* Map-open narrowing (a DEFAULT — the compact pill / an explicit
-           Columns-panel choice turns it off) + two-way linkage (Option B). */
         visibleColumnsOverride={mapOpen && mapCompact ? MAP_ESSENTIAL_COLUMNS_TIME : null}
         onUserAdjustColumns={() => { if (mapOpen && mapCompact) setMapCompact(false); }}
         onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); setJobPanel(panelTargetOf(o)); }}
@@ -518,7 +463,6 @@ export function Trips() {
         onRowDoubleClick={(o) => { const to = rowDocumentPath(o); if (to) navigate(to); else setJobPanel(panelTargetOf(o)); }}
         bulkExtras={
           <>
-            {/* Depart time for the proposed sequences — the one genuine input. */}
             <input
               type="time"
               value={departTime}
@@ -551,8 +495,6 @@ export function Trips() {
           : [])}
       />
 
-      {/* ── The propose-time result: anonymous per-date runs — the stop
-          sequence intelligence, presented with NO lorry or crew identity. */}
       <div ref={assignRef} />
       {assign && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -584,9 +526,6 @@ export function Trips() {
               run={run}
               onApply={() => void applyRun(run)}
               applyBusy={applyingRun === run.key}
-              /* Trip focus (Option B): clicking the card focuses its trip on
-                 the map (jumping the map to the run's date) and filters the
-                 board to its stops; clicking again unfocuses. */
               focused={mapOpen && mapFocus?.routeId === run.key}
               onFocus={mapOpen ? () => {
                 setMapDate(run.date);
@@ -618,12 +557,8 @@ export function Trips() {
         </div>
       )}
 
-      {/* ── Run detail — only under the "Time arranged" side: the trip list is
-          the run-level view of the same fact the board's TIME_ARRANGED rows
-          state per order. */}
       {timeSide === 'TIME_ARRANGED' && (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,360px)_1fr]">
-          {/* ── trip list ── */}
           <div className="rounded-md border border-border bg-surface">
             <div className="border-b border-border px-4 py-2.5 text-[12px] font-semibold uppercase tracking-wider text-ink-secondary">
               Trips
@@ -640,9 +575,6 @@ export function Trips() {
                     onClick={() => {
                       setSelected(t.id);
                       setPreview(null);
-                      /* Trip focus (Option B): with the map open, picking a
-                         trip also focuses it — jump the map to its date, dim
-                         the other routes, filter the board to its stops. */
                       if (mapOpen) {
                         const day = String(t.trip_date ?? '').slice(0, 10);
                         if (day) setMapDate(day);
@@ -672,7 +604,6 @@ export function Trips() {
             </ul>
           </div>
 
-          {/* ── stops + optimiser ── */}
           <div className="rounded-md border border-border bg-surface">
             {!selected && (
               <p className="p-5 text-[13px] text-ink-muted">Pick a trip to see its stops.</p>
@@ -709,9 +640,6 @@ export function Trips() {
                   </div>
                 )}
 
-                {/* ── Live driver location (Phase 4) — only while the trip is
-                    IN_PROGRESS. Polls the latest ping per driver; the marker goes
-                    amber when the last fix is stale. */}
                 {isLive && (
                   <div className="border-b border-border px-5 py-3">
                     <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -755,7 +683,6 @@ export function Trips() {
                           <span className="block text-[11.5px] text-ink-muted">{s.address ?? 'No address'}</span>
                         </span>
                         <span className="flex-none text-right text-[11.5px] text-ink-secondary">
-                          {/* NULL = never optimised — shown as "—", not a fabricated zero. */}
                           <span className="block font-semibold text-ink">{etaLabel(s.eta_offset_s)}</span>
                           <span className="block">{km(s.leg_distance_m)}</span>
                         </span>
@@ -769,7 +696,7 @@ export function Trips() {
         </div>
       )}
 
-      </div>{/* /board column */}
+      </div>
 
       {mapOpen && (
         <DeliveryMapPanel
@@ -778,7 +705,6 @@ export function Trips() {
           onClose={() => { setMapOpen(false); setMapFocus(null); }}
           headerControls={
             <>
-              {/* REQUIRED picked date — the map always shows exactly one day. */}
               <DateField
                 required
                 value={mapDate}
@@ -820,7 +746,7 @@ export function Trips() {
           isLoading={geo.isLoading}
         />
       )}
-      </div>{/* /split */}
+      </div>
 
       {scheduling && (
         <ScheduleTripDrawer
@@ -843,9 +769,6 @@ const RunCard = ({ run, onApply, applyBusy, onFocus, focused = false }: {
   run: AnonymousRun;
   onApply: () => void;
   applyBusy: boolean;
-  /** Option B trip focus — clicking the card header focuses this trip on the
-   *  side map + filters the board; clicking again unfocuses. Absent (map
-   *  closed) the header is inert, exactly as before. */
   onFocus?: () => void;
   focused?: boolean;
 }) => (
@@ -872,7 +795,6 @@ const RunCard = ({ run, onApply, applyBusy, onFocus, focused = false }: {
           back {run.returnTime} · {Math.round(run.totalDistanceMetres / 100) / 10} km
         </span>
       )}
-      {/* stopPropagation: Apply must never toggle the header's map focus. */}
       <Button variant="primary" icon={<CalendarCheck {...ICON} />} onClick={(e) => { e.stopPropagation(); onApply(); }} disabled={applyBusy}>
         {applyBusy ? 'Applying…' : 'Apply this run'}
       </Button>

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { assrNoteCategory } from "../services/assrNoteCategories";
 import type { Env } from "../types";
 import { assrOpenStageSql } from "../services/assrStages";
 import {
@@ -49,8 +50,6 @@ import {
 import { officeCreateFromDeliveryIssue } from "../scm/lib/delivery-issue";
 import { hasPermission } from "../services/permissions";
 import { subtreeUserIds } from "../services/orgScope";
-/* Row-level case visibility + the creditor strip. Lives in services/ so the
-   PRINT route can apply the SAME rule — see assrVisibility.ts. */
 import {
   assrUnrestricted, assrVisibleUserIds, assrVisibilityPredicateSql,
   assrCaseRowInScope, assrCallerIsScoped, stripCreditorFields, listMyCases,
@@ -74,24 +73,9 @@ import { todayMyt } from "../scm/lib/my-time";
 import { assrExportShowsCost, buildAssrCasesCsv } from "./lib/assr-export-csv";
 import { caseCompanySql, namedSupplierGroups, showErpSupplierNames, withErpSuppliers } from "../services/assrCreditorFill";
 
-/* The context the extracted handlers below receive. They are exported so the
-   route tests can drive them directly; the shape is exactly what app.get/post
-   would have passed to an inline handler — including the PATH literal, which is
-   what keeps c.req.param("id") a plain string rather than string | undefined. */
 type HandlerCtx = Context<{ Bindings: Env }, "/:id/cost-suggestion">;
 const app = new Hono<{ Bindings: Env }>();
 
-// AUDIT H5 — enforce case-level tenant + ownership scope on every MUTATING
-// /:id[...] route. The detail GET and its download sub-routes run their own
-// scope check; the write handlers historically did not, so a scoped user could
-// PATCH / reassign / rewrite / mint a survey token for ANY case by walking the
-// sequential id. Centralising the guard here means the read and write paths can
-// never drift again. GET is exempt (each GET handler self-checks). Routes whose
-// first path segment is not the numeric case id (/attachments/:attId,
-// /activity/:actId, /creditors/create, /resync-so/:docNo) are not matched by
-// these patterns and are tracked as a follow-up (they need a parent-case lookup).
-// /bulk/* is a fifth miss of the same kind — worse, because those ids arrive in
-// the BODY, so ONE call reached every case. They carry the predicate themselves.
 const enforceCaseScope: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   if (c.req.method === "GET") return next();
   const id = Number(c.req.param("id"));
@@ -170,7 +154,7 @@ export function canAccessServiceCases(
  */
 export function holdsAnyCompanyGrant(c: CompanyScopeCtx): boolean {
   const allowed = allowedCompanyIds(c);
-  if (allowed === undefined) return true; // unresolved -> legacy single-company
+  if (allowed === undefined) return true;
   return allowed.length > 0;
 }
 
@@ -193,15 +177,12 @@ export function holdsAnyCompanyGrant(c: CompanyScopeCtx): boolean {
  */
 export function holdsHouzsCompanyGrant(c: CompanyScopeCtx): boolean {
   const allowed = allowedCompanyIds(c);
-  if (allowed === undefined) return true; // unresolved -> legacy single-company
+  if (allowed === undefined) return true;
   const houzs = houzsCompanyId(c);
   if (houzs === undefined) return false;
   return allowed.includes(houzs);
 }
 
-/** Route gate that admits the service_cases permission holder OR a HOUZS company
- *  grantee OR a director (see canAccessServiceCases). `perms` defaults to the
- *  read key. */
 function requireServiceCaseAccess(
   perms: string[] = ["service_cases.read"],
 ): MiddlewareHandler<{ Bindings: Env }> {
@@ -232,17 +213,9 @@ function requireServiceCaseAccess(
 // "" / [] / undefined when the companies master is unresolved (pre-migration /
 // D1 test mirror / cold-start), so legacy single-company SQL runs unchanged.
 //
-/* Exported for backend/tests/assrCompanyScope.test.ts AND for routes/search.ts,
-   which kept its own copy and drifted — global search and /api/assr answered the
-   same rep differently. Takes CompanyScopeCtx, not Context<any>: all it needs is
-   a `get`, and demanding a whole Hono Context is what pushes a caller into
-   re-implementing it locally. */
 export function assrCompanySql(c: CompanyScopeCtx, col = "company_id"): string {
   return allowedCompaniesSql(c, col);
 }
-// `number[] | undefined` — `undefined` = company context unresolved (degrade to
-// no predicate), `[]` = caller granted no active company (match nothing). See
-// the sentinel doc on allowedCompanyIds.
 function assrCompanyIds(c: Context<any>): number[] | undefined {
   return allowedCompanyIds(c);
 }
@@ -256,21 +229,6 @@ export function assrCreateCompanyId(c: Context<any>): number | undefined {
   return activeCompanyId(c) ?? houzsCompanyId(c);
 }
 
-// ` AND (...)` wrapper around THE row-visibility rule, for the AGGREGATE
-// endpoints (/summary, /metrics, /by-creditor, /metrics/drill, /logistics/all),
-// which build their WHERE by interpolation. The rule itself is
-// assrVisibilityPredicateSql (services/assrVisibility.ts) — the same string the
-// paginated list and the CSV export splice in through pushVisibilityScope, and
-// the same one the detail / print row check asks the database. ONE rule, ONE
-// home: this used to be a hand-maintained TWIN of pushVisibilityScope, and a
-// drift between them is what `fix/assr-aggregate-scope` had to close when the
-// list and its own totals disagreed.
-//
-// `binds` is now always EMPTY — every id is inlined after re-validation, so
-// there is nothing positional left to get wrong. The field is kept because the
-// aggregate handlers splice it into their own bind arrays at the position the
-// fragment appears; spreading an empty array there is a no-op and removing it
-// would touch every one of those call sites for no behaviour change.
 function assrVisibilitySql(
   ids: number[] | undefined,
   prefix: string,
@@ -288,36 +246,15 @@ export async function assrVisibilityScope(c: {
   env: Env;
 }): Promise<(prefix?: string) => { sql: string; binds: string[] }> {
   const ids = await assrVisibleUserIds(c);
-  // "assr_cases." — not "" — for an unaliased `FROM assr_cases`: the rule
-  // references doc_no inside a subquery-bearing expression and an unqualified
-  // column there is ambiguous. See assrVisibilityPredicateSql.
   return (prefix = "c.") => assrVisibilitySql(ids, prefix);
 }
 
-/**
- * True when the case identified by `caseId` is within the caller's scope on BOTH
- * dimensions — the case's company is in the caller's granted set, and the
- * row-visibility rule admits it. Sales-reachable SUB-routes (attachment /
- * timeline download, sales comment / nudge) go through here so they cannot
- * reach a case the list would not show. A missing/unknown case returns false so
- * the caller gets the same 404 as a nonexistent id (never distinguishes
- * existence across the scope boundary). Raw env.DB reads return snake_case
- * columns (D1-compat shim — same as the customer-history query below).
- *
- * The row rule is NOT restated here: it delegates to assrCaseRowInScope, which
- * answers through the same SQL predicate the list builds its WHERE from. This
- * function used to carry its own copy of the id + agent-name test, which is two
- * places to change and one to forget.
- */
 async function caseInCallerScope(
   c: { get(key: "user"): unknown; env: Env },
   caseId: number,
 ): Promise<boolean> {
   const visibleIds = await assrVisibleUserIds(c);
-  // Every caller passes a full Hono Context; the structural param type above is
-  // just the minimal shape this fn reads. assrCompanyIds wants the real Context.
   const allowedCo = assrCompanyIds(c as Context<any>);
-  // Fully unrestricted on BOTH dimensions — no read needed.
   if (visibleIds === undefined && allowedCo === undefined) return true;
   const row = await c.env.DB.prepare(
     `SELECT id, created_by, assigned_to, assigned_to_2, doc_no, company_id FROM assr_cases WHERE id = ?`,
@@ -325,24 +262,14 @@ async function caseInCallerScope(
     .bind(caseId)
     .first<{ id: number; created_by: number | null; assigned_to: number | null; assigned_to_2: number | null; doc_no: string | null; company_id: number | null }>();
   if (!row) return false;
-  // Company scope FIRST — mirrors the detail GET (see the /:id handler): when the
-  // caller's company set is resolved, the case's company must be inside it. This
-  // must precede the visibility early-return below, or a visibility-unrestricted
-  // director scoped to company A could still reach company B's case.
   if (allowedCo) {
     const caseCo = Number(row.company_id ?? NaN);
     if (Number.isFinite(caseCo) && !allowedCo.includes(caseCo)) return false;
   }
-  if (visibleIds === undefined) return true; // unrestricted visibility tier
+  if (visibleIds === undefined) return true;
   return assrCaseRowInScope(c as Context<any>, row);
 }
 
-// ── Module-level settings (default assignees) ─────────────────
-//
-// Stored in `system_settings` under keys `assr_default_assignee_id`
-// (primary) and `assr_default_assignee2_id` (co-assignee — the desk
-// is run by two people). Read on each create_case call so changes
-// take effect immediately without a deploy.
 
 const DEFAULT_ASSIGNEE_KEYS = {
   default_assignee_id: "assr_default_assignee_id",
@@ -380,7 +307,7 @@ app.put("/settings", requirePermission("service_cases.manage"), async (c) => {
     default_assignee2_id?: number | null;
   }>();
   for (const [field, key] of Object.entries(DEFAULT_ASSIGNEE_KEYS)) {
-    if (!(field in body)) continue; // untouched fields stay as-is
+    if (!(field in body)) continue;
     const id = body[field as keyof typeof DEFAULT_ASSIGNEE_KEYS];
     if (id === null || id === undefined) {
       await c.env.DB.prepare(`DELETE FROM system_settings WHERE key = ?`).bind(key).run();
@@ -388,7 +315,6 @@ app.put("/settings", requirePermission("service_cases.manage"), async (c) => {
       if (typeof id !== "number" || isNaN(id)) {
         return c.json({ error: `${field} must be a number or null` }, 400);
       }
-      // INSERT OR REPLACE so we don't care whether the row exists yet.
       await c.env.DB.prepare(
         `INSERT INTO system_settings (key, value) VALUES (?, ?)
            ON CONFLICT(key) DO UPDATE SET value = excluded.value`
@@ -400,22 +326,12 @@ app.put("/settings", requirePermission("service_cases.manage"), async (c) => {
   return c.json({ ok: true });
 });
 
-// ── Lookups (mig 065) ─────────────────────────────────────────
-//
-// Per-module pickers maintained from Service Maintenance. Same
-// shape across the four kinds — slug + name + sort_order + active —
-// so one set of routes handles them all via a `kind` path param.
-// Slugs are stable values; names are display labels admins can
-// rename without breaking historical case data.
 
 const LOOKUP_TABLES = {
   "issue-categories": "assr_issue_categories",
   "resolution-methods": "assr_resolution_methods",
   "priorities": "assr_priorities",
   "ncr-categories": "assr_ncr_categories",
-  // Mig 0112 — mirrors AutoCount's item groups; seeded with the common
-  // furniture groups, admin-maintained until the AutoCount reconnect
-  // back-fills the authoritative list.
   "product-categories": "assr_product_categories",
 } as const;
 type LookupKind = keyof typeof LOOKUP_TABLES;
@@ -430,9 +346,6 @@ app.get("/lookups/:kind", requireServiceCaseAccess(), async (c) => {
   const table = lookupTable(kind);
   if (!table) return c.json({ error: "Unknown lookup kind" }, 400);
   const includeInactive = c.req.query("include_inactive") === "1";
-  // priorities surface sla_hours so the manager UI can edit it; the
-  // other three only have the common columns. Casting to ANY at the
-  // bind layer because column shape varies.
   const slaCol = kind === "priorities" ? ", sla_hours" : "";
   const rows = await c.env.DB.prepare(
     `SELECT id, slug, name, sort_order, active${slaCol}
@@ -455,9 +368,6 @@ app.post("/lookups/:kind", requirePermission("service_cases.manage"), async (c) 
   }>();
   const name = (body.name ?? "").trim();
   if (!name) return c.json({ error: "name required" }, 400);
-  // Auto-slug when not provided. Lowercased, spaces → underscores,
-  // strip anything that isn't alnum/underscore. Manual override is
-  // accepted to keep historical slugs stable.
   const slug = (
     body.slug?.trim() ||
     name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "")
@@ -519,9 +429,6 @@ app.patch("/lookups/:kind/:id", requirePermission("service_cases.manage"), async
   return c.json({ ok: true });
 });
 
-// Bulk reorder. Same shape as the project bulk-reorder endpoints:
-// `{ ids: [...] }` in the new display order; sort_order is rewritten
-// in steps of 10 so future inserts can slot between rows.
 app.put("/lookups/:kind/reorder", requirePermission("service_cases.manage"), async (c) => {
   const kind = c.req.param("kind");
   const table = lookupTable(kind);
@@ -547,23 +454,12 @@ app.delete("/lookups/:kind/:id", requirePermission("service_cases.manage"), asyn
   if (!table) return c.json({ error: "Unknown lookup kind" }, 400);
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
-  // Soft-delete only — historical case rows still hold the slug as
-  // their `priority` / `resolution_method` / etc., and we don't want
-  // to break filters retroactively. `active = 0` just hides from the
-  // picker.
   await c.env.DB.prepare(`UPDATE ${table} SET active = 0 WHERE id = ?`)
     .bind(id)
     .run();
   return c.json({ ok: true });
 });
 
-// ── Cost auto-fill suggestion ─────────────────────────────────
-//
-// Looks up the case's item_code in (a) the linked sales order's lines,
-// and (b) the linked purchase order's lines. Returns the unit-price ×
-// qty for each side so the frontend can offer to populate
-// customer_amount and po_amount in one click. The user can still edit
-// after — this is a suggestion, not a write.
 
 export const assrCostSuggestionHandler = async (c: HandlerCtx) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -575,11 +471,6 @@ export const assrCostSuggestionHandler = async (c: HandlerCtx) => {
     .bind(id)
     .first<{ doc_no: string | null; po_no: string | null; item_code: string | null; company_id: number | null }>();
   if (!caseRow) return c.json({ error: "Not found" }, 404);
-  /* Go-live review #11 — this sub-panel used requirePermission("service_cases.
-     read"), 403-ing a Sales viewer who legitimately opened this case. Gate on
-     requireServiceCaseAccess (admits Sales / director) + the SAME case-in-scope
-     check the detail GET performs, so a scoped viewer of THIS case can load the
-     panel while an out-of-scope case still answers 404. */
   if (!(await caseInCallerScope(c, id))) return c.json({ error: "Not found" }, 404);
 
   const itemCode = (caseRow.item_code || "").trim();
@@ -592,8 +483,6 @@ export const assrCostSuggestionHandler = async (c: HandlerCtx) => {
     });
   }
 
-  // ── Sales order lookup (revenue side) ──────────────────────────
-  // SO line detail isn't cached in D1; fetch live from AutoCount.
   let customerAmount: number | null = null;
   let soSource: { doc_no: string; unit_price: number; qty: number } | null = null;
   if (caseRow.doc_no) {
@@ -613,16 +502,9 @@ export const assrCostSuggestionHandler = async (c: HandlerCtx) => {
     }
   }
 
-  // ── Purchase order lookup (supplier cost side) ─────────────────
   let poAmount: number | null = null;
   let poSource: { doc_no: string; unit_price: number; qty: number } | null = null;
   if (caseRow.po_no) {
-    // PO line table is purchase_orders (one row per outstanding line),
-    // keyed by (doc_no, item_code). Pull the matching line.
-    // The PO line table stores `original_qty` (the full line quantity at
-    // doc creation, added in migration 030) and `remaining_qty` (still
-    // outstanding). Earlier code referenced `ordered_qty`, which never
-    // existed and crashed auto-fill with a SQLite "no such column" error.
     const poRow = await c.env.DB.prepare(
       `SELECT remaining_qty AS qty,
               original_qty  AS ord_qty,
@@ -631,8 +513,6 @@ export const assrCostSuggestionHandler = async (c: HandlerCtx) => {
         WHERE doc_no = ? AND item_code = ? AND company_id = ?
         LIMIT 1`
     )
-      // The case's own company: PO numbers come from each company's AutoCount
-      // and are not unique across companies.
       .bind(caseRow.po_no, itemCode, caseRow.company_id)
       .first<{ qty: number | null; ord_qty: number | null; price: number | null }>();
     if (poRow && poRow.price != null) {
@@ -650,27 +530,14 @@ export const assrCostSuggestionHandler = async (c: HandlerCtx) => {
 };
 app.get("/:id/cost-suggestion", requireServiceCaseAccess(), assrCostSuggestionHandler);
 
-// ── Summary ───────────────────────────────────────────────────
 
 app.get("/summary", requirePermission("service_cases.read"), async (c) => {
-  // Accept the same period filter the /metrics endpoint takes so the
-  // ServiceMetrics dashboard can share one dropdown. The pulse row
-  // (Pending Review / Aging / Breach) and Stage Funnel below now narrow
-  // to cases whose complaint / creation date falls inside the window —
-  // previously they were always "real-time across all data" and so
-  // looked frozen as the user switched periods.
   const win = assrWindow({ from: c.req.query("from"), to: c.req.query("to"), since_days: c.req.query("since_days") });
   const sinceDays = win.days;
   const periodAnd =
     `AND ${win.sql("COALESCE(c.complained_date, c.created_at)")}`;
-  // Allowed-companies predicates ("" when unresolved) — one per table alias
-  // used below.
   const coC = assrCompanySql(c, "c.company_id");
   const coBare = assrCompanySql(c);
-  // Row-level visibility, the SAME scope the list applies. Without it every
-  // tile below counted the whole company for a caller whose list showed only
-  // their own subtree. "" for the unrestricted tier, so a director's SQL is
-  // unchanged.
   const vis = withOverviewFilter(await assrVisibilityScope(c), overviewFilter(c));
   const visC = vis("c.");
   const visBare = vis("assr_cases.");
@@ -703,11 +570,6 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
       .bind(...visBare.binds)
       .first<{ total: number }>(),
 
-    // Active backlog: cases still in progress (not completed) and not
-    // archived — "how many cases are open right now". Deliberately NOT
-    // period-filtered: the Overview KPI reflects the live workload, not a
-    // rolling window. 'completed' is the only terminal stage (same
-    // definition the breach / aging queries use).
     c.env.DB.prepare(
       `SELECT COUNT(*) as count FROM assr_cases
       WHERE ${assrOpenStageSql()} AND archived_at IS NULL${coBare}${visBare.sql}`
@@ -735,9 +597,6 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
       .bind(...visBare.binds)
       .all(),
 
-    // Group by issue_category. The intake form now captures this on
-    // every new case (replacing the older service_category-driven flow),
-    // so this gives dispatchers a live view of what's coming in.
     c.env.DB.prepare(
       `SELECT issue_category as name, COUNT(*) as count FROM assr_cases
      WHERE issue_category IS NOT NULL${coBare}${visBare.sql}
@@ -754,7 +613,6 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
       .bind(...visBare.binds)
       .first<{ count: number }>(),
 
-    // Aging: cases still open that have been in their current stage >3 days
     c.env.DB.prepare(
       `SELECT COUNT(*) as count
        FROM assr_cases c
@@ -774,12 +632,6 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
       .bind(...visC.binds)
       .first<{ count: number }>(),
 
-    // SLA breach: open cases whose CURRENT stage has crossed 100% of its
-    // snapshotted per-stage target. Uses the SAME stage-level definition as
-    // the Stage Funnel below (assr_stage_history.target_days + entered_at)
-    // so the KPI tile and the funnel's breach totals reconcile. Previously
-    // this used case-level deadline_at, which diverged from the funnel and
-    // showed a different number on the same page.
     c.env.DB.prepare(
       `SELECT COUNT(*) as count
        FROM assr_cases c
@@ -794,7 +646,6 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
       .bind(...visC.binds)
       .first<{ count: number }>(),
 
-    // v3.1 — Pending Review tile
     c.env.DB.prepare(
       `SELECT COUNT(*) as count FROM assr_cases c
       WHERE c.stage = 'pending_review' AND c.archived_at IS NULL
@@ -803,12 +654,6 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
       .bind(...visC.binds)
       .first<{ count: number }>(),
 
-    // v3.1 — Avg end-to-end lead time (days), completed cases only.
-    // Filter out rows where closed_at < created_at — legacy data has
-    // some rows with a closed_at predating the case created_at (likely
-    // imported from AutoCount with a different timestamp source), and
-    // including them produces a wildly negative average. Window now
-    // honours the dashboard's since_days instead of the old hardcoded 90d.
     c.env.DB.prepare(
       `SELECT AVG(julianday(closed_at) - julianday(created_at)) AS avg_days
        FROM assr_cases
@@ -821,13 +666,6 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
       .bind(...visBare.binds)
       .first<{ avg_days: number | null }>(),
 
-    // v3.1 — Stage funnel: count by 9-stage enum, in canonical order,
-    // with breach-aware fill colour (% of cases in this stage that have
-    // crossed 100% of their snapshotted target). sub_return (Nico
-    // 2026-08-22) counts the supplier bucket's RETURN leg so the funnel
-    // card reads "X await pickup · Y await return" for supplier chasing.
-    // (No -- comments inside prepared SQL: a quote in one breaks the
-    // d1-compat placeholder scan — the 2026-08-11 prod outage.)
     c.env.DB.prepare(
       `SELECT c.stage AS stage,
             COUNT(*) AS total,
@@ -847,7 +685,6 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
       .bind(...visC.binds)
       .all<{ stage: string; total: number; breached: number; sub_return: number; sub_customer: number }>(),
 
-    // v3.1 — CSAT 13-week rolling trend (weekly average ratings)
     c.env.DB.prepare(
       `SELECT strftime('%Y-W%W', closed_at) AS week,
             AVG(satisfaction_rating) AS avg_rating,
@@ -873,7 +710,6 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
     recent_30d: recent?.count || 0,
     aging_count: aging?.count || 0,
     breach_count: breach?.count || 0,
-    // v3.1 enrichments
     pending_review_count: pendingReview?.count || 0,
     avg_e2e_days: avgE2E?.avg_days != null ? Number(Number(avgE2E.avg_days).toFixed(1)) : null,
     stage_funnel: funnel.results ?? [],
@@ -881,7 +717,6 @@ app.get("/summary", requirePermission("service_cases.read"), async (c) => {
   });
 });
 
-// ── List ──────────────────────────────────────────────────────
 
 app.get("/", requireServiceCaseAccess(), async (c) => {
   const assignedToParam = c.req.query("assigned_to");
@@ -899,8 +734,6 @@ app.get("/", requireServiceCaseAccess(), async (c) => {
     include_archived: c.req.query("include_archived") === "1",
     archived_only: c.req.query("archived_only") === "1",
     exclude_stage: c.req.query("exclude_stage") || undefined,
-    // Calendar month-window bound (perf/servicecase-board-calendar-bound).
-    // Additive: absent from/to leaves the query unbounded (List view et al).
     from: c.req.query("from") || undefined,
     to: c.req.query("to") || undefined,
     date_field: c.req.query("date_field") === "deadline" ? "deadline" : "reported",
@@ -913,9 +746,6 @@ app.get("/", requireServiceCaseAccess(), async (c) => {
   return c.json(result);
 });
 
-// Manually re-run the item → creditor lookup for a single case.
-// Useful for backfilling existing cases whose creditor_code is null
-// (e.g. cases created before the auto-resolve hook shipped).
 app.post("/:id/resolve-creditor", requirePermission("service_cases.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -941,33 +771,20 @@ app.post("/:id/resolve-creditor", requirePermission("service_cases.manage"), asy
         : `${row.item_code} has no supplier on its PO or SO — pick one by hand`,
     });
   } catch {
-    // Plain-language rule: never surface raw exception text to the user.
     return c.json({ error: "Couldn't look up the supplier. Try again shortly." }, 502);
   }
 });
 
-// Manual AutoCount DO-mirror refresh. The daily 02:00 cron does this
-// unattended; this path exists for the first backfill right after deploy
-// and for "the DO I just cut isn't showing yet" moments. Incremental via
-// getSince where the middleware supports it; otherwise streams the full
-// ~70 MB dump, so expect a few seconds.
 app.post("/sync-delivery-orders", requirePermission("service_cases.manage"), async (c) => {
   try {
     const { runDoMirrorSync } = await import("../services/doMirror");
     const r = await runDoMirrorSync(c.env, "MANUAL");
     return c.json(r);
   } catch {
-    // Plain-language rule: never surface raw exception text to the user.
     return c.json({ error: "Couldn't reach AutoCount to refresh delivery orders. Try again shortly." }, 502);
   }
 });
 
-// ── Creditor search / manual assignment ──────────────────────
-// AutoCount's creditor sync is partial and many items carry no
-// MainSupplier, so staff can search the local creditors mirror and
-// hand-link a supplier — or register one AutoCount doesn't have yet
-// (type='MANUAL'). Hand-picked links set creditor_source='manual' so
-// auto-resolution leaves them alone.
 
 app.get("/creditors/search", requireServiceCaseAccess(), async (c) => {
   const q = (c.req.query("q") || "").trim().toLowerCase();
@@ -1017,16 +834,11 @@ app.post("/creditors/create", requirePermission("service_cases.write"), async (c
     );
   }
 
-  // The supplier belongs to the company raising it; unresolved (legacy) keeps the column default.
   const creditorCo = assrCreateCompanyId(c);
   await c.env.DB.prepare(
     `INSERT INTO creditors (creditor_code, company_name, phone1, email, type, type_description, updated_at${creditorCo != null ? ", company_id" : ""})
      VALUES (?, ?, ?, ?, 'MANUAL', 'Added manually from Service Cases', datetime('now')${creditorCo != null ? ", ?" : ""})`
   )
-    // phone1 is stored E.164 like every other creditor phone written through
-    // the SCM supplier routes; this "add supplier from a Service Case" path was
-    // the one creditor writer that only trimmed, so it seeded rows the supplier
-    // screens then displayed in a different format from their neighbours.
     .bind(code, name, normalizePhone(body.phone), (body.email || "").trim() || null, ...(creditorCo != null ? [creditorCo] : []))
     .run();
 
@@ -1044,11 +856,6 @@ app.post("/:id{[0-9]+}/set-creditor", requirePermission("service_cases.write"), 
   return c.json({ ok: true, creditor_code: code, creditor_name: res.creditor_name });
 });
 
-// ── Cases grouped by creditor ────────────────────────────────
-// Feeds the "By Creditor" tab. One row per creditor_code with open /
-// closed / breached counts, joined to the creditors mirror for the
-// display name. Null creditor_code (unresolved) rolls up into a
-// separate `unassigned` bucket so the caller can surface it.
 app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
   const search = (c.req.query("search") || "").trim();
   const coC = assrCompanySql(c, "c.company_id");
@@ -1097,12 +904,6 @@ app.get("/by-creditor", requirePermission("service_cases.read"), async (c) => {
   });
 });
 
-// ── Bulk actions ──────────────────────────────────────────────
-// Operate on a list of case IDs in one request. Each item is best-effort:
-// failures are collected per-id rather than aborting the batch, so a stale
-// row in the selection (e.g. someone else just archived it) doesn't kill
-// the rest. Returns counts + per-id errors so the UI can show a useful
-// summary toast.
 
 async function bulkRun(
   ids: number[],
@@ -1121,18 +922,6 @@ async function bulkRun(
   return { ok, failed };
 }
 
-/* COMPANY SCOPE ON THE BULK WRITES.
-
-   enforceCaseScope (top of this file) CANNOT reach these: it is mounted on
-   "/:id{[0-9]+}" and "/:id{[0-9]+}/*", so it fires only when the first path
-   segment is the numeric case id. These three are /bulk/..., their ids arrive in
-   the BODY, and ids are sequential integers — so one call reached the other
-   company's cases wholesale while the detail GET 404s the same case. The client
-   is service-role (RLS bypassed, mig 0061), so the route predicate is the only
-   boundary.
-
-   assrCompanySql is the SAME helper the reads use, and it emits "" when the
-   company context is unresolved, so single-company installs are unchanged. */
 
 app.post("/bulk/archive", requirePermission("service_cases.manage"), async (c) => {
   const userId = (c as any).get?.("userId") ?? null;
@@ -1185,8 +974,6 @@ app.post("/bulk/assign", requirePermission("service_cases.manage"), async (c) =>
     )
       .bind(assigneeId, id)
       .run();
-    /* Out of scope -> no row moved. Stop rather than log an assignment that did
-       not happen; bulkRun collects the throw as this id's per-item error. */
     if (!res.meta.changes) throw new Error("Not found");
     await c.env.DB.prepare(
       `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, user_id)
@@ -1214,10 +1001,6 @@ app.post("/bulk/assign", requirePermission("service_cases.manage"), async (c) =>
   return c.json(result);
 });
 
-// ── CSV export ────────────────────────────────────────────────
-// Returns the full filtered case list (capped at 10k rows) as CSV.
-// Honors the same filters as the list endpoint so "what you see is
-// what you export" matches the table.
 
 app.get("/export.csv", requireServiceCaseAccess(), async (c) => {
   const csvVisibleIds = await assrVisibleUserIds(c);
@@ -1233,8 +1016,6 @@ app.get("/export.csv", requireServiceCaseAccess(), async (c) => {
   });
   for (const r of rows as any[]) {
     if (csvVisibleIds !== undefined) stripCreditorFields(r);
-    // Hand-entered DO wins; the live SCM merge (do_numbers) fills the rest —
-    // same precedence as the list's DO No column.
     r.delivery_order = r.delivery_order || r.do_numbers || null;
   }
   const csv = buildAssrCasesCsv(rows as Array<Record<string, unknown>>, assrExportShowsCost(c.get("user") ?? null));
@@ -1247,7 +1028,6 @@ app.get("/export.csv", requireServiceCaseAccess(), async (c) => {
   });
 });
 
-// ── SO item lookup ────────────────────────────────────────────
 
 app.get("/lookup-items/:docNo", requireServiceCaseAccess(), async (c) => {
   const docNo = c.req.param("docNo");
@@ -1308,9 +1088,6 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
         .all()
     : { results: [] as Array<Record<string, unknown>> };
 
-  // (2) SCM-native SOs. assrCompanySql pins rank-and-file SALES to HOUZS (inlining the validated int id, or ""
-  // when unresolved -> degrades to all rows); office/backend/directors get their allowed set. This is the fix
-  // that stops 2990 orders leaking into the service-case SO picker for a both-company SALES user.
   const coFilter = assrCompanySql(c, "so.company_id");
   // linked_ac_docno holds the migrated AutoCount number; customer_so_no holds the customer's own reference and is
   // what the app shows as "Ref No." when ref is empty. Search both, else those SOs answer "No match" (787 live, #5101).
@@ -1331,8 +1108,6 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
     .bind(pattern, pattern, pattern, pattern, pattern)
     .all();
 
-  // Merge: SCM rows first so a doc_no present in both keeps the company-tagged
-  // SCM row; dedupe by doc_no; newest doc_date first; cap 20.
   const seen = new Set<string>();
   const merged = [
     ...((scmRows.results ?? []) as Array<Record<string, unknown>>),
@@ -1387,13 +1162,6 @@ app.get("/search-so", requireServiceCaseAccess(), async (c) => {
   return c.json({ results: merged });
 });
 
-// ── Existing cases for an SO (create-intake duplicate warning) ─
-// Once the operator picks (or types) an SO in the New Case form, the
-// client calls this to show "this order already has N case(s)" with
-// enough detail to recognise — and jump to — the existing case instead
-// of opening a duplicate. Read-scoped like every other ASSR read:
-// non-archived only, company-filtered. Case-insensitive on doc_no for
-// the same hand-typed reason as the search-so annotation above.
 app.get("/so-cases/:docNo", requireServiceCaseAccess(), async (c) => {
   const docNo = (c.req.param("docNo") ?? "").trim();
   if (!docNo) return c.json({ cases: [] });
@@ -1413,17 +1181,6 @@ app.get("/so-cases/:docNo", requireServiceCaseAccess(), async (c) => {
   return c.json({ cases: rows.results ?? [] });
 });
 
-// ── Manual single-SO backfill into the local mirror ───────────
-// The cron pull is incremental (getSince) AND content-filtered by the
-// AutoCount middleware, so a doc can be absent from `sales_orders` even
-// though it exists in AutoCount — e.g. one modified during a sync outage
-// that never re-surfaced in an incremental batch (SO-011902 was one such
-// gap: KL/WEST, passes routeRegion, filter-fields identical to synced
-// neighbours). This fetches the doc directly via getSingle — which
-// bypasses the getSince content filter — and upserts it through the SAME
-// routeRegion path the cron uses, so the re-match typeahead can find it.
-// Gated at service_cases.write: the same permission that PATCH (where the
-// SO-No re-match lives) already requires.
 app.post("/resync-so/:docNo", requirePermission("service_cases.write"), async (c) => {
   const docNo = (c.req.param("docNo") ?? "").trim();
   if (!docNo) return c.json({ error: "docNo required" }, 400);
@@ -1439,9 +1196,6 @@ app.post("/resync-so/:docNo", requirePermission("service_cases.write"), async (c
   }
   if (!so) return c.json({ error: "SO not found in AutoCount", docNo }, 404);
 
-  // Same skip rule the cron applies — an SO that doesn't route to a known
-  // region is intentionally not mirrored, so report that explicitly rather
-  // than silently dropping it.
   const region = routeRegion(so);
   if (!region) {
     return c.json(
@@ -1470,30 +1224,15 @@ app.post("/resync-so/:docNo", requirePermission("service_cases.write"), async (c
   return c.json({ ok: true, region, mirrored: row });
 });
 
-// ── My Cases (sales-side portal) ──────────────────────────────
-// A case is YOURS if you RAISED it (created_by, self + downline BY ID — owner
-// ruling 2026-08-21: submitting is claiming) OR if the legacy free-text
-// `sales_agent` names someone in your reporting subtree. THE RULE and the
-// measurement that says both arms have to stay live in
-// services/assrVisibility.ts `myCasesPredicateSql` — this handler only resolves
-// the per-REQUEST company predicate, which is the one thing a service cannot.
 app.get("/my-cases", requireServiceCaseAccess(), async (c) => {
   const userId = (c as any).get?.("userId") ?? 0;
   if (!userId) return c.json({ cases: [] });
   return c.json(await listMyCases(c.env, Number(userId), assrCompanySql(c)));
 });
 
-// ── Sales comment ─────────────────────────────────────────────
-// Sales rep posts a comment on a case they own (matched by
-// sales_agent). Lands in assr_activity with source_channel=
-// 'sales_portal' so the timeline distinguishes it from staff /
-// customer / supplier notes.
 app.post("/:id{[0-9]+}/sales-comment", requireServiceCaseAccess(), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
-  // Scope guard — this append-only write must be limited to cases the caller
-  // may see (self + downline; directors/admins unrestricted). Out-of-scope →
-  // 404, indistinguishable from a nonexistent id (mirrors the detail GET).
   if (!(await caseInCallerScope(c, id))) return c.json({ error: "Not found" }, 404);
   const userId = (c as any).get?.("userId") ?? 0;
   const body = await c.req.json<{ text?: string }>().catch(() => ({} as { text?: string }));
@@ -1509,15 +1248,9 @@ app.post("/:id{[0-9]+}/sales-comment", requireServiceCaseAccess(), async (c) => 
   return c.json({ ok: true }, 201);
 });
 
-// ── Sales nudge ───────────────────────────────────────────────
-// One-tap "poke the office" from the sales portal — the rep can't
-// dispatch or reassign but they can flag that the customer is on
-// their case, so ops treats the row as fresh. Rate-limited to one
-// nudge per hour per case so it stays useful (spam ≠ signal).
 app.post("/:id{[0-9]+}/sales-nudge", requireServiceCaseAccess(), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
-  // Scope guard — same as sales-comment: only nudge cases the caller may see.
   if (!(await caseInCallerScope(c, id))) return c.json({ error: "Not found" }, 404);
   const userId = (c as any).get?.("userId") ?? 0;
   const body = await c.req.json<{ text?: string }>().catch(() => ({} as { text?: string }));
@@ -1545,30 +1278,13 @@ app.post("/:id{[0-9]+}/sales-nudge", requireServiceCaseAccess(), async (c) => {
   return c.json({ ok: true }, 201);
 });
 
-// ── Detail ────────────────────────────────────────────────────
 
-// Numeric-only guard on the catch-all detail route. Hono's
-// RegExpRouter is order-sensitive — declaring `/:id` before
-// `/metrics` lets `/:id` swallow `GET /api/assr/metrics` because
-// "metrics" matches the param. The `{[0-9]+}` constraint scopes the
-// param to digits so /metrics + any future literal route under
-// /api/assr falls through to its dedicated handler.
 app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const detail = await getAssrDetail(c.env, id);
   if (!detail) return c.json({ error: "Not found" }, 404);
   Object.assign((detail as { case: Record<string, unknown> }).case, await getVerificationNotes(c.env, id), await getQcNotes(c.env, id), await getCaseAddress(c.env, id));
-  /* Multi-company: a case must fall inside the caller's ASSR company scope
-     (same rule as the list). Rank-and-file SALES are pinned to HOUZS; office /
-     backend / directors get their allowed set. A case tagged with a company
-     outside that scope (e.g. one wrongly stamped 2990 before the Houzs pin
-     shipped, viewed by a sales rep) answers 404 here too. Out-of-scope answers
-     404, indistinguishable from a nonexistent id.
-     Skipped only when the scope is UNRESOLVED (undefined — pre-migration / D1
-     test mirror). An EMPTY scope is not the same thing: it means the caller is
-     granted no active company, and every company-stamped case must 404. Those
-     two states used to share `[]` and the merged state failed open. */
   const allowedCo = assrCompanyIds(c);
   if (allowedCo) {
     const caseRow = (detail as { case?: Record<string, unknown> }).case ?? {};
@@ -1579,53 +1295,31 @@ app.get("/:id{[0-9]+}", requireServiceCaseAccess(), async (c) => {
       return c.json({ error: "Not found" }, 404);
     }
   }
-  /* Row-level visibility — same rule as the list: a scoped caller may open
-     only cases created by / assigned to them or their downline. Out-of-scope
-     answers 404, indistinguishable from a nonexistent id (mirrors the SCM SO
-     detail behavior). Dual-read camelCase ?? snake_case — the PG driver
-     camelCases result columns. */
   const visibleIds = await assrVisibleUserIds(c);
   {
     const row = (detail as { case?: Record<string, any> }).case ?? (detail as Record<string, any>);
     if (!(await assrCaseRowInScope(c as any, row))) return c.json({ error: "Not found" }, 404);
   }
-  /* Supplier identity is office + supplier-portal only — see
-     stripCreditorFields above. */
   if (visibleIds !== undefined) {
     stripCreditorFields((detail as { case?: Record<string, any> }).case);
   }
   return c.json(detail);
 });
 
-// Access list (Nth-person visibility) — literals here (route generator sees the path + gate); bodies in routes/assrAccess.ts for the size ceiling. See §6.
 app.post("/:id{[0-9]+}/access", requirePermission("service_cases.write"), (c) => grantCaseAccess(c, caseInCallerScope));
 app.delete("/:id{[0-9]+}/access/:userId{[0-9]+}", requirePermission("service_cases.write"), (c) => revokeCaseAccess(c, caseInCallerScope));
 
-// ── Supplier rating ──────────────────────────────────────────
-// Posted from the Close-Case prompt when the case had a supplier
-// assigned. Stored on the case row (one rating per case) and
-// stamped with the rater + timestamp for audit. Re-posting the
-// same case overwrites — staff can correct a misclick.
 
-// ── Customer history ──────────────────────────────────────────
-// Returns prior cases for the same customer (matched on phone if
-// present, otherwise on exact name) so staff can spot repeat
-// complaints. Excludes the current case and archived rows.
 
 app.get("/:id/customer-history", requireServiceCaseAccess(), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
-  // Column is `phone`, not `customer_phone` — pre-v3.1 naming kept for
-  // SQL compatibility. Same applies to the WHERE below.
   const cur = await c.env.DB.prepare(
     `SELECT customer_name, phone FROM assr_cases WHERE id = ?${assrCompanySql(c)}`
   )
     .bind(id)
     .first<{ customer_name: string | null; phone: string | null }>();
   if (!cur) return c.json({ error: "Not found" }, 404);
-  /* Go-live review #11 — same fix as /cost-suggestion: admit a scoped Sales
-     viewer of this case (requireServiceCaseAccess + case-in-scope) instead of
-     403-ing on the raw service_cases.read permission. */
   if (!(await caseInCallerScope(c, id))) return c.json({ error: "Not found" }, 404);
 
   const phone = (cur.phone || "").trim();
@@ -1655,14 +1349,9 @@ app.get("/:id/customer-history", requireServiceCaseAccess(), async (c) => {
   return c.json({ cases: rows.results ?? [] });
 });
 
-// ── Create ────────────────────────────────────────────────────
 
 app.post(
   "/",
-  // Owner rule 8: Sales may CREATE cases too. Widen the existing create/write/
-  // manage gate to also admit Sales / director (canAccessServiceCases). The new
-  // case is stamped created_by = caller, so the creator owns it and the
-  // self+downline data scope (rule 9) lets them see it afterwards.
   requireServiceCaseAccess([
     "service_cases.create",
     "service_cases.write",
@@ -1686,9 +1375,6 @@ app.post(
   const fromIssue = await officeCreateFromDeliveryIssue(c, (body as Record<string, unknown>).delivery_issue_id, Number((c as any).get?.("userId")) || null);
   if (fromIssue) return c.json(fromIssue.body, fromIssue.status);
 
-  // Owner ruling (2026-07): Issue Category is REQUIRED and must be enforced
-  // server-side, not only by the FE button gate — the server previously
-  // accepted a null/blank category. Treat whitespace-only as missing.
   const hasCategory =
     typeof body.issue_category === "string" && body.issue_category.trim().length > 0;
   if (!body.doc_no || !body.complaint_issue || !hasCategory) {
@@ -1740,8 +1426,6 @@ app.post(
         .all<{ id: number; doc_no: string; stage: string | null; customer_name: string | null; created_at: string | null; item_code: string }>();
       const rows = dup.results ?? [];
       if (rows.length) {
-        // Group by case id so a single case that spans several ticked items
-        // shows once with its items[] rather than N repeated rows.
         const byCase = new Map<number, {
           id: number; docNo: string; stage: string | null;
           customerName: string | null; createdAt: string | null; items: string[];
@@ -1767,9 +1451,6 @@ app.post(
     }
   }
 
-  // Normalise the intake extras: trim strings to null, coerce the
-  // assignee to a valid positive integer or null. Null-safe so the
-  // existing minimal create flow (no extras) is unaffected.
   const trimOrNull = (v: unknown): string | null => {
     if (typeof v !== "string") return null;
     const t = v.trim();
@@ -1793,8 +1474,6 @@ app.post(
     complained_date: trimOrNull(body.complained_date),
     ref_no: trimOrNull(body.ref_no),
     customer_email: trimOrNull(body.customer_email),
-    // Multi-select: pass an array straight through (createAssrCase resolves
-    // it against the lookup); trim only the legacy single-string form.
     service_category: Array.isArray(body.service_category)
       ? body.service_category
       : trimOrNull(body.service_category),
@@ -1869,11 +1548,7 @@ app.post(
   return c.json(result, 201);
 });
 
-// ── Patch ─────────────────────────────────────────────────────
 
-// Same digit-only constraint as the GET — keeps any future literal
-// route under /api/assr (e.g. /metrics, /summary) reachable when the
-// methods overlap.
 app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -1904,14 +1579,12 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
 
   const notes = takeVerificationNotes(body);
   const qcNotes = takeQcNotes(body);
-  const ok = await patchAssrCase(c.env, id, body, userId); // a new SO No. adds the SO's postcode / city / state to body
+  const ok = await patchAssrCase(c.env, id, body, userId);
   const notesOk = notes ? await saveVerificationNotes(c.env, id, notes, userId) : false;
   const qcNotesOk = qcNotes ? await saveQcNotes(c.env, id, qcNotes, userId) : false;
   const addr = takeCaseAddress(body), addrOk = addr ? await saveCaseAddress(c.env, id, addr, userId, true) : false;
   if (!ok && !notesOk && !qcNotesOk && !addrOk) return c.json({ error: "Not found or no changes" }, 404);
 
-  // Notify newly-responsible people (+ their recursive upline) when an assignee
-  // or the sales_agent changed. Best-effort: never fails the PATCH.
   try {
     const after = await c.env.DB.prepare(
       `SELECT assigned_to, assigned_to_2, sales_agent, customer_name, assr_no
@@ -1927,9 +1600,6 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
       }>();
     if (after && before) {
       const changedUserIds: number[] = [];
-      // Only a change TO a non-null assignee is worth a notice (un-assignment
-      // has no new person to tell). NaN != NaN would false-positive when both
-      // are null, but the `!= null` guard suppresses that case.
       if (
         after.assigned_to != null &&
         Number(after.assigned_to) !== Number(before.assigned_to ?? NaN)
@@ -1965,12 +1635,6 @@ app.patch("/:id{[0-9]+}", requirePermission("service_cases.write"), async (c) =>
   return c.json({ ok: true });
 });
 
-// ── Mark opened by Service Admin ──────────────────────────────
-// Frontend fires this when the detail page mounts. Server checks
-// the case is still at pending_review; if so it auto-advances to
-// under_verification and stamps the activity log. Requires write
-// permission so a read-only viewer opening the case doesn't kick
-// the stage — Sales sees pending_review, SA opening it advances.
 app.post("/:id{[0-9]+}/mark-opened", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -1979,19 +1643,6 @@ app.post("/:id{[0-9]+}/mark-opened", requirePermission("service_cases.write"), a
   return c.json({ advanced });
 });
 
-// ── Generate a staff-sourced portal tracking link ─────────────
-// Dispatcher clicks "Copy portal link" — returns a token that the
-// frontend turns into a full URL, then copied into WhatsApp.
-//
-// This said "30-day TTL so the customer can reopen it over the life of
-// the case" until 2026-07-17. It was true when written (mig 017 minted
-// staff tokens with a 30-day expiry) and was superseded by mig 0076 /
-// D1 113: Nick 2026-07-07 ruled that shared WhatsApp links must keep
-// working forever, and that migration extended every existing token to
-// PERMANENT_EXPIRES_AT. The comment outlived the behaviour it
-// described and kept promising a bound this endpoint no longer had, on
-// the surface whose only protection is the token. Links are permanent
-// by design; DELETE /:id/track-link below is what ends one.
 app.post("/:id/track-link", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -2005,10 +1656,6 @@ app.post("/:id/track-link", requirePermission("service_cases.write"), async (c) 
   return c.json({ token, path: `/portal/case/${token}` }, 201);
 });
 
-// ── Sales portal link ─────────────────────────────────────────
-// Same per-case portal as the customer link but source='sales' —
-// the portal shows the salesperson variant (full stage progress,
-// comments attributed to sales). Idempotent per case.
 app.post("/:id/sales-link", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -2022,24 +1669,9 @@ app.post("/:id/sales-link", requirePermission("service_cases.write"), async (c) 
   return c.json({ token, path: `/portal/case/${token}` }, 201);
 });
 
-// ── Revoke every portal link for a case ───────────────────────
-//
-// The counterpart to the two issuers above. Portal links are permanent
-// by ruling (see the track-link comment), which is right up until one
-// is forwarded to the wrong WhatsApp group -- before this the only
-// remedy was hand-editing case_track_tokens. Kills staff + sales + any
-// live 30-min customer session for the case; re-clicking Generate
-// mints a fresh link, so this doubles as rotation.
-//
-// Gated on service_cases.write, matching the issuers: anyone who can
-// hand out a link can take it back. A stricter gate would mean the
-// dispatcher who leaked it cannot contain it without escalating.
 app.delete("/:id/track-link", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
-  /* COMPANY SCOPE — this existence check is the ONLY gate on revokeCaseTokens
-     below, so unscoped it let one company kill the other company's customer
-     tracking links. Same fix and same discovery as POST /:id/approve. */
   const revokeCoSql = assrCompanySql(c);
   const exists = await c.env.DB.prepare(
     `SELECT id FROM assr_cases WHERE id = ?${revokeCoSql}`
@@ -2048,11 +1680,6 @@ app.delete("/:id/track-link", requirePermission("service_cases.write"), async (c
     .first();
   if (!exists) return c.json({ error: "Not found" }, 404);
   await revokeCaseTokens(c.env, id);
-  // Revoking access to an unauthenticated surface is a security event:
-  // it belongs in the case timeline, not just a server log. category
-  // 'system' keeps it off the portal -- of the buckets (mig 121) only
-  // 'customer' renders there, and a revocation record is the last
-  // thing that should be readable through the link it just killed.
   const userId = (c as any).get?.("userId") ?? null;
   await logActivity(
     c.env,
@@ -2067,11 +1694,6 @@ app.delete("/:id/track-link", requirePermission("service_cases.write"), async (c
   return c.json({ ok: true });
 });
 
-// ── Supplier portal link (v3.1) ───────────────────────────────
-//
-// Idempotent: re-clicking the button returns the existing active
-// token. Scoped to the case's resolved creditor_code so the supplier
-// only sees jobs assigned to them.
 
 app.post("/:id/supplier-link", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -2087,18 +1709,9 @@ app.post("/:id/supplier-link", requirePermission("service_cases.write"), async (
   return c.json({ token, path: `/portal/supplier/${token}` }, 201);
 });
 
-// ── Revoke the supplier portal links for a case ───────────────
-//
-// The counterpart to the issuer above, and what finally makes
-// resolveSupplierToken's revoked_at check reachable — it had no caller
-// since the portal shipped, so a supplier link could only end by
-// hitting its 30-day TTL. Needed most when a case is re-assigned: the
-// previous supplier's token stays valid otherwise.
 app.delete("/:id/supplier-link", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
-  /* COMPANY SCOPE — same shape as DELETE /:id/track-link above: this read is
-     the only gate on revokeSupplierTokensForCase. */
   const revokeCoSql = assrCompanySql(c);
   const exists = await c.env.DB.prepare(
     `SELECT id FROM assr_cases WHERE id = ?${revokeCoSql}`
@@ -2122,7 +1735,6 @@ app.delete("/:id/supplier-link", requirePermission("service_cases.write"), async
   return c.json({ ok: true });
 });
 
-// ── Generate satisfaction survey token ────────────────────────
 
 app.post("/:id/survey-token", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -2131,10 +1743,6 @@ app.post("/:id/survey-token", requirePermission("service_cases.write"), async (c
   return c.json({ token });
 });
 
-// ── Soft-delete (archive) endpoints ───────────────────────────
-// No rows are ever physically deleted. Archive stamps archived_at +
-// archived_by; restore clears them. Default queries skip archived
-// rows so the UI is clean without losing data or audit trail.
 
 async function setArchived(
   env: Env,
@@ -2160,9 +1768,6 @@ async function setArchived(
   return (r.meta.changes ?? 0) > 0;
 }
 
-// Case — archive/unarchive. Manager-level (service_cases.manage).
-// No predicate here BY DESIGN: the path is /<numeric id>/archive, so
-// enforceCaseScope has already run caseInCallerScope — company AND row scope.
 app.post("/:id/archive", requirePermission("service_cases.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
@@ -2183,7 +1788,6 @@ app.post("/:id/unarchive", requirePermission("service_cases.manage"), async (c) 
   return c.json({ ok: true });
 });
 
-// Logistics entry archive.
 app.post("/:id/logistics/:logId/archive", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   const logId = parseInt(c.req.param("logId"), 10);
@@ -2201,13 +1805,10 @@ app.post("/:id/logistics/:logId/archive", requirePermission("service_cases.write
   return c.json({ ok: true });
 });
 
-// Attachment archive — hard replacement for the old "delete" wish.
 app.post("/attachments/:attId/archive", requireAnyPermission(["service_cases.write", "service_cases.manage"]), async (c) => {
   const attId = parseInt(c.req.param("attId"), 10);
   if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
   const userId = (c as any).get?.("userId") ?? 0;
-  // Resolve the owning case + file so the removal is recorded on the right
-  // timeline (append-only — the record survives the file being archived).
   const att = await c.env.DB.prepare(
     `SELECT assr_id, category, file_name FROM assr_attachments WHERE id = ?`
   )
@@ -2237,10 +1838,6 @@ app.post("/attachments/:attId/archive", requireAnyPermission(["service_cases.wri
   return c.json({ ok: true });
 });
 
-// Activity archive — only non-system actions (notes, customer and
-// sales comments). Stage transitions, created, approval, po_generated,
-// escalated, survey_submitted are all part of the audit trail and
-// must not be archive-able.
 const ARCHIVABLE_ACTIONS = new Set(["note", "customer_comment", "sales_comment"]);
 
 app.post("/activity/:actId/archive", requirePermission("service_cases.write"), async (c) => {
@@ -2270,9 +1867,6 @@ app.post("/activity/:actId/archive", requirePermission("service_cases.write"), a
   return c.json({ ok: true });
 });
 
-// ── Toggle an attachment's visibility to the portal customer ──
-// Lets staff hide an internal photo so it doesn't show up on the
-// customer's portal view of the case.
 app.patch("/attachments/:attId/visibility", requirePermission("service_cases.write"), async (c) => {
   const attId = parseInt(c.req.param("attId"), 10);
   if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
@@ -2291,44 +1885,27 @@ app.patch("/attachments/:attId/visibility", requirePermission("service_cases.wri
   return c.json({ ok: true });
 });
 
-// ── Manual SLA escalation sweep ───────────────────────────────
 
 app.post("/run-escalation", requirePermission("service_cases.manage"), async (c) => {
   const result = await runSlaEscalation(c.env);
   return c.json(result);
 });
 
-// ── Quality metrics (for manager dashboard) ───────────────────
 
 app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
   const win = assrWindow({ from: c.req.query("from"), to: c.req.query("to"), since_days: c.req.query("since_days") });
   const sinceDays = win.days;
-  // Period filter falls back to created_at when complained_date is
-  // NULL — legacy rows + manual SQL inserts often skipped the intake
-  // date, so a strict `complained_date >= …` was silently excluding
-  // them from EVERY window (which makes 30d / 90d / 365d look identical
-  // because the same too-small subset survives the filter).
   const sinceFor = (prefix = "") =>
     `AND ${win.sql(`COALESCE(${prefix}complained_date, ${prefix}created_at)`)}`;
   const sinceClause = sinceFor();
-  // Allowed-companies predicates per table alias ("" when unresolved).
   const coBare = assrCompanySql(c);
   const coC = assrCompanySql(c, "c.company_id");
   const coA = assrCompanySql(c, "a.company_id");
-  // Row-level visibility, per alias — the SAME scope the list applies. The
-  // repeat_customers roll-up below is the reason this is not cosmetic: it
-  // ships customer_name + phone, so an unscoped GROUP BY handed a caller the
-  // contact details of cases outside their reporting chain.
   const vis = withOverviewFilter(await assrVisibilityScope(c), overviewFilter(c));
   const visBare = vis("assr_cases.");
   const visC = vis("c.");
   const visA = vis("a.");
 
-  // Headline numbers. avg_resolution_hours filters out legacy rows
-  // where julianday(closed_at) <= julianday(created_at) (corrupt
-  // timestamps from old imports) OR the diff exceeds 1 year — a
-  // healthy ASSR case never takes that long, so it's almost certainly
-  // a data anomaly skewing the mean.
   const headline = await c.env.DB.prepare(
     `SELECT
         COUNT(*) as total,
@@ -2349,10 +1926,6 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     .bind(...visBare.binds)
     .first();
 
-  // NCR category breakdown — engineering taxonomy (material_defect /
-  // workmanship / transit_damage / …). Used for quality root-cause
-  // analysis. Distinct from `issue_category` below, which is the
-  // customer-facing category captured at intake.
   const ncr = await c.env.DB.prepare(
     `SELECT COALESCE(ncr_category, 'unclassified') as category, COUNT(*) as count
        FROM assr_cases
@@ -2363,10 +1936,6 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     .bind(...visBare.binds)
     .all();
 
-  // Customer-facing issue category — what the dashboards in the legacy
-  // Excel called "Service issues category". One row per ISSUE_CATEGORIES
-  // value (Product defect / Incorrect item delivered / etc.) plus an
-  // "Other" bucket for anything else.
   const issueCategories = await c.env.DB.prepare(
     `SELECT COALESCE(issue_category, 'Other') as category, COUNT(*) as count
        FROM assr_cases
@@ -2377,13 +1946,6 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     .bind(...visBare.binds)
     .all();
 
-  // Case Duration buckets — mirrors the legacy Excel "Case Duration"
-  // tile. All counts are *open* cases (${assrOpenStageSql()}) bucketed by
-  // age since complaint date. The buckets are non-overlapping so the
-  // sum + still-younger-than-2wks == opening_count.
-  //
-  // avg_per_month is the rolling monthly intake over the last 4 months
-  // (matching the Excel formula `monthly_case/month (last 4 month data)`).
   const caseDuration = await c.env.DB.prepare(
     `SELECT
         SUM(CASE WHEN ${assrOpenStageSql()} THEN 1 ELSE 0 END) AS opening_count,
@@ -2420,7 +1982,6 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     .bind(...visBare.binds)
     .first<{ avg_per_month: number | null }>();
 
-  // Resolution method mix
   const resolutions = await c.env.DB.prepare(
     `SELECT COALESCE(resolution_method, 'unset') as method, COUNT(*) as count
        FROM assr_cases
@@ -2431,7 +1992,6 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     .bind(...visBare.binds)
     .all();
 
-  // Repeat offenders — items with >= 2 cases in window
   const repeatItems = await c.env.DB.prepare(
     `SELECT i.item_code,
             COUNT(DISTINCT i.assr_id) as cases,
@@ -2447,7 +2007,6 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     .bind(...visC.binds)
     .all();
 
-  // Repeat customers — customers with >= 2 cases in window
   const repeatCustomers = await c.env.DB.prepare(
     `SELECT customer_name, phone,
             COUNT(*) as cases,
@@ -2463,9 +2022,6 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     .bind(...visBare.binds)
     .all();
 
-  // Creditor performance (within window). Joined against the
-  // creditors mirror via a.creditor_code rather than the old
-  // suppliers table — creditor is now the source of truth.
   const coColA = caseCompanySql(c.env, "a.");
   const creditorPerf = await c.env.DB.prepare(
     `SELECT a.creditor_code as creditor_code,
@@ -2494,12 +2050,6 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
     .all<Record<string, unknown>>();
   const perfRows = await showErpSupplierNames(c.env, creditorPerf.results ?? [], null);
 
-  // Monthly trend (last 12 months of case opens). Use complained_date
-  // when populated, fall back to created_at — legacy rows imported
-  // before the intake form required complained_date have it NULL, and
-  // excluding them left the chart blank for tenants whose oldest data
-  // predated the form change. strftime returns NULL on bad inputs;
-  // HAVING strips those rows so the chart never receives a NULL month.
   const trend = await c.env.DB.prepare(
     `SELECT strftime('%Y-%m', COALESCE(complained_date, created_at)) as month,
             COUNT(*) as opened,
@@ -2535,15 +2085,6 @@ app.get("/metrics", requirePermission("service_cases.read"), async (c) => {
   });
 });
 
-// ── Metric drill-down ─────────────────────────────────────────
-//
-// Returns the case list behind a single ServiceMetrics card. The
-// frontend just passes which card was clicked (`metric=`) plus the
-// active period window (`since_days=`, matching the dashboard's
-// FilterPills) and the route resolves both into a WHERE clause.
-//
-// Response shape is slim — only what the side-panel rows render. The
-// case detail page is fetched separately when the user clicks through.
 
 const DRILL_METRICS = new Set([
   "pending_review",
@@ -2573,10 +2114,6 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
   const sinceDays = win.days;
   const limit = Math.min(parseInt(c.req.query("limit") || "100", 10), 500);
 
-  // Collect WHERE fragments + their bind values together so user input
-  // (customer_name / phone / item_code) is always parameterised. The
-  // hard-coded `sinceDays` is parsed to an int above so interpolating
-  // it into the SQL string is safe.
   const conds: string[] = ["c.archived_at IS NULL"];
   const binds: any[] = [];
   let joinItems = false;
@@ -2640,11 +2177,6 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
         AND julianday('now') - julianday(c.complained_date) < 21`);
       break;
     case "customer_cases": {
-      // Repeat-customer drill — feeds the "Repeat Customers" panel
-      // when a row is clicked. Match by name (required) and phone
-      // (optional, mirroring how the metrics group identifies a
-      // customer). Window by sinceDays so the panel matches the
-      // count on the originating card.
       const name = (c.req.query("customer_name") || "").trim();
       const phone = (c.req.query("phone") || "").trim();
       if (!name) {
@@ -2656,15 +2188,11 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
         conds.push("c.phone = ?");
         binds.push(phone);
       } else {
-        // The metrics aggregate groups by (customer_name, phone) so a
-        // NULL-phone row is its own bucket. Match the same shape here.
         conds.push("c.phone IS NULL");
       }
       break;
     }
     case "item_cases": {
-      // Repeat-item drill — joins assr_items so we can filter by
-      // item_code. Window by sinceDays for parity with the card.
       const code = (c.req.query("item_code") || "").trim();
       if (!code) {
         return c.json({ error: "We couldn't load that item's cases. Please try again." }, 400);
@@ -2698,10 +2226,6 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
     ? "FROM assr_cases c LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code JOIN assr_items i ON i.assr_id = c.id"
     : "FROM assr_cases c LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code";
   const distinct = joinItems ? "DISTINCT" : "";
-  // Row-level visibility. This endpoint returns the CASES behind a tile, so an
-  // unscoped drill handed the caller the rows themselves, not just a count —
-  // and `total` below is the length of this fetch, so scoping here fixes both.
-  // Appended last, and its binds go last, because binds are positional.
   const visDrill = withOverviewFilter(await assrVisibilityScope(c), overviewFilter(c))("c.");
   const where =
     conds.join(" AND ") + assrCompanySql(c, "c.company_id") + visDrill.sql;
@@ -2732,7 +2256,6 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
   });
 });
 
-// ── Auto-generate service PO number ───────────────────────────
 
 app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c) => {
   // company-scope: the READ at :2683 carries assrCompanySql and :2691 returns 404 when it misses, so the unscoped UPDATE at :2699 can only ever reach an id this company owns. Verified 2026-08-19.
@@ -2740,14 +2263,6 @@ app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const userId = (c as any).get?.("userId") ?? 0;
 
-  // A case's supplier is its creditor_code resolved against the creditors
-  // mirror. assr_cases has never had a `supplier` column, so the old SELECT
-  // raised `column "supplier" does not exist` and 500'd every click. Same join
-  // the case detail already uses (services/assr.ts:489).
-  /* COMPANY SCOPE — this read is the gate for the PO mint and the UPDATE that
-     follows, both keyed on the same id. Unscoped, one company could burn a
-     service-PO number onto the other company's case. Aliased column because the
-     statement joins. */
   const poCoSql = assrCompanySql(c, "c.company_id");
   const existing = await c.env.DB.prepare(
     `SELECT c.po_no, c.creditor_code, ${caseCompanySql(c.env, "c.")} AS company_id, cr.company_name AS creditor_name
@@ -2771,9 +2286,6 @@ app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c
   if (!claim.ok) return c.json({ error: `PO already exists: ${claim.poNo ?? ""}`, po_no: claim.poNo }, 409);
   const poNo = claim.poNo;
 
-  // Name when the mirror has the creditor, else the raw code — a case can carry
-  // a creditor_code the mirror has not synced yet, and the code still tells the
-  // reader who the PO is for.
   await showErpSupplierNames(c.env, [existing], null);
   const supplierLabel = existing.creditor_name || existing.creditor_code;
   await logActivity(
@@ -2789,7 +2301,6 @@ app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c
   return c.json({ po_no: poNo }, 201);
 });
 
-// ── Manager approval / quality sign-off ───────────────────────
 
 app.post("/:id/approve", requirePermission("service_cases.approve"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -2802,13 +2313,6 @@ app.post("/:id/approve", requirePermission("service_cases.approve"), async (c) =
   }>();
 
   const now = new Date().toISOString();
-  /* COMPANY SCOPE. Found 2026-08-18 by check-company-scope.mjs, which could not
-     see this statement until its raw-SQL table list learned about assr_cases:
-     this UPDATE keyed on id alone while every sibling writer in this file
-     (bulk/archive, bulk/unarchive, bulk/assign) carries assrCompanySql. So a
-     HOUZS approver could sign off the other company's case and stamp their own
-     NCR category on it — a quality record, written into books they cannot read
-     back. */
   const approveCoSql = assrCompanySql(c);
   const r = await c.env.DB.prepare(
     `UPDATE assr_cases
@@ -2828,7 +2332,6 @@ app.post("/:id/approve", requirePermission("service_cases.approve"), async (c) =
     .run();
   if (!r.meta.changes) return c.json({ error: "Not found" }, 404);
 
-  // Log to activity trail so the timeline captures the sign-off.
   await c.env.DB.prepare(
     `INSERT INTO assr_activity (assr_id, action, from_value, to_value, note, user_id)
      VALUES (?, 'approval', NULL, ?, ?, ?)`
@@ -2844,7 +2347,6 @@ app.post("/:id/approve", requirePermission("service_cases.approve"), async (c) =
   return c.json({ ok: true, approved_at: now });
 });
 
-// ── Stage transition ──────────────────────────────────────────
 
 app.post("/:id/transition", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -2857,11 +2359,6 @@ app.post("/:id/transition", requirePermission("service_cases.write"), async (c) 
     const ok = await transitionStage(c.env, id, body.stage as any, userId, body.note);
     if (!ok) return c.json({ error: "Not found" }, 404);
 
-    // Auto-dispatch satisfaction survey when case is completed.
-    // Fire-and-forget: if email is disabled or the customer has no
-    // survey recipient, the email service silently skips (and still
-    // logs the attempt). Prefer `email_for_survey` (proposal §14 —
-    // separate from notify channel) and fall back to `customer_email`.
     if (body.stage === "completed") await sendCompletionSurvey(c.env, id);
     return c.json({ ok: true });
   } catch (e: any) {
@@ -2876,16 +2373,6 @@ app.post("/:id/return-dos", requirePermission("service_cases.write"), addReturnD
 app.patch("/:id/return-dos/:doId{[0-9]+}", requirePermission("service_cases.write"), patchReturnDoRoute);
 app.delete("/:id/return-dos/:doId{[0-9]+}", requirePermission("service_cases.write"), archiveReturnDoRoute);
 app.post("/:id/reopen", requirePermission("service_cases.write"), reopenCaseRoute);
-// ── Notes ─────────────────────────────────────────────────────
-
-// Manual-note audience buckets (mig 0108). Legacy 'purchasing' from
-// not-yet-refreshed clients maps to 'service'; unknown values fall back
-// to 'service' too so nothing lands unclassified.
-const NOTE_CATEGORIES = new Set(["service", "customer", "supplier", "sales"]);
-function noteCategory(v?: string): "service" | "customer" | "supplier" | "sales" {
-  if (v === "purchasing") return "service";
-  return NOTE_CATEGORIES.has(v ?? "") ? (v as any) : "service";
-}
 
 app.post("/:id/notes", requireAnyPermission(["service_cases.write", "service_cases.create", "service_cases.manage"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -2896,12 +2383,7 @@ app.post("/:id/notes", requireAnyPermission(["service_cases.write", "service_cas
     category?: string;
   }>();
   if (!body.note?.trim()) return c.json({ error: "note is required" }, 400);
-  // Manual notes pick an audience bucket (mig 0108): service (internal,
-  // the old 'purchasing'), customer (portal-visible), supplier or sales.
-  // 'system' is reserved for auto-emitted events, and anything unknown
-  // (incl. the legacy 'purchasing' from stale clients) falls back to
-  // 'service', so a misconfigured client can't impersonate an event.
-  const category = noteCategory(body.category);
+  const category = assrNoteCategory(body.category);
   await logActivity(c.env, id, "note", null, null, body.note, userId, {
     category,
     source_channel: "app",
@@ -2909,11 +2391,6 @@ app.post("/:id/notes", requireAnyPermission(["service_cases.write", "service_cas
   return c.json({ ok: true });
 });
 
-// ── Service Log corrections (v3.1 mig 077) ────────────────────
-//
-// assr_activity is append-only: instead of editing a row, post a new
-// "correction" entry that references the prior one. Useful for fixing
-// a misposted note or stage_change without erasing the audit trail.
 
 app.post("/:id/notes/:noteId/correct", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -2923,7 +2400,6 @@ app.post("/:id/notes/:noteId/correct", requirePermission("service_cases.write"),
   const body = await c.req.json<{ note: string; category?: string }>();
   if (!body.note?.trim()) return c.json({ error: "correction note is required" }, 400);
 
-  // Verify the referenced entry belongs to this case.
   const prior = await c.env.DB.prepare(
     `SELECT id FROM assr_activity WHERE id = ? AND assr_id = ?`
   )
@@ -2932,7 +2408,7 @@ app.post("/:id/notes/:noteId/correct", requirePermission("service_cases.write"),
   if (!prior) return c.json({ error: "Referenced entry not found on this case" }, 404);
 
   await logActivity(c.env, id, "note", null, null, body.note, userId, {
-    category: noteCategory(body.category),
+    category: assrNoteCategory(body.category),
     source_channel: "app",
     references_entry_id: noteId,
     is_correction: true,
@@ -2940,19 +2416,11 @@ app.post("/:id/notes/:noteId/correct", requirePermission("service_cases.write"),
   return c.json({ ok: true });
 });
 
-// ── Service Log export (CSV) ────────────────────────────────────
-//
-// Full audit trail for one case in CSV form. Manager-only — internal
-// notes + supplier comms aren't customer-safe.
 
 app.get("/:id/timeline.csv", requireServiceCaseAccess(), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
 
-  // Scope guard — a Sales caller admitted by org field may DOWNLOAD the timeline
-  // of a case within their reporting chain (self + downline), but not an
-  // arbitrary case. Out-of-scope → 404 (mirrors the detail GET). Directors /
-  // service_cases.manage stay unrestricted (caseInCallerScope short-circuits).
   if (!(await caseInCallerScope(c, id))) return c.json({ error: "Not found" }, 404);
 
   const row = await c.env.DB.prepare(
@@ -3028,7 +2496,6 @@ function csvField(v: any): string {
   return s;
 }
 
-// ── Items ─────────────────────────────────────────────────────
 
 app.post("/:id/items", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -3048,8 +2515,6 @@ app.delete("/:id/items/:itemId", requirePermission("service_cases.write"), async
   return c.json({ ok: true });
 });
 
-// Per-item remark — prints in the ITEMS table's REMARK column on both
-// the customer and supplier copies (Nick 2026-07-15).
 app.patch("/:id/items/:itemId", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   const itemId = parseInt(c.req.param("itemId"), 10);
@@ -3064,7 +2529,6 @@ app.patch("/:id/items/:itemId", requirePermission("service_cases.write"), async 
   if (!prevItem) return c.json({ error: "Not found" }, 404);
   const code = prevItem.item_code ?? `#${itemId}`;
 
-  // Quantity — clamp to a positive integer; log the change.
   if (body.qty !== undefined) {
     const qty = Math.max(1, Math.round(Number(body.qty) || 0));
     const ok = await setItemQty(c.env, id, itemId, qty);
@@ -3091,8 +2555,6 @@ app.patch("/:id/items/:itemId", requirePermission("service_cases.write"), async 
     if (!ok) return c.json({ error: "Not found" }, 404);
   }
 
-  // Remark — capture the prior value so the change is recorded
-  // append-only on the timeline (removing logs a "cleared" event).
   if (body.remark !== undefined) {
     const remark = body.remark == null ? null : String(body.remark).trim() || null;
     const ok = await setItemRemark(c.env, id, itemId, remark);
@@ -3112,8 +2574,6 @@ app.patch("/:id/items/:itemId", requirePermission("service_cases.write"), async 
       );
     }
   }
-  // Supplier-copy remark — same append-only audit trail, supplier
-  // timeline bucket.
   if (body.supplier_remark !== undefined) {
     const remark = body.supplier_remark == null ? null : String(body.supplier_remark).trim() || null;
     const ok = await setItemSupplierRemark(c.env, id, itemId, remark);
@@ -3136,10 +2596,9 @@ app.patch("/:id/items/:itemId", requirePermission("service_cases.write"), async 
   return c.json({ ok: true });
 });
 
-// ── Attachments ───────────────────────────────────────────────
 
 const ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "mp4", "mov", "webm", "pdf"]);
-const MAX_SIZE = 25 * 1024 * 1024; // 25 MB
+const MAX_SIZE = 25 * 1024 * 1024;
 
 app.put("/:id/attachments", requireAnyPermission(["service_cases.write", "service_cases.create", "service_cases.manage"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
@@ -3184,17 +2643,11 @@ app.put("/:id/attachments", requireAnyPermission(["service_cases.write", "servic
   return c.json({ id: attachId, key }, 201);
 });
 
-// WO-7 — optional client-generated thumbnail for a photo attachment, stored
-// at `<r2_key>.thumb`. The frontend uploads it right after the main PUT above;
-// old clients never call this and nothing changes for them. Best-effort by
-// design: a failed thumb never invalidates the already-saved attachment.
 app.put("/:id/attachments/thumb", requireAnyPermission(["service_cases.write", "service_cases.create", "service_cases.manage"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
 
   const key = c.req.query("key") || "";
-  // The key must be a real attachment of THIS case — never trust the caller's
-  // key shape (mirrors the download route's ownership rule).
   const att = await c.env.DB.prepare(
     `SELECT assr_id FROM assr_attachments WHERE r2_key = ?`,
   )
@@ -3217,15 +2670,6 @@ app.put("/:id/attachments/thumb", requireAnyPermission(["service_cases.write", "
 
 app.get("/attachments/:key{.+}", requireServiceCaseAccess(), async (c) => {
   const key = c.req.param("key");
-  // Resolve the attachment's OWNING case from its r2_key (canonical — never
-  // trust the caller-supplied key's shape), then enforce the same self+downline
-  // scope as the case detail: a Sales caller may download attachments only for
-  // cases within their reporting chain. Unknown key or out-of-scope case → 404,
-  // indistinguishable from a nonexistent object. Directors / service_cases.manage
-  // stay unrestricted (caseInCallerScope short-circuits).
-  // WO-7: a `<r2_key>.thumb` request is authorised against its BASE key's row
-  // (thumbs have no assr_attachments row); missing thumb objects 404 below and
-  // the frontend falls back to the original.
   const att = await c.env.DB.prepare(
     `SELECT assr_id FROM assr_attachments WHERE r2_key = ?`,
   )
@@ -3241,21 +2685,13 @@ app.get("/attachments/:key{.+}", requireServiceCaseAccess(), async (c) => {
   return new Response(obj.body as ReadableStream, {
     headers: {
       "Content-Type": obj.httpMetadata?.contentType || "application/octet-stream",
-      // Block MIME-sniffing the server-derived content-type back into
-      // html/svg (parity with mail-center.ts's INLINE_SAFE serve).
       "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=86400",
     },
   });
 });
 
-// ── Logistics ─────────────────────────────────────────────────
 
-/**
- * Service-wide logistics feed for the Logistics tab's Service sub-tab.
- * Returns ASSR logistics rows joined with case context so ops can see
- * pickups/deliveries across all open cases in one list.
- */
 app.get("/logistics/all", requirePermission("service_cases.read"), async (c) => {
   const page = Math.max(1, parseInt(c.req.query("page") || "1", 10));
   const perPage = Math.min(200, Math.max(10, parseInt(c.req.query("per_page") || "50", 10)));
@@ -3271,11 +2707,6 @@ app.get("/logistics/all", requirePermission("service_cases.read"), async (c) => 
     where.push("(ca.assr_no LIKE ? OR ca.customer_name LIKE ? OR l.notes LIKE ?)");
     binds.push(`%${search}%`, `%${search}%`, `%${search}%`);
   }
-  // Row-level visibility + the company pin, both keyed off the joined case.
-  // This feed had NEITHER: it is the one ASSR read `fix/assr-scope-creator2`
-  // missed when it swapped the company helper across the module, so it was the
-  // only place a logistics row could cross both the company and the reporting
-  // boundary. Appended last; binds are positional and follow in the same order.
   const visLog = (await assrVisibilityScope(c))("ca.");
   const whereSql =
     `WHERE ${where.join(" AND ")}` +
@@ -3340,9 +2771,7 @@ app.patch("/:id/logistics/:logId", requirePermission("service_cases.write"), asy
   return c.json({ ok: true });
 });
 
-// ── Cost-suggestion helpers ───────────────────────────────────
 
-/** Parse the AutoCount line set: case-insensitive ItemCode match. */
 function matchLine(
   lines: Array<Record<string, any>> | null | undefined,
   itemCode: string

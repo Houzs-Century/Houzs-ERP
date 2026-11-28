@@ -3,11 +3,6 @@ import { Share, Plus, X } from "lucide-react";
 import { isIosInstallable } from "../pwa";
 import { shouldShowPwaPrompt } from "./pwaDismissal";
 
-/**
- * IosInstallGuide — manual "Add to Home Screen" coach for iOS Safari, which
- * never fires beforeinstallprompt (so PwaBanners' auto prompt can't appear).
- * Shows once per 7-day cool-off; hidden once installed (standalone). Theme C.
- */
 const DISMISS_KEY = "pwa:ios-guide:dismissed-at";
 const NAG_AFTER_DAYS = 7;
 

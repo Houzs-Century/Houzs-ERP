@@ -1,20 +1,8 @@
-/**
- * My Cases — a sales rep's view of the service cases they raised.
- *
- * Simpler than the staff /assr detail (no stage editing, no
- * assignment controls). Each card opens a Panel with case summary +
- * a two-way comment thread merging customer_portal, sales_portal and
- * staff notes so the rep can hold the conversation with ops + the
- * customer in one place.
- *
- * Scope: cases where LOWER(sales_agent) LIKE '%' || lower(user.name)
- * || '%' — the same rule /api/assr/my-cases uses on the backend.
- */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Send, User, Package, MessageSquare, Search, X } from "lucide-react";
 import { api } from "../api/client";
-import { formatPhone } from "../vendor/shared/phone";
+import { formatPhone } from "../../../shared/src/vendor/shared/phone";
 import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import { useQuery } from "../hooks/useQuery";
 import { formatCaseAddress } from "../vendor/scm/lib/assr-case-address";
@@ -51,11 +39,6 @@ const STAGE_LABEL: Record<string, string> = {
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Delivery / Service",
   completed: "Completed",
-  // Read, not retyped. This exact string had six hand-written homes and the
-  // customer portal's copy — the only one a customer reads — had none at all
-  // and printed the raw slug. (The rows ABOVE are this screen's short pill
-  // vocabulary, a different question, and still a hand-written copy shared
-  // with the other pill screens — see BUG-HISTORY, not yet unified.)
   voided: ASSR_STAGE_LABEL.voided,
 };
 
@@ -91,15 +74,9 @@ export function MyCases() {
   const cases = listQ.data?.cases ?? [];
   const userName = listQ.data?.user_name ?? null;
 
-  // Search + filter run CLIENT-SIDE: /api/assr/my-cases returns the rep's whole
-  // set in one shot (≤200 rows, no pagination), so there's nothing to page
-  // through — filtering the loaded array is exact and instant.
   const [q, setQ] = useState("");
   const [stageFilter, setStageFilter] = useState("all");
 
-  // Count per stage + the stages actually present, in canonical pipeline order
-  // (STAGE_LABEL is already ordered) so the filter row only offers stages the
-  // rep has cases in.
   const counts = useMemo(() => {
     const m: Record<string, number> = {};
     for (const c of cases) m[c.stage] = (m[c.stage] ?? 0) + 1;
@@ -115,10 +92,6 @@ export function MyCases() {
     return cases.filter((c) => {
       if (stageFilter !== "all" && c.stage !== stageFilter) return false;
       if (!term) return true;
-      // Covers the same fields the card surfaces: case no / SO / Ref /
-      // customer / issue text / item code / the matched sales-agent name.
-      // Ref No included 2026-08-12 (Nico): reps identify a case by its
-      // ref (HC…/ZNT…/PG…) more often than by anything else.
       return [c.assr_no, c.doc_no, c.ref_no, c.customer_name, c.complaint_issue, c.item_code, c.sales_agent]
         .some((f) => f && f.toLowerCase().includes(term));
     });
@@ -157,7 +130,6 @@ export function MyCases() {
         </div>
       ) : (
         <>
-          {/* Search + stage filter (client-side over the loaded set). */}
           <div className="mt-6 space-y-3">
             <div className="relative">
               <Search
@@ -291,7 +263,6 @@ function FilterChip({
   );
 }
 
-// ── Detail (route target `/my-cases/:id`) ─────────────────────
 
 export function MyCaseDetail() {
   const { id: idStr } = useParams();
@@ -322,9 +293,6 @@ export function MyCaseDetail() {
     }
   }, [comment, id, detail, toast]);
 
-  // "Nudge office" — one-tap ping that lands in the timeline so ops
-  // sees the row bubble up. Server rate-limits to one nudge per hour
-  // per case; on 429 we tell the rep it was already sent recently.
   const nudge = useCallback(async () => {
     setNudging(true);
     try {

@@ -1,9 +1,3 @@
-// Money in's receipts as pages (the owner's Claude Design, batch 5 step 3): an
-// official receipt (Confirm money, the receipt that replaced it, what its
-// payment says now, the payment's journal as its books) and an other debtor's
-// receipt walking the payment voucher's four layers (Prepare, Check, Withdraw,
-// Reject with a reason, Approve & post, Void), plus the bill page's receipts
-// and credit notes. The reads are pinned in backend/tests/moneyInDocReads.test.ts.
 
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -11,7 +5,6 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-/* ── What the server answers ────────────────────────────────────────────── */
 const OFFICIAL: Record<string, unknown> = {
   7: {
     receipt: { id: 7, or_number: '2990-DraftOR-2610-031', status: 'DRAFT', payment_source: 'SOPAY', payment_id: 'p-1', doc_no: '2990-SO-2610-011', customer_name: 'Larding Chen', method: 'transfer', amount_sen: 111_500, paid_at: '2026-10-13', channel_account_code: null, issued_at: null, issued_by: null, created_at: '2026-10-13T03:00:00Z', created_by: 'Ivy', cancelled_at: null, cancelled_by: null, cancel_reason: null, replaced_by_id: null },
@@ -89,7 +82,6 @@ vi.mock('../../../vendor/scm/lib/accounting-queries', async (importOriginal) => 
   useOtherDebtors: () => DEBTORS,
 }));
 const updateDebtorReceipt = vi.fn();
-/* What the edit form lists (batch 5 step 6): the debtor and the bills it still owes on. */
 const DEBTORS = { data: { debtors: [{ id: 'd1', name: 'AHMAD BIN ALI', phone: '012-345', notes: null, is_active: true, outstanding_sen: 80_000 }] }, isLoading: false };
 const DEBTOR_D1 = {
   debtor: DEBTORS.data.debtors[0],
@@ -140,7 +132,6 @@ describe('an official receipt, as a page', () => {
     expect(fact('Salesperson').textContent).toBe('Mei Ling');
     expect(fact('Payment journal').textContent).toBe('2990-JE-2610-0140');
     expect(fact('Confirmed').textContent).toBe('Not yet · money not confirmed');
-    /* The payment was corrected to RM 558 after the receipt said RM 1,115. */
     expect(fact('Payment keyed').textContent).toBe('RM 558.00');
     await waitFor(() => expect(screen.getByText(/Dr 310-0001 Hong Leong Bank · Cr 300-0000 Trade Debtors \(Larding Chen\) · RM 558\.00 · 2990-JE-2610-0140/)).toBeTruthy());
     const confirm = screen.getByRole('button', { name: 'Confirm money' });
@@ -213,7 +204,6 @@ describe("an other debtor's receipt walks the four layers", () => {
     expect(stepMutate.mock.calls[2]![0]).toEqual({ receiptId: 'r1', action: 'reject', note: 'Wrong bank' });
   });
 
-  /* Batch 5 step 6 (c5): a Draft or a Prepared receipt changes in place; it keeps its stage and posts nothing. */
   test('prepared: Edit opens the form in place — the debtor fixed — and saves the date, account and bills', async () => {
     openDebtorReceipt({ submitted_at: '2026-10-03T01:00:00Z' });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy());
@@ -241,7 +231,6 @@ describe("an other debtor's receipt walks the four layers", () => {
     expect(stepMutate.mock.calls[0]![0]).toEqual({ receiptId: 'r1', action: 'approve' });
   });
 
-  /* Batch 5 step 10: the receipt prints on the A4 RECEIPT — DRAFT across it until approved (the generator's). */
   test('Print opens the print dialog; Print now hands the receipt, its debtor and the bills it knocks off to the RECEIPT', async () => {
     openDebtorReceipt({});
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '2990-ODR-2610-001' })).toBeTruthy());

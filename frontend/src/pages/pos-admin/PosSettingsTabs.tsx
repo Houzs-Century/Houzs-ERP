@@ -1,13 +1,10 @@
-/* POS Admin > SST & Receipt (layout E4, with a live 58 / 80 mm preview),
- * Printer & Scanner and General (layout E5). Each tab edits one settings
- * group and saves it whole; the device reads the same normalised document. */
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import { useToast } from "../../hooks/useToast";
 import { cn, formatDateTime } from "../../lib/utils";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import { POS_PAYMENT_METHODS, posMethodLabel } from "../../vendor/shared/pos-vocabulary";
-import { type GeneralSettings, type PosSettingsGroup, type PrinterScannerSettings, type SstReceiptSettings } from "../../vendor/shared/pos-settings";
+import { receiptNoFormatProblem, type GeneralSettings, type PosSettingsGroup, type PrinterScannerSettings, type SstReceiptSettings } from "../../vendor/shared/pos-settings";
 import { POS_ADMIN, useAdminSettings } from "./posAdminApi";
 import { Field, Toggle, errText, ghostBtn, inputCls, primaryBtn } from "./posAdminUi";
 import { SAMPLE_BILL, receiptPreviewLines } from "./receiptPreview";
@@ -34,10 +31,10 @@ function useGroup<G extends PosSettingsGroup, T>(group: G, pick: (s: NonNullable
   return { q, draft, setDraft, save, saving, reset: () => setDraft(q.data ? pick(q.data.settings) : null), updated: q.data?.updated[group] };
 }
 
-function SaveBar({ saving, onSave, onReset, updated }: { saving: boolean; onSave: () => void; onReset: () => void; updated?: string }) {
+function SaveBar({ saving, onSave, onReset, updated, blocked }: { saving: boolean; onSave: () => void; onReset: () => void; updated?: string; blocked?: string | null }) {
   return (
     <div className="mt-3 flex items-center gap-2 border-t border-border-subtle pt-3">
-      <button type="button" className={primaryBtn} disabled={saving} onClick={onSave}>Save</button>
+      <button type="button" className={primaryBtn} disabled={saving || !!blocked} title={blocked ?? undefined} onClick={onSave}>Save</button>
       <button type="button" className={ghostBtn} onClick={onReset}>Reset</button>
       {updated && <span className="ml-auto text-[10.5px] text-ink-muted">Last saved {formatDateTime(updated)}</span>}
     </div>
@@ -144,6 +141,7 @@ export function PosGeneralTab() {
   const d = g.draft;
   if (!d) return <div className="text-[11px] text-ink-muted">{g.q.error ?? "Loading settings…"}</div>;
   const set = <K extends keyof GeneralSettings>(k: K, v: GeneralSettings[K]) => g.setDraft({ ...d, [k]: v });
+  const fmtProblem = receiptNoFormatProblem(d.receipt_no_format);
   return (
     <div className="max-w-xl space-y-4">
       <section>
@@ -159,7 +157,7 @@ export function PosGeneralTab() {
           <Field label="Price override"><select className={inputCls} value={d.price_override} onChange={(e) => set("price_override", e.target.value as GeneralSettings["price_override"])}><option value="SUPERVISOR">Supervisor PIN only</option><option value="OFF">Off</option></select></Field>
           <Field label="Void rule"><select className={inputCls} value={d.void_rule} onChange={(e) => set("void_rule", e.target.value as GeneralSettings["void_rule"])}><option value="SUPERVISOR_ANY_TIME">Supervisor, any time</option><option value="SUPERVISOR_SAME_DAY">Supervisor, same day only</option></select></Field>
           <Field label="Return / exchange window"><select className={inputCls} value={d.return_window} onChange={(e) => set("return_window", e.target.value as GeneralSettings["return_window"])}><option value="EVENT">Any day within the event</option><option value="SAME_DAY">Same day only</option></select></Field>
-          <Field label="Receipt no format" hint="{TERM} = terminal ID, {000000} = running number"><input className={inputCls} value={d.receipt_no_format} onChange={(e) => set("receipt_no_format", e.target.value)} /></Field>
+          <Field label="Receipt no format" hint="{TERM} = terminal ID, {000000} = running number"><input className={cn(inputCls, fmtProblem && "border-red-500")} aria-invalid={!!fmtProblem} value={d.receipt_no_format} onChange={(e) => set("receipt_no_format", e.target.value)} />{fmtProblem && <span role="alert" className="mt-0.5 block text-[10.5px] text-red-600">{fmtProblem}</span>}</Field>
           <Field label="Customer field"><select className={inputCls} value={d.customer_field} onChange={(e) => set("customer_field", e.target.value as GeneralSettings["customer_field"])}><option value="OPTIONAL">Optional on the sell screen</option><option value="HIDDEN">Hidden</option></select></Field>
           <Field label="Main POS stock location" hint="Deducted when an event has no booth allocation" className="col-span-2">
             <select className={inputCls} value={d.pos_store_warehouse_id ?? ""} onChange={(e) => set("pos_store_warehouse_id", e.target.value || null)}>
@@ -189,7 +187,7 @@ export function PosGeneralTab() {
         </div>
         <Toggle checked={d.daily_summary_email} onChange={(v) => set("daily_summary_email", v)} label="Daily summary email" hint="Off: only the one end-of-event summary is sent." />
       </section>
-      <SaveBar saving={g.saving} onSave={() => void g.save()} onReset={g.reset} updated={g.updated} />
+      <SaveBar saving={g.saving} onSave={() => void g.save()} onReset={g.reset} updated={g.updated} blocked={fmtProblem} />
     </div>
   );
 }

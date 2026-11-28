@@ -80,8 +80,6 @@ describe('filterOutstandingGrnLines', () => {
   });
 });
 
-/* Staff 2026-11-09, HC-GRN-2611-052: one receipt held lines from two POs and
-   the picker labelled all of them with the first. */
 describe('a note that received from several POs', () => {
   const NOTE_52 = [
     line({ grnItemId: 'g52-1', grnId: 'grn-52', grnDocNo: 'HC-GRN-2611-052', purchaseOrderId: 'po-125', poDocNo: 'HC-PO-2610-125' }),

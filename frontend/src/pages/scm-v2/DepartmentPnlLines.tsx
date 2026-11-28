@@ -12,7 +12,7 @@ import { useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { BookOpen, ChevronRight, X } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { ledgerHref } from '../../vendor/scm/lib/report-layout';
 import { useDepartmentLines, type DeptEntry, type DeptLinesAsk } from '../../vendor/scm/lib/department-queries';
 import { fmtMoney } from './reports/FinanceGrid';
@@ -23,16 +23,13 @@ import s from './DepartmentPnlLines.module.css';
 /** One line as the panel prints it. */
 export type DrillRow = {
   id: string;
-  /** Its date; a figure of the Logistics cost report has its month only. */
   day: string | null;
   month: string;
-  /** The sheet's row it is on, where the figure adds several (a block's total). */
   row: string | null;
   region: string | null;
   ref: string | null;
   account: string | null;
   text: string | null;
-  /** How the amount was arrived at (a share of a line, a month of a spread bill), under its words. */
   how: string | null;
   sen: number;
 };
@@ -42,8 +39,6 @@ export type DrillLedger = { codes: string[]; from: string; to: string } | null;
 
 const shown = (rows: readonly DrillRow[], k: keyof DrillRow) => rows.some((r) => r[k] != null && r[k] !== '');
 
-/* Narrow enough that a row's lines fit the report's own width, the Amount in sight;
-   the table widens with the report. */
 function columnsOf(rows: readonly DrillRow[]): Column<DrillRow>[] {
   const cols: Column<DrillRow>[] = [
     { key: 'date', label: 'Date', width: '120px', getValue: (r) => r.day ?? r.month, render: (r) => (r.day ? fmtDate(r.day) : monthName(`${r.month}-01`)) },

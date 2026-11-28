@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// post-si-revenue — idempotent Sales Invoice → General Ledger posting.
-//
-// Confirming / creating a Sales Invoice records revenue: Dr AR / Cr Sales for
-// the invoice total, booked through acc/engine (THE one posting gate — see
-// backend/src/acc/rules.ts for the whole rules table). This file owns the SI
-// specifics only: fetching the invoice, the migrated-source guard, and mapping
-// the engine's answers onto this module's historical result contract.
-//
-// IDEMPOTENT: keyed on (source_type='SI', source_doc_no=invoice_number) — the
-// engine's guard fails closed on a read blip and the database repeats the rule
-// with the acc_je_one_active_source unique index. This is the single source of
-// truth shared by:
-//   • POST /accounting/post/si/:invoiceNumber  (manual / explicit re-post)
-//   • POST /sales-invoices                     (auto-post on create/confirm)
-// ----------------------------------------------------------------------------
 
 import { todayMyt } from './my-time';
 import { postJournal, reverseJournal } from '../../acc/engine';
@@ -21,13 +5,11 @@ import { resolveRoles, siLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import { splitByItemGroup } from '../../acc/item-group-split';
 import { customerPartyCode } from '../../acc/payments';
 import { applyDepositInvoicesBestEffort } from '../../acc/deposit-invoices';
+import { applyAutoCountDepositBestEffort } from '../../acc/autocount-deposits';
 
 export type PostSiResult =
   | { ok: true; status: 'posted'; jeNo: string; jeId: string; totalSen: number }
   | { ok: true; status: 'already_posted'; jeNo: string; jeId: string }
-  /* Deliberately not posted, and that is a SUCCESS — see the migrated guard in
-     postSiRevenue. `ok: true` so no caller records a failure for a thing that
-     was never meant to post. */
   | { ok: true; status: 'migrated_source' }
   /* The lines could not be classified (docs/bugs/0829): a line with no
      product group, or a group with no sales account bound for this company.
@@ -47,16 +29,9 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
     .single();
   if (error || !si) return { ok: false, status: 'invoice_not_found' };
 
-  /* MIGRATED PAPERWORK BOOKS NO REVENUE (migration 0280). This invoice mirrors
-     one AutoCount already raised, and AutoCount already booked the revenue and
-     the receivable. Posting Dr AR / Cr Sales here would count the same sale in
-     two books — and because the SI auto-posts on create/confirm, the leak would
-     be immediate and silent. Guarding here rather than at the call sites means
-     every path is covered by construction. */
   if ((si as { migrated_no_stock?: boolean | null }).migrated_no_stock === true) {
     return { ok: true, status: 'migrated_source' };
   }
-  // Multi-company (mig 0061): the JE + lines belong to the SI's company.
   const companyId = (si as { company_id?: number | null }).company_id ?? null;
 
   const totalSen = Number(si.total_sen);
@@ -115,13 +90,16 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
     await applyDepositInvoicesBestEffort(sb, {
       companyId, siId: (si as { id: string }).id, siNumber: si.invoice_number, soDocNo, invoiceDate: si.invoice_date, actor: null,
     });
+    /* The deposit the order took in AutoCount, which AutoCount already counted
+       as sales, comes back out of sales here onto the same AR party — once per
+       order (owner 2026-11-26). */
+    await applyAutoCountDepositBestEffort(sb, {
+      companyId, siId: (si as { id: string }).id, siNumber: si.invoice_number, soDocNo, invoiceDate: si.invoice_date,
+      party: { code: partyCode, name: si.debtor_name ?? null }, actor: null,
+    });
     if (r.status === 'already_posted') return { ok: true, status: 'already_posted', jeNo: r.jeNo, jeId: r.jeId };
     return { ok: true, status: 'posted', jeNo: r.jeNo, jeId: r.jeId, totalSen };
   }
-  /* The engine's idempotency guard failed to ANSWER — the SI stays unposted and
-     the next call (create/confirm/resync are all idempotent) posts it once.
-     Logged the way the in-file guard used to log, because silence here is how a
-     revenue posting quietly never happens. */
   if (r.status === 'idempotency_read_failed') {
     /* eslint-disable-next-line no-console */
     console.error('[si-revenue] idempotency read failed — SI NOT posted:', invoiceNumber, r.reason);
@@ -130,15 +108,9 @@ export async function postSiRevenue(sb: any, invoiceNumber: string): Promise<Pos
   if (r.status === 'je_insert_failed' || r.status === 'lines_insert_failed' || r.status === 'post_failed') {
     return { ok: false, status: r.status, reason: r.reason };
   }
-  // Shape/chart refusals (unbalanced, bad account, …) cannot happen for the
-  // rule's lines unless the chart itself is wrong (an inactive sales account
-  // bound to a group) — surface them loudly under the historical catch-all
-  // status.
   return { ok: false, status: 'post_failed', reason: `${r.status}: ${r.reason ?? ''}` };
 }
 
-/* 'reversal_read_failed' is the honest third state this type was missing: a read
-   that did not answer is neither "reversed" nor "nothing to reverse". */
 export type ReverseSiResult =
   | { ok: true; status: 'reversed'; jeNo: string; jeId: string }
   | { ok: true; status: 'already_reversed' | 'nothing_to_reverse' }
@@ -187,7 +159,6 @@ export type ResyncSiResult =
  * Best-effort caller pattern — never blocks the line edit on a GL hiccup.
  */
 export async function resyncSiRevenue(sb: any, invoiceNumber: string): Promise<ResyncSiResult> {
-  // Current live SI JE (non-reversed) + its booked total.
   const { data: jeRows, error: jeErr } = await sb
     .from('journal_entries')
     .select('id, total_debit_sen, reversed')
@@ -197,16 +168,6 @@ export async function resyncSiRevenue(sb: any, invoiceNumber: string): Promise<R
   const active = ((jeRows ?? []) as Array<{ id: string; total_debit_sen: number; reversed: boolean | null }>)
     .find((r) => !r.reversed);
 
-  /* The most destructive read in this file, and it reads as a lookup. A blip left
-     `si` null, so newTotal folded to 0 and status folded to '' — which walks
-     straight past the CANCELLED/DRAFT short-circuit, fails the unchanged-total
-     test against any real total, reverses the live JE, and then returns
-     { ok:true, 'reversed_to_zero' } because 0 <= 0. A healthy invoice loses its
-     revenue on a line edit and the caller is told it succeeded. It does NOT
-     re-post (the re-post sits after that early return), so nothing self-heals
-     until someone edits a line again.
-     `error === null && si === null` stays untouched: the invoice is genuinely
-     gone and voiding its JE is the existing, intended behaviour. */
   const { data: si, error: siErr } = await sb
     .from('sales_invoices')
     .select('total_sen, status')
@@ -215,10 +176,6 @@ export async function resyncSiRevenue(sb: any, invoiceNumber: string): Promise<R
   if (siErr) return { ok: false, status: 'resync_read_failed', reason: `si: ${siErr.message}` };
   const newTotal = Number((si as { total_sen?: number } | null)?.total_sen ?? 0);
 
-  /* A CANCELLED or DRAFT invoice must never (re)post revenue. CANCELLED: its JE
-     was already reversed on cancel. DRAFT: it has not committed any revenue yet
-     (posting happens on confirm) — editing a draft's lines must NOT post GL.
-     Both are short-circuited so a line mutation can't leak revenue. */
   {
     const s = ((si as { status?: string } | null)?.status ?? '').toUpperCase();
     if (s === 'CANCELLED' || s === 'DRAFT') {
@@ -227,8 +184,6 @@ export async function resyncSiRevenue(sb: any, invoiceNumber: string): Promise<R
   }
 
   if (!active) {
-    // Never posted (or fully reversed). Post fresh only when there's value —
-    // SI posts revenue on issue, so a positive total with no live JE should post.
     if (newTotal > 0) {
       const post = await postSiRevenue(sb, invoiceNumber);
       return post.ok ? { ok: true, status: 'posted' } : { ok: false, status: post.status, reason: (post as { reason?: string }).reason };
@@ -238,12 +193,9 @@ export async function resyncSiRevenue(sb: any, invoiceNumber: string): Promise<R
 
   if (Number(active.total_debit_sen) === newTotal) return { ok: true, status: 'unchanged' };
 
-  // Total changed → void the stale JE.
   const rev = await reverseSiRevenue(sb, invoiceNumber);
   if (!rev.ok) return { ok: false, status: rev.status, reason: (rev as { reason?: string }).reason };
 
-  // Re-post at the new total. A new total of 0 (all lines removed) means there is
-  // nothing left to record — the void alone leaves the GL flat.
   if (newTotal <= 0) return { ok: true, status: 'reversed_to_zero' };
   const post = await postSiRevenue(sb, invoiceNumber);
   return post.ok ? { ok: true, status: 'resynced' } : { ok: false, status: post.status, reason: (post as { reason?: string }).reason };

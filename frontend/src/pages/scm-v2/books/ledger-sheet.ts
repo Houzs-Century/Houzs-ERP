@@ -1,13 +1,5 @@
-// ----------------------------------------------------------------------------
-// ledger-sheet — the General ledger as the report sheet its Excel draws (the
-// owner's redesign, batch 6 §2.3 a7; the PDF and Print stay ledger-pdf, his
-// layout): each account a bold row, its balance brought forward, its lines
-// one step in with the running balance and its side, the account's total,
-// and the grand total last. What the screen shows — a block it shows
-// collapsed still exports whole, as the PDF prints it.
-// ----------------------------------------------------------------------------
 
-import { fmtDate } from '../../../vendor/shared/format';
+import { fmtDate } from '../../../../../shared/src/vendor/shared/format';
 import { counterLabel, journalLabel, type LedgerBlock, type LedgerReport } from '../../../vendor/scm/lib/ledger-queries';
 import type { ReportSheet, SheetColumn, SheetRow } from '../../../vendor/scm/lib/report-sheet';
 

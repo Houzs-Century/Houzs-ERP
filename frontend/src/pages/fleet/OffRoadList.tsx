@@ -1,8 +1,5 @@
-// The lorry's off-the-road windows. Read-only unless the caller passes onEnd, which
-// adds "Back on the road" to the windows staff entered by hand (a lorry service job
-// or Repair Days owns its own windows and ends them from its own screen).
 import { cn } from "../../lib/utils";
-import { fmtDate } from "../../vendor/shared/format";
+import { fmtDate } from "../../../../shared/src/vendor/shared/format";
 import { Pill } from "../FleetHealth";
 import { offRoadRows, type OffRoadRow, type OffRoadWindow } from "./fleetHealthModel";
 

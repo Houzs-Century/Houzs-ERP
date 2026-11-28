@@ -47,8 +47,6 @@ export function planChunks(answer: unknown, pageCount: number): PageChunk[] {
     const start = Number((c as { startPage?: unknown }).startPage);
     const end = Number((c as { endPage?: unknown }).endPage);
     if (!Number.isInteger(start) || !Number.isInteger(end) || start !== next || end < start || end > pageCount) return whole;
-    // Pages that carry the same document number are one document printed over
-    // several pages (Hookka DO-2611-037, 3 pages): never split them apart.
     const docNo = docNoKey((c as { docNo?: unknown }).docNo);
     if (docNo && docNo === lastDocNo) chunks[chunks.length - 1].endPage = end;
     else chunks.push({ startPage: start, endPage: end });

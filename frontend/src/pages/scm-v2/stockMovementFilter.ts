@@ -11,15 +11,10 @@ import { mytDayOfValue } from '../../vendor/scm/lib/dates';
 export type MovementType = InventoryMovement['movement_type'];
 
 export interface MovementFilter {
-  /** Allowed movement types; empty = every type. */
   types: readonly MovementType[];
-  /** Restrict to one warehouse by id; null = every warehouse. */
   warehouseId: string | null;
-  /** Inclusive lower bound on the movement date (YYYY-MM-DD); '' = no bound. */
   dateFrom: string;
-  /** Inclusive upper bound on the movement date (YYYY-MM-DD); '' = no bound. */
   dateTo: string;
-  /** Case-insensitive substring match on source_doc_no; '' = no filter. */
   sourceDoc: string;
 }
 
@@ -47,7 +42,6 @@ export const movementDateKey = (iso: string | null | undefined): string => {
   return mytDayOfValue(iso) ?? '';
 };
 
-/** Fields the filter reads; a superset row (with runningBalance etc.) is fine. */
 type FilterableMovement = Pick<
   InventoryMovement,
   'movement_type' | 'warehouse_id' | 'source_doc_no' | 'created_at'

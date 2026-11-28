@@ -5,50 +5,14 @@ import { requirePermission } from "../middleware/auth";
 import { checkRateLimit } from "../middleware/rateLimit";
 import { captureError } from "../services/errorTracking";
 
-// ---------------------------------------------------------------------------
-// /api/client-errors -- self-hosted client error reporting (owner ruling: no
-// Sentry; free, data stays in-house). The SPA's global error reporter
-// (frontend/src/lib/errorReporter.ts) batches uncaught errors and POSTs them
-// here; the daily 02:00 cron (services/clientErrors.ts) mails IT a digest.
-//
-// TRUST BOUNDARY. The reporter runs in the user's browser, so everything in the
-// body is attacker-controllable. Identity is therefore taken ONLY from the
-// session (c.get("user") / companyContext) -- a userId/companyId in the body is
-// ignored by schema. Sizes are capped at three layers: total payload (~16KB),
-// events per batch, and per-field lengths (stack truncated to 4KB, not
-// rejected -- a long stack is data loss, not an attack). The route is stripped
-// of query strings + fragments server-side so a token- or data-carrying URL can
-// never be stored even if a client forgets to.
-//
-// STORM COLLAPSE. Events are collapsed by dedup_hash in memory first (the
-// browser also sends a repeat as ONE event with a `count`), then the whole batch
-// is ONE multi-row write — upsert on the (dedup_hash, day, user_id) unique key
-// (mig 0151 / D1 126), so the same error looping for one user all day is ONE
-// row with a bumped count. dedup_hash = sha256(message + route + build_id).
-// It used to be one awaited statement per event, i.e. up to 20 sequential
-// database round trips per report (p50 675 ms in production).
-//
-// Raw env.DB (not Drizzle) deliberately: the vitest harness runs on isolated D1
-// where the Drizzle/postgres path has no database, and the immediate neighbours
-// this extends (audit.ts, systemHealth.ts, email.ts) are raw env.DB too. The
-// SQL below is the dialect-shared subset (ON CONFLICT DO UPDATE + `?` binds)
-// that runs identically on test D1 and the prod PG shim.
-// ---------------------------------------------------------------------------
 
 const app = new Hono<{ Bindings: Env }>();
 
-// Hard byte cap on the raw body. The reporter flushes at most 10 events of
-// ~4.5KB worst case, but it retries nothing -- a cap breach is a broken or
-// hostile client, and 413 is the honest answer.
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_STACK = 4096;
 const MAX_MESSAGE = 500;
 const MAX_ROUTE = 200;
 
-// Per-user batch budget: the reporter sends at most one batch per 10s, so 60
-// per 10 minutes is the ceiling of legitimate traffic even mid-storm; beyond
-// that is a loop the client-side caps failed to contain. KV-backed, fail-open
-// (same contract as every other checkRateLimit caller).
 const RL_MAX = 60;
 const RL_WINDOW_SEC = 600;
 
@@ -59,23 +23,14 @@ const eventSchema = z.object({
   buildId: z.string().max(64).optional(),
   userAgent: z.string().max(500).optional(),
   occurredAt: z.string().max(40).optional(),
-  /** How many times the browser saw this exact event before sending it. */
   count: z.number().int().min(1).max(1000).optional(),
 });
-// Unknown keys are stripped by zod -- a client-sent userId/companyId never
-// reaches the insert even as a value to ignore.
 const bodySchema = z.object({
   events: z.array(eventSchema).min(1).max(20),
 });
 
-// ISO-8601 UTC ("...Z") or nothing: the table's text timestamps sort
-// lexicographically, so one row in "YYYY-MM-DD HH:MM:SS" format would corrupt
-// every range scan. Anything else falls back to the server clock.
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
-/* Rows per INSERT. Test D1 refuses a statement with more than 100 bound
-   parameters; 13 per row x 7 = 91. A batch of distinct events is almost always
-   one statement; the rare larger one goes as one DB.batch. */
 const ROWS_PER_STATEMENT = 7;
 const COLUMNS = 13;
 
@@ -87,9 +42,6 @@ async function dedupHash(message: string, route: string, buildId: string): Promi
     .join("");
 }
 
-/** Pathname only -- no query string, no fragment, no origin. Privacy boundary:
- *  query strings routinely carry search terms, filters, and (in the reset/invite
- *  flows) tokens. */
 function sanitizeRoute(raw: string | undefined): string {
   const r = (raw ?? "").split("?")[0].split("#")[0];
   return r.slice(0, MAX_ROUTE);
@@ -118,15 +70,12 @@ app.post("/", async (c) => {
     return c.json({ error: "Invalid error report" }, 400);
   }
 
-  // Identity comes from the session + companyContext, never the body.
   const userId = Number(user.id) || 0;
   const companyId = c.get("companyId") ?? null;
 
   const nowIso = new Date().toISOString();
   const day = nowIso.slice(0, 10);
 
-  // Resolved once, outside the loop. c.executionCtx throws when the runtime
-  // supplied none; the reporter is fire-and-forget either way.
   let waitUntil: ((p: Promise<unknown>) => void) | undefined;
   try {
     waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
@@ -157,8 +106,6 @@ app.post("/", async (c) => {
       continue;
     }
     rows.set(hash, {
-      // The FIRST occurrence's values are kept (the first capture is the
-      // cleanest; a loop's later frames add nothing).
       occurredAt: ev.occurredAt && ISO_RE.test(ev.occurredAt) ? ev.occurredAt : nowIso,
       route,
       message,
@@ -178,8 +125,6 @@ app.post("/", async (c) => {
     const binds = chunk.flatMap((r) => [
       r.occurredAt, day, userId, companyId, r.route, r.message, r.stack, r.buildId, r.userAgent, r.hash, r.count, nowIso, nowIso,
     ]);
-    // Same-day same-user recurrence bumps the counter instead of inserting.
-    // stack/user_agent/occurred_at keep the FIRST occurrence's values.
     statements.push(
       c.env.DB.prepare(
         `INSERT INTO client_errors
@@ -197,17 +142,6 @@ app.post("/", async (c) => {
   let stored = 0;
   for (const r of all) {
     stored += r.count;
-    // Mirror the SAME sanitized event to the error tracker so a white-screen
-    // gets an alert in minutes instead of waiting for the 02:00 digest. INERT
-    // until SENTRY_DSN is set — with no DSN this returns immediately.
-    //
-    // WHY THE RELAY GOES THROUGH HERE AND NOT THROUGH THE BROWSER. Sending
-    // from the SPA would (a) bake a DSN into a public bundle, (b) hand the
-    // ingest server every staff member's real IP address, and (c) create a
-    // second payload path to audit. Relaying from the Worker means the ingest
-    // server's only client is Cloudflare, and the values below are the ones
-    // this route already sanitized and capped — the query string is gone, the
-    // route is a pathname, identity is the session's numeric ids.
     captureError(
       c.env,
       new Error(r.message),
@@ -227,9 +161,6 @@ app.post("/", async (c) => {
   return c.json({ success: true, stored });
 });
 
-// GET /summary?days=7 -- the System Health "Client Errors" panel. Super-admin
-// only (matches /api/admin/health/ledger): this is IT diagnostics, and stacks +
-// routes across every company are not for general staff eyes.
 app.get("/summary", requirePermission("*"), async (c) => {
   const days = Math.min(Math.max(parseInt(c.req.query("days") || "7", 10) || 7, 1), 30);
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -273,8 +204,6 @@ app.get("/summary", requirePermission("*"), async (c) => {
     };
     return c.json({ success: true, days, data, totals });
   } catch (e: any) {
-    // The health page must stay readable even when the thing it monitors is
-    // broken (systemHealth.ts contract).
     return c.json({ success: false, days, data: [], totals: { errors: 0, occurrences: 0 }, error: e?.message || "summary failed" });
   }
 });

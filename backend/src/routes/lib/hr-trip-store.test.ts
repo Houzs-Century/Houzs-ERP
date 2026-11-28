@@ -1,8 +1,6 @@
-// Delivery Planning stops and project Setup / Dismantle as trip rows: the job
-// type each becomes, and where its amount, state, postcode and crew come from.
 import { describe, expect, test } from "vitest";
 import { computeTripMonth, DEFAULT_TRIP_RATES } from "../../scm/shared/hr-trip-pay";
-import { deliveryOrderRows, doRunDate, planningRowOf, projectCrewLorries, projectLegRows, rowHrEdited, tripRowOf, type PlanningDo, type PlanningStop, type ProjectLeg } from "./hr-trip-store";
+import { deliveryOrderRows, doRunDate, planningRowOf, projectCrewLorries, projectLegRows, rowHrEdited, tripPaySisterCompanies, tripRowOf, type PlanningDo, type PlanningStop, type ProjectLeg } from "./hr-trip-store";
 
 const base: PlanningStop = {
   stop_id: "s1",
@@ -24,6 +22,7 @@ const base: PlanningStop = {
   dp_state: null,
   dp_postcode: null,
   dp_no: null,
+  dp_supplier_name: null,
   project_id: null,
   event_slug: null,
   event_name: null,
@@ -57,7 +56,6 @@ describe("planningRowOf", () => {
   test("a delivery with no SO pays commission on the amount typed on its DP job (owner 2026-11-20)", () => {
     const r = planningRowOf({ ...base, revenue_sen: 0, dp_sales_sen: "350000" }, who);
     expect(r.local_total_sen).toBe(350000);
-    /* A DO still wins when the stop has one. */
     const withDo = planningRowOf({ ...base, local_total_sen: "570000", revenue_sen: 0, dp_sales_sen: 350000 }, who);
     expect(withDo.local_total_sen).toBe(570000);
   });
@@ -83,6 +81,19 @@ describe("planningRowOf", () => {
     expect(planningRowOf({ ...base, stop_type: "SETUP", dp_state: "Melaka", project_id: "88", event_slug: "solo" }, who)).toMatchObject({ job_type: "SETUP", kind: "FAIR", event_type: "ROADSHOW", venue_key: "P88", state: "Melaka" });
     expect(planningRowOf({ ...base, stop_type: "DISMANTLE", project_id: "89", event_slug: "exhibition" }, who).event_type).toBe("EXHIBITION");
     expect(planningRowOf({ ...base, stop_type: "LORRY_SERVICE" }, who)).toMatchObject({ job_type: "LORRY_SERVICE", kind: "NONE" });
+  });
+
+  test("a Supplier pickup from Hookka is Supplier (Hookka); another supplier stays Supplier", () => {
+    const hookka = planningRowOf({ ...base, stop_type: "SUPPLIER_PICKUP", dp_no: "DP-H", dp_supplier_name: "HOOKKA INDUSTRIES SDN. BHD." }, who);
+    expect(hookka).toMatchObject({ job_type: "SUPPLIER_HOOKKA", kind: "SUPPLIER", doc_no: "DP-H" });
+    expect(planningRowOf({ ...base, stop_type: "SUPPLIER_PICKUP", dp_supplier_name: "DORSETTLOFT SDN. BHD." }, who).job_type).toBe("SUPPLIER");
+    expect(planningRowOf({ ...base, stop_type: "SUPPLIER_PICKUP", dp_supplier_name: null }, who).job_type).toBe("SUPPLIER");
+  });
+
+  test("a delivery to Singapore is a Transfer item, never a commissioned delivery", () => {
+    expect(planningRowOf({ ...base, do_number: "HC-DO-1", do_state: "West" }, who).job_type).toBe("TRANSFER");
+    expect(planningRowOf({ ...base, do_number: "HC-DO-1", do_state: "", dp_state: "Central" }, who).job_type).toBe("TRANSFER");
+    expect(planningRowOf({ ...base, do_number: "HC-DO-1", do_state: "Johor" }, who).job_type).toBe("DELIVERY_ORDER");
   });
 });
 
@@ -110,7 +121,7 @@ describe("project Setup / Dismantle from the Projects module", () => {
   const byName = (n: string) => ({ AMIR: 1, WAN: 2, ALI: 3 })[n.toUpperCase()] ?? null;
 
   test("one row per lorry of the phase, inside the trip month, crew matched by name", () => {
-    const rows = projectLegRows(project, "2026-10-23", "2026-11-22", new Set(), byName);
+    const rows = projectLegRows(project, "2026-10-23", "2026-11-22", new Set(), new Set(), byName);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
       source_ref: "project:42:SETUP:1",
@@ -128,10 +139,17 @@ describe("project Setup / Dismantle from the Projects module", () => {
     expect(rows[1]).toMatchObject({ lorry_plate: "VQE 9058", driver_1_employee_id: 3, trip_ref: "project:42:SETUP:2" });
   });
 
-  test("a phase Delivery Planning already carries is left to its stop; no crew falls back to the legacy driver", () => {
-    expect(projectLegRows(project, "2026-10-23", "2026-11-22", new Set(["42|SETUP|2026-11-05"]), byName)).toEqual([]);
-    const legacy = projectLegRows({ ...project, setup_crew: null, setup_driver_name: "Amir" }, "2026-10-23", "2026-11-22", new Set(), byName);
-    expect(legacy).toMatchObject([{ driver_1_name: "Amir", lorry_plate: "" }]);
+  test("a Delivery Planning stop carries only its own lorry, not the whole multi-lorry phase (HC-0125)", () => {
+    const vqeStays = projectLegRows(project, "2026-10-23", "2026-11-22", new Set(), new Set(["42|SETUP|2026-11-05|VPC9058"]), byName);
+    expect(vqeStays).toMatchObject([{ source_ref: "project:42:SETUP:2", lorry_plate: "VQE 9058", driver_1_name: "Ali" }]);
+    expect(projectLegRows(project, "2026-10-23", "2026-11-22", new Set(), new Set(["42|SETUP|2026-11-05|VPC9058", "42|SETUP|2026-11-05|VQE9058"]), byName)).toEqual([]);
+    expect(projectLegRows(project, "2026-10-23", "2026-11-22", new Set(), new Set(["42|SETUP|2026-11-05|"]), byName)).toEqual([]);
+  });
+
+  test("a plate-less leg (legacy single driver) falls back to the whole-phase key", () => {
+    const base = { ...project, setup_crew: null, setup_driver_name: "Amir" };
+    expect(projectLegRows(base, "2026-10-23", "2026-11-22", new Set(), new Set(), byName)).toMatchObject([{ driver_1_name: "Amir", lorry_plate: "" }]);
+    expect(projectLegRows(base, "2026-10-23", "2026-11-22", new Set(["42|SETUP|2026-11-05"]), new Set(), byName)).toEqual([]);
   });
 
   test("the flattened crew shape is one lorry; bad JSON is none", () => {
@@ -184,9 +202,7 @@ describe("delivery orders our lorries ran (Last Mile reaches them through the DO
   const rowsOf = (dos: PlanningDo[], stops: Set<string>) => deliveryOrderRows(dos, "2026-10-23", "2026-11-22", stops, who);
 
   test("the run date is the day Last Mile shows it on the lorry: the SO's due date for its newest live DO", () => {
-    // HC-DO-2611-219 is cut 2026-11-18 but its SO is due, and run, 2026-11-17.
     expect(doRunDate(doBase)).toBe("2026-11-17");
-    // An older DO of the SO (a partial delivery Last Mile no longer shows): the day it was delivered, else its DO date.
     expect(doRunDate({ ...doBase, is_latest_live: false, delivered_day: "2026-11-05" })).toBe("2026-11-05");
     expect(doRunDate({ ...doBase, is_latest_live: false, delivered_day: null })).toBe("2026-11-18");
     expect(doRunDate({ ...doBase, so_due_date: null, delivered_day: null })).toBe("2026-11-18");
@@ -232,7 +248,6 @@ describe("delivery orders our lorries ran (Last Mile reaches them through the DO
     expect(out({ lorry_internal: false })).toEqual([]);
     expect(out({ crew_plate: null, lorry_plate: null, lorry_internal: null })).toEqual([]);
     expect(out({ so_due_date: null, delivered_day: null, do_date: null })).toEqual([]);
-    // On the lorry but not yet signed for is still a run; a typed plate with no master counts.
     expect(out({ do_status: "IN_TRANSIT" })).toHaveLength(1);
     expect(out({ lorry_plate: null, lorry_internal: null })[0]?.lorry_plate).toBe("VNB 9058");
   });
@@ -250,5 +265,25 @@ describe("delivery orders our lorries ran (Last Mile reaches them through the DO
     };
     expect(pay({})).toEqual([[3, 1200000]]);
     expect(pay({ h2: null, h2_name: null })).toEqual([[2, 1200000]]);
+  });
+
+  test("a Singapore delivery is a Transfer item (RM15, no commission), not a commissioned delivery", () => {
+    const jt = (p: Partial<PlanningDo>) => rowsOf([{ ...doBase, ...p }], new Set())[0]?.job_type;
+    expect(jt({ do_state: "West", do_postcode: "642682" })).toBe("TRANSFER");
+    expect(jt({ do_state: "Singapore" })).toBe("TRANSFER");
+    expect(jt({ do_state: "", do_postcode: "138632" })).toBe("TRANSFER");
+    expect(jt({})).toBe("DELIVERY_ORDER");
+    const rows = rowsOf([{ ...doBase, do_state: "West" }], new Set()).map((r) => tripRowOf({ ...r, id: 1, hr_edited: false } as unknown as Parameters<typeof tripRowOf>[0]));
+    const out = computeTripMonth({ rows, rates: DEFAULT_TRIP_RATES, employeeOf: (x) => x.employeeId, missedDaysOf: () => 0, punches: new Map() });
+    expect(out.pay.get(11)?.commission.baseSen).toBe(0);
+    expect(out.pay.get(11)?.jobAllowanceSen).toBe(1500);
+  });
+});
+
+describe("cross-company Trip Pay (owner 2026-11-27)", () => {
+  test("HOUZS (1) also pays 2990 (2); 2990 and others pull only themselves", () => {
+    expect(tripPaySisterCompanies(1)).toEqual([2]);
+    expect(tripPaySisterCompanies(2)).toEqual([]);
+    expect(tripPaySisterCompanies(99)).toEqual([]);
   });
 });

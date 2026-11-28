@@ -1,6 +1,3 @@
-// The combo Excel file: one sheet for each of Price 1 to 4, laid out like the screen
-// (a row per combo, a column per size), plus a Modules sheet. Export and Import live
-// together so a file always reads back what was written.
 
 import { fmtDate, type SofaPriceTier } from '@2990s/shared';
 import { parseDmy } from '../DateField';
@@ -89,7 +86,6 @@ export type ImportChange = { kind: string; where: string; before: string; after:
 export type ComboImportPlan = {
   changes: ImportChange[];
   refused: string[];
-  /** Run in this order: a recompose moves a combo, so prices written after it land on the new modules. */
   recompose: Array<{ baseModel: string; from: string[][]; to: string[][] }>;
   retire: Array<{ baseModel: string; modules: string[][] }>;
   apply: ApplyComboItem[];
@@ -97,9 +93,7 @@ export type ComboImportPlan = {
 
 type PlanContext = {
   lines: readonly ComboLine[];
-  /** Every model this company has, with the modules it makes. */
   modulesByModel: Partial<Record<string, readonly string[]>>;
-  /** Every size the company has. A column outside these is a typing slip. */
   sizes: readonly string[];
   supplierId: string | null;
   supplierName: string | null;
@@ -108,8 +102,6 @@ type PlanContext = {
 
 const parseSlotCell = (cell: string): string[] => cell.split('|').map((c) => c.trim()).filter(Boolean);
 
-/** Who a file was exported for. null = Products, which has no Supplier column. A sheet
- *  with both is reported as the supplier, and a mix as more than one name. */
 function fileOwners(grids: ComboGrids): Array<string | null> {
   const owners = new Set<string | null>();
   for (const rows of Object.values(grids)) {
@@ -123,7 +115,6 @@ function fileOwners(grids: ComboGrids): Array<string | null> {
 
 export function planComboImport(grids: ComboGrids, ctx: PlanContext): ComboImportPlan {
   const plan: ComboImportPlan = { changes: [], refused: [], recompose: [], retire: [], apply: [] };
-  // A file from another page would write that page's prices onto this one.
   const strangers = fileOwners(grids).filter((o) => o !== ctx.supplierName);
   if (strangers.length > 0) {
     const whose = strangers.map((o) => o ?? 'the Products page').join(', ');
@@ -164,7 +155,6 @@ export function planComboImport(grids: ComboGrids, ctx: PlanContext): ComboImpor
       if (wrong.length > 0) { plan.refused.push(`${at}: ${wrong.join(', ')} is not a module of ${model}`); return; }
       const sameSet = ctx.lines.find((l) => l.key === comboKey(model, slots));
       if (!line && sameSet) {
-        // The name was retyped, the modules were not: a rename, not a second combo.
         named.set(nameKey(model, name), sameSet);
         plan.apply.push(...PRICE_TIERS.flatMap((tier): ApplyComboItem[] => (sameSet.byTier[tier]
           ? [{ baseModel: model, modules: sameSet.modules, tier, supplierId: ctx.supplierId, prices: {}, effectiveFrom: ctx.today, label: name }]
@@ -253,8 +243,6 @@ function planPriceSheet(
     const dateCell = row[col('Effective from')] ?? '';
     const typedDate = dateCell ? parseDmy(dateCell) : null;
     if (dateCell && !typedDate) { plan.refused.push(`${at}: ${dateCell} is not a date`); return; }
-    // The export prints the date a price started. Left as it is, a new price starts
-    // today rather than rewriting when the old one began.
     const current = line?.byTier[tier]?.effectiveFrom;
     const effectiveFrom = typedDate && typedDate !== current ? typedDate : ctx.today;
     const notes = row[col('Notes')] ?? '';

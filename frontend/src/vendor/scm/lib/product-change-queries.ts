@@ -19,7 +19,6 @@ export type ProductChangeBucket = 'SELLING' | 'COST_ONLY';
 export type ChangedLineSide = { code: string; qty: number; sellingSen: number; costSen: number };
 export type ChangedLine = {
   id: string;
-  /** Empty for a line that only moved with the change (a price, a set's other piece). */
   types: ProductChangeType[];
   before: ChangedLineSide | null;
   after: ChangedLineSide | null;
@@ -31,9 +30,7 @@ export type ProductChangeRow = {
   soDate: string | null;
   customer: string | null;
   salesperson: string;
-  /** The order came over from AutoCount at the cutover; the reports leave these out unless asked. */
   imported: boolean;
-  /** The Malaysia day of the change: the month it counts in. */
   changeDay: string;
   changedAt: string | null;
   route: 'DIRECT' | 'AMENDMENT';
@@ -52,15 +49,12 @@ export type ProductChangeRow = {
   covered: boolean;
   shortfallSen: number;
   lines: ChangedLine[];
-  /** Rebuilt from the order's history: the months before the record went live. */
   rebuilt: boolean;
-  /** A changed line's cost was not in that history and was taken from the product's own cost. */
   costEstimated: boolean;
 };
 
 export type ProductChangesData = {
   month: string;
-  /** The first and last days of the whole months read. */
   from: string;
   to: string;
   rows: ProductChangeRow[];

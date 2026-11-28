@@ -43,7 +43,7 @@ import {
 } from './mrp-tree-rows';
 import { isSofaAccessory } from './mrp-sofa-accessory';
 import { checkSofaSetsBeforePo } from './mrp-sofa-set-gate';
-import { fmtDate, fmtDateTime, fmtQty } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtQty } from '../../../../shared/src/vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { Button } from '../../components/Button';
@@ -52,26 +52,12 @@ import styles from './Mrp.module.css';
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-/* Toolbar utility button — matches the shared <PageHeader> secondaryActions
-   button so the MRP toolbar reads as native header chrome (the page's own
-   .ghostBtn / .primaryBtn only resolved via the removed .page cascade). */
 const TOOLBAR_BTN =
   'inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary disabled:cursor-default disabled:opacity-50';
 
 
-/* A tab id — the lower-cased product category it shows. NOT a closed union:
-   the tab list is derived from the catalogue the server reports, so a category
-   added to mfg_product_category tomorrow gets a tab without a code change here.
-   See mrp-views.ts for why a hard-coded list stranded 181 SKUs. */
 type View = string;
 
-/* LeadTimesDialog (Commander 2026-06-18, moved from SO Maintenance) — per-
-   category "order N days early". When you Proceed PO, the PO delivery date is
-   set this many days BEFORE the customer delivery date (see mfg-purchase-orders
-   /from-sos). Per-WAREHOUSE too (Commander 2026-06-22, migration 0184 / SCM mig
-   0036): "Global Defaults" (warehouseId null) is the fallback for a warehouse
-   with no number of its own. The rows are every product category the server
-   lists (2990-0063), with one Save for all of them (LeadTimesTable). */
 function LeadTimesDialog({ onClose, warehouses }: { onClose: () => void; warehouses: MrpWarehouse[] }) {
   const q = useCategoryLeadTimes();
   const update = useUpdateCategoryLeadTime();
@@ -131,22 +117,11 @@ function LeadTimesDialog({ onClose, warehouses }: { onClose: () => void; warehou
   );
 }
 
-/* MRP is split into one tab per product category (Commander 2026-06-15); the
-   list itself lives in mrp-views.ts and is derived from the catalogue the
-   server reports, because a hard-coded four stranded every DINING / BEDLINES /
-   DIFFUSER / CARPET line. Service is excluded (not an orderable stock item). */
 
-/* The Model / Sofa-set / colour-variant grouping + funnel that both this page
-   and the workbook export run lives in ./mrp-model-pipeline (computeTabModels).
-   Only the two ordering helpers this page uses directly stay here. */
 
-/* The SKU's default supplier id for a freshly-shown shortage line — its main
-   supplier (suppliers is main-first), else the first bound supplier, else null
-   (unbound SKU: no PO can be raised until a supplier is assigned). */
 const skuDefaultSupplierId = (s: MrpSku): string | null =>
   (s.suppliers.find((x) => x.isMain) ?? s.suppliers[0])?.supplierId ?? null;
 
-/* Only SHORTAGE lines are selectable / orderable. */
 const shortageLinesOf = (s: MrpSku) => s.lines.filter((l) => l.source === 'shortage' && l.shortageQty > 0 && l.soItemId);
 
 
@@ -158,18 +133,10 @@ export const Mrp = () => {
   const [showLeadTimes, setShowLeadTimes] = useState(false);
   const [view, setView] = useState<View>('sofa');
   const [warehouseId, setWarehouseId] = useState<string>('all');
-  /* Two expand levels: models (itemCode) and variants (rowKey). The sofa flat
-     view reuses expandedVariants (each sofa row is variant-level). */
   const [expandedModels, setExpandedModels] = useState<Set<string>>(new Set());
   const [expandedVariants, setExpandedVariants] = useState<Set<string>>(new Set());
-  /* Commander 2026-05-31 — selection lives at the SO ORDER-LINE level: each
-     individual shortage line (soItemId) has its own checkbox. The Model/Variant
-     checkboxes are parent "select all shortage lines beneath me" toggles. */
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [poMode, setPoMode] = useState<'combined' | 'per-so'>('combined');
-  /* Commander 2026-05-29 — turnover control: order by delivery-date window.
-     Single date window with a switchable basis (like the convert page): filter
-     by Delivery / Processing / SO date. Delivery basis = the turnover window. */
   const [dateBasis, setDateBasis] = useState<'delivery' | 'processing' | 'soDate' | 'orderBy'>('delivery');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
@@ -188,9 +155,6 @@ export const Mrp = () => {
      itself is still computed and tested server-side (MrpResult.undated,
      backend/src/scm/routes/mrp.test.ts); nothing on this page reads it now. */
   const [showUndated, setShowUndated] = useState<boolean>(false);
-  /* Commander 2026-05-29 — focus view: hide everything that's fully covered and
-     show ONLY the rows that still need ordering (shortage > 0), so the operator
-     can go straight to Proceed PO without wading past the Ready ones. */
   const [onlyShort, setOnlyShort] = useState<boolean>(false);
   /* Owner 2026-09-11 — "我的 MRP 也要有 search 的功能，要不然我都找不出 MRP 的
      list,那版太长了". A find box over the rows already in view: matches item
@@ -199,18 +163,9 @@ export const Mrp = () => {
      narrowing of the current tab — and a non-empty query force-expands the
      matches so the hit is visible without a manual drill. */
   const [search, setSearch] = useState<string>('');
-  /* Commander 2026-05-31 — supplier is chosen PER SHORTAGE SO LINE (different
-     lines of the same SKU may pick different suppliers). { soItemId: supplierId };
-     defaults to the SKU's main supplier when no entry. Covered / already-PO'd
-     lines never appear here — they show the PO's supplier read-only. */
   const [lineSupplier, setLineSupplier] = useState<Partial<Record<string, string>>>({});
   const setLineSupplierId = (soItemId: string, supplierId: string) =>
     setLineSupplier((prev) => ({ ...prev, [soItemId]: supplierId }));
-  /* In-app result dialog (Commander 2026-05-29: confirm INSIDE the page, not a
-     browser window.confirm/alert). null = closed.
-     'confirm' (Commander 2026-05-29) — Proceed PO first opens a confirm step so
-     the operator can OPTIONALLY pick one Expected Delivery date for the whole
-     batch; blank = keep each SO's own dates (today's behaviour). */
   const [dialog, setDialog] = useState<
     | { kind: 'info'; title: string; body: string }
     | { kind: 'created'; title: string; body: string }
@@ -218,8 +173,6 @@ export const Mrp = () => {
     | { kind: 'suppliers'; body: string; picks: Array<{ soItemId: string; qty: number; supplierId: string | null }>; orderedCodes: Set<string>; count: number; units: number }
     | null
   >(null);
-  /* The Expected Delivery date the operator typed into the confirm dialog
-     (YYYY-MM-DD). Blank = send no override → server uses each SO's own date. */
   const [proceedExpectedAt, setProceedExpectedAt] = useState<string>('');
 
   /* Each tab is locked to its own category (Commander 2026-06-15) — EXCEPT the
@@ -241,83 +194,17 @@ export const Mrp = () => {
   const apiCategory = view === 'sofa' ? null : mrpCategoryOf(view);
   const q = useMrp({ category: apiCategory, warehouseId, includeUndated: showUndated });
   const data = q.data;
-  /* THE TAB LIST IS THE SERVER'S, not a constant here. `categories` is every
-     category in this company's product catalogue (mrp.ts section 2 — paged,
-     company-scoped, and independent of the category filter, so every tab's
-     response carries the same list). Four tabs were typed here while the enum
-     had nine members, and the four that had no tab were dropped by the server
-     before render and again by the filter below: planned, quantified, shown
-     nowhere. See mrp-views.ts. */
   const views = mrpViews(data?.categories);
-  /* Stored planning snapshot (option B, 2026-08-19). `data.stored` is true when
-     this came from the saved snapshot (the default view opens instantly from it);
-     `regenerate` recomputes it server-side. See mrp-snapshot.ts. */
   const regenerate = useRegenerateMrp();
-  /* After a PO create or a stale refusal the plan on screen is out of date. A
-     stored plan must be recomputed (a refetch re-reads the same snapshot); a live
-     one only needs re-reading, and regenerating there would write a first
-     snapshot for a company the scheduled refresh does not keep fresh. */
   const recalculatePlan = () => {
     if (data?.stored) regenerate.mutate(undefined, { onSettled: () => { void q.refetch(); } });
     else void q.refetch();
   };
-  /* `data.undated` (the tab-appropriate count of withheld demand) is no longer
-     read here — the banner that displayed it was removed on the owner's
-     instruction, 2026-08-20. The response still carries it and the backend still
-     tests it; if it is ever surfaced again, read `sofaSets` on the sofa view and
-     `lines` everywhere else (section 8 is SOFA-only and ignores the category
-     filter, section 7 honours it — blending them reports the whole sofa book on
-     the Mattress tab), and take `hidden` from the RESPONSE rather than from
-     `showUndated`, so a request the server did not honour is not described as
-     the state the operator asked for. */
   const createPos = useCreatePosFromSoItems();
 
-  /* One key per convert RUN — the intent this page DOES have, and the reason
-     fix/doc-idempotency's "no bindable intent here" was half right. The MOUNT is
-     not the intent (this page stays open and runs convert after convert; a
-     per-mount key would make runs 2..N replay run 1 and silently raise NOTHING
-     while reporting POs created) and neither is the PAYLOAD (fromMrp converts
-     are reference-only and infinite BY DESIGN, so identical picks twice are two
-     legitimate POs). The RUN is: it begins when the operator commits a pick
-     selection through the Proceed → confirm dialog, and it ends when the server
-     answers. A ref, not state — nothing renders from it.
-
-     Why the key must be RETIRED ON LANDING, which lib/idempotency.ts normally
-     forbids ("retired by the intent ENDING, never by the write succeeding").
-     Both 2xx branches force it:
-       · total > 0 → the run landed, onSuccess CLEARS the selection and names the
-         POs. The selection IS the intent's representation, so clearing it ends
-         the intent — the sanctioned "dies with the row on success" shape, not the
-         forbidden rotate(). Keeping the key would make the operator's NEXT,
-         genuinely different selection replay this run's response.
-       · total === 0 → mfg-purchase-orders.ts:1831 answers 201 { created: [], total: 0 }
-         when every bucket's line-insert failed and its header was rolled back.
-         NOTHING was created, but the 201 IS claimed. Keeping the key would replay
-         that empty answer forever and the operator could never order these lines.
-     The module's no-rotate reasoning does not bite here: it guards the case where
-     a step AFTER a successful post fails and invites a re-press. Nothing here can
-     — setDialog runs synchronously after the (unawaited) refetch, so a stalled
-     refetch still shows "Successfully created N POs" with the numbers.
-
-     On ERROR the key is deliberately KEPT. A non-2xx already deletes the claim
-     server-side (idempotency.ts:103-108), so a genuinely failed run re-claims and
-     re-runs; the key only bites when the post COMMITTED and the response was lost
-     — the 4G case — where the selection is still on screen, "Order failed" invites
-     the re-press, and fromMrp means the server has NO qty backstop to stop it
-     duplicate-ordering the whole shortage. That is the bug this exists for. */
   const runKeyRef = useRef<string | null>(null);
 
-  /* Four category tabs (Commander 2026-06-15): Sofa is fed from the per-SO sofa
-     SETS; the other three filter the SKU payload to their own category so a
-     stray category can't leak across tabs. */
-  /* THE TAB DECIDES WHAT BELONGS TO IT, and it is the same module that built
-     the tab. Comparing to one string here is what stranded four categories
-     before (mrp-views.ts), and the Others tab stands for a SET, so equality
-     cannot express it — `rowBelongsToView` claims by EXCLUSION, which is the
-     only form that cannot leave a row homeless. */
   const activeView = views.find((v) => v.value === view) ?? views[0]!;
-  /* The page's live filters — the ONE object the funnel + grouping and the
-     workbook export both read (mrp-model-pipeline.ts). */
   const filters: MrpFilters = { dateFrom, dateTo, dateBasis, onlyShort, search };
   const hasWindow = Boolean(dateFrom || dateTo);
   /* Tab category funnel -> date window -> grouper -> only-shortages -> search,
@@ -326,13 +213,6 @@ export const Mrp = () => {
   const { viewSkus, models, displayModels, accessoryBySoDoc, forceOpen } =
     computeTabModels(data, activeView, filters);
 
-  /* Workbook export (v7 layout, owner-approved). Wired to DataTable's own Export
-     button via the `onExport` prop. Builds ONE .xlsx with a sheet per category
-     tab; each sheet is fetched with that tab's own `?category=` so its coverage
-     matches what that tab shows (a category filter changes the allocation inputs,
-     so the full plan can't be safely post-filtered), then run through the SAME
-     computeTabModels with the page's live warehouse / date / only-shortages /
-     search filters. See mrp-export-workbook.ts. */
   const [exporting, setExporting] = useState(false);
   // scope: 'all' keeps the owner-approved v7 workbook (one sheet per category
   // tab) unchanged; 'tab' exports only the tab currently open (owner 2026-09-17:
@@ -358,10 +238,6 @@ export const Mrp = () => {
   const onExportWorkbook = () => runExportWorkbook('all');
   const onExportCurrentTab = () => runExportWorkbook('tab');
 
-  /* Model-row expansion is driven by DataTable via its controlled-expansion API
-     (expandable.expandedIds = expandedModels, onExpandedChange = setExpandedModels);
-     Collapse/Expand-all and a search hit set that state directly. Variant-level
-     expansion stays the page's own (the drilldown is custom content). */
   const toggleVariant = (key: string) =>
     setExpandedVariants((prev) => {
       const next = new Set(prev);
@@ -380,14 +256,9 @@ export const Mrp = () => {
     setSelected(new Set());
     setExpandedModels(new Set());
     setExpandedVariants(new Set());
-    setSearch(''); // a query narrowing one tab would otherwise hide the next
+    setSearch('');
   };
 
-  /* Fire the (mode-aware) convert-from-SO endpoint for the given picks. Shared
-     by the General (per-variant shortage) and Sofa (per-set) order paths.
-     `expectedAt` (Commander 2026-05-29) — when set, the server applies it as the
-     PO header expected_at AND every PO line's delivery date for the whole batch;
-     when blank we send nothing so it keeps using each SO's own dates. */
   const runCreatePos = (
     picks: Array<{ soItemId: string; qty: number; supplierId: string | null }>,
     _orderedCodes: Set<string>,
@@ -398,22 +269,11 @@ export const Mrp = () => {
       setDialog({ kind: 'info', title: 'Nothing to order', body: 'No uncovered (shortage) lines in the current selection / window.' });
       return;
     }
-    /* Commander 2026-05-31 — supplier now travels PER PICK (the per-line
-       dropdown), so we no longer send supplierByCode from MRP. We DO send the
-       Combined/Per-SO `mode` so the toggle works: 'combined' groups by
-       (warehouse, supplier); 'per-so' splits further by source SO doc so each
-       SO gets its own PO. fromMrp tags every PO line as reference-only so it
-       never locks the source SO line (infinite-convert). */
-    /* planAsOf: the server refuses (mrp_plan_stale) when a PO was raised on these
-       SO lines after the plan on screen was calculated, so a stale plan cannot
-       order the same goods twice (backend lib/mrp-plan-freshness.ts). */
     const body = { picks, mode: poMode, fromMrp: true, planAsOf: data?.computedAt ?? null, allowSofaSupplierSplit, ...(expectedAt ? { expectedAt } : {}) };
     const runKey = runKeyRef.current ?? newIdempotencyKey();
     runKeyRef.current = runKey;
     createPos.mutate({ ...body, idempotencyKey: runKey }, {
       onSuccess: (res) => {
-        // The run landed (either branch below) — end it, so the next Proceed is a
-        // new run with a new key. See runKeyRef for why this is mandatory.
         runKeyRef.current = null;
         if (!res.total) {
           setDialog({
@@ -423,11 +283,7 @@ export const Mrp = () => {
           });
           return;
         }
-        // Refresh so coverage updates immediately; keep the result in an in-app
-        // dialog (not a browser alert) per commander.
         setSelected(new Set());
-        /* The page reads a stored plan: recompute it, or the lines just ordered
-           stay short on screen and can be ordered again. */
         recalculatePlan();
         setDialog({
           kind: 'created',
@@ -440,8 +296,6 @@ export const Mrp = () => {
         let codes: string[] = [];
         let errCode = '';
         try {
-          /* authedFetch turns the body into a plain sentence for `message` and
-             keeps the raw JSON on `body`, so the code is read from there. */
           const rawBody = (err as { body?: unknown }).body;
           const m = (typeof rawBody === 'string' ? rawBody : raw).match(/\{.*\}/s);
           if (m) {
@@ -453,11 +307,7 @@ export const Mrp = () => {
               return;
             }
           }
-        } catch { /* generic */ }
-        // A stale view can still try to order a line that was already PO'd in
-        // another session/tab (server: qty_exceeds_remaining). Refresh so the
-        // ordered line drops off, and tell the operator plainly instead of
-        // showing the raw error (Commander 2026-05-29).
+        } catch { }
         if (errCode === 'qty_exceeds_remaining' || errCode === 'mrp_plan_stale') {
           recalculatePlan();
           setDialog({
@@ -474,11 +324,6 @@ export const Mrp = () => {
     });
   };
 
-  /* General — picks (+ codes + unit count) from SHORTAGE order-lines. When a
-     line-level selection exists, only the selected soItemIds are gathered;
-     otherwise every visible shortage line. Each pick carries its per-line
-     chosen supplier (defaulting to the line's rule supplier, else the SKU's
-   main supplier). */
   const gatherShortages = (skus: MrpResponse['skus'], onlySelected: boolean) => {
     const picks: Array<{ soItemId: string; qty: number; supplierId: string | null }> = [];
     const orderedCodes = new Set<string>();
@@ -495,8 +340,6 @@ export const Mrp = () => {
     return { picks, orderedCodes, units };
   };
 
-  /* Sofa — same per-SO-line shortage picks as General (the adapter already
-     unified the sets into MrpSku lines), PLUS the pillow pull-in. */
   const gatherSofa = (skus: MrpResponse['skus'], onlySelected: boolean) => {
     const base = gatherShortages(skus, onlySelected);
     const picks = [...base.picks];
@@ -562,10 +405,7 @@ export const Mrp = () => {
     return { picks, orderedCodes, units, blocked: undefined, confirmSuppliers };
   };
 
-  /* Commander 2026-05-31 — selection is now per SO ORDER-LINE (soItemId). Every
-     shortage line in view is one selectable unit. */
   const shortageSkus = viewSkus.filter((s) => s.shortage > 0);
-  // All selectable shortage line ids currently in view (header select-all set).
   const allShortageLineIds = shortageSkus.flatMap((s) => shortageLinesOf(s).map((l) => l.soItemId));
 
   /* Sofa set-selection (Commander 2026-05-30 — "选1 就整套一起选 同个SO"): a sofa
@@ -587,8 +427,6 @@ export const Mrp = () => {
       }
     }
   }
-  /* Expand a set of line ids to include every same-SO sibling line (sofa only;
-     in General the input set is returned unchanged). */
   const expandSofaSiblings = (ids: Iterable<string>): Set<string> => {
     const out = new Set<string>();
     for (const id of ids) {
@@ -600,7 +438,6 @@ export const Mrp = () => {
     return out;
   };
 
-  /* Toggle one SO order-line (General = just that line; Sofa = its whole set). */
   const toggleSelectLine = (soItemId: string) => {
     const group = expandSofaSiblings([soItemId]);
     setSelected((prev) => {
@@ -610,8 +447,6 @@ export const Mrp = () => {
       return next;
     });
   };
-  /* Parent toggle: select / deselect every shortage line beneath the given
-     line ids (used by the Model + Variant parent checkboxes). */
   const setLinesSelected = (ids: string[], on: boolean) => {
     const group = expandSofaSiblings(ids);
     setSelected((prev) => {
@@ -621,8 +456,6 @@ export const Mrp = () => {
     });
   };
 
-  // View-agnostic counts the header / select-all / summary read from — now
-  // line-based (each shortage SO order-line is one unit).
   const shortCount = allShortageLineIds.length;
   const selectedShortCount = allShortageLineIds.filter((id) => selected.has(id)).length;
 
@@ -633,9 +466,6 @@ export const Mrp = () => {
     setSelected(new Set(allShortageLineIds));
   };
 
-  /* One-click backfill of warehouses onto older SOs that have none (derived
-     from each SO's State). Fixes the "—" warehouse on SOs placed before per-line
-     warehouse routing / via paths that sent no address. Admin-only. */
   const onBackfillWarehouses = async () => {
     if (backfilling) return;
     setBackfilling(true);
@@ -656,9 +486,6 @@ export const Mrp = () => {
     }
   };
 
-  /* Proceed PO — gather the selected shortage lines (or all visible shortage
-     lines if none selected) and open the confirm dialog so the operator can
-     OPTIONALLY pick one Expected Delivery date for the whole batch. */
   const onProceed = () => {
     const onlySelected = selectedShortCount > 0;
     const { picks, orderedCodes, units, blocked, confirmSuppliers } = view === 'sofa'
@@ -842,10 +669,6 @@ export const Mrp = () => {
     },
   ];
 
-  /* A non-empty search force-opens every shown model so the match is visible
-     without a manual drill (the drilldown searches child lines too). Otherwise
-     the page's own expand/collapse state (Collapse/Expand-all, chevrons) drives
-     DataTable through its controlled-expansion API. */
   const modelExpandedIds = forceOpen
     ? new Set(displayModels.map((m) => m.groupKey))
     : expandedModels;
@@ -857,9 +680,6 @@ export const Mrp = () => {
         title="MRP · Stock Status Report"
         actions={
           <>
-            {/* Group 1 — VIEW SWITCH: segmented toggle, one connected control with
-                the active option highlighted (same semantics as Create-PO-from-SO).
-                Reskinned to the reference FilterPills slab. */}
             <div
               className="inline-flex items-center gap-0.5 rounded-md border border-border bg-surface p-1 shadow-stone"
               role="group"
@@ -888,20 +708,12 @@ export const Mrp = () => {
 
             <span className="hidden h-5 w-px self-center bg-border sm:block" aria-hidden="true" />
 
-            {/* Group 2 — UTILITIES: lighter, secondary buttons grouped together. */}
             <div className="inline-flex items-center gap-1.5" role="group" aria-label="Table utilities">
               <button type="button" className={TOOLBAR_BTN} onClick={collapseAll}>Collapse</button>
               <button type="button" className={TOOLBAR_BTN} onClick={expandAll}>Expand</button>
               <button type="button" className={TOOLBAR_BTN} onClick={() => void q.refetch()} disabled={q.isFetching}>
                 <RefreshCw {...ICON} className={q.isFetching ? 'animate-spin' : undefined} /> Refresh
               </button>
-              {/* The report's Export button (the shared DataTable's own, wired via
-                  `onExport` below) downloads the v7 workbook — one sheet per
-                  category tab, in the owner-approved layout. The per-tab variant
-                  sits in the DataTable's own toolbar (`toolbarExtra` below),
-                  beside Export/Columns rather than up here. */}
-              {/* Server-side Regenerate — recompute + save the stored planning
-                  snapshot (option B). Distinct from Refresh, which only re-reads. */}
               <button type="button" className={TOOLBAR_BTN} onClick={() => regenerate.mutate()} disabled={regenerate.isPending}
                 title="Recompute the MRP plan from current stock, orders and deliveries, and save it">
                 <RefreshCw {...ICON} className={regenerate.isPending ? 'animate-spin' : undefined} /> {regenerate.isPending ? 'Regenerating…' : 'Regenerate'}
@@ -917,12 +729,6 @@ export const Mrp = () => {
                   {backfilling ? 'Re-binding…' : 'Re-bind WH'}
                 </button>
               )}
-              {/* Lead Times is SCM master-data config (order-N-days-early per
-                  category), so it gates on canWriteScmConfig — the same
-                  position-driven "may write SCM config" answer SO Maintenance
-                  uses — NOT isAdmin, which only Owner/IT-Admin ('*') pass. That
-                  left Procurement/Operation unable to set the lead times their
-                  own Proceed PO consumes. */}
               {canWriteScmConfig && (
                 <button type="button" className={TOOLBAR_BTN} onClick={() => setShowLeadTimes(true)}
                   title="Set how many days early each category's PO is ordered (applied when you Proceed PO)">
@@ -933,7 +739,6 @@ export const Mrp = () => {
           </>
         }
         primaryAction={
-          /* Group 3 — PRIMARY CTA: the strongest action, far right. */
           <Button
             type="button"
             variant="primary"
@@ -957,11 +762,6 @@ export const Mrp = () => {
         }
       />
 
-      {/* Tabs — Commander 2026-06-15: one tab per category (Service excluded).
-          The LIST comes from the response's own `categories` (mrp-views.ts), so
-          a category the catalogue holds can never be one this page cannot show.
-          Underline strip matching the shared <TabStrip>; hand-rolled so the
-          tablist/tab/aria-selected semantics this page already had survive. */}
       <div className="no-scrollbar -mx-4 flex items-center gap-1 overflow-x-auto border-b border-border px-4 sm:mx-0 sm:px-0 [&>*]:shrink-0" role="tablist">
         {views.map((t) => (
           <button key={t.value} type="button" role="tab" aria-selected={view === t.value}
@@ -986,8 +786,6 @@ export const Mrp = () => {
         </div>
       )}
 
-      {/* Filters — switchable date basis drives the window; Warehouse over
-          Category on the right. Category sub-filter only on the General tab. */}
       <div className={styles.filterRow}>
         {/* Search (owner 2026-09-11) moved into the DataTable toolbar (its
             `search` slot) so it sits with the column funnels / Reset, like every
@@ -1039,15 +837,8 @@ export const Mrp = () => {
             ))}
           </select>
         </label>
-        {/* Category sub-filter removed — each tab IS its own category now (M1). */}
       </div>
 
-      {/* Report table — the shared DataTable. Top-level rows are Models / SOs /
-          colour variants (the `columns` above); the Model -> Variant -> SO
-          lines open under them as rows in the same columns. Frozen
-          header, per-column funnel filters, sort, column show/hide, CSV export
-          and Reset layout all come from DataTable — the parity the owner asked
-          for, and the freeze that never worked on the hand-built table. */}
       <DataTable<ModelGroup>
         tableId="mrp"
         documentLabel="MRP · Stock Status"
@@ -1061,8 +852,6 @@ export const Mrp = () => {
         getRowKey={(g) => g.groupKey}
         getRowClassName={(g) => (g.shortage > 0 ? styles.rowShort : undefined)}
         exportName={`mrp-${view}`}
-        /* The Export button downloads the v7 workbook (a sheet per category tab),
-           not this tab's grid CSV — see onExportWorkbook. */
         exportLabel="Export all"
         onExport={onExportWorkbook}
         toolbarExtra={
@@ -1100,9 +889,6 @@ export const Mrp = () => {
         }
       />
 
-      {/* In-app result dialog — Commander 2026-05-29: confirm/result inside the
-          page, not a browser alert. The 'confirm' kind is the Proceed-PO step
-          that lets the operator OPTIONALLY pick one Expected Delivery date. */}
       {dialog && dialog.kind === 'confirm' && (
         <div className={styles.dialogBackdrop} onClick={() => setDialog(null)}>
           <div className={styles.dialog} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">

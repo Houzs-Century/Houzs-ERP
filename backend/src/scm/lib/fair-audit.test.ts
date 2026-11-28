@@ -62,7 +62,6 @@ describe('recordFairChange — one History row per move', () => {
   });
 
   it('a re-link to the same fair that moves the place still gets its row — the place only (owner 2026-10-22)', async () => {
-    /* HC-SO-2609-388: linked to the MLE fair, still saying AEON BUKIT MERTAJAM. */
     const tables: Record<string, Array<Record<string, unknown>>> = {
       mfg_sales_orders: [{ doc_no: 'HC-SO-2609-388', company_id: 1 }],
       mfg_so_audit_log: [],

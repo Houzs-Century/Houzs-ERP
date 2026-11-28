@@ -15,7 +15,7 @@ import { cardPaymentKey, type BankCardPayment } from './bank-queries';
 import { useReconcilePick } from './bank-reconcile-pick';
 import { EntryDocument } from './bank-entry-doc';
 import { fmt } from './settlement-ui';
-import { fmtDateOrDash } from '../../vendor/shared/format';
+import { fmtDateOrDash } from '../../../../shared/src/vendor/shared/format';
 import look from './BankStatements.module.css';
 import grid from './MerchantRecon.module.css';
 
@@ -27,7 +27,6 @@ export function BankCardPaymentsTab({ cards }: { cards: BankCardPayment[] }) {
   const pick = useReconcilePick();
   const [find, setFind] = useState('');
   const needle = find.trim().toLowerCase();
-  /* A ticked payment stays in view whatever is typed, so the bar never counts one nobody can see. */
   const shown = needle === '' ? cards : cards.filter((p) => matches(p, needle) || pick.pickedCards.includes(cardPaymentKey(p)));
   return (
     <div className={look.section}>

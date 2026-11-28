@@ -12,7 +12,7 @@
 
 import { useState } from 'react';
 import { History, Pencil, Save, Trash2 } from 'lucide-react';
-import { fmtDate, fmtDateTime, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import type { AuditLabelDictionary } from '../../components/audit/audit-labels';
@@ -299,7 +299,6 @@ export function DailyBankCashbook({ date, today }: { date: string; today: string
   const open = openOn(accounts, date);
   const canEdit = day?.canWrite === true;
   const total = (day?.receipts ?? []).filter((r) => r.counted).reduce((n, r) => n + r.amountSen, 0);
-  /* A receipt typed with a note, before the table: listed on its own, changed there. */
   const noted = (day?.receipts ?? []).filter((r) => r.method == null);
   const cells = (day?.receipts ?? []).filter((r) => r.method != null);
   const future = date > today;

@@ -34,11 +34,9 @@ export type ListMrpFallback = 'missing' | 'stale' | 'refresh';
 
 /** What every list-enrichment response carries next to `enrichment`. */
 export type ListMrpMeta = {
-  /** When the MRP answer was computed (ISO). null only when a live run failed. */
   asOf: string | null;
   source: 'snapshot' | 'live';
   fallback: ListMrpFallback | null;
-  /** The live run failed: the MRP-derived cells are empty, not "no assignment". */
   failed: boolean;
 };
 
@@ -91,17 +89,13 @@ export async function resolveListMrp(
   }
   const asOf = new Date(run.startedAt).toISOString();
 
-  /* Keep the computation: the next list open, in any isolate, reads it. Only
-     for companies the cron keeps fresh (same rule as deferMrpSnapshotRefresh),
-     and only when it is newer than what is stored. */
   if (companyId != null && MRP_REFRESH_COMPANY_IDS.includes(companyId)
       && (!snap || Date.parse(snap.computedAt) < run.startedAt)) {
     const store = storeListMrpSnapshot(sb, companyId, result, asOf).catch((e: unknown) => {
       // eslint-disable-next-line no-console
       console.error(`[mrp-list-snapshot] store company=${companyId}`, e);
     });
-    /* c.executionCtx throws outside Workers (vitest); the promise is already caught. */
-    try { c.executionCtx.waitUntil(store); } catch { /* non-Workers runtime */ }
+    try { c.executionCtx.waitUntil(store); } catch { }
   }
   return { result, meta: { asOf, source: 'live', fallback: reason, failed: false } };
 }

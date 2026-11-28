@@ -14,7 +14,7 @@ import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
 import { parseMoneyToSen } from "../lib/money";
-import { fmtDate, fmtDateTime, todayMY } from "../vendor/shared/format";
+import { fmtDate, fmtDateTime, todayMY } from "../../../shared/src/vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 import { PlanServiceForm } from "./fleet/PlanServiceForm";
 import { BTN_GHOST, BTN_PRI, BTN_SEC, EMPTY, LABEL, PlateBadge, orNotSet } from "./fleet/FleetUi";
@@ -22,14 +22,6 @@ import { uploadEach } from "./fleet/fleetHealthModel";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import { openLoadedTab } from "../lib/openLoadedTab";
 
-// ---------------------------------------------------------------------------
-// Fleet Health — the shared types, the quick-look drawer and every section of a
-// lorry's record (plans, mileage, breakdowns, work orders, components, the
-// compliance vault). The dashboard itself is fleet/FleetHealthDashboard.tsx and
-// the record page is LorryRecord.tsx. All derived state (status, reminder
-// levels, KPIs) is computed by the backend from services/fleet-status.ts, so
-// these only render — they never re-derive the rules.
-// ---------------------------------------------------------------------------
 
 /* Owner, 2026-10-15: APAD / cross-border are not needed; the Geran (registration
    card) is. Geran has no expiry — kept on file, never reminds. */
@@ -59,7 +51,6 @@ export type DocView = {
   daysRemaining: number | null;
   reminderLevel: string;
   tone: Tone;
-  /** mig 0238 - the scans attached to this renewal. */
   files?: ComplianceFile[];
 };
 
@@ -137,21 +128,16 @@ export type VehicleRow = {
   plansOverdue: number;
   plansDueSoon: number;
   nextPlan: NextPlanView | null;
-  // Phase 3
   breakdownActive?: boolean;
   openBreakdowns?: number;
   openWorkOrders?: number;
   downtimeHours?: number | null;
   openProblem?: string | null;
-  /** The box, drawn as the side view on the board (mig 0209). */
   lengthFt?: number | null;
   widthFt?: number | null;
   heightFt?: number | null;
 };
 
-/* A copy of WORK_ORDER_STATES in services/fleet-status.ts, kept in step by
-   `npm run audit:work-order-states`. The stepper needs the ORDER, which the API
-   does not send. */
 const WORK_ORDER_STATES = [
   "REPORTED",
   "DIAGNOSED",
@@ -177,8 +163,6 @@ const WORK_ORDER_STATE_LABEL: Record<WorkOrderState, string> = {
 type PartView = { id: string; name: string; partNo: string | null; qty: number; unitPriceSen: number; lineSen: number; serial: string | null };
 export type WorkOrderView = {
   id: string;
-  /** WO-#### (mig 0248) — OURS. quotationNo is the workshop's own number, off
-   *  their document; it is not unique across vendors and is often absent. */
   woNo?: string | null;
   status: WorkOrderState;
   statusLabel: string;
@@ -187,8 +171,6 @@ export type WorkOrderView = {
   problem: string | null;
   diagnosis: string | null;
   workshop: string | null;
-  /** THEIRS — off the workshop's own document (mig 0241). Shown beside woNo so
-   *  the two are never confused for each other. */
   quotationNo?: string | null;
   invoiceNo?: string | null;
   labourSen: number;
@@ -212,7 +194,6 @@ export type WorkOrderView = {
 
 export type BreakdownView = {
   id: string;
-  /** BD-#### (mig 0248) — ours. */
   caseNo?: string | null;
   occurredAt: string | null;
   gpsLat: number | null;
@@ -292,13 +273,9 @@ export type DashboardPayload = {
 };
 
 export type VehicleDetailPayload = {
-  vehicle: VehicleRow & {
+  vehicle: Omit<VehicleRow, "compliance"> & {
     lastServiceWorkshop?: string | null;
-    /* WS3 (mig 0209) has stored the box since it shipped; the drawer never
-       showed it until 2026-08-01. capacity_m3 is derived from L x W x H. */
     isInternal?: boolean;
-    /* Mig 0245 — four dates that answer four different questions and are
-       routinely confused. Surfaced on the full record page. */
     manufactureDate?: string | null;
     registrationDate?: string | null;
     inServiceDate?: string | null;
@@ -358,8 +335,6 @@ export function fmtDowntime(hours: number | null): string {
   return h > 0 ? `${d}d ${h}h` : `${d}d`;
 }
 
-/* Re-exported, not re-implemented — this printed the STORAGE shape at the
-   user. LorryRecord.tsx imports the name from here. */
 export { fmtDateTime };
 
 export function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
@@ -381,7 +356,7 @@ export function fmtPlanRemaining(p: { kmRemaining: number | null; daysRemaining:
 
 /** The board's "Next service" cell: the single most-urgent plan (per-component),
  *  falling back to the legacy next-service target when no plans exist yet. */
-export function NextServiceCell({ v }: { v: VehicleRow }) {
+export function NextServiceCell({ v }: { v: Omit<VehicleRow, "compliance"> }) {
   if (v.nextPlan) {
     const np = v.nextPlan;
     const toneText = np.tone === "crit" ? "text-err" : np.tone === "warn" ? "text-warning-text" : "text-ink-muted";
@@ -420,6 +395,18 @@ export function openProblem(v: VehicleRow): string | null {
   return null;
 }
 
+/** Each type's current renewal, the shape a board row carries, from the
+ *  per-type history GET /vehicles/:id sends. */
+export function currentDocs(compliance: VehicleDetailPayload["compliance"] | undefined): VehicleRow["compliance"] {
+  const out: VehicleRow["compliance"] = {};
+  for (const t of DOC_TYPES) {
+    const g = compliance?.[t];
+    const d = g?.history.find((x) => x.id === g.currentId);
+    if (d) out[t] = d;
+  }
+  return out;
+}
+
 export function statusLabel(status: string): string {
   const map: Record<string, string> = {
     AVAILABLE: "Available",
@@ -433,7 +420,6 @@ export function statusLabel(status: string): string {
   return map[status] ?? status;
 }
 
-// ── Detail drawer — vehicle header + compliance vault with renewal history ──
 export function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; onClose: () => void; onChanged?: () => void }) {
   const detail = useQuery<VehicleDetailPayload>(
     `/api/fleet-maintenance/vehicles/${id}`,
@@ -443,6 +429,7 @@ export function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; o
   );
   const v = detail.data?.vehicle;
   const compliance = detail.data?.compliance;
+  const problem = v ? openProblem({ ...v, compliance: currentDocs(compliance) }) : null;
   const refresh = () => {
     detail.reload();
     onChanged?.();
@@ -492,9 +479,9 @@ export function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; o
                 Out of service{v.outOfServiceReason ? ` — ${v.outOfServiceReason}` : ""}.
               </p>
             )}
-            {openProblem(v) && !v.outOfService && (
+            {problem && !v.outOfService && (
               <p className="rounded-md border border-warning-text/25 bg-warning-text/10 px-3 py-2 text-[12px] text-warning-text">
-                {openProblem(v)}
+                {problem}
               </p>
             )}
 
@@ -548,8 +535,6 @@ export function VehicleDrawer({ id, onClose, onChanged }: { id: string | null; o
 export function PlansSection({ plans, currentKm, vehicleId, components, onChanged }: {
   plans: PlanView[];
   currentKm: number | null;
-  /* Optional so the section still renders read-only where there is nothing to
-     write to (the dashboard's own preview). Given all three, it can be edited. */
   vehicleId?: string;
   components?: { value: string; label: string }[];
   onChanged?: () => void;
@@ -579,8 +564,6 @@ export function PlansSection({ plans, currentKm, vehicleId, components, onChange
         <PlanForm
           vehicleId={vehicleId}
           components={components ?? []}
-          /* A new plan POSTs (the route UPSERTs on lorry + component); an
-             existing one PATCHes by id, which can also retire it. */
           plan={editing}
           taken={new Set(plans.map((p) => p.component))}
           onCancel={() => { setAdding(false); setEditing(null); }}
@@ -595,9 +578,6 @@ export function PlansSection({ plans, currentKm, vehicleId, components, onChange
   );
 }
 
-/** Create or edit one plan. The route UPSERTs on (lorry, component), so the
- *  component picker is disabled while editing — changing it would silently move
- *  the plan to a different component instead of renaming this one. */
 function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
   vehicleId: string;
   components: { value: string; label: string }[];
@@ -620,7 +600,6 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
     const n = Number(t);
     return Number.isFinite(n) ? Math.round(n) : null;
   };
-  // The route refuses a plan with neither interval — nothing could make it due.
   const ok = component !== "" && (num(intervalKm) !== null || num(intervalMonths) !== null);
 
   const save = async () => {
@@ -687,8 +666,6 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
   );
 }
 
-/** Fraction of a plan's interval consumed, 0..1, on whichever axis is furthest
- *  along (closest to due). Used only for the visual bar. */
 function planProgress(p: PlanView, currentKm: number | null): number {
   const fracs: number[] = [];
   if (p.intervalKm && p.lastDoneKm != null && currentKm != null) {
@@ -708,7 +685,6 @@ function PlanRow({ p, currentKm, onEdit, onServiced }: { p: PlanView; currentKm:
   const [servicing, setServicing] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [toggleErr, setToggleErr] = useState<string | null>(null);
-  /* Retire = active off: the plan stays on file but stops falling due. */
   const setActive = async (active: boolean) => {
     if (!onServiced) return;
     if (!active && !(await serviceConfirm({ title: `Retire the ${p.componentLabel} plan?`, body: "It stays on file but stops falling due. You can reactivate it later.", confirmLabel: "Retire" }))) return;
@@ -804,8 +780,6 @@ export function MileageSection({ readings, vehicleId, onChanged }: {
     <div className="space-y-3">
       {canWrite && (
         <div>
-          {/* The route refuses a lower number, and saves a very large jump flagged
-              for review, so the field states the floor before you hit it. */}
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-[160px] flex-1">
               <label className={FIELD_LABEL}>Odometer (km)</label>
@@ -857,7 +831,6 @@ export function MileageSection({ readings, vehicleId, onChanged }: {
 
 const MILEAGE_FIELD = "h-10 w-full rounded-lg border border-[#d9d3c6] bg-surface px-3 text-[13.5px] text-ink focus:border-primary focus:outline-none";
 
-// ── Phase 3 drawer sections ──────────────────────────────────────────────────
 
 export const FIELD_CLS = "h-10 w-full rounded-lg border border-[#d9d3c6] bg-surface px-3 text-[13.5px] text-ink focus:border-primary focus:outline-none disabled:bg-surface-2";
 const FORM_SHELL = "rounded-[14px] border border-[#e6e1d6] bg-surface p-4";
@@ -867,15 +840,13 @@ export const FIELD_LABEL = LABEL;
    been rewritten into a sentence by humanHttpMessage, so matching codes against
    it never hit and every refusal read "Could not save. Please try again." */
 export function apiErrText(e: unknown): string {
-  // Only an HttpError's message is safe to show (humanHttpMessage made it so:
-  // 403 → no permission, 5xx → our side); any other Error may be a raw JS internal.
   const http = e instanceof Error && (e as { isHttp?: boolean }).isHttp === true
     ? (e as Error & { rawBody?: string }) : null;
   let body: { error?: unknown; previousKm?: unknown } = {};
   try {
     const j: unknown = JSON.parse(http?.rawBody ?? "");
     if (j && typeof j === "object") body = j;
-  } catch { /* not json */ }
+  } catch { }
   const code = typeof body.error === "string" ? body.error : "";
   const prevKm = Number(body.previousKm);
   const known: Record<string, string> = {
@@ -987,9 +958,6 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
     } catch (e) { setErr(apiErrText(e)); } finally { setBusy(false); }
   };
 
-  /* No render on a refusal would leave this CONTROLLED select on the picked
-     option: the row reads "Resolved" while the lorry is still grounded. A
-     refusal remounts it (new key) so it falls back to the saved status. */
   const [statusReset, setStatusReset] = useState(0);
   const setStatus = async (id: string, status: BreakdownView["status"]) => {
     setErr(null);
@@ -1001,7 +969,6 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
 
   return (
     <div className="space-y-2">
-      {/* Section-level: a refused STATUS change has no form to sit under. */}
       {err && !adding && <div className="rounded-[10px] bg-err-bg px-3 py-2 text-[12.5px] font-semibold text-err">{err}</div>}
       {impact && (
         <div className="rounded-[10px] bg-err-bg px-3 py-2.5 text-[13px] font-semibold text-err">
@@ -1022,7 +989,6 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
           subtitle={[BREAKDOWN_STATUS_LABEL[b.status], b.stillDrivable ? "still drivable" : "not drivable",
             b.downtimeHours != null ? `downtime ${fmtDowntime(b.downtimeHours)}` : null].filter(Boolean).join(" · ")}
           when={fmtDateTime(b.occurredAt)}
-          /* An unresolved case is the one you opened the page for. */
           defaultOpen={b.status !== "RESOLVED"}
         >
           <dl className="grid grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-x-6 gap-y-3">
@@ -1105,8 +1071,6 @@ export function BreakdownSection({ vehicleId, breakdowns, onChanged }: { vehicle
 /** Maintenance work orders — the state-machine stepper + parts table. */
 export function WorkOrdersSection({ vehicleId, plate, workOrders, breakdowns = [], onChanged }: { vehicleId: string; plate: string | null; workOrders: WorkOrderView[]; breakdowns?: BreakdownView[]; onChanged: () => void }) {
   const [adding, setAdding] = useState(false);
-  /* Importing a document is the OTHER way to open a work order, not a mode of
-     the manual form — the two share nothing but the outcome. */
   const [importing, setImporting] = useState(false);
   const [problem, setProblem] = useState("");
   const [workshop, setWorkshop] = useState("");
@@ -1118,8 +1082,6 @@ export function WorkOrdersSection({ vehicleId, plate, workOrders, breakdowns = [
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Only cases still open are offered. Attaching a repair to a case that was
-  // resolved weeks ago is almost always a mis-click, not a late link.
   const openCases = breakdowns.filter((b) => b.status !== "RESOLVED");
 
   const create = async () => {
@@ -1182,9 +1144,6 @@ export function WorkOrdersSection({ vehicleId, plate, workOrders, breakdowns = [
       ) : !importing && (
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => setAdding(true)}>New work order</Button>
-          {/* Scan it or type it — the same editor either way, so the fields mig
-              0241 added (workshop, document number, advisor, per-line UOM and
-              discount) are reachable without an OCR-able document. */}
           <Button variant="secondary" onClick={() => setImporting(true)}>
             <FileUp size={14} /> Workshop quotation or invoice
           </Button>
@@ -1194,8 +1153,6 @@ export function WorkOrdersSection({ vehicleId, plate, workOrders, breakdowns = [
   );
 }
 
-/** Edit the facts of a breakdown case. Every field here is one the PATCH route
- *  has always accepted; the screen only ever wired the status dropdown. */
 function BreakdownEdit({ b, onChanged }: { b: BreakdownView; onChanged: () => void }) {
   const [open, setOpen] = useState(false);
   const [faultType, setFaultType] = useState(b.faultType ?? "");
@@ -1261,8 +1218,6 @@ function BreakdownEdit({ b, onChanged }: { b: BreakdownView; onChanged: () => vo
           <input className={FIELD_CLS} value={description} onChange={(e) => setDescription(e.target.value)} />
         </EditField>
       </div>
-      {/* Severity is not cosmetic: CRITICAL + unresolved is what grounds the
-          lorry, so changing it here can put a lorry back on the road. */}
       <p className="mt-2 text-[12px] text-ink-muted">
         Not drivable, or Critical, takes the lorry off the road until the case is resolved.
       </p>
@@ -1275,12 +1230,6 @@ function BreakdownEdit({ b, onChanged }: { b: BreakdownView; onChanged: () => vo
   );
 }
 
-/** Edit a work order's HEADER — everything except its state and its lines.
- *
- *  The four money legs sit beside the lines and are added to them, so labour
- *  typed here is labour that does NOT ride a line. The route refuses a non-zero
- *  header labour on a work order whose lines already carry LABOUR, which is the
- *  invariant that stops the same cost being counted twice. */
 function WorkOrderEdit({ wo, onSaved, onCancel }: { wo: WorkOrderView; onSaved: () => void; onCancel: () => void }) {
   const [problem, setProblem] = useState(wo.problem ?? "");
   const [diagnosis, setDiagnosis] = useState(wo.diagnosis ?? "");
@@ -1379,8 +1328,6 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
   const [pName, setPName] = useState("");
   const [pQty, setPQty] = useState("1");
   const [pPrice, setPPrice] = useState("");
-  /* Every write below refused in silence: the refetch runs only on the success
-     path, so a refusal reads as "the button does nothing". */
   const [err, setErr] = useState<string | null>(null);
 
   const transition = async (to: WorkOrderState) => {
@@ -1422,7 +1369,6 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
     >
       {err && <div className="mt-2 rounded-[10px] bg-err-bg px-3 py-2 text-[12.5px] font-semibold text-err">{err}</div>}
       <div className="mt-1"><ViewOriginalScan kind="workshop" documentId={wo.id} /></div>
-      {/* Stepper */}
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {WORK_ORDER_STATES.map((s, i) => {
           const idx = WORK_ORDER_STATES.indexOf(wo.status);
@@ -1452,7 +1398,6 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
         {wo.actualComplete && <span>Done {fmtDateTime(wo.actualComplete)}</span>}
         {wo.warrantyUntil && <span>Warranty to {fmtDate(wo.warrantyUntil)}</span>}
       </div>
-      {/* Parts table */}
       {(wo.photoRefs?.length ?? 0) > 0 && (
         <div className="mt-3">
           <PodPhotoAlbum paths={(wo.photoRefs ?? []).map((_, n) => `/api/fleet-maintenance/work-orders/${wo.id}/photo/${n}`)} fileStem={`WO-${wo.woNo ?? wo.id}`} title={wo.woNo ?? `Work order ${wo.id}`} />
@@ -1494,9 +1439,6 @@ function WorkOrderCard({ wo, cause, onChanged }: { wo: WorkOrderView; cause?: Br
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <span className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => setAddingPart(true)} className={BTN_SEC}>Add part</button>
-            {/* PATCH /work-orders/:id has always accepted the whole header —
-                problem, diagnosis, workshop, their document numbers, advisor,
-                and the four money legs. Nothing on screen sent any of it. */}
             <button type="button" onClick={() => setEditing((v) => !v)} className={BTN_SEC}>
               {editing ? "Close" : "Edit details"}
             </button>
@@ -1592,7 +1534,6 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
   const [logging, setLogging] = useState(false);
   const [eventType, setEventType] = useState<(typeof EVENT_TYPES)[number]>("ROTATION");
   const [eventNote, setEventNote] = useState("");
-  /* A refused removal left the tyre reading "still fitted", nothing said. */
   const [err, setErr] = useState<string | null>(null);
 
   const remove = async () => {
@@ -1622,7 +1563,6 @@ function ComponentCard({ c, currentKm, onChanged }: { c: ComponentView; currentK
         c.status === "ACTIVE" ? null : "removed",
       ].filter(Boolean).join(" · ")}
       when={c.fittedDate ? fmtDate(c.fittedDate) : null}
-      /* A fitted component is the live one; a removed one is history. */
       defaultOpen={c.status === "ACTIVE"}
     >
       <dl className="grid grid-cols-[repeat(auto-fill,minmax(130px,1fr))] gap-x-6 gap-y-3">
@@ -1748,9 +1688,6 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
     setOwner(""); setResult(""); setReinspect(""); setFiles([]); setErr(null);
   };
 
-  /* The renewal row is created ONCE. If a scan then fails to upload, the row is
-     kept, the vault is refreshed, and Save only retries the scans still to go;
-     it used to post the renewal again and leave a duplicate. */
   const [savedId, setSavedId] = useState<string | null>(null);
   const save = async () => {
     if (!savedId && !expiryDate && !NO_EXPIRY.has(docType)) { setErr("An expiry date is what the reminders count down to - it is required."); return; }
@@ -1761,7 +1698,6 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
     let id = savedId;
     try {
       if (!id) {
-        /* Renewing APPENDS a row; the prior one survives as history (mig 0202). */
         const created = await api.post<{ id: string }>(
           `/api/fleet-maintenance/vehicles/${lorryId}/compliance`,
           {
@@ -1861,8 +1797,6 @@ function RenewalField({ label, children }: { label: string; children: React.Reac
   );
 }
 
-/* The box (mig 0209) as one label: dimensions when they are on file, otherwise
-   the hand-entered capacity, otherwise nothing rather than "null m3". */
 export function boxLabel(v: { lengthFt?: number | null; widthFt?: number | null; heightFt?: number | null; capacityM3?: number | null }): string | null {
   if (v.lengthFt && v.widthFt && v.heightFt) {
     const m3 = v.capacityM3 != null ? ` (${v.capacityM3} m3)` : "";

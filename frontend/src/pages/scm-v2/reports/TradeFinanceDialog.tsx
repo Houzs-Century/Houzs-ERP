@@ -15,7 +15,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@2990s/design-system';
 import { Modal } from '../../../vendor/scm/components/Modal';
 import { useToastOptional } from '../../../hooks/useToast';
-import { fmtSenPlain } from '../../../vendor/shared/format';
+import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
 import {
   useSaveTradeFinance, useTradeFinance,
   type TfDue, type TfFacility, type TfMonth, type TfOff, type TfPlans, type TradeFinance,
@@ -102,7 +102,7 @@ const messageOf = (e: unknown): string => {
       const b = JSON.parse(o.body) as { message?: unknown; error?: unknown };
       if (typeof b.message === 'string' && b.message) return b.message;
       if (typeof b.error === 'string' && b.error) return b.error;
-    } catch { /* not JSON */ }
+    } catch { }
   }
   return typeof o.message === 'string' && o.message ? o.message : 'The plan was not saved.';
 };

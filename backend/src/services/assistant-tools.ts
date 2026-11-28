@@ -34,13 +34,9 @@ export interface AssistantToolCtx {
   env: Env;
   scope: AssistantScope;
   companyCtx: CompanyScopeCtx;
-  /** Appended to as the model calls tools, so the caller can render the same
-   *  routing trace ("consulted: Search") the single-shot path shows. */
   consulted: Array<{ key: string; label: string }>;
 }
 
-/** A query longer than this is a paste, not a search term — cap it so one tool
- *  call cannot balloon the request. searchPattern already neutralises wildcards. */
 const SEARCH_MAX_Q = 120;
 
 export const SEARCH_TOOL: AgentToolDef = {
@@ -68,8 +64,6 @@ export const SEARCH_TOOL: AgentToolDef = {
   },
 };
 
-/** How many items one ready-date question may ask about — a sane bound so one
- *  tool call cannot fan out into hundreds of lead-time resolutions. */
 const READY_DATE_MAX_ITEMS = 30;
 
 export const ESTIMATE_READY_DATE_TOOL: AgentToolDef = {
@@ -91,8 +85,8 @@ export const ESTIMATE_READY_DATE_TOOL: AgentToolDef = {
           properties: {
             category: {
               type: "string",
-              enum: ["sofa", "bedframe", "mattress", "accessory", "service"],
-              description: "The item's lead-time category.",
+              // No enum: the categories are the registry's (scm.acc_item_groups), so a typed list went stale (HC-0258).
+              description: "The item's product category code in lower case (sofa, bedframe, mattress, dining, fabric_accessory, ...), or others.",
             },
             supplierCode: {
               type: "string",
@@ -187,8 +181,6 @@ export function normalizeReadyDateItems(input: Record<string, unknown>): ReadyDa
     out.push({
       key,
       category,
-      // The model does not know internal warehouse UUIDs; null falls back to the
-      // owner's global-category lead bucket, which is the right default here.
       warehouseId: null,
       supplierCode: typeof o.supplierCode === "string" && o.supplierCode.trim() ? o.supplierCode.trim() : null,
       deliveryDate: typeof o.deliveryDate === "string" && o.deliveryDate.trim() ? o.deliveryDate.slice(0, 10) : null,
@@ -219,9 +211,6 @@ export async function dispatchAssistantTool(
       return { query: raw, count: 0, hits: [], note: "search is unavailable right now" };
     }
     const shaped = shapeSearchResult(ctx, raw, hits);
-    // A source that could not be READ must never be reported as a source with
-    // nothing in it — otherwise the assistant tells the operator their document
-    // does not exist. Same rule the palettes follow.
     return degraded.length
       ? {
           ...shaped,
@@ -238,12 +227,9 @@ export async function dispatchAssistantTool(
       return { note: "no items given — name at least one item category (sofa, bedframe, mattress, accessory, service)" };
     }
     const asOfDate = typeof input.asOfDate === "string" && input.asOfDate.trim() ? input.asOfDate.slice(0, 10) : undefined;
-    // A2A: the assistant DEFERS to the Procurement agent's fact through the
-    // registry, rather than reading lead times itself. callAgentFact never throws.
     const res = await callAgentFact<ReadyDateEstimate>(ctx.env, "procurement.estimateReadyDate", { items, asOfDate });
     recordConsulted(ctx, "procurement", "Procurement");
     if (!res.ok) return { error: res.error };
-    // No money in the estimate, but redact defensively like every other result.
     return redactFacts(res.result, ctx.scope);
   }
 

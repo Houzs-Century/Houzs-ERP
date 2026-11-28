@@ -27,16 +27,15 @@ import {
   amountInWordsMyr, fmtRm, fmtDocDate, safeName, DOC_TABLE_STYLES, DOC_TABLE_HEAD_STYLES, type PdfAction,
 } from './pdf-common';
 import type { CreditNoteDetail } from './credit-note-queries';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type CreditNotePdfHeader = {
   note_number: string;
   kind: 'CN' | 'DN' | 'SCN' | 'OCN';
-  status: string;            // DRAFT | POSTED | CANCELLED
+  status: string;
   note_date: string;
   party_name: string | null;
   party_code: string | null;
-  /** An other debtor's account code, read off the registry beside the note (its party_code stays blank). */
   debtor_code?: string | null;
   so_doc_no: string | null;
   source_doc_no: string | null;
@@ -55,13 +54,14 @@ export type CreditNoteKnockedOff = {
 };
 
 /** The block off a note's detail: a posted note's knock-offs (a draft's plan),
-    or the final invoice a close-out closed against. Null when there is none to
-    print: a debit note, a supplier's, a refund's or a move's, a cancelled one. */
+    or the invoice a close-out (or an AutoCount deposit note) was raised at.
+    Null when there is none to print: a debit note, a supplier's, a refund's or
+    a move's, a cancelled one. */
 export function knockedOffOf(d: Pick<CreditNoteDetail, 'note' | 'allocations' | 'depositPaper' | 'closedInvoice'>): CreditNoteKnockedOff | null {
   const n = d.note;
   if ((n.kind !== 'CN' && n.kind !== 'OCN') || n.status === 'CANCELLED') return null;
   if (d.depositPaper) {
-    return d.depositPaper.kind === 'closes' && d.closedInvoice
+    return (d.depositPaper.kind === 'closes' || d.depositPaper.kind === 'autocount') && d.closedInvoice
       ? { rows: [{ number: d.closedInvoice.number, date: d.closedInvoice.date, totalSen: d.closedInvoice.totalSen, knockedSen: Number(n.total_sen) }], leftSen: 0 }
       : null;
   }
@@ -72,13 +72,10 @@ export function knockedOffOf(d: Pick<CreditNoteDetail, 'note' | 'allocations' | 
   return { rows, leftSen: Math.max(0, Number(n.total_sen) - rows.reduce((sum, r) => sum + r.knockedSen, 0)) };
 }
 
-/* An other debtor's credit note prints as the debtor's bill does — to the
-   party it billed, under CUSTOMER (2026-10-28). */
 const KIND_TITLE: Record<CreditNotePdfHeader['kind'], string> = {
   CN: 'CREDIT NOTE', DN: 'DEBIT NOTE', SCN: 'SUPPLIER CREDIT NOTE', OCN: 'CREDIT NOTE',
 };
 
-/** A deposit invoice number under any company's prefix: {co}-DI-YYMM-NNN. */
 const looksLikeDepositInvoice = (s: string | null): boolean => /-DI-\d{4}-\d+$/.test(String(s ?? ''));
 
 type JsPdf = import('jspdf').jsPDF;
@@ -106,7 +103,6 @@ export function renderCreditNoteInto(
   });
 
   const closesDeposit = looksLikeDepositInvoice(h.source_doc_no);
-  /* A note to a customer or an other debtor takes the design's A4 family; a supplier's keeps its paper. */
   if (h.kind === 'SCN') renderSupplierNoteBody(doc, autoTable, h, lines, accountName, y, closesDeposit);
   else renderCustomerNoteBody(doc, autoTable, h, lines, accountName, y, closesDeposit, knockedOff);
 
@@ -132,7 +128,6 @@ export function renderCreditNoteInto(
   doc.setPage(pageCount);
 }
 
-/** A supplier's credit note below the letterhead (Money out): SUPPLIER and the papers it answers, each line with its account, TOTAL, Prepared by. */
 function renderSupplierNoteBody(
   doc: JsPdf,
   autoTable: AutoTable,
@@ -198,9 +193,6 @@ function renderSupplierNoteBody(
 
 const noteStatusWord = (s: string): string => (s === 'DRAFT' ? 'Draft' : s === 'CANCELLED' ? 'Cancelled' : s === 'POSTED' ? 'Posted' : s);
 
-/** A customer's or other debtor's note below the letterhead: CUSTOMER and NOTE
- *  DETAILS, the lines without our accounts, TOTAL CREDIT / DEBIT, the words,
- *  Issued by. */
 function renderCustomerNoteBody(
   doc: JsPdf,
   autoTable: AutoTable,
@@ -229,7 +221,6 @@ function renderCustomerNoteBody(
       ],
     },
   );
-  /* What it is for and how much — the account behind a line stays off the paper; an unnamed line reads as its account's name. */
   const rows = lines.map((l, idx) => [
     String(idx + 1),
     l.description?.trim() ? l.description : (accountName(l.account_code) ?? '—'),
@@ -254,7 +245,6 @@ function renderCustomerNoteBody(
   doc.text(fmtRm(h.total_sen), pageW - margin, y + 3, { align: 'right' });
   y += 10;
   if (h.kind !== 'DN' && knockedOff && (knockedOff.rows.length > 0 || knockedOff.leftSen > 0)) {
-    /* What it knocked off, then what stays as credit on the account (the design's words). */
     doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
     doc.text('KNOCKED OFF AGAINST', margin, y);
     const body = knockedOff.rows.map((r) => [r.number, r.date ? fmtDocDate(r.date) : '', r.totalSen == null ? '' : fmtRm(r.totalSen), fmtRm(r.knockedSen)]);

@@ -31,7 +31,7 @@ import { DateField } from '../../vendor/scm/components/DateField';
 import { Modal } from '../../vendor/scm/components/Modal';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash, fmtSen, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDateOrDash, fmtSen, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { Field, SetupModal, Skeleton, Tag } from './finance/SetupParts';
 import sp from './finance/SetupParts.module.css';
 import css from './OpeningBalance.module.css';
@@ -96,7 +96,6 @@ export const OpeningBalance = () => {
 
         <section className={sp.card} aria-label="The opening">
           <div className={css.cardHead}>
-            {/* The four views of one opening — inner views, not a tab strip. */}
             <div className={css.seg} role="group" aria-label="Opening balance views">
               {TABS.map(([k, label]) => (
                 <button key={k} type="button" aria-pressed={tab === k} className={tab === k ? `${css.segBtn} ${css.segOn}` : css.segBtn} onClick={() => setTab(k)}>
@@ -133,7 +132,6 @@ export const OpeningBalance = () => {
   );
 };
 
-/* ── Accounts ─────────────────────────────────────────────────────────────── */
 
 type DraftLine = { code: string; name: string; drSen: number; crSen: number };
 
@@ -208,9 +206,7 @@ const AccountsTab = ({ accounts, locked }: { accounts: OpeningAccount[]; locked:
   );
 };
 
-/* ── Creditors / Other debtors ────────────────────────────────────────────── */
 
-/* Typed on the kind union, so a kind added there and not here fails to compile. */
 const KIND_WORD: Record<OpeningPaperKind, string> = { API: 'Bill', SCN: 'Credit', ODB: 'Bill', ODR: 'Credit' };
 const kindWord = (k: OpeningPaperKind): string => KIND_WORD[k];
 
@@ -314,7 +310,6 @@ type PaperValues = { date: string; ref: string; amountSen: number };
 
 const PaperForm = ({ title, openingDate, initial, withRef, floorSen = 0, blocker = null, pending, onCancel, onSave, children }: {
   title: string; openingDate: string; initial: PaperValues; withRef: boolean; floorSen?: number;
-  /** A check the caller owns (who the paper is for) — named before the paper's own. */
   blocker?: string | null;
   pending: boolean;
   onCancel: () => void; onSave: (v: PaperValues) => void; children?: ReactNode;
@@ -388,7 +383,6 @@ const AddPaperModal = ({ side, openingDate, onClose }: { side: 'creditors' | 'de
   );
 };
 
-/* ── Stock ────────────────────────────────────────────────────────────────── */
 
 const StockTab = ({ stock, locked }: { stock: { buckets: Partial<Record<OpeningBucket, number>>; totalSen: number; codes: Record<OpeningBucket, string> }; locked: boolean }) => {
   const save = useSaveOpeningStock();

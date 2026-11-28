@@ -24,7 +24,6 @@ function listFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Every (key, label) declared by a page that renders a list table. */
 function columnVocabulary(): Array<[string, string]> {
   const pairs = new Map<string, [string, string]>();
   for (const file of listFiles("src")) {
@@ -45,22 +44,18 @@ function columnVocabulary(): Array<[string, string]> {
 describe("column grouping", () => {
   it("classifies the overwhelming majority of the app's real columns", () => {
     const vocabulary = columnVocabulary();
-    // Guard the guard: if the extraction breaks, coverage would pass vacuously.
     expect(vocabulary.length).toBeGreaterThan(300);
 
     const ungrouped = vocabulary.filter(([key, label]) => !inferColumnGroup(key, label));
     const coverage = 1 - ungrouped.length / vocabulary.length;
 
-    // 90% is the bar the rules were tuned to. What is left is genuinely
-    // one-off ("Matrix", "Modules", "Spare") — columns whose group would be
-    // invented rather than inferred, and which the drawer leaves ungrouped.
     expect(coverage).toBeGreaterThan(0.9);
   });
 
   it("puts the obvious columns where a person would put them", () => {
     const cases: Array<[string, string, string]> = [
-      // Cost & margin wins over money — "Total Cost" is a cost first.
       ["total_cost_sen", "Total Cost", COLUMN_GROUPS.costs],
+      ["terminal", "Terminal", COLUMN_GROUPS.amounts],
       ["margin_pct_basis", "Margin %", COLUMN_GROUPS.costs],
       ["cogs", "COGS (RM)", COLUMN_GROUPS.costs],
       ["unit_cost", "Unit Cost", COLUMN_GROUPS.costs],

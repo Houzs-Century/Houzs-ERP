@@ -1,8 +1,3 @@
-/* Print now / View full PDF. Pinned: both open the in-app viewer (no window.open —
-   it would run after the render await and be blocked as a popup); 'print' asks
-   the viewer for the dialog once it has loaded (after a settle) and the Print
-   button asks again; 'preview' never asks; Esc closes only the viewer; the
-   viewer's New tab is the one route that still opens a tab. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { deliverPdfBlob } from './pdf-common';
 

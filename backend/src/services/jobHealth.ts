@@ -1,5 +1,3 @@
-// Verdicts for the System Health "Background jobs" and "Queues" panels.
-// Pure functions, so the thresholds are tested without a database.
 
 export type Verdict = "ok" | "warning" | "critical";
 
@@ -13,6 +11,7 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   keepwarm: 5,
   "email-outbox": 5,
   "meeting-mail": 5,
+  "mail-sync-trigger": 5,
   "so-pull": 5,
   "amendment-cmd": 5,
   "ac-writeback": 5,
@@ -24,7 +23,9 @@ export const JOB_CADENCE_MIN: Record<string, number> = {
   "so-allocation": 5,
   "mrp-snapshot": 15,
   "procurement-overview": 15,
+  "mcp-brief": 15,
   "vp-reconcile": 30,
+  "mcp-alerts": 30,
   "connect-sync": 30,
   "hr-auto-clockout": 30,
   "assr-alerts": 30,
@@ -73,8 +74,8 @@ export function missedAfterMin(cadenceMin: number): number {
 }
 
 export interface JobFacts {
-  cadenceMin: number | null; // null = not in the catalogue, so no missed rule
-  lastStartMs: number | null; // null = no run recorded in the retention window
+  cadenceMin: number | null;
+  lastStartMs: number | null;
   lastStatus: "running" | "ok" | "error" | null;
   lastDurationMs: number | null;
   median7dMs: number | null;

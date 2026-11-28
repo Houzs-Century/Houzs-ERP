@@ -12,7 +12,6 @@ describe("unsavedWork", () => {
     expect(at("/scm/sales-orders/new")).toBe(true);
     expect(at("/scm/grns/from-po")).toBe(true);
     expect(at("/scm/sales-orders/HC-SO-1", "?edit=0")).toBe(false);
-    // A document number that merely CONTAINS the word is not an editor.
     expect(at("/scm/products/renewal-kit")).toBe(false);
   });
 

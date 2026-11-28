@@ -71,7 +71,6 @@ describe("phone SO editor — a partly delivered order", () => {
     expect(frozen.style.filter).toBe("grayscale(1)");
     expect(frozen.querySelectorAll("input, select, button, textarea")).toHaveLength(0);
     expect(frozen.textContent).not.toContain("MT-QUEEN");
-    /* The sibling is a real line card (it carries controls), and a line can still be added. */
     expect(screen.getByRole("button", { name: /add line/i })).toBeTruthy();
     expect(container.querySelectorAll('[data-frozen="true"]')).toHaveLength(1);
   });

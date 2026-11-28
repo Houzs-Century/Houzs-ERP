@@ -30,24 +30,16 @@ const past = shift(-1);
 const future = shift(1);
 
 describe('the Processing Date alone decides the lock', () => {
-  /* company 1: 519 both-set live (440 CONFIRMED, 79 READY_TO_SHIP).
-     company 2: 21 both-set live (14 CONFIRMED, 7 READY_TO_SHIP). */
   test.each(['CONFIRMED', 'READY_TO_SHIP', 'IN_PRODUCTION'])(
     'a %s order past its processing day is locked', (status) => {
       expect(procLockActive({ processing_date: past, status })).toBe(true);
     },
   );
 
-  /* company 2's date-only class: 5 live orders, all CONFIRMED. They were
-     already locked by the date before this change and must not move. */
   test('a date with no stamp still locks — it always did', () => {
     expect(procLockActive({ processing_date: past, status: 'CONFIRMED' })).toBe(true);
   });
 
-  /* company 2's stamp-only class: 16 live orders (12 CONFIRMED, 4
-     READY_TO_SHIP). No date means nothing has elapsed, so the editor stays
-     open. This is the assertion that fails if anyone reintroduces
-     "locked if EITHER column says proceeded". */
   test.each(['CONFIRMED', 'READY_TO_SHIP'])(
     'a %s order with no Processing Date is never process-locked', (status) => {
       expect(procLockActive({ processing_date: null, status })).toBe(false);
@@ -68,16 +60,11 @@ describe('the Processing Date alone decides the lock', () => {
 });
 
 describe('what the deleted proceeded_at marker was protecting', () => {
-  /* The old fallback answered the question "no status — should I lock?" with
-     "only if there is a Proceed stamp". With one storage there is no second
-     signal, so the answer is the side that never blocks an entitled edit. */
   test('an empty status answers NOT locked', () => {
     expect(procLockActive({ processing_date: past, status: '' })).toBe(false);
     expect(procLockActive({ processing_date: past, status: null })).toBe(false);
   });
 
-  /* ...and the po_locked road is untouched by any of it: it short-circuits the
-     date test entirely, including the DRAFT/CANCELLED exemptions. */
   test('po_locked still wins outright, with or without a date', () => {
     expect(procLockActive({ po_locked: true, status: 'DRAFT' })).toBe(true);
     expect(procLockActive({ po_locked: true, processing_date: null, status: 'CONFIRMED' })).toBe(true);
@@ -86,9 +73,6 @@ describe('what the deleted proceeded_at marker was protecting', () => {
 });
 
 describe('the source carries no second storage', () => {
-  /* Source-level, because the regression is a two-line "defensive" addition
-     that every behavioural test above would still pass if it were written as
-     `|| header.proceeded_at` on a header that also has a date. */
   const sources = import.meta.glob('./so-detail-gates.ts', {
     query: '?raw', import: 'default', eager: true,
   }) as Record<string, string>;

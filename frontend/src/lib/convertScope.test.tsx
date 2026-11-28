@@ -12,11 +12,6 @@ import {
 
 afterEach(cleanup);
 
-/* The contract these tests pin exists because eight of the ten convert pickers
-   never read the parameter their callers sent, and two callers spelled it
-   differently from what the destination read (?fromGrn= vs grnId=). Both
-   failures are invisible when each site invents its own string, so the string
-   lives in ONE table and both sides derive from it. */
 
 describe("convertToLink — the caller half", () => {
   it("names the parameter from the table, not from the call site", () => {
@@ -25,7 +20,6 @@ describe("convertToLink — the caller half", () => {
     expect(convertToLink("soToDo", "HC-SO-1")).toBe("/scm/delivery-orders/from-so?soDocNo=HC-SO-1");
   });
 
-  /* The exact bug: the GRN screens sent ?fromGrn= to a page reading grnId. */
   it("sends a Purchase Return the name that page actually reads", () => {
     expect(convertToLink("grnToPr", "grn-1")).toBe("/scm/purchase-returns/new?grnId=grn-1");
     expect(convertToLink("grnToPr", "grn-1")).not.toContain("fromGrn");
@@ -92,14 +86,6 @@ describe("UnrecognisedScopeNotice — the loud half", () => {
   });
 });
 
-/* The guard that keeps the table the ONLY spelling.
- *
- * A convention people have to remember is the thing that failed here — five
- * call sites invented `?do=`, `?grn=`, `?so=` and two more sent `?fromGrn=` to
- * a page reading `grnId`. So no site may hand-write a query onto a convert
- * path: it has to come from convertToLink(), where the name is written once.
- * A new hand-built link fails HERE, naming the file and the parameter.
- */
 describe("no site hand-builds a convert link", () => {
   // Parameters on a convert path that are NOT a source scope, so they are
   // legitimately hand-written. `appendToGrn` names an existing DESTINATION GRN
@@ -110,16 +96,12 @@ describe("no site hand-builds a convert link", () => {
     "/scm/grns/from-po": ["appendToGrn"],
     "/scm/purchase-invoices/from-grn": ["q"],
   };
-  // This module writes the table; these two suites deliberately write the OLD
-  // spellings to prove they are REPORTED rather than honoured.
   const EXEMPT = [
     "src/lib/convertScope.tsx",
     "src/lib/convertScope.test.tsx",
     "src/pages/scm-v2/convert-scope-pickers.test.tsx",
   ];
 
-  // Resolved from THIS file, not process.cwd(): the scan must find the same
-  // tree whichever directory vitest was launched from.
   const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const APP = resolve(SRC, "..");
   const walk = (dir: string, out: string[] = []): string[] => {
@@ -140,8 +122,6 @@ describe("no site hand-builds a convert link", () => {
       const lines = readFileSync(file, "utf8").split("\n");
       lines.forEach((line, i) => {
         for (const path of paths) {
-          // Only a QUOTED occurrence is a link; the same text in prose is a
-          // comment describing one.
           const re = new RegExp(`['"\`]${path}\\?([A-Za-z_][A-Za-z0-9_]*)=`, "g");
           for (const m of line.matchAll(re)) {
             if ((NON_SCOPE_PARAMS[path] ?? []).includes(m[1])) continue;

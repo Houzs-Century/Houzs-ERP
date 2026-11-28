@@ -5,8 +5,6 @@ import { MemoryRouter } from "react-router-dom";
 import { useSoRelationshipMap } from "./so-relationship-map";
 import { DocumentRelationshipMapModal } from "../../components/scm-v2/DocumentRelationshipMapModal";
 
-/* 2990-0011 (Sim, 2026-10-20): 2990-SO-2606-001 came back on
-   2990-DR-2610-001, but the SO's Relationship Map never showed the return. */
 
 const navigate = vi.fn();
 vi.mock("react-router-dom", async (importOriginal) => ({

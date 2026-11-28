@@ -44,7 +44,6 @@ const who = (c: any): string => String(c.get('houzsUser')?.name ?? c.get('user')
 const LOCKED = (o: BooksOpening) => ({ error: 'opening_locked', message: `The opening is locked (${o.lockedBy ?? 'by Finance'}) — unlock it first.` });
 const NO_OPENING = { error: 'no_opening', message: 'This company has no opening yet — its books have no start day.' };
 
-/** The paper tables, by kind. */
 const PAPER = {
   API: { table: 'ap_invoices', no: 'invoice_number', date: 'invoice_date', party: 'supplier_id', lines: 'ap_invoice_lines', lineFk: 'invoice_id', lineAccount: 'debit_account_code', word: 'AP invoice' },
   SCN: { table: 'acc_credit_notes', no: 'note_number', date: 'note_date', party: 'supplier_id', lines: 'acc_credit_note_lines', lineFk: 'note_id', lineAccount: 'account_code', word: 'Supplier credit note' },
@@ -54,7 +53,6 @@ const PAPER = {
 
 type Paper = { id: string; kind: OpeningPaperKind; no: string; partyId: string; date: string; ref: string | null; amountSen: number; settledSen: number; status: string; note: string | null };
 
-/** What has already come off a paper: payments on a bill, knock-offs of a credit, receipts on a debtor bill, allocations of a receipt. */
 async function settledOf(sb: any, companyId: number, kind: OpeningPaperKind, rows: Row[]): Promise<{ ok: true; of: Map<string, number> } | { ok: false; reason: string }> {
   const of = new Map<string, number>();
   if (kind === 'API') { for (const r of rows) of.set(String(r.id), Number(r.paid_sen ?? 0)); return { ok: true, of }; }
@@ -94,7 +92,6 @@ async function loadPapers(sb: any, companyId: number, kind: OpeningPaperKind): P
   };
 }
 
-/** The live OPENING journal and its lines. */
 async function loadOpeningJournal(sb: any, companyId: number): Promise<{ ok: true; je: Row | null; lines: Row[] } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('journal_entries').select('id, je_no, entry_date, source_doc_no')
     .eq('company_id', companyId).eq('source_type', OPENING_SOURCE).eq('posted', true).eq('reversed', false).is('reversed_by_je', null);
@@ -110,7 +107,6 @@ async function loadOpeningJournal(sb: any, companyId: number): Promise<{ ok: tru
 const stockCodesOf = (roles: Record<AccountRole, string>): Record<StockBucket, string> =>
   Object.fromEntries(STOCK_BUCKETS.map((b) => [b, roles[STOCK_BUCKET_ROLES[b].opening]])) as Record<StockBucket, string>;
 
-/** Every account the opening journal may not carry, and the sentence that says why. */
 async function refusedAccounts(sb: any, companyId: number, roles: Record<AccountRole, string>): Promise<{ ok: true; known: Set<string>; refused: Map<string, string>; names: Map<string, Row> } | { ok: false; reason: string }> {
   const { data, error } = await sb.from('accounts').select('account_code, account_name, account_type, section, parent_code, is_active').eq('company_id', companyId);
   if (error) return { ok: false, reason: `chart: ${error.message}` };
@@ -128,7 +124,6 @@ async function refusedAccounts(sb: any, companyId: number, roles: Record<Account
   return { ok: true, known: new Set(chart.map((a) => String(a.account_code))), refused, names: new Map(chart.map((a) => [String(a.account_code), a])) };
 }
 
-/** The clearing over every date the books count: nil when the opening balances. */
 async function clearingBalance(sb: any, companyId: number): Promise<{ ok: true; sen: number } | { ok: false; reason: string }> {
   const { data, error } = await paginateAll<Row>((f, t) => sb.from('v_gl_entries').select('debit_sen, credit_sen, posted, reversed, reversed_by_je')
     .eq('company_id', companyId).eq('account_code', OPENING_CLEARING).order('line_id').range(f, t));
@@ -136,7 +131,6 @@ async function clearingBalance(sb: any, companyId: number): Promise<{ ok: true; 
   return { ok: true, sen: ((data ?? []) as Row[]).filter((r) => countsInTheBooks(r)).reduce((s, r) => s + Number(r.debit_sen ?? 0) - Number(r.credit_sen ?? 0), 0) };
 }
 
-/* ── GET /opening ──────────────────────────────────────────────────────────── */
 export const openingGet = async (c: any): Promise<Response> => {
   if (!requirePerm(c)) return c.json(NO_PERM, 403);
   const co = requireActiveCompanyId(c);
@@ -165,7 +159,6 @@ export const openingGet = async (c: any): Promise<Response> => {
       return { code: String(l.account_code), name: a?.account_name ?? String(l.account_code), type: a?.account_type ?? null, section: a?.section ?? null, drSen: Number(l.debit_sen ?? 0), crSen: Number(l.credit_sen ?? 0) };
     });
 
-  /* The parties, named. */
   const supplierIds = [...new Set(all.filter((p) => p.kind === 'API' || p.kind === 'SCN').map((p) => p.partyId))];
   const debtorIds = [...new Set(all.filter((p) => p.kind === 'ODB' || p.kind === 'ODR').map((p) => p.partyId))];
   const [sups, debs] = await Promise.all([
@@ -205,7 +198,6 @@ export const openingGet = async (c: any): Promise<Response> => {
   });
 };
 
-/* ── re-posting the OPENING journal ───────────────────────────────────────── */
 
 async function rePostOpening(sb: any, companyId: number, o: BooksOpening, docNo: string, lines: ReturnType<typeof openingJournalLines>, actor: string): Promise<{ ok: true; jeNo: string } | { ok: false; reason: string }> {
   const rev = await reverseJournal(sb, {
@@ -222,7 +214,6 @@ async function rePostOpening(sb: any, companyId: number, o: BooksOpening, docNo:
   return { ok: true, jeNo: je.jeNo };
 }
 
-/** What a write needs first: the permission, the company, an opening, unlocked. */
 async function openForWrites(c: any): Promise<{ resp: Response } | { companyId: number; sb: any; o: BooksOpening; roles: Record<AccountRole, string> }> {
   if (!requirePerm(c)) return { resp: c.json(NO_PERM, 403) };
   const co = requireActiveCompanyId(c);
@@ -235,7 +226,6 @@ async function openForWrites(c: any): Promise<{ resp: Response } | { companyId: 
   return { companyId: co.companyId, sb, o: books.opening, roles: await resolveRoles(sb, co.companyId) };
 }
 
-/* ── PUT /opening/accounts { lines: [{ code, drSen, crSen }] } ─────────────── */
 export const openingAccountsPut = async (c: any): Promise<Response> => {
   const w = await openForWrites(c);
   if ('resp' in w) return w.resp;
@@ -259,7 +249,6 @@ export const openingAccountsPut = async (c: any): Promise<Response> => {
   return c.json({ ok: true, jeNo: posted.jeNo });
 };
 
-/* ── PUT /opening/stock { buckets: { customer: sen, … } } ─────────────────── */
 export const openingStockPut = async (c: any): Promise<Response> => {
   const w = await openForWrites(c);
   if ('resp' in w) return w.resp;
@@ -287,11 +276,9 @@ export const openingStockPut = async (c: any): Promise<Response> => {
   return c.json({ ok: true, jeNo: posted.jeNo });
 };
 
-/* ── the papers ────────────────────────────────────────────────────────────── */
 
 const isKind = (k: unknown): k is OpeningPaperKind => (OPENING_PAPER_KINDS as readonly unknown[]).includes(k);
 
-/** The party a paper is for: a supplier (API/SCN) or an other debtor (ODB/ODR). */
 async function partyOf(sb: any, companyId: number, kind: OpeningPaperKind, id: string): Promise<{ ok: true; party: { id: string; code: string | null; name: string } } | { ok: false; message: string }> {
   const supplier = kind === 'API' || kind === 'SCN';
   const { data, error } = await sb.from(supplier ? 'suppliers' : 'acc_debtors').select(supplier ? 'id, code, name' : 'id, name').eq('company_id', companyId).eq('id', id).maybeSingle();
@@ -303,7 +290,6 @@ async function partyOf(sb: any, companyId: number, kind: OpeningPaperKind, id: s
 const controlOf = (roles: Record<AccountRole, string>, kind: OpeningPaperKind, code: string | null): string =>
   kind === 'API' || kind === 'SCN' ? roles[apControlRole(code)] : roles.AR_OTHER;
 
-/* ── POST /opening/papers { kind, partyId, date, ref?, amountSen, note? } ─── */
 export const openingPaperCreate = async (c: any): Promise<Response> => {
   const w = await openForWrites(c);
   if ('resp' in w) return w.resp;
@@ -351,7 +337,6 @@ export const openingPaperCreate = async (c: any): Promise<Response> => {
   return c.json({ ok: true, id: row.id, docNo, jeNo: je.jeNo }, 201);
 };
 
-/** One opening paper, with what has come off it. */
 async function loadPaper(sb: any, companyId: number, kind: OpeningPaperKind, id: string): Promise<{ ok: true; paper: Paper } | { ok: false; status: number; body: Row }> {
   const all = await loadPapers(sb, companyId, kind);
   if (!all.ok) return { ok: false, status: 500, body: { error: 'load_failed', reason: all.reason } };
@@ -360,7 +345,6 @@ async function loadPaper(sb: any, companyId: number, kind: OpeningPaperKind, id:
   return { ok: true, paper };
 }
 
-/* ── PATCH /opening/papers/:kind/:id { date?, ref?, amountSen?, note? } ───── */
 export const openingPaperUpdate = async (c: any): Promise<Response> => {
   const w = await openForWrites(c);
   if ('resp' in w) return w.resp;
@@ -409,7 +393,6 @@ export const openingPaperUpdate = async (c: any): Promise<Response> => {
   return c.json({ ok: true, jeNo: je.jeNo });
 };
 
-/* ── POST /opening/papers/:kind/:id/cancel ─────────────────────────────────── */
 export const openingPaperCancel = async (c: any): Promise<Response> => {
   const w = await openForWrites(c);
   if ('resp' in w) return w.resp;
@@ -434,7 +417,6 @@ export const openingPaperCancel = async (c: any): Promise<Response> => {
   return c.json({ ok: true });
 };
 
-/* ── POST /opening/lock · /opening/unlock ──────────────────────────────────── */
 export const openingLock = async (c: any): Promise<Response> => {
   const w = await openForWrites(c);
   if ('resp' in w) return w.resp;

@@ -1,6 +1,3 @@
-// "MORE FILTERS" — the draft rows [field ▾][value ▾][delete] and "+ Add filter",
-// shared by the phone sheet and the desktop panel. It edits a DRAFT; applying
-// it (and previewing its count) belongs to the surface that hosts it.
 import { useState } from "react";
 import {
   SO_FILTER_MAX_ROWS,

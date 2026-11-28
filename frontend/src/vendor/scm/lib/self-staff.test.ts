@@ -31,9 +31,6 @@ const ROSTER: Row[] = [
 
 describe('resolveSelfStaff', () => {
   test('user_id wins — the emailless majority is recognised as themselves', () => {
-    /* THE PRODUCTION CASE. The IT Admin has a staff row (user_id 4, email NULL);
-       id / email / name all miss it, so the old order offered a synthesized
-       "self" option the create path then discarded. */
     expect(resolveSelfStaff(ROSTER, { userId: 4, email: null, name: 'Someone Else' }))
       .toBe(ROSTER[0]);
   });
@@ -60,7 +57,6 @@ describe('resolveSelfStaff', () => {
   });
 
   test('a staff row with a null user_id is never matched by an absent caller id', () => {
-    /* null === null must not resolve to "that is me". */
     expect(resolveSelfStaff(ROSTER, { userId: null, email: null, name: null })).toBeUndefined();
   });
 });
@@ -80,10 +76,6 @@ describe('both New-SO surfaces read this module — no fourth copy', () => {
   });
 
   test('mobile no longer claims to match by an id it never looked at', () => {
-    /* The comment above the old mobile memo said "(by id / email / name)" while
-       the code read email then name. A comment that describes a rule the code
-       does not run is worse than no comment: it is what stops the next reader
-       from finding this. */
     expect(mobileSource).not.toContain('(by id / email / name)');
   });
 });

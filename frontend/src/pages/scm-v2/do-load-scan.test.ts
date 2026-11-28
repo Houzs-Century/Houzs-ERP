@@ -32,18 +32,10 @@ import { resolve } from 'node:path';
 const read = (p: string) => readFileSync(resolve(__dirname, p), 'utf8');
 const PAGE = read('./DoLoadScan.tsx');
 const PDF = read('../../vendor/scm/lib/delivery-order-pdf.ts');
-/* Comments stripped, for the NEGATIVE assertions only. The header of that file
-   RECORDS what the QR used to encode and what the caption used to say, which is
-   exactly the prose a reader needs and exactly the string a naive `not.toContain`
-   trips on — the same trap this file already fixed once, three tests below. */
 const PDF_CODE = PDF.replace(/\/\*[\s\S]*?\*\//g, '')
   .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 const APP = read('../../App.tsx');
 const CN = read('./ConsignmentNoteDetail.tsx');
-/* The ladder MOVED on 2026-08-26 (it is read by the server now, so it lives in
-   the mirrored rule module and do-next-step.ts re-exports it). This file follows
-   it rather than dropping the assertion — the copy under the button is what a
-   storekeeper reads at the dock, and it is pinned wherever it lives. */
 const LADDER_SRC = read('../../vendor/shared/do-scan-ladder.ts');
 const PUBLIC_PAGE = read('../PublicDoScan.tsx');
 
@@ -61,11 +53,8 @@ describe('the DO print QR', () => {
     expect(PDF_CODE, 'the authed link must not still be printed anywhere').not.toContain('/scm/do-load?id=');
   });
 
-  /* THE CAPTION HAD TO CHANGE WITH THE LADDER. "SCAN · MARK LOADED" named ONE
-     of the four things the code now does, so it was wrong on three papers out
-     of four. The caption states what is true of every rung. */
   it('the caption names the repeated scan, not one rung', () => {
-    expect(PDF).toContain("doc.text('SCAN AT EACH STEP'");
+    expect(PDF).toContain("caption: 'SCAN AT EACH STEP'");
     expect(PDF_CODE).not.toContain('MARK LOADED');
   });
 
@@ -78,23 +67,14 @@ describe('the DO print QR', () => {
     for (const p of ['./DeliveryOrderDetailV2.tsx', '../../mobile/MobileModuleDetail.tsx', '../../lib/printDocumentPdf.ts']) {
       expect(read(p), `${p} does not arm the scan token`).toContain('armDoScanToken');
     }
-    /* The list goes through printDocumentPdf's fetcher, which is the third file
-       above — it has no stamping of its own to keep in step. */
     expect(read('./MfgDeliveryOrdersListV2.tsx')).toContain('fetchPrintBundle');
   });
 });
 
 describe('the landing page', () => {
   it('has ONE write site, and types no status literal of its own', () => {
-    /* One call site is the property that outlived the one-rung premise: four
-       rungs written by four `mutate` calls would be four places to forget the
-       confirmation state or the evidence note. */
     const writes = PAGE.match(/updateStatus\.mutate\(/g) ?? [];
     expect(writes.length).toBe(1);
-    /* And it writes what the LADDER hands it, never a status it typed. A
-       hand-typed literal here is how a value the enum does not define reaches
-       Postgres as a 22P02 — bug 0530 — and the ladder's target type is checked
-       by the compiler. `status: step.status` is the only shape allowed. */
     expect(PAGE).toContain('status: step.status');
     const code = PAGE
       .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -103,11 +83,6 @@ describe('the landing page', () => {
   });
 
   it('never touches the ledger itself — the server owns the stock write', () => {
-    /* Prose may SAY "inventory"; the page must never CALL anything that moves
-       it. The old assertion ran the regex over the WHOLE FILE and so was
-       satisfied only while no comment mentioned the deduction — it would have
-       failed on an honest comment and passed on a call hidden behind a rename.
-       Stripping comments first is what the sentence above always meant. */
     const code = PAGE
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
@@ -115,16 +90,6 @@ describe('the landing page', () => {
   });
 
   it('tells the operator that confirming takes the goods out of stock', () => {
-    /* The copy is a pin, not decoration. It said the opposite until 2026-08-22
-       ("Stock leaves the warehouse when the dispatcher sends the truck ... not
-       now"), and a sentence that survives the behaviour it describes is how a
-       storekeeper comes to trust a thing that is not true.
-
-       It moved into the LADDER on 2026-08-26 — each rung carries its own line,
-       so adding a rung cannot leave one behind — so the assertion follows it
-       there. Which rung shows which sentence is asserted through the rendered
-       page in DoLoadScan.ladder.test.tsx; this only pins that the words exist
-       and that the retracted ones have not come back anywhere. */
     expect(LADDER_SRC).toContain('takes the goods out of warehouse stock');
     expect(LADDER_SRC + PAGE + PUBLIC_PAGE).not.toContain('Stock leaves the warehouse when the');
   });

@@ -23,8 +23,8 @@ import { markWorkspaceOpenIntent } from "../../lib/workspaceTabs";
 import { api } from "../../api/client";
 import { useQuery, type QueryState } from "../../hooks/useQuery";
 import { cn, formatCurrency, formatDate } from "../../lib/utils";
-import { fmtSen } from "../../vendor/shared/format";
-import { formatPhone } from "../../vendor/shared/phone";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
+import { formatPhone } from "../../../../shared/src/vendor/shared/phone";
 import { transferSummary, useFairOptions, useFairTransfer } from "../../vendor/scm/lib/fair-options-queries";
 import { boothChoices } from "../../vendor/scm/lib/fair-booth-choices";
 import { announceProjectSalesChanged, useOnProjectSalesChanged } from "./projectSalesEvents";
@@ -58,9 +58,6 @@ function Tile({ label, value, accent }: { label: string; value: string; accent?:
   );
 }
 
-/* The one sentence the owner asked for: how much of the final total is still
- * not opened as an order. Signed — a negative gap means the orders already
- * exceed the typed total, which is worth seeing rather than clamping away. */
 function GapPill({ s }: { s: ProjectSalesOrdersSummary }) {
   if (s.notOpenedRm == null) return null;
   const pct = s.notOpenedPct != null ? ` (${Math.abs(s.notOpenedPct)}%)` : "";
@@ -91,8 +88,6 @@ function GapPill({ s }: { s: ProjectSalesOrdersSummary }) {
   );
 }
 
-/** A "Venue differs" order no report places: pick a booth at its own venue and
- *  move it — one at a time. */
 function PickAndMove({ row, onMove, busy }: { row: ProjectSalesOrderRow; onMove: (projectId: number) => void; busy: boolean }) {
   const optionsQ = useFairOptions(row.so_date);
   const { choices, suggested } = boothChoices(
@@ -129,7 +124,6 @@ export function ProjectSalesOrdersBlock({
   finalTotalRm,
 }: {
   query: QueryState<ProjectSalesOrdersResponse>;
-  /** project_finance.total_sales (RM) — the lump sum typed into Total Sales. */
   finalTotalRm: number | null;
 }) {
   const rows = query.data?.data ?? [];

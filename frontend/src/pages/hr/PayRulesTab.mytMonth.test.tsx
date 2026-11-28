@@ -1,6 +1,3 @@
-/* The pay-rules worked example divides by the days of THIS month. At 01:30 on
-   1 Dec (Malaysia), on a machine whose clock zone is UTC, it used November's
-   30 instead of December's 31. Run with TZ=UTC. */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render } from "@testing-library/react";
 import { DEFAULT_PAY_RULES } from "../../vendor/shared/hr-pay-rules";

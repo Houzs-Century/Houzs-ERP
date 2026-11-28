@@ -1,7 +1,3 @@
-// Browser I/O for the role-matrix Excel export/import. The MEANING is all in
-// roleMatrixExcel.ts (pure, unit-tested); this file only turns a WorkbookData
-// into a downloaded .xlsx and an uploaded .xlsx/.csv into SheetData[]. SheetJS
-// stays lazy (xlsx-runtime) so it is not in the main bundle.
 
 import { parseCSV } from "./csv";
 import type { CellValue, SheetData, WorkbookData, MatrixSnapshot } from "./roleMatrixExcel";
@@ -40,8 +36,6 @@ export async function readMatrixSheets(file: File): Promise<SheetData[]> {
   return readWorkbookBytes(await file.arrayBuffer());
 }
 
-/** Column widths from the longest cell in each column (clamped), so the exported
- *  sheet is readable without manual resizing. */
 function colWidths(aoa: CellValue[][]): Array<{ wch: number }> {
   const widths: number[] = [];
   for (const row of aoa) {
@@ -61,8 +55,6 @@ export async function workbookToXlsx(wb: WorkbookData): Promise<ArrayBuffer> {
   for (const s of wb.sheets) {
     const ws = XLSX.utils.aoa_to_sheet(s.aoa);
     (ws as Record<string, unknown>)["!cols"] = colWidths(s.aoa);
-    // Excel caps a sheet name at 31 chars; our names are shorter, but clamp to
-    // be safe against a future rename.
     XLSX.utils.book_append_sheet(out, ws, s.name.slice(0, 31));
   }
   return XLSX.writeXLSX(out, { type: "array", bookType: "xlsx" }) as ArrayBuffer;

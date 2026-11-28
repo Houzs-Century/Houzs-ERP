@@ -16,7 +16,7 @@ import { useStaff, usePickableStaff } from "../vendor/scm/lib/admin-queries";
 import { SoSharedWith } from "../vendor/scm/components/SoSharedWith";
 import { HIST_FIELD_LABEL, HIST_MONEY_FIELDS } from "./so-history-labels";
 import { isStoredPhotoKey } from "../components/audit/audit-value";
-import { statusLabel } from "../vendor/scm/lib/status-pill";
+import { statusLabel } from "../../../shared/src/vendor/scm/lib/status-pill";
 import { AMENDMENT_APPROVER_LABEL, soAmendmentApprover, SO_AMENDMENT_LANE_APPROVE_PERM } from "../vendor/scm/lib/amendment-approver";
 import { useAuth as useHouzsAuth } from "../auth/AuthContext";
 import { ACCESS_RANK } from "../types";
@@ -31,9 +31,9 @@ import {
   type SoAuditFieldChange,
 } from "../vendor/scm/lib/sales-order-queries";
 import { overlaySoLineCoverage } from "../vendor/scm/lib/so-coverage-overlay";
-import { buildVariantSummary } from "../vendor/shared/variant-summary";
-import { formatPhone } from "../vendor/shared/phone";
-import { fmtDateTime } from "../vendor/shared/format";
+import { buildVariantSummary } from "../../../shared/src/vendor/shared/variant-summary";
+import { formatPhone } from "../../../shared/src/vendor/shared/phone";
+import { fmtDateTime } from "../../../shared/src/vendor/shared/format";
 import { orderLineIdentity } from "@2990s/shared"; import { soEditOpensOnOverride } from "../vendor/scm/lib/so-after-do-client";
 import {
   CANCELLABLE_STATUSES,
@@ -72,10 +72,6 @@ import {
   useWithdrawAmendment,
   type AmendmentLine,
 } from "../vendor/scm/lib/so-amendment-queries";
-/* Printable amendment document — the SAME shared client-side jsPDF template the
-   desktop AmendmentDetailV2 and the PO mobile detail use (one logic layer). Gives
-   the mobile SO-amendment surface the "Print amendment" the desktop already had,
-   closing the desktop/mobile parity gap. */
 import { generateAmendmentPdf } from "../vendor/scm/lib/amendment-pdf";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../vendor/scm/lib/pdf-common";
@@ -100,9 +96,6 @@ import "./mobile.css";
 import { isFocLine } from '../vendor/scm/lib/foc-line';
 import { soConfirmDateNote } from '../lib/soConfirmDateNote';
 import { addressLineTwoView } from '../vendor/shared/address-two-lines';
-/* Shapes are the subset of the /mfg-sales-orders/:docNo + /:docNo/payments
-   responses the mobile detail screen reads. The backend camelCases nothing —
-   these are the raw snake_case columns. */
 type SoHeader = {
   doc_no: string;
   debtor_name: string | null;
@@ -111,35 +104,21 @@ type SoHeader = {
   email: string | null;
   customer_type: string | null;
   salesperson_id: string | number | null;
-  /* Who ELSE may see and edit this order (mig 20260909T1000). Attribution
-     stays salesperson_id above — these people carry none of it. */
   collaborator_staff_ids: string[] | null;
   sales_location: string | null;
   customer_state: string | null;
-  /* Task #121 — country snapshot auto-derived from customer_state (mig 0082).
-     Desktop SO Detail surfaces it as the address block's Country line. */
   customer_country: string | null;
   ref: string | null;
   customer_so_no: string | null;
   po_doc_no: string | null;
-  /* Emergency contact — the detail HEADER carries all three columns
-     (emergency_contact_name / _phone / _relationship). The Build Spec's
-     Customer card shows an "Emergency contact" row, HIDDEN entirely when no
-     phone is on file. Mirrors the desktop SO form's emergency block. */
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
   building_type: string | null;
-  /* venue = the free-text name (on PDFs); venue_id = the master FK (mig 0086); fair = the linked event. */
   venue: string | null;
   venue_id: string | null;
-  fair?: LinkedFair | null; fair_date?: string | null; // + the day of it the order was written on
+  fair?: LinkedFair | null; fair_date?: string | null;
   note: string | null;
-  /* Delivery address columns — the desktop SO form maps these to labelled
-     lines (address1/2 = free-text; address3 = city fallback; address4 =
-     postcode fallback; customer_state = State; customer_country = Country).
-     The header also carries `city`/`postcode` proper columns, so read those
-     first and fall back to address3/address4 exactly like desktop. */
   address1: string | null;
   address2: string | null;
   address3: string | null;
@@ -154,17 +133,8 @@ type SoHeader = {
   total_revenue_sen: number | null;
   paid_sen_total: number | null;
   balance_sen: number | null;
-  /* Tier 2 downstream-lock + delivery progress — stamped by the detail GET
-     (same fields the desktop SO Detail / list read). has_children = a live DO/SI
-     references this SO (locks Cancel); downstream_fully_frozen = every line is on one (locks Edit). */
   has_children: boolean | null; downstream_fully_frozen?: boolean | null;
   delivery_state: string | null;
-  /* SO-amendment gate flags (Phase 1-C, read-only) — the GET /:docNo endpoint
-     derives these (backend mfg-sales-orders.ts). amendment_eligible = the SO is
-     processing-locked (already PO'd to the supplier) but still editable via the
-     amendment flow, so a line change here must go out as an amendment request.
-     open_amendment is the light summary of any in-flight amendment (status NOT IN
-     SENT/REJECTED). Same flags the desktop SalesOrderDetail routes on. */
   amendment_eligible: boolean | null;
   /* Owner 2026-08-12 — a live PO already claims one of this SO's lines (2990
      only). Feeds soProcLockActive (line ~390), so the phone freezes the same
@@ -172,33 +142,19 @@ type SoHeader = {
   po_locked: boolean | null;
   has_open_amendment: boolean | null;
   open_amendment: { id: string; status: string; amendment_no: string; lane?: string | null } | null;
-  /* Scan-flow proof photos (migrations 0033 + 0034) — R2 keys for the
-     handwritten order slip and the card-terminal payment receipt this SO was
-     scanned from. Dual-read camelCase ?? snake_case at the use site (the pg
-     driver camelCases result columns on some paths). */
   slip_image_key: string | null;
   receipt_image_key: string | null;
 };
 type SoItem = {
   id: string;
   description: string | null;
-  /* Backend returns mfg_sales_order_items.variants as a JSONB OBJECT (not a
-     pre-formatted string). Render it through the shared summary builder — the
-     prototype's `variants: string` assumption crashed on .trim(). */
   item_group: string | null;
   variants: Record<string, unknown> | null;
-  /* description2 = the server-computed variant summary string (HOOKKA-style),
-     stamped on the line. Used as a fallback when the raw `variants` object is
-     absent/empty so the spec line still shows its category-aware spec text. */
   description2: string | null;
   item_code: string | null;
-  /* Unit of measure — the Build Spec line item reads "SKU {sku} · {uom}". */
   uom: string | null;
   qty: number | null;
   unit_price_sen: number | null;
-  /* Per-line discount (mfg_sales_order_items.discount_sen). Desktop SO detail
-     shows it in the "Disc" column; without it a discounted line silently hid the
-     discount on mobile and an FOC line read "RM 0.00 ×qty" with no marker. */
   discount_sen: number | null;
   total_sen: number | null;
   line_delivery_date: string | null;
@@ -215,14 +171,8 @@ type SoItem = {
   shipped_source_adj?: boolean;
   ready_source_pos?: Array<{ po: string | null; qty: number; kind: "po" | "adjustment" }>;
   delivered_qty?: number | null; remaining_qty?: number | null;
-  /* Why the line can never read READY, when the reason is WHERE it stands (2026-09-08). */
   non_selling_warehouse?: { code: string | null; name: string | null; type: string | null; notice: string } | null; awaiting_processing_date?: boolean;
-  /* A retired line — the SO's history, not part of the live order. Returned by
-     GET /:docNo like every other row; filtered out at the use site. */
   cancelled?: boolean | null;
-  /* The operator's free-text instruction for whoever executes this line (the
-     line card's "Type remarks…" box). Served by GET /:docNo all along and
-     rendered on neither platform until 2026-08-11 — see the render site. */
   remark?: string | null;
   photo_urls?: string[] | null;
   photoUrls?: string[] | null;
@@ -240,26 +190,15 @@ type SoPayment = {
   collected_by_name: string | null;
   amount_sen: number | null;
   slip_key: string | null;
-  /* Row creation instant (UTC) — drives the same-day EDIT affordance (a payment
-     may be corrected only on the MY calendar day it was recorded). */
   created_at: string | null;
 };
 
-// Bare 2dp amount; callers print their own "RM " prefix. The shared fmtAmt
-// keeps a non-finite from reaching the user as "RM NaN".
 const rm = fmtAmt;
-/* Full date for the locked read-only fields. Numeric DD/MM/YYYY via the shared
-   formatter (house rule — no month names), which also UTC-tags bare timestamps. */
 const dl = (d: string | null | undefined) => formatDate(d);
-/* Locked-field value or em-dash — a field the detail endpoint doesn't return
-   (or returns empty) renders as "—" inside the .fld-ro box, per the brief. */
 const val = (v: string | null | undefined) => {
   const s = (v ?? "").toString().trim();
   return s.length ? s : "—";
 };
-/* DRAFT → Draft, CANCELLED → Cancelled, everything else (CONFIRMED,
-   IN_PRODUCTION, READY_TO_SHIP, SHIPPED, DELIVERED …) reads as a live/Submitted
-   order — matching the design's 3-state action model. */
 const phase = (status: string | null): "draft" | "cancelled" | "submitted" => {
   const s = (status ?? "").toUpperCase();
   if (s === "DRAFT") return "draft";
@@ -273,7 +212,6 @@ const total = (h: SoHeader) => h.local_total_sen ?? h.total_revenue_sen ?? 0;
  *  /mfg-sales-orders/:docNo (header + line items) and /:docNo/payments.
  *  Draft/Submitted actions PATCH /:docNo/status. Design classes only. */
 export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onConvert }: { docNo: string; onBack: () => void; onEdit?: (docNo: string) => void; onAddLine: ((docNo: string) => void) | null;
-  /** Relationship-Map node navigation (MobileApp). Absent → map nodes inert. */
   flowNav?: FlowNav;
   /** Convert on a cancelled order's money panel: open New SO with this seed (docs/bugs/0933). */
   onConvert?: (seed: MobileConvertPrefill) => void;
@@ -284,17 +222,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   const askPrompt = usePrompt();
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  /* Relationship Map — the mobile twin of the desktop SO map
-     (so-relationship-map.ts → DocumentRelationshipMapModal). The SO anchor
-     reads /document-flow/so/:docNo ONLY — no coverage fetch, matching the
-     desktop SO map's deliberate no-floating-hop rule (coverage is
-     purchase-doc-keyed; an SO-keyed read would be new backend load). */
   const [mapOpen, setMapOpen] = useState(false);
-  /* SO-amendment (Phase 1-C) — the pending-amendment banner's actions. The
-     diff sheet opens with the amendment id; the supplier-confirm sheet toggles
-     inline. approve-SO / reject / withdraw are direct mutations gated by
-     permission + status. All reuse the vendored so-amendment-queries hooks (no
-     re-implemented API). */
   const [viewingAmendmentId, setViewingAmendmentId] = useState<string | null>(null);
   const [supplierConfirmOpen, setSupplierConfirmOpen] = useState(false);
   const approveSo = useApproveSo();
@@ -305,11 +233,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   const updateStatus = useUpdateMfgSalesOrderStatus(); const requestCancel = useCancelRequestAction("so"); // cancel = request + two approvals (owner 2026-09-08)
   const deleteDraft = useDeleteMfgSalesOrder();
 
-  /* Reads route through the SHARED vendored hooks (vendor/scm/lib/
-     sales-order-queries) so mobile lives in the SAME query-key namespace as the
-     desktop SalesOrderDetail — shared mutations (status / payments / amendments)
-     invalidate ['mfg-sales-order-detail'] + ['mfg-sales-orders', docNo,
-     'payments'] and those invalidations now reach this screen too. */
   const detail = useMfgSalesOrderDetail(docNo);
   /* The live Stock / Incoming PO / READY-source fields are NOT in GET /:docNo
      (it returns coverage_po null since docs/bugs/0592); they come from this
@@ -320,42 +243,17 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   const paymentsQ = useSalesOrderPayments(docNo);
 
   const staffQ = useStaff();
-  /* staffQ (FULL roster) resolves persisted names (a scoped-out / resigned
-     salesperson or collector still shows a name). The payment "Collected By"
-     SELECTION list must instead be the company-scoped, ACTIVE-only pickable set
-     (Team-grant rule), mirroring the desktop PaymentsTable — a resigned or
-     other-company staff must never be a NEW pickable collector. */
   const pickableStaffQ = usePickableStaff({ onlySales: true });
   const houzsAuth = useHouzsAuth();
   const h = detail.data?.salesOrder as SoHeader | undefined;
-  /* Cancelled lines are dropped here for the SAME reason desktop V2 drops them
-     (SalesOrderDetailV2.tsx `.filter((l) => !l.cancelled)`): GET /:docNo returns
-     an SO's retired lines along with its live ones, and this screen's `items`
-     feeds both the Line items card and generateSalesOrderPdf. Desktop filtered
-     and mobile did not — the one-shared-rule divergence this repo keeps paying
-     for. Production held zero cancelled rows until 2026-08-10, so it never
-     showed. */
   const items = useMemo(
     () => overlaySoLineCoverage(((detail.data?.items ?? []) as SoItem[]).filter((l) => !l.cancelled), coverage.data?.coverage),
     [detail.data, coverage.data],
   );
-  /* MONEY IS EITHER KNOWN OR UNKNOWN — the MobilePOD (#653) rule, applied to the
-     sibling screen that runs the same subtraction. `paymentsQ.data ?? []` folded
-     a FAILED payments read into "no payments", and `data` is set only by a
-     SUCCESSFUL fetch, so an empty array meant two different things. An empty
-     array is an ANSWER (a genuinely unpaid SO has none); the ABSENCE of one is
-     not. */
   const paymentsKnown = paymentsQ.error === null && Array.isArray(paymentsQ.data);
   const payments = (paymentsKnown ? paymentsQ.data! : []) as SoPayment[];
-  /* Download the SO PDF — reuses the SAME desktop generator (per-brand letterhead)
-     so the phone produces byte-identical output. 'save' = normal download. */
   const deliverPdf = async (action: PdfAction) => {
     if (!h) return;
-    /* This PDF is handed to the CUSTOMER. Generating it from an unknown payments
-       ledger prints an empty Payments table, which does not read as "we could not
-       load this" — it reads as "you have paid nothing and owe the full total".
-       Refusing to print is recoverable; a wrong statement of what a customer owes
-       is not. Same guard as the desktop SalesOrderDetail print path. */
     if (!paymentsKnown) {
       void notifyTop({
         title: "Can't generate the PDF yet",
@@ -378,9 +276,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   };
   const print = usePrintPreview(deliverPdf);
 
-  /* Salesperson NAME — the detail header carries only salesperson_id (a staff
-     UUID), so resolve it against the shared /staff list. Falls back to em-dash
-     while loading or when the id has no matching active staff row. */
   const salespersonName = h?.salesperson_id != null
     ? (staffQ.data ?? []).find((s) => String(s.id) === String(h.salesperson_id))?.name ?? null
     : null;
@@ -388,9 +283,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
      them; granting and withdrawing live on SO Maintenance, desktop-only
      (docs/modules/so-handover.md §8). */
 
-  /* Status change routes through the SHARED useUpdateMfgSalesOrderStatus so
-     mobile gets the same optimistic update + audit-log / status-changes
-     invalidation desktop has (the raw inline PATCH skipped both). */
   const setStatus = async (status: string, confirmMsg?: string) => {
     if (busy) return;
     if (confirmMsg && !(await confirm({ title: confirmMsg, confirmLabel: "Confirm", danger: true }))) return;
@@ -431,13 +323,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   };
 
   const ph = h ? phase(h.status) : "submitted";
-  /* Balance — null means UNKNOWN, not zero. deriveBalance prefers the
-     server-stamped `balance_sen`, then `paid_sen_total`, and only falls
-     through to summing the payments ledger when BOTH header fields are null.
-     That is the one case where a failed payments read corrupts the answer:
-     paid becomes 0 and the balance renders as the FULL order total. Narrow, but
-     it is the #653 loss exactly (an already-paid order shown as owing
-     everything), so it fails closed instead of guessing. */
   const balanceUnknown =
     h != null && h.balance_sen == null && h.paid_sen_total == null && !paymentsKnown;
   const bal = h && !balanceUnknown ? deriveBalance(h, payments) : null;
@@ -453,7 +338,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   const rawStatus = (h?.status ?? "").toUpperCase();
   const hasChildren = soDownstreamHardLocked(h);
   const migratedLocked = soMigratedReadonly(h), canCancel = !migratedLocked && CANCELLABLE_STATUSES.includes(rawStatus);
-  const isLocked = migratedLocked || isSoLocked(h?.status, hasChildren); // migrated sits OUTSIDE: there is no override or amendment route out of it
+  const isLocked = migratedLocked || isSoLocked(h?.status, hasChildren);
 
   /* Processing LOCK — the shared procLockActive: once the SO has a Processing
      Date AND that day has passed (compared against todayMyt() — the Malaysia
@@ -464,35 +349,13 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
      past-processing order. */
   const processingLocked = h ? soProcLockActive(h) : false;
 
-  /* Amendment gate (server-derived, desktop SalesOrderDetail parity) — when
-     amendment_eligible AND not hard-locked the SO is processing-locked but still
-     editable via the amendment flow, so Edit stays ENABLED (tapping it routes
-     into MobileNewSO's amendment-raise mode) rather than being hard-locked by
-     the processing date. A SHIPPED/terminal SO is never amendment-eligible.
-     open_amendment / has_open_amendment drive the pending banner + its gate
-     actions below. */
   const amendmentEligible = h ? soAmendmentEligible(h, isLocked) : false;
   const openAmendment = h?.open_amendment ?? null;
   const hasOpenAmendment = Boolean(h?.has_open_amendment) && openAmendment != null;
 
-  /* editLocked (disables the footer Edit button) = hard-locked (terminal status
-     OR downstream DO/SI) OR a proceeded past-processing order that is NOT
-     amendment-eligible. An amendment-eligible SO keeps Edit live so the
-     salesperson can raise an amendment from mobile instead of reopening it on
-     desktop. */
   const hardLocked = isLocked || (processingLocked && !amendmentEligible);
-  const editLocked = hardLocked && !(h && soEditOpensOnOverride(h, { can: houzsAuth.can, migrated: migratedLocked })); // DEV-32: the editor's Override / after-DO road
+  const editLocked = hardLocked && !(h && soEditOpensOnOverride(h, { can: houzsAuth.can, migrated: migratedLocked }));
 
-  /* Houzs perm gates (mirror the server-side scm.amendment.* keys, desktop
-     parity) — the server 403 stays the real gate (its plain-language message is
-     humanised by authed-fetch); these just hide the affordance from users who
-     can't use it. */
-  /* Both footer actions below are WRITES -- "Edit Draft" PATCHes the SO and
-     "Create Sales Order" PATCHes /:docNo/status. The backend's area guard needs
-     `edit` for either (scm/middleware/area-guard: GET/HEAD -> view,
-     POST/PATCH/PUT/DELETE -> edit, "else 403 (ENFORCED)"), so a view-level rep
-     was shown both and got a 403 on the tap. Owner's off-not-hide rule: a
-     button its holder cannot use must be ABSENT, not fail on press. */
   const canWriteSo =
     houzsAuth.can("scm.access") ||
     ACCESS_RANK[houzsAuth.pageAccess("scm.sales.orders")] >= ACCESS_RANK.edit;
@@ -517,10 +380,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   const openAmendmentDetail = useAmendmentDetail(hasOpenAmendment && openAmendment ? openAmendment.id : null);
   const amendmentStatus = (openAmendment?.status ?? "").toUpperCase();
   const isAmendmentRequester = openAmendmentDetail.data?.viewerIsRequester === true;
-  /* Two-lane rework (2026-07-27): a lane row (open_amendment.lane set) has ONE
-     approver key — LINES → purchasing, DELIVERY → logistics — and its whole
-     life is REQUESTED → applied. The legacy chain keys below stay for
-     pre-rework (lane null) rows only. */
   const amendmentLane =
     openAmendment?.lane === "LINES" || openAmendment?.lane === "DELIVERY" || openAmendment?.lane === "PRICE" || openAmendment?.lane === "LINE_ADDREMOVE"
       ? openAmendment.lane : null;
@@ -530,12 +389,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   const canRejectAmendment = amendmentLane
     ? canApproveLane
     : houzsAuth.can("scm.amendment.approve_po");
-  /* Approve-PO + Send gates (SO_APPROVED -> PO_APPROVED -> SENT) ride the SAME
-     purchasing key the server enforces + the desktop PO banner uses
-     (scm.amendment.approve_po). The server 403 stays the real gate. */
   const canApprovePo = houzsAuth.can("scm.amendment.approve_po");
-  /* The bound PO carried on the shared amendment detail — names the PO in the
-     "SO revised, PO not yet revised" safety warning; null until the PO exists. */
   const boundPo =
     (openAmendmentDetail.data?.purchaseOrders?.[0] as { id: string; po_number: string; status: string } | undefined) ?? null;
   const canOfferReject = amendmentLane
@@ -544,9 +398,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   const canOfferWithdraw =
     amendmentStatus === "REQUESTED" && (isAmendmentRequester || canRejectAmendment);
 
-  /* Reject (an APPROVER refusing) — reason MANDATORY (server 400s without one; a
-     refusal that doesn't say why leaves the requester guessing and resubmitting).
-     Same ≥5-char prompt as desktop handleReject. */
   const handleReject = async () => {
     if (!openAmendment) return;
     const reason = await askPrompt({
@@ -561,7 +412,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
           ? "Give a reason the requester can act on — at least a few words."
           : null,
     });
-    if (reason == null) return; // cancelled
+    if (reason == null) return;
     try {
       await rejectAmendment.mutateAsync({ id: openAmendment.id, reason: reason.trim() });
       void notifyTop({
@@ -577,9 +428,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
     }
   };
 
-  /* Withdraw (the REQUESTER pulling their own request back) — REQUESTED only;
-     the server refuses once anyone has acted on it. Confirm first, then an
-     OPTIONAL reason, mirroring desktop handleWithdraw's two steps. */
   const handleWithdraw = async () => {
     if (!openAmendment) return;
     if (!(await confirm({
@@ -596,7 +444,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
       multiline: true,
       confirmLabel: "Withdraw request",
     });
-    if (reason == null) return; // cancelled at the second step
+    if (reason == null) return;
     try {
       await withdrawAmendment.mutateAsync({ id: openAmendment.id, reason: reason.trim() || undefined });
       void notifyTop({
@@ -612,10 +460,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
     }
   };
 
-  /* Approve-SO gate (SUPPLIER_PENDING → SO_APPROVED). Confirms, then re-derives
-     the SO server-side; the vendored useApproveSo mutation already invalidates
-     the shared SO detail + amendment queries this screen now reads, so no
-     mobile-scoped refresh is needed. */
   const handleApproveSo = async () => {
     if (!openAmendment || busy) return;
     if (!(await confirm({
@@ -648,13 +492,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
     }
   };
 
-  /* Approve-PO gate (SO_APPROVED -> PO_APPROVED) — the amendment's SECOND gate.
-     Re-derives the bound PO(s) in place (same PO number, revision bumped, prior
-     snapshotted into Revisions). Desktop drives this from the PO page; the mobile
-     app has no PO editor, so the gate lives on this banner. The PO's line items
-     are not loaded here, so a `received_floor` 409 names no specific line — the
-     plain-language "raise a Purchase Return first" is still exact. Mirrors desktop
-     PurchaseOrderDetail.handleApprovePo. */
   const handleApprovePo = async () => {
     if (!openAmendment || approvePo.isPending) return;
     if (!(await confirm({
@@ -671,10 +508,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
           : { title: "PO revision approved" },
       );
     } catch (e) {
-      /* approve-po may 409 { code:'received_floor', revisedQty, receivedQty } —
-         the revised qty is below what's already been received, so a Purchase
-         Return must clear the excess first. Read the structured body off the
-         thrown error (authed-fetch rides err.body) and render ONE plain sentence. */
       const body = (e as { body?: Record<string, unknown> }).body ?? null;
       if (body && body.code === "received_floor") {
         const revised = Number(body.revisedQty ?? 0);
@@ -691,10 +524,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
     }
   };
 
-  /* Send gate (PO_APPROVED -> SENT) — marks the amendment SENT. There is no server
-     email (Houzs mirrors 2990): the operator opens the bound PO on desktop to
-     download the Revised PO and sends it to the supplier themselves. Mirrors
-     desktop PurchaseOrderDetail.handleSendAmendment. */
   const handleSendAmendment = async () => {
     if (!openAmendment || sendAmendment.isPending) return;
     if (!(await confirm({
@@ -744,10 +573,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   const canAddPayment = canEditPayments;
   const [payOpen, setPayOpen] = useState(false);
 
-  /* Collected By default = the logged-in user (owner option B). The detail
-     header has no staff id for the viewer, so resolve it by matching the Houzs
-     session email against the shared /staff list; '' when unmatched (dropdown
-     falls back to "—"). Seeds NEW payment rows only. */
   const authEmail = houzsAuth.user?.email ?? null;
   const defaultCollectedBy =
     (authEmail
@@ -756,13 +581,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
         )?.id
       : "") ?? "";
 
-  /* Refresh the header KPIs after a payment posts. Reused by both the delete
-     action and the standalone Add-Payment sheet's onSaved.
-     After a payment add/edit/delete the shared mutation already invalidates the
-     payments ledger (['mfg-sales-orders', docNo, 'payments']) — the same key
-     useSalesOrderPayments reads. The header KPIs (Paid / Balance) come from the
-     DETAIL header, which the payment mutation does NOT touch, so refresh that
-     one key here so the KPIs update live. */
   const refreshAfterPayment = () =>
     qc.invalidateQueries({ queryKey: ["mfg-sales-order-detail", docNo] });
 
@@ -827,12 +645,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
               </div>
             )}
 
-            {/* Locked-view hint (design VERBATIM) — Edit unlocks the same New SO
-                form; there's no in-place edit here, so wording drops the mode.
-                When the SO is genuinely edit-locked (SHIPPED+ / downstream DO-SI /
-                past-processing proceeded order) the banner turns orange and names
-                the reason, mirroring the desktop SO Detail lock banner — and the
-                footer Edit button is disabled below. */}
             {hardLocked ? (
               <div data-testid={migratedLocked ? "so-migrated-readonly-banner" : "so-locked-banner"} style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "rgba(232,107,58,0.08)", border: "1px solid var(--c-orange, #e86b3a)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#8a4a24", lineHeight: 1.45 }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c66a34" strokeWidth="2" strokeLinecap="round"><rect x="4" y="10" width="16" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
@@ -843,10 +655,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                   : "Locked — this order has moved past editing. Line items can't be edited."}
               </div>
             ) : amendmentEligible ? (
-              /* Amendment-eligible (desktop parity) — the SO is on order to the
-                 supplier but still editable via the amendment flow. Edit stays
-                 live; tapping it opens the same New SO form in amendment-raise
-                 mode where Save submits an amendment request. */
               <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: "rgba(232,107,58,0.08)", border: "1px solid var(--c-orange, #e86b3a)", borderRadius: 10, padding: "9px 11px", marginBottom: 12, fontSize: 11, color: "#8a4a24", lineHeight: 1.45 }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c66a34" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, marginTop: 1 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="m10.5 13-2.5 2.5 2.5 2.5" /><path d="m13.5 13 2.5 2.5-2.5 2.5" /></svg>
                 {hasOpenAmendment
@@ -860,14 +668,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
               </div>
             )}
 
-            {/* ── Pending-amendment banner (Phase 1-C) ──────────────────────
-                An amendment is in flight. Shows its no + status pill, a "View
-                changes" link opening the before/after diff, and the gate actions
-                the current user is permitted across BOTH gates — record supplier
-                confirmation (REQUESTED) / approve SO revision (SUPPLIER_PENDING) /
-                approve the bound PO (SO_APPROVED) / send to supplier (PO_APPROVED)
-                — mirroring the desktop SalesOrderDetail + PurchaseOrderDetail
-                amendment banners so mobile can finish + send the amendment. */}
             <CancelRequestPanel compact docType="so" docKey={docNo} docNumber={docNo} onExecute={() => setStatus("CANCELLED")} executing={busy} />
             {hasOpenAmendment && openAmendment && (
               <div style={{ display: "flex", flexDirection: "column", gap: 9, background: "rgba(214,158,46,0.14)", border: "1px solid rgba(214,158,46,0.55)", borderRadius: 12, padding: "11px 13px", marginBottom: 12 }}>
@@ -883,11 +683,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     View changes
                   </button>
                 </div>
-                {/* Two-lane rework — a lane row is ONE signature: approve at
-                    REQUESTED applies the SO on the spot (LINES also raises the
-                    follow-up PO Amendment for purchasing to confirm in PO
-                    Amendments). The legacy multi-gate buttons below are
-                    lane-null only. */}
                 {amendmentLane != null && openAmendment.status === "REQUESTED" && canApproveLane && (
                   <button
                     type="button"
@@ -904,8 +699,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     Waiting for {AMENDMENT_APPROVER_LABEL[soAmendmentApprover(amendmentLane)]} — one signature applies it.
                   </div>
                 )}
-                {/* Gate actions — perm + status gated, exactly like desktop.
-                    LEGACY (lane null) rows only. */}
                 {amendmentLane == null && openAmendment.status === "REQUESTED" && canSupplierConfirm && (
                   <button
                     type="button"
@@ -951,9 +744,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     )}
                   </>
                 )}
-                {/* PO_APPROVED -> Send. Marks the amendment SENT (no server email);
-                    the Revised PO PDF is downloaded from the desktop PO screen — the
-                    mobile app has no PO PDF generator. */}
                 {amendmentLane == null && openAmendment.status === "PO_APPROVED" && (
                   <>
                     <div style={{ fontSize: 11.5, lineHeight: 1.45, color: "#6d5626" }}>
@@ -973,7 +763,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                   </>
                 )}
                 <WrongApproverFlagButton amendment={openAmendmentDetail.data?.amendment} canSign={canApproveLane} variant="mobile" />
-                {/* Reject — an approver refusing (reason mandatory), at every pre-approved gate as on desktop. */}
                 {canOfferReject && (
                   <button
                     type="button"
@@ -985,8 +774,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                     {rejectAmendment.isPending ? "Rejecting…" : "Reject amendment"}
                   </button>
                 )}
-                {/* Withdraw — the requester's own way out, so a mistaken request
-                    can be closed instead of buried under a second one. */}
                 {canOfferWithdraw && (
                   <button
                     type="button"
@@ -1012,34 +799,22 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
               <Kpi label="Balance" centi={bal} color="#b23a3a" unknown={balanceUnknown} />
             </div>
 
-            {/* Customer — locked .fld-ro fields (design layout VERBATIM) */}
             <div className="card"><div className="card-h"><span className="card-t">Customer</span></div><div className="card-b">
               <RoField label="Customer name" value={val(h.debtor_name)} />
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Phone" value={formatPhone(h.phone) || val(h.phone)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Email" value={val(h.email)} /></div></div>
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Customer type" value={val(h.customer_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Salesperson" value={val(salespersonName)} /></div></div>
-              {/* Only when actually shared — a field blank on almost every
-                  order teaches people to stop reading it. */}
               <SoSharedWith docNo={h.doc_no} header={h} staff={staffQ.data} frame={(v) => <RoField label="Shared with" value={v} />} />
               <RoField label="Ref No." value={val(h.customer_so_no ?? h.ref)} mono />
-              {/* Emergency contact — whole row HIDDEN when no phone on file
-                  (Build Spec §6 + null-field rule: "hide the row"). Value =
-                  "name · phone (relationship)" from the header's emergency_* cols. */}
               {(h.emergency_contact_phone ?? "").trim() ? (
                 <RoField label="Emergency contact" value={composeEmergency(h)} />
               ) : null}
             </div></div>
 
-            {/* Order info */}
             <div className="card"><div className="card-h"><span className="card-t">Order info</span></div><div className="card-b">
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Building type" value={val(h.building_type)} /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Fair" value={h.fair ? fairLabel(h.fair) : val(h.venue ?? h.venue_id)} /></div></div>{h.fair_date ? <RoField label="Fair day" value={dl(h.fair_date)} mono /> : null}
               {h.fair && h.venue && fairElsewhereLine(h.venue, h.fair) ? <RoField label="Venue" value={`${h.venue} · Venue differs`} /> : null}{/* the fair is named above; its place is not the order's (owner 2026-10-19) */}
               <div style={{ display: "flex", gap: 9 }}><div style={{ flex: 1, minWidth: 0 }}><RoField label="Processing Date" value={dl(h.processing_date)} mono /></div><div style={{ flex: 1, minWidth: 0 }}><RoField label="Delivery Date" value={dl(h.customer_delivery_date)} mono /></div></div>
               <RoField label="Sales location" value={val(h.sales_location ?? h.customer_state)} />
-              {/* Note — a non-empty note is emphasised as an amber callout (desktop
-                  SalesOrderDetailV2 parity), reusing THIS screen's own amber family
-                  (the --amber-bg / --amber / #e0cf9e / #6d5626 tokens the Draft
-                  banner above already uses) and the card's own field font sizes
-                  (9px label / 12.5px value). An empty note keeps the plain field. */}
               {(h.note ?? "").trim() ? (
                 <div style={{ marginTop: 2, border: "1px solid #e0cf9e", background: "var(--amber-bg, var(--hz-c-warning-bg))", borderRadius: 10, padding: "10px 12px" }}>
                   <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--amber, #8a6a2e)" }}>Note</div>
@@ -1065,7 +840,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
               </div>
             </div></div>
 
-            {/* Line items — description / variants / SKU / ×qty / line total */}
             <div className="card"><div className="card-h"><span className="card-t">Line items</span><span className="card-sub">{items.length} {items.length === 1 ? "line" : "lines"}</span></div>
               {items.length ? items.map((it, i) => {
                 /* SUPERSEDED, owner 2026-07-17 ("根據你的") — this row used to show
@@ -1083,22 +857,11 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                    happens. The code still binds (dual-read camelCase ?? snake_case
                    feeds `orderLineIdentity`, and is the fallback for a codeless row). */
                 const code = (((it as unknown as { itemCode?: string | null }).itemCode ?? it.item_code) ?? "").trim();
-                /* Variant = the category-aware spec (sofa Fabric·config / bedframe
-                   size·Headboard·Storage / mattress size·firmness·height) built
-                   from the variants JSON, falling back to the server's stamped
-                   description2 for older rows. It is the ONLY display of that spec
-                   on the row, so `orderLineIdentity` keeps it as `secondary` and drops
-                   only the redundant code. */
                 const { primary, secondary } = orderLineIdentity({
                   code,
                   description: it.description,
                   variant: buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
                 });
-                /* FOC + discount markers (desktop SalesOrderDetailV2 "Disc"
-                   column). FOC = zero unit price AND zero line total; otherwise a
-                   positive discount_sen renders under the unit price. Without
-                   these the row hid the discount and an FOC line looked like a
-                   plain "RM 0.00 ×qty". */
                 const isFoc = isFocLine({ ...it, line_total_sen: lineTotalSen(it) });
                 const discountSen = it.discount_sen ?? 0;
                 return (
@@ -1106,11 +869,8 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)", overflowWrap: "anywhere" }}>{primary || "—"}</div>
                     {secondary ? <div style={{ fontSize: 11.5, color: "var(--mut)", marginTop: 2, overflowWrap: "anywhere" }}>{secondary}</div> : null}
-                    {/* The line's REMARK — one renderer, shared with the phone's
-                        PO surface since 2026-09-04 (see MobileLineRemark). */}
                     <MobileLineRemark text={it.remark} />
                     <MobileLinePhotos docNo={docNo} line={it} />
-                    {/* UOM only — never the code (see the primary line above). */}
                     {(it.uom ?? "").trim() ? <div className="money" style={{ fontSize: 10, color: "var(--mut2)", marginTop: 3 }}>{it.uom!.trim()}</div> : null}
                     {/* Stock pill + source-PO trace (owner 2026-08-01) — the
                         mobile twin of the desktop Stock / Incoming PO columns,
@@ -1141,9 +901,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                   </div>
                   <div style={{ textAlign: "right", whiteSpace: "nowrap", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
                     <div className="money" style={{ fontSize: 13, fontWeight: 700, color: "var(--hz-c-primary-ink)" }}>RM {rm(lineTotalSen(it))}</div>
-                    {/* Unit price × qty — the per-unit price was missing on mobile,
-                        so a discounted / FOC line was indistinguishable from a
-                        full-price one. */}
                     <div className="money" style={{ fontSize: 11, color: "var(--mut)" }}>RM {rm(it.unit_price_sen ?? 0)} {"×"}{it.qty ?? 0}</div>
                     {isFoc ? (
                       <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".3px", color: "var(--hz-c-accent)", background: "var(--hz-dk-warning-bg, #f6ecd9)", border: "1px solid #e6d3ad", borderRadius: 5, padding: "1px 5px" }}>FOC</span>
@@ -1168,9 +925,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
             {(() => {
               const slipImageKey =
                 (h as unknown as { slipImageKey?: string | null }).slipImageKey ?? h.slip_image_key ?? null;
-              // Owner: the payment RECEIPT does NOT belong in this card -- it
-              // lives on its payment row's slip (the camera icon there). This
-              // card shows ONLY the customer's order slip.
               if (!slipImageKey) return null;
               return <ScannedPhotosCard slipKey={slipImageKey} receiptKey={null} />;
             })()}
@@ -1233,27 +987,13 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
             </div>
             <MobileSoDeliveryIssues docNo={docNo} />
 
-            {/* History — owner requirement (Inistate-style audit timeline): WHO
-                created / edited / changed status, WHEN, via WHICH app, with an
-                expandable field-level old → new diff. Accordion follows the
-                card pattern above; the audit-log fetch is LAZY — it only fires
-                the first time the section is opened (mirrors desktop's
-                historyOpen-mounted HistoryPanel). */}
             <HistoryCard docNo={docNo} />
 
-            {/* Confirm-gate refusals arrive as a bullet-per-reason list
-                (humanApiError renders validation_failed problems one per
-                line) — pre-line keeps the list readable; a single-line error
-                stays centered as before. */}
             {actionError && <div style={{ marginTop: 13, fontSize: 11.5, color: "var(--red)", whiteSpace: "pre-line", textAlign: actionError.includes("\n") ? "left" : "center" }}>{actionError}</div>}
           </div>
         )}
       </div>
 
-      {/* Standalone ADD-Payment sheet (the card-header "+ Add Payment"). Editing an EXISTING row is owned by
-          RecordedPaymentsList, which mounts the same sheet in edit mode — so the affordance exists wherever the ledger
-          is rendered, including inside Edit Sales Order. Reachable even when the SO is edit-locked, because payment is
-          never lock-gated (only status/downstream via canAddPayment). */}
       {payOpen && h && (
         <AddPaymentSheet
           docNo={docNo}
@@ -1270,9 +1010,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
         />
       )}
 
-      {/* Supplier-confirmation sheet (Phase 1-C) — records the supplier's
-          confirmation ref/note against the open amendment (REQUESTED →
-          SUPPLIER_PENDING) via the vendored useSupplierConfirm mutation. */}
       {supplierConfirmOpen && openAmendment && (
         <SupplierConfirmSheet
           amendmentId={openAmendment.id}
@@ -1281,9 +1018,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
         />
       )}
 
-      {/* Before/after diff sheet (Phase 1-C) — reads the amendment detail
-          (useAmendmentDetail) and renders each requested line change as
-          old_snapshot → new_*, the SAME data as the desktop AmendmentDiffModal. */}
       {viewingAmendmentId && (
         <AmendmentDiffSheet
           amendmentId={viewingAmendmentId}
@@ -1293,11 +1027,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
 
       {!detail.isLoading && !detail.error && h && (
         <footer className="actbar">
-          {/* No Add Payment in the FOOTER — the standalone Add-Payment entry
-              lives on the Payments card header (see AddPaymentSheet above), so
-              it stays reachable even when this footer's Edit button is locked.
-              Adding a payment through Edit (MobileNewSO's PAYMENTS card) also
-              still works when the SO is unlocked. */}
           {ph === "draft" && canWriteSo && (
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
               <div style={{ display: "flex", gap: 9 }}>
@@ -1305,10 +1034,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
                 <button className="btn" style={{ flex: 1.3, opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={async () => { if (!(await passesSoffioReminder(confirm, items.map((l) => l.item_code)))) return; const note = soConfirmDateNote(h.processing_date, h.customer_delivery_date); if (note && !(await confirm({ title: `Confirm ${docNo}?`, body: note, confirmLabel: "Create Sales Order" }))) return; void setStatus("CONFIRMED"); }}>{busy ? "Working…" : "Create Sales Order"}</button>
               </div>
               {onAddLine && <button className="btn-ghost" style={{ opacity: busy || migratedLocked ? 0.55 : 1 }} disabled={busy || migratedLocked} onClick={() => onAddLine(docNo)}>+ {ADD_LINE_LABEL}</button>}
-              {/* Discard draft — the escape hatch for a junk draft (esp. a bad
-                  scan/OCR draft). Secondary red-outline so it never competes with
-                  Create; behind the house confirm dialog. Backend refuses anything
-                  but a DRAFT. */}
               <button
                 type="button"
                 className="btn-ghost"
@@ -1323,11 +1048,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
           {ph === "submitted" && (
             <>
               <div style={{ display: "flex", gap: 9 }}>
-                {/* Edit — locked once SHIPPED+ or a non-cancelled DO/SI references
-                    this SO (has_children), matching the desktop's lockedStatuses. */}
                 <button className="btn-ghost" style={{ flex: 1, opacity: busy || editLocked ? 0.4 : 1 }} disabled={busy || editLocked} onClick={() => onEdit?.(docNo)}>Edit</button>
-                {/* Cancel — only on in-flight statuses (not SHIPPED+ / INVOICED /
-                    CLOSED), matching the desktop's cancellableStatuses. */}
                 {canCancel ? (
                   <button className="btn-danger" style={{ flex: 1, opacity: busy ? 0.55 : 1 }} disabled={busy} onClick={() => void requestCancel(docNo, docNo)}>{busy ? "Working…" : "Request cancel"}</button>
                 ) : (
@@ -1344,9 +1065,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
         </footer>
       )}
 
-      {/* Relationship Map (mobile) — the SO anchor's stacked twin of the
-          desktop SO map. See the mapOpen comment at the top of the component
-          for the deliberate no-coverage-fetch rule. */}
       {mapOpen && (
         <MobileRelationshipMap
           type="so"
@@ -1361,18 +1079,6 @@ export function MobileSODetail({ docNo, onBack, onEdit, onAddLine, flowNav, onCo
   );
 }
 
-/* KPI stat card — one third of the Total / Paid / Balance strip. Sized to fit
-   three-up at 375px: flex 1 1 0 (equal thirds regardless of content width) +
-   minWidth 0 so a long RM figure can't blow the row open; the value line is
-   nowrap + ellipsis as the final safety net. `.money` supplies tabular-nums.
-   The figure renders at 13.5px and steps down to 12px once the amount passes
-   6 digits (>= RM 10,000.00); the "RM" prefix rides smaller so the digits keep
-   the room. Visual style (card / .fld-l label / weights / colours) unchanged
-   from the design. */
-/* `unknown` is NOT the same as a null `centi`. fmtAmt deliberately renders null
-   as "0.00" (see lib/scm.ts — six mobile screens depend on that), which is the
-   right call for a figure the ERP genuinely holds as zero and the WRONG one for
-   a figure it failed to read. A card that could not be computed says so. */
 function Kpi({ label, centi, color, unknown }: { label: string; centi: number | null | undefined; color: string; unknown?: boolean }) {
   const v = unknown ? "—" : rm(centi);
   const big = v.replace(/\D/g, "").length > 6;
@@ -1381,8 +1087,6 @@ function Kpi({ label, centi, color, unknown }: { label: string; centi: number | 
       <div className="card-b" style={{ padding: "9px 9px" }}>
         <div className="fld-l" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
         <div className="money" style={{ fontSize: big ? 12 : 13.5, fontWeight: 800, color, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {/* No "RM" in front of an em-dash — "RM —" reads as a broken amount
-              rather than an absent one. */}
           {unknown ? null : <span style={{ fontSize: big ? 9 : 10, fontWeight: 700, opacity: 0.75, marginRight: 3 }}>RM</span>}{v}
         </div>
       </div>
@@ -1390,9 +1094,6 @@ function Kpi({ label, centi, color, unknown }: { label: string; centi: number | 
   );
 }
 
-/* Locked read-only field — the design's `.fld` + `.fld-l` + `.fld-ro` trio, the
-   detail screen's whole "form rendered locked" idiom. `mono` opts the value into
-   tabular-nums (phone / doc refs / dates) via the shared `.money` class. */
 function RoField({ label, value, mono }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
     <div className="fld">
@@ -1402,9 +1103,6 @@ function RoField({ label, value, mono }: { label: string; value: ReactNode; mono
   );
 }
 
-/* Emergency contact — "name · phone (relationship)" from the header's
-   emergency_* columns. Only rendered when a phone exists (caller-gated), so a
-   blank name still shows the phone; relationship is appended in parens if set. */
 function composeEmergency(h: SoHeader): string {
   const name = (h.emergency_contact_name ?? "").trim();
   const phone = formatPhone(h.emergency_contact_phone);
@@ -1413,18 +1111,9 @@ function composeEmergency(h: SoHeader): string {
   return rel ? `${head} (${rel})` : head || "—";
 }
 
-/* Line total — prefer the persisted total_sen; fall back to unit_price × qty
-   for older rows that never stamped it. */
 const lineTotalSen = (it: SoItem): number =>
   it.total_sen ?? Math.round((it.unit_price_sen ?? 0) * (it.qty ?? 0));
 
-/* ── Scanned photos card (mobile port of desktop's ScannedImageCard pair) ────
-   Order slip (slip_image_key, mig 0033) + payment receipt (receipt_image_key,
-   mig 0034) as tappable thumbnails; tap opens a full-size overlay (tap again to
-   dismiss). The images are served by GET /scan-so/slip-image?key=… which needs
-   the bearer, so each thumb authed-fetches the blob (fetchScanSlipImageBlobUrl)
-   and renders the object URL — revoked when the thumb unmounts, so the overlay
-   (which shows while the thumb stays mounted) always has a live URL. */
 function ScannedPhotosCard({ slipKey, receiptKey }: { slipKey: string | null; receiptKey: string | null }) {
   const [viewer, setViewer] = useState<{ src: string; label: string } | null>(null);
   return (
@@ -1459,8 +1148,6 @@ function ScannedPhotosCard({ slipKey, receiptKey }: { slipKey: string | null; re
   );
 }
 
-/* One authed thumbnail — fetches the scan image as a blob, shows a skeleton
-   while loading and a plain-language line when the fetch fails. */
 function ScannedThumb({ imageKey, label, onView }: { imageKey: string; label: string; onView: (src: string, label: string) => void }) {
   const [src, setSrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -1502,24 +1189,16 @@ function ScannedThumb({ imageKey, label, onView }: { imageKey: string; label: st
   );
 }
 
-/* ── History timeline (owner requirement — Inistate-style audit trail) ──────
-   Reads GET /mfg-sales-orders/:docNo/audit-log (mfg_so_audit_log) via the SAME
-   vendored hook desktop's HistoryPanel uses. Lazy: the hook receives null until
-   the accordion opens, so `enabled: Boolean(docNo)` keeps the request unfired.
-   Entries arrive newest-first from the backend. */
 
 const histVal = (field: string, v: unknown): string => {
   if (v === null || v === undefined || v === "") return "—";
   if ((HIST_MONEY_FIELDS.has(field) || /Sen$/.test(field)) && typeof v === "number") return `RM ${rm(v)}`;
-  // An object field-change (variants / sofa build) must never dump raw JSON at
-  // the user: summarise a list by its count, any other object as "updated".
   if (typeof v === "object") {
     return Array.isArray(v) ? `${v.length} item${v.length === 1 ? "" : "s"}` : "updated";
   }
   if (typeof v === "string" && isStoredPhotoKey(v)) return "1 photo";
   return String(v).replace(/_/g, " ");
 };
-/* Timestamp — desktop-standard numeric DD/MM/YYYY + HH:mm. */
 const histWhen = (iso: string): string => fmtDateTime(iso);
 const histHue = (s: string): number => {
   let h = 0;
@@ -1534,8 +1213,6 @@ const histInitials = (name: string): string => {
   const last = parts[parts.length - 1] ?? "";
   return ((first[0] ?? "") + (last[0] ?? "")).toUpperCase();
 };
-/* Action → plain sentence ("<actor> <sentence>"), pulling the headline value
-   (status pair / amount / item code) out of the entry's field_changes. */
 const histSentence = (e: SoAuditEntry): string => {
   const fc: SoAuditFieldChange[] = Array.isArray(e.field_changes) ? e.field_changes : [];
   const find = (f: string) => fc.find((c) => c.field === f);
@@ -1588,8 +1265,6 @@ const histSentence = (e: SoAuditEntry): string => {
 function HistoryCard({ docNo }: { docNo: string }) {
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  /* Lazy load — hook gets null until first open, so nothing is fetched for the
-     common "just glancing at the order" visit (mirrors desktop historyOpen). */
   const q = useSalesOrderAuditLog(open ? docNo : null);
   const entries = q.data ?? [];
 
@@ -1685,10 +1360,6 @@ function StatusPill({ status }: { status: string | null }) {
   return <span className={`badge ${cls}`} style={p === "draft" ? { border: "1px solid #e0cf9e" } : undefined}>{label}</span>;
 }
 
-/* ── Amendment status pill ───────────────────────────────────────────────────
-   The SO-amendment state machine (backend so-amendments.ts):
-   REQUESTED → SUPPLIER_PENDING → SO_APPROVED → PO_APPROVED → SENT (or REJECTED).
-   Plain-language labels; amber/teal/red tones by phase. */
 const AMENDMENT_STATUS_LABEL: Record<string, string> = {
   REQUESTED: "Requested",
   SUPPLIER_PENDING: "Supplier pending",
@@ -1713,19 +1384,12 @@ function AmendmentStatusPill({ status }: { status: string }) {
   );
 }
 
-/* changeType → plain label (desktop AmendmentDiffModal parity). */
 const amendmentChangeLabel = (t: string): string =>
   t === "SPEC" ? "Spec change" :
   t === "QTY" ? "Quantity change" :
   t === "ADD" ? "Added line" :
   t === "REMOVE" ? "Removed line" : t;
 
-/* ── Supplier-confirmation sheet ─────────────────────────────────────────────
-   Records the supplier's confirmation reference (+ optional note / attachment
-   key) against the open amendment via the vendored useSupplierConfirm mutation
-   (REQUESTED → SUPPLIER_PENDING). Mobile .hz-m bottom sheet; mirrors the desktop
-   SupplierConfirmForm fields. The server 403/409 is the real gate (humanised by
-   authed-fetch). */
 function SupplierConfirmSheet({
   amendmentId,
   onClose,
@@ -1800,11 +1464,6 @@ function SupplierConfirmSheet({
   );
 }
 
-/* ── Amendment diff sheet ────────────────────────────────────────────────────
-   Reads the amendment detail (useAmendmentDetail) and renders each requested
-   line change as a Before → After pair — the SAME data as the desktop
-   AmendmentDiffModal (old_snapshot vs new_item_code / new_variants / new_qty /
-   new_unit_price_sen), laid out mobile-first as stacked cards. */
 /* Owner 2026-07-16 — the moved field is struck on the Was side and emphasised on
    the Requesting side, so the ask is visible without reading both columns
    character-by-character. Desktop does the same on its table + job card. */
@@ -1813,8 +1472,6 @@ const mStrikeIf = (changed: boolean): CSSProperties =>
 const mEmphIf = (changed: boolean): CSSProperties =>
   changed ? { fontWeight: 800, color: "var(--ink)" } : {};
 
-/* Per-row department routing chips (mobile idiom). Advisory accountability — it
-   never gates the single-signature apply. Mirror of the desktop RowRoutingChips. */
 function AmRoutingChips({ kinds }: { kinds: AmendmentFieldKind[] }) {
   if (kinds.length === 0) return null;
   return (
@@ -1837,7 +1494,6 @@ function AmRoutingChips({ kinds }: { kinds: AmendmentFieldKind[] }) {
   );
 }
 
-/* Amendment TYPE badge(s) — Processing vs Delivery / Commercial, Mixed when both. */
 function AmTypeBadges({ kinds }: { kinds: AmendmentFieldKind[] }) {
   const { types, isMixed } = summariseRouting(kinds);
   if (types.length === 0) return null;
@@ -1877,29 +1533,17 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
   const oldOf = amendmentOldSnapshot;
   const amNo = data?.amendment?.amendment_no != null ? String(data.amendment.amendment_no) : "";
   const reason = typeof data?.amendment?.reason === "string" ? data.amendment.reason : "";
-  /* The HEADER half of the request (mig 0119) — Delivery / Processing Date,
-     State, Postcode. Same shared builder the desktop job card uses, so a
-     header-only amendment isn't invisible here either. `dl` is the shared
-     TZ-aware date formatter (see its definition — delegates to lib/utils
-     formatDate, which formats a bare YYYY-MM-DD verbatim). */
   const headerDiffs = amendmentHeaderDiffRows(
     data?.amendment?.header_changes as SoAmendmentHeaderChanges | null | undefined,
     data?.amendment?.old_header_snapshot as SoAmendmentHeaderChanges | null | undefined,
     dl,
   );
 
-  /* Every routable atom this amendment moves — lines + header — for the type
-     badge(s). Mirror of the desktop job card. */
   const allFieldKinds: AmendmentFieldKind[] = [
     ...lines.flatMap((l) => amendmentLineFieldKinds(l)),
     ...headerDiffs.map((d) => soHeaderFieldKind(d.key) as AmendmentFieldKind),
   ];
 
-  /* Print amendment — reuse the shared jsPDF template + soAmendmentToPdfInput,
-     EXACTLY as desktop AmendmentDetailV2 and MobilePoAmendmentDetail. Status
-     label collapses the multi-gate backend states to the SIMPLIFIED
-     Requested / Approved on the document (SO revision is live from SO_APPROVED
-     on). All lines are handed to the mapper (it filters no-op rows itself). */
   const notify = useNotify();
   const { actorNameOf } = useStaffLookup();
   const amd = data?.amendment as Record<string, unknown> | undefined;
@@ -1943,9 +1587,6 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
           ) : error ? (
             <div style={{ fontSize: 11.5, color: "var(--red)", padding: "8px 0" }}>{error instanceof Error ? error.message : "Couldn't load the changes."}</div>
           ) : lines.length === 0 && headerDiffs.length === 0 ? (
-            /* "Nothing recorded" vs "every recorded line is a no-op" — the
-               latter is a legacy amendment raised before the header half existed
-               (mig 0119); its real ask only survives in the Reason below. */
             <div style={{ fontSize: 11.5, color: "var(--mut2)", padding: "8px 0", lineHeight: 1.45 }}>
               {allLines.length > 0
                 ? "No line changes recorded — every line matches the order exactly. This request predates order-detail tracking, so what was asked for is in the Reason below."
@@ -1953,7 +1594,6 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-              {/* Order details (dates / delivery location) first, then the lines. */}
               {headerDiffs.map((d) => (
                 <div key={d.key} style={{ border: "1px solid var(--line2, var(--hz-c-border-subtle))", borderRadius: 11, overflow: "hidden" }}>
                   <div style={{ padding: "7px 11px", background: "var(--hz-c-surface-2)", fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: "#5c6156" }}>{d.label}</div>
@@ -1973,14 +1613,7 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
               {lines.map((l) => {
                 const old = oldOf(l);
                 const newSummary = amendmentVariantSummaries(l).to;
-                /* Emphasise the field that actually moved — Was / Requesting
-                   were two plain columns you had to diff by eye. */
                 const chg = amendmentLineChangedFields(l);
-                /* Axes this line carries that the summaries above cannot show. A
-                   non-empty set means the spec strings are INCOMPLETE, and a short
-                   Requesting string is exactly what reads as "the amendment dropped
-                   my divan height" on a screen you can APPROVE from. Say it out loud
-                   (mirror desktop DiffCard) instead of showing a shorter string. */
                 const unrendered = amendmentUnrenderedAxes(l);
                 const unrenderedAll = [...new Set([...unrendered.from, ...unrendered.to])];
                 return (
@@ -1988,7 +1621,6 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                     <div style={{ padding: "7px 11px", background: "var(--hz-c-surface-2)", fontSize: 10.5, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: "#5c6156" }}>{amendmentChangeLabel(l.change_type)}</div>
                     <AmRoutingChips kinds={amendmentLineFieldKinds(l)} />
                     <div style={{ display: "flex", gap: 0 }}>
-                      {/* Before */}
                       <div style={{ flex: 1, minWidth: 0, padding: "9px 11px", borderRight: "1px solid var(--line2, #e3e6e0)" }}>
                         <div className="fld-l" style={{ marginBottom: 3 }}>Was</div>
                         {l.change_type === "ADD" ? (
@@ -2003,15 +1635,12 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                               ) : ""}
                             </div>
                             {old.description2 ? <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 2, ...mStrikeIf(chg.variants) }}>{old.description2}</div> : null}
-                            {/* mig 0280 — the remark this request replaces (only
-                                when the request touches it). Desktop parity. */}
                             {chg.remark && (old.remark ?? "").trim() ? (
                               <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 2, fontStyle: "italic", ...mStrikeIf(true) }}>{"“"}{old.remark}{"”"}</div>
                             ) : null}
                           </>
                         )}
                       </div>
-                      {/* After */}
                       <div style={{ flex: 1, minWidth: 0, padding: "9px 11px" }}>
                         <div className="fld-l" style={{ marginBottom: 3 }}>Requesting</div>
                         {l.change_type === "REMOVE" ? (
@@ -2021,20 +1650,16 @@ function AmendmentDiffSheet({ amendmentId, onClose }: { amendmentId: string; onC
                             <div className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "var(--hz-c-primary-ink)", ...mEmphIf(chg.itemCode) }}>{l.new_item_code ?? old.itemCode ?? "—"}</div>
                             <div className="money" style={{ fontSize: 11, color: "var(--mut)", marginTop: 2 }}>
                               <span style={mEmphIf(chg.qty)}>Qty {l.new_qty ?? old.qty ?? "—"}</span>
-                              {/* A null requested price keeps the stored one (desktop parity): show it unchanged. */}
                               {typeof (l.new_unit_price_sen ?? old.unitPriceSen) === "number" ? (
                                 <>{" · "}<span style={mEmphIf(chg.unitPrice)}>RM {rm((l.new_unit_price_sen ?? old.unitPriceSen) as number)}</span></>
                               ) : ""}
                             </div>
                             {newSummary ? <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 2, ...mEmphIf(chg.variants) }}>{newSummary}</div> : null}
-                            {/* mig 0280 — the REQUESTED remark: on a service line
-                                it is the whole request, so it renders here too. */}
                             {chg.remark ? (
                               <div style={{ fontSize: 10.5, color: "var(--mut2)", marginTop: 2, fontStyle: "italic", ...mEmphIf(true) }}>
                                 {(l.new_remark ?? "").trim() ? `“${l.new_remark}”` : "Remark cleared"}
                               </div>
                             ) : null}
-                            {/* mig 0317 — a fee line's discount IS the request. */}
                             {chg.discount ? <div className="money" style={{ fontSize: 10.5, marginTop: 2, ...mEmphIf(true) }}>{Math.round(l.new_discount_sen ?? 0) > 0 ? `Discount RM ${rm(l.new_discount_sen ?? 0)}` : "Discount cleared"}</div> : null}
                           </>
                         )}

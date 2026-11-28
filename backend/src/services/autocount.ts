@@ -7,24 +7,6 @@ import type {
   ACDeliveryOrder,
 } from "../types";
 
-/**
- * GLOBAL KILL SWITCH for outbound writes to AutoCount.
- *
- * Set to `true` to halt every PUT/POST/PATCH that this client would
- * normally send to the AutoCount middleware. Reads (getAll/getSince/
- * getOverdue/getOutstandingPOs) keep working — only mutations are
- * blocked. The wrapping push services still complete their D1 writes
- * locally so the dashboard reflects the change; the AutoCount round
- * trip is just skipped.
- *
- * In effect: the dashboard becomes "read-from-AutoCount, write-to-D1
- * only". Flip back to `false` to resume pushing changes upstream.
- *
- * Why a constant and not an env var: this is a deliberate human
- * decision tied to a specific environment risk (live database). It
- * should require a code edit + deploy to flip back on, not a flag in
- * the dashboard that anyone could toggle by accident.
- */
 const AUTOCOUNT_WRITES_DISABLED = true;
 
 function headers(env: Env, rid: string) {
@@ -54,11 +36,6 @@ export class AutoCountClient {
     return (await res.json()) as ACSalesOrder[];
   }
 
-  /**
-   * Full unfiltered list of every Sales Order — no Remark2/Attention/Remark4/
-   * SalesExemptionExpiryDate filters, no checkpoint. Used by the manual
-   * "Sync All" action; not safe to run on a cron.
-   */
   async getAll(): Promise<ACSalesOrder[]> {
     const res = await fetch(this.url(`/SalesOrder/getAll`), {
       headers: headers(this.env, this.rid),
@@ -68,8 +45,6 @@ export class AutoCountClient {
   }
 
   async getSingle(docNo: string): Promise<ACSalesOrder | null> {
-    // Bounded, one attempt: creating a service case awaits this, and an
-    // unanswered office host held the create open past a minute (CI 2026-11-17).
     const res = await fetch(this.url(`/SalesOrder/getSingle/${encodeURIComponent(docNo)}`), {
       headers: headers(this.env, this.rid),
       signal: AbortSignal.timeout(GET_SINGLE_TIMEOUT_MS),
@@ -79,11 +54,6 @@ export class AutoCountClient {
     return arr && arr.length > 0 ? arr[0] : null;
   }
 
-  /**
-   * Fetch the line-item details for a single Sales Order. Returns the
-   * raw array of detail rows from the middleware — typically one row
-   * per item line (ItemCode, Description, Qty, etc.).
-   */
   async getDetail(docNo: string): Promise<ACSalesOrderDetail[]> {
     const res = await fetch(this.url(`/SalesOrder/getDetail/${encodeURIComponent(docNo)}`), {
       headers: headers(this.env, this.rid),
@@ -92,13 +62,6 @@ export class AutoCountClient {
     return (await res.json()) as ACSalesOrderDetail[];
   }
 
-  /**
-   * Raw Response for the full Delivery Order HEADER dump (~70 MB, ~11k
-   * docs, 181 fields each). The DO-mirror sync stream-parses this body
-   * instead of buffering it — JSON.parse of the whole payload would blow
-   * the Worker's memory ceiling. Fallback path; incremental getSince
-   * below is preferred once the middleware carries it.
-   */
   async fetchAllDeliveryOrders(): Promise<Response> {
     const res = await fetch(this.url(`/DeliveryOrder/getAll`), {
       headers: headers(this.env, this.rid),
@@ -107,12 +70,6 @@ export class AutoCountClient {
     return res;
   }
 
-  /**
-   * Incremental DO headers (middleware PR #1): rows modified after the
-   * checkpoint, LastModified-ascending, nine slim columns. Returns null
-   * when the middleware hasn't been upgraded yet (route 404s) so the
-   * caller can fall back to the full dump.
-   */
   async getDeliveryOrdersSince(checkpoint: string): Promise<ACDeliveryOrder[] | null> {
     const res = await fetch(this.url(`/DeliveryOrder/getSince/${encodeURIComponent(checkpoint)}`), {
       headers: headers(this.env, this.rid),
@@ -165,13 +122,6 @@ export class AutoCountClient {
     return (await res.json()) as ACPurchaseOrder[];
   }
 
-  /**
-   * Doc-level list of every Purchase Order — completed, outstanding,
-   * and cancelled. Returns one row per PO header (no line items;
-   * /getAll on the AutoCount middleware is header-only). Carries
-   * doc-total amounts (LocalExTax / LocalNetTotal / FinalTotal) which
-   * are what the P&L module rolls up.
-   */
   async getAllPODocs(): Promise<ACPurchaseOrderDoc[]> {
     const res = await fetch(this.url(`/PurchaseOrder/getAll`), {
       headers: headers(this.env, this.rid),
@@ -180,13 +130,6 @@ export class AutoCountClient {
     return (await res.json()) as ACPurchaseOrderDoc[];
   }
 
-  /**
-   * Line-item details for a single PO. Mirrors the SO `getDetail`
-   * pattern. Each row carries item-level price / discount / tax fields
-   * (UnitPrice, UnitPriceAfterDiscount, SubTotal, LocalSubTotal,
-   * SubTotalExTax, Tax, TransferedQty, etc.). Used by the side panel
-   * "Full Line Details" section.
-   */
   async getPODetail(docNo: string): Promise<Array<Record<string, any>>> {
     const res = await fetch(
       this.url(`/PurchaseOrder/getDetail/${encodeURIComponent(docNo)}`),
@@ -196,12 +139,6 @@ export class AutoCountClient {
     return (await res.json()) as Array<Record<string, any>>;
   }
 
-  /**
-   * Full unfiltered list of every Creditor (procurement supplier) in
-   * AutoCount. Mirrored locally into the `creditors` table so the
-   * dashboard can search, list, and filter without round-tripping
-   * AutoCount on every page view.
-   */
   async getAllCreditors(): Promise<Array<Record<string, any>>> {
     const res = await fetch(this.url(`/Creditor/getAll`), {
       headers: headers(this.env, this.rid),
@@ -210,7 +147,6 @@ export class AutoCountClient {
     return (await res.json()) as Array<Record<string, any>>;
   }
 
-  /** One creditor by code — read-through, no caching. */
   async getSingleCreditor(code: string): Promise<Record<string, any> | null> {
     const res = await fetch(
       this.url(`/Creditor/getSingle/${encodeURIComponent(code)}`),
@@ -222,16 +158,6 @@ export class AutoCountClient {
     return body as Record<string, any>;
   }
 
-  /**
-   * Fetch a single stock item. The key field we care about is
-   * `MainSupplier` — that's the AutoCount creditor code for the
-   * item's default procurement supplier, and it's how we decide
-   * which creditor owns a service case for this item.
-   *
-   * Returns null when AutoCount responds with an empty array or a
-   * 404-ish status, so callers can treat "unknown item" explicitly
-   * rather than through exceptions.
-   */
   async getStockItem(itemCode: string): Promise<Record<string, any> | null> {
     const res = await fetch(
       this.url(`/StockItem/getSingle/${encodeURIComponent(itemCode)}`),
@@ -301,19 +227,16 @@ function normalizeDate(d: string | null | undefined): string | null {
   return d.replace(/\//g, "-");
 }
 
-// Helper: clean phone string (strip + & - and spaces)
 export function cleanPhone(p: string | null | undefined): string {
   if (!p) return "";
   return String(p).replace(/[+&\- ]/g, "");
 }
 
-// Helper: split ISO datetime on T -> date part
 export function dateOnly(s: string | null | undefined): string | null {
   if (!s) return null;
   return s.split("T")[0];
 }
 
-// Routes a sales order to a region. Returns null if it should be skipped.
 export function routeRegion(o: ACSalesOrder): "WEST" | "EAST" | "SG" | null {
   const addr = (o.InvAddr3 || "").toUpperCase();
   const loc = (o.SalesLocation || "").toUpperCase();

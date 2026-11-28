@@ -1,13 +1,3 @@
-/* BUG-53 (HC-SO-011143, 2026-10-03): opening the order to add a storage charge
- * raised a second, Purchaser approval for a colour change on the SQUARE PILLOW
- * that nobody made. The edit view's variant cascade FILLED the sofa master's
- * colourLabel onto the saved pillow the moment Edit opened, so the amendment
- * builder saw the pillow's variants move. A saved line must open exactly as
- * stored; it follows the sofa only when the operator moves the sofa.
- *
- * Same harness as SalesOrderDetail.frozenLines.test.tsx: the real page on its
- * real route with ?edit=1, SoLineCard replaced by a probe printing the draft.
- */
 import { cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";

@@ -49,15 +49,10 @@ import {
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/* The carrier list on this page comes from /delivery-rate-cards/meta, a DIFFERENT
-   query from the one useCreateThreePLCompany invalidates — and it holds for five
-   minutes. Without this, registering a carrier in the drawer and then trying to
-   price it would show a list that does not contain it. */
 const COMPANY_LIST_KEY = ['delivery-rate-card-meta'];
 type Tab = 'cards' | 'invoices' | 'reconcile' | 'own';
 const TAB_LABEL: Record<Tab, string> = { cards: 'Rate Cards', invoices: '3PL invoices', reconcile: 'Reconciliation', own: 'Own fleet' };
 
-/* What the right-hand side shows: a card, or a carrier that has none yet. */
 type Selection = { kind: 'card'; id: string } | { kind: 'company'; id: string } | null;
 
 export const DeliveryRateCards = ({ embedded = false }: {
@@ -65,8 +60,6 @@ export const DeliveryRateCards = ({ embedded = false }: {
 } = {}) => {
   const [tab, setTab] = useState<Tab>('cards');
   const [sel, setSel] = useState<Selection>(null);
-  /* The card's open tab is kept while carriers are switched, so two carriers'
-     outstation prices or price checks can be compared; a new visit starts on Delivery. */
   const [section, setSection] = useState<RateSection>('DELIVERY');
   const [creating, setCreating] = useState<{ carrierCompanyId: string | null; name: string | null } | null>(null);
   const [companiesOpen, setCompaniesOpen] = useState(false);
@@ -84,7 +77,6 @@ export const DeliveryRateCards = ({ embedded = false }: {
   };
   const companies = meta.data?.companies ?? [];
   const emptyCompany = sel?.kind === 'company' ? companies.find((co) => co.id === sel.id) ?? null : null;
-  /* On a phone the list sits above the card: bring the picked card into view. */
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (sel && window.innerWidth < 768) editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -120,7 +112,6 @@ export const DeliveryRateCards = ({ embedded = false }: {
             {TAB_LABEL[t]}
           </button>
         ))}
-        {/* Embedded there is no header, so the tab strip carries the actions. */}
         {embedded && actions && <div className="ml-auto pb-1.5">{actions}</div>}
       </nav>
 
@@ -161,9 +152,6 @@ export const DeliveryRateCards = ({ embedded = false }: {
         />
       )}
 
-      {/* The standalone ThreePLCompanies screen verbatim (`embedded` drops its
-          header), so registering a carrier here and at /scm/threepl-companies
-          are the same code path. */}
       {companiesOpen && (
         <ResizableDrawer onClose={closeCompanies} storageKey="carriers-3pl-drawer" defaultWidth={760} ariaLabel="3PL Companies"
           title="3PL Companies" subtitle="Each carrier, its lorries, drivers and helpers">
@@ -174,7 +162,6 @@ export const DeliveryRateCards = ({ embedded = false }: {
   );
 };
 
-/* A carrier with no card: say so plainly, and offer the one thing to do. */
 const NoCardYet = ({ name, onCreate }: { name: string; onCreate: () => void }) => (
   <section aria-label="No rate card yet" className={cn(CARD, 'flex flex-col items-center gap-3 px-6 py-12 text-center')}>
     <Pill tone="amber">No rate card yet</Pill>
@@ -206,9 +193,6 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
   for (const c of cards) if (c.carrierCompanyId) byCompany.set(c.carrierCompanyId, c);
   const listed = new Set(companies.map((co) => co.id));
   const ownFleet = cards.filter((c) => cardKind(c, listed) === 'own');
-  /* A card whose 3PL company was deleted (before deleting one with a card was
-     refused) has no carrier but was never own fleet; a card whose company is
-     inactive is not in the carrier list. Neither may hide or vanish. */
   const others = cards.filter((c) => cardKind(c, listed) === 'removed' || cardKind(c, listed) === 'inactive');
   const match = (name: string) => !q.trim() || name.toLowerCase().includes(q.trim().toLowerCase());
   /* Owner 2026-11-11 「这个sidebar 也要整理」: carriers with a card first, the rest
@@ -237,7 +221,6 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
       {badge}
     </button>
   );
-  /* A shaded band per group, as a finance table shades its head. */
   const group = (label: string) => (
     <div className="border-y border-border bg-surface-dim px-[18px] py-1.5 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-ink-secondary first:border-t-0">{label}</div>
   );
@@ -293,7 +276,6 @@ const CardList = ({ cards, companies, isLoading, loadFailed, sel, onSelect, onCr
   );
 };
 
-// ── Card editor: header (settings in one line + the tabs), then the open tab ──
 const NO_RULES: RateRule[] = [];
 const NO_AREAS: RateArea[] = [];
 const CardEditor = ({ cardId, section, onSection, onDeleted }: {
@@ -305,16 +287,12 @@ const CardEditor = ({ cardId, section, onSection, onDeleted }: {
   const del = useDeleteRateCard();
   const askConfirm = useConfirm();
   const [editing, setEditing] = useState(false);
-  /* Price check's boxes outlive a trip to another tab and back. */
   const [checkForm, setCheckForm] = useState<PriceCheckForm>(EMPTY_FORM);
 
   const allCards = useRateCards();
   const card = detail.data?.card;
   const allRules = detail.data?.rules ?? NO_RULES;
-  /* The tabs show the card's own prices; a price that belongs to one area of
-     the card (areaId set) is the area's, and must not read as a second tier. */
   const rules = useMemo(() => allRules.filter((r) => r.areaId == null), [allRules]);
-  /* The areas' own prices, shown with their area in the Outstation tab. */
   const areaRules = useMemo(() => allRules.filter((r) => r.areaId != null), [allRules]);
   const areas = detail.data?.areas ?? NO_AREAS;
   const companies = meta.data?.companies ?? [];
@@ -325,8 +303,6 @@ const CardEditor = ({ cardId, section, onSection, onDeleted }: {
   if (detail.isLoading || !card) return <div className={cn(CARD, 'p-6 text-[13px] text-ink-muted')}>Loading card…</div>;
 
   const kind = cardKind(card, new Set(companies.map((co) => co.id)));
-  /* The card name was copied from the company once; show the company's
-     current name so a renamed carrier does not keep its old one here. */
   const title = (card.carrierCompanyId ? companies.find((co) => co.id === card.carrierCompanyId)?.name : null) ?? card.name;
   const taken = new Set((allCards.data ?? []).map((c) => c.carrierCompanyId));
   const freeCarriers = companies.filter((co) => !taken.has(co.id));
@@ -338,8 +314,6 @@ const CardEditor = ({ cardId, section, onSection, onDeleted }: {
 
   return (
     <>
-      {/* The card's header, sticky: which card this is, what it charges by and
-          its tabs stay in view while a long tab scrolls past. */}
       <div className={cn(CARD, 'z-10 flex flex-col overflow-hidden shadow-sm md:sticky md:top-0')}>
         {/* The title band, shaded (owner 2026-11-11: 「加一下 background colour，特别是 title」). */}
         <div className="flex flex-col gap-3 bg-surface-dim/60 px-5 pb-3.5 pt-4">
@@ -392,7 +366,6 @@ const CardEditor = ({ cardId, section, onSection, onDeleted }: {
   );
 };
 
-// ── Reconciliation view ────────────────────────────────────────────────────────
 const reconStatus = (r: ReconcileRow): string => (!r.matched ? 'unmatched' : r.flagged ? 'mismatch' : 'match');
 const signed = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${fmtSen(Math.abs(v))}`;
 const RECON_COLUMNS: Column<ReconcileRow>[] = [
@@ -434,7 +407,6 @@ const CARRIER_COLUMNS: Column<CarrierRecon>[] = [
   { key: 'expected', label: 'Rate card', align: 'right', render: (r) => (r.priced ? <span className="tabular-nums">{fmtSen(r.expectedSen)}</span> : '—'), getValue: (r) => r.expectedSen, exportValue: (r) => r.expectedSen / 100, exportFormat: 'money' },
   {
     key: 'diff', label: 'Difference', align: 'right',
-    /* Over the DOs the card prices only: a DO with no card has no expected cost to differ from. */
     render: (r) => <DiffPill v={r.priced ? r.billedPricedSen - r.expectedSen : null} />,
     getValue: (r) => (r.priced ? r.billedPricedSen - r.expectedSen : null),
     exportValue: (r) => (r.priced ? (r.billedPricedSen - r.expectedSen) / 100 : null), exportFormat: 'money',
@@ -530,10 +502,8 @@ const ReconcileView = () => {
   );
 };
 
-// ── Create-card drawer ─────────────────────────────────────────────────────────
 const CreateCardDrawer = ({ initialCarrierCompanyId, initialName, onClose, onCreated }: {
   initialCarrierCompanyId: string | null;
-  /** The name typed in for an own fleet card opened from the Own fleet tab. */
   initialName: string | null;
   onClose: () => void;
   onCreated: (id: string) => void;
@@ -545,8 +515,6 @@ const CreateCardDrawer = ({ initialCarrierCompanyId, initialName, onClose, onCre
   const set = <K extends keyof typeof form>(k: K, v: typeof form[K]) => { setErr(null); setForm((s) => ({ ...s, [k]: v })); };
 
   const submit = () => {
-    /* A carrier card is NAMED BY ITS COMPANY (server-side), so the name is only
-       asked for — and only required — when there is no company to name it. */
     if (!form.carrierCompanyId && !form.name.trim()) { setErr('Pick a 3PL company, or name the card.'); return; }
     create.mutate(
       { name: form.carrierCompanyId ? undefined : form.name.trim(), carrierCompanyId: form.carrierCompanyId || null, basis: form.basis, aggregation: form.aggregation },
@@ -563,7 +531,6 @@ const CreateCardDrawer = ({ initialCarrierCompanyId, initialName, onClose, onCre
         </div>
       }>
       <div className="flex flex-col gap-4 p-4">
-        {/* All registered carriers as pills (the design), plus Own fleet. */}
         <div className="flex flex-col gap-1.5">
           <span className={LABEL}>3PL company (carrier) *</span>
           <div role="group" aria-label="3PL company" className="flex flex-wrap gap-1.5">
@@ -590,7 +557,6 @@ const CreateCardDrawer = ({ initialCarrierCompanyId, initialName, onClose, onCre
               <option value="SET">By set</option><option value="ITEM">By item</option>
             </select>
           </Field>
-          {/* All four, matching the editor; UNIT is the default since mig 0244. */}
           <Field label="Charge per">
             <select className={INPUT} value={form.aggregation} onChange={(e) => set('aggregation', e.target.value as RateAggregation)}>
               <option value="UNIT">{form.basis === 'ITEM' ? 'Item' : 'Set'}</option>

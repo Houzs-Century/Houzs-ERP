@@ -44,7 +44,6 @@ function harness() {
   return { spy, wrapper };
 }
 
-/** Did any invalidateQueries call target the ['inventory'] root? */
 const invalidatedInventory = (spy: { mock: { calls: unknown[][] } }): boolean =>
   spy.mock.calls.some((args) => {
     const f = args[0] as { queryKey?: unknown[] } | undefined;
@@ -100,10 +99,6 @@ describe("GRN stock-moving mutations invalidate ['inventory']", () => {
   });
 });
 
-/* Symptom: "Back to PO" after a receipt showed the old received qty, and a line added or edited on a posted receipt
-   read as clean when its stock write or PO recount was refused.
-   Cause: the hooks refreshed only the GRN keys and read no in-band failure from the line answers.
-   Fix: every receipt write also refreshes the PO keys; line add / edit report movementErrors and recountError. */
 const invalidatedRoot = (spy: { mock: { calls: unknown[][] } }, root: string): boolean =>
   spy.mock.calls.some((args) => {
     const f = args[0] as { queryKey?: unknown[] } | undefined;

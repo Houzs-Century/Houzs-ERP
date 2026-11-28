@@ -1,14 +1,3 @@
-// ----------------------------------------------------------------------------
-// so-form-validate — PURE save-time guards for the NEW / EDIT Sales-Order form.
-// NO React, no I/O. Desktop `SalesOrderNew` and mobile `MobileNewSO` both feed
-// their own state into these, so a guard can't exist on one surface and be
-// missing on the other (mobile was missing the past-date / processing>delivery
-// guards desktop had).
-//
-// Each guard returns the FIRST blocking error as `{ title, body? }` (both
-// surfaces short-circuit on the first failure) or null when the input passes.
-// Desktop renders it via notify({title, body}); mobile flattens to a sentence.
-// ----------------------------------------------------------------------------
 
 export interface SoFormError {
   title: string;
@@ -20,15 +9,9 @@ export const soErrorText = (e: SoFormError): string =>
   e.body ? `${e.title} ${e.body}` : e.title;
 
 export interface SoDateGuardInput {
-  /** '' when unset. */
   processingDate: string;
   deliveryDate: string;
-  /** todayMyt() — MYT calendar day, NOT the device clock. */
   today: string;
-  /**
-   * Enforce the "both dates or neither" rule. Desktop always does; mobile skips
-   * it for a draft (it strips both dates), so pass false there.
-   */
   requireDatesTogether?: boolean;
   /**
    * GRANDFATHER (Owner 2026-06-01) — the value ALREADY SAVED on this SO, for an
@@ -57,8 +40,6 @@ export interface SoDateGuardInput {
   canRemoveProcessingDate?: boolean;
 }
 
-/** True when `v` is a non-empty date identical to the already-saved original —
-    i.e. this edit is leaving it exactly as it was. */
 const unchanged = (v: string, original: string | undefined): boolean =>
   v !== "" && original != null && v === original.trim();
 
@@ -77,9 +58,6 @@ export function soDateGuardError(i: SoDateGuardInput): SoFormError | null {
   const d = i.deliveryDate.trim();
   const hasP = p !== "";
   const hasD = d !== "";
-  /* Runs BEFORE the XOR rule: clearing the Processing Date always trips XOR too
-     (or forces the paired Delivery clear), and "you may not remove this" is the
-     reason the save is blocked — the XOR sentence would misdirect. */
   if (
     !hasP &&
     (i.originalProcessingDate ?? "").trim() !== "" &&
@@ -153,32 +131,11 @@ export function companyRequiresStockLocation(
 }
 
 export interface SoLocationGuardInput {
-  /** Active company code from `useBranding().companyCode` ('HOUZS' | '2990'). */
   companyCode: string | null | undefined;
-  /**
-   * The read-only "Sales Location" the form resolved from the picked State
-   * (state_warehouse_mappings). '' when nothing resolved — which is the ONLY
-   * thing AutoCount actually cares about, and it covers both causes at once.
-   */
   salesLocation: string;
-  /** The picked State ('' when none) — used only to name the right cause. */
   state: string;
-  /**
-   * False while `useStateWarehouseMappings()` has not answered yet, on a
-   * surface that resolves the location from it. An unloaded mapping table makes
-   * every State look unmapped, and refusing a legitimate order because a query
-   * is in flight is worse than letting the server (which reads the mappings
-   * directly) have the last word. Defaults TRUE for surfaces that resolve no
-   * location at all and must still be gated.
-   */
   mappingsLoaded?: boolean;
-  /** True for Save-as-draft. A draft is never written to AutoCount. */
   asDraft?: boolean;
-  /**
-   * True on an EDIT of an existing order. An edit enqueues an AutoCount EDIT,
-   * which leaves the account book's own Location alone — only a CREATE has a
-   * foreign key to satisfy.
-   */
   isEdit?: boolean;
 }
 
@@ -221,17 +178,10 @@ export function soStockLocationError(i: SoLocationGuardInput): SoFormError | nul
 export interface SoRequiredFieldsInput {
   customerName: string;
   phone: string;
-  /** True when at least one line has a product picked (itemCode) AND qty > 0. */
   hasNamedLine: boolean;
-  /** Save-as-draft: a draft needs none of the confirm-only fields. */
   asDraft: boolean;
-  /** Resolved venue — false when none picked. Confirm-only. */
   hasVenue: boolean;
-  /** Resolved salesperson — false when none. Confirm-only. */
   hasSalesperson: boolean;
-  /** Stock-location gate input — only its "no State picked" case counts as a
-      missing FIELD here; the "State has no warehouse" config case stays with
-      soStockLocationError, run separately AFTER this returns empty. */
   location: SoLocationGuardInput;
 }
 
@@ -257,10 +207,6 @@ export function soRequiredFieldErrors(i: SoRequiredFieldsInput): string[] {
   if (!i.asDraft) {
     if (!i.hasVenue) missing.push("Venue");
     if (!i.hasSalesperson) missing.push("Salesperson");
-    // "No State picked yet" is a missing field the operator can fill now, so it
-    // joins the list. The "picked State has no warehouse" case is an admin
-    // config problem, not a field the operator forgot — it keeps its own
-    // sentence via soStockLocationError, which the caller runs once this is empty.
     const l = i.location;
     const locationRequired =
       !l.asDraft && !l.isEdit && l.mappingsLoaded !== false &&
@@ -291,10 +237,8 @@ export function soRequiredFieldErrors(i: SoRequiredFieldsInput): string[] {
  * behaviour (CLAUDE.md's optional-param-noop rule).
  */
 export interface SoProceedingAddressInput {
-  /** Empty = the order is not proceeding, and none of this applies. */
   processingDate: string;
   customerName: string;
-  /** Ticked BLANKS the address out of the payload, so it counts as missing. */
   fillAddressLater: boolean;
   address1: string;
   postcode: string;
@@ -320,15 +264,10 @@ export function soProceedingAddressErrors(i: SoProceedingAddressInput): string[]
  */
 export function soRequiredFieldsMessage(missing: string[], proceeding: string[]): SoFormError {
   const all = [...missing, ...proceeding];
-  /* The bare "X is required." shortcut is for the ALWAYS-required fields only.
-     A lone proceeding field must keep its reason: "postcode is required" does
-     not tell an operator that a postcode became required the moment they set a
-     Processing Date, and they have no way to work that out. */
   if (all.length === 1 && proceeding.length === 0) {
     return { title: `${all[0]} is required.` };
   }
   const body = `Still missing: ${all.join(", ")}.`;
-  /* Only the proceeding half is missing — lead with the reason it is required. */
   if (missing.length === 0) {
     return {
       title: "A Processing Date means this order is proceeding, so it needs a delivery address.",

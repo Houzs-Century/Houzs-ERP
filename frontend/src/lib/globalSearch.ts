@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
-import type * as StatusPill from "../vendor/scm/lib/status-pill";
-import type { StatusDocType, StatusTone } from "../vendor/scm/lib/status-pill";
+import type * as StatusPill from "../../../shared/src/vendor/scm/lib/status-pill";
+import type { StatusDocType, StatusTone } from "../../../shared/src/vendor/scm/lib/status-pill";
 
-// Owner UX contract: the first character starts a real server search. The UI
-// enters the searching state immediately; the short debounce only coalesces
-// network traffic and never asks the operator to type a second character.
 export const GLOBAL_SEARCH_MIN_LENGTH = 1;
 export const GLOBAL_SEARCH_DEBOUNCE_MS = 250;
 
@@ -33,13 +30,10 @@ export interface SearchHit {
   title: string;
   subtitle?: string | null;
   date?: string | null;
-  /** Stored status (DRAFT, POSTED, ...); shown through searchHitStatus. */
   status?: string | null;
   link: string;
 }
 
-/* The documents the shared status map knows, so a hit reads the same word as
-   its own list ("Submitted", not POSTED). The rest are humanised. */
 const STATUS_DOC: Partial<Record<SearchHitType, StatusDocType>> = {
   sales_order: "so",
   purchase_order: "po",
@@ -51,20 +45,16 @@ const STATUS_DOC: Partial<Record<SearchHitType, StatusDocType>> = {
   payment_voucher: "pv",
 };
 
-/* The status vocabulary is loaded on first use, not with the app: the palette
-   lives in the always-loaded shell, and the status maps alone pushed the
-   initial bundle past its gzip ceiling (check-bundle-size.mjs). */
 let vocabulary: typeof StatusPill | null = null;
 let vocabularyLoad: Promise<typeof StatusPill> | null = null;
 
 export function loadSearchStatusVocabulary(): Promise<typeof StatusPill> {
-  vocabularyLoad ??= import("../vendor/scm/lib/status-pill").then(
+  vocabularyLoad ??= import("../../../shared/src/vendor/scm/lib/status-pill").then(
     (m) => {
       vocabulary = m;
       return m;
     },
     (e: unknown) => {
-      // Let the next palette open try again rather than remember the failure.
       vocabularyLoad = null;
       throw e;
     },
@@ -83,7 +73,6 @@ export function useSearchStatusVocabulary(): typeof StatusPill | null {
         if (live) setV(m);
       },
       () => {
-        // Statuses are an extra on a hit; the hit itself still shows and opens.
       },
     );
     return () => {
@@ -107,8 +96,6 @@ export function searchHitStatus(
   return { label: entry.label, ...vocab.STATUS_TONES[entry.tone] };
 }
 
-// Source names for the degraded notice. Kept here, not in either palette, so
-// desktop and mobile cannot drift into describing the same outage differently.
 const DEGRADED_LABEL: Record<SearchHitType, string> = {
   sales_order: "Sales Orders",
   purchase_order: "Purchase Orders",
@@ -184,8 +171,6 @@ export function useGlobalSearchResults(query: string) {
             status: "success",
             hits: response.hits ?? [],
             error: null,
-            // Optional on the wire so a Worker older than this deploy simply
-            // reports nothing degraded, rather than rendering "undefined".
             degraded: response.degraded ?? [],
           });
         }
@@ -210,8 +195,6 @@ export function useGlobalSearchResults(query: string) {
     };
   }, [term]);
 
-  // Effects run after render. Never expose a previous term's state during that
-  // small gap: it could otherwise still be selected with Enter.
   const current: SearchState =
     state.term === term
       ? state

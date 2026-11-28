@@ -91,7 +91,6 @@ const pr = (id: string, returnNumber: string, over: Record<string, unknown> = {}
   ...over,
 });
 
-/* The screen read holds one return; the server holds three. */
 const all = [
   pr("p-1", "HC-PRT-2610-0001"),
   pr("p-2", "HC-PRT-2610-0002", { status: "CANCELLED" }),

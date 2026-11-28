@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// ReceiptForm — a receipt's form in place of its list or its page (the owner's
-// Claude Design, batch 5 §2.1, the design's receipt form): sundry income — who
-// paid, into which money account, the lines and the account each credits — or
-// an other debtor's money — the debtor, the money account, and what the debtor
-// still owes, a tick for a bill in full or an amount for part of it. The right
-// column says the total, what the books will say, why it cannot save yet, and
-// the buttons. F3 / Ctrl+S saves, as the old pop-out did.
-//
-// The form only gathers. Its caller sends what it gathered through the same
-// routes as before — POST /receipts (or PATCH on an edit, which re-posts) for
-// sundry income, POST /other-debtors/:id/receipts for a debtor's money (post
-// now from Receipts; a draft for the four layers from Debtor maintenance) — so
-// nothing posts differently.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Info, X } from 'lucide-react';
@@ -24,7 +9,7 @@ import { AccountSelect } from '../../../vendor/scm/components/AccountSelect';
 import { DateField } from '../../../vendor/scm/components/DateField';
 import { MoneyInput } from '../../../vendor/scm/components/MoneyInput';
 import { useSaveHotkey, SAVE_HOTKEY_HINT } from '../../../vendor/scm/lib/use-save-hotkey';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import ui from '../MoneyIn.module.css';
 
 export type SundryLine = { rid: number; description: string; creditAccountCode: string; amountSen: number };
@@ -36,7 +21,6 @@ export type ReceiptValues = {
   bankAccountCode: string;
   lines: SundryLine[];
   debtorId: string;
-  /** Bill id → sen received on it. */
   alloc: Record<string, number>;
 };
 export type SundrySubmit = {
@@ -66,8 +50,6 @@ export const receiptValuesOf = (d: ReceiptDetail, copy: boolean): ReceiptValues 
   debtorId: '', alloc: {},
 });
 
-/** A bill a debtor receipt may take money for: posted, not cancelled, something
- *  still owed — or already on this receipt (an edit). */
 const isOpenBill = (b: DebtorBill, alloc: Record<string, number>): boolean =>
   String(b.status).toUpperCase() !== 'CANCELLED' && (Number(b.total_sen) - Number(b.received_sen) > 0 || (alloc[b.id] ?? 0) > 0);
 
@@ -77,17 +59,12 @@ export function ReceiptForm({
 }: {
   kind: 'sundry' | 'debtor';
   mode: 'new' | 'copy' | 'edit';
-  /** Where a debtor receipt is raised: on Receipts it posts now and knocks the
-   *  bills off; on Debtor maintenance it waits for the four layers. */
   door: 'receipts' | 'debtors';
   initial: ReceiptValues;
-  /** Postable leaves a sundry line may credit. */
   accounts: Account[];
-  /** The bank and cash accounts the money may land on. */
   moneyAccounts: Account[];
   accountName: (code: string) => string | null;
   saving: boolean;
-  /** The debtor cannot change (an edit). */
   debtorLocked?: boolean;
   onSundry: (v: SundrySubmit) => void;
   onDebtor: (v: DebtorSubmit, how: DebtorSave) => void;
@@ -109,9 +86,6 @@ export function ReceiptForm({
     () => (detailQ.data?.bills ?? []).filter((b) => isOpenBill(b, initial.alloc)),
     [detailQ.data, initial.alloc],
   );
-  /* What a bill still owes this receipt: on an edit, the draft's own amounts
-     were never taken off the bill (a draft posts nothing), so the bill's
-     outstanding is the limit either way. */
   const outOf = (b: DebtorBill): number => Math.max(0, Number(b.total_sen) - Number(b.received_sen));
   const allocTotal = bills.reduce((sum, b) => sum + (v.alloc[b.id] ?? 0), 0);
   const over = bills.find((b) => (v.alloc[b.id] ?? 0) > outOf(b));
@@ -144,7 +118,6 @@ export function ReceiptForm({
       })),
     });
   };
-  /* The primary button: post on Receipts, prepare (or save an edit) on Debtor maintenance. */
   const primary: DebtorSave = debtor && door === 'debtors' && mode !== 'edit' ? 'prepare' : debtor && door === 'debtors' ? 'draft' : 'post';
   useSaveHotkey(() => submit(primary), !saving);
 

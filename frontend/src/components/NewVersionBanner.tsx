@@ -59,23 +59,10 @@ export function NewVersionBanner() {
 
   return (
     <div
-      /* bottom offset: the mobile shell's tab bar is 58px tall inside a .navwrap
-         with 16px + safe-area of bottom padding (src/mobile/mobile.css), so at
-         the mobile breakpoint the pill has to clear ~74px or it lands on top of
-         the tabs. `lg` is 1024px, which is exactly useIsMobile()'s breakpoint —
-         above it the mobile shell never renders and the original bottom-6
-         applies. The arithmetic is pinned by a test in NewVersionBanner.test.tsx
-         that reads those two values back out of mobile.css. */
-      /* Wraps below `sm`, single-line above it. A phone leaves roughly 110px
-         between the dot and the Refresh button, so `truncate` cut the message to
-         "This tab is running an olde…" — measured in the browser at 375x812.
-         The desktop shell never saw that because the pill only ever mounted
-         there, where the sentence fits. */
       className="fixed bottom-[calc(env(safe-area-inset-bottom)+90px)] left-1/2 z-[100] flex w-[calc(100vw-1.5rem)] max-w-[calc(100vw-1.5rem)] -translate-x-1/2 items-center gap-3 rounded-2xl bg-ink px-4 py-2.5 text-[12.5px] text-white shadow-slab sm:w-auto sm:rounded-full sm:pl-[18px] sm:pr-3 lg:bottom-6"
       role="status"
       aria-live="polite"
     >
-      {/* breathing petrol dot */}
       <span className="relative flex h-2 w-2 shrink-0">
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
         <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />

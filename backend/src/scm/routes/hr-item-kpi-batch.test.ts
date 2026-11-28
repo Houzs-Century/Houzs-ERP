@@ -1,5 +1,3 @@
-/* POST /hr/item-kpi/batch — a fabric series (13 rules) saved in one insert,
- * all or nothing (YH 2026-11-06). */
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 
@@ -10,7 +8,7 @@ vi.mock('../middleware/auth', () => ({ supabaseAuth: async (_c: unknown, next: (
 
 const { hr } = await import('./hr');
 
-const CO = 7; // any company: the route stamps whichever one is active
+const CO = 7;
 
 function app(sb: ReturnType<typeof fakeSb>, perms: string[]) {
   const a = new Hono<{ Bindings: Env; Variables: Variables }>();

@@ -1,16 +1,3 @@
-// ----------------------------------------------------------------------------
-// DebtorReceiptFormPage — an other debtor's receipt kept for the payment
-// voucher's four layers (the owner's Claude Design, batch 5 §4.1), in place of
-// the page it was opened from: Debtor maintenance's New receipt, the debtor's
-// page, and Edit on a receipt nobody has checked yet (its own page or a list
-// row). A new one is saved as a Draft, or saved and prepared in one go; an edit
-// changes the date, the money account and the bills, and keeps its stage.
-//
-// The doors: POST /other-debtors/:id/receipts (no postNow — it waits for its
-// approval, as it always did from this side), the four-layer submit, and
-// PATCH /other-debtors/receipts/:id (c5), which posts nothing. Money posts at
-// approval, exactly as before.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Info } from 'lucide-react';
@@ -18,7 +5,7 @@ import {
   postableAccounts, useAccounts, useCreateDebtorReceipt, useDebtorReceiptAction, useUpdateDebtorReceipt,
 } from '../../../vendor/scm/lib/accounting-queries';
 import { useToastOptional } from '../../../hooks/useToast';
-import { todayMY } from '../../../vendor/shared/format';
+import { todayMY } from '../../../../../shared/src/vendor/shared/format';
 import { pvStage } from '../PvDocParts';
 import { DocFormShell } from './MoneyInDocPage';
 import { ReceiptForm, blankReceipt, type DebtorSave, type DebtorSubmit } from './ReceiptForm';
@@ -30,11 +17,8 @@ import ui from '../MoneyIn.module.css';
 const errText = (e: unknown): string => (e instanceof Error && e.message ? e.message : 'Something went wrong.');
 
 export function DebtorReceiptFormPage({ id, debtorId, alloc, backLabel, onClose, openDoc }: {
-  /** The receipt an Edit changes; null for a new one. */
   id: string | null;
-  /** The debtor a new receipt starts on ('' to pick). */
   debtorId: string;
-  /** What a new receipt starts by taking off each bill (a bill page's New receipt). */
   alloc?: Record<string, number>;
   backLabel: string;
   onClose: () => void;
@@ -44,7 +28,7 @@ export function DebtorReceiptFormPage({ id, debtorId, alloc, backLabel, onClose,
   const accountsQ = useAccounts();
   const detailQ = useDebtorReceipt(id);
   const create = useCreateDebtorReceipt();
-  const idemKey = useIdempotencyKey(); // one per opened form: a double press books one receipt
+  const idemKey = useIdempotencyKey();
   const update = useUpdateDebtorReceipt();
   const step = useDebtorReceiptAction();
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +41,6 @@ export function DebtorReceiptFormPage({ id, debtorId, alloc, backLabel, onClose,
   const d = detailQ.data;
   const r = d?.receipt;
   const [today] = useState(todayMY);
-  /* An edit starts from the receipt as saved; a new one from today, on its debtor. */
   const initial = useMemo(() => (d
     ? {
       ...blankReceipt(String(d.receipt.receipt_date).slice(0, 10), d.receipt.debtor_id),
@@ -76,7 +59,6 @@ export function DebtorReceiptFormPage({ id, debtorId, alloc, backLabel, onClose,
     );
   }
   const stage = r ? pvStage(r) : null;
-  /* Only a receipt nobody has checked changes (the server refuses the rest too, c5). */
   if (r && stage && stage !== 'Draft' && stage !== 'Prepared') {
     const why = stage === 'Checked' ? 'has been checked — it is locked. Reject it back to Draft to change it.'
       : stage === 'Approved' ? 'is on the books — void it and raise it again to change it.'
@@ -105,7 +87,6 @@ export function DebtorReceiptFormPage({ id, debtorId, alloc, backLabel, onClose,
         if (how === 'prepare' && made) {
           step.mutate({ receiptId: made, action: 'submit' }, {
             onSuccess: () => { toast?.success(`${no} prepared · checked next`); opened(); },
-            /* Saved, not prepared: the draft stands, and says why. */
             onError: (e) => { toast?.error(`${no} saved as Draft — not prepared: ${errText(e)}`); opened(); },
           });
           return;

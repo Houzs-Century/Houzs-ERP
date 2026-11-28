@@ -1,9 +1,6 @@
-/* Procurement Overview · every outstanding PO line under the breakdown (owner
-   2026-10-31: click Mattress / a supplier and its POs list below; layer them by
-   days overdue, click a layer to see its POs; sort; export; empty layers hidden). */
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { SortTh, Td, useTableSort } from "../../components/scm-v2/OverviewKit";
 
@@ -12,7 +9,6 @@ export type PoLine = {
   itemDesc: string | null; soDocNo: string | null; dueDate: string | null; openQty: number; openSen: number; daysLate: number | null;
 };
 
-/* Days past the date first put on the PO; "not due" also holds lines with no date. */
 export const LAYERS = [
   { k: "late30", label: "Over 30 days late", min: 31, max: Infinity },
   { k: "late15", label: "15–30 days late", min: 15, max: 30 },

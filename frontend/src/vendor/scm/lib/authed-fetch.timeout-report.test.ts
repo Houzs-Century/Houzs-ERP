@@ -24,7 +24,6 @@ beforeEach(() => {
 });
 
 describe("a timed-out SCM request reaches System Health", () => {
-  /* The uuid is collapsed later, inside the reporter (normalizeApiPath). */
   test("approve-so past the deadline is reported once", async () => {
     const original = Object.getOwnPropertyDescriptor(AbortSignal, "timeout");
     const deadline = new AbortController();

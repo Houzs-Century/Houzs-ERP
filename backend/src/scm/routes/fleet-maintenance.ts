@@ -1,23 +1,3 @@
-// ----------------------------------------------------------------------------
-// /api/fleet-maintenance — Fleet Maintenance & Compliance, Phase 1.
-//
-// Builds ON the EXISTING SCM fleet foundation — it does NOT create a parallel
-// master (mig 0055 already dropped a duplicate public.lorries once). The lorry
-// master is scm.lorries; people come from scm.drivers (drivers.vehicle holds
-// the plate); region from scm.warehouses; out-of-service from the existing
-// scm.lorry_maintenance windows; mileage + next service from the latest
-// scm.lorry_service_records row. The ONE genuinely-new table is the compliance
-// VAULT (scm.lorry_compliance_documents, mig 0202) with true renewal history.
-//
-// Mounted at TOP LEVEL (outside /api/scm) so the gate is the flat fleet.read /
-// fleet.write permission alone, not the coarse scm.access. It uses the SCM
-// supabase client via supabaseAuth (same as the sibling lorry routes) and gates
-// on the REAL Houzs caller via requireHouzsPerm.
-//
-// The backend is the SINGLE SOURCE OF TRUTH for derived state: it runs the pure,
-// unit-tested services/fleet-status.ts and returns ready-to-render status,
-// reminder levels and KPIs, so the frontend never re-derives the rules.
-// ----------------------------------------------------------------------------
 
 import { Hono } from "hono";
 import { supabaseAuth } from "../middleware/auth";
@@ -50,7 +30,6 @@ import {
   MILEAGE_SOURCES,
   type MileageSource,
   assessMileageReading,
-  // Phase 3
   BREAKDOWN_SEVERITIES,
   BREAKDOWN_STATUSES,
   type BreakdownStatus,
@@ -92,15 +71,12 @@ const COMPONENT_EVENT_TYPE_SET = new Set<string>(COMPONENT_EVENT_TYPES);
 const DOC_TYPE_SET = new Set<string>(COMPLIANCE_DOC_TYPES);
 const PLAN_COMPONENT_SET = new Set<string>(PLAN_COMPONENTS);
 const MILEAGE_SOURCE_SET = new Set<string>(MILEAGE_SOURCES);
-// doc_type -> the denormalized "current" flat column on scm.lorries (mig 0121).
-// APAD / CROSS_BORDER are vault-only (no flat column).
 const FLAT_COL: Partial<Record<ComplianceDocType, "road_tax_expiry" | "insurance_expiry" | "puspakom_expiry">> = {
   ROAD_TAX: "road_tax_expiry",
   INSURANCE: "insurance_expiry",
   PUSPAKOM: "puspakom_expiry",
 };
 
-/** Today's calendar date in MYT (UTC+8), where the fleet operates. */
 
 type VaultRow = {
   id: string;
@@ -138,8 +114,6 @@ function shapeDoc(row: VaultRow, today: string) {
   };
 }
 
-/** A synthetic "current" doc built from a scm.lorries flat expiry column, used
- *  when the vault has no row of that type yet (existing lorries keep working). */
 function flatDoc(docType: ComplianceDocType, expiry: string | null, today: string) {
   const expiryDate = iso(expiry);
   const days = daysUntil(expiryDate, today);
@@ -217,8 +191,6 @@ type Lorry = {
   notes: string | null;
 };
 
-/** The current document per type for a lorry: the latest-expiring VAULT row if
- *  present, otherwise a synthetic doc from the scm.lorries flat column. */
 function currentByType(lorry: Lorry, vaultRows: VaultRow[], today: string) {
   const currentVault = currentDocsByType(
     vaultRows.map((d) => ({ docType: d.doc_type as ComplianceDocType, expiryDate: d.expiry_date, issueDate: d.issue_date })),
@@ -237,7 +209,6 @@ function currentByType(lorry: Lorry, vaultRows: VaultRow[], today: string) {
         continue;
       }
     }
-    // Fallback to the flat column (only the three that have one).
     const col = FLAT_COL[type];
     if (col && lorry[col]) {
       out[type] = flatDoc(type, lorry[col], today);
@@ -272,7 +243,6 @@ type MileageRow = {
   note: string | null;
 };
 
-/** A plan as the wire needs it: raw fields + the derived due picture. */
 function shapePlan(row: PlanRow, currentKm: number | null, today: string) {
   const plan: MaintenancePlanInput = {
     component: row.component,
@@ -305,7 +275,6 @@ function shapePlan(row: PlanRow, currentKm: number | null, today: string) {
   };
 }
 
-/** The plan-status inputs the state machine needs (active plans only). */
 function planInputs(rows: PlanRow[]): MaintenancePlanInput[] {
   return rows.map((r) => ({
     component: r.component,
@@ -317,7 +286,6 @@ function planInputs(rows: PlanRow[]): MaintenancePlanInput[] {
   }));
 }
 
-// ── Phase 3 row types + shapers ─────────────────────────────────────────────
 type BreakdownRow = {
   id: string;
   lorry_id: string;
@@ -414,13 +382,9 @@ type WorkOrderPartRow = {
   serial: string | null;
 };
 
-/** Every column the line model needs, in ONE place — the dashboard and the
- *  vehicle detail both read this table and must not drift apart. */
 const WO_PART_COLS =
   "id, work_order_id, section, name, part_no, uom, qty, unit_price_sen, discount_pct, amount_sen, line_no, serial";
 
-/** DB row -> the calculator's line shape. The single conversion point, so a
- *  discount can never be dropped on one read path and honoured on another. */
 const partToLine = (p: WorkOrderPartRow): WorkOrderLineInput => ({
   qty: p.qty,
   unitPriceSen: p.unit_price_sen,
@@ -439,18 +403,12 @@ function shapeWorkOrder(row: WorkOrderRow, parts: WorkOrderPartRow[]) {
     unitPriceSen: p.unit_price_sen ?? 0,
     discountPct: p.discount_pct ?? 0,
     lineNo: p.line_no ?? null,
-    /* The printed amount when the document had one, else qty x unit x (1-disc).
-       This used to be a bare qty x unit, which silently overcharged every
-       discounted line — 14 of the 19 on the invoice that prompted mig 0241. */
     lineSen: workOrderLineSen(partToLine(p)),
     serial: p.serial,
   }));
   const state = row.status as WorkOrderState;
   return {
     id: row.id,
-    /* OURS (mig 0248). quotationNo below is the WORKSHOP'S number, off their
-       document — it is not unique across vendors and a repair with no document
-       has none, so it cannot be the record's identity. */
     woNo: row.wo_no ?? null,
     status: state,
     statusLabel: WORK_ORDER_STATE_LABELS[state] ?? row.status,
@@ -566,7 +524,6 @@ function shapeComponent(row: ComponentRow, currentKm: number | null, today: stri
   };
 }
 
-// ── GET /dashboard ──────────────────────────────────────────────────────────
 fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => {
   const sb = c.get("supabase");
   const today = todayMyt();
@@ -582,9 +539,7 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     sb.from("lorry_service_records").select("lorry_id, service_date, odometer_km, next_service_km, next_service_date, cost_sen").order("service_date", { ascending: false }),
     sb.from("lorry_maintenance_plans").select("*").eq("active", true),
     sb.from("lorry_mileage_readings").select("lorry_id, reading_date, odometer_km, source, flagged").order("reading_date", { ascending: false }).order("created_at", { ascending: false }),
-    // Phase 3: active (non-resolved) breakdown cases feed the BREAKDOWN seam + downtime.
     sb.from("lorry_breakdown_cases").select("*").neq("status", "RESOLVED").order("occurred_at", { ascending: false }),
-    // All work orders: open ones feed the WO seam; those completed this month feed spend.
     sb.from("lorry_work_orders").select("*"),
     sb.from("lorry_work_order_parts").select(WO_PART_COLS),
   ]);
@@ -607,7 +562,6 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
   }
   const oosByLorry = new Map<string, string | null>();
   for (const m of maintR.data ?? []) if (!oosByLorry.has(m.lorry_id as string)) oosByLorry.set(m.lorry_id as string, (m.reason as string) ?? null);
-  // latest service record per lorry (rows already newest-first) + this-month spend.
   const latestSvc = new Map<string, { odometer_km: number | null; next_service_km: number | null; next_service_date: string | null }>();
   const monthSpend = new Map<string, number>();
   for (const s of svcR.data ?? []) {
@@ -615,33 +569,28 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     if (!latestSvc.has(lid)) latestSvc.set(lid, { odometer_km: s.odometer_km as number | null, next_service_km: s.next_service_km as number | null, next_service_date: iso(s.next_service_date) });
     if (iso(s.service_date) && iso(s.service_date)! >= monthStart) monthSpend.set(lid, (monthSpend.get(lid) ?? 0) + Number(s.cost_sen ?? 0));
   }
-  // Active preventive-maintenance plans per lorry.
   const plansByLorry = new Map<string, PlanRow[]>();
   for (const p of (plansR.data ?? []) as PlanRow[]) {
     const list = plansByLorry.get(p.lorry_id) ?? [];
     list.push(p);
     plansByLorry.set(p.lorry_id, list);
   }
-  // Latest odometer reading per lorry (rows already newest-first).
   const latestMileage = new Map<string, { odometer_km: number | null; reading_date: string | null; flagged: boolean }>();
   for (const m of (mileageR.data ?? []) as MileageRow[]) {
     if (!latestMileage.has(m.lorry_id)) latestMileage.set(m.lorry_id, { odometer_km: m.odometer_km, reading_date: iso(m.reading_date), flagged: !!m.flagged });
   }
-  // Phase 3: active breakdown cases per lorry (already non-resolved, newest-first).
   const breakdownByLorry = new Map<string, BreakdownRow[]>();
   for (const b of (breakdownR.data ?? []) as BreakdownRow[]) {
     const list = breakdownByLorry.get(b.lorry_id) ?? [];
     list.push(b);
     breakdownByLorry.set(b.lorry_id, list);
   }
-  // Work-order parts grouped by work order (for the derived total).
   const partsByWo = new Map<string, WorkOrderPartRow[]>();
   for (const p of (woPartsR.data ?? []) as WorkOrderPartRow[]) {
     const list = partsByWo.get(p.work_order_id) ?? [];
     list.push(p);
     partsByWo.set(p.work_order_id, list);
   }
-  // Work orders per lorry + this-month WO repair spend (actual_complete in month).
   const woByLorry = new Map<string, WorkOrderRow[]>();
   const woMonthSpend = new Map<string, number>();
   for (const w of (woR.data ?? []) as WorkOrderRow[]) {
@@ -669,8 +618,6 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
   const rows = lorries.map((l) => {
     const { compliance, statusDocs } = currentByType(l, vaultByLorry.get(l.id) ?? [], today);
     const svc = latestSvc.get(l.id);
-    // The odometer the plans measure against: latest MILEAGE reading first (the
-    // Phase-2 primary), else the latest service record's odometer.
     const mileage = latestMileage.get(l.id);
     const currentMileageKm = mileage?.odometer_km ?? svc?.odometer_km ?? null;
     const planRows = plansByLorry.get(l.id) ?? [];
@@ -678,10 +625,7 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     const shapedPlans = planRows.map((p) => shapePlan(p, currentMileageKm, today)).sort((a, b) => (a.daysRemaining ?? 1e9) - (b.daysRemaining ?? 1e9));
     const plansOverdue = shapedPlans.filter((p) => p.overdue).length;
     const plansDueSoon = shapedPlans.filter((p) => p.dueSoon && !p.overdue).length;
-    // The single most-urgent plan drives the board's "next service" cell.
     const nextPlan = shapedPlans.find((p) => p.nextDueKm !== null || p.nextDueDate !== null) ?? null;
-    // Phase 3 seams: a breakdown that took it off the road grounds the lorry; an open work
-    // order in IN_REPAIR / WAITING_PARTS feeds the maintenance states.
     const lorryBreakdowns = breakdownByLorry.get(l.id) ?? [];
     const breakdownActive = isBreakdownActive(lorryBreakdowns.map(groundingInput));
     const lorryWos = woByLorry.get(l.id) ?? [];
@@ -698,7 +642,6 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
       breakdownActive,
       openWorkOrder,
     });
-    // Longest current downtime across active grounding breakdowns.
     const downtimeHours = lorryBreakdowns
       .map((b) => breakdownDowntimeHours({ breakdownStart: b.breakdown_start, occurredAt: b.occurred_at, recoveryTime: b.recovery_time }, nowIso))
       .filter((h): h is number => h !== null)
@@ -753,7 +696,6 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
             overdue: nextPlan.overdue,
           }
         : null,
-      // Phase 3 board columns.
       breakdownActive,
       openBreakdowns: lorryBreakdowns.length,
       openWorkOrders: openWos.length,
@@ -762,7 +704,6 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
     };
   });
 
-  // Costliest vehicle this month: combine service records + work-order totals.
   const combinedSpend = new Map<string, number>();
   for (const [lid, v] of monthSpend) combinedSpend.set(lid, (combinedSpend.get(lid) ?? 0) + v);
   for (const [lid, v] of woMonthSpend) combinedSpend.set(lid, (combinedSpend.get(lid) ?? 0) + v);
@@ -789,8 +730,6 @@ fleetMaintenance.get("/dashboard", requireHouzsPerm("fleet.read"), async (c) => 
   });
 });
 
-/** The one-line "what is wrong right now" summary for the board's Open-problem
- *  column, derived from status + open breakdowns/work orders. */
 function openProblemFor(status: string, breakdowns: BreakdownRow[], openWos: WorkOrderRow[]): string | null {
   const grounding = breakdowns.find((b) => isCaseGrounding(groundingInput(b)));
   if (grounding) return grounding.fault_type ? `Breakdown: ${grounding.fault_type}` : "Breakdown";
@@ -803,7 +742,6 @@ function openProblemFor(status: string, breakdowns: BreakdownRow[], openWos: Wor
   return null;
 }
 
-// ── GET /vehicles/:id — one lorry + full compliance history + windows ────────
 fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) => {
   const id = c.req.param("id"); // company-scope: unified fleet (owner 2026-09-02, bugs/0620), see the UNIFIED FLEET note above inHouseLorries.
   const sb = c.get("supabase");
@@ -823,9 +761,6 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
     lorry.warehouse_id ? sb.from("warehouses").select("code, name").eq("id", lorry.warehouse_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
     sb.from("drivers").select("vehicle, name").eq("active", true),
     sb.from("lorry_compliance_documents").select("*").eq("lorry_id", id).order("issue_date", { ascending: false }).order("expiry_date", { ascending: false }),
-    /* mig 0238 — the vault's FILES. Read by lorry through the join column so one
-       query covers every document; a failure degrades to "no files", never a 500
-       on the whole drawer. */
     sb.from("lorry_compliance_attachments").select("id, document_id, r2_key, file_name, mime_type, size_bytes, created_at").order("created_at"),
     sb.from("lorry_maintenance").select("unavailable_from, unavailable_to, reason").eq("lorry_id", id).order("unavailable_from", { ascending: false }),
     sb.from("lorry_service_records").select("service_date, odometer_km, next_service_km, next_service_date, cost_sen, workshop, description").eq("lorry_id", id).order("service_date", { ascending: false }).limit(1),
@@ -841,8 +776,6 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
   const vaultRows = (vaultR.data ?? []) as VaultRow[];
   const { statusDocs } = currentByType(lorry, vaultRows, today);
   const currentVault = currentDocsByType(vaultRows.map((d) => ({ docType: d.doc_type as ComplianceDocType, expiryDate: d.expiry_date, issueDate: d.issue_date })));
-  /* mig 0238 — attach each renewal's FILES to its history row. Grouped once here
-     rather than per type, so the drawer never has to join two arrays itself. */
   type AttachRow = { id: string; document_id?: string; documentId?: string; r2_key?: string; r2Key?: string; file_name?: string | null; fileName?: string | null; mime_type?: string | null; mimeType?: string | null; size_bytes?: number | null; sizeBytes?: number | null };
   const filesByDoc = new Map<string, Array<{ id: string; r2Key: string; fileName: string | null; mimeType: string | null; sizeBytes: number | null }>>();
   for (const a of ((attachR.data ?? []) as AttachRow[])) {
@@ -885,7 +818,6 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
     .sort((a, b) => Number(b.active) - Number(a.active) || (a.daysRemaining ?? 1e9) - (b.daysRemaining ?? 1e9));
   const oosNow = (maintR.data ?? []).some((m) => iso(m.unavailable_from)! <= today && iso(m.unavailable_to)! >= today);
 
-  // Phase 3: breakdowns, work orders (+ parts), components (+ events).
   const breakdownRows = (breakdownR.data ?? []) as BreakdownRow[];
   const woRows = (woR.data ?? []) as WorkOrderRow[];
   const woIds = new Set(woRows.map((w) => w.id));
@@ -942,11 +874,7 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
       status,
       statusLabel: VEHICLE_STATUS_LABELS[status],
       canDispatch: canDispatch(status),
-      /* WS3 (mig 0209) has stored the box since it shipped; the drawer never
-         showed it. capacity_m3 is DERIVED from L x W x H by the lorries route. */
       isInternal: lorry.is_internal !== false,
-      /* Mig 0245 — the lorry's own lifecycle, distinct from purchase_date.
-         Surfaced on the full record page, not the quick-look drawer. */
       manufactureDate: iso((lorry as Record<string, unknown>).manufacture_date as string | null),
       registrationDate: iso((lorry as Record<string, unknown>).registration_date as string | null),
       inServiceDate: iso((lorry as Record<string, unknown>).in_service_date as string | null),
@@ -959,9 +887,6 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
     },
     compliance: byType,
     plans: shapedPlans,
-    /* The components a plan may cover, served rather than mirrored. The list and
-       its labels live in fleet-status.ts and the migration's CHECK mirrors them;
-       a THIRD copy in the frontend would be the one nobody updates. */
     planComponents: PLAN_COMPONENTS.map((value) => ({ value, label: PLAN_COMPONENT_LABELS[value] })),
     mileage: mileageRows.map((m) => ({
       id: m.id,
@@ -979,11 +904,6 @@ fleetMaintenance.get("/vehicles/:id", requireHouzsPerm("fleet.read"), async (c) 
   });
 });
 
-// ── GET /reminders — fleet-wide actionable expiries, most urgent first ───────
-// The computation is EXPORTED for the daily push job
-// (services/pushFleetReminders.ts) — the module guide has always called this
-// endpoint "the seam a future notification job calls". One computation, two
-// consumers; the route stays the single place the rules live.
 export type FleetReminderItem = {
   vehicleId: string;
   plate: string;
@@ -1030,9 +950,6 @@ fleetMaintenance.get("/reminders", requireHouzsPerm("fleet.read"), async (c) => 
   return c.json({ today: r.today, reminders: r.reminders });
 });
 
-// ── POST /vehicles/:id/compliance — APPEND a vault renewal (never overwrite) ─
-// Also SYNCS the denormalized flat expiry column on scm.lorries from the latest
-// vault row of that type, so the existing Fleet compliance strip keeps working.
 fleetMaintenance.post("/vehicles/:id/compliance", requireHouzsPerm("fleet.write"), async (c) => {
   /* company-scope: unified fleet — see the UNIFIED FLEET note above
      inHouseLorries. This stamp can disagree with the parent lorry's and it does
@@ -1063,7 +980,6 @@ fleetMaintenance.post("/vehicles/:id/compliance", requireHouzsPerm("fleet.write"
     result = r;
   }
 
-  // Confirm the lorry exists (unified fleet — no company scope on the master).
   const { data: lorry, error: lorryErr } = await sb.from("lorries").select("id").eq("id", lorryId).maybeSingle();
   if (lorryErr) return c.json({ error: "load_failed", reason: lorryErr.message }, 500);
   if (!lorry) return c.json({ error: "vehicle_not_found" }, 404);
@@ -1091,7 +1007,6 @@ fleetMaintenance.post("/vehicles/:id/compliance", requireHouzsPerm("fleet.write"
     return c.json({ error: "insert_failed", reason: error.message }, 500);
   }
 
-  // Sync the denormalized flat column to the latest vault expiry for this type.
   const flatCol = FLAT_COL[docType as ComplianceDocType];
   if (flatCol) {
     const { data: all } = await sb.from("lorry_compliance_documents").select("expiry_date").eq("lorry_id", lorryId).eq("doc_type", docType);
@@ -1114,13 +1029,12 @@ fleetMaintenance.post("/vehicles/:id/compliance", requireHouzsPerm("fleet.write"
 // server-minted R2 key, POD_BUCKET, and a streamer for reading it back.
 
 const COMPLIANCE_FILE_EXT = new Set(["pdf", "jpg", "jpeg", "png", "webp", "heic"]);
-const COMPLIANCE_FILE_MAX = 15 * 1024 * 1024; // 15 MB - a scanned road tax, not a video
+const COMPLIANCE_FILE_MAX = 15 * 1024 * 1024;
 const COMPLIANCE_MIME: Record<string, string> = {
   pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg",
   png: "image/png", webp: "image/webp", heic: "image/heic",
 };
 
-// PUT /vehicles/:id/compliance/:docId/attachments?ext=pdf&name=roadtax.pdf
 fleetMaintenance.put("/vehicles/:id/compliance/:docId/attachments", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const lorryId = c.req.param("id");
@@ -1133,9 +1047,6 @@ fleetMaintenance.put("/vehicles/:id/compliance/:docId/attachments", requireHouzs
   }
   const fileName = c.req.query("name") || null;
 
-  /* The document must exist AND belong to the lorry in the path - otherwise a
-     known docId would let a caller hang a file off another lorry's renewal.
-     OWNER-CHECKED, not scoped: one shared fleet (see the UNIFIED FLEET note). */
   const { data: doc, error: docErr } = await sb
     .from("lorry_compliance_documents").select("id, lorry_id").eq("id", docId).maybeSingle();
   if (docErr) return c.json({ error: "load_failed", reason: docErr.message }, 500);
@@ -1150,8 +1061,6 @@ fleetMaintenance.put("/vehicles/:id/compliance/:docId/attachments", requireHouzs
   }
 
   const contentType = COMPLIANCE_MIME[ext] ?? "application/octet-stream";
-  /* Server-minted: the client never supplies a key, so it cannot point a row at
-     an arbitrary bucket object. */
   const key = `fleet/compliance/${lorryId}/${docId}/${Date.now()}.${ext}`;
   await c.env.POD_BUCKET.put(key, body, { httpMetadata: { contentType } });
 
@@ -1169,7 +1078,6 @@ fleetMaintenance.put("/vehicles/:id/compliance/:docId/attachments", requireHouzs
   return c.json({ id: inserted?.id, r2Key: key, fileName, mimeType: contentType, sizeBytes: body.byteLength }, 201);
 });
 
-// DELETE /compliance-attachments/:attId - drops the row AND the R2 object.
 fleetMaintenance.delete("/compliance-attachments/:attId", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const attId = c.req.param("attId");
@@ -1180,22 +1088,15 @@ fleetMaintenance.delete("/compliance-attachments/:attId", requireHouzsPerm("flee
   if (loadErr) return c.json({ error: "load_failed", reason: loadErr.message }, 500);
   if (!row) return c.json({ error: "attachment_not_found" }, 404);
 
-  /* Scoped on the DELETE itself, not only on the load above: the client is
-     service-role, so RLS re-checks nothing between the two statements. */
   const { error } = await sb.from("lorry_compliance_attachments").delete().eq("id", attId);
   if (error) return c.json({ error: "delete_failed", reason: error.message }, 500);
 
-  /* Row first, object second. If the object delete fails the bucket keeps an
-     unreferenced blob, which is harmless; the reverse order could leave a row
-     pointing at nothing, which the drawer would render as a broken file. */
   const key = String((row as Record<string, unknown>).r2Key ?? (row as Record<string, unknown>).r2_key ?? "");
-  if (key) { try { await c.env.POD_BUCKET.delete(key); } catch { /* see above */ } }
+  if (key) { try { await c.env.POD_BUCKET.delete(key); } catch { } }
 
   return c.json({ ok: true });
 });
 
-// GET /compliance-attachments/:key{.+} - stream it back. The area guard and
-// fleet.read have already run; {.+} captures the slashes in the key.
 fleetMaintenance.get("/compliance-attachments/:key{.+}", requireHouzsPerm("fleet.read"), async (c) => {
   const key = c.req.param("key");
   if (!key.startsWith("fleet/compliance/")) return c.json({ error: "not_found" }, 404);
@@ -1209,11 +1110,6 @@ fleetMaintenance.get("/compliance-attachments/:key{.+}", requireHouzsPerm("fleet
   });
 });
 
-// ── POST /vehicles/:id/plans — create OR update the plan for one component ───
-// One plan per (lorry, component) — the unique index enforces it, and this route
-// UPSERTs on that pair so re-submitting the same component edits rather than
-// duplicates. next_due_* is never written (it is derived); only the raw interval
-// + last-done facts are stored.
 fleetMaintenance.post("/vehicles/:id/plans", requireHouzsPerm("fleet.write"), async (c) => {
   const lorryId = c.req.param("id"); // company-scope: unified fleet (owner 2026-09-02, bugs/0620), see the UNIFIED FLEET note above inHouseLorries.
   const sb = c.get("supabase");
@@ -1246,7 +1142,6 @@ fleetMaintenance.post("/vehicles/:id/plans", requireHouzsPerm("fleet.write"), as
     component,
     interval_km: intervalKm.value,
     interval_months: intervalMonths.value,
-    // The plan is the RULE; a done service moves last-done (fleet-plan-service.ts). Unsent keys are kept.
     ...("lastDoneDate" in body ? { last_done_date: lastDoneDate.value } : {}),
     ...("lastDoneKm" in body ? { last_done_km: lastDoneKm.value } : {}),
     ...("workshop" in body ? { workshop: (body.workshop as string)?.trim() || null } : {}),
@@ -1267,7 +1162,6 @@ fleetMaintenance.post("/vehicles/:id/plans", requireHouzsPerm("fleet.write"), as
   return c.json({ id: up?.id }, 201);
 });
 
-// ── PATCH /plans/:planId — edit an existing plan (partial) ────────────────────
 fleetMaintenance.patch("/plans/:planId", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const planId = c.req.param("planId");
@@ -1317,12 +1211,6 @@ fleetMaintenance.patch("/plans/:planId", requireHouzsPerm("fleet.write"), async 
   return c.json({ id: updated.id });
 });
 
-// ── POST /vehicles/:id/mileage — capture a daily odometer reading ────────────
-// The primary flow is the driver marking the day "fully complete" and entering
-// the odometer + a dashboard photo (source = DAY_COMPLETE). Guards (pure, in
-// services/fleet-status.ts): a reading BELOW the latest is a rollback and is
-// REJECTED; an abnormal one-day jump is ACCEPTED but flagged for review. GPS
-// distance is never written as the odometer.
 fleetMaintenance.post("/vehicles/:id/mileage", requireHouzsPerm("fleet.write"), async (c) => {
   const lorryId = c.req.param("id"); // company-scope: unified fleet (owner 2026-09-02, bugs/0620), see the UNIFIED FLEET note above inHouseLorries.
   const sb = c.get("supabase");
@@ -1345,7 +1233,6 @@ fleetMaintenance.post("/vehicles/:id/mileage", requireHouzsPerm("fleet.write"), 
   if (lorryErr) return c.json({ error: "load_failed", reason: lorryErr.message }, 500);
   if (!lorry) return c.json({ error: "vehicle_not_found" }, 404);
 
-  // Latest existing reading is the previous odometer the guards compare against.
   const { data: prevRows, error: prevErr } = await sb
     .from("lorry_mileage_readings")
     .select("odometer_km, reading_date")
@@ -1362,8 +1249,6 @@ fleetMaintenance.post("/vehicles/:id/mileage", requireHouzsPerm("fleet.write"), 
     newKm: odo.value,
     newDate: readingDate,
   });
-  // A rollback is rejected — the client can resubmit a corrected value. The GPS
-  // cross-check the client may show is advisory only and never lands here.
   if (assessment.verdict === "ROLLBACK") {
     return c.json({ error: "odometer_rollback", previousKm: prev?.odometer_km ?? null, deltaKm: assessment.deltaKm }, 409);
   }
@@ -1384,7 +1269,6 @@ fleetMaintenance.post("/vehicles/:id/mileage", requireHouzsPerm("fleet.write"), 
     .select("id")
     .single();
   if (error) {
-    // The one-DAY_COMPLETE-per-day unique index: a second day-complete entry.
     if (error.code === "23505") return c.json({ error: "already_captured_today" }, 409);
     if (error.code === "23503") return c.json({ error: "vehicle_not_found" }, 404);
     return c.json({ error: "insert_failed", reason: error.message }, 500);
@@ -1392,22 +1276,13 @@ fleetMaintenance.post("/vehicles/:id/mileage", requireHouzsPerm("fleet.write"), 
   return c.json({ id: inserted?.id, verdict: assessment.verdict, flagged: assessment.flagged, deltaKm: assessment.deltaKm }, 201);
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// Phase 3 write surface — breakdown cases, work orders (+ state machine + parts),
-// tyre/component lifecycle (+ events). All gated fleet.write.
-// ════════════════════════════════════════════════════════════════════════════
 
-/** Confirm the lorry exists (unified fleet — no company scope on the master). */
 async function lorryExists(sb: Variables["supabase"], lorryId: string): Promise<boolean | "error"> {
   const { data, error } = await sb.from("lorries").select("id").eq("id", lorryId).maybeSingle();
   if (error) return "error";
   return !!data;
 }
 
-// ── POST /vehicles/:id/breakdowns — driver/office logs a breakdown ───────────
-// A not-drivable or CRITICAL case grounds the lorry (feeds breakdownActive → BREAKDOWN). We find
-// the affected trip(s), suggest replacement lorries / 3PL, and notify the
-// reporter's reporting line through the EXISTING announcements mechanism.
 fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"), async (c) => {
   const lorryId = c.req.param("id"); // company-scope: unified fleet (owner 2026-09-02, bugs/0620), see the UNIFIED FLEET note above inHouseLorries.
   const sb = c.get("supabase");
@@ -1470,12 +1345,10 @@ fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"
     return c.json({ error: "insert_failed", reason: error.message }, 500);
   }
 
-  // If this case grounds the lorry, surface the dispatch impact + suggestions.
   const grounding = isCaseGrounding({ severity, status: statusIn, stillDrivable: body.stillDrivable === undefined ? true : Boolean(body.stillDrivable) });
   let affectedTrips: Array<{ id: string; tripNo: string | null; tripDate: string | null; status: string | null }> = [];
   let replacementSuggestions: Array<{ id: string; plate: string; region: string | null }> = [];
   if (grounding) {
-    // Trips today+future on this lorry that are not yet finished.
     const { data: trips } = await sb
       .from("trips")
       .select("id, trip_no, trip_date, status, warehouse_id")
@@ -1485,7 +1358,6 @@ fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"
       .order("trip_date");
     affectedTrips = (trips ?? []).map((t) => ({ id: t.id as string, tripNo: (t.trip_no as string) ?? null, tripDate: iso(t.trip_date), status: (t.status as string) ?? null }));
 
-    // Replacement suggestion: available lorries in the same warehouse, minus this one.
     const sameWh = (trips ?? [])[0]?.warehouse_id ?? null;
     const { data: cand } = await sb
       .from("lorries")
@@ -1498,7 +1370,6 @@ fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"
       .slice(0, 6)
       .map((x) => ({ id: x.id as string, plate: x.plate as string, region: null }));
 
-    // Notify the reporter's reporting line via the existing announcements path.
     const reporterId = Number(c.get("houzsUser")?.id ?? NaN);
     if (Number.isFinite(reporterId) && reporterId > 0) {
       try {
@@ -1522,7 +1393,6 @@ fleetMaintenance.post("/vehicles/:id/breakdowns", requireHouzsPerm("fleet.write"
   return c.json({ id: inserted?.id, grounding, affectedTrips, replacementSuggestions }, 201);
 });
 
-// ── PATCH /breakdowns/:id — update / resolve a breakdown case ─────────────────
 fleetMaintenance.patch("/breakdowns/:caseId", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const caseId = c.req.param("caseId");
@@ -1570,7 +1440,6 @@ fleetMaintenance.patch("/breakdowns/:caseId", requireHouzsPerm("fleet.write"), a
   return c.json({ id: updated.id });
 });
 
-// ── POST /vehicles/:id/work-orders — open a maintenance work order ───────────
 fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write"), async (c) => {
   const lorryId = c.req.param("id");
   const sb = c.get("supabase");
@@ -1606,10 +1475,6 @@ fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write
       status: "REPORTED",
       problem: (body.problem as string)?.trim() || null,
       diagnosis: (body.diagnosis as string)?.trim() || null,
-      /* `workshop` (free text) and `workshop_id` (the 0241 master) coexist on
-         purpose: every pre-0241 row has only the string, and the string is also
-         what an OCR pass produces before anyone has matched it to a master row.
-         The master link is the one that aggregates spend. */
       workshop: (body.workshop as string)?.trim() || null,
       workshop_id: (body.workshopId as string)?.trim() || null,
       quotation_no: (body.quotationNo as string)?.trim() || null,
@@ -1640,7 +1505,6 @@ fleetMaintenance.post("/vehicles/:id/work-orders", requireHouzsPerm("fleet.write
   return c.json({ id: inserted?.id, status: "REPORTED" }, 201);
 });
 
-// ── PATCH /work-orders/:id — edit fields (NOT status — use /transition) ───────
 fleetMaintenance.patch("/work-orders/:woId", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const woId = c.req.param("woId");
@@ -1695,10 +1559,6 @@ fleetMaintenance.patch("/work-orders/:woId", requireHouzsPerm("fleet.write"), as
   return c.json({ id: updated.id });
 });
 
-// ── POST /work-orders/:id/transition — advance the state machine ──────────────
-// The ONLY path that changes a work order's status: it validates the transition
-// against WORK_ORDER_TRANSITIONS so an illegal jump (e.g. Reported → Verified)
-// is a 409, never a silent write.
 fleetMaintenance.post("/work-orders/:woId/transition", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const woId = c.req.param("woId");
@@ -1728,7 +1588,6 @@ fleetMaintenance.post("/work-orders/:woId/transition", requireHouzsPerm("fleet.w
   return c.json({ id: updated.id, status: to });
 });
 
-// ── POST /work-orders/:id/parts — add a part line ────────────────────────────
 fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const woId = c.req.param("woId");
@@ -1742,9 +1601,6 @@ fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"
   if (!qty.ok || (qty.value !== null && qty.value <= 0)) return c.json({ error: "invalid_qty" }, 400);
   const unit = numOrNull(body.unitPriceSen);
   if (!unit.ok) return c.json({ error: "invalid_unit_price" }, 400);
-  /* A workshop invoice discounts PER LINE, not per document, and prints its own
-     line total. Both are optional: a line with neither is the pre-0241 shape and
-     still prices as qty x unit. */
   const discount = numOrNull(body.discountPct);
   if (!discount.ok || (discount.value !== null && (discount.value < 0 || discount.value > 100))) {
     return c.json({ error: "invalid_discount_pct" }, 400);
@@ -1760,9 +1616,6 @@ fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"
   if (woErr) return c.json({ error: "load_failed", reason: woErr.message }, 500);
   if (!wo) return c.json({ error: "work_order_not_found" }, 404);
 
-  /* The one rule the DB cannot express (mig 0241): labour lives EITHER in the
-     header scalar OR in LABOUR-section lines, never both, or the total counts
-     it twice. The route is the single writer, so it is enforced here. */
   if (section === "LABOUR" && Number(wo.labour_sen ?? 0) > 0) {
     return c.json({
       error: "labour_already_on_header",
@@ -1796,7 +1649,6 @@ fleetMaintenance.post("/work-orders/:woId/parts", requireHouzsPerm("fleet.write"
   return c.json({ id: inserted?.id }, 201);
 });
 
-// ── DELETE /work-orders/:id/parts/:partId — remove a part line ────────────────
 fleetMaintenance.delete("/work-orders/:woId/parts/:partId", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const sb = c.get("supabase");
@@ -1812,7 +1664,6 @@ fleetMaintenance.delete("/work-orders/:woId/parts/:partId", requireHouzsPerm("fl
   return c.json({ id: deleted.id });
 });
 
-// ── POST /vehicles/:id/components — fit a component (tyre/battery/…) ──────────
 fleetMaintenance.post("/vehicles/:id/components", requireHouzsPerm("fleet.write"), async (c) => {
   const lorryId = c.req.param("id");
   const sb = c.get("supabase");
@@ -1868,7 +1719,6 @@ fleetMaintenance.post("/vehicles/:id/components", requireHouzsPerm("fleet.write"
   return c.json({ id: inserted?.id }, 201);
 });
 
-// ── PATCH /components/:id — update / remove a component ───────────────────────
 fleetMaintenance.patch("/components/:componentId", requireHouzsPerm("fleet.write"), async (c) => {
   // company-scope: unified fleet - see the UNIFIED FLEET note above inHouseLorries.
   const componentId = c.req.param("componentId");
@@ -1923,7 +1773,6 @@ fleetMaintenance.patch("/components/:componentId", requireHouzsPerm("fleet.write
   return c.json({ id: updated.id });
 });
 
-// ── POST /components/:id/events — log rotation/puncture/repair/inspection ──────
 fleetMaintenance.post("/components/:componentId/events", requireHouzsPerm("fleet.write"), async (c) => {
   const componentId = c.req.param("componentId");
   const sb = c.get("supabase");
@@ -1976,37 +1825,19 @@ fleetMaintenance.post("/components/:componentId/events", requireHouzsPerm("fleet
 // 地址、Email、SSM 注册号". None of that has anywhere to live in a TEXT column,
 // and neither does "what did we spend at this workshop".
 
-/** Mint the next WS-#### for a company. Owner: codes are generated, never typed
- *  — the driver roster is what hand-typed codes look like after a year
- *  (DRV-001..007 alongside DRV-05/DRV-050, same person three times).
- *
- *  Highest-existing + 1 rather than a sequence, because the code is per COMPANY
- *  and a Postgres sequence is global. The UNIQUE (company_id, code) index is the
- *  real guard: two racing creates collide there and the loser retries. */
 async function mintWorkshopCode(sb: any, companyId: number | null): Promise<string> {
-  /* Reads EVERY code, not the top 50 by string order: "WS-9" sorts above
-     "WS-10" as text, so an ordered LIMIT would eventually mint a duplicate.
-     nextCode (scm/lib/fleet-code-mint) is the one parser every minted code in
-     this system shares — it reads any padding, which is what stops a second
-     numbering scheme forming the way DRV-05 formed beside DRV-050. */
   const { data } = await scopeToCompanyIdOrOpen(sb.from("workshops").select("code"), companyId);
   return nextCode(CODE_PREFIX.WORKSHOP, ((data ?? []) as Array<{ code?: string | null }>).map((r) => r.code));
 }
 
-/** BD-#### / WO-#### (mig 0248). Same shape as mintWorkshopCode and for the
- *  same reasons: read EVERY number (string order puts WO-9 above WO-10), let the
- *  shared parser decide what comes next, and let the partial UNIQUE index be the
- *  real guard so two racing creates cannot both win. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function mintRecordNo(sb: any, table: string, column: string, prefix: string, companyId: number | null): Promise<string> {
-  /* Falls OPEN: a nullable id in .eq read zero codes and minted a duplicate (0618-*). */
   const { data } = await scopeToCompanyIdOrOpen(sb.from(table).select(column), companyId);
   return nextCode(prefix, ((data ?? []) as Array<Record<string, string | null>>).map((r) => r[column]));
 }
 
 fleetMaintenance.get("/workshops", requireHouzsPerm("fleet.read"), async (c) => {
   const sb = c.get("supabase");
-  /* scopeToCompany fails closed; a raw nullable .eq showed an empty list. 0618-* */
   const { data, error } = await scopeToCompany(sb.from("workshops")
     .select("id, code, name, registration_no, contact_name, contact_phone, office_phone, email, address, notes, is_active"), c).order("name");
   if (error) return c.json({ error: "load_failed", reason: error.message }, 500);
@@ -2048,15 +1879,11 @@ fleetMaintenance.post("/workshops", requireHouzsPerm("fleet.write"), async (c) =
     notes: (body.notes as string)?.trim() || null,
   };
 
-  /* Retry the MINT, not the whole create: the only thing that can race is the
-     code, and re-reading the highest is exactly what resolves it. */
   for (let attempt = 0; attempt < 4; attempt++) {
     const code = await mintWorkshopCode(sb, companyId);
     const { data, error } = await sb.from("workshops").insert({ ...row, code }).select("id, code").single();
     if (!error) return c.json({ id: data?.id, code: data?.code }, 201);
     if (error.code !== "23505") return c.json({ error: "insert_failed", reason: error.message }, 500);
-    /* 23505 on the NAME or the SSM is the caller's problem, not a race — only a
-       code collision is worth retrying. */
     if (!String(error.message ?? "").includes("workshops_code_uq")) {
       return c.json({ error: "duplicate_workshop", reason: error.message }, 409);
     }
@@ -2078,10 +1905,8 @@ fleetMaintenance.patch("/workshops/:id", requireHouzsPerm("fleet.write"), async 
     if (k in body) patch[col] = (body[k] as string)?.trim() || null;
   }
   if ("isActive" in body) patch.is_active = Boolean(body.isActive);
-  /* `code` is minted, never edited — the whole point of generating it. */
   if (patch.name === null) return c.json({ error: "name_required" }, 400);
 
-  /* Same fix as the list — the raw nullable .eq made every edit a phantom 404. */
   const { data, error } = await scopeToCompany(
     sb.from("workshops").update(patch).eq("id", c.req.param("id")), c,
   ).select("id").maybeSingle();

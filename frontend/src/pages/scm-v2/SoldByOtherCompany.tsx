@@ -56,7 +56,6 @@ const SoldByConfirm = ({ row, company, onCancel }: { row: SettlementRow; company
     );
   };
   return (
-    /* Its own row under the buttons it opened from. */
     <div style={{ flexBasis: '100%' }} className="space-y-1" data-testid="sold-by-confirm">
       {done ? (
         <div style={{ fontSize: 'var(--fs-13)', color: good }}>
@@ -67,7 +66,7 @@ const SoldByConfirm = ({ row, company, onCancel }: { row: SettlementRow; company
         <>
           <div style={{ fontSize: 'var(--fs-13)' }}>
             Book this line as <b>{company.name}</b>&rsquo;s sale? Its {fmt(row.gross_sen)}, less the {fmt(row.fee_sen)} fee and its
-            share of the report&rsquo;s statement charge, goes to <b>{company.accountCode}</b>
+            {(row.charge_share_sen ?? 0) !== 0 ? ` ${fmt(Math.abs(row.charge_share_sen ?? 0))}` : ''} share of the report&rsquo;s statement charge, goes to <b>{company.accountCode}</b>
             {company.accountName ? ` ${company.accountName}` : ''} as owed to {company.code}. The voucher paying {company.code} back clears it.
           </div>
           <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>

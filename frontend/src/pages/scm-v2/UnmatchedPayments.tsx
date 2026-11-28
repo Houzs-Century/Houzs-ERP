@@ -33,7 +33,7 @@ import {
 } from '../../components/dataTableLineExport';
 import { DateField } from '../../vendor/scm/components/DateField';
 import type { UnmatchedPdfPart } from '../../vendor/scm/lib/unmatched-payments-pdf';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { danger, fmt, softText } from './settlement-ui';
 import top from './MerchantReports.module.css';
 import { useSettlementBatchDetails, useSettlementBatches } from './settlement-queries';
@@ -53,14 +53,12 @@ const daysBefore = (day: string, n: number): string =>
 const asList = (v: string | null): ListKey => LISTS.find((l) => l.key === v)?.key ?? 'payments';
 const listOf = (k: ListKey) => LISTS.find((l) => l.key === k)!;
 const titleOf = (k: ListKey): string => listOf(k).label;
-/** Each list's column names, to say a column filter in words. */
 const COLUMN_LABELS: Record<ListKey, ReadonlyMap<string, string>> = {
   reports: new Map(REPORT_COLUMNS.map((c) => [c.key, c.label])),
   payments: new Map(PAYMENT_COLUMNS.map((c) => [c.key, c.label])),
   bank: new Map(BANK_COLUMNS.map((c) => [c.key, c.label])),
 };
 
-/** What each list is, said once above it. */
 const ABOUT: Record<ListKey, string> = {
   reports: 'Lines on a merchant report that are not reconciled to their sale yet, read as Merchant Recon reads them. '
     + '“No sale in the ERP” is card money nobody keyed a sale for — key it, or find it on the report.',
@@ -77,7 +75,6 @@ const PREVIOUS_ABOUT = 'Payment records you checked and marked as the previous s
 
 type Chip = { key: string; label: string; n: number; sen: number };
 const total = <T,>(rows: readonly T[], sen: (r: T) => number): number => rows.reduce((s, r) => s + sen(r), 0);
-/** "All" first, then each chip with something in it. */
 const chipsOf = <T,>(rows: readonly T[], sen: (r: T) => number, defs: ReadonlyArray<{ key: string; label: string }>, keyOf: (r: T) => string): Chip[] => [
   { key: 'all', label: 'All', n: rows.length, sen: total(rows, sen) },
   ...defs.map((d) => {
@@ -89,7 +86,6 @@ const pick = <T,>(rows: T[] | null, chip: string, keyOf: (r: T) => string): T[] 
   (rows == null ? null : chip === 'all' ? rows : rows.filter((r) => keyOf(r) === chip));
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
-/** The columns a table has showing, or — before it has said — its own default view. */
 const shownOr = <T,>(shown: Column<T>[] | null, all: Column<T>[]): Column<T>[] => shown ?? all.filter((c) => !c.defaultHidden);
 
 type Shown = { reports: Column<ReportLineRow>[] | null; payments: Column<PaymentRow>[] | null; bank: Column<UnmatchedBankLine>[] | null };
@@ -102,7 +98,6 @@ export const UnmatchedPayments = () => {
   const backwards = from > to;
   const [params, setParams] = useSearchParams();
   const list = asList(params.get('list'));
-  /* The fourth list: the payments marked as the previous system's. */
   const showPrevious = params.get('list') === 'previous';
   const choose = (k: ListKey | 'previous') => setParams((prev) => {
     const next = new URLSearchParams(prev);
@@ -113,7 +108,6 @@ export const UnmatchedPayments = () => {
   const [markResult, setMarkResult] = useState<PressResult | null>(null);
   const [chip, setChip] = useState<Record<ListKey, string>>({ reports: 'all', payments: 'all', bank: 'all' });
 
-  /* The merchant report lines: each open report read as Merchant Recon reads it. */
   const batchesQ = useSettlementBatches();
   const openBatches = useMemo(() => (batchesQ.data?.batches ?? []).filter((b) => (b.open_count ?? 0) > 0
     && String(b.period_to ?? '9999-12-31').slice(0, 10) >= from
@@ -130,8 +124,6 @@ export const UnmatchedPayments = () => {
   const payRows = backwards ? null : payQ.data?.rows ?? null;
   const payments = useMemo(() => (payRows ? withSameMoney(payRows, reports ?? [], bank ?? []) : null), [payRows, reports, bank]);
 
-  /* What each table shows — its columns, and its rows after its own funnels —
-     for Export all and the PDF button. Refs: told on every render, read on a press. */
   const shown = useRef<Shown>({ reports: null, payments: null, bank: null });
   const seen = useRef<Seen>({ reports: null, payments: null, bank: null });
   const shownReports = useCallback((c: Column<ReportLineRow>[]) => { shown.current.reports = c; }, []);
@@ -140,7 +132,6 @@ export const UnmatchedPayments = () => {
   const seenReports = useCallback((r: ReportLineRow[]) => { seen.current.reports = r; }, []);
   const seenPayments = useCallback((r: PaymentRow[]) => { seen.current.payments = r; }, []);
   const seenBank = useCallback((r: UnmatchedBankLine[]) => { seen.current.bank = r; }, []);
-  /* Each table's column filters, so its export can say them. */
   const funnels = useRef<Record<ListKey, Record<string, string[]>>>({ reports: {}, payments: {}, bank: {} });
   const funnelReports = useCallback((f: Record<string, string[]>) => { funnels.current.reports = f; }, []);
   const funnelPayments = useCallback((f: Record<string, string[]>) => { funnels.current.payments = f; }, []);
@@ -163,7 +154,6 @@ export const UnmatchedPayments = () => {
     bank: Math.max(0, ...(bank ?? []).map((r) => r.ageDays)),
   };
   const loaded: Record<ListKey, boolean> = { reports: reports != null, payments: payments != null, bank: bank != null };
-  /* Ticks on Payments, for "Previous record". */
   const payTicks = usePaymentTicks((rowsOn.payments ?? []).map((r) => `${r.source}:${r.paymentId}`));
 
   const range = `Dated ${fmtDate(from)} to ${fmtDate(to)}`;
@@ -184,12 +174,10 @@ export const UnmatchedPayments = () => {
     if (columnWords.length === 0 && shownN < chipN) words.push(`table filter: ${shownN} of ${chipN} rows`);
     return words.length === 0 ? 'No filter — every row' : `Filter: ${words.join(' · ')}`;
   };
-  /** Above a list's Excel table: what the list is, then the dates and what narrowed it. */
   const headingOf = (k: ListKey, shownN: number): string[] => [listOf(k).exportTitle, `${range} · ${narrowing(k, shownN)}`];
   const partOf = <T,>(k: ListKey, view: TablePdfView<T>): UnmatchedPdfPart =>
     ({ title: listOf(k).exportTitle, label: listOf(k).sheet, note: narrowing(k, view.rows.length), view });
 
-  /** One list on paper: what its table shows, under its export title. */
   const printList = async <T,>(k: ListKey, view: TablePdfView<T>) => {
     setExportError(null);
     try {
@@ -207,7 +195,6 @@ export const UnmatchedPayments = () => {
     const r = shownOr(shown.current.reports, REPORT_COLUMNS);
     const p = shownOr(shown.current.payments, PAYMENT_COLUMNS);
     const b = shownOr(shown.current.bank, BANK_COLUMNS);
-    /* What each table shows now; before it has said, its chip's rows. */
     const rows = {
       reports: seen.current.reports ?? rowsOn.reports ?? [],
       payments: seen.current.payments ?? rowsOn.payments ?? [],

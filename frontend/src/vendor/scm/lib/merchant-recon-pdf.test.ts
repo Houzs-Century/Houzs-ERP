@@ -48,7 +48,6 @@ const pagesOf = (doc: jsPDF): string[] => {
   return pages.slice(1).map((p) => (p ?? []).join('\n'));
 };
 const drawn = () => deliver.mock.calls[0]! as [jsPDF, string, string];
-/* A PDF string escapes its brackets. */
 const asPdf = (text: string) => text.replace(/[()]/g, '\\$&');
 
 describe('the card payments list', () => {

@@ -1,5 +1,3 @@
-// Vendored VERBATIM from apps/backend/src/lib/pos-remark-special.ts — pure
-// helper (no imports, no supabase). Used by the vendored SoLineCard.
 
 export const posRemarkSpecialOf = (
   variants: Record<string, unknown>,

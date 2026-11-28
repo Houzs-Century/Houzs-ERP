@@ -1,6 +1,3 @@
-// The rules behind a project's sales report: which chat messages count, who
-// may report, which bill is already an order (and whether under the right
-// event), whose bill it is, and what each person still has to open.
 import { describe, expect, test } from "vitest";
 import {
   canSaveSalesReport,
@@ -45,25 +42,24 @@ describe("canSaveSalesReport", () => {
     expect(canSaveSalesReport(null, null)).toBe(false);
   });
   test("every Sales Director (position OR role) and every Sales Person (role) pass (owner 2026-11-09)", () => {
-    // Sales Director by position
-    expect(canSaveSalesReport({ position_name: "Sales Director", role_name: "Sales Director", email: "yzhe212@gmail.com" }, null)).toBe(true); // Peter
+    expect(canSaveSalesReport({ position_name: "Sales Director", role_name: "Sales Director", email: "yzhe212@gmail.com" }, null)).toBe(true);
     expect(canSaveSalesReport({ position_name: "Sales Director", role_name: null, email: "anothersd@houzs.com" }, null)).toBe(true);
-    // Sales Director by role only (seat that carries the role but a different position name)
     expect(canSaveSalesReport({ position_name: "Sales Manager", role_name: "Sales Director", email: "sm@houzs.com" }, null)).toBe(true);
-    // Sales Person by role
     expect(canSaveSalesReport({ position_name: "Sales Executive", role_name: "Sales Person", email: "jason@houzs.com" }, null)).toBe(true);
-    // Sales Executive WITHOUT the Sales Person role is not in the open tier
     expect(canSaveSalesReport({ position_name: "Sales Executive", role_name: "Position Preview", email: "newjoiner@houzs.com" }, null)).toBe(false);
+  });
+  test("Loo Wen Wei by email and the Finance Manager position pass; neither widens to Super Admin (owner 2026-11-26)", () => {
+    expect(canSaveSalesReport({ position_name: "Super Admin", email: "wenwei4046@gmail.com" }, null)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Finance Manager", email: "chew.acchouzs@gmail.com" }, null)).toBe(true);
+    expect(canSaveSalesReport({ position_name: "Super Admin", email: "nico@houzs.com" }, null)).toBe(false);
+    expect(canSaveSalesReport({ position_name: "Finance Executive", email: "fin@houzs.com" }, null)).toBe(false);
   });
   test("a sales attendee of THIS project is accepted via attendeeEmails; non-attendee non-Sales roles still rejected", () => {
     const attendees = new Set(["anthony@houzs.com", "adrian@houzs.com"]);
     expect(canSaveSalesReport({ position_name: "Driver", role_name: "Driver", email: "anthony@houzs.com" }, attendees)).toBe(true);
-    // Input is normalised to lowercase, so mixed-case email still matches a lowercased attendee set.
     expect(canSaveSalesReport({ position_name: "Driver", role_name: "Driver", email: "ADRIAN@houzs.com" }, attendees)).toBe(true);
     expect(canSaveSalesReport({ position_name: "Driver", role_name: "Driver", email: "someoneelse@houzs.com" }, attendees)).toBe(false);
-    // Admin tier still passes without an attendee list.
     expect(canSaveSalesReport({ position_name: "Owner", email: "hello@houzscentury.com" }, attendees)).toBe(true);
-    // An attendees set in mixed case is a caller mistake — a mixed-case attendee entry is not matched.
     const mixedAttendees = new Set(["Mixed@case.com"]);
     expect(canSaveSalesReport({ position_name: "Driver", role_name: "Driver", email: "mixed@case.com" }, mixedAttendees)).toBe(false);
   });
@@ -78,9 +74,7 @@ describe("collectReport", () => {
     const r = collectReport([
       note(1, "9/10\n1. HC13161 RM10,500 CH"),
       note(2, "10/10\n1. HC13162 RM1999 Ethan\n2. HC13163 RM4172 + 710(T) Ethan"),
-      /* A rep pasting numbers does not move the event. */
       note(3, "1. HC99999 RM100 Me", { author_email: "rep@houzs.com", author_position: "Sales Executive" }),
-      /* The corrected re-paste of HC13162 wins. */
       note(4, "10/10\n1. HC13162 RM2099 Ethan"),
     ], "2026-10-09", null);
     expect(r.bills.map((b) => [b.ref_token, b.amount_sen, b.report_date, b.source_activity_id, b.extra_sen])).toEqual([
@@ -112,11 +106,9 @@ describe("collectReport", () => {
     const r = collectReport([
       /* Peter — Sales Director (position) — counts via the open Sales tier (owner 2026-11-09). */
       note(1, "1. HC2001 RM100 CH", { author_email: "yzhe212@gmail.com", author_position: "Sales Director", author_role: "Sales Director" }),
-      /* An attendee of THIS project — counts because the Set carries their email. */
       note(2, "1. HC2002 RM200 Anthony", { author_email: "anthony@houzs.com", author_position: "Sales Executive", author_role: "Sales Person" }),
       /* A Sales Person who is NOT this event's attendee — still counts via role (owner 2026-11-09). */
       note(3, "1. HC2003 RM300 Random", { author_email: "random@houzs.com", author_position: "Sales Executive", author_role: "Sales Person" }),
-      /* A non-Sales role, non-attendee — still rejected. */
       note(4, "1. HC2004 RM400 Driver", { author_email: "driver@houzs.com", author_position: "Driver", author_role: "Driver" }),
     ], "2026-10-09", new Set(["anthony@houzs.com"]));
     expect(r.bills.map((b) => b.ref_token).sort()).toEqual(["HC2001", "HC2002", "HC2003"]);
@@ -172,13 +164,10 @@ describe("resolveAttendee", () => {
     expect(resolveAttendee("Melvin", ATTENDEES)?.sales_rep_id).toBe(12);
     expect(resolveAttendee("Mei Ting", ATTENDEES)?.sales_rep_id).toBe(13);
     expect(resolveAttendee("Wong", ATTENDEES)?.sales_rep_id).toBe(13);
-    /* "Ting" is a word of two attendees' names — not a guess. */
     expect(resolveAttendee("Ting", ATTENDEES)).toBeNull();
-    /* Initials, as the floor writes them: CH is Chea Huan, ST is Shi Ting. */
     const withChea = [...ATTENDEES, { sales_rep_id: 15, rep_name: "Chea Huan", user_name: null, rep_user_id: 105 }];
     expect(resolveAttendee("CH", withChea)?.sales_rep_id).toBe(15);
     expect(resolveAttendee("ST", withChea)?.sales_rep_id).toBe(14);
-    /* MT fits Mei Ting and Melvin Tan both — not a guess. */
     expect(resolveAttendee("MT", withChea)).toBeNull();
     expect(resolveAttendee("Adrian", ATTENDEES)).toBeNull();
     expect(resolveAttendee(null, ATTENDEES)).toBeNull();
@@ -215,7 +204,6 @@ describe("matchBills + summarizeBills", () => {
       not_opened_count: 3, not_opened_sen: 669900,
       other_event_count: 1,
     });
-    /* Sorted by what is still not opened, largest first. */
     expect(persons.map((p) => [p.name, p.sales_rep_id, p.not_opened_sen, p.opened_sen, p.other_event_count])).toEqual([
       ["Melvin Tan", 12, 499900, 0, 0],
       ["Adrian", null, 120000, 0, 0],

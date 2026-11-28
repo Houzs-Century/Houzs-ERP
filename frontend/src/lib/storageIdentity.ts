@@ -13,11 +13,6 @@ function emit(): void {
   for (const listener of listeners) listener();
 }
 
-// Adopting the company BEFORE reading it is load-bearing: /auth/me is the first
-// moment we know who this tab is, and the durable per-user company record can
-// only be claimed once that id exists. Reading first would stamp companyId 0 on
-// every identity-scoped key for the rest of the session — which is how a user's
-// own payment-retry drafts and preferences become unreadable after a re-login.
 export function bindBrowserStorageIdentity(userId: number): void {
   const next = { userId, companyId: adoptActiveCompanyForUser(userId) ?? 0 };
   if (identity?.userId === next.userId && identity.companyId === next.companyId) return;

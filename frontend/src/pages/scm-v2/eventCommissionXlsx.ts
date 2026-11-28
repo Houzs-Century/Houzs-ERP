@@ -46,7 +46,6 @@ export function ecCell(col: EcColumn, v: ExportCell, style: Style, indent = 0): 
   return { type: String, value: String(v), align: col.align, ...(indent > 0 ? { indent } : {}), ...style };
 }
 
-/** What a cell shows, for its column's width. */
 const shownText = (c: EcColumn, v: ExportCell): string => {
   if (v == null) return '';
   if (typeof v === 'number' && c.format === 'money') return `(${Math.abs(v).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;

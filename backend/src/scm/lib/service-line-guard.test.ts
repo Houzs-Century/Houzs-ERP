@@ -1,15 +1,7 @@
-// The SERVICE-line guard exists because a Delivery Return line for a delivery
-// fee / dispose / lift would write phantom stock IN. Payload signals catch the
-// honest paths; the CATALOG read is what catches a payload that lies about
-// both. These tests pin the third case — the read that FAILED — because that is
-// the one that used to pass the gate silently (2026-08-13 swallowed-error
-// sweep): `const { data } = await q` made a broken lookup indistinguishable
-// from "none of these codes are SERVICE".
 import { describe, expect, test } from 'vitest';
 import { findServiceLineCodes } from './service-line-guard';
 import { parsePgrestInList } from './pgrest-in-list';
 
-/** PostgREST stand-in: `rows` when it works, `error` when it does not. */
 const sbWith = (result: { data?: unknown; error?: { message: string } | null }) => ({
   from: () => {
     const b: Record<string, unknown> = {
@@ -48,9 +40,6 @@ describe('findServiceLineCodes', () => {
     expect(r.ok && r.codes).toEqual([]);
   });
 
-  /* THE CLASS. Before the fix this returned [] — the same value as "all clear" —
-     and the caller saved the return line. A failed read must never read as an
-     absence when the absence is what authorises the write. */
   test('a FAILED catalog read is not "no SERVICE lines"', async () => {
     const r = await findServiceLineCodes(
       sbWith({ error: { message: 'connection reset' } }),

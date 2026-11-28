@@ -15,7 +15,7 @@
 
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { PO_ESTIMATE_DELIVERY_DATE_LABELS } from '../../vendor/scm/lib/po-line-export-columns';
-import { fmtDate, fmtSen } from '../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../shared/src/vendor/shared/format';
 import { soRefOfStamp, type SoRefStamp } from '../../lib/so-ref-search';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -51,31 +51,21 @@ const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
 const MODULES: {
   value: OutstandingModule;
-  /** The card's label and the list's title (the design's words). */
   card: string;
   title: string;
   icon: ReactNode;
-  /** The card's money line, read off the summary; null for a module the
-   *  summary sums no money for, whose card counts documents instead. */
   money: ((e: SummaryEntry) => number) | null;
   route: (row: OutRow) => string;
 }[] = [
-  // HOUZS VENDOR — the numbers open Houzs's own /scm/* detail pages (same
-  // /api/scm backend).
   { value: 'si',  card: 'SI · Sales invoices',    title: 'Sales invoices',    icon: <FileText {...ICON} />,       money: (e) => e.total_outstanding_sen ?? 0, route: (r) => `/scm/sales-invoices/${String(r.id)}` },
   { value: 'so',  card: 'SO · Sales orders',      title: 'Sales orders',      icon: <ClipboardCheck {...ICON} />, money: (e) => e.total_sen ?? 0,             route: (r) => `/scm/sales-orders/${String(r.doc_no)}` },
   { value: 'do',  card: 'DO · Deliveries',        title: 'Delivery orders',   icon: <Truck {...ICON} />,          money: null,                                route: (r) => `/scm/delivery-orders/${String(r.id)}` },
   { value: 'po',  card: 'PO · Purchase orders',   title: 'Purchase orders',   icon: <FileText {...ICON} />,       money: (e) => e.total_sen ?? 0,             route: (r) => `/scm/purchase-orders/${String(r.id)}` },
   { value: 'grn', card: 'GRN · Goods received',   title: 'Goods received',    icon: <Package {...ICON} />,        money: null,                                route: (r) => `/scm/grns/${String(r.id)}` },
   { value: 'pi',  card: 'PI · Purchase invoices', title: 'Purchase invoices', icon: <Receipt {...ICON} />,        money: (e) => e.total_outstanding_sen ?? 0, route: (r) => `/scm/purchase-invoices/${String(r.id)}` },
-  /* The design counts PR refunds as money, but the summary sums no refund, so
-     the card counts documents rather than print a total it cannot know. */
   { value: 'pr',  card: 'PR · Purchase returns',  title: 'Purchase returns',  icon: <Undo2 {...ICON} />,          money: null,                                route: (r) => `/scm/purchase-returns/${String(r.id)}` },
 ];
 
-/* The cards carry the seven modules plus one extra: 'po-lines', the line-level
-   PO chasing list. It is NOT an OutstandingModule (no summary money, cross-
-   company, its own endpoint), so it rides a wider union here. */
 type OutstandingTab = OutstandingModule | 'po-lines';
 const PO_LINES_TITLE = 'PO chasing';
 const DEFAULT_TAB: OutstandingTab = 'si';
@@ -89,7 +79,6 @@ const MODE_OPTIONS: ChipOption<OutstandingFilterMode>[] = [
 
 const isTab = (v: string | null): v is OutstandingTab => v === 'po-lines' || MODULES.some((m) => m.value === v);
 const isMode = (v: string | null): v is OutstandingFilterMode => MODE_OPTIONS.some((o) => o.value === v);
-/** A date from the URL, or '' (an open end) when it is not a real day. */
 const urlDay = (v: string | null): string => (v && isIsoDay(v) ? v : '');
 
 const docWord = (n: number): string => (n === 1 ? '1 document' : `${n.toLocaleString('en-MY')} documents`);
@@ -106,9 +95,6 @@ export const Outstanding = () => {
   const activeModule: OutstandingTab = isTab(rawTab) ? rawTab : DEFAULT_TAB;
   const rawMode = params.get('mode');
   const mode: OutstandingFilterMode = isMode(rawMode) ? rawMode : DEFAULT_MODE;
-  /* No dates in the URL = the default window, counted from today (the last 12
-     months until the owner answers f7). An empty value is an open end: "All
-     dates" writes `from=&to=`, and the hooks then send neither. */
   const fallback = presetRange(OUTSTANDING_DEFAULT_PRESET, today);
   const hasRange = params.has('from') || params.has('to');
   const from = hasRange ? urlDay(params.get('from')) : fallback.from;
@@ -127,9 +113,6 @@ export const Outstanding = () => {
     setParam(f === fallback.from && t === fallback.to ? { from: null, to: null } : { from: f, to: t });
 
   const summary = useOutstandingSummary({ from, to });
-  // The generic per-module hook only knows the seven money modules; when the
-  // chasing card is picked fall it back to 'po' (cached, cheap) and read the
-  // dedicated cross-company hook below instead.
   const genericModule: OutstandingModule = activeModule === 'po-lines' ? 'po' : activeModule;
   const rowsQ = useOutstanding(genericModule, { mode, from, to });
   const rows = rowsQ.data?.rows ?? [];
@@ -145,17 +128,12 @@ export const Outstanding = () => {
     <div className={s.page}>
       <PageHeader eyebrow="Finance · Money in" title="Outstanding" />
 
-      {/* A card per module — its outstanding documents and money in these
-          dates — then PO chasing. */}
       <div className={s.cardsWrap}>
         <div className={`${s.cards} ${s.cardsEight}`}>
           {MODULES.map((m) => {
             const e: SummaryEntry | undefined = summary.data?.summary[m.value];
             const unread = summaryFailed || e?.unavailable === true;
             const count = e?.count ?? 0;
-            /* "at most" is not hedging — when deposit_applied is false the SI
-               figure counts every invoice but subtracts no order deposit, so it
-               is a ceiling and the reader is entitled to know. */
             const sub = pending ? 'Loading…'
               : unread ? 'Could not read'
               : m.money && e ? `${e.deposit_applied === false ? 'at most ' : ''}${fmtSen(m.money(e))}`
@@ -176,8 +154,6 @@ export const Outstanding = () => {
               />
             );
           })}
-          {/* PO chasing — line-level, cross-company (HOUZS + 2990). Not a money
-              module, so it counts lines, in the mode picked below. */}
           <FigureCard
             icon={<PackageSearch {...ICON} />}
             label={PO_LINES_TITLE}
@@ -206,8 +182,6 @@ export const Outstanding = () => {
         />
       </div>
 
-      {/* key= remounts the table per module — columns AND search reset with
-          the card, so a PI search never filters the SO list. */}
       {isPoLines ? (
         <PoChasingView rows={poLinesRows} isLoading={poLinesQ.isLoading} error={poLinesQ.error} />
       ) : (
@@ -228,28 +202,16 @@ export const Outstanding = () => {
 const errorText = (e: unknown): string | null =>
   e ? (e instanceof Error && e.message ? e.message : 'Could not load this list') : null;
 
-/* ── One module's documents ──────────────────────────────────────────────
-   Column specs per module, in the design's order. Keys are the ones the list
-   had before the redesign, so a saved layout carries over. Money (sen) and
-   qty sort on the raw number via getValue; dates on the raw ISO string. */
 type ColSpec = {
   key: string;
   label: string;
-  /** doc: the row's own number · so: its sales order · date · due: a date
-   *  tagged late while open · money · qty · status: the status tag. */
   kind?: 'doc' | 'so' | 'date' | 'due' | 'money' | 'qty' | 'status';
   muted?: boolean;
-  /** The cell's value when it is not the row's own field. */
   value?: (r: OutRow) => unknown;
-  /** For `due`: whether the document is still open (the date then turns red
-   *  once passed; the Completed / All filters show closed rows too). */
   open?: (r: OutRow) => boolean;
-  /** Off until the reader turns it on in Columns. */
   hidden?: boolean;
 };
 
-/* Still open by the view's own rule (a paid or cancelled document never is),
-   and something left on it — the date only turns late then. */
 const owes = (r: OutRow): boolean => r.is_outstanding === true && Number(r.outstanding_sen) > 0;
 
 const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
@@ -260,11 +222,6 @@ const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
     { key: 'debtor_name',    label: 'Customer' },
     { key: 'total_sen',      label: 'Total', kind: 'money' },
     { key: 'paid_sen',       label: 'Paid', kind: 'money', muted: true },
-    /* The deposit taken on the source Sales Order. `outstanding_sen` on these
-       rows is ALREADY net of it (the /outstanding/si handler subtracts it —
-       the view scm.v_si_outstanding cannot, the split is a per-order rule), so
-       this column is what makes the smaller Outstanding readable instead of
-       mysterious. */
     { key: 'so_deposit_applied_sen', label: 'SO deposit', kind: 'money', muted: true },
     /* The customers' credit notes knocked off it (owner 2026-11-03: 「要」), served
        beside the deposit and, like it, already out of outstanding_sen. */
@@ -316,8 +273,6 @@ const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
   ],
 };
 
-/* Near the design's proportions, so the ten sales-invoice columns open without
-   squeezing a date or an amount on a laptop; the customer takes what is left. */
 const widthOf = (spec: ColSpec): string | undefined => {
   switch (spec.kind) {
     case 'money':
@@ -334,19 +289,14 @@ const widthOf = (spec: ColSpec): string | undefined => {
 const rawOf = (spec: ColSpec, r: OutRow): unknown => (spec.value ? spec.value(r) : r[spec.key]);
 const senOf = (spec: ColSpec, r: OutRow): number => Number(rawOf(spec, r)) || 0;
 const textOf = (v: unknown): string => (v == null ? '' : String(v));
-/* A cancelled document's amounts read "—" and stay out of the totals (the
-   Completed / All lists carry them); its number is struck, its row faded. */
 const isDead = (r: OutRow): boolean => isCancelledDocStatus(textOf(r.status));
 
-/** A sales invoice counts as part-paid once money, its order's deposit or a
- *  credit note has gone against it (the design's Partly paid). */
 const partlyPaid = (r: OutRow): boolean =>
   Number(r.paid_sen ?? 0) + Number(r.so_deposit_applied_sen ?? 0) + Number(r.credit_notes_sen ?? 0) > 0;
 
 const statusTagOf = (module: OutstandingModule, r: OutRow) =>
   outstandingStatusTag(module, textOf(r.status), r.is_outstanding === true, module === 'si' && partlyPaid(r));
 
-/** What a cell reads as text — the search matches it, alongside the raw date. */
 const cellText = (module: OutstandingModule, spec: ColSpec, r: OutRow, today: string): string => {
   const v = rawOf(spec, r);
   switch (spec.kind) {
@@ -381,8 +331,6 @@ const ModuleTable = ({
       width: widthOf(spec),
       align: numeric ? 'right' : undefined,
       defaultHidden: spec.hidden,
-      /* Sort, funnel and export read what the cell shows: the number, the raw
-         ISO date, the status's word (never its stored key). */
       getValue: (r) => (numeric ? Number(rawOf(spec, r)) || 0
         : spec.kind === 'status' ? statusTagOf(module, r).text
         : textOf(rawOf(spec, r))),
@@ -411,7 +359,6 @@ const ModuleTable = ({
       },
     };
     if (spec.kind === 'money') {
-      // Ringgit, not sen, in the file; a cancelled document's amount blank as on screen.
       col.exportValue = (r) => (isDead(r) ? null : senOf(spec, r) / 100);
       col.exportFormat = 'money';
       col.total = (list) => fmtSen(list.reduce((sum, r) => sum + (isDead(r) ? 0 : senOf(spec, r)), 0));
@@ -419,19 +366,11 @@ const ModuleTable = ({
     return col;
   }), [module, config, today]);
 
-  /* Rows can lack a stable id for some modules — pre-compute a row key that
-     falls back to doc_no then the index (matches the legacy <tr key>). */
   const keyedRows: KeyedRow[] = useMemo(
     () => rows.map((r, i) => ({ ...r, __rk: textOf(r.id ?? r.doc_no ?? i) })),
     [rows],
   );
 
-  /* Loaded-only search across the module's columns as they read on screen
-     (and the raw ISO dates), the page filtering and DataTable rendering the box
-     and its hint. The table remounts per module (key= above), so the term never
-     leaks across cards. The SO / DO / SI rows also carry their order's customer
-     reference (stamped server-side), which the search matches without a
-     column. */
   const [search, setSearch] = useState('');
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -460,7 +399,6 @@ const ModuleTable = ({
       columns={columns}
       onRowDoubleClick={(r) => navigate(config.route(r))}
       getRowClassName={(r) => cancelledRowClass(textOf(r.status))}
-      /* The design's sand tint: a sales invoice still owed. */
       getRowStyle={(r) => (module === 'si' && r.is_outstanding === true ? { background: 'var(--open-bg)' } : undefined)}
       search={{
         value: search,
@@ -471,13 +409,6 @@ const ModuleTable = ({
   );
 };
 
-/* ── PO chasing — line-level, cross-company outstanding PO list ───────────────
-   The AutoCount "PO chasing list" shape: one row per outstanding PO line,
-   grouped by supplier, with a Detail (component lines) / By set switch and an
-   Excel export. Reads the cross-company /outstanding/po-lines (HOUZS + 2990),
-   so it carries a Company column and an optional company filter the module
-   lists don't have. Rolling sofa components into one "set" row is a heuristic
-   — see po-outstanding-rollup.ts. */
 type ChaseSpec = {
   key: string;
   label: string;
@@ -488,8 +419,6 @@ type ChaseSpec = {
   get: (r: PoOutstandingLineRow) => string | number;
 };
 
-/** A cell as the reader sees it (dates through fmtDate); `forExport` keeps the
- *  raw ISO date the Excel file has always carried. */
 const chaseText = (spec: ChaseSpec, r: PoOutstandingLineRow, forExport = false): string => {
   const v = spec.get(r);
   if (spec.kind === 'qty') return (Number(v) || 0).toLocaleString();

@@ -49,7 +49,7 @@ import { useOpenDocInTab } from '../../lib/openDocInTab';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useToastOptional } from '../../hooks/useToast';
-import { fmtDate, fmtSen, todayMY } from '../../vendor/shared/format';
+import { fmtDate, fmtSen, todayMY } from '../../../../shared/src/vendor/shared/format';
 import { FinanceDocLink } from './finance/FinanceDocLink';
 import { AskBanner, type Ask } from './money-in/AskBanner';
 import { DebtorReceiptFormPage } from './money-in/DebtorReceiptFormPage';
@@ -77,8 +77,6 @@ export const Receipts = () => {
   const qc = useQueryClient();
   const toast = useToastOptional();
   const { can } = useHouzsAuth();
-  /* Each kind shows to whoever saw its old Sidebar entry (batch 5 §1): the
-     official receipts to Official receipts' keys, the rest to Receipts'. */
   const { paperKeys, createKeys } = useMoneyInGates();
   const gates = { official: paperKeys, others: createKeys };
   const canCreate = can('scm.payment_voucher.create');
@@ -89,7 +87,6 @@ export const Receipts = () => {
   const kind = readKind(params.get('kind'));
   const chip = readChip(kind, params.get('status'));
   const rawMonth = params.get('month');
-  /* f6: the page opens on this month; `month=all` is Any month. */
   const month = rawMonth === 'all' ? '' : rawMonth && /^\d{4}-\d{2}$/.test(rawMonth) ? rawMonth : now;
   const form = params.get('form');
   const setUrl = (patch: Record<string, string | null>, push = false) => setParams((prev) => {
@@ -128,7 +125,6 @@ export const Receipts = () => {
     ...(gates.others ? (listQ.data?.receipts ?? []).map((r) => receiptItem(r, (code) => accountName(code) ?? code)) : []),
   ], [officialRows, gates.others, listQ.data, accountName]);
 
-  /* Counts follow the month and the search, not the chip (the design). */
   const pool = useMemo(() => items.filter((x) => inMonth(x, month) && matchesReceipt(x, q)), [items, month, q]);
   const list = useMemo(() => pool.filter((x) => inKind(x, kind) && inChip(x, kind, chip)).sort(newestFirst), [pool, kind, chip]);
 
@@ -139,9 +135,6 @@ export const Receipts = () => {
     void qc.invalidateQueries({ queryKey: ['finance-todo'] });
   };
 
-  /* Confirm money (one or a batch): each draft turns formal and takes its
-     official number — the formalise door, one by one in payment-date order so
-     the numbers follow the days; the first refusal stops the run, verbatim. */
   const confirmMoney = async (rows: OfficialListRow[]) => {
     const drafts = rows.filter((r) => String(r.status).toUpperCase() === 'DRAFT')
       .sort((a, b) => String(a.paid_at ?? '').localeCompare(String(b.paid_at ?? '')) || a.or_number.localeCompare(b.or_number));
@@ -165,9 +158,6 @@ export const Receipts = () => {
     }
   };
 
-  /* Print (batch 5 §9.3): through the print dialog — the official receipts as
-     ONE A5 file, a receipt a page; the sundry and other-debtor receipts as ONE
-     A4 file after it, each read whole for its lines; list order kept. */
   const printer = useMoneyInPrint((e) => setFailure(errText(e)));
   const paperOf = async (x: ReceiptItem): Promise<A4ReceiptPaper> => {
     if (x.kind === 'sundry') {
@@ -189,7 +179,6 @@ export const Receipts = () => {
     const papers: Paper[] = [...(officials.length > 0 ? ['A5' as const] : []), ...(others.length > 0 ? ['A4' as const] : [])];
     printer.open({
       title: n > 1 ? batchTitle(n, true) : officials.length > 0 ? 'Official receipt' : 'Receipt',
-      /* One receipt names itself; a batch says how many. */
       docNo: n > 1 ? `${n} ticked` : [...officials.map((o) => o.or_number), ...others.map((x) => x.no)].join(''),
       papers,
       rows: [
@@ -252,7 +241,6 @@ export const Receipts = () => {
         ]);
       case 'debtor': {
         const m = steps.menuOf(stepRowOf(x));
-        /* A Draft or a Prepared one changes in place and keeps its stage (batch 5 step 6, c5). */
         const edit: MenuItem[] = (x.stage === 'Draft' || x.stage === 'Prepared') && canEdit
           ? [{ label: 'Edit', onClick: () => setUrl({ form: 'edit', id: x.id, type: 'debtor' }, true) }] : [];
         return tidyMenu([open, ...edit, ...m.steps, DIVIDER, { label: 'Print', onClick: () => printReceipts([x]) }, DIVIDER, ...m.undo]);
@@ -263,7 +251,6 @@ export const Receipts = () => {
   };
   const rowMenu = useRowMenu<ReceiptItem>(menuOf, (x) => x.no);
 
-  /* The row's next step (the design's rowAct), ⋯ last. */
   const actionsOf = (x: ReceiptItem): ReactNode => {
     let main: ReactNode = null;
     if (x.kind === 'official') {
@@ -323,8 +310,6 @@ export const Receipts = () => {
     { key: 'actions', label: '', align: 'right', width: '190px', disableSort: true, disableFilter: true, render: actionsOf },
   ];
 
-  /* An other debtor's receipt not yet checked, changed in place (c5): the
-     Debtor maintenance form — it keeps its stage; nothing posts. */
   if (form === 'edit' && params.get('type') === 'debtor') {
     return (
       <DebtorReceiptFormPage id={params.get('id')} debtorId="" backLabel="Receipts"
@@ -343,7 +328,6 @@ export const Receipts = () => {
     );
   }
 
-  /* The kinds this person may see, with their counts. */
   const kinds: KindPick[] = [
     ...(gates.official || gates.others ? ['all' as const] : []),
     ...(gates.official ? ['official' as const] : []),
@@ -356,7 +340,6 @@ export const Receipts = () => {
   const tickedShown = onScreen.filter((x) => ticked.has(x.key));
   const hidden = items.filter((x) => ticked.has(x.key)).length - tickedShown.length;
   const tickedDrafts = tickedShown.filter((x) => x.kind === 'official' && x.status === 'draft').map((x) => x.official!);
-  /* What a batch Print takes: the receipts — a customer payment is not one. */
   const tickedPrintable = tickedShown.filter((x) => x.kind !== 'customer');
   const tickedSum = tickedShown.filter((x) => !x.cancelled).reduce((s, x) => s + x.amountSen, 0);
   const cancelledShown = onScreen.filter((x) => x.cancelled).length;
@@ -463,11 +446,6 @@ export const Receipts = () => {
   );
 };
 
-/* ── The receipt form, in place of the list (`?form=new|copy|edit`) ─────────
-   New receipt picks Sundry income or Other debtor; Copy as new and Edit start
-   from a sundry receipt. The same doors as before: POST /receipts, PATCH
-   /receipts/:id (re-posts), POST /other-debtors/:id/receipts {postNow} — an
-   other debtor's money from this page posts at once and knocks the bills off. */
 function ReceiptFormPage({ mode, id, type, onType, onClose, onSaved, openDoc }: {
   mode: 'new' | 'copy' | 'edit';
   id: string | null;
@@ -483,7 +461,6 @@ function ReceiptFormPage({ mode, id, type, onType, onClose, onSaved, openDoc }: 
   const create = useCreateReceipt();
   const update = useUpdateReceipt();
   const createDebtor = useCreateDebtorReceipt();
-  /* One key per opened form: a double press books one receipt (lib/idempotency.ts). */
   const idemKey = useIdempotencyKey();
   const [error, setError] = useState<string | null>(null);
   const accounts = useMemo(() => postableAccounts(accountsQ.data?.accounts ?? []), [accountsQ.data]);

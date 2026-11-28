@@ -15,7 +15,7 @@ import { useAccountRoles, useAccounts } from '../../../vendor/scm/lib/accounting
 import {
   useCreditNoteDetail, useCreditNoteKnockOff, useSetCreditNoteAllocations, type KnockOffRow,
 } from '../../../vendor/scm/lib/credit-note-queries';
-import { fmtDate, fmtSen } from '../../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { useToastOptional } from '../../../hooks/useToast';
 import { customerWords, pickFromRows, pickSen, pickTargets, type KnockOffPick } from '../CreditNoteKnockOff';
 import { DocFormShell } from './MoneyInDocPage';
@@ -40,7 +40,6 @@ export function NoteKnockOffPage({ id, backLabel, onClose, onSaved }: {
   id: string;
   backLabel: string;
   onClose: () => void;
-  /** Heard after the knock-off is saved (the lists read again). */
   onSaved: () => void;
 }) {
   const toast = useToastOptional();
@@ -58,7 +57,6 @@ export function NoteKnockOffPage({ id, backLabel, onClose, onSaved }: {
   const taken = pickSen(pick);
   const named = customerWords(n?.party_name);
 
-  /* The books line names the trade debtors control the server posts to (its role), never a typed code. */
   const ar = rolesQ.data?.roles.AR ?? '300-0000';
   const arName = (accountsQ.data?.accounts ?? []).find((a) => a.account_code === ar)?.account_name;
   const books = `Posts nothing · both sides sit in ${ar}${arName ? ` ${arName}` : ''} · knocks off ${fmtSen(taken)}${taken > 0 && total > taken ? ` · ${fmtSen(total - taken)} stays as credit` : ''}`;
@@ -127,7 +125,6 @@ export function NoteKnockOffPage({ id, backLabel, onClose, onSaved }: {
                           <div className={ui.pickHead}><span /><span>Invoice</span><span>Date</span><span>For</span><span className={ui.right}>Outstanding</span><span className={ui.right}>Knock off</span></div>
                           {rows.map((r) => {
                             const mine = pick[r.id]?.amountSen ?? 0;
-                            /* Ticked: in full, as far as the credit left reaches. */
                             const reach = Math.max(0, Math.min(r.owedSen, total - (taken - mine)));
                             return (
                               <div key={r.id} className={ui.pickRow}>

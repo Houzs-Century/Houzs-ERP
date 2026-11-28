@@ -30,18 +30,12 @@ export function useIdleSessionFilter<T extends Record<string, string>>(
         sessionStorage.removeItem(key);
         return initial;
       }
-      // Merge onto `initial` so a key added to the filter set later still has a
-      // value when an older stored blob is missing it.
       return { ...initial, ...(rec.v as Partial<T>) };
     } catch {
       return initial;
     }
   });
 
-  // Opening the page counts as touching it — re-stamp a restored value's clock
-  // so the idle TTL measures time AWAY from the page, matching useStickyFilters.
-  // Only re-stamps an entry that already exists (a fresh/expired one is left
-  // absent, so a default filter never creates storage noise).
   const touched = useRef(false);
   useEffect(() => {
     if (touched.current || !key) return;
@@ -51,7 +45,6 @@ export function useIdleSessionFilter<T extends Record<string, string>>(
         sessionStorage.setItem(key, JSON.stringify({ v: value, t: Date.now() }));
       }
     } catch {
-      // storage unavailable — nothing to refresh
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -63,7 +56,6 @@ export function useIdleSessionFilter<T extends Record<string, string>>(
         try {
           if (key) sessionStorage.setItem(key, JSON.stringify({ v: next, t: Date.now() }));
         } catch {
-          // storage unavailable — keep the in-memory value
         }
         return next;
       });

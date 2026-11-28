@@ -19,9 +19,9 @@
 
 import { useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { fmtDateTime } from '../../vendor/shared/format';
+import { fmtDateTime } from '../../../../shared/src/vendor/shared/format';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
-import { STATUS_TONES } from '../../vendor/scm/lib/status-pill';
+import { STATUS_TONES } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { cancelRequestReferenceOf } from '../../vendor/scm/lib/amendment-queue-rows';
 import {
   approvalRemarksOf,
@@ -48,6 +48,7 @@ import {
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
+import { RefundApprovals } from './RefundApprovals';
 
 const STORAGE_KEY = 'cancel-request-list.layout.v1';
 
@@ -58,8 +59,6 @@ const CHIPS = [
 
 const DOC_LABEL: Record<CancelRequestRow['doc_type'], string> = { SO: 'Sales Order', PO: 'Purchase Order', DO: 'Delivery Order' };
 
-/* doc_key is each document's own route key: the Sales Order's number, the
-   Purchase Order's and the Delivery Order's id. */
 const DOC_PATH: Record<CancelRequestRow['doc_type'], (key: string) => string> = {
   SO: (key) => `/scm/sales-orders/${encodeURIComponent(key)}`,
   PO: (key) => `/scm/purchase-orders/${key}`,
@@ -237,6 +236,8 @@ export const CancelRequests = () => {
           isLoading={q.isLoading}
           emptyMessage={scope === 'open' ? 'Nothing is waiting for approval.' : 'No cancellation requests yet — raise one from a Sales Order or a Purchase Order.'}
         />
+
+        <RefundApprovals onlyWhenWaiting={false} />
       </div>
     </div>
   );

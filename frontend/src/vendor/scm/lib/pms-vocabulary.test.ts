@@ -1,9 +1,3 @@
-/* What the shared PMS vocabulary answers.
- *
- * The one-home half — that neither surface keeps its own copy — is pinned by
- * pms-vocabulary-one-home.test.ts. This file pins the WORDS, including the two
- * that had already drifted between desktop and mobile.
- */
 import { describe, expect, test } from "vitest";
 import { ledgerCategoryLabel, LEDGER_COST_CATS, LEDGER_INCOME_CATS } from "./pms-ledger-categories";
 import { isReviewableTitle, REVIEWABLE_TITLES } from "./pms-reviewable-titles";
@@ -11,7 +5,6 @@ import { PROJECT_STATUS_OPTIONS, paymentPillOptions } from "./pms-project-status
 
 describe("ledger category labels", () => {
   test("the sub-categories keep desktop's spelling, not a humanized slug", () => {
-    // The drift: mobile's humanize() produced "Cogs Matt Sofa" for this row.
     expect(ledgerCategoryLabel("cogs_matt_sofa")).toBe("COGS — Matt/Sofa");
     expect(ledgerCategoryLabel("cogs_bedframe")).toBe("COGS — Bedframe");
     expect(ledgerCategoryLabel("cogs_accessories")).toBe("COGS — Accessories");
@@ -39,9 +32,6 @@ describe("ledger category labels", () => {
 
 describe("the reviewable-title rule", () => {
   test("PREFIX IS A STRICT SUPERSET OF THE EXACT SET — nobody loses a control", () => {
-    // This is the whole argument for choosing prefix. If any exact title failed
-    // its own prefix, adopting it would REMOVE the workflow from that document
-    // on desktop, and the choice would be wrong.
     for (const t of REVIEWABLE_TITLES) {
       expect(isReviewableTitle(t), t).toBe(true);
     }
@@ -66,7 +56,6 @@ describe("the reviewable-title rule", () => {
   });
 
   test("a row that merely MENTIONS a reviewable name is not reviewable", () => {
-    // Prefix, not substring — "Photo of 3D Design" is a different document.
     expect(isReviewableTitle("Photo of 3D Design")).toBe(false);
     expect(isReviewableTitle("Old agreement")).toBe(false);
   });

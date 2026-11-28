@@ -1,23 +1,6 @@
-// What these pin, and why each one is here rather than trusted.
-//
-// mapBounded replaces sequential `for (…) await …` loops in the MRP engine. Two
-// properties make that swap safe, and neither is self-evident from reading it:
-// results come back in INPUT order (so a caller that concatenates them cannot
-// notice), and the number in flight never exceeds the bound (so a shared
-// connection pool cannot be exhausted — the owner's "must not destabilise"
-// rule, expressed as an assertion).
-//
-// eager exists to keep error PRECEDENCE identical when reads are hoisted into a
-// wave. The failure it prevents is silent: an un-awaited rejected promise is an
-// unhandled rejection, which in a Worker kills the request instead of returning
-// the route's 500.
 import { describe, expect, test, vi } from 'vitest';
 import { mapBounded, eager } from './concurrency';
 
-/* The backend tsconfig targets Workers and does not declare `process`, so reach
-   it through globalThis with an explicit shape. The test ASSERTS it is present
-   rather than skipping when it is not — a guard that silently turns the check
-   off is how a test comes to pass over nothing. */
 type UnhandledHost = {
   on(event: 'unhandledRejection', listener: (e: unknown) => void): void;
   off(event: 'unhandledRejection', listener: (e: unknown) => void): void;
@@ -28,8 +11,6 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
 describe('mapBounded', () => {
   test('returns results in INPUT order, not completion order', async () => {
-    // Deliberately inverted delays: if the implementation returned results as
-    // they settled, this comes back reversed.
     const out = await mapBounded([1, 2, 3, 4, 5], 5, async (n) => {
       await tick((6 - n) * 5);
       return n * 10;
@@ -49,8 +30,6 @@ describe('mapBounded', () => {
       return i;
     });
     expect(maxInFlight).toBeLessThanOrEqual(4);
-    // If this drops to 1 the helper has silently become a sequential loop and
-    // the whole reason for it is gone, with every test still green.
     expect(maxInFlight).toBe(4);
   });
 
@@ -94,8 +73,6 @@ describe('eager', () => {
 
   test('the error is re-thrown at the point of USE, not at creation', async () => {
     const held = eager(Promise.reject(new Error('load failed')));
-    // Awaiting the holder must NOT throw — that is what lets a caller await
-    // several of these and still decide the order errors surface in.
     const thunk = await held;
     expect(() => thunk()).toThrow('load failed');
   });
@@ -106,8 +83,6 @@ describe('eager', () => {
     expect(unhandledHost).toBeDefined();
     unhandledHost!.on('unhandledRejection', onUnhandled);
     try {
-      // Created, never read — exactly the hazard of hoisting a read into a wave
-      // and then throwing earlier for an unrelated reason.
       void eager(Promise.reject(new Error('never read')));
       await tick(20);
     } finally {
@@ -117,9 +92,6 @@ describe('eager', () => {
   });
 
   test('error PRECEDENCE is preserved when two reads are hoisted together', async () => {
-    // Both fail; the SECOND one fails first in wall-clock terms. Sequential code
-    // would surface the FIRST one, because it awaited it first. eager must keep
-    // that, which a Promise.all would not.
     const first = eager((async () => { await tick(20); throw new Error('first'); })());
     const second = eager((async () => { await tick(1); throw new Error('second'); })());
     const a = await first;

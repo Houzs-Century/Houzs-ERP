@@ -1,9 +1,3 @@
-/* The phone's generic list (Suppliers, Purchase Orders, ...):
-   - a failed load used to say "Pull to refresh to try again" on a screen with no
-     pull-to-refresh, so there was no way back short of leaving (Conts-ERP #594);
-     it now has a Retry button;
-   - opening a card replaces the list, so Back remounted it with the search and
-     chips cleared (the phone side of Conts-ERP #406); they are now kept. */
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

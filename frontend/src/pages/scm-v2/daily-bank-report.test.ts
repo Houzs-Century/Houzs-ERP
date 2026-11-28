@@ -7,7 +7,7 @@
    what names no bank, only when there is some; the day's label. */
 import { describe, expect, test, vi } from 'vitest';
 import type { DailyBankBoard } from './accounting-phase1-queries';
-import { DB_COLORS, boardDayLabel, boardSourceLine, dailyBankSections, drawDailyBankCanvas, isDetailRow } from './daily-bank-report';
+import { DB_COLORS, TOTAL_BANK_LABEL, boardDayLabel, boardSourceLine, dailyBankSections, drawDailyBankCanvas, isDetailRow } from './daily-bank-report';
 
 const block = (over: Partial<DailyBankBoard['blocks'][number]>): DailyBankBoard['blocks'][number] => ({
   accountCode: '310-0010', accountName: 'CASH AT BANK - MAYBANK', start: null,
@@ -36,8 +36,8 @@ describe('dailyBankSections', () => {
       ['receivedHead', 'Received today', '', 500, null, null],
       ['received', 'Hookka', 'OR-1', 500, null, null],
       ['paidHead', 'Paid today', '', null, 200, null],
-      ['paid', '', 'PV-1', null, 200, null],                       // nobody named: the line stays, the name blank
-      ['pendingHead', 'Pending payment (checked, awaiting approval)', '', null, 100, null],   // pending sits in PAYMENT with what was paid
+      ['paid', '', 'PV-1', null, 200, null],
+      ['pendingHead', 'Pending payment (checked, awaiting approval)', '', null, 100, null],
       ['pending', 'UNICOM', 'HPV-1', null, 100, null],
       ['available', 'Available (after pending)', '', null, null, 1_200],
       ['transitHead', 'In transit (swiped, not yet in this bank)', '', null, null, 50],
@@ -121,13 +121,13 @@ describe('the exported picture', () => {
 
   test('the cash book: a line you can see under the headings and every row, and a frame round each bank', () => {
     const calls = draw(board({ book: 'cashbook', blocks: [{ ...paidBank('UNICOM', 'Bill'), start: { date: '2026-09-28', balanceSen: 1_000 } }] }));
-    expect(lines(calls).map((c) => c.fill)).toEqual(Array(5).fill(DB_COLORS.line));   // headings, B/F, paid today, its line, available
+    expect(lines(calls).map((c) => c.fill)).toEqual(Array(5).fill(DB_COLORS.line));
     expect(calls.filter((c) => c.op === 'strokeRect')).toHaveLength(1);
   });
 
   test('the original keeps its faint rules under the rows, and no frame', () => {
     const calls = draw(board({ blocks: [paidBank('UNICOM', 'Bill')] }));
-    expect(lines(calls).map((c) => c.fill)).toEqual(Array(4).fill(DB_COLORS.rule));   // B/F, paid today, its line, available
+    expect(lines(calls).map((c) => c.fill)).toEqual(Array(4).fill(DB_COLORS.rule));
     expect(calls.filter((c) => c.op === 'strokeRect')).toHaveLength(0);
   });
 
@@ -151,14 +151,13 @@ describe('the exported picture', () => {
 
   /* Owner 2026-11-25 (可以优化一下): names and descriptions were cut short with "…". */
   test('a party or description too long for its column wraps onto a second line', () => {
-    const party = 'NORTHWIND EXHIBITION SERVICES SDN BHD';           // 37 characters, past the column at 6 px each
+    const party = 'NORTHWIND EXHIBITION SERVICES SDN BHD';
     const calls = draw(board({ book: 'cashbook', blocks: [paidBank(party, 'Rental of booth A1 and A2')] }));
     const first = texts(calls).find((c) => c.text?.startsWith('· NORTHWIND'))!;
     const second = texts(calls).find((c) => c.text === 'BHD')!;
     expect(first.text).toBe('· NORTHWIND EXHIBITION SERVICES SDN');
     expect(second.args[1]! - first.args[1]!).toBe(14);
     expect(texts(calls).some((c) => c.text?.includes('…'))).toBe(false);
-    /* The row below moves down by the second line. */
     const available = texts(calls).find((c) => c.text === 'Available (after pending)')!;
     expect(available.args[1]! - first.args[1]!).toBe(24 + 14);
   });
@@ -172,5 +171,22 @@ describe('the exported picture', () => {
     expect(words).not.toContain('PAY TO / FROM');
     expect(lines(calls)).toEqual([]);
     expect(calls.filter((c) => c.op === 'strokeRect')).toHaveLength(1);
+  });
+
+  /* Owner 2026-11-26 (total bank balance 不见了): the page's all-banks closing was never in the picture. */
+  test('under the last bank, a dark bar with the total bank balance of all the banks, inside the picture', () => {
+    for (const [sen, shown] of [[1_600, '16.00'], [-1_600, '(16.00)']] as const) {
+      const calls = draw(board({ book: 'cashbook', totalClosingSen: sen, blocks: [paidBank('UNICOM', 'Bill'), quietBank] }));
+      const label = texts(calls).find((c) => c.text === TOTAL_BANK_LABEL)!;
+      const total = texts(calls).find((c) => c.text === shown)!;
+      expect(total.args[1]).toBe(label.args[1]);
+      expect(label.args[1]).toBeGreaterThan(texts(calls).find((c) => c.text === 'Bank Balance  10.00')!.args[1]!);
+      const bars = calls.filter((c) => c.op === 'fillRect' && c.fill === DB_COLORS.bar);
+      expect(bars).toHaveLength(2);
+      expect(label.args[1]!).toBeGreaterThan(bars[1]!.args[1]!);
+      expect(label.args[1]!).toBeLessThan(bars[1]!.args[1]! + bars[1]!.args[3]!);
+      const [background] = calls;
+      expect(texts(calls).at(-1)!.args[1]!).toBeLessThan(background!.args[3]!);
+    }
   });
 });

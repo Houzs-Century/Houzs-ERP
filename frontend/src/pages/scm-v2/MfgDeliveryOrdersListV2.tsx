@@ -1,14 +1,3 @@
-// MfgDeliveryOrdersListV2 — Theme C redesign of the Delivery Orders listing.
-// Mirrors the SO V2 template (MfgSalesOrdersListV2): PageHeader + StatCard
-// grid + FilterPills + Table/Cards toggle + right slide-over detail drawer.
-// See MfgSalesOrdersListV2.tsx for the deep dive on primitives + Theme C
-// conventions — this file is deliberately structured the same way so the
-// three-headed sales chain (DO / SI / DR) can share the template.
-//
-// Route: /scm/delivery-orders (App.tsx flips ScmDeliveryOrdersV2 here).
-// Data: useMfgDeliveryOrders / useMfgDeliveryOrderDetail /
-//       useUpdateMfgDeliveryOrderStatus (all live in the vendored SCM lib —
-//       we don't re-derive them; the Theme C paint is chrome-only).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { conditionDateRange } from "../../components/dataTableConditionFilters";
@@ -24,6 +13,7 @@ import {
   ChevronDown,
   Truck,
   Wrench,
+  PackageCheck,
   LayoutGrid,
   Table as TableIcon,
   X as XIcon,
@@ -42,6 +32,8 @@ import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { StatCard } from "../../components/StatCard";
 import { FilterPills } from "../../components/FilterPills";
+import { TabStrip } from "../../components/TabStrip";
+import { DoPackingListsView } from "../../vendor/scm/components/DoPackingListsView";
 import { DataTable, type Column, type ColumnLayoutPreset } from "../../components/DataTable";
 import { fetchDoExportRows } from "../../vendor/scm/lib/so-list-export";
 import { compareDoPrintOrder, type DoPrintHeader } from "../../vendor/scm/lib/delivery-date-group";
@@ -93,13 +85,9 @@ import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/
 import { formatPhone } from "@2990s/shared/phone";
 import { useHoldAction } from "./use-hold-action";
 import { StatusWithHold, rowIsHeld, type HoldFields } from "../../vendor/scm/components/HoldChip";
-import { customerRefOf } from '../../lib/customer-ref';
+import { customerRefOf } from '../../../../shared/src/lib/customer-ref';
 import { todayMyt } from "../../vendor/scm/lib/dates";
 
-// ─── Types ──────────────────────────────────────────────────────────────────
-// Subset of the full DoRow (see MfgDeliveryOrdersList.tsx for the 40-field
-// shape). Fields not listed here still exist on the API payload — they just
-// aren't rendered by this V2 chrome.
 
 type DoRow = HoldFields & {
   id: string;
@@ -108,8 +96,6 @@ type DoRow = HoldFields & {
   do_date: string;
   expected_delivery_at: string | null;
   customer_delivery_date: string | null;
-  /** Linked SO's Processing date (mfg_sales_orders.processing_date),
-   *  stamped server-side onto every list row for the quick-view drawer. */
   so_processing_date?: string | null;
   debtor_name: string;
   debtor_code: string | null;
@@ -122,15 +108,11 @@ type DoRow = HoldFields & {
    *  pre-batch) stock. A DO is a sales-side doc, so it shows Source PO, not an
    *  Assigned SO (owner 2026-07-31). */
   source_pos?: string[] | null;
-  /* The SOs this DO's LINES draw on. so_doc_no above is only the header LABEL
-     (from-sos copies the first pick's SO), so a merged DO named one source and
-     hid the rest. */
   source_sos?: string[] | null;
   /** Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
    *  "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
   ref: string | null;
-  /** POD, as stored — the list select is HEADER, which carries both. */
   signature_data?: string | null; pod_r2_key?: string | null;
   branding: string | null;
   driver_name: string | null;
@@ -147,19 +129,14 @@ type DoRow = HoldFields & {
   local_total_sen: number;
   line_count?: number;
   lifecycle_state?: "shipped" | "invoiced" | "returned";
-  /** Transfer-to relations (display-only, audit R8): the SI number(s) this DO
-   *  was invoiced into, and the DR number(s) returned against it. */
   invoiced_si_nos?: string[] | null;
   return_nos?: string[] | null;
   is_dropship?: boolean;
   isDropship?: boolean;
-  // ── Phase 2: NON-finance fields already on the DO list payload (HEADER).
   venue: string | null;
   note: string | null;
   customer_type: string | null;
   building_type: string | null;
-  // ── Phase 2 FINANCE: backend OMITS these keys for non-finance callers
-  //    (canViewScmFinance), so each is optional. margin_pct_basis = basis points.
   mattress_sofa_sen?: number;
   bedframe_sen?: number;
   accessories_sen?: number;
@@ -173,31 +150,22 @@ type DoRow = HoldFields & {
   total_cost_sen?: number;
   total_margin_sen?: number;
   margin_pct_basis?: number;
-  /** The delivery order's lines (no money), and its AutoCount spellings (do-list-lines.ts). */
   lines?: DoListLine[];
 } & Partial<DoBookHeader>;
 
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtRm = (centi: number): string => fmtSen(centi);
 
 
-// Customer's PO / Ref. Same fallback chain as the SO V2 template.
 const refOf = (r: DoRow): string => customerRefOf(r) || "—";
 
-// Origin SO number for the "SO Ref" column — the Delivery Order's most useful
-// cross-doc anchor. Falls back to a dash for direct-issue DOs.
 const soOf = (r: DoRow): string => r.so_doc_no || "—";
 
 const brandOf = (r: DoRow): string => r.branding || "—";
-/* Colour says WHAT THE LINE IS; the label says whose brand it is.
-   ../../lib/brandingTone is the one home. This copy had lost the BEDFRAME
-   arm too. */
 const brandTone = brandingToneForLabel;
 
 
-// ─── Split-menu dropdown (mirrors SO V2) ───────────────────────────────────
 
 function SplitDropdown({
   onFromSo,
@@ -290,7 +258,6 @@ function ViewToggle({
   );
 }
 
-// ─── Cards grid (shared shape with SO V2 — only fields differ) ─────────────
 
 function CardsGrid({ rows, onOpen }: { rows: DoRow[]; onOpen: (r: DoRow) => void }) {
   if (rows.length === 0) {
@@ -351,7 +318,6 @@ function CardsGrid({ rows, onOpen }: { rows: DoRow[]; onOpen: (r: DoRow) => void
   );
 }
 
-// ─── Detail drawer ─────────────────────────────────────────────────────────
 
 function DetailDrawer({
   row,
@@ -369,7 +335,6 @@ function DetailDrawer({
   onOpenFull: () => void;
   onEdit: () => void;
   onPrint: () => void;
-  /** Advance THIS document one status step — see do-next-step.ts for the verb. */
   onAdvance: () => void;
   onConvertToSi: () => void;
   canWrite: boolean;
@@ -404,9 +369,6 @@ function DetailDrawer({
   const open = !!row;
   const st = row ? statusFor(row.status) : null;
 
-  /* Both status questions come from the SAME module the detail page and the
-     mobile shell import, so this drawer and the page it opens can no longer
-     answer them differently. See vendor/scm/lib/do-next-step.ts. */
   const advanceStep = doAdvanceStep(row?.status);
   const advanceReason = doAdvanceBlockReason(row?.status);
   const siReason = siTransferBlockReason(row?.status);
@@ -695,10 +657,6 @@ function TotalRow({
   );
 }
 
-// Table column key → backend sort-whitelist column. The DO backend whitelist is
-// { do_date, do_number, debtor_name, status, customer_delivery_date } — only the
-// delivery_date column key differs from its backend name; every other sortable
-// column matches 1:1. Columns absent from the whitelist carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
   delivery_date: "customer_delivery_date",
 };
@@ -720,12 +678,6 @@ const DO_LAYOUT_PRESETS: ColumnLayoutPreset[] = [
   },
 ];
 
-// ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
-// Inline per-line breakdown for one DO under its parent row when the chevron is
-// toggled (2990 MfgDeliveryOrdersList drill-down parity). Lazy-fetches the DO
-// detail via the same useMfgDeliveryOrderDetail hook the drawer uses — TanStack
-// caches it, so re-expanding (or expanding a row the drawer already opened) is
-// instant.
 
 type DoDrillItem = {
   item_code?: string;
@@ -747,14 +699,10 @@ type DoDrillItem = {
      from the OUT movements ∪ consumed FIFO lots. A DO is a sales-side doc, so it
      shows Source PO, not an Assigned SO. */
   source_pos?: string[] | null;
-  /* The SOs this DO's LINES draw on. so_doc_no above is only the header LABEL
-     (from-sos copies the first pick's SO), so a merged DO named one source and
-     hid the rest. */
   source_sos?: string[] | null;
   /* Shipped (at least partly) from a PO-less stock ADJUSTMENT lot — renders a
      "STOCK ADJ" chip so the cell is explained, never blank (owner 2026-08-01). */
   source_adj?: boolean;
-  /* 'locked' = stamped when the line shipped; 'worked_out' = re-derived (older DO). */
   source_state?: 'locked' | 'worked_out' | null;
 };
 
@@ -780,7 +728,7 @@ function DoLinesExpansion({ doId }: { doId: string }) {
     <div className="flex flex-col gap-2">
       <DocumentLinesExpansion
         isLoading={detailQ.isLoading}
-        coverage="ready" /* one query fills this drill-down — coverage-state.tsx */
+        coverage="ready"
         isError={Boolean(detailQ.error)}
         errorMessage={detailQ.error instanceof Error ? detailQ.error.message : null}
         lines={lines}
@@ -791,7 +739,6 @@ function DoLinesExpansion({ doId }: { doId: string }) {
   );
 }
 
-// ─── Main page ──────────────────────────────────────────────────────────────
 
 export function MfgDeliveryOrdersListV2() {
   const navigate = useNavigate();
@@ -802,38 +749,40 @@ export function MfgDeliveryOrdersListV2() {
   const holdAction = useHoldAction("do");
   const { cancelDo } = useDoCancelAction();
   const askChoice = useChoice();
-  // Active company (top-bar switcher) — the header subtitle reflects it so a
-  // per-company list is never mislabelled as another company's (e.g. Houzs).
   const branding = useBranding();
-  // Finance-viewer gate (auth/me = isFinanceViewer). Finance columns below are
-  // DECLARED only for a finance-viewer; the backend also omits their keys from
-  // the payload for everyone else (canViewScmFinance).
   const { user, can, pageAccess } = useAuth();
   const canFinance = canViewScmCosting(user);
-  // Write gate — a salesperson reaches this list read-only via the sales inherit
-  // hatch (App.tsx allowSales; backend readInheritsFrom scm.sales.orders) and
-  // cannot create/edit/convert a DO. Hide the create + row mutation actions
-  // rather than render-then-deny (owner off-not-hide rule).
-  // ONE gate, shared with the detail page, the SO drawer and mobile.
   const canWriteDo = canOperateDeliveryOrders(user, can, pageAccess);
 
+  /* ?tab=packing — the Packing Lists view (owner 2026-11-27): one sheet per
+     lorry for a date. The order list is not fetched while it is open. */
+  const pageTab: "orders" | "packing" = params.get("tab") === "packing" ? "packing" : "orders";
+  const setPageTab = (t: "orders" | "packing") => {
+    const next = new URLSearchParams(params);
+    if (t === "packing") next.set("tab", "packing");
+    else {
+      next.delete("tab"); next.delete("date"); next.delete("unassigned");
+      if (next.get("view") === "lorry" || next.get("view") === "region") next.delete("view");
+    }
+    setParams(next, { replace: true });
+  };
+  const pageTabs = (
+    <TabStrip
+      value={pageTab}
+      onChange={setPageTab}
+      options={[{ value: "orders", label: "Delivery orders" }, { value: "packing", label: "Packing Lists" }]}
+    />
+  );
   const status = (params.get("status") ?? "all") as StatusTab;
   const view = (params.get("view") ?? "table") as "table" | "cards";
   const search = params.get("q") ?? "";
   const dateFrom = params.get("from") ?? "";
   const dateTo = params.get("to") ?? "";
   const dateBy: DoDateBy = params.get("dateBy") === "do" ? "do" : "delivery";
-  // URL is state — the 0-based page index lives in `?page=`. pageSize is a
-  // fixed 50 (backend caps at 100). Server-side paging + search + counts + sort
-  // span the FULL scoped set, not just the visible page.
   const page = Math.max(0, parseInt(params.get("page") ?? "0", 10) || 0);
   const [pageSize, setPageSize] = useLocalStorage<number>("scm:perpage:delivery-orders", 50);
 
   const [selected, setSelected] = useState<DoRow | null>(null);
-  // Multi-select for batch PDF export. The Set owns the ticked DO ids; the
-  // DataTable `selection` prop below drives the leading checkbox column and a
-  // bulk-action bar renders once ≥1 row is ticked. `exporting` guards the
-  // Export button against double-clicks while PDFs generate.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
   /* Server-filterable column funnels the grid pushes down (owner 2026-09-16) so
@@ -849,14 +798,10 @@ export function MfgDeliveryOrdersListV2() {
   const [sort, setSort] = useState<string | undefined>(undefined);
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
-  // Send the active tab's BUCKET NAME as `status`; the backend resolves each
-  // bucket to the raw statuses it covers (open = DRAFT+LOADED, in_transit =
-  // DISPATCHED+IN_TRANSIT, delivered = SIGNED+DELIVERED+INVOICED+COMPLETED,
-  // cancelled = CANCELLED). `all` omits the filter.
   const apiStatus = status === "all" ? undefined : status;
 
   const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = useMfgDeliveryOrdersPaged({
-    enabled: true,
+    enabled: pageTab === "orders",
     page,
     pageSize,
     status: apiStatus,
@@ -876,20 +821,13 @@ export function MfgDeliveryOrdersListV2() {
     hasError: Boolean(error),
   });
   const listLoading = isLoading || searchTransition.isSearching;
-  // The list below is replaced by a pending panel while a search is in flight,
-  // and these tiles summarise the SAME payload - so a settled-looking "RM 0.00"
-  // (or the PREVIOUS term's money under a placeholder page) would outlive the
-  // rows it describes. Same flag SearchScopeHint already uses for its count.
   const statsFailed = Boolean(error);
   const statsPending =
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const updateStatus = useUpdateMfgDeliveryOrderStatus();
 
-  // Server already filtered + sorted this page — render verbatim, no client
-  // re-filter / re-sort (wrong on a partial page).
   const rows = (data?.deliveryOrders ?? []) as DoRow[];
   const total = data?.total ?? 0;
-  // Full-set status-tab counts from the server (stable while paging / searching).
   const counts: Record<string, number> = data?.statusCounts ?? {};
 
   /* The rows the TABLE is showing — the server page minus whatever the
@@ -898,18 +836,8 @@ export function MfgDeliveryOrdersListV2() {
      contradictory numbers on one screen. */
   const visible = useVisibleRows(rows);
 
-  // Revenue sums the rows ON SCREEN (the paginated contract returns counts but
-  // not full-set money sums), so the card and the table can never disagree.
   const revenueSen = useMemo(() => doRevenueSen(visible.rows, status), [visible.rows, status]);
 
-  /* In-transit / Delivered normally read the server's FULL-set statusCounts —
-     right, and deliberately unaffected by paging. But under an active column
-     funnel they would state a whole-dataset count beside a table showing a
-     handful of rows, which is the exact contradiction this change exists to
-     remove. So while a funnel is narrowing the page, they describe the visible
-     set instead; with no funnel they are byte-identical to before. */
-  /* The TABS split one-per-status; these two cards must NOT — an invoiced
-     delivery was delivered, and en-route is dispatched + in transit. */
   const visibleBucketCounts = useMemo(() => {
     let inTransit = 0;
     let delivered = 0;
@@ -931,7 +859,7 @@ export function MfgDeliveryOrdersListV2() {
     const next = new URLSearchParams(params);
     if (s === "all") next.delete("status");
     else next.set("status", s);
-    next.delete("page"); // status change → back to page 0
+    next.delete("page");
     setParams(next, { replace: true });
   };
   const setDateWindow = (w: { from: string; to: string; dateBy: DoDateBy }) => {
@@ -955,7 +883,7 @@ export function MfgDeliveryOrdersListV2() {
     const next = new URLSearchParams(params);
     if (!q.trim()) next.delete("q");
     else next.set("q", q);
-    next.delete("page"); // typing → back to page 0
+    next.delete("page");
     setParams(next, { replace: true });
   };
   const sortSyncedRef = useRef(false);
@@ -965,12 +893,8 @@ export function MfgDeliveryOrdersListV2() {
       sortSyncedRef.current = true;
       return;
     }
-    setPageParam(0); // sort change → back to page 0
+    setPageParam(0);
   };
-  /* DataTable reports funnel state; lift the SERVER-FILTERABLE ones (Customer
-     Name, Currency) into the list query. Mirrors setSortAndReset: first
-     (mount-restore) report adopts without clobbering ?page=; later changes reset
-     to page 1. */
   const funnelSyncedRef = useRef(false);
   const serverFunnelSigRef = useRef("");
   const onColFiltersChange = (colFilters: Record<string, string[] | undefined>) => {
@@ -1000,7 +924,6 @@ export function MfgDeliveryOrdersListV2() {
     ]);
   };
 
-  // Wired actions
   const goNewDo = () => navigate("/scm/delivery-orders/new");
   const goFromSo = () => navigate("/scm/delivery-orders/from-so");
   const goDuplicate = () => navigate("/scm/delivery-orders?duplicate=1");
@@ -1009,8 +932,6 @@ export function MfgDeliveryOrdersListV2() {
   const goEdit = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}?edit=1`);
   const printDocument = usePrintDocument();
   const goFullPage = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}`);
-  /* One advance handler, target status supplied by do-next-step.ts — so this
-     drawer walks the same ladder as the detail page and the mobile shell. */
   const doAdvance = (r: DoRow) => {
     const step = doAdvanceStep(r.status);
     if (!step) return;
@@ -1027,7 +948,6 @@ export function MfgDeliveryOrdersListV2() {
   /* Cancel REVERSES STOCK and costs a REASON (owner 2026-09-14) — the detail
      page's own prompt and endpoint, from ./use-do-cancel-action. */
   const doCancelDo = (r: DoRow) => void cancelDo(r.id, r.do_number);
-  // Put On Hold / Take Off Hold — the mig-0324 MARKER, never the status. Wording in ./use-hold-action.ts.
   const setDoHold = (r: DoRow, onHold: boolean) => holdAction(r.id, r.do_number, onHold);
   /* Every predicate here is a SHARED one, not a status list typed at this call
      site. doCountsAsInvoiceable carries the owner's 2026-08-20 ruling that a
@@ -1049,35 +969,15 @@ export function MfgDeliveryOrdersListV2() {
     canSetStatus: (r) => canWriteDo && !rowIsHeld(r),
     canCancel: (r) => canWriteDo && doCancellableStatus(r.status),
   });
-  /* `doReopen` (cancelled DO → LOADED) was REMOVED, not disabled. It could
-     never succeed: PATCH /:id/status refuses every transition out of CANCELLED
-     with `do_cancelled_final` (delivery-orders-mfg.ts:5401), because
-     un-cancelling leaves the cancel's stock add-back standing while the
-     re-deduct no-ops — the DO's whole quantity is then permanently added to
-     stock. The drawer showed it as the green PRIMARY action on every cancelled
-     row. A control whose only possible outcome is a 409 is not a capability to
-     explain, so do-next-step.ts states the real next step instead: raise a new
-     delivery order. */
 
-  // ─── Batch PDF export (ported from MfgDeliveryOrdersList) ─────────────────
-  /* Delegated to lib/printDocumentPdf, which is now the ONE place that knows a
-     DO's detail endpoint and that its header must carry `loadScanId` to arm the
-     print's "scan to mark loaded" QR. The row menu's print reads the same
-     function, so batch and single cannot drift apart. */
   const fetchDoBundle = async (row: DoRow): Promise<{ header: unknown; items: unknown[] }> => {
     const bundle = await fetchPrintBundle({ doc: "do", docNo: row.do_number, key: row.id });
-    // Attach the resolved salesperson name for the PDF's DELIVERY DETAILS block —
-    // the generator can't run the staff lookup. Resolved the same way the list
-    // column is (ac_agent, else the staff lookup); blank ⇒ the row is omitted.
     const salesperson = row.ac_agent ?? salespersonNameOf(null, row.salesperson_id, "");
     return { ...bundle, header: { ...(bundle.header as Record<string, unknown>), salesperson } };
   };
 
   const clearSelection = () => setSelectedIds(new Set());
 
-  // Batch "Export PDF" — one ticked DO downloads straight; several prompt
-  // "One combined PDF" vs "Separate files", then fetch each bundle and render
-  // into one merged file or one file per DO. Combined filename is date-stamped.
   const deliverSelectedDos = async (action: PdfAction) => {
     if (exporting) return;
     const chosen = rows.filter((r) => selectedIds.has(r.id));
@@ -1092,9 +992,6 @@ export function MfgDeliveryOrdersListV2() {
         clearSelection();
         return;
       }
-      /* View / Print always render ONE document — a preview or a print run
-         is about the stack, not N separate files. Only the download exit
-         still asks combined-vs-separate. */
       const how = action !== "save" ? "one" : await askChoice({
         title: `Download ${chosen.length} delivery orders`,
         options: [
@@ -1129,9 +1026,6 @@ export function MfgDeliveryOrdersListV2() {
   };
   const batchPrint = usePrintPreview(deliverSelectedDos);
 
-  // Table columns
-  /* Labels are AutoCount's captions; Doc No / Debtor Code / Agent are the book's
-     spellings where the delivery order is in AutoCount (server-stamped ac_*). */
   const columns: Column<DoRow, DoListLine>[] = [
     {
       key: "do_number",
@@ -1195,7 +1089,7 @@ export function MfgDeliveryOrdersListV2() {
          Falls back to the header label when a DO has no linked lines (an ad-hoc
          DO legitimately has only the header), so no cell goes blank. */
       getValue: (r) => (r.source_sos?.length ? r.source_sos.join(" ") : r.so_doc_no ?? ""),
-      lineValue: (_r, l) => l.so_doc_no, // the file: the SO THIS line was delivered from
+      lineValue: (_r, l) => l.so_doc_no,
       render: (r) => {
         const sos = r.source_sos?.length ? r.source_sos : (r.so_doc_no ? [r.so_doc_no] : []);
         return sos.length > 0 ? (
@@ -1254,9 +1148,6 @@ export function MfgDeliveryOrdersListV2() {
       },
     },
     {
-      /* Transfer-to (audit R8): the SI(s) this DO was invoiced into, mirroring
-         the SO list's "PO No." (converted_po_nos) convert-to column. Server-
-         derived (invoiced_si_nos); DR returns share the tooltip via return_nos. */
       key: "invoiced_si_nos",
       label: "Invoiced to",
       width: "150px",
@@ -1295,8 +1186,6 @@ export function MfgDeliveryOrdersListV2() {
       key: "debtor_name",
       label: DO_LABELS.debtorName,
       getValue: (r) => r.debtor_name,
-      // Server-filterable: seed the checklist with every customer (not just the
-      // loaded page's), so a customer whose DOs are all on a later page is pickable.
       filterSeedValues: customerNames,
       render: (r) => (
         <span className="text-[13px] font-semibold text-ink">
@@ -1310,7 +1199,7 @@ export function MfgDeliveryOrdersListV2() {
       width: "128px",
       exportFormat: "date",
       getValue: (r) => r.customer_delivery_date ?? "",
-      lineValue: (_r, l) => l.delivery_date, // the file: the line's own date, else the order's
+      lineValue: (_r, l) => l.delivery_date,
       render: (r) => (
         <span className="text-[12.5px] text-ink-secondary">
           {fmtDate(r.customer_delivery_date)}
@@ -1343,13 +1232,11 @@ export function MfgDeliveryOrdersListV2() {
       key: "status",
       label: "Status",
       width: "116px",
-      // Exempt from the cancelled-row fade — the pill is WHY the row is grey.
       className: "dt-cancel-keep",
       getValue: (r) => r.status,
       exportValue: (r) => doStatusWord(r.status, r.on_hold ?? null),
       render: (r) => {
         const st = statusFor(r.status);
-        /* mig 0324 — the Hold marker sits BESIDE the real status pill. */
         return <StatusWithHold tone={st.tone} label={st.label} row={r} />;
       },
     },
@@ -1363,11 +1250,6 @@ export function MfgDeliveryOrdersListV2() {
       getValue: (r) => r.currency,
       render: (r) => <span className="text-[12.5px] text-ink-secondary">{r.currency}</span>,
     },
-    // ── Re-added columns (Phase 1) — data already on the DoRow payload, ported
-    //    from the legacy MfgDeliveryOrdersList buildColumns (labels/widths). All
-    //    default-hidden so the column chooser exposes them without changing the
-    //    slim default view. disableSort because the DO list is server-sorted and
-    //    these keys aren't in the backend sort whitelist.
     {
       key: "salesperson",
       label: DO_LABELS.agent,
@@ -1520,8 +1402,6 @@ export function MfgDeliveryOrdersListV2() {
         <span className="text-[12.5px] text-ink-secondary">{r.customer_state || "—"}</span>
       ),
     },
-    // ── Re-added columns (Phase 2) — NON-finance fields already on the DO
-    //    payload (HEADER). Default-hidden + disableSort. Safe for everyone.
     {
       key: "venue",
       label: "Venue",
@@ -1566,14 +1446,11 @@ export function MfgDeliveryOrdersListV2() {
         <span className="text-[12.5px] text-ink-secondary">{r.building_type || "—"}</span>
       ),
     },
-    // ── Phase 2 FINANCE columns — cost / margin / per-category subtotals.
-    //    DECLARED ONLY for a finance-viewer (backend also omits the keys).
     ...(canFinance ? financeColumns<DoRow, DoListLine>(undefined) : []),
     ...Object.values(doLineColumns<DoRow>()),
   ];
 
   const statusPillOptions: Array<{ value: StatusTab; label: string }> = (
-    // `on_hold` sits before Cancelled, as on the other four lists. Mig 0324.
     [["all", "All"], ["draft", "Draft"], ["loaded", "Confirmed"], ["dispatched", "Loaded"],
      ["in_transit", "In transit"], ["delivered", "Delivered"], ["invoiced", "Invoiced"],
      ["on_hold", "On Hold"], ["cancelled", "Cancelled"]] as Array<[StatusTab, string]>
@@ -1581,16 +1458,12 @@ export function MfgDeliveryOrdersListV2() {
 
   return (
     <PullToRefresh onRefresh={onPullToRefresh}>
-      {/* When the drawer is open the desktop shell reflows into the left
-          520 + gutter so stats/table are cleanly visible next to it instead
-          of being half-covered. Mobile keeps the full-width overlay. */}
       <div
         className={cn(
           "transition-[padding] duration-200",
           selected ? "md:pr-[540px]" : ""
         )}
       >
-      {/* Mobile-only compact header — hides at md+. */}
       <div className="mb-3 flex items-start justify-between gap-3 md:hidden">
         <div className="min-w-0">
           <h1 className="font-display text-[22px] font-extrabold leading-tight tracking-tight text-ink">
@@ -1602,9 +1475,8 @@ export function MfgDeliveryOrdersListV2() {
           </div>
         </div>
       </div>
+      <div className="md:hidden">{pageTabs}</div>
 
-      {/* Desktop sticky page chrome — pinned PageHeader + KPIs + FilterPills
-          + ViewToggle. Matches SO listing V2 pattern. */}
       <div className="-mx-4 hidden pb-3 sm:-mx-6 md:block">
         <div className="px-4 sm:px-6">
           <PageHeader
@@ -1641,9 +1513,12 @@ export function MfgDeliveryOrdersListV2() {
             secondaryActions={[
               { label: "Sales Orders", icon: Wrench, onClick: goSoList },
               { label: "Delivery Planning", icon: Truck, onClick: goPlanning },
+              ...(pageTab === "orders" ? [{ label: "Packing Lists", icon: PackageCheck, onClick: () => setPageTab("packing") }] : []),
             ]}
           />
 
+          {pageTabs}
+          {pageTab === "orders" && <>
           <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
             {/* Every tile describes the rows ON SCREEN and says so while a
                 column funnel narrows them (owner 2026-08-13). The count tiles
@@ -1701,10 +1576,12 @@ export function MfgDeliveryOrdersListV2() {
             <div className="flex-1" />
             <ViewToggle value={view} onChange={setView} />
           </div>
+          </>}
         </div>
       </div>
 
-      {/* Mobile sticky search */}
+      {pageTab === "packing" ? <DoPackingListsView /> : <>
+
       <div className="sticky top-0 z-10 -mx-4 mb-3 bg-bg/95 px-4 py-2 backdrop-blur-sm md:hidden">
         <input
           type="search"
@@ -1717,7 +1594,6 @@ export function MfgDeliveryOrdersListV2() {
         <SearchScopeHint scope="server" searching={searchTransition.isSearching} countPending={isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale} resultCount={total} term={search} className="mt-1" />
       </div>
 
-      {/* Mobile filter row — desktop pills live inside the sticky chrome above. */}
       <div className="mb-4 flex flex-wrap items-center gap-3 md:hidden">
         <FilterPills
           options={statusPillOptions}
@@ -1727,7 +1603,6 @@ export function MfgDeliveryOrdersListV2() {
         <DoDateFilter from={dateFrom} to={dateTo} dateBy={dateBy} onChange={setDateWindow} />
       </div>
 
-      {/* Phone → Cards */}
       <div className="md:hidden">
         {error ? (
           <ListErrorPanel message={(error as Error).message} />
@@ -1747,14 +1622,9 @@ export function MfgDeliveryOrdersListV2() {
         </div>}
       </div>
 
-      {/* Desktop → Table / Cards */}
       <div className="hidden md:block">
         {view === "table" ? (
           <>
-            {/* Bulk-action bar — appears once ≥1 row is ticked. Mirrors the
-                DeliveryPlanning "Convert N to DO" bar's look/placement (count
-                on the left, primary action + Clear on the right), rendered in
-                Theme C Tailwind instead of the vendored CSS module. */}
             {selectedIds.size > 0 && !searchTransition.resultsAreStale && (
               <div className="mb-3 flex items-center gap-3 rounded-lg border border-primary/40 bg-primary-soft px-4 py-2.5 shadow-stone">
                 <span className="text-[13px] font-semibold text-ink">
@@ -1792,7 +1662,6 @@ export function MfgDeliveryOrdersListV2() {
             <DataTable<DoRow, DoListLine>
               tableId="delivery-orders-v2"
               rows={rows}
-              /* Feeds the stat strip so the tiles describe what is on screen. */
               onFilteredRowsChange={visible.onFilteredRowsChange}
               onColFiltersChange={onColFiltersChange}
               loading={listLoading}
@@ -1907,6 +1776,7 @@ export function MfgDeliveryOrdersListV2() {
           </>
         )}
       </div>
+      </>}
       </div>
 
       <DetailDrawer

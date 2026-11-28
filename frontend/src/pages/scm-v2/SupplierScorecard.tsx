@@ -6,7 +6,7 @@
      B. the score, 0–100;
      C. on time, the share of lines received by the date on the PO. */
 import { useMemo } from "react";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { SortTh, Td, useTableSort } from "../../components/scm-v2/OverviewKit";
 
@@ -65,7 +65,6 @@ export function SupplierScorecard({ groups, lines, quality, onPick }: {
     .filter((g) => g.supplierLead.receipts > 0 || g.open.sen > 0)
     .map((g) => scoreSupplier(g, lines, quality?.get(supplierKey(g.key)) ?? null)), [groups, lines, quality]);
   const { sorted, sort, toggle } = useTableSort(rows, (r, k) => (r as unknown as Record<string, number | string | null>)[k] ?? null);
-  /* Worst first until a header is clicked. */
   const shown = sort ? sorted : [...rows].sort((a, b) => (a.score ?? 101) - (b.score ?? 101));
   const tone = (s: number | null) => (s == null ? "text-ink-muted" : s < 60 ? "text-err" : s < 80 ? "text-warning-text" : "text-synced");
 

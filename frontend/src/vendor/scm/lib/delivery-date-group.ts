@@ -47,10 +47,6 @@ export type DeliverySlotRow = DeliveryDateRow & RunStopOrder & {
   crew?: { lorry_plate: string | null } | null;
 };
 
-/* Reporter 2026-11-04: drivers lost track of which bill comes first, so each
-   lorry's day reads earliest Time Slot first, the same order as the driver's
-   phone run-sheet. Lorry sits above the slot so two lorries never interleave;
-   rows with no lorry yet sink to the end of their day. */
 export function compareByDeliverySlot(a: DeliverySlotRow, b: DeliverySlotRow): number {
   const la = (a.crew?.lorry_plate ?? '').trim();
   const lb = (b.crew?.lorry_plate ?? '').trim();

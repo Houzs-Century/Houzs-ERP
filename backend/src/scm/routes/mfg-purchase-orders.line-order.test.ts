@@ -32,8 +32,6 @@ import { convertSosToPosCore, type PoConvertContext } from './mfg-purchase-order
 
 type Row = Record<string, unknown>;
 
-/** Top-level column names of a PostgREST select string. `so:t!inner ( a, b )`
- *  yields its ALIAS (`so`); nested commas are skipped. */
 function selectedColumns(cols: string): string[] {
   const out: string[] = [];
   let depth = 0;
@@ -53,9 +51,6 @@ function selectedColumns(cols: string): string[] {
 }
 
 function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
-  /* Across the WHOLE fake, not per insert call: the convert emits one header
-     insert per bucket, and a per-call counter would hand every bucket the same
-     id — which reads as "one PO" and would hide a per-document assertion. */
   let poSeq = 0;
   class Q {
     rows: Row[];
@@ -64,9 +59,6 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
     private projection: string[] | null = null;
     constructor(table: string, rows: Row[]) { this.table = table; this.rows = [...rows]; }
     select(cols?: string) {
-      /* Recorded, applied in result(): a filter may legitimately name a column
-         the caller did not select (`.eq('is_main_supplier', true)`), so
-         projecting here would empty the read instead of narrowing it. */
       if (typeof cols === 'string' && cols.trim() !== '' && cols.trim() !== '*') {
         this.projection = selectedColumns(cols);
       }
@@ -152,7 +144,6 @@ function fakeSb(tables: Record<string, Row[]>, captured: Row[]) {
 const SUPPLIER_ID = 'sup-1';
 const SO_DOC = 'HC-SO-013503';
 
-/** One SO line as the convert reads it. `line_no` is what these tests are about. */
 const soLine = (id: string, itemCode: string, lineNo: number, docNo = SO_DOC): Row => ({
   id,
   doc_no: docNo,
@@ -171,7 +162,6 @@ const soLine = (id: string, itemCode: string, lineNo: number, docNo = SO_DOC): R
   so: { sales_location: 'KL', customer_delivery_date: '2026-09-30' },
 });
 
-/** Runs the real convert; returns the rows it writes to purchase_order_items. */
 async function convertAndCapture(
   soLines: Row[],
   opts?: { pickOrder?: string[]; targetPo?: { id: string; existing: Row[] } },
@@ -227,9 +217,6 @@ async function convertAndCapture(
   return captured;
 }
 
-/* The three modules of the owner's example, HC-SO-013503 -> HC-PO-2609-053.
-   The SO holds them at line_no 1 / 4 / 5 (the last two were added two days
-   later), with an accessory and a service line at 2 and 3 in between. */
 const LHF = soLine('si-lhf', '8030-L(LHF)', 1);
 const NA = soLine('si-na', '8030-1NA', 4);
 const RHF = soLine('si-rhf', '8030-1A(RHF)', 5);
@@ -242,25 +229,17 @@ describe('a converted PO line carries the source SO line order', () => {
   });
 
   test('L leads and R closes even when the picks arrive scrambled', async () => {
-    /* The MRP picker groups by item, not by document, so the pick array is NOT
-       in SO line order. The PO must still read L -> armless -> R. */
     const rows = await convertAndCapture([LHF, NA, RHF], { pickOrder: ['si-na', 'si-rhf', 'si-lhf'] });
     const printed = [...rows].sort((a, b) => (a.line_no as number) - (b.line_no as number));
     expect(printed.map((r) => r.item_code)).toEqual(['8030-L(LHF)', '8030-1NA', '8030-1A(RHF)']);
   });
 
   test('the numbers are dense and 1-based, not the SO’s own gaps', async () => {
-    /* The SO holds these at 1, 4, 5. The PO has three lines, so it numbers them
-       1, 2, 3 — its own order, derived from the SO's, never a copy of it (two
-       source SOs would otherwise collide on one number). */
     const rows = await convertAndCapture([LHF, NA, RHF], { pickOrder: ['si-rhf', 'si-lhf', 'si-na'] });
     expect([...rows].map((r) => r.line_no).sort((a, b) => (a as number) - (b as number))).toEqual([1, 2, 3]);
   });
 
   test('two sales orders of sofa become two POs, each numbered from 1 in ITS order', async () => {
-    /* po-grouping.ts splits sofa per SO (the dye-lot rule), so this convert
-       emits two documents. Each is numbered independently — line_no is a
-       position ON A DOCUMENT, never a global sequence. */
     const other = [
       soLine('sj-lhf', '9058-1A(LHF)', 1, 'HC-SO-013900'),
       soLine('sj-rhf', '9058-1A(RHF)', 2, 'HC-SO-013900'),
@@ -282,10 +261,6 @@ describe('a converted PO line carries the source SO line order', () => {
   });
 
   test('a MERGED PO keeps each sales order together, in document order', async () => {
-    /* Accessories are a category the owner did not rule on, so they follow the
-       caller's toggle and default to one PO per (warehouse, supplier) — several
-       SOs on one document. The sort is (SO doc_no, SO line_no), so the merged
-       document reads one sales order at a time rather than interleaving them. */
     const acc = (id: string, code: string, lineNo: number, doc: string): Row =>
       ({ ...soLine(id, code, lineNo, doc), item_group: 'accessory' });
     const rows = await convertAndCapture([
@@ -322,9 +297,6 @@ describe('a converted PO line carries the source SO line order', () => {
   });
 
   test('appending to a PO whose lines predate the column starts at 1', async () => {
-    /* Historical POs the migration could not derive keep line_no NULL, and the
-       read puts NULLs FIRST — so a line appended to one takes 1 and lands
-       AFTER them, which is where an appended line belongs. */
     const rows = await convertAndCapture([RHF], {
       targetPo: {
         id: 'po-existing',

@@ -12,13 +12,9 @@
 // label at a time.
 
 export type SeedRackSpec = {
-  /** Leading word every label carries. The endpoint defaults it to "Rack". */
   prefix?: string | null;
-  /** Series letter placed before the number: "L" -> "Rack L3.1". */
   series?: string | null;
-  /** How many aisles — or plain racks, when `levels` is 1. */
   count: number;
-  /** Levels within each aisle. 1 (the default) keeps the flat shape. */
   levels?: number | null;
 };
 

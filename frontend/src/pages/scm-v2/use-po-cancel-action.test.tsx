@@ -45,7 +45,6 @@ describe('usePoCancelAction', () => {
     expect(p.validate('x'.repeat(MIN_PO_CANCEL_REASON - 1))).not.toBeNull();
     expect(p.validate('x'.repeat(MIN_PO_CANCEL_REASON))).toBeNull();
     expect(p.body).toContain('no approval is needed');
-    /* The floor is the server's (readReason, 5 chars) — one rule, one number. */
     expect(MIN_PO_CANCEL_REASON).toBe(5);
   });
 });

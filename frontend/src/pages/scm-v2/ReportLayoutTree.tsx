@@ -11,7 +11,7 @@
 // ----------------------------------------------------------------------------
 
 import { Fragment, useEffect, useState } from 'react';
-import { fmtSenPlain } from '../../vendor/shared/format';
+import { fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import { fmtPct, pctOf, type LaidNode } from '../../vendor/scm/lib/report-layout';
 import { AccountLinesRow } from './AccountLinesRow';
 
@@ -22,7 +22,6 @@ export type Level = number | 'all';
     whole tree at once, so a new level clears both. */
 export type ReportTree = {
   open: Record<string, boolean>;
-  /** Flip a folder from what it shows now (the level decides that until a hand does). */
   toggle: (id: string, openNow: boolean) => void;
   drilled: Record<string, boolean>;
   toggleDrill: (id: string) => void;
@@ -82,7 +81,6 @@ const pickBtn: React.CSSProperties = { background: 'none', border: 'none', paddi
 export const LaidRows = ({ nodes, level, depth = 1, columns, fmt = fmtSenPlain, onPick, activeId, tree, drill }: {
   nodes: LaidNode[]; level: Level; depth?: number;
   columns?: string[]; fmt?: (sen: number) => string; onPick?: LaidPick; activeId?: string | null;
-  /** Hand-opened categories and accounts; with `drill`, an account's name opens its lines for the period. */
   tree?: ReportTree; drill?: DrillPeriod;
 }) => (
   <>
@@ -124,7 +122,6 @@ export const LaidRows = ({ nodes, level, depth = 1, columns, fmt = fmtSenPlain, 
 /** A titled block with its rows and its total line. */
 export const LaidBlock = ({ title, nodes, level, totalLabel, totalSen, baseSen, onPick, tree, drill }: {
   title: string; nodes: LaidNode[]; level: Level; totalLabel: string; totalSen: number; baseSen: number | null;
-  /** A figure opens its entries — the general ledger on the node's accounts. */
   onPick?: LaidPick;
   tree?: ReportTree; drill?: DrillPeriod;
 }) => (

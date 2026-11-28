@@ -53,8 +53,6 @@ export function allocSourceOf(
   poNumber: string | null | undefined,
 ): AllocSource {
   if ((shortageQty ?? 0) > 0) return 'shortage';
-  /* Trimmed: a PO number that is whitespace names nothing, and PostgREST
-     hands back '' for a text column that was never filled. */
   if (typeof poNumber === 'string' && poNumber.trim() !== '') return 'po';
   return 'stock';
 }

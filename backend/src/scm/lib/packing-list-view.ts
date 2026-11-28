@@ -1,35 +1,7 @@
-// ----------------------------------------------------------------------------
-// packing-list-view — assemble ONE DAY's packing lists out of the trip rows.
-//
-// A PACKING LIST IS A TRIP, RENDERED. It is not a document of its own and there
-// is no `packing_lists` table: `scm.trips` already IS "one day + one lorry"
-// (mig 0053 — `trip_date DATE`, `lorry_id`, indexed on both), and `trip_stops`
-// already carries the ordered drop list with the delivery order hanging off each
-// stop. Three lorries out today = three trips = three packing lists. Mixed
-// companies work by construction, because each stop's DO carries its own
-// company_id and the reads that resolve them carry the company predicate.
-//
-// PURE. No supabase, no Hono, no env — the route does the five reads and hands
-// the rows here. That is what makes the ordering rule and the totals testable
-// without a database, and it is why the reversal rule below has a test that
-// fails if anyone "fixes" it.
-//
-// STOPS COME OUT IN DELIVERY ORDER (stop_no ascending) — the truth as the
-// dispatcher sequenced it. The LOADING order is the reverse of it, and that
-// reversal belongs to the thing that prints, not to the thing that reads: see
-// frontend/src/vendor/scm/lib/packing-list-model.ts `loadingOrder`.
-//
-// EMPTY IS NOT ZERO. `m3_milli` is null — never 0 — when not one member DO
-// carries a figure, because `delivery_orders.m3_total_milli` is a column that
-// exists and is not necessarily filled, and a printed "0.00 m³" is a claim
-// about the load rather than a report of what we hold. Same reason a stop whose
-// DO did not come back carries `do_missing: true` instead of `units: 0`: the
-// company predicate legitimately filters a DO out, and that is an unknown, not
-// an empty lorry.
-// ----------------------------------------------------------------------------
 
 // @ts-expect-error - plain .mjs, the one stamp rule shared with the DO detail and scripts/stamp-do-shipped-from.mjs
-import { stampRackLabel } from '../../../scripts/lib/do-shipped-from.mjs';
+import { stampRackLabel, stampFitsLine } from '../../../scripts/lib/do-shipped-from.mjs';
+import { isServiceLine } from '../shared/service-sku';
 
 export type PackTripRow = {
   id: string;
@@ -38,6 +10,8 @@ export type PackTripRow = {
   status: string | null;
   lorry_id: string | null;
   driver_id: string | null;
+  helper_1_id: string | null;
+  helper_2_id: string | null;
   warehouse_id: string | null;
 };
 
@@ -56,6 +30,9 @@ export type PackDoRow = {
   do_number: string | null;
   status: string | null;
   m3_total_milli: number | null;
+  so_doc_no: string | null;
+  phone: string | null;
+  time_range: string | null;
 };
 
 export type PackItemRow = {
@@ -65,9 +42,20 @@ export type PackItemRow = {
   description: string | null;
   qty: number | null;
   rack_id: string | null;
-  /** The PO / rack stamp locked at the first ship (mig 20261110T2300), or null. */
   shipped_from: unknown;
+  item_group: string | null;
+  variants: Record<string, unknown> | null;
+  description2: string | null;
+  so_item_id: string | null;
+  committed_po_batch_no: string | null;
+  worked: { pos: string[]; racks: string[] } | null;
 };
+
+/** The sales-order line a DO line was cut from: its position on the SO. */
+export type PackSoItemRow = { id: string; doc_no: string | null; line_no: number | null };
+
+/** A crew master row: name plus the phone the crew box prints. */
+export type PackCrewRow = { id: string; name: string | null; phone: string | null };
 
 /** id -> printable label, for the two masters that only lend a name. */
 export type PackLabelRow = { id: string; label: string | null };
@@ -77,12 +65,15 @@ export type PackingItem = {
   item_code: string;
   description: string | null;
   qty: number;
-  /** The rack the LINE leaves from (scm.delivery_order_items.rack_id, mig 0118).
-   *  Null when the line carries no explicit pick — dispatch auto-picks then, and
-   *  a sheet that printed a rack anyway would be inventing one. A shipped line
-   *  prints the rack(s) it was locked to when it left instead (`rack_locked`). */
   rack: string | null;
   rack_locked: boolean;
+  po: string | null;
+  po_locked: boolean;
+  worked_out: boolean;
+  item_group: string | null;
+  variants: Record<string, unknown> | null;
+  description2: string | null;
+  so_line_no: number | null;
 };
 
 export type PackingStop = {
@@ -93,8 +84,10 @@ export type PackingStop = {
   do_id: string | null;
   do_number: string | null;
   do_status: string | null;
-  /** The stop names a delivery order that this caller's companies cannot read. */
   do_missing: boolean;
+  so_doc_no: string | null;
+  phone: string | null;
+  time_range: string | null;
   units: number;
   items: PackingItem[];
 };
@@ -106,14 +99,16 @@ export type PackingList = {
   trip_status: string | null;
   lorry_plate: string | null;
   driver_name: string | null;
+  driver_phone: string | null;
+  helper_1_name: string | null;
+  helper_2_name: string | null;
   warehouse_name: string | null;
   stop_count: number;
   do_count: number;
   units: number;
-  /** Σ m3_total_milli over the DISTINCT member DOs, or null when none carries one. */
   m3_milli: number | null;
-  /** DELIVERY order — stop_no ascending. The print reverses it. */
   stops: PackingStop[];
+  source: 'trip' | 'crew';
 };
 
 const num = (v: unknown): number => {
@@ -136,42 +131,111 @@ export type AssembleInput = {
   deliveryOrders: readonly PackDoRow[];
   items: readonly PackItemRow[];
   racks: readonly PackLabelRow[];
+  soItems: readonly PackSoItemRow[];
   lorries: readonly PackLabelRow[];
-  drivers: readonly PackLabelRow[];
+  drivers: readonly PackCrewRow[];
+  helpers: readonly PackCrewRow[];
   warehouses: readonly PackLabelRow[];
 };
 
-/** The stamped rack(s) first; only an unstamped line falls back to its explicit pick. */
+/* Rack (owner 2026-11-28): the rack(s) locked at dispatch, else the operator's pick, else the
+   rack(s) worked out the way the DO detail works them out (the rack this DO left, else the GRN
+   rack of the line's source PO). */
 function packRack(it: PackItemRow, rackById: Map<string, string>): { rack: string | null; rack_locked: boolean } {
   const locked: string | null = stampRackLabel(it.shipped_from, it.item_code ?? null);
   if (locked) return { rack: locked, rack_locked: true };
-  return { rack: it.rack_id ? rackById.get(String(it.rack_id)) ?? null : null, rack_locked: false };
+  const picked = it.rack_id ? rackById.get(String(it.rack_id)) ?? null : null;
+  if (picked) return { rack: picked, rack_locked: false };
+  const worked = [...new Set(it.worked?.racks ?? [])];
+  return { rack: worked.length > 0 ? worked.join(', ') : null, rack_locked: false };
 }
 
-export function assemblePackingLists(input: AssembleInput): PackingList[] {
-  const rackById = labelMap(input.racks);
-  const lorryById = labelMap(input.lorries);
-  const driverById = labelMap(input.drivers);
-  const warehouseById = labelMap(input.warehouses);
+/* PO (owner 2026-11-27, 2026-11-28): the stamp's POs when the line was locked at dispatch (the
+   same stamp the rack comes from), else the PO batch the line was committed to, else the PO(s)
+   worked out from the stock ledger / the SO line's bound PO, exactly as the DO detail shows them.
+   None = null and the sheet prints a dash. */
+function packPo(it: PackItemRow): { po: string | null; po_locked: boolean } {
+  const stamp = it.shipped_from as { pos?: Array<{ po?: unknown }> } | null;
+  if (stampFitsLine(stamp, it.item_code ?? null)) {
+    const pos = [...new Set((stamp?.pos ?? [])
+      .map((p) => (typeof p.po === 'string' ? p.po.trim() : ''))
+      .filter(Boolean))];
+    if (pos.length > 0) return { po: pos.join(', '), po_locked: true };
+  }
+  const committed = (it.committed_po_batch_no ?? '').trim();
+  if (committed) return { po: committed, po_locked: false };
+  const worked = [...new Set(it.worked?.pos ?? [])];
+  return { po: worked.length > 0 ? worked.join(', ') : null, po_locked: false };
+}
 
-  const doById = new Map<string, PackDoRow>();
-  for (const d of input.deliveryOrders) if (d.id) doById.set(String(d.id), d);
+function packSources(it: PackItemRow, rackById: Map<string, string>) {
+  const rack = packRack(it, rackById);
+  const po = packPo(it);
+  const worked_out = (!!rack.rack && !rack.rack_locked) || (!!po.po && !po.po_locked);
+  return { ...rack, ...po, worked_out };
+}
+
+const crewMap = (rows: readonly PackCrewRow[]): Map<string, { name: string; phone: string | null }> => {
+  const m = new Map<string, { name: string; phone: string | null }>();
+  for (const r of rows) {
+    const name = (r.name ?? '').trim();
+    if (r.id && name) m.set(String(r.id), { name, phone: (r.phone ?? '').trim() || null });
+  }
+  return m;
+};
+
+/* Line order per owner 2026-11-27: the SALES ORDER's line order, then the DO's own line_no for lines with no SO line behind them. */
+function compareSoOrder(a: PackingItem, b: PackingItem): number {
+  const sa = a.so_line_no ?? Number.POSITIVE_INFINITY;
+  const sb = b.so_line_no ?? Number.POSITIVE_INFINITY;
+  if (sa !== sb) return sa < sb ? -1 : 1;
+  return a.line_no - b.line_no;
+}
+
+export type PackedLines = { itemsByDo: Map<string, PackingItem[]>; soDocByDo: Map<string, string> };
+
+/** DO lines -> printable items per DO, service lines dropped, SO line order. Shared by the lorry and region views. */
+export function packItemsByDo(input: Pick<AssembleInput, 'items' | 'racks' | 'soItems'>): PackedLines {
+  const rackById = labelMap(input.racks);
+  const soItemById = new Map<string, PackSoItemRow>();
+  for (const r of input.soItems) if (r.id) soItemById.set(String(r.id), r);
+  const soDocByDo = new Map<string, string>();
 
   const itemsByDo = new Map<string, PackingItem[]>();
   for (const it of input.items) {
     const key = String(it.delivery_order_id ?? '');
     if (!key) continue;
+    if (isServiceLine({ itemGroup: it.item_group, itemCode: it.item_code })) continue;
+    const soItem = it.so_item_id ? soItemById.get(String(it.so_item_id)) ?? null : null;
+    if (soItem?.doc_no && !soDocByDo.has(key)) soDocByDo.set(key, soItem.doc_no);
+    const soLine = soItem?.line_no != null && Number.isFinite(Number(soItem.line_no)) ? Number(soItem.line_no) : null;
     const arr = itemsByDo.get(key) ?? [];
     arr.push({
       line_no: num(it.line_no) || arr.length + 1,
       item_code: (it.item_code ?? '').trim() || '—',
       description: it.description ?? null,
       qty: num(it.qty),
-      ...packRack(it, rackById),
+      ...packSources(it, rackById),
+      item_group: it.item_group ?? null,
+      variants: it.variants && typeof it.variants === 'object' && !Array.isArray(it.variants) ? it.variants : null,
+      description2: it.description2 ?? null,
+      so_line_no: soLine,
     });
     itemsByDo.set(key, arr);
   }
-  for (const arr of itemsByDo.values()) arr.sort((a, b) => a.line_no - b.line_no);
+  for (const arr of itemsByDo.values()) arr.sort(compareSoOrder);
+  return { itemsByDo, soDocByDo };
+}
+
+export function assemblePackingLists(input: AssembleInput): PackingList[] {
+  const lorryById = labelMap(input.lorries);
+  const driverById = crewMap(input.drivers);
+  const helperById = crewMap(input.helpers);
+  const warehouseById = labelMap(input.warehouses);
+  const { itemsByDo, soDocByDo } = packItemsByDo(input);
+
+  const doById = new Map<string, PackDoRow>();
+  for (const d of input.deliveryOrders) if (d.id) doById.set(String(d.id), d);
 
   const stopsByTrip = new Map<string, PackStopRow[]>();
   for (const s of input.stops) {
@@ -184,10 +248,6 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
 
   return input.trips.map((t) => {
     const raw = (stopsByTrip.get(String(t.id)) ?? []).slice();
-    /* Sort by stop_no, ties broken by the stop's own id so the order is stable
-       across two reads. `stop_no` is NOT NULL DEFAULT 1 (mig 0053), so a trip
-       that was never sequenced has every stop on 1 and the tiebreak is what
-       stops the sheet shuffling between prints. */
     raw.sort((a, b) => num(a.stop_no) - num(b.stop_no) || String(a.id).localeCompare(String(b.id)));
 
     const seenDo = new Set<string>();
@@ -201,9 +261,6 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
       const items = doId && row ? itemsByDo.get(doId) ?? [] : [];
       const stopUnits = items.reduce((n, it) => n + it.qty, 0);
 
-      /* Totals count each DELIVERY ORDER once. Two stops may legitimately name
-         the same DO (a split drop), and adding its units twice would overstate
-         what goes on the lorry. */
       if (doId && row && !seenDo.has(doId)) {
         seenDo.add(doId);
         units += stopUnits;
@@ -219,6 +276,9 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
         do_number: row?.do_number ?? null,
         do_status: row?.status ?? null,
         do_missing: !!doId && !row,
+        so_doc_no: (row?.so_doc_no ?? '').trim() || (doId ? soDocByDo.get(doId) ?? null : null),
+        phone: (row?.phone ?? '').trim() || null,
+        time_range: (row?.time_range ?? '').trim() || null,
         units: stopUnits,
         items,
       };
@@ -230,13 +290,17 @@ export function assemblePackingLists(input: AssembleInput): PackingList[] {
       trip_date: t.trip_date ?? null,
       trip_status: t.status ?? null,
       lorry_plate: t.lorry_id ? lorryById.get(String(t.lorry_id)) ?? null : null,
-      driver_name: t.driver_id ? driverById.get(String(t.driver_id)) ?? null : null,
+      driver_name: t.driver_id ? driverById.get(String(t.driver_id))?.name ?? null : null,
+      driver_phone: t.driver_id ? driverById.get(String(t.driver_id))?.phone ?? null : null,
+      helper_1_name: t.helper_1_id ? helperById.get(String(t.helper_1_id))?.name ?? null : null,
+      helper_2_name: t.helper_2_id ? helperById.get(String(t.helper_2_id))?.name ?? null : null,
       warehouse_name: t.warehouse_id ? warehouseById.get(String(t.warehouse_id)) ?? null : null,
       stop_count: stops.length,
       do_count: seenDo.size,
       units,
       m3_milli: m3Known ? m3 : null,
       stops,
+      source: 'trip' as const,
     };
   });
 }

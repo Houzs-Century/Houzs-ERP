@@ -1,6 +1,3 @@
-/* The phone inbox row: clock for today, "Yesterday", else the date — on the
-   Malaysian calendar. At 01:30 on 10 Nov (Malaysia) a message from 23:30 on
-   the 9th is "Yesterday", even when the phone's clock zone is UTC. */
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
@@ -26,7 +23,7 @@ const thread = (at: string) => ({
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(new Date("2026-11-09T17:30:00Z")); // 01:30 on 10 Nov in Malaysia
+  vi.setSystemTime(new Date("2026-11-09T17:30:00Z"));
   apiGet.mockReset();
   apiGet.mockImplementation(async () => ({ threads: [thread(lastAt.current)], total: 1, page: 1, pageSize: 50, hasMore: false }));
 });

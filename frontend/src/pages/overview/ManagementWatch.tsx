@@ -5,7 +5,7 @@
 // read contributes nothing (its data is null).
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 import { formatCurrency } from "../../lib/utils";
 import { TONE } from "../../components/scm-v2/Charts";
 

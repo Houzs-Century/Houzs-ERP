@@ -1,10 +1,3 @@
-// ----------------------------------------------------------------------------
-// Warehouses — CRUD page (PR #37). Manages physical stock locations.
-//
-// Default seed: KL Warehouse + 2990 PJ (from migration 0050). Add new
-// warehouses here; deactivate (don't delete) when retired to preserve
-// historical movements + lots.
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -22,8 +15,6 @@ import { PageHeader } from '../../components/Layout';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/* Human labels for the Type column (mig 0171). Falls back to the raw value if
-   a legacy / unknown enum somehow lands here. */
 const TYPE_LABELS: Record<WarehouseType, string> = {
   warehouse: 'Warehouse',
   showroom:  'Showroom',
@@ -40,9 +31,6 @@ export const Warehouses = () => {
   const [editing, setEditing] = useState<Warehouse | null>(null);
   const warehouses = useWarehouses({ includeInactive });
 
-  /* Shared DataGrid conversion (2026-06-12) — sort / per-column filter /
-     column show-hide / reorder / pin / persisted layout. The Edit button
-     stopPropagations so it never reads as a row click. */
   const columns = useMemo<GridColumn<Warehouse>[]>(() => [
     {
       key: 'code',

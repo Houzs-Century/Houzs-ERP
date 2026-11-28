@@ -50,8 +50,6 @@ const stageLabel = (k: string) => STAGES.find(([s]) => s === k)?.[1] ?? k.replac
 const dayTxt = (x: number | null | undefined) => (x == null ? "—" : `${x} days`);
 /* A rate on fewer items than this says nothing (owner 2026-10-20: "数据太少的都不需要说出来"). */
 const MIN_RECEIVED = 30;
-/* A rate over 100% means the receipts sit under another supplier code (e.g. a
-   renamed company), not that every item came back. */
 const AGE_COLOR = ["#4f8a5b", "#7fa86a", "#c9a77c", "#d9b25c", TONE.warn, TONE.bad, "#8f2d2d"];
 
 /** `breakdowns` (issue categories, resolution mix) sit under the trend;
@@ -100,7 +98,6 @@ export function QualitySummary({ from, to, fq, filters, periodLabel, breachNow, 
     <div className="mb-4 space-y-4">
       {filters(d?.options ?? null)}
       {q.error && <div className="rounded-md border border-err/40 bg-err/5 px-3 py-2 text-[12.5px] text-err">Could not load the quality summary: {q.error}</div>}
-      {/* The headline on the dark slab the home page and Project Overview use. */}
       <section className="relative overflow-hidden rounded-2xl bg-sidebar px-5 py-5 text-sidebar-ink shadow-slab sm:px-7">
         <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full opacity-50 blur-2xl" style={{ background: "radial-gradient(circle, rgba(22,105,95,0.6), transparent 70%)" }} />
         <div className="relative">
@@ -223,7 +220,6 @@ export function QualitySummary({ from, to, fq, filters, periodLabel, breachNow, 
       {d && (
         <section id="quality-overdue">
           <Panel title="Overdue cases" hint="open cases whose current stage has run past its target days · tab = open cases at the stage, red = how many are overdue · most overdue first">
-            {/* Each stage: open cases at it, and in red how many of them are overdue. */}
             <StepTabs value={stageTab} onChange={setStageTab}
               tabs={[["all", "All", d.caseList.filter((c) => c.open).length, d.overdue.length] as [string, string, number, number],
                 ...STAGES.map(([k, label]) => [k, label, d.caseList.filter((c) => c.open && c.stage === k).length, d.overdue.filter((o) => o.stage === k).length] as [string, string, number, number])]} />

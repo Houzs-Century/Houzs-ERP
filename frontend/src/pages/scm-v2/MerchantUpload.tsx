@@ -1,22 +1,10 @@
-// ----------------------------------------------------------------------------
-// MerchantUpload — the Upload drawer of Merchant reports (the owner's Claude
-// Design, batch 3). What used to be the upload row, in a drawer, with every
-// option it had: several files at once, Excel flattened in the browser, the
-// fee total for a prorated-summary acquirer, the statement month for one whose
-// dates carry no year, the no-reference warning, a refusal per file that keeps
-// the file for Try again. Public Bank first asks which paper it is — its
-// merchant report, or the IBG payment advice PDF that came with the payout.
-// The result is said the design's way: each file read, then the piles its
-// lines fell into. Every rule is the server's; this reads files and repeats
-// what the server said, refusals verbatim (§2.14).
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { AlertTriangle, Check, FileText, Info, Upload, X } from 'lucide-react';
 import { ResizableDetailDrawer } from '../../components/ResizableDetailDrawer';
 import { useUploadPayoutAdvice, useUploadStatement, type AcquirerSetup, type PayoutDay } from './settlement-queries';
 import { fmt, refusalText } from './settlement-ui';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { parseMoneyToSen } from '../../lib/money';
 import drawer from './finance/FinanceTasks.module.css';
 import styles from './UploadDrawer.module.css';
@@ -54,7 +42,6 @@ export const readAdviceFiles = (picked: File[]): Promise<Array<{ name: string; c
 const bucket = (buckets: Record<string, number>, key: string): number => Number(buckets[key] ?? 0);
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** An advice's days, in the design's three piles. */
 const advicePiles = (days: PayoutDay[]) => ({
   agree: days.filter((d) => d.state === 'AGREES').length,
   short: days.filter((d) => d.state === 'DIFFERS'),
@@ -69,14 +56,11 @@ export function MerchantUploadDrawer({ acq, acquirers, startWith, onClose }: {
   const uploadAdvice = useUploadPayoutAdvice();
   const [code, setCode] = useState(acq ?? (startWith === 'advice' ? 'PBB' : ''));
   const chosen = acquirers.find((a) => a.code === code) ?? null;
-  /* Only Public Bank sends an advice this system reads, so only Public Bank is asked which paper it is. */
   const [picked, setPicked] = useState<UploadKind | null>(startWith);
   const kind: UploadKind | null = code === 'PBB' ? picked : code ? 'report' : null;
   const [reports, setReports] = useState<Array<{ name: string; content: string }>>([]);
   const [advices, setAdvices] = useState<Array<{ name: string; contentBase64: string }>>([]);
   const [summaryFee, setSummaryFee] = useState('');
-  /* A file that dates "05-Jun" with no year: the operator answers which month;
-     the system never guesses which year money belongs to. */
   const [statementMonth, setStatementMonth] = useState('');
   const [results, setResults] = useState<FileResult[]>([]);
   const [made, setMade] = useState<number[]>([]);
@@ -95,12 +79,8 @@ export function MerchantUploadDrawer({ acq, acquirers, startWith, onClose }: {
 
   const sendReports = async () => {
     const done: FileResult[] = [];
-    /* A refused file stays selected: half the refusals end "…and upload it
-       again", and throwing the file away made that impossible. */
     const rejected: typeof reports = [];
     const ids: number[] = [...made];
-    /* One after another: each upload's matching must see the payments the
-       previous one claimed, or two reports could take the same money. */
     const fee = parseMoneyToSen(summaryFee, 'The statement fee total');
     if (!fee.ok) {
       setResults(reports.map((f) => ({ name: f.name, ok: false, text: fee.message })));
@@ -215,7 +195,6 @@ export function MerchantUploadDrawer({ acq, acquirers, startWith, onClose }: {
               <input className={drawer.input} value={summaryFee} onChange={(e) => setSummaryFee(e.target.value)} placeholder="0.00" aria-label="Statement fee total" />
             </label>
           )}
-          {/* Asked ONLY of the acquirer whose file needs it: Hong Leong dates a line "16-Aug" with no year. */}
           {kind === 'report' && chosen?.dates_have_no_year === true && (
             <label className={drawer.field}>
               <span className={drawer.fieldLabel}>Statement month</span>

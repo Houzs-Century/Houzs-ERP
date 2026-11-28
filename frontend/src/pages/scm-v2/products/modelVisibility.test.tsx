@@ -1,5 +1,3 @@
-/* Modular hides a Model whose codes are all off (a merge leftover such as
- * "AMIRA PREMUIM") unless Show inactive is on, and the choice lives in the URL. */
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { describe, expect, test } from 'vitest';

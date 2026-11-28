@@ -31,15 +31,11 @@ import type { Company, DivisionTarget } from "./announcementModel";
 // ────────────────────────────────────────────────────────────────────────────
 
 export type AudienceValue = {
-  /** null = every company (the backend stores NULL). */
   companyId: number | null;
-  /** Explicit broadcast. Nothing else is read while it is on. */
   allStaff: boolean;
   deptIds: number[];
-  /** Divisions targeted on their own (a selected department implies its divisions). */
   divisions: DivisionTarget[];
   userIds: number[];
-  /** People unticked under a selected department / division (see header). */
   excludedUserIds: number[];
 };
 
@@ -55,14 +51,11 @@ export const EMPTY_AUDIENCE: AudienceValue = {
 export type AudiencePickerProps = {
   value: AudienceValue;
   onChange: (next: AudienceValue) => void;
-  /** Which department column three lists (deptKey string), null = first. */
   focusDeptId: number | null;
   onFocusDept: (id: number) => void;
   companies: Company[];
   departments: Department[];
   users: TeamMember[];
-  /** A Sales-Director-only composer: no company column, no All staff — the
-   *  department list is already server-scoped to their own department. */
   salesDirOnly: boolean;
   disabled?: boolean;
 };
@@ -77,7 +70,6 @@ export function membersOf(users: TeamMember[], deptId: number | null): TeamMembe
   );
 }
 
-/** Division label for grouping; "" = the department's own (unnamed) group. */
 function divisionOf(u: TeamMember): string {
   return (u.division ?? "").trim();
 }
@@ -108,7 +100,6 @@ export function membersOfDivision(users: TeamMember[], deptId: number, division:
   );
 }
 
-/** Everyone a selection reaches through a department or division target. */
 function reachedByGroups(v: AudienceValue, users: TeamMember[]): Set<number> {
   const out = new Set<number>();
   for (const id of v.deptIds) for (const u of membersOf(users, id)) out.add(u.id);
@@ -141,7 +132,6 @@ export function audienceSummary(
   if (v.allStaff) who = "All staff";
   else {
     const parts: string[] = [];
-    // Divisions of one department read as "Operation › Driver Team + Attendant KL".
     const byDept = new Map<number, string[]>();
     for (const d of v.divisions) {
       if (v.deptIds.includes(d.deptId)) continue;
@@ -223,7 +213,6 @@ export function AudiencePicker(p: AudiencePickerProps) {
   const focusDept = p.departments.find((d) => d.id === focusId) ?? null;
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<Set<number>>(() => new Set(focusId != null ? [focusId] : []));
-  // The focused department's tree is always open.
   useEffect(() => {
     if (focusId == null) return;
     setOpen((prev) => (prev.has(focusId) ? prev : new Set([...prev, focusId])));
@@ -240,7 +229,6 @@ export function AudiencePicker(p: AudiencePickerProps) {
   const reached = useMemo(() => reachedByGroups(p.value, p.users), [p.value, p.users]);
 
   const set = (patch: Partial<AudienceValue>) => p.onChange({ ...p.value, ...patch });
-  /** Exclusions that no selected group reaches any more are forgotten. */
   const pruneExclusions = (next: AudienceValue): AudienceValue => {
     const r = reachedByGroups(next, p.users);
     return { ...next, excludedUserIds: next.excludedUserIds.filter((id) => r.has(id)) };
@@ -264,8 +252,6 @@ export function AudiencePicker(p: AudiencePickerProps) {
   };
   const isTicked = (id: number) =>
     p.value.userIds.includes(id) || (reached.has(id) && !p.value.excludedUserIds.includes(id));
-  /** One click on a person: reached through a group → toggle the exclusion;
-   *  otherwise → toggle the explicit pick. */
   const setPeople = (ids: number[], on: boolean) => {
     const excluded = new Set(p.value.excludedUserIds);
     const explicit = new Set(p.value.userIds);
@@ -475,14 +461,11 @@ export function AudiencePicker(p: AudiencePickerProps) {
             const groupOn = deptOff || deptOn || divisionOn;
             const allOn = deptOff || tickedCount === ids.length;
             const someOn = !deptOff && tickedCount > 0 && tickedCount < ids.length;
-            // A named division's tick-all IS the division target; the unnamed
-            // rest can only be picked person by person (explicit ids).
             const onGroupClick = () => {
               if (focusId == null) return;
               if (g.division !== "") {
-                if (deptOn) return; // implied by the department
+                if (deptOn) return;
                 if (divisionOn && tickedCount < ids.length) {
-                  // Some were unticked: re-tick them all first.
                   setPeople(ids, true);
                   return;
                 }

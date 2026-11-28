@@ -1,14 +1,3 @@
-// Guards the 2026-08-15 clipping fix for the customer-name typeahead, which was
-// four copies of the same JSX across the SO and consignment forms and portalled
-// in exactly one of them.
-//
-// WHAT THIS CANNOT PROVE. jsdom does no layout, so nothing here shows pixels are
-// no longer sliced — that was measured in a browser against the real
-// `.card { overflow: hidden }` markup. What IS mechanically checkable is the
-// property the clip depended on: the list being a descendant of the clipping
-// ancestor. Same split the StatePicker and PhoneInput suites document.
-//
-// Unmount is handled by the global afterEach(cleanup) in src/test-setup.ts.
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { useRef } from 'react';
@@ -27,7 +16,6 @@ const ROWS = [
 
 const CLASSES = { list: 'lst', item: 'itm', code: 'cde' };
 
-/** The form's own clipping ancestor — the shape that caused the bug. */
 function Host({
   open = true,
   suggestions = ROWS,

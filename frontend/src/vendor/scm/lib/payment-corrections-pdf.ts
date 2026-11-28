@@ -17,14 +17,9 @@ import {
   DOC_TABLE_HEAD_STYLES, DOC_TABLE_STYLES, deliverPdf, drawHeader, ensurePdfCjkFont, paperText,
   fmtDocDate, fmtDocStamp, safeName, type PdfAction,
 } from './pdf-common';
-/* Money reads 'RM 1,990.00' on this report, as it does on the screen and every
-   other Finance page — pdf-common's fmtRm spells the ISO code ('MYR'), which
-   is right on a document a supplier abroad may read and wrong here. */
-import { fmtSen as fmtRm } from '../../shared/format';
-import { PDF_COMPRESS } from './pdf-options';
+import { fmtSen as fmtRm } from '../../../../../shared/src/vendor/shared/format';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
-/* What the report endpoint hands over, structurally — named here so the
-   document can be built and tested without the page's query module. */
 export type CorrectionRowInput = {
   at: string;
   by: string;
@@ -37,7 +32,6 @@ export type CorrectionRowInput = {
   reason: string;
   /** No reason because the row predates the rule (owner 2026-09-14: 规则之前). */
   beforeRule: boolean;
-  /** Who first recorded the payment this row concerns, and when (ISO). */
   recordedBy: string | null;
   recordedOn: string | null;
   originalJeNo: string | null;
@@ -57,19 +51,11 @@ export type CorrectionsInput = {
 export type CorrectionsDocument = {
   title: string;
   monthText: string;
-  /** The three figures the screen's cards show, as label/value pairs. */
   summary: Array<{ label: string; value: string }>;
-  /** One line per action, in the report's column order: when + who / order +
-      customer / what was done / who first recorded the payment / reason /
-      ledger. */
   lines: string[][];
-  /** The sentence printed instead of a table when there is nothing to list. */
   empty: string | null;
 };
 
-/* The audit's field names, in the words the screen uses. Anything not listed
-   prints as its raw name rather than being dropped — a field the report does
-   not know is still a field that moved. */
 const FIELD_WORDS: Record<string, string> = {
   amountSen: 'Amount', paidAt: 'Date', method: 'Method', merchantProvider: 'Bank',
   installmentMonths: 'Plan', onlineType: 'Sub-type', approvalCode: 'Approval code',

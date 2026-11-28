@@ -34,6 +34,7 @@ import {
   flowAnchorFromSearch,
   MAX_CONFIRMED_PER_DAY,
   PENDING_TTL_MS,
+  pdfDisposition,
   pdfKind,
   flowSpec,
   pickDateAmount,
@@ -45,10 +46,10 @@ import {
   type Proposal,
 } from "../services/mcp-actions";
 import { isFinanceViewer, isProductCostViewer } from "../services/pmsAccess";
+import { grnPdf, PdfReadError, purchaseOrderPdf, salesInvoicePdf, salesOrderPdf, type PdfReader } from "../services/mcp-pdf";
 import { docTitle, fetchKind, myToday, parseFetchId, pickFields, PROMPTS, promptText, resolveWindow, searchResults, singleMonth, summariseDelivery, summariseSales, type Window } from "../services/mcp-quick";
 import { classifyPath, moduleCatalog, readablePaths, redactMoney, redactSecrets, type RouteInfo } from "../services/mcp-access";
 import {
-  actionsEnabled,
   claimPendingAction,
   confirmedLastDay,
   consumeCode,
@@ -67,11 +68,19 @@ import {
   resolveAccessToken,
   validRedirectUri,
 } from "../services/mcp-store";
+import { answerCacheKey, cachedAnswer, cacheTtlFor, RATE_LIMITED_NOTE, rateLimitRefusal } from "../services/mcp-ratelimit";
+import { writeAudit } from "../services/audit";
+import { actionSwitches, type ActionSwitches } from "../services/mcp-store";
+import { caseIdFrom, caseIdFromList, isActionKind, kindAllowed, kindOffText, pickThread, proposeMailReply, proposeNote, THREAD_ID_RE, WRITE_TOOLS, writeOutcome, type WriteKind, type WriteProposal } from "../services/mcp-write-actions";
+import { ROLE_PROMPTS, rolePromptText, visibleRolePrompts, visibleTools, withOutputSchemas, withStructured } from "../services/mcp-round4c";
+import { CACHEABLE_TOOLS, isRound3Tool, mcpXlsxDownload, ROUND3_INSTRUCTIONS, ROUND3_TOOLS, runRound3Tool } from "../services/mcp-round3";
+import { HOWTO_INSTRUCTIONS, HOWTO_PROMPTS, HOWTO_TOOLS, howtoPromptText, isHowtoTool, redactQuestion, runHowtoTool } from "../services/mcp-howto";
+import { isScreenTool, runScreenTool, SCREEN_INSTRUCTIONS, SCREEN_PROMPTS, SCREEN_TOOLS, screenPromptText } from "../services/mcp-screen";
+import { annotatedHtml, annotatedSvg, resolveShot, SHOW_ME_TOOL, showMeText } from "../services/mcp-show-me";
 
 type HonoEnv = { Bindings: Env };
 const app = new Hono<HonoEnv>();
 
-// The whole app, for in-process tool calls; set by index.ts (importing it here would be circular).
 type FetchApp = { fetch: (req: Request, env: Env, ctx?: unknown) => Response | Promise<Response>; routes: RouteInfo[] };
 let appRef: FetchApp | null = null;
 export function setMcpApp(a: FetchApp): void {
@@ -105,7 +114,6 @@ const originOf = (c: Context<HonoEnv>): string =>
 
 export const isMcpAdmin = (u: AuthUser): boolean => hasPermission(u.permissions_set, MCP_ADMIN_PERMISSION);
 
-// ── discovery ───────────────────────────────────────────────────────────────
 
 export function protectedResourceMetadata(origin: string) {
   return { resource: `${origin}/api/mcp`, authorization_servers: [origin], bearer_methods_supported: ["header"], scopes_supported: ["erp.read"], resource_name: "Houzs ERP" };
@@ -131,7 +139,6 @@ mcpWellKnown.get("/oauth-protected-resource/*", (c) => c.json(protectedResourceM
 mcpWellKnown.get("/oauth-authorization-server", (c) => c.json(authorizationServerMetadata(originOf(c))));
 mcpWellKnown.get("/oauth-authorization-server/*", (c) => c.json(authorizationServerMetadata(originOf(c))));
 
-// ── OAuth ───────────────────────────────────────────────────────────────────
 
 app.post("/oauth/register", async (c) => {
   let body: { client_name?: unknown; redirect_uris?: unknown };
@@ -173,7 +180,6 @@ app.get("/oauth/authorize", async (c) => {
   if (q("response_type") !== "code") return plain("Only response_type=code is supported.");
   if (!q("code_challenge") || q("code_challenge_method") !== "S256") return plain("This app must use PKCE (S256).");
   const id = await createAuthRequest(c.env.DB, { clientId, redirectUri, state: q("state"), codeChallenge: q("code_challenge") });
-  // The SPA signs the person in (or uses their session) and shows Allow / Cancel.
   return c.redirect(`${originOf(c)}/ai-connect?request=${encodeURIComponent(id)}`, 302);
 });
 
@@ -220,12 +226,12 @@ app.post("/oauth/token", async (c) => {
   );
 });
 
-// ── MCP endpoint ────────────────────────────────────────────────────────────
 
 export type McpIdentity = { tokenId: string; clientId: string; user: AuthUser };
 type Identity = McpIdentity;
 type RpcReq = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
+type ImageItem = { type: "image"; data: string; mimeType: string };
 const text = (t: string, isError = false): ToolResult => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
 
 export const MCP_INSTRUCTIONS = `You are connected to Houzs ERP (Houzs Century furniture retail + the 2990's POS: sales orders, projects / exhibitions, service cases (ASSR), purchasing, delivery, warehouse, accounting, HR, fleet) as the signed-in staff member.
@@ -233,6 +239,7 @@ Everything is limited to what this person may see and do in the ERP. Reading is 
 ANSWER FAST: use a quick answer first. It is one call and already summarised.
 - Sales (a month, quarter or year; vs the same days of the previous period; by showroom, brand, salesperson, state; daily; top models; trend): sales_summary {period: "YYYY-MM" | "YYYY-Qn" | "YYYY"} or {from, to}.
 - Deliveries (delivery orders and amount; vs the same days of the previous period; by region and lorry; daily; open process gaps such as delivery orders not closed or delivered but still owing): delivery_summary {period} or {from, to}.
+${ROUND3_INSTRUCTIONS}
 - One document, customer or supplier by number or name, or the status of an order: search {query}, then fetch {id} for the full record.
 - The chain of a document (sales order -> delivery orders -> invoices -> payments, and purchase orders -> goods received -> purchase invoices, or backwards from any of them): document_flow {number_or_id}.
 - A document's PDF / printout: get_pdf {type, id} (ids from search).
@@ -240,7 +247,9 @@ Only when no quick answer fits: list_modules, then list_endpoints for a module, 
 Two companies share the ERP: HOUZS (default) and 2990 (the 2990's POS). Pass company "2990" to sales_summary, delivery_summary, search, fetch or erp_get for 2990 data, if this person may see it.
 Money in the ERP is integer sen (RM x 100) unless a field says RM. Dates are Malaysia time.
 If a call says "not available to your role" or "You don't have permission", tell the person they do not have permission for that data.
-ACTIONS (only booking a meeting and sending an email; never orders, money, stock, approvals or deletes): call propose_meeting or propose_email, show the person the summary it returns word for word, and ask them to confirm. Only call confirm_action after they explicitly say yes in their own reply. If they want changes, propose again. If a tool says AI actions are switched off, tell them their admin has not turned actions on.`;
+ACTIONS (only booking a meeting, sending an email, replying to a Mail Center email and adding a note to a service case; never orders, money, stock, prices, payroll, approvals or deletes): call propose_meeting, propose_email, propose_mail_reply or propose_note, show the person the summary it returns word for word, and ask them to confirm. Only call confirm_action after they explicitly say yes in their own reply. If they want changes, propose again. If a tool says an action is switched off, tell them their admin has not turned it on.
+${HOWTO_INSTRUCTIONS}
+${SCREEN_INSTRUCTIONS}`;
 
 const readOnly = { readOnlyHint: true, openWorldHint: false };
 const actionHint = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
@@ -322,7 +331,7 @@ export const MCP_TOOLS = [
     name: "get_pdf",
     title: "PDF / printout of a document",
     description:
-      "A document's printout. A service case (customer copy) or a project debrief comes back as a download link valid for 15 minutes (open it, then print or save as PDF). Sales orders, delivery orders, invoices, purchase orders and the other trading documents make their PDF in the browser: you get the ERP page link, and the person presses Print / PDF there.",
+      "A document's printout. A sales order, purchase order, sales invoice or goods received note (grn) comes back as a download link to the PDF file itself (the same document the ERP's Print / PDF button makes), valid for 15 minutes. A service case (customer copy) or a project debrief comes back as a printout link valid for 15 minutes (open it, then print or save as PDF). Delivery orders (their printed QR is a public scan link minted at print time, so only the ERP page prints them) and the other trading documents make their PDF in the browser: you get the ERP page link, and the person presses Print / PDF there.",
     inputSchema: {
       type: "object",
       properties: {
@@ -378,10 +387,11 @@ export const MCP_TOOLS = [
     },
     annotations: actionHint,
   },
+  ...WRITE_TOOLS,
   {
     name: "confirm_action",
     title: "Do a confirmed action",
-    description: "Book the meeting or send the email prepared by propose_meeting / propose_email. ONLY after the person has seen the summary and explicitly said yes. Each confirmationId works once, within 10 minutes.",
+    description: "Do the action prepared by a propose_* tool (book the meeting, send the email or the reply, add the note). ONLY after the person has seen the summary and explicitly said yes. Each confirmationId works once, within 10 minutes.",
     inputSchema: { type: "object", properties: { confirmationId: { type: "string" } }, required: ["confirmationId"], additionalProperties: false },
     annotations: actionHint,
   },
@@ -392,31 +402,48 @@ export const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { confirmationId: { type: "string" } }, required: ["confirmationId"], additionalProperties: false },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  ...ROUND3_TOOLS,
+  ...HOWTO_TOOLS,
+  ...SCREEN_TOOLS,
+  SHOW_ME_TOOL,
 ];
 
-async function innerCall(c: Context<HonoEnv>, token: string, pathWithQuery: string, company: string | null, write: { actionId: string; method: string; body: unknown } | null): Promise<Response> {
-  if (!appRef) throw new Error("MCP app not initialised");
+/** Who an in-process read runs for: the Worker env, its execution context and the public origin links are built on. */
+export type InnerCaller = { env: Env; ctx: unknown; origin: string };
+function callerOf(c: Context<HonoEnv>): InnerCaller {
   let ctx: unknown;
   try {
     ctx = c.executionCtx;
   } catch {
     ctx = undefined;
   }
+  return { env: c.env, ctx, origin: originOf(c) };
+}
+
+async function innerCall(c: Context<HonoEnv>, token: string, pathWithQuery: string, company: string | null, write: { actionId: string; method: string; body: unknown } | null): Promise<Response> {
+  return innerCallAs(callerOf(c), token, pathWithQuery, company, write);
+}
+async function innerCallAs(k: InnerCaller, token: string, pathWithQuery: string, company: string | null, write: { actionId: string; method: string; body: unknown } | null): Promise<Response> {
+  if (!appRef) throw new Error("MCP app not initialised");
   const headers: Record<string, string> = { authorization: `Bearer ${token}`, [MCP_INNER_HEADER]: mcpInnerSecret(), accept: "application/json" };
   if (company) headers["X-Company-Id"] = company;
-  if (!write) return appRef.fetch(new Request(originOf(c) + pathWithQuery, { method: "GET", headers }), c.env, ctx);
+  if (!write) return appRef.fetch(new Request(k.origin + pathWithQuery, { method: "GET", headers }), k.env, k.ctx);
   headers[MCP_ACTION_HEADER] = write.actionId;
   headers["content-type"] = "application/json";
-  return appRef.fetch(new Request(originOf(c) + pathWithQuery, { method: write.method, headers, body: JSON.stringify(write.body) }), c.env, ctx);
+  return appRef.fetch(new Request(k.origin + pathWithQuery, { method: write.method, headers, body: JSON.stringify(write.body) }), k.env, k.ctx);
 }
 const innerGet = (c: Context<HonoEnv>, token: string, pathWithQuery: string, company: string | null) => innerCall(c, token, pathWithQuery, company, null);
 
-type ReadValue =
+export type ReadValue =
   | { ok: true; status: number; value: unknown; removed: string[]; target: string }
   | { ok: false; status: number; message: string; note: string; target: string };
 
-/** Read one endpoint as the person (gate, in-process GET, credential strip). Shared by erp_get, the quick answers, search and fetch. */
-async function readValue(c: Context<HonoEnv>, token: string, rawPath: string, query: Record<string, unknown> | undefined, company: string | null): Promise<ReadValue> {
+function readValue(c: Context<HonoEnv>, token: string, rawPath: string, query: Record<string, unknown> | undefined, company: string | null): Promise<ReadValue> {
+  return readAs(callerOf(c), token, rawPath, query, company);
+}
+
+/** One read as the token's person: the same in-process GET, credential strip and money strip every tool uses. Shared with the scheduled brief (services/mcp-proactive-run.ts). */
+export async function readAs(k: InnerCaller, token: string, rawPath: string, query: Record<string, unknown> | undefined, company: string | null): Promise<ReadValue> {
   const d = classifyPath(rawPath);
   if (!d.ok) return { ok: false, status: 400, message: d.reason, note: "blocked path", target: rawPath };
   const qs = new URLSearchParams();
@@ -425,7 +452,7 @@ async function readValue(c: Context<HonoEnv>, token: string, rawPath: string, qu
     qs.set(k, String(v));
   }
   const target = d.path + (qs.toString() ? `?${qs.toString()}` : "");
-  const res = await innerGet(c, token, target, company);
+  const res = await innerCallAs(k, token, target, company, null);
   const ctype = res.headers.get("content-type") ?? "";
   if (res.status === 401 || res.status === 403) {
     return { ok: false, status: res.status, message: "Not available to your role: you do not have permission for this in the ERP.", note: "no permission", target };
@@ -445,12 +472,34 @@ async function readValue(c: Context<HonoEnv>, token: string, rawPath: string, qu
     return { ok: false, status: res.status, message: `The ERP answered: ${msg}`, note: msg.slice(0, 120), target };
   }
   const { value: noSecrets, removed } = redactSecrets(body);
-  // Cost / margin / profit by the ERP's own cohorts (services/mcp-access.ts redactMoney).
-  const who = recallVerified<McpIdentity>(token, Date.now())?.user ?? (await mcpIdentity(c.env, token))?.user ?? null;
+  const who = recallVerified<McpIdentity>(token, Date.now())?.user ?? (await mcpIdentity(k.env, token))?.user ?? null;
   const sight = { finance: !!who && isFinanceViewer(who), productCost: !!who && isProductCostViewer(who) };
   const money = redactMoney(noSecrets, sight);
   for (const k of money.removed) removed.add(k);
   return { ok: true, status: res.status, value: money.value, removed: [...removed], target };
+}
+
+const PDF_BYTE_PREFIXES = ["/api/scm/mfg-sales-orders/", "/api/scm/mfg-purchase-orders/", "/api/branding/logo?", "/api/projects/brands/logo?"];
+function pdfReader(c: Context<HonoEnv>, token: string, company: string | null): PdfReader {
+  return {
+    json: async <T>(apiPath: string): Promise<T> => {
+      const [path, qs] = apiPath.split("?");
+      const r = await readValue(c, token, path, qs ? Object.fromEntries(new URLSearchParams(qs)) : undefined, company);
+      if (!r.ok) throw new PdfReadError(r.status, r.message, r.note);
+      return r.value as T;
+    },
+    bytes: async (apiPath) => {
+      if (!PDF_BYTE_PREFIXES.some((p) => apiPath.startsWith(p))) throw new Error(`not a printout image route: ${apiPath.slice(0, 80)}`);
+      const res = await innerGet(c, token, apiPath, company);
+      return { status: res.status, contentType: res.headers.get("content-type") ?? "", companyCode: res.headers.get("x-company-code"), body: new Uint8Array(await res.arrayBuffer()) };
+    },
+    asset: async (path) => {
+      if (!/^\/fonts\/[\w.-]+\.ttf$/.test(path)) throw new Error(`not a font asset: ${path.slice(0, 80)}`);
+      const res = await fetch(originOf(c) + path);
+      if (!res.ok) throw new Error(`${path} -> HTTP ${res.status}`);
+      return new Uint8Array(await res.arrayBuffer());
+    },
+  };
 }
 
 /** Read one endpoint as the person, as tool text; shared with the leak check (routes/mcpAdmin.ts). */
@@ -476,13 +525,11 @@ export async function readEndpoint(
   return { result: text((notes.length ? notes.join(" ") + "\n" : "") + out), status: r.status, note: "", target: r.target, body: r.value, removed: r.removed };
 }
 
-/** The X-Company-Id pick passed through; companyContext admits only a company this person holds. */
 const companyArg = (args: Record<string, unknown>): string | null =>
   typeof args.company === "string" && /^[A-Za-z0-9]{1,12}$/.test(args.company) ? args.company : null;
 
 type Outcome = { result: ToolResult; status: number; note: string; target: string };
 
-/** A quick answer: the summary as JSON, or the main read's refusal / error in plain words. */
 function quick(target: string, main: ReadValue, summary: () => unknown): Outcome {
   if (!main.ok) return { result: text(main.message, true), status: main.status, note: main.note, target };
   return { result: text(JSON.stringify(summary())), status: 200, note: "", target };
@@ -493,12 +540,10 @@ const BAD_WINDOW = "Give period as YYYY-MM, YYYY-Qn or YYYY (not in the future),
 
 async function salesSummary(c: Context<HonoEnv>, token: string, w: Window, company: string | null): Promise<Outcome> {
   const fair = (r: { from: string; to: string }) => readValue(c, token, "/api/scm/reports/fair-report", { stage: "so", date_from: r.from, date_to: r.to }, company);
-  // Top models come from the Sales Analysis, which takes one month; for a longer window only its trend is used.
   const month = singleMonth(w);
   const [cur, prev, analysis] = await Promise.all([fair(w), fair(w.prev), readValue(c, token, "/api/scm/sales-analysis", { period: month ?? w.to.slice(0, 7) }, company)]);
   const a = valueOf(analysis);
   const trendOnly = { monthly: (a as { monthly?: unknown } | null)?.monthly };
-  // Only the window itself must succeed; the comparison and the Sales Analysis are extras.
   return quick(`sales:${w.from}..${w.to}`, cur, () => summariseSales(w, valueOf(cur), valueOf(prev), month ? a : trendOnly, w.to.slice(0, 7)));
 }
 
@@ -542,7 +587,6 @@ async function fetchTool(c: Context<HonoEnv>, token: string, rawId: unknown, com
   return { result: text(JSON.stringify(doc)), status: 200, note: "", target };
 }
 
-// ── document flow ───────────────────────────────────────────────────────────
 
 const FLOW_ENRICH_MAX = 15;
 const FLOW_ENRICH_PARALLEL = 5;
@@ -560,7 +604,6 @@ async function documentFlowTool(c: Context<HonoEnv>, token: string, q: string, c
   const r = await readValue(c, token, `/api/scm/document-flow/${anchor.type}/${encodeURIComponent(anchor.id)}`, undefined, company);
   if (!r.ok) return { result: text(r.message, true), status: r.status, note: r.note, target };
 
-  // Date and amount come from each document's own detail read, as the person (money stripped by cohort there too).
   const nodes = (Array.isArray((r.value as { nodes?: unknown }).nodes) ? (r.value as { nodes: Record<string, unknown>[] }).nodes : []).filter((n) => {
     const spec = flowSpec(String(n.type));
     return !!spec?.fetch && typeof n.id === "string" && /^[A-Za-z0-9._-]{1,80}$/.test(n.id);
@@ -568,7 +611,7 @@ async function documentFlowTool(c: Context<HonoEnv>, token: string, q: string, c
   const extra = new Map<string, { date: string | null; amountRM: number | null }>();
   const todo = nodes.slice(0, FLOW_ENRICH_MAX);
   for (let i = 0; i < todo.length; i += FLOW_ENRICH_PARALLEL) {
-    // eslint-disable-next-line no-await-in-loop -- bounded fan-out: 5 in-process reads at a time, at most 15 in all
+     
     await Promise.all(
       todo.slice(i, i + FLOW_ENRICH_PARALLEL).map(async (n) => {
         const kind = fetchKind(String(flowSpec(String(n.type))?.fetch ?? ""));
@@ -585,7 +628,6 @@ async function documentFlowTool(c: Context<HonoEnv>, token: string, q: string, c
   return { result: text(JSON.stringify(out).slice(0, MAX_RESULT_CHARS)), status: 200, note: "", target };
 }
 
-// ── print / PDF ─────────────────────────────────────────────────────────────
 
 async function getPdfTool(c: Context<HonoEnv>, id: Identity, token: string, type: string, docId: string, company: string | null): Promise<Outcome> {
   const target = `pdf:${type}:${docId}`.slice(0, 200);
@@ -593,7 +635,6 @@ async function getPdfTool(c: Context<HonoEnv>, id: Identity, token: string, type
   const kind = fetchKind(type);
   if (!spec || !kind) return { result: text(`get_pdf does not know "${type}". Use a type from search, e.g. sales_order, delivery_order, sales_invoice, purchase_order, assr_case, project.`, true), status: 400, note: "", target };
   if (!/^[A-Za-z0-9._-]{1,80}$/.test(docId)) return { result: text("Give the document id from search.", true), status: 400, note: "", target };
-  // Never weaker than opening the document: read it as the person first.
   const seen = await readValue(c, token, kind.api(docId), undefined, company);
   if (!seen.ok) return { result: text(seen.message, true), status: seen.status, note: seen.note, target };
   const page = originOf(c) + kind.page(docId);
@@ -603,6 +644,7 @@ async function getPdfTool(c: Context<HonoEnv>, id: Identity, token: string, type
     note: "",
     target,
   });
+  if (spec.server) return serverPdfTool(c, id, token, spec.server, type, docId, company, page, target, browserOnly);
   if (!spec.print) return browserOnly("This document's PDF is made in the browser by the ERP page, not on the server.");
   if (spec.financeOnly && !isFinanceViewer(id.user)) return browserOnly("This printout carries cost and profit, which the AI connector shows only to finance.");
   const res = await innerGet(c, token, spec.print(docId), company);
@@ -623,18 +665,54 @@ async function getPdfTool(c: Context<HonoEnv>, id: Identity, token: string, type
   };
 }
 
-// ── actions: propose, confirm, cancel ───────────────────────────────────────
+async function serverPdfTool(
+  c: Context<HonoEnv>,
+  id: Identity,
+  token: string,
+  kind: "so" | "po" | "si" | "grn",
+  type: string,
+  docId: string,
+  company: string | null,
+  page: string,
+  target: string,
+  browserOnly: (why: string) => Outcome,
+): Promise<Outcome> {
+  let pdf: Awaited<ReturnType<typeof salesOrderPdf>>;
+  try {
+    const reader = pdfReader(c, token, company);
+    const draw = { so: salesOrderPdf, po: purchaseOrderPdf, si: salesInvoicePdf, grn: grnPdf }[kind];
+    pdf = await draw(reader, docId);
+  } catch (e) {
+    if (e instanceof PdfReadError) return { result: text(e.message, true), status: e.status, note: e.note, target };
+    const why = e instanceof Error ? e.message : String(e);
+    console.warn(`[mcp] get_pdf ${type} ${docId}: server render failed:`, why);
+    return { ...browserOnly(`The PDF could not be made here (${why.slice(0, 160)}).`), note: `server pdf failed: ${why}`.slice(0, 120) };
+  }
+  const key = randomToken(32);
+  const expiresAt = new Date(Date.now() + EXPORT_TTL_MS).toISOString();
+  await c.env.POD_BUCKET.put(`${EXPORT_PREFIX}${key}.pdf`, pdf.bytes, {
+    httpMetadata: { contentType: "application/pdf", contentDisposition: pdfDisposition(pdf.filename) },
+    customMetadata: { expiresAt, userId: String(id.user.id), doc: `${type}:${docId}` },
+  });
+  return {
+    result: text(JSON.stringify({ download: `${originOf(c)}/api/mcp/export/${key}`, filename: pdf.filename, pages: pdf.pages, expiresAt, page, serverPdf: true, howTo: "The link downloads the PDF itself (the same document the ERP's Print / PDF button makes) and works for 15 minutes." })),
+    status: 200,
+    note: `pdf ${pdf.pages}p ${Math.round(pdf.bytes.byteLength / 1024)}KB ${pdf.ms}ms`,
+    target,
+  };
+}
+
 
 async function proposeTool(c: Context<HonoEnv>, id: Identity, token: string, kind: ActionKind, args: Record<string, unknown>, company: string | null): Promise<Outcome> {
   let target = `propose ${kind}`;
-  if (!(await actionsEnabled(c.env.DB))) return { result: text(ACTIONS_OFF, true), status: 403, note: "actions off", target };
+  const sw = await actionSwitches(c.env.DB);
+  if (!kindAllowed(kind, sw)) return { result: text(kindOffText(kind, sw), true), status: 403, note: "actions off", target };
   let p: Proposal;
   if (kind === "meeting") {
     const boot = await readValue(c, token, "/api/meetings/bootstrap", undefined, company);
     if (!boot.ok) return { result: text(boot.message, true), status: boot.status, note: boot.note, target };
     p = proposeMeeting(args, readBootstrap(boot.value), Date.now());
   } else {
-    // Mail Center is never READ through the connector; this asks only which mailboxes the person may send from.
     const res = await innerGet(c, token, "/api/mail-center/compose/senders", company);
     if (res.status === 401 || res.status === 403) return { result: text("Not available to your role: you may not send email from the Mail Center.", true), status: res.status, note: "no permission", target };
     const body = (await jsonOrNull(res, "senders")) as { senders?: unknown } | null;
@@ -652,7 +730,6 @@ async function proposeTool(c: Context<HonoEnv>, id: Identity, token: string, kin
   };
 }
 
-/** A reply's JSON, or null when it is not JSON (logged; the caller words the status). */
 async function jsonOrNull(res: Response, what: string): Promise<unknown> {
   try {
     return await res.json();
@@ -662,26 +739,86 @@ async function jsonOrNull(res: Response, what: string): Promise<unknown> {
   }
 }
 
+async function threadIdFor(c: Context<HonoEnv>, token: string, args: Record<string, unknown>, company: string | null): Promise<{ ok: true; id: string } | { ok: false; out: Outcome }> {
+  const target = "propose mail_reply";
+  const given = typeof args.thread_id === "string" ? args.thread_id.trim() : "";
+  if (given) return THREAD_ID_RE.test(given) ? { ok: true, id: given } : { ok: false, out: { result: text("That is not a Mail Center thread id.", true), status: 400, note: "", target } };
+  const q = typeof args.thread_search === "string" ? args.thread_search.trim().slice(0, 100) : "";
+  if (q.length < 2) return { ok: false, out: { result: text("Give thread_id, or thread_search (subject, sender name or email) to find the email.", true), status: 400, note: "", target } };
+  const res = await innerGet(c, token, `/api/mail-center/threads?${new URLSearchParams({ q, page: "1", pageSize: "6" }).toString()}`, company);
+  if (res.status === 401 || res.status === 403) return { ok: false, out: { result: text("Not available to your role: you may not use the Mail Center.", true), status: res.status, note: "no permission", target } };
+  const list = res.ok ? await jsonOrNull(res, "mail threads") : null;
+  if (!res.ok || list === null) return { ok: false, out: { result: text(`Your Mail Center could not be searched (HTTP ${res.status}).`, true), status: 502, note: "threads unreadable", target } };
+  const pick = pickThread(list, q);
+  return pick.ok ? pick : { ok: false, out: { result: text(pick.error, true), status: 409, note: "pick a thread", target } };
+}
+
+async function proposeWriteTool(c: Context<HonoEnv>, id: Identity, token: string, kind: WriteKind, args: Record<string, unknown>, company: string | null): Promise<Outcome> {
+  let target = `propose ${kind}`;
+  const sw = await actionSwitches(c.env.DB);
+  if (!kindAllowed(kind, sw)) return { result: text(kindOffText(kind, sw), true), status: 403, note: "actions off", target };
+  let p: WriteProposal;
+  if (kind === "mail_reply") {
+    const tid = await threadIdFor(c, token, args, company);
+    if (!tid.ok) return tid.out;
+    const [det, snd] = await Promise.all([innerGet(c, token, `/api/mail-center/threads/${encodeURIComponent(tid.id)}`, company), innerGet(c, token, "/api/mail-center/compose/senders", company)]);
+    if (det.status === 401 || det.status === 403) return { result: text("Not available to your role: you may not use the Mail Center.", true), status: det.status, note: "no permission", target };
+    if (det.status === 404) return { result: text("That email is not in your Mail Center mailboxes.", true), status: 404, note: "thread not found", target };
+    const detail = det.ok ? await jsonOrNull(det, "mail thread") : null;
+    if (detail === null) return { result: text(`The email could not be read (HTTP ${det.status}).`, true), status: 502, note: "thread unreadable", target };
+    const senders = snd.ok ? ((await jsonOrNull(snd, "senders")) as { senders?: unknown } | null)?.senders : null;
+    p = proposeMailReply(args, detail, Array.isArray(senders) ? senders.map(String) : []);
+  } else {
+    if (args.record_type !== undefined && args.record_type !== "service_case") return { result: text("Only service cases take notes in the ERP (sales orders, purchase orders and customers have no note feature).", true), status: 400, note: "", target };
+    const ref = caseIdFrom(args.id);
+    if (!ref) return { result: text("Give the service case number or its id from search.", true), status: 400, note: "", target };
+    let caseId: string | null = "id" in ref ? ref.id : null;
+    if ("number" in ref) {
+      const found = await readValue(c, token, "/api/assr", { search: ref.number, per_page: 10 }, company);
+      if (!found.ok) return { result: text(found.status === 401 || found.status === 403 ? "You don't have access to service cases in the ERP." : found.message, true), status: found.status, note: found.note, target };
+      caseId = caseIdFromList(found.value, ref.number);
+      if (!caseId) return { result: text(`No service case numbered ${ref.number} that you may see.`, true), status: 404, note: "case not found", target };
+    }
+    const det = await readValue(c, token, `/api/assr/${caseId}`, undefined, company);
+    if (!det.ok) return { result: text(det.status === 401 || det.status === 403 ? "You don't have access to that service case in the ERP." : det.status === 404 ? "That service case is not in your scope or does not exist." : det.message, true), status: det.status, note: det.note, target };
+    p = proposeNote(args, det.value);
+  }
+  if (!p.ok) return { result: text(p.error, true), status: 400, note: p.error.slice(0, 120), target };
+  const confirmationId = await createPendingAction(c.env.DB, { tokenId: id.tokenId, userId: id.user.id, kind, payload: { company, body: p.payload, id: p.id, entity: p.entity }, summary: p.logLine, ttlMs: PENDING_TTL_MS });
+  target = `propose ${p.logLine}`;
+  return {
+    result: text(JSON.stringify({ confirmationId, expiresInMinutes: PENDING_TTL_MS / 60_000, summary: p.summary, next: "Show this summary to the person and ask them to confirm. Only call confirm_action after they explicitly say yes." })),
+    status: 200,
+    note: "",
+    target,
+  };
+}
+
 const UNKNOWN_CONFIRMATION = "That confirmation is unknown, expired (10 minutes), already used, or belongs to another connection. Propose it again.";
 
 async function confirmTool(c: Context<HonoEnv>, id: Identity, token: string, confirmationId: string): Promise<Outcome> {
   let target = "confirm";
-  if (!confirmationId) return { result: text("Give the confirmationId from propose_meeting or propose_email.", true), status: 400, note: "", target };
-  if (!(await actionsEnabled(c.env.DB))) return { result: text(ACTIONS_OFF, true), status: 403, note: "actions off", target };
+  if (!confirmationId) return { result: text("Give the confirmationId from the propose_* tool.", true), status: 400, note: "", target };
+  const sw: ActionSwitches = await actionSwitches(c.env.DB);
+  if (!sw.master) return { result: text(ACTIONS_OFF, true), status: 403, note: "actions off", target };
   if ((await confirmedLastDay(c.env.DB, id.user.id)) >= MAX_CONFIRMED_PER_DAY) {
     return { result: text(`You have reached the limit of ${MAX_CONFIRMED_PER_DAY} AI actions in 24 hours. Do this one in the ERP.`, true), status: 429, note: "daily limit", target };
   }
   const row = await claimPendingAction(c.env.DB, confirmationId, id.tokenId, id.user.id, "confirmed");
   if (!row) return { result: text(UNKNOWN_CONFIRMATION, true), status: 404, note: "unknown or used", target };
   target = `confirm ${row.summary}`;
-  const route = actionRoute(row.kind);
-  const kind = row.kind === "meeting" || row.kind === "email" ? row.kind : null;
+  const kind = isActionKind(row.kind) ? row.kind : null;
+  if (kind && !kindAllowed(kind, sw)) {
+    await finishPendingAction(c.env.DB, row.id, "failed", "switched off");
+    return { result: text(kindOffText(kind, sw), true), status: 403, note: "actions off", target };
+  }
+  const route = kind ? actionRoute(kind, typeof row.payload.id === "string" ? row.payload.id : null) : null;
   if (!route || !kind) {
     await finishPendingAction(c.env.DB, row.id, "failed", "unknown kind");
     return { result: text("That action cannot be done.", true), status: 400, note: "unknown kind", target };
   }
   const company = typeof row.payload.company === "string" ? row.payload.company : null;
-  armAction(row.id, kind, id.tokenId, Date.now());
+  armAction(row.id, kind, id.tokenId, route.path, Date.now());
   let res: Response;
   try {
     res = await innerCall(c, token, route.path, company, { actionId: row.id, method: route.method, body: row.payload.body });
@@ -689,35 +826,95 @@ async function confirmTool(c: Context<HonoEnv>, id: Identity, token: string, con
     disarmAction(row.id);
   }
   const body: unknown = await jsonOrNull(res, `confirm ${kind}`);
-  const out = actionOutcome(kind, res.status, body);
+  const out = kind === "meeting" || kind === "email" ? actionOutcome(kind, res.status, body) : writeOutcome(kind, res.status, body);
   await finishPendingAction(c.env.DB, row.id, out.ok ? "done" : "failed", out.ok ? `HTTP ${res.status}` : out.text);
+  if (out.ok) {
+    const entity = (row.payload.entity ?? null) as { type?: unknown; id?: unknown } | null;
+    await writeAudit(c.env, {
+      action: `ai_connector.action.${kind}`,
+      entityType: typeof entity?.type === "string" ? entity.type : kind,
+      entityId: typeof entity?.id === "string" ? entity.id : row.id,
+      summary: `Through the AI Connector (confirmed by the person): ${row.summary}`.slice(0, 500),
+      meta: { confirmationId: row.id, clientId: id.clientId, status: res.status },
+      actorId: id.user.id,
+      actorEmail: id.user.email,
+    });
+  }
   return { result: text(out.text, !out.ok), status: res.status, note: out.ok ? "" : out.text.slice(0, 120), target };
 }
 
 async function cancelTool(c: Context<HonoEnv>, id: Identity, confirmationId: string): Promise<Outcome> {
   const row = confirmationId ? await claimPendingAction(c.env.DB, confirmationId, id.tokenId, id.user.id, "cancelled") : null;
   if (!row) return { result: text(UNKNOWN_CONFIRMATION, true), status: 404, note: "unknown or used", target: "cancel" };
-  return { result: text("Cancelled. Nothing was booked or sent."), status: 200, note: "", target: `cancel ${row.summary}` };
+  return { result: text("Cancelled. Nothing was booked, sent or written."), status: 200, note: "", target: `cancel ${row.summary}` };
 }
 
-async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+const toBase64 = (bytes: Uint8Array): string => {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+};
+
+async function showMeTool(c: Context<HonoEnv>, id: Identity, args: Record<string, unknown>): Promise<Outcome & { image: ImageItem | null }> {
+  const s = (k: string) => (typeof args[k] === "string" ? (args[k] as string).trim().slice(0, 300) : undefined);
+  const hit = resolveShot({ path: s("path"), guide_id: s("guide_id"), label: s("label"), step: typeof args.step === "number" ? args.step : undefined });
+  const asked = [s("guide_id"), s("path"), s("label")].filter(Boolean).join(" ");
+  if (!hit) {
+    return { result: text(JSON.stringify({ matched: false, message: "No screenshot for that yet. Use the page link from how_to / where_is instead; it highlights the button on the real page." })), status: 200, note: "no-guide", target: redactQuestion(asked || "show_me"), image: null };
+  }
+  const origin = originOf(c);
+  const res = await fetch(`${origin}/help-shots/${hit.shot.file}`);
+  if (!res.ok) return { result: text(JSON.stringify(showMeText(hit, origin, null))), status: 200, note: `shot fetch ${res.status}`, target: `show_me ${hit.page}`, image: null };
+  const b64 = toBase64(new Uint8Array(await res.arrayBuffer()));
+  const caption = `Press "${hit.label}" (test data, real layout)`;
+  const key = randomToken(32);
+  const expiresAt = new Date(Date.now() + EXPORT_TTL_MS).toISOString();
+  await c.env.POD_BUCKET.put(`${EXPORT_PREFIX}${key}.html`, annotatedHtml(annotatedSvg(hit, b64, caption), caption), {
+    httpMetadata: { contentType: "text/html; charset=utf-8" },
+    customMetadata: { expiresAt, userId: String(id.user.id), doc: `show_me:${hit.page}` },
+  });
+  const link = `${origin}/api/mcp/export/${key}`;
+  return { result: text(JSON.stringify(showMeText(hit, origin, link))), status: 200, note: "", target: `show_me ${hit.page} ${hit.label}`.slice(0, 200), image: { type: "image", data: b64, mimeType: "image/webp" } };
+}
+
+async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: string, args: Record<string, unknown>): Promise<ToolResult | { content: (ToolResult["content"][number] | ImageItem)[]; isError?: boolean }> {
   const t0 = Date.now();
   let status = 200;
   let note = "";
   let target = "";
   let result: ToolResult;
+  let image: ImageItem | null = null;
   const company = companyArg(args);
   const tag = company ? `[${company}] ` : "";
   try {
-    if (name === "sales_summary" || name === "delivery_summary") {
+    const overLimit = await rateLimitRefusal(c.env.DB, id.user.id, t0);
+    const cacheKey = CACHEABLE_TOOLS.has(name) ? answerCacheKey(id.user.id, company, name, args) : "";
+    if (overLimit) {
+      result = text(overLimit, true);
+      status = 429;
+      note = RATE_LIMITED_NOTE;
+    } else if (isHowtoTool(name)) {
+      ({ result, status, note, target } = runHowtoTool({ user: id.user, origin: originOf(c) }, name, args));
+    } else if (name === "show_me") {
+      const o = await showMeTool(c, id, args);
+      ({ result, status, note, target } = o);
+      image = o.image;
+    } else if (isScreenTool(name)) {
+      ({ result, status, note, target } = runScreenTool({ user: id.user, origin: originOf(c) }, name, args));
+    } else if (isRound3Tool(name)) {
+      const run = () => runRound3Tool({ read: (p, q) => readValue(c, token, p, q, company), origin: originOf(c), userId: id.user.id, bucket: c.env.POD_BUCKET, now: t0 }, name, args);
+      const o = cacheKey ? await cachedAnswer(cacheKey, t0, run, cacheTtlFor(name)) : await run();
+      ({ result, status, note } = o);
+      target = tag + o.target + ("cached" in o ? " (cached)" : "");
+    } else if (name === "sales_summary" || name === "delivery_summary") {
       const w = resolveWindow(args, myToday());
       if (!w) {
         result = text(BAD_WINDOW, true);
         status = 400;
       } else {
-        const o = name === "sales_summary" ? await salesSummary(c, token, w, company) : await deliverySummary(c, token, w, company);
+        const o = await cachedAnswer(cacheKey, t0, () => (name === "sales_summary" ? salesSummary(c, token, w, company) : deliverySummary(c, token, w, company)));
         ({ result, status, note } = o);
-        target = tag + o.target;
+        target = tag + o.target + ("cached" in o ? " (cached)" : "");
       }
     } else if (name === "search" || name === "fetch") {
       const o = name === "search" ? await searchTool(c, token, String(args.query ?? args.q ?? "").trim(), company) : await fetchTool(c, token, args.id, company);
@@ -731,12 +928,17 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
       const o = await proposeTool(c, id, token, name === "propose_meeting" ? "meeting" : "email", args, company);
       ({ result, status, note } = o);
       target = tag + o.target;
+    } else if (name === "propose_mail_reply" || name === "propose_note") {
+      const o = await proposeWriteTool(c, id, token, name === "propose_mail_reply" ? "mail_reply" : "note", args, company);
+      ({ result, status, note } = o);
+      target = tag + o.target;
     } else if (name === "confirm_action" || name === "cancel_action") {
       const o = name === "confirm_action" ? await confirmTool(c, id, token, String(args.confirmationId ?? "").trim()) : await cancelTool(c, id, String(args.confirmationId ?? "").trim());
       ({ result, status, note } = o);
       target = o.target;
     } else if (name === "whoami") {
-      result = text(JSON.stringify({ name: id.user.name, email: id.user.email, position: id.user.position_name, department: id.user.department_name, actionsAllowed: await actionsEnabled(c.env.DB) }));
+      const sw = await actionSwitches(c.env.DB);
+      result = text(JSON.stringify({ name: id.user.name, email: id.user.email, position: id.user.position_name, department: id.user.department_name, actionsAllowed: sw.master, actions: { meetingsAndEmail: sw.master, mailReplies: kindAllowed("mail_reply", sw), serviceCaseNotes: kindAllowed("note", sw) } }));
     } else if (name === "list_modules") {
       result = text(JSON.stringify({ readOnly: true, modules: moduleCatalog(mcpAppRoutes()), tip: "Call list_endpoints with a prefix, then erp_get. A module you may not open answers 'not available to your role'." }));
     } else if (name === "list_endpoints") {
@@ -764,13 +966,14 @@ async function callTool(c: Context<HonoEnv>, id: Identity, token: string, name: 
     result = text(`Failed: ${e instanceof Error ? e.message : String(e)}`, true);
     status = 500;
   }
+  result = withStructured(name, result);
   const done = logCall(c.env.DB, { tokenId: id.tokenId, userId: id.user.id, clientId: id.clientId, tool: name, target, status, ok: !result.isError, note, ms: Date.now() - t0 });
   try {
     c.executionCtx.waitUntil(done);
   } catch {
     await done;
   }
-  return result;
+  return image && !result.isError ? { ...result, content: [...result.content, image] } : result;
 }
 
 async function handleRpc(c: Context<HonoEnv>, id: Identity, token: string, m: RpcReq): Promise<unknown> {
@@ -784,18 +987,19 @@ async function handleRpc(c: Context<HonoEnv>, id: Identity, token: string, m: Rp
     case "ping":
       return reply({});
     case "tools/list":
-      return reply({ tools: MCP_TOOLS });
+      return reply({ tools: visibleTools(withOutputSchemas(MCP_TOOLS), id.user, await actionSwitches(c.env.DB)) });
     case "tools/call":
       return reply(await callTool(c, id, token, String(m.params?.name ?? ""), (m.params?.arguments as Record<string, unknown> | undefined) ?? {}));
     case "resources/list":
       return reply({ resources: [] });
     case "prompts/list":
-      return reply({ prompts: PROMPTS });
+      return reply({ prompts: [...PROMPTS, ...visibleRolePrompts(id.user, await actionSwitches(c.env.DB)), ...HOWTO_PROMPTS, ...SCREEN_PROMPTS] });
     case "prompts/get": {
       const pname = String(m.params?.name ?? "");
-      const ptext = promptText(pname, (m.params?.arguments as Record<string, unknown> | undefined) ?? {});
+      const pargs = (m.params?.arguments as Record<string, unknown> | undefined) ?? {};
+      const ptext = promptText(pname, pargs) ?? rolePromptText(pname, pargs) ?? howtoPromptText(pname, pargs) ?? screenPromptText(pname, pargs);
       if (ptext === null) return { jsonrpc: "2.0", id: m.id ?? null, error: { code: -32602, message: `Unknown prompt: ${pname}` } };
-      return reply({ description: PROMPTS.find((x) => x.name === pname)?.description ?? "", messages: [{ role: "user", content: { type: "text", text: ptext } }] });
+      return reply({ description: [...PROMPTS, ...ROLE_PROMPTS, ...HOWTO_PROMPTS, ...SCREEN_PROMPTS].find((x) => x.name === pname)?.description ?? "", messages: [{ role: "user", content: { type: "text", text: ptext } }] });
     }
     default:
       if (m.id === undefined || m.id === null || (m.method ?? "").startsWith("notifications/")) return null;
@@ -821,8 +1025,6 @@ app.post("/", async (c) => {
       "WWW-Authenticate": `Bearer realm="houzs-erp", resource_metadata="${originOf(c)}/.well-known/oauth-protected-resource/api/mcp"${token ? ', error="invalid_token"' : ""}`,
     });
   }
-  // The inner GETs of this request reuse this check instead of repeating it
-  // (middleware/auth.ts recallVerified): one token check per lookup, not two.
   rememberVerified(token, id, Date.now());
   let body: unknown;
   try {
@@ -840,34 +1042,33 @@ app.post("/", async (c) => {
   return c.json(Array.isArray(body) ? out : out[0]);
 });
 
-// A get_pdf printout: the ERP's own print HTML, stored for 15 minutes under an
-// unguessable key (R2 mcp-exports/). The key is the permission: it was made only
-// after the person's own read of the document succeeded. Sandboxed so the page
-// runs with no access to the ERP's origin (no session, no storage).
 app.get("/export/:key", async (c) => {
   const key = c.req.param("key");
   const gone = (status: 404 | 410) =>
     new Response("This printout link has expired or does not exist. Ask the AI for the PDF again.\n", { status, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
   if (!EXPORT_KEY_RE.test(key)) return gone(404);
-  const objKey = `${EXPORT_PREFIX}${key}.html`;
-  const obj = await c.env.POD_BUCKET.get(objKey);
+  const pdfKey = `${EXPORT_PREFIX}${key}.pdf`;
+  const pdfObj = await c.env.POD_BUCKET.get(pdfKey);
+  const objKey = pdfObj ? pdfKey : `${EXPORT_PREFIX}${key}.html`;
+  const obj = pdfObj ?? (await c.env.POD_BUCKET.get(objKey));
   if (!obj) return gone(404);
   if (!exportAlive(obj.customMetadata?.expiresAt, Date.now())) {
     await c.env.POD_BUCKET.delete(objKey);
     return gone(410);
   }
+  const common = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex", "X-Content-Type-Options": "nosniff" };
+  if (pdfObj) {
+    return new Response(obj.body, {
+      headers: { ...common, "Content-Type": "application/pdf", "Content-Disposition": obj.httpMetadata?.contentDisposition ?? 'attachment; filename="document.pdf"' },
+    });
+  }
   return new Response(obj.body, {
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Content-Security-Policy": "sandbox allow-scripts allow-modals allow-popups",
-      "Cache-Control": "no-store",
-      "Referrer-Policy": "no-referrer",
-      "X-Robots-Tag": "noindex",
-    },
+    headers: { ...common, "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "sandbox allow-scripts allow-modals allow-popups" },
   });
 });
 
-// Stateless server: no server-initiated stream.
+app.route("/xlsx", mcpXlsxDownload);
+
 app.get("/", (c) => c.json({ error: "Use POST (MCP Streamable HTTP)." }, 405, { Allow: "POST" }));
 app.delete("/", (c) => c.body(null, 405, { Allow: "POST" }));
 

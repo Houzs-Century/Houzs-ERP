@@ -88,7 +88,7 @@ describe('Books › Commission release', () => {
     expect(within(row('October 2026 bill')).getByText('2,000.00')).toBeTruthy();
     expect(within(row('Opening balance')).getByText('Goods of the orders')).toBeTruthy();
     expect(within(row('Opening balance')).getByText('4,000.00')).toBeTruthy();
-    expect(within(bills).getByText('6,000.00')).toBeTruthy();   // left in total
+    expect(within(bills).getByText('6,000.00')).toBeTruthy();
   });
 
   test('a click on a bill shows its orders under it', () => {

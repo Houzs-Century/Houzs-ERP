@@ -1,23 +1,10 @@
-// ----------------------------------------------------------------------------
-// useDebtorReceiptSteps — an other debtor's receipt walked through the payment
-// voucher's four layers from a LIST row (the owner's Claude Design, batch 5
-// §2.1 and §4.1, the design's odrActs): Draft → Prepare → Prepared → Check (or
-// Withdraw) → Checked → Approve & post (the approver; the others see it
-// waiting), Reject… back to Draft with a reason, and Void… once it is on the
-// books. Receipts and Debtor maintenance share it; the receipt's own page
-// (DebtorReceiptDoc) walks the same doors.
-//
-// Every step is a route that already exists (other-debtors.ts): Approve posts
-// exactly what the Receipts page's post-now door posts. Who may press what is
-// the server's — the buttons follow the same keys.
-// ----------------------------------------------------------------------------
 
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useDebtorReceiptAction, useVoidDebtorReceipt } from '../../../vendor/scm/lib/accounting-queries';
 import { useAuth as useHouzsAuth } from '../../../auth/AuthContext';
 import { useToastOptional } from '../../../hooks/useToast';
-import { fmtSen } from '../../../vendor/shared/format';
+import { fmtSen } from '../../../../../shared/src/vendor/shared/format';
 import { AskBanner, type Ask } from './AskBanner';
 import type { MenuItem } from './MoneyInParts';
 import type { DebtorStage } from './receiptsModel';
@@ -28,10 +15,8 @@ export type DebtorStepRow = {
   no: string;
   stage: DebtorStage;
   totalSen: number;
-  /** The money account, "310-0001 Hong Leong Bank". */
   bankCode: string;
   bankName: string | null;
-  /** The bills it knocks off, by number. */
   bills: string[];
 };
 
@@ -47,7 +32,6 @@ export function useDebtorReceiptSteps() {
   const step = useDebtorReceiptAction();
   const voidIt = useVoidDebtorReceipt();
   const { can } = useHouzsAuth();
-  /* The server's keys, step by step (other-debtors.ts). */
   const canWrite = can('scm.payment_voucher.write');
   const canCheck = can('scm.payment_voucher.check');
   const canApprove = can('scm.payment_voucher.approve');
@@ -56,7 +40,6 @@ export function useDebtorReceiptSteps() {
   const [askError, setAskError] = useState<string | null>(null);
   const busy = step.isPending || voidIt.isPending;
 
-  /* The list it sits on, and Receipts' other kinds (batch 5 §1: ['receipts'] ⇄ the rest). */
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['receipts'] });
     void qc.invalidateQueries({ queryKey: ['journal-entries'] });
@@ -70,8 +53,6 @@ export function useDebtorReceiptSteps() {
   };
   const ask = (what: 'reject' | 'approve' | 'void', row: DebtorStepRow) => { setAskError(null); setAsking({ what, row }); };
 
-  /** The row's next step as its button: Prepare, Check, Approve & post — or
-   *  null when it is not this person's to take (`waiting` says so). */
   const nextOf = (row: DebtorStepRow): { button: StepButton | null; waiting: boolean } => {
     switch (row.stage) {
       case 'Draft':
@@ -79,7 +60,6 @@ export function useDebtorReceiptSteps() {
       case 'Prepared':
         return { button: canCheck ? { label: 'Check', primary: true, onClick: () => run(row, 'check', `Checked · ${row.no} · approved next`) } : null, waiting: false };
       case 'Checked':
-        /* f5 (no reminder yet): whoever cannot approve sees it waiting. */
         return canApprove
           ? { button: { label: 'Approve & post', primary: true, onClick: () => ask('approve', row) }, waiting: false }
           : { button: null, waiting: true };
@@ -88,7 +68,6 @@ export function useDebtorReceiptSteps() {
     }
   };
 
-  /** Every step the row offers, for its ⋯ menu: the moving ones, then the red ones. */
   const menuOf = (row: DebtorStepRow): { steps: MenuItem[]; undo: MenuItem[] } => {
     const steps: MenuItem[] = [];
     const undo: MenuItem[] = [];

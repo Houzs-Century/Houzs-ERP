@@ -15,7 +15,7 @@ import {
 } from './pdf-common';
 import type { ArListKind, ArListRow } from './ar-invoice-queries';
 import { todayMyt } from './dates';
-import { PDF_COMPRESS } from './pdf-options';
+import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
 
 export type ArListingFilter = { kind: ArListKind; partyName?: string | null };
 
@@ -64,8 +64,6 @@ export async function generateArListingPdf(rows: ArListRow[], filter: ArListingF
     ],
   });
   const t = arListingTable(rows);
-  /* Totals are MYR sums of the sen columns — a bill is MYR; a foreign sales
-     invoice prints its own currency per row and the foot says so. */
   const foreign = rows.some((r) => r.currency !== 'MYR');
   autoTable(doc, {
     startY: y + 2,
@@ -80,7 +78,6 @@ export async function generateArListingPdf(rows: ArListRow[], filter: ArListingF
     rowPageBreak: 'avoid',
     styles: { ...DOC_TABLE_STYLES, fontSize: 8 },
     headStyles: DOC_TABLE_HEAD_STYLES,
-    /* The foot wears the head's dress — bold, ruled above and below. */
     footStyles: DOC_TABLE_HEAD_STYLES,
     columnStyles: {
       0: { cellWidth: 24 },

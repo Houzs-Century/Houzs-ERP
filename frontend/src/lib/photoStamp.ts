@@ -1,17 +1,3 @@
-/* Burn the job number and the time into the corner of a field photo (POD, job
-   stop) before it is uploaded, so the photo carries them wherever it is sent -
-   a customer or supplier on WhatsApp sees which delivery and when.
-
-   The time is the SERVER's: read from the Date header of an existing cheap,
-   same-origin API response and cached for a few minutes, so a phone with its
-   clock set back cannot stamp another day. When the server cannot be asked
-   (offline, or a cross-origin dev API whose Date header the browser hides),
-   the phone's own clock is used and the stamp says "phone time" - never passed
-   off as the server's.
-
-   The stamped image is what goes into the normal upload pipeline
-   (imagePipeline.ts via uploadFieldPhoto), which still does the compression.
-   A file the browser cannot draw goes up unstamped rather than not at all. */
 import { fmtDateTime } from "@2990s/shared";
 import { correlatedFetch } from "./requestCorrelation";
 
@@ -30,9 +16,6 @@ export function resetStampClock(): void {
   cached = null;
 }
 
-/* /api/auth/status is public, tiny, and already called on every app start. It
-   lives on the same origin in production (the Pages proxy), so its Date header
-   is readable. */
 function clockProbeUrl(): string {
   const base = (import.meta.env.VITE_API_URL as string | undefined) || (import.meta.env.PROD ? "" : "https://autocount-sync-api.houzs-erp.workers.dev");
   return `${base}/api/auth/status`;
@@ -48,10 +31,8 @@ export async function stampNow(
       const server = Date.parse(res.headers.get("Date") ?? "");
       if (!Number.isNaN(server)) cached = { offsetMs: server - nowMs(), readAt: nowMs() };
     } catch {
-      // Offline: fall through to the cached offset or the phone's clock.
     }
   }
-  // A reading older than the TTL is still better than the phone's own clock.
   if (cached) return { at: new Date(nowMs() + cached.offsetMs), source: "server" };
   return { at: new Date(nowMs()), source: "device" };
 }
@@ -59,7 +40,6 @@ export async function stampNow(
 /** The lines burned into the photo: the job label, then the Malaysia date and
  *  time (marked when it is only the phone's clock). */
 export function stampLines(label: string | null, clock: StampClock): string[] {
-  // The house date format (Malaysia time), the same one every screen prints.
   const when = `${fmtDateTime(clock.at)}${clock.source === "device" ? " (phone time)" : ""}`;
   return [label?.trim() ?? "", when].filter(Boolean);
 }

@@ -1,7 +1,3 @@
-/* Regression: the warehouse DO scan said "Delivery order not found ... re-print
-   the DO" on ANY load error, so a weak dock signal sent staff to re-print a good
-   DO. Now only a 404 says that; a timeout or 500 says it could not load and
-   offers Retry. */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";

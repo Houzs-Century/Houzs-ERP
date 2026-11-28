@@ -1,7 +1,3 @@
-/* Sim, 2026-10-20: on the GRN edit page, picking a rack then pressing Add was
- * "double work", and a pick left without Add saved nothing (HC-GRN-2610-155 /
- * 156 were posted with no rack). The first rack of an unplaced line saves on
- * the pick; only a second rack (a split) asks for its qty. */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

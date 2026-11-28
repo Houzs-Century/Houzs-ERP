@@ -1,31 +1,3 @@
-// ----------------------------------------------------------------------------
-// effective-delivery — the ONE answer to "when is this due".
-//
-// TWO questions live here, one per direction of the book, and they are not the
-// same question:
-//
-//   effectiveDelivery(...)    SUPPLY  — when will the supplier hand us the goods
-//   effectiveSoDelivery(row)  DEMAND  — when must the goods reach the customer
-//
-// ── SUPPLY (PO) ─────────────────────────────────────────────────────────────
-// A PO header (and each PO line) carries a base delivery date plus up to three
-// supplier revisions (supplier_delivery_date_2/3/4). The supplier only ever
-// pushes the date BACK, so the date the supplier is actually committing to now
-// is the MAX over all the non-null dates.
-//
-//   effectiveDelivery(base, d2, d3, d4) = max of the non-null inputs, else null
-//
-// Dates are ISO 'YYYY-MM-DD' strings (Postgres `date` columns). Lexical compare
-// equals chronological compare for that format, so we compare as strings (no
-// Date parsing / timezone drift). Empty strings are treated as null.
-//
-// IMPORTANT: this is a READ-side helper only. It does NOT change how the header
-// `expected_at` (original earliest line date) or a line `delivery_date` are
-// stored/recomputed — those keep their original meaning. Every reader that
-// wants the latest committed date calls this.
-//
-// Ported from 2990 packages/shared/src/effective-delivery.ts (migration 0180).
-// ----------------------------------------------------------------------------
 
 /** The latest (max) of the non-null/non-empty date strings, or null if none. */
 export function effectiveDelivery(
@@ -33,7 +5,7 @@ export function effectiveDelivery(
 ): string | null {
   let best: string | null = null;
   for (const d of dates) {
-    if (!d) continue;              // null / undefined / '' → skip
+    if (!d) continue;
     if (best === null || d > best) best = d;
   }
   return best;
@@ -113,14 +85,6 @@ export type SoDeliveryDateRow = {
   lineDeliveryDateOverridden?: boolean | null;
 };
 
-/* Normalise to 'YYYY-MM-DD'. A `date` column arrives as that string over
-   PostgREST (so this is the identity there), but the repair scripts drive the
-   same allocator through a postgres shim that hands back Date OBJECTS — and
-   `.localeCompare` on a Date threw mid-recompute in production on 2026-08-10.
-   The Date branch is byte-identical to the `dateKey` helper that incident added
-   to so-stock-allocation.ts, deliberately: this replaces that helper and must
-   not quietly change what it answered. Empty string → null, matching
-   effectiveDelivery above. */
 function dayOf(v: string | Date | null | undefined): string | null {
   if (v == null) return null;
   if (v instanceof Date) return v.toISOString().slice(0, 10);
@@ -137,8 +101,8 @@ function dayOf(v: string | Date | null | undefined): string | null {
 export function effectiveSoDelivery(row: SoDeliveryDateRow): string | null {
   const lineDate = dayOf(row.line_delivery_date ?? row.lineDeliveryDate);
   const overridden = row.line_delivery_date_overridden ?? row.lineDeliveryDateOverridden ?? false;
-  if (overridden === true && lineDate !== null) return lineDate;      // 1. explicit per-line date
-  return dayOf(row.amended_delivery_date ?? row.amendedDeliveryDate)  // 2. the reschedule
-      ?? dayOf(row.customer_delivery_date ?? row.customerDeliveryDate) // 3. the original promise
-      ?? lineDate;                                                     // 4. mirror, last resort
+  if (overridden === true && lineDate !== null) return lineDate;
+  return dayOf(row.amended_delivery_date ?? row.amendedDeliveryDate)
+      ?? dayOf(row.customer_delivery_date ?? row.customerDeliveryDate)
+      ?? lineDate;
 }

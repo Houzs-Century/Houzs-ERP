@@ -74,9 +74,6 @@ describe('a RECONCILED payment is closed to everyone', () => {
     expect(r.problem).not.toBe(PAYMENT_WINDOW_CLOSED_MESSAGE);
   });
 
-  /* The strongest case: a payment keyed TODAY that has already been matched.
-     The same-day window would say yes; reconciliation says no, and it is the
-     one that has to win — the match is already booked against it. */
   it('refuses even on the day it was keyed', () => {
     expect(paymentRowMutable(TODAY, TODAY, false, { reconciled: merchant }).mutable).toBe(false);
   });
@@ -95,9 +92,6 @@ describe('a RECONCILED payment is closed to everyone', () => {
     expect(msg).toMatch(/record a new payment|credit note/i);
   });
 
-  /* Every refusal travels through humanApiError's sentence filter, which drops
-     anything that looks like machinery. A reason nobody can read is a reason
-     nobody acts on. */
   it('every refusal stays plain language, short, and free of jargon', () => {
     for (const reconciled of [merchant, bank, month]) {
       const msg = paymentRowMutable(OLD, TODAY, false, { mayAmend: true, reconciled }).problem;
@@ -112,10 +106,6 @@ describe('a RECONCILED payment is closed to everyone', () => {
     }
   });
 
-  /* A DRAFT order is exempted BEFORE this check, and that is deliberate: it is
-     the 2026-07-13 exemption for an OCR-scanned draft whose payment was
-     mis-read, and this change was not asked to touch it. Pinned so the choice
-     is a decision on the record rather than an accident of line order. */
   it('leaves the DRAFT exemption alone, on purpose', () => {
     expect(paymentRowMutable(OLD, TODAY, true, { reconciled: merchant }).mutable).toBe(true);
   });

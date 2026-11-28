@@ -16,10 +16,6 @@ import { provenanceNote, parseProvenanceNote } from '../shared/transfer-vocabula
 
 type Row = Record<string, unknown>;
 
-/* Captures the header rows (purchase_orders) AND the line rows
-   (purchase_order_items) the convert writes; every other write is accepted and
-   ignored so the convert runs to completion without the fake modelling the
-   whole schema. */
 function fakeSb(tables: Record<string, Row[]>, headers: Row[], lines: Row[]) {
   class Q {
     rows: Row[];
@@ -74,9 +70,6 @@ function fakeSb(tables: Record<string, Row[]>, headers: Row[], lines: Row[]) {
 
 const SUPPLIER_ID = 'sup-1';
 
-/** One SO line as the convert reads it. `remark` is the line's own note; the SO
- *  header's `note` rides on the embedded `so` object, exactly as PostgREST
- *  returns the `!inner` join. */
 const soLine = (o: {
   id: string; doc_no?: string; itemCode?: string; group?: string;
   remark?: string | null; note?: string | null;
@@ -100,7 +93,6 @@ const soLine = (o: {
   };
 };
 
-/** Runs the real convert; returns the captured PO header rows and line rows. */
 async function convertAndCapture(soLines: Row[]): Promise<{ headers: Row[]; lines: Row[] }> {
   const headers: Row[] = [];
   const lines: Row[] = [];
@@ -117,7 +109,6 @@ async function convertAndCapture(soLines: Row[]): Promise<{ headers: Row[]; line
   }])).values()];
   const sb = fakeSb({
     mfg_sales_order_items: soLines,
-    // CONFIRMED — anything else is refused by the orderable gate before the map.
     mfg_sales_orders: docNos.map((d) => ({ doc_no: d, status: 'CONFIRMED' })),
     warehouses: [{ id: 'wh-kl', code: 'KL', name: 'KL' }],
     suppliers: [{ id: SUPPLIER_ID, code: 'SUP1', name: 'Supplier One' }],
@@ -153,11 +144,8 @@ describe('SO -> PO carries a DINING order’s remarks to the supplier', () => {
       soLine({ id: 'si-1', note: 'Prefer delivery at monday', remark: 'Wrap legs in foam' }),
     ]);
     expect(headers).toHaveLength(1);
-    // Provenance stays line 1 (the stored contract), the customer note below it.
     expect(headers[0].notes).toBe(`${provenanceNote('so', ['SO-2611-028'])}\nPrefer delivery at monday`);
-    // ...and the provenance is still machine-readable — its 8 readers see the SO.
     expect(parseProvenanceNote(headers[0].notes as string)).toEqual(['SO-2611-028']);
-    // The line's own remark reaches the PO line (prints as "Remark:").
     expect(lines).toHaveLength(1);
     expect(lines[0].notes).toBe('Wrap legs in foam');
   });
@@ -167,7 +155,6 @@ describe('SO -> PO carries a DINING order’s remarks to the supplier', () => {
       soLine({ id: 'si-1', doc_no: 'SO-2611-028', itemCode: 'DINING-CHAIR', note: 'Deliver Monday' }),
       soLine({ id: 'si-2', doc_no: 'SO-2611-024', itemCode: 'DINING-TABLE', note: 'Call before arrival' }),
     ]);
-    // Both dining lines (same supplier + warehouse) merge into ONE PO.
     expect(headers).toHaveLength(1);
     expect(headers[0].notes).toBe(
       `${provenanceNote('so', ['SO-2611-028', 'SO-2611-024'])}\n`

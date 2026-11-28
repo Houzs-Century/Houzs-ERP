@@ -1,23 +1,8 @@
-// ----------------------------------------------------------------------------
-// Accounting page — the ledger's face (accounting module, phase 1).
-//
-// Tab strip:
-//   1. Chart of Accounts — the ACTIVE company's tree, read-only (maintenance
-//      lives on the union page /scm/chart-of-accounts — one door only)
-//   2. Journal Entries — list w/ filter, drill into lines, NEW manual journal,
-//      post a draft, reverse a posted manual journal
-//   3. General Ledger — flat GL stream, filter by account / date
-//   4. Trial Balance — Σ Dr / Σ Cr per account + the report's own self-check:
-//      the difference tile is 0.00 or the ledger is broken (brief §3.7)
-//   5. AR Aging / 6. AP Aging — outstanding SI / PI bucketed
-//   7. Self-check — reconciliation layer 1: control account vs documents,
-//      drift named to the document (brief §3.5)
-// ----------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
-import { reportOfAccountingTab, type ReportItem } from './reports-catalog';
+import { movedPnlSearch, reportOfAccountingTab, type ReportItem } from './reports-catalog';
 import { ReportShell } from './reports/ReportShell';
 import {
   useAccounts,
@@ -34,7 +19,6 @@ import { ReceiptsPaymentsTab } from './ReceiptsPayments';
 import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
 import { CollectionTab } from './CollectionReport';
 import { MerchantChargesTab } from './MerchantChargesReport';
-import { PerformanceTab } from './PerformancePnl';
 import { EventCostsTab } from './EventCosts';
 import { EventCommissionTab } from './EventCommission';
 import { ProductProfitTab } from './ProductProfit';
@@ -49,16 +33,25 @@ import { GeneralLedger } from './GeneralLedger';
 import { JournalTab } from './JournalEntries';
 import { SelfCheckTab } from './SelfCheck';
 import { AccountingHeader } from './books/AccountingHeader';
-import { humaniseStatusKey } from '../../vendor/scm/lib/status-pill';
+import { humaniseStatusKey } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 
 type Tab = AccountingTab;
 
-/* The tabs that draw their own head, with their actions in it. */
 const OWN_HEADER: ReadonlySet<Tab> = new Set<Tab>(['je', 'gl', 'check', 'close', 'commrel']);
 
+/** An old link to the Overall P&L's Performance view lands where movedPnlSearch says, the rest
+ *  of the address kept (owner 2026-11-28: Remove Performance View 的 P&L). */
 export const Accounting = () => {
+  const [params] = useSearchParams();
+  const { pathname } = useLocation();
+  const moved = movedPnlSearch(params);
+  if (!moved) return <AccountingTabs />;
+  return <Navigate to={{ pathname, search: `?${moved.toString()}` }} replace />;
+};
+
+const AccountingTabs = () => {
   /* THE TAB THE URL NAMES (docs/bugs/0824). The Finance sidebar deep-links
      every tab (/scm/accounting?tab=pnl …) and is the ONE way between them
      (owner 2026-09-12: 只靠侧栏就好，不然太乱了 — the strip of sixteen buttons
@@ -73,9 +66,6 @@ export const Accounting = () => {
     if (wanted && wanted !== tab) setTabState(wanted);
   }, [wanted, tab]);
 
-  /* A report tab is drawn in the report shell — the report list and the
-     report's own header (batch 6 §4.3); Journal entries, the General ledger
-     and the Trial balance too when opened from the list (`in=reports`). */
   const report = reportOfAccountingTab(tab, params.get('in') === 'reports');
 
   return (
@@ -98,7 +88,6 @@ export const Accounting = () => {
       {tab === 'corrections' && <PaymentCorrectionsTab />}
       {tab === 'collection' && <CollectionTab />}
       {tab === 'charges' && <MerchantChargesTab />}
-      {tab === 'performance' && <PerformanceTab />}
       {tab === 'events' && <EventCostsTab />}
       {tab === 'commission' && <EventCommissionTab />}
       {tab === 'products' && <ProductProfitTab />}
@@ -113,10 +102,6 @@ export const Accounting = () => {
   );
 };
 
-/* The frame a tab is drawn in: a report in the report shell (a tab that draws
-   its own head keeps it, the shell adds the report list), any other tab under
-   the redesign's head (batch 6 §1.2) — "Finance · <section>" over the tab's
-   own name, unless the tab draws its own with its actions in it. */
 const AccountingFrame = ({ tab, report, children }: { tab: Tab; report: ReportItem | null; children: ReactNode }) => (
   report
     ? <ReportShell report={report.id} ownHeader={OWN_HEADER.has(tab)}>{children}</ReportShell>
@@ -128,7 +113,6 @@ const AccountingFrame = ({ tab, report, children }: { tab: Tab; report: ReportIt
     )
 );
 
-/* ── Chart of Accounts ───────────────────────────────────────────────── */
 const ACCOUNT_TYPE_ORDER = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'];
 
 const CoaTab = () => {
@@ -236,13 +220,11 @@ const CoaTab = () => {
   );
 };
 
-/* ── Journal Entries ─────────────────────────────────────────────────── */
 
 /* The Journal page grouped per entry — the AutoCount way (docs/bugs/0935).
    Its filters live in the URL; the entry card and the draft form ride with it. */
 const JeTab = () => <JournalTab />;
 
-/* ── GL ──────────────────────────────────────────────────────────────── */
 /* The General Ledger the AutoCount way — per-account blocks, BALANCE B/F, a
    running balance, the journal's references (docs/bugs/0924). Its filters
    live in the URL, so a figure on a statement opens it on that account. */

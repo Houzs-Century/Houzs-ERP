@@ -79,29 +79,11 @@ import { loadSellingSofaCombos, posOwnsSellingCombos } from '../lib/pos-sofa-com
 export const salesAnalysis = new Hono<{ Bindings: Env; Variables: Variables }>();
 salesAnalysis.use('*', supabaseAuth);
 
-/**
- * The shapes Houzs SHIPS — the vendored rows minus the demographic blocks (see
- * the header). Everything they sit on (geographic area, order stats, product
- * rankings) is real and is carried through untouched.
- *
- * `marginSen` is OPTIONAL on these (and grossMarginPct on SaOverviewOut):
- * present for a finance caller, ABSENT for everyone else — gateSaFinance below
- * deletes it. Two INDEPENDENT cuts land on one shape: demographics are dropped
- * for EVERYONE (Houzs captures none), margin only for a NON-FINANCE caller.
- */
 type SaCustomerOut = Omit<SaCustomerRow, 'race' | 'birthday' | 'gender' | 'marginSen'> & { marginSen?: number };
-type VariantOut = Omit<VariantRank, 'demographics'>;   // VariantRank carries no margin
+type VariantOut = Omit<VariantRank, 'demographics'>;
 type ModelOut = Omit<ModelRank, 'demographics' | 'variants' | 'marginSen'>
   & { variants: VariantOut[]; marginSen?: number };
 
-/**
- * Active-company sofa combos (master scope: B2C default rows only, sales-side).
- * Mirrors the private loadActiveSofaCombos in mfg-sales-orders.ts, plus a
- * company_id scope so a combo authored under the other company never
- * misclassifies this company's builds. Used only to label combo vs custom —
- * this route never re-prices, so the combo price merge is cosmetic here but
- * kept faithful to the billing path.
- */
 async function loadCompanyActiveSofaCombos(
   sb: any,
   c: any,
@@ -119,10 +101,6 @@ async function loadCompanyActiveSofaCombos(
     .is('customer_id', null)
     .is('supplier_id', null);
   q = scopeToCompany(q, c);
-  /* Bind the error and hand it back. supabase-js does not throw, so a discarded
-     `error` makes a failed query indistinguishable from "this company has no
-     combos" — and a build that IS a combo would then be ranked as a custom
-     build. The caller turns this into load_failed like every other read here. */
   const { data, error } = await q;
   const combos = ((data ?? []) as Array<{
     id: string; base_model: string; modules: string[][]; tier: SofaPriceTier | null;
@@ -174,10 +152,6 @@ async function loadCompanyActiveSofaCombos(
 type SaOverviewOut = Omit<OverviewResult, 'grossMarginPct'> & { grossMarginPct?: number | null };
 type SaMonthlyOut = Omit<MonthlyRow, 'marginSen'> & { marginSen?: number };
 
-/** Strip every margin path in place for a non-finance caller. Takes the
- *  ALREADY-demographics-stripped products shape (ModelOut), i.e. exactly what
- *  c.json ships — gating the raw vendored ProductsSection instead would strip a
- *  shape the response never sees. */
 function gateSaFinance(
   c: Parameters<typeof canViewScmFinance>[0],
   payload: {
@@ -199,17 +173,12 @@ function gateSaFinance(
 salesAnalysis.get('/', async (c) => {
   const sb = c.get('supabase');
 
-  // ACCESS gate — viewing aggregate sales across EVERY salesperson requires the
-  // "view all SOs" permission OR a director position (Sales Director / Super
-  // Admin / Finance Manager) — a Director sees all Orders / the Financial
-  // Report. canViewAllSales OR-s the two (additive; permission path unchanged).
-  // Passing this does NOT grant margin — that is gateSaFinance's call, below.
   if (!canViewAllSales(c)) {
     return c.json({ error: 'forbidden', reason: 'sales_analysis_requires_scm.so.view_all' }, 403);
   }
 
-  const period = (c.req.query('period') ?? 'all').trim(); // 'all' | 'YYYY-MM'
-  const includeTest = c.req.query('includeTest') === 'true'; // no-op in Houzs (no is_test column)
+  const period = (c.req.query('period') ?? 'all').trim();
+  const includeTest = c.req.query('includeTest') === 'true';
 
   type Raw = {
     doc_no: string; cross_category_source_doc_no: string | null; so_date: string;
@@ -219,15 +188,10 @@ salesAnalysis.get('/', async (c) => {
     customer_state: string | null;
   };
 
-  // Load all non-cancelled / non-on-hold orders (monthly trend always spans
-  // everything; the period filter scopes only the Overview below). Paged so the
-  // 1000-row cap can't truncate a busy history.
   const { data: orderRows, error: ordErr } = await paginateAll<Raw>((from, to) => {
     let q = sb
       .from('mfg_sales_orders')
       .select('doc_no, cross_category_source_doc_no, so_date, total_revenue_sen, total_margin_sen, service_sen, customer_id, city, customer_state')
-      /* `on_hold` since mig 0324 — the hold is a MARKER beside the status now,
-         so the status arm below can no longer see one on its own. */
       .eq('on_hold', false)
       .not('status', 'in', '("CANCELLED","ON_HOLD")')
       .order('doc_no')
@@ -251,8 +215,6 @@ salesAnalysis.get('/', async (c) => {
     ? allOrders.filter((row) => row.soDate.slice(0, 7) === period)
     : allOrders;
 
-  // Delivery actually charged = SVC-DELIVERY* lines (base + CROSS + ADD),
-  // summed per doc, non-cancelled — for the scoped orders only.
   const docNos = scoped.map((row) => row.docNo);
   const deliveryByDoc = new Map<string, number>();
   if (docNos.length) {
@@ -279,8 +241,6 @@ salesAnalysis.get('/', async (c) => {
 
   const overview: SaOverviewOut = summarizeOverview(scoped, deliveryByDoc);
 
-  // Customer Data section — geographic area from the ORDER header. Per-customer
-  // order stats are over the scoped window.
   const custIdByDoc = new Map<string, string | null>();
   for (const r of ((orderRows ?? []) as Raw[])) custIdByDoc.set(r.doc_no, r.customer_id ?? null);
   const ordersByCustomer = new Map<string, SaOrderRow[]>();
@@ -329,12 +289,8 @@ salesAnalysis.get('/', async (c) => {
     });
   }
 
-  // Target profile — one row per company (keyed by company_id).
   let tq = sb.from('analysis_customer_targets').select('*');
   tq = scopeToCompany(tq, c);
-  /* maybeSingle: NO row is legitimate (this company has set no targets yet).
-     A failed query is not, and without the error bound the two are the same
-     shape — the page would quietly show "no targets set". */
   const { data: tRow, error: tErr } = await tq.maybeSingle();
   if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
   const targets: TargetProfile = {
@@ -346,12 +302,8 @@ salesAnalysis.get('/', async (c) => {
     areaCities: tRow?.area_cities ?? [],
   };
 
-  // ── Products section — per-category model/variant ranking. Combo
-  // classification mirrors the authoritative SELLING billing path
-  // (computeSofaSellingSen): tier PRICE_1, height = variants.depth ?? seatHeight.
   let products = buildProductsSection([]);
   if (docNos.length) {
-    // Product lines for the scoped docs, excluding service (its own bucket).
     const { data: lineRows, error: lineErr } = await chunkIn<{
       doc_no: string; item_code: string | null; item_group: string | null;
       qty: number | null; total_sen: number | null; line_cost_sen: number | null;
@@ -375,7 +327,6 @@ salesAnalysis.get('/', async (c) => {
     if (lineErr) console.error('sales-analysis product-line load failed (products section empty):', lineErr.message ?? lineErr);
     const rawLines = lineRows ?? [];
 
-    // Product master (distinct item_code) + models (distinct model_id).
     const codes = [...new Set(rawLines.map((r) => (r.item_code ?? '').trim()).filter(Boolean))];
     const productByCode = new Map<string, { category: string; modelId: string | null; sizeLabel: string | null; baseModel: string | null }>();
     if (codes.length) {
@@ -416,7 +367,6 @@ salesAnalysis.get('/', async (c) => {
       for (const m of modelRows) modelById.set(m.id, m.name ?? '');
     }
 
-    // Sofa combos (company scope) + fabric-tier config for upgrade detection.
     const { combos, error: comboErr } = await loadCompanyActiveSofaCombos(sb, c);
     if (comboErr) return c.json({ error: 'load_failed', reason: comboErr.message }, 500);
     const fabricIds = [...new Set(rawLines.map((r) => ((r.variants ?? {}) as Record<string, unknown>).fabricId).filter(Boolean).map(String))];
@@ -431,7 +381,6 @@ salesAnalysis.get('/', async (c) => {
 
     const itemRows: SaItemRow[] = rawLines.map((r) => {
       const v = (r.variants ?? {}) as Record<string, unknown>;
-      // Height carrier mirrors the billing path (sofaHeightKey = depth ?? seatHeight).
       const heightRaw = v.depth ?? v.seatHeight;
       const seatHeight = heightRaw != null && String(heightRaw).trim() !== '' ? String(heightRaw) : null;
       return {
@@ -447,19 +396,15 @@ salesAnalysis.get('/', async (c) => {
         legHeight: (v.legHeight as string) ?? null,
         seatHeight,
         isPwp: v.pwp === true,
-        // Inert: the vendored SaItemRow requires these. Houzs captures no
-        // demographics and the response carries none (see the header).
         race: null, birthday: null, gender: null,
       };
     });
 
-    // buyerByDoc stays EMPTY — foldProductUnits falls back to all-null per doc,
-    // so filling it would only rebuild the same nulls under a different name.
     const ctx: ProductCtx = { productByCode, modelById, buyerByDoc: new Map() };
     const units = foldProductUnits(itemRows, ctx);
     for (const u of units) {
       if (u.category !== 'SOFA' && u.category !== 'BEDFRAME') continue;
-      const category = u.category as 'SOFA' | 'BEDFRAME';   // narrow (u.category is string)
+      const category = u.category as 'SOFA' | 'BEDFRAME';
       const tiers = u.fabricId ? fabricTiersById.get(u.fabricId) : undefined;
       const tier = category === 'SOFA' ? (tiers?.sofaTier ?? null) : (tiers?.bedframeTier ?? null);
       const compartments = category === 'SOFA' ? u.itemCodes.map((code) => splitSofaCode(code).sizeCode).filter(Boolean) : [];
@@ -470,8 +415,6 @@ salesAnalysis.get('/', async (c) => {
       if (category === 'SOFA') {
         const lead = u.itemCodes[0] ?? '';
         const baseModel = productByCode.get(lead)?.baseModel ?? splitSofaCode(lead).baseModel;
-        // FIDELITY: mirror billing — computeSofaSellingSen matches combos at
-        // PRICE_1 and keys height = depth ?? seatHeight.
         const cls = classifySofaBuild(
           {
             baseModel,
@@ -491,11 +434,6 @@ salesAnalysis.get('/', async (c) => {
     products = buildProductsSection(units);
   }
 
-  // The vendored core hangs a BuyerDemographics block (race / ageBand / gender)
-  // off every model and variant. Houzs captures none of it, so it is stripped
-  // here rather than shipped as an all-'Unknown' bucket. The rankings it sits on
-  // (units / revenue / combo / fabric-upgrade) are real and ship as-is; the
-  // margin beside them is finance-only and is gated separately, below.
   const byCategory: Record<string, ModelOut[]> = {};
   for (const [category, models] of Object.entries(products.byCategory)) {
     byCategory[category] = models.map(({ demographics, variants, ...model }) => ({
@@ -505,28 +443,16 @@ salesAnalysis.get('/', async (c) => {
   }
   const productsOut: { byCategory: Record<string, ModelOut[]> } = { byCategory };
 
-  // Demographics come off for EVERYONE (above); margin comes off only for a
-  // non-finance caller. Gate productsOut — the shape c.json actually ships —
-  // NOT the raw vendored `products`, which the response no longer carries.
   gateSaFinance(c, { overview, monthly, customers, products: productsOut });
   return c.json({ period, includeTest, overview, monthly, customers, targets, products: productsOut });
 });
 
-/* GET /lines — every sold line, for the 2990 POS Marketing > Sales analysis,
-   which filters by day, showroom and customer profile on the tablet. The
-   customer's race / gender / age come off the ORDER header (mig 0162: captured
-   at the POS handover, never shown on the SO); the age is sent, not the
-   birthday. So do the name on the order and its city, for the tablet's
-   customer list — never the phone or the address. Admits the all-sales tier
-   and the POS marketing account. MARGIN
-   rides canViewScmFinance, as on GET / (gateSaFinance): a finance caller gets
-   `marginSen` per row, everyone else gets no such key — never a zero. */
 salesAnalysis.get('/lines', async (c) => {
   const sb = c.get('supabase');
   if (!canViewAllSales(c) && !isPosMarketingCaller(c)) {
     return c.json({ error: 'forbidden', reason: 'sales_lines_requires_scm.so.view_all_or_pos_marketing' }, 403);
   }
-  const includeTest = c.req.query('includeTest') === 'true'; // no-op in Houzs (no is_test column)
+  const includeTest = c.req.query('includeTest') === 'true';
 
   type OrderRow = {
     doc_no: string; so_date: string; venue: string | null; customer_id: string | null; debtor_name: string | null;
@@ -557,7 +483,6 @@ salesAnalysis.get('/lines', async (c) => {
     let q = sb
       .from('mfg_sales_order_items')
       .select('doc_no, line_no, item_code, item_group, qty, total_sen, line_cost_sen, variants')
-      // `neq` alone would also drop a line with no group (NULL <> 'service' is NULL).
       .or('item_group.is.null,item_group.neq.service')
       .not('item_code', 'like', 'SVC-%')
       .eq('cancelled', false)
@@ -624,7 +549,6 @@ salesAnalysis.get('/lines', async (c) => {
 salesAnalysis.put('/targets', async (c) => {
   const sb = c.get('supabase');
 
-  // Editing the marketing target profile = SCM master-data config.
   if (!canWriteScmConfig(c)) {
     return c.json({ error: 'forbidden', reason: 'targets_edit_requires_scm.config.write' }, 403);
   }

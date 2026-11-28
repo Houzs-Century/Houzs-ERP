@@ -1,16 +1,3 @@
-/* The AP BILL print (Money out › Supplier bills, batch 4 step 8). Pinned off
-   the page as data (apBillSheet), then off the drawn page the way
-   credit-note-pdf.test.ts reads it:
-     • the heading is the paper's — AP BILL, or SUPPLIER DEBIT NOTE with its
-       own date and reference labels;
-     • the supplier with the control it sits on (the code, the name below);
-       the supplier's invoice no., the due date, what is outstanding, the
-       journal, the description;
-     • each line's account as the owner reads it — code, then name below —
-       its description and amount; the TOTAL in figures and words;
-     • who raised, posted or cancelled it;
-     • a Draft and a Cancelled bill carry the design's band; a posted one none.
-   Ordinary ASCII in the fixture: no CJK font fetch, no logo fetch, no network. */
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { DEFAULT_BRANDING, clearBrandingLogoCache, setBrandingCache } from '../../../lib/branding';
@@ -52,7 +39,6 @@ describe('the AP BILL page as data', () => {
       ['Description', 'Rent September'],
     ]);
     expect(s.head).toEqual(['Account', 'Description', 'Amount (RM)']);
-    /* The account as the owner reads it — the code, its name below; an unknown code still prints as itself. */
     expect(s.body).toEqual([
       ['900-A001\nRENTAL', 'Rent Sept', 'RM 4,000.00'],
       ['900-Z999', '—', 'RM 200.00'],
@@ -128,7 +114,6 @@ describe('the drawn AP BILL', () => {
       import('jspdf'), import('jspdf-autotable'), import('./ap-bill-pdf'),
     ]);
     const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-    /* A page already in the doc: the bill counts its own pages, not the file's. */
     doc.text('previous document', 20, 20);
     doc.addPage();
     const draws = captureTextDraws(doc);

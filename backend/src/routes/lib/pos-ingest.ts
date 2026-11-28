@@ -1,12 +1,3 @@
-// ----------------------------------------------------------------------------
-// pos-ingest.ts — ONE way a POS receipt enters the ERP, whether it arrives
-// from the device's sync engine (POST /api/pos-device/sales/batch) or from a
-// backup file dropped on POS Admin > Import backup (layout E8). Both paths
-// classify the same way (new / duplicate / void / salesman / conflict), write
-// the same rows (pos_sales, pos_sale_lines, pos_payments, pos_audit) and book
-// the same inventory movements, so the Inventory never sees two versions of
-// a receipt. Everything here is scoped by the company the caller resolved.
-// ----------------------------------------------------------------------------
 import { and, eq, sql } from "drizzle-orm";
 import type { getDb } from "../../db/client";
 import { pos_audit, pos_event_links, pos_payments, pos_sale_lines, pos_sales, pos_settings } from "../../db/schema";
@@ -31,27 +22,29 @@ export async function stockLocationFor(db: Db, companyId: number, projectId: num
  *  receipt number. The FIFO trigger consumes lots on OUT and records a short
  *  when there are none (over-sell allowed offline); the balance that goes
  *  negative is the warning the Sync Status page shows. Idempotent per
- *  (doc type, receipt no): a second run writes nothing. */
+ *  (doc type, receipt no): a second run writes nothing, and says so in the
+ *  warning, because the sale and its movements commit together, so a NEW sale
+ *  that finds movements under its number is a receipt-number clash, never a
+ *  retry (docs/bugs/README.md, audit H3). */
 export async function bookMovements(tx: Tx, companyId: number, warehouseId: string | null, rows: MovementRow[], who: string): Promise<string | null> {
   if (rows.length === 0) return null;
   if (!warehouseId) return "no stock location: set the event's stock source or the POS store in General";
   const docType = rows[0].source_doc_type;
   const docNo = rows[0].source_doc_no;
   const existing = await tx.execute<{ n: number | string }>(sql`SELECT COUNT(*)::int AS n FROM scm.inventory_movements WHERE company_id = ${companyId} AND source_doc_type = ${docType} AND source_doc_no = ${docNo}`);
-  if ((existing.length ? Number(existing[0].n) : 0) > 0) return null;
+  if ((existing.length ? Number(existing[0].n) : 0) > 0) {
+    return `stock NOT booked: receipt ${docNo} already has ${docType} stock movements from another sale. Receipt numbers must be unique: check that the POS receipt no format keeps {TERM}`;
+  }
   const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
   for (const m of rows) {
     let unitCost = 0;
     if (m.movement_type === "IN") {
-      /* A return or void brings the unit back at the cost its sale took it out at. */
       const prior = await tx.execute<{ c: number | string | null }>(sql`
         SELECT unit_cost_sen AS c FROM scm.inventory_movements
          WHERE company_id = ${companyId} AND item_code = ${m.item_code} AND movement_type = 'OUT' AND source_doc_type IN ('POS_SALE', 'POS_RETURN')
          ORDER BY created_at DESC LIMIT 1`);
       unitCost = prior.length ? Number(prior[0].c ?? 0) : 0;
     }
-    /* A void's IN names the sale OUT it undoes (one OUT per IN, oldest first), so a sale that took
-       nothing from the lots gets nothing re-opened; without it the void opened a full lot. */
     let reverses: string | null = null;
     if (m.movement_type === "IN" && m.reverses) {
       const out = await tx.execute<{ id: string }>(sql`

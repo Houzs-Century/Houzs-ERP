@@ -28,7 +28,6 @@ export const projectForecast = new Hono<{ Bindings: Env }>();
 
 type Ctx = Context<{ Bindings: Env }>;
 
-/** The project in the active company, or the refusal to send. */
 async function gate(c: Ctx): Promise<{ ok: true; projectId: number; companyId: number; line: string } | { ok: false; res: Response }> {
   const user = c.get("user");
   if (financeHiddenForUser(user)) return { ok: false, res: c.json({ error: "You don't have permission to view financial information." }, 403) };

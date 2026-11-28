@@ -1,21 +1,8 @@
-// ----------------------------------------------------------------------------
-// MoneyInDocPage — one page for every Money-in document (the owner's Claude
-// Design, batch 5 §8; the design's vDoc). Back to where it was opened from
-// (else its own list); the head — kind, number, status, Add task, Print and
-// the document's own steps; the party and amount card with its facts and the
-// Books line read from the journal; the sections; the trail on the right.
-//
-// The shell only lays out. Each document page brings its reads and its steps
-// — the same hooks and endpoints the old pop-outs used — so nothing here
-// posts, and a step the server refuses says so in the page's ask banner.
-// Print opens the ERP's one print dialog with the paper it prints on
-// (`printJob`, batch 5 step 10 — moneyInPrint.tsx).
-// ----------------------------------------------------------------------------
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ListChecks, Printer } from 'lucide-react';
-import { fmtDate, fmtDateTime } from '../../../vendor/shared/format';
+import { fmtDate, fmtDateTime } from '../../../../../shared/src/vendor/shared/format';
 import { returnToWorkspaceOpener, useWorkspaceOpener } from '../../../lib/useWorkspaceOpener';
 import type { TaskLink } from '../finance/finance-todo-queries';
 import { VoucherTaskDrawer } from '../PvDocParts';
@@ -30,9 +17,7 @@ import s from './MoneyInDoc.module.css';
 export type DocFact = {
   label: string;
   value: ReactNode;
-  /** A fact that opens something (an order, a debtor, a note). */
   to?: string | null;
-  /** Red for something wrong or late, brass for money still owed. */
   tone?: 'late' | 'brass' | null;
   title?: string;
 };
@@ -40,20 +25,14 @@ export type DocFact = {
 export type DocAction = {
   label: string;
   onClick: () => void;
-  /** Primary moves the document on (petrol); danger undoes it (red outline). */
   kind?: 'primary' | 'danger';
-  /** The step is refused: greyed, and this says why. */
   refused?: string | null;
-  /** A word on the button when it is not refused. */
   hint?: string;
   busy?: boolean;
 };
 
 export type TrailStep = { key: string; act: string; who?: string | null; when?: string | null; note?: string | null; undo?: boolean };
 
-/* Who did a step, when the row says so. Some Money-in tables stamp the SCM
-   session's pinned system id instead of a person (scm/middleware/auth.ts) —
-   a stamp like that names nobody, so the trail leaves the name out. */
 const ID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const personOf = (v: string | null | undefined): string | null => {
   const t = String(v ?? '').trim();
@@ -114,11 +93,8 @@ export function DocBooks({ journals, loading, accountName, preview, prefix, tail
   journals: DocJournals | undefined;
   loading: boolean;
   accountName: (code: string) => string | null;
-  /** What the rule would book while nothing is posted (`Not posted · …`, `Posts at approval · …`). */
   preview?: ReactNode;
-  /** Words before a posted entry's accounts — default `Posted`. */
   prefix?: string;
-  /** Words after a posted entry (`knocks off the bills below`). */
   tail?: string;
 }) {
   if (loading) return <>Reading the journal…</>;
@@ -161,13 +137,10 @@ export function MoneyInDocPage({
   sub?: ReactNode;
   taskLink: TaskLink;
   onPrint?: (() => void) | null;
-  /** Print through the print dialog: what it names and how it delivers the paper. */
   printJob?: PrintJob | null;
   printing?: boolean;
   actions?: DocAction[];
-  /** The ask banner, when a step is being asked about. */
   ask?: ReactNode;
-  /** A line under the head — what a step just did, or why it failed. */
   notice?: ReactNode;
   party: { label: string; name: ReactNode; lines?: ReactNode[] };
   amount: { label: string; value: string; sub?: ReactNode };

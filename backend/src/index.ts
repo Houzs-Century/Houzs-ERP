@@ -8,14 +8,10 @@ import { GIT_SHA, resolveBuildSha } from "./build-info";
 import { restKeyClaims, restUrlRef } from "./db/rest-key-claims";
 import { auth, requirePermission, requireAnyPermission, requireHrRead, requireScmAccess, requirePageAccessOrSalesView, requirePageAccess } from "./middleware/auth";
 import { TRANSIENT_CONN_RE } from "./db/d1-compat";
-// Ported 2990's SCM modules (furniture supply chain). Talk to the `scm` Postgres
-// schema via supabase-js; namespaced under /api/scm/*, owner-only during the port.
 import scmApp from "./scm";
 import { publicScmImages } from "./scm/routes/public-images";
 import { idempotency } from "./middleware/idempotency";
 import { requestLog } from "./middleware/requestLog";
-// Error tracking (Sentry-protocol, no SDK). Completely inert until the owner
-// sets the SENTRY_DSN Worker secret — see services/errorTracking.ts.
 import { captureError, describeErrorForLog } from "./services/errorTracking";
 import assr from "./routes/assr";
 import logs from "./routes/logs";
@@ -23,8 +19,6 @@ import auditRoutes from "./routes/audit";
 import systemHealthRoutes from "./routes/systemHealth";
 import aiUsageRoutes from "./routes/aiUsage";
 import ocrDashboardRoutes from "./routes/ocrDashboard";
-// Self-hosted client error reporting (no Sentry): the SPA's global reporter
-// POSTs batched uncaught errors here; the daily 02:00 cron mails IT a digest.
 import clientErrors from "./routes/clientErrors";
 import udf from "./routes/udf";
 import authRoutes from "./routes/auth";
@@ -45,6 +39,8 @@ import pushDevices from "./routes/push";
 import itSupport from "./routes/itSupport";
 import mcpRoutes, { mcpWellKnown, setMcpApp } from "./routes/mcp";
 import mcpAdminRoutes from "./routes/mcpAdmin";
+import { mcpBriefPublic } from "./routes/mcpBrief";
+import { runAlerts, runBriefs } from "./services/mcp-proactive-run";
 import meetings, { publicMeetings } from "./routes/meetings";
 import { MEETINGS_DIRECTORY_JOB, pushMeetingsDirectory } from "./services/meetingsDirectory";
 import { sendAiUsageToHub } from "./services/aiUsageHub";
@@ -75,34 +71,16 @@ import { projectOverview } from "./routes/projectOverview";
 import assrQuality from "./routes/assrQuality";
 import { isFinanceViewer } from "./services/pmsAccess";
 import type { AuthUser } from "./services/auth";
-// Sales entries (/api/sales) is retained as a DEPENDENCY of Projects — the
-// Projects page embeds the sales-entry EntryPanel + submit/void/delete flow.
-// It has no standalone nav/route after the cutover.
 import sales from "./routes/sales";
-// Endpoints retained ONLY because the kept Service/Projects pages still call
-// them (no standalone nav/route): finance.ts backs the Finances P&L tab on both
-// Service and Projects (PnlCalendar); stockItems backs the ASSR By-Creditor
-// "Refresh from AutoCount" button; fleet/lorries back the Projects Setup /
-// Dismantle / Logistics crew + lorry pickers.
 import finance from "./routes/finance";
 import stockItems from "./routes/stockItems";
 import fleet from "./routes/fleet";
-// Fleet Maintenance & Compliance (Phase 1) — the compliance vault + Fleet Health
-// dashboard BUILT ON the existing scm.lorries master (+ scm.lorry_maintenance /
-// scm.lorry_service_records). Mounted OUTSIDE /api/scm so the gate is the flat
-// fleet.read/fleet.write permission alone; it uses the SCM supabase client via
-// supabaseAuth. Distinct from routes/fleet.ts (the crew picker).
 import fleetMaintenance from "./scm/routes/fleet-maintenance";
 import { fleetWorkOrderPhotos } from "./scm/routes/fleet-work-order-photos";
 import { fleetPlanService } from "./scm/routes/fleet-plan-service";
 import { fleetOffRoad } from "./scm/routes/fleet-off-road";
 import fleetWorkOrderFiles from "./scm/routes/fleet-work-order-files";
 import fleetBreakdownFiles from "./scm/routes/fleet-breakdown-files";
-// `routes/lorries.ts` removed 2026-06-28 — old Houzs Fleet lorries CRUD retired
-// in favour of scm.lorries (mounted at /api/scm/lorries). public.lorries data
-// was migrated by mig 0055 then the dead table dropped. /api/fleet/staff stays
-// — it reads public.users by role for the project Setup/Dismantle crew picker
-// (distinct from the new SCM TMS crew records).
 import settings from "./routes/settings";
 import branding from "./routes/branding";
 import inbox, { bustInboxForUser } from "./routes/inbox";
@@ -118,9 +96,6 @@ import survey from "./routes/survey";
 import track from "./routes/track";
 import portal from "./routes/portal";
 import supplierPortal from "./routes/supplierPortal";
-// Mail Center — in-ERP shared inbox. `mailInbound` is the PRE-AUTH ingest
-// (secret-guarded, mounted before the auth gate); `mailCenter` is the authed
-// read/reply/compose/label/address/access/scope router.
 import mailCenter from "./routes/mail-center";
 import mailInbound from "./routes/mail-inbound";
 import mailAcks from "./routes/mail-acks";
@@ -129,8 +104,6 @@ import mailReplyGuard from "./routes/mail-reply-guard";
 import mailPersonal from "./routes/mail-personal";
 import mailSenders from "./routes/mail-senders";
 import mailClaim from "./routes/mail-claim";
-// 2990 → Houzs LIVE SO mirror receiver. PRE-AUTH (secret-guarded, called by the
-// 2990 DB via pg_net, no user JWT) — mounted at the top level, outside /api/scm.
 import { soMirror } from "./scm/routes/so-mirror";
 import { drainCommands } from "./scm/lib/amendment-command";
 import { drainStockAllocationRecompute } from "./scm/lib/stock-allocation-job";
@@ -155,18 +128,11 @@ import { amendmentMirror } from "./scm/routes/amendment-mirror";
 import { customerMirror } from "./scm/routes/customer-mirror";
 import { staffMirror } from "./scm/routes/staff-mirror";
 import { warehouseMirror } from "./scm/routes/warehouse-mirror";
-// POS auth (Phase 1 of the 2990-backend replacement): PIN/session login for the
-// 2990 POS. Mounted PRE-AUTH; its two write endpoints re-apply `auth` per-route.
 import pos from "./routes/pos";
-// Announcements — office posts every logged-in user sees as a top banner with
-// a "Got it" ack. Ported from Hookka (single-tenant + office-only here).
 import announcements from "./routes/announcements";
 import announcementReceipts from "./routes/announcementReceipts";
 import announcementApproval from "./routes/announcementApproval";
 import memos from "./routes/memos";
-// Agent Console — owner-only fleet console for the HOOKKA-ported agents
-// (Delivery/Document/CS). Skeleton: controls + runs + config proposals +
-// feedback; the engines register themselves in services/agent-scheduler.ts.
 import agentConsole from "./routes/agent-console";
 import assistant from "./routes/assistant";
 import { caseTrack } from "./middleware/caseTrack";
@@ -184,6 +150,7 @@ import { backfillOutboundMessageIds } from "./lib/mail-threading";
 import { DELIVERY_REFRESH_LIMIT, refreshOutboundDelivery } from "./lib/mail-delivery";
 import { pollVelocity } from "./scm/lib/velocity-poll";
 import { pollItrack } from "./scm/lib/itrack-poll";
+import { triggerMailSync } from "./lib/mail-sync-trigger";
 import { runMailAckEscalation } from "./lib/mail-acks";
 import { runClientErrorDigest } from "./services/clientErrors";
 import { runSlaEscalation } from "./services/assrEscalation";
@@ -193,9 +160,6 @@ import { runOverdueEscalation } from "./services/announcementEscalation";
 import { runScheduledLeadTimeActivations } from "./services/assrLeadTime";
 import { runProjectDueReminders } from "./services/projectReminders";
 import { runPosAlerts } from "./services/posAlerts";
-// Weekly OCR rule-distill (scan-so self-evolution). Run via the daily 02:00
-// slot gated to Sundays — no new cron trigger. getSupabaseService is the same
-// service client scan-so.ts uses internally (serviceClient(env)).
 import { distillAllSalespersonRules, warmCatalogCacheForCron, processScanQueueMessage, processDistillQueueMessage } from "./scm/routes/scan-so";
 import { processAiReadQueueMessage } from "./scm/lib/ai-read-runners";
 import { CLAUDE_MODEL } from "./scm/lib/scan-ocr";
@@ -213,16 +177,8 @@ import { applyDueSupplierPrices } from "./scm/lib/supplier-price-apply";
 import { todayMyt } from "./scm/lib/my-time";
 import { reapOnce } from "./scm/lib/reaper";
 import { getBranding } from "./services/branding";
-// AutoCount inbound SO pull — restored 2026-07-14. Reads SO from the AutoCount
-// middleware and upserts the local `sales_orders` mirror (read-only against
-// AutoCount; writes only ERP tables). Gated by isAutoCountSyncDisabled so the
-// env kill switch still halts it. The mirror feeds Finance/P&L revenue and the
-// ASSR SO lookup, which had been frozen since the 2026-06-13 pause.
 import { runPull } from "./services/pull";
 import { runDoMirrorSync } from "./services/doMirror";
-// AutoCount PO pulls (restored — frozen since 2026-06-12) and the unfiltered
-// ac_snapshot_* staging load that gives the migration reconciliation a
-// denominator. Both daily; see the 02:00 slot.
 import { runPOPull, runPODocsPull } from "./services/po";
 import { runSOSnapshot, runPOSnapshot } from "./services/acSnapshot";
 import { isAutoCountSyncDisabled } from "./services/autocount";
@@ -232,9 +188,6 @@ import { bustProjectOverviewOnWrite } from "./routes/lib/project-overview-bust";
 
 const app = new Hono<{ Bindings: Env }>();
 
-// After a successful ASSR/Projects write, bust the acting user's inbox snapshot
-// so their own inbox self-heals on the next load (see routes/inbox.ts). Runs the
-// handler first, then busts on a 2xx non-GET; always best-effort.
 const inboxBustAfterWrite: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   await next();
   if (c.req.method === "GET") return;
@@ -244,29 +197,15 @@ const inboxBustAfterWrite: MiddlewareHandler<{ Bindings: Env }> = async (c, next
   }
 };
 
-// Outermost: one structured access-log line + X-Request-Id per request.
 app.use("*", requestLog);
-// Best-effort work deep in a helper (afterResponse in lib/after-response.ts) runs
-// on the request's waitUntil instead of delaying the response.
 app.use("*", async (c, next) => {
   let waitUntil: ((p: Promise<unknown>) => void) | null = null;
-  try { waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx); } catch { /* no execution context (tests) */ }
+  try { waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx); } catch { }
   return waitUntil ? withAfterResponse(waitUntil, () => next()) : next();
 });
 
-// Allow-listed CORS origins (audit M3). The SPA calls the API SAME-ORIGIN, so it
-// needs no CORS at all; the only legitimate CROSS-origin BROWSER callers are the
-// company domains and the Pages hosts (prod / staging / preview) plus localhost
-// for dev. Everything else is refused instead of the previous wildcard `*`, so a
-// random attacker page can no longer read responses from the public/unauth
-// endpoints. Non-browser callers (native apps, pg_net, server-to-server) send no
-// Origin header and are unaffected.
-//
-// VERIFY BEFORE MERGE: confirm the POS surface's BROWSER origin is covered below
-// (expected to be erp.houzscentury.com or a *.houzs-erp*.pages.dev host). A
-// native/mobile POS sends no Origin and needs nothing here.
 function corsOriginAllowed(origin: string | undefined | null): string | undefined {
-  if (!origin) return undefined; // same-origin / non-browser: no ACAO needed
+  if (!origin) return undefined;
   let host: string;
   try {
     host = new URL(origin).hostname.toLowerCase();
@@ -279,21 +218,11 @@ function corsOriginAllowed(origin: string | undefined | null): string | undefine
     host === "2990shome.com" ||
     host.endsWith(".2990shome.com") ||
     /^([a-z0-9-]+\.)?houzs-erp(-staging)?\.pages\.dev$/.test(host) ||
-    // 2990 POS is a BROWSER SPA on Cloudflare Pages at 2990s-pos.pages.dev
-    // calling this backend cross-origin (post-cutover it targets the Houzs
-    // Worker). The M3 allowlist that replaced `cors *` omitted it, which
-    // CORS-blocked every POS request (pin-login, catalog, cart) — the POS could
-    // not open. The `<hash>.` prefix covers Pages preview deploys.
     /^([a-z0-9-]+\.)?2990s-pos\.pages\.dev$/.test(host) ||
     host === "localhost" ||
     host === "127.0.0.1";
   return ok ? origin : undefined;
 }
-// X-Company-Code rides on the branding-logo response so the client can refuse
-// an image that belongs to another company (see routes/branding.ts). A custom
-// response header is INVISIBLE to a cross-origin reader unless it is exposed
-// here — omitting it would make the guard silently no-op in prod, where the
-// SPA and the worker are different origins.
 /* X-Session-Pass is EXPOSED because the middleware re-issues a pass on the
    authoritative path and the SPA has to be able to read it back — a header the
    browser hides is a renewal that silently never happens. It carries no secret:
@@ -301,14 +230,6 @@ function corsOriginAllowed(origin: string | undefined | null): string | undefine
    docs/bugs/0593-*. */
 app.use("*", cors({ origin: corsOriginAllowed, exposeHeaders: ["X-Request-Id", "X-Company-Code", "X-Session-Pass", "Server-Timing"] }));
 
-// Baseline security headers on every Worker response. Deliberately conservative:
-// the cross-origin isolation family (CORP/COOP/COEP) is DISABLED because the API
-// serves images consumed cross-origin (public image proxies, the POS surface) and
-// CORP:same-origin would break those loads. HSTS omits includeSubDomains/preload so
-// it cannot affect sibling subdomains. No Content-Security-Policy here yet — CSP is
-// breakage-prone and must ship report-only first (tracked separately). The load-
-// bearing one is X-Content-Type-Options: nosniff, which blunts MIME-sniff XSS on the
-// file-proxy routes.
 app.use(
   "*",
   secureHeaders({
@@ -325,8 +246,6 @@ app.use(
   }),
 );
 
-// D1 -> Supabase cutover: swap env.DB for the Postgres-backed shim on every
-// request, before auth + routes. Remove once all paths use Drizzle/postgres.js.
 app.use("*", dbInject);
 
 app.get("/", (c) => c.json({ ok: true, service: "autocount-sync-api" }));
@@ -354,71 +273,29 @@ app.get("/health", (c) => {
   });
 });
 
-// /api/auth/* is unauthenticated (login, bootstrap, accept-invite, status,
-// me, logout). It must be mounted BEFORE the auth middleware below.
 app.route("/api/auth", authRoutes);
-// AI Connector (MCP): own auth (OAuth + hzmcp_ tokens), so above the gate.
-// /.well-known is reached through the Pages functions at the site root.
+app.route("/api/mcp/brief", mcpBriefPublic);
 app.route("/api/mcp", mcpRoutes);
 app.route("/.well-known", mcpWellKnown);
 
-// Public customer survey — unauthenticated, token-based. Lives under
-// /api/survey (not /survey) so it doesn't collide with the SPA route
-// at /survey/:token. The SPA page fetches from /api/survey.
 app.route("/api/survey", survey);
 
-// Customer Portal — tokenised per-case tracking.
-//   POST /api/track               public: verify ASSR no + phone
-//   /api/portal/*   (caseTrack)   single-case scoped API
-// Both live under /api so the existing /api/* rewrite in _redirects
-// forwards them correctly, and they never collide with SPA paths
-// like /track or /portal/case/:token.
 app.route("/api/track", track);
 app.use("/api/portal/*", caseTrack);
 app.route("/api/portal", portal);
 
-// Supplier portal — same shape as customer portal, different middleware.
 app.use("/api/supplier-portal/*", supplierTrack);
 app.route("/api/supplier-portal", supplierPortal);
 
-// Mail Center inbound ingest — PRE-AUTH, secret-guarded machine-to-machine.
-// MUST be mounted BEFORE the /api/* auth gate so the standalone inbound Worker
-// (no staff session) can POST received mail. It authenticates the caller with
-// the x-mail-secret header vs env.MAIL_INBOUND_SECRET and 503s until that secret
-// is set. Mounted at the exact sub-path so the authed mail-center router below
-// never shadows it.
 app.route("/api/mail-center/inbound", mailInbound);
-// 2990 live SO mirror — pre-auth, secret-guarded (x-sync-secret == SYNC_SECRET).
 app.route("/api/sync/so-mirror", soMirror);
-// 2990 live SO AMENDMENT mirror — same caller, same secret, SEPARATE route and
-// SEPARATE 2990-side drain/cron, so an amendment failure can never stall the SO
-// mirror the business already runs on.
 app.route("/api/sync/amendment-mirror", amendmentMirror);
-// 2990 live CUSTOMER mirror — same caller, same secret, SEPARATE route and
-// SEPARATE 2990-side drain/cron. This is the masters prerequisite (design D6):
-// customers is a live FK parent of mirrored SOs, and a frozen import means a new
-// 2990 customer's first SO 500s here forever (SO-2607-013, 6582 attempts).
 app.route("/api/sync/customer-mirror", customerMirror);
-// 2990 live STAFF + WAREHOUSE mirrors — the rest of the SO trio's FK parents, and
-// the last two that can wedge it (venues are NULLed by so-mirror; items carry no
-// product FK). Same caller, same secret, SEPARATE routes and SEPARATE 2990-side
-// drains/crons. staff has NO company_id (0083: shared masters get none), so it
-// guards on `user_id IS NULL` — the Houzs-User-Management handover flag — instead.
 app.route("/api/sync/staff-mirror", staffMirror);
 app.route("/api/sync/warehouse-mirror", warehouseMirror);
-// POS auth — pin-login + sales-staff are PRE-AUTH (before the /api/* gate);
-// every OTHER route in the router re-applies `auth` on itself (set-pin,
-// verify-pin, sales-stats and the three admin-*-pin doors).
 app.route("/api/pos", pos);
-// Houzs POS booth terminals (NOT the 2990 tablet POS above): PRE-AUTH, every
-// route carries its own device-token guard (routes/pos-device.ts).
 app.route("/api/pos-device", posDevice);
 
-// Google Form intake webhook — PRE-AUTH like mail-inbound: called by
-// Google Apps Script (no staff session), self-guarded by the
-// FORM_INTAKE_KEY shared secret (X-Intake-Key header). Was mounted
-// below the gate at first, so every call 401'd at the gate before the
-// route's own key check ever ran.
 app.route("/api/assr-form-intake", assrFormIntake);
 
 // HC Delivery sheet ERP sync — PRE-AUTH for the same reason as the form intake:
@@ -427,20 +304,9 @@ app.route("/api/assr-form-intake", assrFormIntake);
 // and push (owner 2026-09-15). See routes/deliverySheetSync.ts.
 app.route("/api/delivery-sheet", deliverySheetSync);
 
-// Houzs Chat (Connect) delivery callback — PRE-AUTH for the same reason as
-// the form intake above: chat.houzscentury.com's servers call it with no staff
-// session, self-guarded by the CHAT_CALLBACK_KEY shared secret (X-Chat-Key
-// header). It RECORDS what the customer tapped into scm.wa_message_log; it
-// never writes a delivery date onto the Sales Order. See routes/chatCallback.ts.
 app.route("/api/chat-callback", chatCallback);
 
-// Auth gate for everything else under /api/*. Mounted AFTER the
-// public API routes above so they stay unauthenticated.
-// PUBLIC image proxies for the cross-origin POS — MUST be mounted BEFORE the
 // global `auth` + `requireScmAccess` gates so a plain <img src> (no Bearer, no
-// same-origin cookie) reaches them. Only these GET image routes are exposed; every
-// other /api/scm/* path is untouched and still hits the gates below. Mirrors how
-// 2990's api serves Model photos auth-free. See scm/routes/public-images.ts.
 app.route("/api/scm", publicScmImages);
 
 // PUBLIC no-login delivery-order SCAN — MUST be mounted BEFORE the `auth` gate,
@@ -454,78 +320,25 @@ app.route("/api/scm", publicScmImages);
 // See routes/publicDoScan.ts and backend/tests/publicDoScan*.test.ts.
 app.route("/api/public/do-scan", publicDoScan);
 
-// PUBLIC no-login CONTRACTOR CALENDAR — also mounted BEFORE the `auth` gate: a
-// booth-setup contractor opens their link with no Houzs account. The gate is the
-// unguessable token in the URL (services/contractorShare.ts) plus the revoke
-// kill switch. The route returns ONLY the confirmed schedule (venue + booth +
-// dates) for the ONE contractor the token resolves to — never finance or any
-// other contractor's events. See routes/publicContractorCalendar.ts.
 app.route("/api/public/contractor-calendar", publicContractorCalendar);
-// PUBLIC no-login BRAND CALENDAR — same shape and the same reasons: a brand's
-// own confirmed events, its display floorplan, its own size and total sales,
-// scoped by the token's brand on every read. See routes/publicBrandCalendar.ts.
 app.route("/api/public/brand-calendar", publicBrandCalendar);
-// A meeting-room booking link (no login): free times, book, a guest's own booking by its token.
-// Proxied to the IT Hub as a guest; see routes/meetings.ts.
 app.route("/api/public/meetings", publicMeetings);
 
 app.use("/api/*", auth);
 
-// Multi-company (Phase 0b): resolve the ACTIVE company + allowed companies per
-// request (X-Company-Id switcher header / hostname default) and stash them on
-// the context, so BOTH the SCM query-scoping helpers (scm/lib/companyScope.ts)
-// AND the native raw-SQL modules (sales / finance) can filter + stamp
-// company_id. Mounted on the whole authenticated /api/* surface: after auth,
-// before idempotency and every route. Reads only request headers + the companies
-// master, so native routes without any company table simply ignore
-// c.get('companyId'), and it DEGRADES SAFELY (leaves companyId undefined) when
-// the companies master isn't resolvable yet — so single-company Houzs keeps
-// serving unchanged and the pre-auth public routes above are untouched.
 app.use("/api/*", companyContext);
 
-// Principal + company scoped request idempotency (no-op unless the client sends
-// an `Idempotency-Key` header). Mounted after auth AND companyContext so a key
-// can never replay another user's or another company's response. Bookkeeping
-// failures are fail-closed for callers that explicitly request idempotency.
 app.use("/api/*", idempotency);
 
-// ETag + 304 on the GET lists the frontend polls (pollEtag.ts lists them), so an
-// unchanged poll costs headers instead of the whole list. Inside auth and
-// companyContext so the tag carries the user and company it was computed for;
-// above every router so it wraps the handler.
 for (const path of POLLED_LIST_PATHS) app.use(path, pollEtag);
 
-// HOUZS CONNECT → ERP confirmed-payment push. Books a Connect-verified customer
-// payment onto its Sales Order through the one Payments writer. Mounted BELOW the
-// /api/* auth gate on purpose (unlike /api/chat-callback): it reuses the service
-// user the auth middleware mints for Bearer <CONNECT_SERVICE_TOKEN> — the same
-// credential Connect's org sync uses — and the router itself gates to the service
-// tier with requirePermission("*"). See routes/connect-payments.ts.
 app.route("/api/connect/payments", connectPayments);
 
-// Inbox snapshot self-heal — the /api/inbox GET caches a per-user aggregate of
-// ASSR + Projects + Trips for ~60s. After the acting user makes a successful
-// write to ASSR or Projects, bust THEIR snapshot so their own inbox reflects it
-// on the next load instead of staying stale for up to a minute. Best-effort and
-// post-response: never blocks or fails the write. Scoped to /api/assr + /api/
-// projects only, where c.get("user") is the Houzs bigint user that keys the
-// snapshot; the /api/scm/* trip routes carry the scm.staff UUID (see the
-// staff-UUID bigint trap), so their inbox slice stays on the 60s TTL. Cross-
-// user staleness (items assigned to others) is likewise intentionally on TTL.
 app.use("/api/assr/*", inboxBustAfterWrite);
 app.use("/api/projects/*", inboxBustAfterWrite);
-// Venture Portal: a Sales Attending edit (POST / DELETE
-// /api/projects/:id/sales-attendees) reaches the portal in seconds, and so do
-// the orders a project's venue or date change re-queues. The same middleware
-// /api/scm/* mounts — it runs after the response and can never fail it
-// (scm/lib/venture-portal-kick.ts).
 app.use("/api/projects/*", venturePortalKick());
 
-// Mount the Lead Time Portal first so /api/assr/portal/* doesn't
-// fall through into the catch-all /:id handler on the main module.
 app.route("/api/assr/portal", assrPortal);
-// Quality Overview's period summary and supplier figures; before the Service
-// Case router so its "/:id" does not take the path. See routes/assrQuality.ts.
 app.route("/api/assr/quality-overview", assrQuality);
 app.route("/api/assr", assr);
 app.route("/api/logs", logs);
@@ -533,8 +346,6 @@ app.route("/api/audit", auditRoutes);
 app.route("/api/admin/health", systemHealthRoutes);
 app.route("/api/admin/ai-usage", aiUsageRoutes);
 app.route("/api/admin/ocr", ocrDashboardRoutes);
-// Behind the /api/* auth gate: intake needs a session (identity is stamped from
-// it, never from the body); the /summary read is super-admin inside the router.
 app.route("/api/client-errors", clientErrors);
 app.route("/api/udf", udf);
 app.route("/api/totp", totpRoutes);
@@ -545,17 +356,10 @@ app.route("/api/positions", positions);
 app.route("/api/position-capabilities", positionCapabilities);
 app.route("/api/position-policy", positionPolicy);
 app.route("/api/departments", departments);
-// Document reference numbers + document types (mig 20260906T1417): the
-// router carries its own /document-refs and /document-types prefixes.
 app.route("/api", documentRefs);
 app.route("/api/companies", companies);
-// Column layouts: this user's own (synced across their machines) + each
-// company's admin-set default. Any signed-in user reads and writes their OWN
-// row; the /default writes gate on settings.manage inside the router.
 app.route("/api/table-layouts", tableLayouts);
 app.route("/api/notifications", notifications);
-// Every sidebar count in one request: each source is re-dispatched through THIS
-// app with the caller's headers, so it passes the same gates as a direct call.
 setBadgeDispatch((c, req) => {
   let ctx: Parameters<typeof app.fetch>[2];
   try {
@@ -567,63 +371,35 @@ setBadgeDispatch((c, req) => {
 });
 app.route("/api/badge-counts", badgeCounts);
 
-// Native-app push device registry (any signed-in user, own device only).
 app.route("/api/push", pushDevices);
-// IT Support: a proxy to the Houzs IT Hub (any signed-in user, own requests only).
 app.route("/api/it-support", itSupport);
 app.route("/api/mcp-admin", mcpAdminRoutes);
-// Meetings: every signed-in user; rooms need meetings.manage_rooms (checked in the router).
 app.route("/api/meetings", meetings);
 app.route("/api/presence", presence);
-// Mounted at the EXACT path BEFORE the projects router so its "/:id" catch-all
-// does not swallow "outstanding-tasks" as an id (owner/admin Reminder view).
 app.route("/api/projects/outstanding-tasks", projectsOutstanding);
-// All-dates calendar search (Previous / Next match). Same exact-path-first reason.
 app.route("/api/projects/calendar/search", projectsCalendarSearch);
-// Cross-project open-defect feed (service team's Defect List). Same exact-path-
-// first reason; gated projects.list inside. See routes/projectsDefectList.ts.
 app.route("/api/projects/defect-list", projectsDefectList);
-// Finished events with incomplete books (Project Overview, Overview). Same exact-
-// path-first reason as above; finance-viewer rule inside. See routes/projectDataGaps.ts.
 app.use("/api/projects/data-gaps/*", requirePageAccess("projects.finances"));
 app.route("/api/projects/data-gaps", projectDataGaps);
-// Every project with its keyed books and its Sales Orders, for Project Overview.
-// Same exact-path-first reason and gate as data-gaps. See routes/projectOverview.ts.
 /* Project Overview: the projects.finances page, or any finance viewer (the
    directors, owner 2026-10-20) - the router itself still refuses everyone else. */
 const requirePageAccessOrDirector: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   if (isFinanceViewer(c.get("user") as unknown as AuthUser)) return next();
   return requirePageAccess("projects.finances")(c, next);
 };
-// A successful project write drops Project Overview's cached copy (routes/lib/project-overview-bust.ts).
 app.use("/api/projects/*", bustProjectOverviewOnWrite);
 app.use("/api/project-forecast/*", bustProjectOverviewOnWrite);
 app.use("/api/projects/overview/*", requirePageAccessOrDirector);
 app.route("/api/projects/overview", projectOverview);
 app.route("/api/projects", projects);
-// The office side of a brand's share link (generate / revoke). Own file because
-// routes/projects.ts is at its size ceiling. See routes/brandShare.ts.
 app.route("/api/brand-share", brandShare);
-// The Forecast figure of a Financial Snapshot line (own prefix, same size-ceiling
-// reason). See routes/projectForecast.ts.
 app.route("/api/project-forecast", projectForecast);
-// The Sales Orders written at one exhibition, read from inside the project page.
-// Same read gate as GET /api/sales/entries so the section and its data admit the
-// same people; own prefix because routes/projects.ts is at its size ceiling and
-// the router carries the SCM bridge. See routes/project-sales-orders.ts.
 app.use("/api/project-sales-orders/*", requirePageAccessOrSalesView("sales"));
 app.route("/api/project-sales-orders", projectSalesOrders);
-// The evening sales report a project keeps, bill by bill, matched to the orders
-// opened since. Same read gate as the Sales section; saving is for the three
-// named people, checked inside. See routes/project-sales-bills.ts.
 app.use("/api/project-sales-bills/*", requirePageAccessOrSalesView("sales"));
 app.route("/api/project-sales-bills", projectSalesBills);
-// Houzs POS bills of one event (layout E9) — the Sales section's POS half, so
-// the same read gate as its Sales Orders and sales report.
 app.use("/api/project-pos-sales/*", requirePageAccessOrSalesView("sales"));
 app.route("/api/project-pos-sales", projectPosSales);
-// Houzs POS Admin (layouts E1-E5): owner / admin only, the whole menu behind
-// one key. NOT under /api/pos — that is the older 2990 tablet-POS auth.
 app.use("/api/pos-admin/*", requirePermission("pos.manage"));
 app.route("/api/pos-admin", posAdmin);
 // HR Employees & Attendance (HC-0125): broad read on either employees key sees
@@ -646,7 +422,6 @@ app.route("/api/finance", finance);
 app.route("/api/stockitems", stockItems);
 app.route("/api/fleet", fleet);
 app.route("/api/fleet-maintenance", fleetWorkOrderPhotos);
-// Mounted first: its auth is per-route, and fleet-maintenance.ts is at its file-size ceiling.
 app.route("/api/fleet-maintenance", fleetPlanService);
 app.route("/api/fleet-maintenance", fleetOffRoad);
 app.route("/api/fleet-maintenance", fleetMaintenance);
@@ -655,10 +430,6 @@ app.route("/api/fleet-breakdown-files", fleetBreakdownFiles);
 app.route("/api/settings", settings);
 app.route("/api/branding", branding);
 app.route("/api/inbox", inbox);
-// Mail Center (authed) — reads/reply/compose/label gate on mailbox SCOPE
-// ownership; alias/access/scope-level admin gate on mail_center.manage inside
-// the handlers (owner passes via "*"). The pre-auth /api/mail-center/inbound
-// route is mounted above, before the auth gate, and is not shadowed by this.
 app.route("/api/mail-center", mailAcks);
 app.route("/api/mail-center", mailAccessLog);
 app.route("/api/mail-center", mailReplyGuard);
@@ -666,51 +437,21 @@ app.route("/api/mail-center", mailPersonal);
 app.route("/api/mail-center", mailClaim);
 app.route("/api/mail-center", mailSenders);
 app.route("/api/mail-center", mailCenter);
-// Announcements — the banner GET, the LIST GET and the ack POST are open to
-// every authed user (the route handles it internally: the list is audience- and
-// company-filtered server-side, same as the banner). announcements.read is the
-// ADMIN verb and no longer gates reading; CRUD/remind/acks-readout stay on
-// announcements.write.
 app.route("/api/announcements", announcements);
-// The approval + attachment-log routes (submit / approve / reject / files) —
-// same prefix, second router (routes/announcements.ts is at its size ceiling).
-// Read receipts + ack analytics (2026-09-09 split; no path overlaps the router above).
 app.route("/api/announcements", announcementReceipts);
 app.route("/api/announcements", announcementApproval);
-// The department memo register (mig 20260909T0500): numbered at creation on
-// the same <DEPT>-MEMO-<YYMM> series the notices use.
 app.route("/api/memos", memos);
-// Agent Console — owner-only (requirePermission("*") inside the router).
-// Deliberately in the public /api tree, NOT /api/scm (the scm subtree swaps
-// c.get('user') to scm.staff UUIDs — the known staff-UUID bigint trap).
 app.route("/api/agents", agentConsole);
 app.route("/api/assistant", assistant);
 app.route("/api/projects-print", projectsPrint);
 app.route("/api/search", search);
 app.route("/api/assr-print", assrPrint);
 
-// ── Ported 2990's SCM (furniture supply chain) — /api/scm/* ──────────
-// Gated on scm.access (Owner / IT Admin pass via their "*" wildcard). The
-// routes attach their own scm-scoped supabase client via scm/middleware/auth.
-// requireScmAccess is ADDITIVE: it keeps the exact "*"/"scm.access" pass
-// conditions AND also lets a position pass when it has ANY scm* page-access
-// area granted at >= view — so per-position SCM grants work without removing
-// any existing user's access. (Was requireAnyPermission(["*","scm.access"]).)
 app.use("/api/scm/*", requireScmAccess);
 app.route("/api/scm", scmApp);
 
-// Map raw infrastructure errors to operator-friendly messages so staff never
-// see a Postgres/driver string (e.g. the "operator does not exist: date < text"
-// or "CONNECTION_CLOSED" leaks seen during the cutover). Full error still goes
-// to wrangler tail for us. HTTPException (thrown with an intended status) passes
-// through untouched.
 function humanizeError(err: Error): { status: 500 | 503; message: string } {
   const m = String(err?.message ?? err);
-  // Transient connection failures (cold-start hang, pooler connection cap,
-  // dropped/reaped socket, cross-context I/O) -> 503 "try again". Shares ONE
-  // matcher with the retry layer (d1-compat TRANSIENT_CONN_RE) so the two can
-  // never drift apart, and the frontend retries idempotent GETs on 503 — so
-  // these self-heal instead of surfacing as a dead-end "Something went wrong".
   if (TRANSIENT_CONN_RE.test(m))
     return { status: 503, message: "The database is briefly unavailable. Please try again in a moment." };
   if (/operator does not exist|column .* does not exist|relation .* does not exist|syntax error|invalid input syntax|violates .* constraint|duplicate key/i.test(m))
@@ -720,7 +461,6 @@ function humanizeError(err: Error): { status: 500 | 503; message: string } {
 
 app.onError((err, c) => {
   console.error("[onError]", describeErrorForLog(err), err);
-  // Preserve Hono HTTPException status/body (intentional 4xx from handlers).
   const anyErr = err as Error & { getResponse?: () => Response; status?: number };
   const base =
     typeof anyErr.getResponse === "function"
@@ -729,34 +469,12 @@ app.onError((err, c) => {
           const { status, message } = humanizeError(err);
           return c.json({ error: message }, status);
         })();
-  // The cors() middleware sets Access-Control-Allow-Origin in its post-next()
-  // pass, which is SKIPPED when a handler throws — so error responses would
-  // otherwise reach the browser WITHOUT CORS headers and surface as an opaque
-  // "Failed to fetch" instead of the real status/message. Re-add them here so
-  // every error is readable by the SPA — but only for an allow-listed origin,
-  // matching the restricted cors() above (audit M3), never a blanket "*".
   const res = new Response(base.body, base);
   const allowedOrigin = corsOriginAllowed(c.req.header("Origin"));
   if (allowedOrigin) res.headers.set("Access-Control-Allow-Origin", allowedOrigin);
   res.headers.set("Access-Control-Expose-Headers", "X-Request-Id, X-Session-Pass");
 
-  // Error tracking. INERT until the owner sets the SENTRY_DSN secret — with no
-  // DSN this call returns before doing anything (no fetch, no log, no latency),
-  // which is the default state on every environment. See
-  // services/errorTracking.ts and docs/error-tracking-options.md.
-  //
-  // Only 5xx is reported. A handler that deliberately threw an HTTPException
-  // with a 4xx status is telling a caller it got the request wrong; sending
-  // those would bury the real failures and burn the free monthly quota on
-  // validation noise.
-  //
-  // The route PATTERN, not the URL, is what travels: c.req.routePath is
-  // "/api/scm/sales-orders/:id" where the URL would carry ids and (on a search)
-  // the customer's name in the query string.
   if (res.status >= 500) {
-    // c.executionCtx throws when the runtime did not supply one (some test
-    // harnesses). Falling back to a floating promise is correct here — the
-    // reporter is fire-and-forget by design.
     let waitUntil: ((p: Promise<unknown>) => void) | undefined;
     try {
       waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
@@ -781,11 +499,6 @@ app.onError((err, c) => {
   return res;
 });
 
-// Exported for portalSurfaces.test.ts, which walks `app.routes` in
-// registration order to prove every PUBLIC_API_PREFIXES entry is backed
-// by a router mounted above the auth gate. The invariant is about mount
-// ORDER, so it can only be checked against the assembled app.
-// The AI Connector re-enters the assembled app in-process for its reads.
 setMcpApp(app as unknown as Parameters<typeof setMcpApp>[0]);
 
 export { app };
@@ -793,14 +506,9 @@ export { app };
 export default {
   fetch: app.fetch,
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
-    // Cutover: cron services write via env.DB too — point it at Postgres.
     env = withPgDb(env);
-    // Each job's run lands in public.job_runs for System Health (services/jobRuns.ts).
     const track = jobTracker(env);
     if (event.cron === "*/5 * * * *") {
-      // Keep-warm: a trivial DB ping every 5 min keeps the Hyperdrive pool
-      // alive through quiet periods so the first real request never hits a
-      // reaped/cold connection. Cheap — SELECT 1.
       ctx.waitUntil(
         track("keepwarm", () => env.DB.prepare("SELECT 1 AS ok").first()).catch((e) => console.error("[cron keepwarm]", e))
       );
@@ -832,10 +540,6 @@ export default {
           })
           .catch((e) => console.error("[cron mail-delivery]", e))
       );
-      // Health report to the IT Hub: live DB, email backlog, jobs, AI failures,
-      // measured as the System Health page measures them (services/healthHub.ts).
-      // No hub address or key: nothing is sent. A refusal is only logged.
-      // The staff list for the meeting-room hub, once an hour (services/meetingsDirectory.ts).
       if (new Date(event.scheduledTime).getUTCMinutes() < 5) {
         ctx.waitUntil(
           track("meetings-directory", () => pushMeetingsDirectory(env))
@@ -847,13 +551,17 @@ export default {
           .then((r) => { if (r.sent && !r.ok) console.log(`[cron ${HEALTH_HUB_JOB}] sent, health is not ok`); })
           .catch((e) => console.error(`[cron ${HEALTH_HUB_JOB}]`, e))
       );
-      // DEV-42: store live lorry positions from Velocity (no-op until the secret is set).
       ctx.waitUntil(
         pollVelocity(env)
           .then((r) => {
             if (!r.skipped) console.log(`[cron velocity] ${JSON.stringify(r)}`);
           })
           .catch((e) => console.error("[cron velocity]", e instanceof Error ? e.message : e))
+      );
+      ctx.waitUntil(
+        track("mail-sync-trigger", () => triggerMailSync(env))
+          .then((r) => { if ("ok" in r && !r.ok) console.error(`[cron mail-sync-trigger] github ${r.status}`); })
+          .catch((e) => console.error("[cron mail-sync-trigger]", e instanceof Error ? e.message : e))
       );
       // HC-0050: same, from iTrack (no-op until ITRACK_ACCOUNT + ITRACK_PASSWORD are set).
       ctx.waitUntil(
@@ -863,12 +571,6 @@ export default {
           })
           .catch((e) => console.error("[cron itrack]", e instanceof Error ? e.message : e))
       );
-      // AutoCount inbound SO pull (incremental, checkpoint-driven). getSince()
-      // fetches every SO modified since the stored pull_checkpoint and upserts
-      // the local `sales_orders` mirror — so the first run after re-enabling
-      // catches the mirror up from the 2026-06-13 freeze, and every 5-min run
-      // keeps it fresh. Read-only against AutoCount (no writes back). Gated by
-      // the env kill switch; best-effort so a pull failure never breaks the slot.
       if (!isAutoCountSyncDisabled(env)) {
         ctx.waitUntil(
           track("so-pull", () => runPull(env, "SCHEDULED"))
@@ -876,10 +578,6 @@ export default {
             .catch((e) => console.error("[cron so-pull]", e))
         );
       }
-      // Amendment write-back backstop (design §3.2): drain any sync_command left
-      // PENDING (a lost inline attempt, a 2990 hiccup). No-op when the DB flag is
-      // off or the 2990 bridge is unconfigured, so this is safe to run always and
-      // ships dark. Best-effort — a drain failure can never break the slot.
       ctx.waitUntil(
         track("amendment-cmd", () => drainCommands(env))
           .then((r) => {
@@ -887,57 +585,24 @@ export default {
           })
           .catch((e) => console.error("[cron amendment-cmd]", e))
       );
-      // ERP -> AutoCount write-back drain. Ships dark twice over: no-op without
-      // AC_SYNC_URL, and no-op while scm.app_config 'scm.autocount_writeback'
-      // is off (which 0277 seeds it to). Best-effort — a drain failure can
-      // never break the slot.
       ctx.waitUntil(
         track("ac-writeback", () => drainAutoCountOutbox(env))
           .then((r) => {
-            /* A FAILED row means a document exists in the ERP and does not
-               exist in AutoCount. That is the divergence this whole mechanism
-               is built to prevent, so it can never read as routine. */
             if (r.failed) console.error(`[cron ac-writeback] FAILED ${JSON.stringify(r)}`);
             else if (r.processed) console.log(`[cron ac-writeback] ${JSON.stringify(r)}`);
           })
           .catch((e) => console.error("[cron ac-writeback]", e))
       );
-      /* ERP -> Venture Portal live sales-order feed drain (mig 20260912T1800).
-         The portal pays Revenue Department commission out of these orders, so a
-         document that does not arrive is a commission that does not get paid.
-         Ships dark THREE times over: no-op while scm.app_config
-         'scm.venture_portal_feed' is off (which the migration seeds it to), and
-         no-op without scm.sync_config vp.url + vp.secret. Best-effort — a drain
-         failure can never break the slot.
-
-         THIS IS THE SENDER THE CONTRACT PUT IN pg_cron + pg_net. Neither
-         extension is installed on production (measured 2026-09-12; the query
-         and its NULL are in the migration header), and a pg_cron job would be
-         invisible to every gate this repo runs. Commission is settled monthly,
-         so five minutes and ten seconds are the same number to it. */
       const vpOrderDrain = track("vp-feed", () => drainVenturePortalOutbox(env))
         .then((r) => {
-          /* A FAILED row means a sales order exists here and the portal has
-             not got it — somebody's commission is computed from a document
-             the portal cannot see. It can never read as routine. */
           if (r.failed) console.error(`[cron vp-feed] FAILED ${JSON.stringify(r)}`);
           else if (r.processed) console.log(`[cron vp-feed] ${JSON.stringify(r)}`);
         })
         .catch((e) => console.error("[cron vp-feed]", e));
       ctx.waitUntil(vpOrderDrain);
-      /* The CATALOGUE push (items only, mig 20260923T1843), same switch, same
-         key. It starts only once the order drain has SETTLED — vpOrderDrain
-         never rejects — so a megabyte upload can never hold a connection the
-         orders are waiting for, and its own failure is caught here, never
-         there. The unchanged case is one md5 round trip. */
       const vpCatalogue = vpOrderDrain
         .then(() => track("vp-catalogue", () => pushVenturePortalCatalogue(env, { force: false })))
         .then((r) => {
-          /* failed = the portal refused the catalogue (400/413/422) and it
-             will not be sent again until it changes or a person forces it;
-             build_failed = the SQL did not answer. A catalogue already
-             parked (refused_unchanged) is on the status page, not re-logged
-             every five minutes. */
           if (
             r.skipped === "catalogue_url_unknown"
             || r.companies.some((x) => x.action === "failed" || x.action === "build_failed")
@@ -949,9 +614,6 @@ export default {
         })
         .catch((e) => console.error("[cron vp-catalogue]", e));
       ctx.waitUntil(vpCatalogue);
-      /* The SALES ATTENDING push (mig *_scm_vp_sales_attending.sql), same
-         switch, same key, after the catalogue has settled — vpCatalogue never
-         rejects. The unchanged case is one md5 round trip. */
       ctx.waitUntil(
         vpCatalogue
           .then(() => pushVenturePortalAttendance(env, { force: false }))
@@ -967,13 +629,6 @@ export default {
           })
           .catch((e) => console.error("[cron vp-attendance]", e))
       );
-      /* Keyless-conversion backlog sweep. Ships DARK: no-op unless
-         scm.app_config 'scm.autocount_relink_sweep' is 'plan' (report only) or
-         'apply' (stamp the book's line keys, then queue the keyed edit). Reads
-         the live book to match up delivery orders / goods receipts that were
-         converted before the book reported its keys back, so a person no longer
-         has to press "Match up lines" per document. Best-effort — a sweep
-         failure can never break the slot. */
       ctx.waitUntil(
         track("ac-relink-sweep", () => relinkHeldBackSweep(env))
           .then((r) => {
@@ -1022,20 +677,12 @@ export default {
       ctx.waitUntil(
         track("so-allocation", () => drainStockAllocationRecompute(env))
           .then((r) => {
-            /* A dead-lettered job is the one state that must NEVER read as
-               routine: allocation has stopped and stays stopped until a human
-               acts. Logged at error level on every sweep so it cannot hide in
-               the noise. */
             if (r.deadLettered) console.error(`[cron so-allocation] DEAD LETTER ${JSON.stringify(r)}`);
             else if (r.processed || r.reason) console.log(`[cron so-allocation] ${JSON.stringify(r)}`);
           })
           .catch((e) => console.error("[cron so-allocation]", e))
       );
     } else if (event.cron === "*/15 * * * *") {
-      // MRP stored-planning snapshot refresh (option B, 2026-08-19): recompute
-      // each company's default-view MRP and save it, so the MRP page opens
-      // instantly from a fresh plan. Best-effort + fire-and-forget — a slow or
-      // failed run logs and never stalls the slot.
       ctx.waitUntil(
         track("mrp-snapshot", () => refreshAllMrpSnapshots(env, new Date().toISOString()))
           .catch((e) => console.error("[cron mrp-snapshot]", e))
@@ -1045,9 +692,17 @@ export default {
         track("procurement-overview", () => refreshProcurementOverviewSnapshots(env, todayMyt()))
           .catch((e) => console.error("[cron procurement-overview]", e))
       );
+      ctx.waitUntil(
+        track("mcp-brief", () => runBriefs(env, ctx, event.scheduledTime))
+          .then((r) => { if (r.due) console.log(`[cron mcp-brief] ${JSON.stringify(r)}`); })
+          .catch((e) => console.error("[cron mcp-brief]", e))
+      );
     } else if (event.cron === "*/30 * * * *") {
-      // HR punch clock: close clock-ins left open 16 hours (a forgotten
-      // clock-out) at the shift end of their day. Idempotent.
+      ctx.waitUntil(
+        track("mcp-alerts", () => runAlerts(env, ctx, event.scheduledTime))
+          .then((r) => { if (r.sent || r.failed) console.log(`[cron mcp-alerts] ${JSON.stringify(r)}`); })
+          .catch((e) => console.error("[cron mcp-alerts]", e))
+      );
       ctx.waitUntil(
         track("hr-auto-clockout", () => runAutoClockOut(env))
           .then((r) => {
@@ -1055,18 +710,6 @@ export default {
           })
           .catch((e) => console.error("[cron hr-auto-clockout]", e))
       );
-      /* Venture Portal feed BACKSTOP — the half of "not one order missed" that
-         is provable rather than hoped for. The capture trigger swallows its own
-         errors on purpose (it must never roll back a salesperson's Save), so a
-         row CAN be missed; this re-queues any in-scope order with no delivered
-         row and the next drain sends it. Steady state is requeued=0.
-
-         The contract asks for hourly; this slot is every 30 minutes, which is
-         strictly better for a backstop and costs one more cheap statement.
-         `includeFailed: false` — a row parked after exhausting its attempts
-         stays parked until a person clears the cause, because re-queueing it
-         automatically would hide the failure behind a retry loop. Ships dark
-         with the feed. */
       ctx.waitUntil(
         track("vp-reconcile", () => reconcileVenturePortalOutbox(env, { includeFailed: false }))
           .then((r) => {
@@ -1089,8 +732,6 @@ export default {
           })
           .catch((e) => console.error("[cron connect-sync]", e))
       );
-      // Houzs POS watchdog (spec section 10): terminal alerts, their emails
-      // (once, then daily), auto-resolve, and the once-per-event summary.
       ctx.waitUntil(
         runPosAlerts(env)
           .then((r) => {
@@ -1099,9 +740,6 @@ export default {
           })
           .catch((e) => console.error("[cron pos-alerts]", e))
       );
-      // ASSR/QMS v3.1 — per-stage alert scanner (half / approaching / breach).
-      // Cheap: one query over open stage_history rows, idempotent via the
-      // alerts_fired bit-mask.
       ctx.waitUntil(
         track("assr-alerts", () => runAssrAlerts(env))
           .then((r) =>
@@ -1111,11 +749,6 @@ export default {
           )
           .catch((e) => console.error("[cron assr-alerts]", e))
       );
-      // Lead-time scheduled activations (mig 080). Cheap: one indexed SELECT
-      // for pending rows whose scheduled_for is past.
-      // Announcements: a notice that requires acknowledgement and is past the
-      // 48h overdue window gets its supervisors notified once (owner
-      // 2026-09-06). Cheap: one indexed-ish SELECT, work only for due rows.
       ctx.waitUntil(
         track("ann-escalation", () => runOverdueEscalation(env))
           .then((r) => {
@@ -1124,8 +757,6 @@ export default {
           })
           .catch((e) => console.error("[cron ann-escalation]", e))
       );
-      // Mail Center: the same 48h window for a mail that asked for
-      // acknowledgement; once per message.
       ctx.waitUntil(
         runMailAckEscalation(env)
           .then((r) => {
@@ -1140,10 +771,6 @@ export default {
           })
           .catch((e) => console.error("[cron lead-time-schedule]", e))
       );
-      // Agent heartbeat — the agents decide their own cadence (scheduler's
-      // >=1h min-gap makes this an effective hourly beat). No-op until an
-      // engine registers; kill switch / pause honoured inside. Best-effort:
-      // a heartbeat failure can never break the other crons.
       ctx.waitUntil(
         track("agent-heartbeat", () => runAgentHeartbeat(env))
           .then((r) => {
@@ -1154,12 +781,6 @@ export default {
           })
           .catch((e) => console.error("[cron agent-heartbeat]", e))
       );
-      // Keep-warm the scan-SO catalog prompt-cache during Malaysia business
-      // hours (UTC+8 ~08:00–22:00 → UTC hour 0–13) so the shared Anthropic
-      // cache rarely goes cold between showroom scans. Fires the SAME minimal
-      // warm call /scan-so/warm uses (byte-identical cachedPrefix). Skips
-      // gracefully when ANTHROPIC_API_KEY is unset; try/catch so a warm failure
-      // can never break the scheduled handler.
       {
         const h = new Date(event.scheduledTime).getUTCHours();
         if (h >= 0 && h < 14 && env.ANTHROPIC_API_KEY) {
@@ -1170,10 +791,6 @@ export default {
           );
         }
       }
-      // iOS fleet-reminder push (docs/ios-app-store.md, phase 3). Gated to the
-      // 08:00 MYT hour (UTC 0); the slot fires twice in it and the per-device
-      // date stamp makes the second pass a no-op. Ships dark until the APNS_*
-      // secrets exist. Best-effort — a push failure can never break the slot.
       {
         const h = new Date(event.scheduledTime).getUTCHours();
         if (h === 0) {
@@ -1222,12 +839,6 @@ export default {
           })
           .catch((e) => console.error("[cron threepl-bills]", e))
       );
-      // Slip reaper (mirrors 2990's */10 orphan-slip sweep, which retires with
-      // 2990's apps/api). Leases up to 100 orphan pending_slip_uploads rows
-      // (5-min lease, SKIP LOCKED via lease_orphan_slips), deletes each R2 blob,
-      // marks the row failed — reclaims leaked payment-slip objects from
-      // abandoned/failed uploads. Idempotent; best-effort (a failure can never
-      // break the other crons).
       ctx.waitUntil(
         track("slip-reaper", () => reapOnce(getSupabaseService(env), env, `cron-${event.scheduledTime}`))
           .then((r) => {
@@ -1249,14 +860,11 @@ export default {
         );
       }
     } else if (event.cron === "0 2 * * *") {
-      // Daily 02:00 UTC slot: SLA escalation + ASSR digest + project reminders.
       ctx.waitUntil(
         track("sla", () => runSlaEscalation(env))
           .then((r) => console.log(`[cron sla] escalated ${r.escalated} case(s)`))
           .catch((e) => console.error("[cron sla]", e))
       );
-      // AI cost per company and feature, last 7 days, to the IT Hub (splits the
-      // Anthropic bill there). Best-effort; a missed day is re-sent the next day.
       ctx.waitUntil(
         track("ai-usage-hub", () => sendAiUsageToHub(env, new Date()))
           .then((r) => console.log(r ? `[cron ai-usage-hub] sent ${r.days} day(s), ${r.rows} row(s)` : "[cron ai-usage-hub] not set up"))
@@ -1271,23 +879,12 @@ export default {
           .then((r) => console.log(`[cron deliver-due] scanned=${r.scanned} delivered=${r.delivered} skipped=${r.skipped}`))
           .catch((e) => console.error("[cron deliver-due]", e))
       );
-      // AutoCount DO-header mirror refresh (mig 0215) — feeds the ASSR list's
-      // DO No column for Houzs cases. Incremental via DeliveryOrder/getSince
-      // once the middleware upgrade (its PR #1) is deployed; until then each
-      // run streams the ~70 MB full dump — hence the daily batch slot, not
-      // the 5-min SO pull. Same kill-switch + best-effort rules as the SO pull.
       if (!isAutoCountSyncDisabled(env)) {
         ctx.waitUntil(
           track("do-mirror", () => runDoMirrorSync(env, "SCHEDULED"))
             .then((r) => console.log(`[cron do-mirror] ${r.message}`))
             .catch((e) => console.error("[cron do-mirror]", e))
         );
-        // AutoCount PO pulls — frozen since 2026-06-12 because the 2026-07-14
-        // restore brought back the SO pull only. Both tables are read on main:
-        // `purchase_orders` by the ASSR supplier-PO lookup, `purchase_order_docs`
-        // by Finance/P&L. Daily, not 5-min: each is a full wipe-and-reload of a
-        // few thousand rows. Sequential so the two reloads never interleave, and
-        // best-effort like every other job in this slot.
         ctx.waitUntil(
           track("po-docs-pull", () => runPODocsPull(env, "SCHEDULED"))
             .then((r) => console.log(`[cron po-docs-pull] ${r.message}`))
@@ -1295,10 +892,6 @@ export default {
             .then((r) => console.log(`[cron po-pull] ${r.message}`))
             .catch((e) => console.error("[cron po-pull]", e))
         );
-        // Full AutoCount snapshots into the ac_snapshot_* staging tables
-        // (mig 0282) — the unfiltered denominator the migration reconciliation
-        // needs. Writes only its own tables, so a failure here cannot touch the
-        // mirrors above.
         ctx.waitUntil(
           track("ac-snapshot-so", () => runSOSnapshot(env, "SCHEDULED"))
             .then((r) => console.log(`[cron ac-snapshot-so] ${r.message}`))
@@ -1335,9 +928,6 @@ export default {
           )
           .catch((e) => console.error("[cron proj-reminders]", e))
       );
-      // Client-error digest: one email to IT when anything crashed in the last
-      // 24h (zero errors = no email), plus the 90-day retention sweep.
-      // Best-effort — a digest failure can never break the other crons.
       ctx.waitUntil(
         track("client-errors", () => runClientErrorDigest(env))
           .then((r) => {
@@ -1348,19 +938,6 @@ export default {
           })
           .catch((e) => console.error("[cron client-errors]", e))
       );
-      // Idempotency-key TTL sweep. Keys only need to outlive a client's retry
-      // window; 24h is generous. Cheap (indexed on created_at).
-      //
-      // The predicate is PG-native on purpose. idempotency_keys.created_at is
-      // `timestamptz` (mig 0003), but the d1-compat shim rewrites
-      // datetime('now','-24 hours') into a to_char(...) that returns TEXT — so
-      // the old form was `timestamptz < text`, which Postgres rejects with
-      // "operator does not exist". `.catch(console.error)` swallowed it, so this
-      // sweep had never once deleted a row. mig 0008's rule ("created_at columns
-      // are only ever populated by DEFAULT now(), so they stay timestamptz — no
-      // bug there") reasons about WRITES only; it does not cover COMPARING a
-      // created_at against a shim-rewritten datetime('now'), which is this. When
-      // a timestamptz column meets datetime('now'), compare in PG terms.
       ctx.waitUntil(
         track("idempotency-sweep", () => env.DB.prepare(
           `DELETE FROM idempotency_keys WHERE created_at < now() - interval '24 hours'`,
@@ -1372,16 +949,6 @@ export default {
           })
           .catch((e) => console.error("[cron idempotency-sweep]", e)),
       );
-      // AR aging snapshot (WO-3): rebuild scm.mv_ar_aging — the pre-aggregated
-      // rollup behind the Outstanding summary's ?snapshot=1 fast path (migration
-      // 0151) — then stamp its freshness row. CONCURRENTLY so a nightly rebuild
-      // never blocks a reader (the MV carries a UNIQUE index for exactly this).
-      // The REFRESH and the meta UPDATE are TWO separate autocommit statements on
-      // purpose: REFRESH MATERIALIZED VIEW CONCURRENTLY cannot run inside a
-      // transaction, so they must never be batched (env.DB.batch wraps in one).
-      // Guarded so a refresh failure can never break the other 02:00 jobs — the
-      // endpoint keeps serving the previous snapshot (or the live path) until the
-      // next successful run.
       ctx.waitUntil(
         track("ar-aging-refresh", async () => {
           await env.DB.prepare(
@@ -1393,7 +960,6 @@ export default {
           console.log("[cron ar-aging-refresh] refreshed scm.mv_ar_aging");
         }).catch((e) => console.error("[cron ar-aging-refresh]", e)),
       );
-      // job_runs retention: the System Health run log keeps 14 days.
       ctx.waitUntil(
         track("job-runs-retention", () => purgeOldJobRuns(env))
           .then((n) => {
@@ -1401,7 +967,6 @@ export default {
           })
           .catch((e) => console.error("[cron job-runs-retention]", e)),
       );
-      // Failed sign-ins (System Health): kept 90 days.
       ctx.waitUntil(
         track("failed-logins-retention", () => pruneFailedLogins(env))
           .then((n) => {
@@ -1409,12 +974,6 @@ export default {
           })
           .catch((e) => console.error("[cron failed-logins-retention]", e)),
       );
-      // Weekly: re-distill every salesperson's scan-so OCR rules + the
-      // __GLOBAL__ alias dictionary. Reuses the daily 02:00 slot, gated to
-      // Sundays so it runs once a week without a dedicated cron trigger.
-      // distillAllSalespersonRules cheap-skips reps with <2 samples and returns
-      // a graceful error result when ANTHROPIC_API_KEY is unset — log + swallow
-      // so a distill failure can never break the scheduled handler.
       if (new Date(event.scheduledTime).getUTCDay() === 0) {
         ctx.waitUntil(
           track("scan-so-distill", async () => {
@@ -1477,8 +1036,6 @@ export default {
         track("lorry-day-routes", async () => {
           const sb = getSupabaseService(env);
           const today = new Date(Date.now() + 8 * 3600_000);
-          // The two days just gone (final), then today and tomorrow so the plan is
-          // ready before the lorries leave; an unchanged run asks Google nothing.
           for (const offset of [-2, -1, 0, 1]) {
             const date = new Date(today.getTime() + offset * 86_400_000).toISOString().slice(0, 10);
             const outcomes = await computeDayRoutes(sb, env, date);
@@ -1515,9 +1072,6 @@ export default {
           .then((r) => console.log(`[cron ${INTEGRITY_JOB}] ${r.companies} compan${r.companies === 1 ? "y" : "ies"}, ${r.findings} new finding(s)`))
           .catch((e) => console.error(`[cron ${INTEGRITY_JOB}]`, e)),
       );
-      // Books › Self-check summed for To do (batch 6 c3): the control check is
-      // too heavy for every To do read, so each night leaves one row per
-      // company in scm.acc_selfcheck_runs — reads only, nothing posts.
       ctx.waitUntil(
         track("self-check", async () => {
           const sb = getSupabaseService(env);
@@ -1540,8 +1094,6 @@ export default {
           .then((r) => console.log(`[cron hr-trip-sync] ${r.companies} compan${r.companies === 1 ? "y" : "ies"}: ${r.results.join(" | ")}`))
           .catch((e) => console.error("[cron hr-trip-sync]", e)),
       );
-      // Scheduled supplier prices whose effective date is today (BUG-32): onto
-      // the flat binding POs read, then the derived product cost SOs read.
       ctx.waitUntil(
         track("supplier-price-apply", () => applyDueSupplierPrices(getSupabaseService(env), { today: todayMyt() }))
           .then((r) => console.log(`[cron supplier-price-apply] ${r.bindings} binding(s), ${r.applied} applied, ${r.failed} failed`))
@@ -1549,21 +1101,10 @@ export default {
       );
     }
   },
-  // Cloudflare Queue consumer for the background scan-so OCR pipeline (queue
-  // `houzs-scan-ocr`, DLQ `houzs-scan-ocr-dlq`). max_batch_size = 1, so each
-  // batch is one job. A queue-owned attempt survives isolate eviction — the
-  // reliability fix for the old waitUntil pipeline. On success ack; on failure
-  // retry (up to max_retries in wrangler.toml, then the message lands in the
-  // DLQ and the read-time reaper marks it stale as a final backstop).
   async queue(batch: MessageBatch<ScanQueueMessage>, env: Env, _ctx: ExecutionContext) {
-    // Mirror the scheduled handler: the consumer writes via env.DB too, so
-    // point it at Postgres.
     env = withPgDb(env);
     for (const msg of batch.messages) {
       const body = msg.body;
-      // A confirmed scan-so correction to learn from (scan-so.ts
-      // runConfirmDistills). Every step is non-fatal, so it is acked, never
-      // retried: a retry would re-spend the Claude calls.
       if (body && "distill" in body) {
         try {
           await processDistillQueueMessage(env, body.distill);
@@ -1573,9 +1114,6 @@ export default {
         msg.ack();
         continue;
       }
-      // An AI read (bill / credit note / receipt, scm/lib/ai-read-jobs.ts).
-      // The runner writes every failure to its row, so it is acked; only a
-      // failed row read (nothing spent yet) is retried.
       if ("aiRead" in body) {
         try {
           await processAiReadQueueMessage(env, body.aiRead);

@@ -2,14 +2,13 @@
    Excel and PDF draw (owner 2026-09-19: 我这页显示什么就要 export 什么). Pinned:
    a statement's lines as rows of amount and %; the Cash Flow with the ticked
    columns, folded to the level, a zero in an account column a dash; the
-   Performance P&L's two tables and notes; the monthly grid in amounts mode
+   monthly grid in amounts mode
    (a % beside each amount) and in % mode; a cell's text. */
 import { describe, expect, it } from 'vitest';
 import type { LaidNode } from './report-layout';
 import type { FlatLine, MonthColumn, MonthlyLine } from './report-monthly';
 import type { RpReport } from './rp-report-queries';
-import type { PerformanceReport } from './performance-report-queries';
-import { cashFlowTable, exportFileName, monthlyTable, performanceTables, rowsWithTotalsBelow, sheetText, statementColumnsTable, statementTable } from './report-sheet';
+import { cashFlowTable, exportFileName, monthlyTable, rowsWithTotalsBelow, sheetText, statementColumnsTable, statementTable } from './report-sheet';
 
 const acc = (code: string, label: string, amountSen: number, pct: number | null): LaidNode =>
   ({ kind: 'account', id: `acc:${code}`, label, code, key: code, amountSen, pct, children: [] });
@@ -70,7 +69,7 @@ const rp: RpReport = {
 
 describe('the Cash Flow as a table', () => {
   it('lays each top category as a block with its tree and its own subtotal name, a running subtotal as a net line, then Cash surplus / (deficit) with its % of the receipts, Balance b/f and c/f — Total and % alone when nothing is ticked', () => {
-    const t = cashFlowTable(rp);
+    const t = cashFlowTable(rp, { codes: true });
     expect(t.columns.map((c) => c.label)).toEqual(['Total', '%']);
     expect(t.rows.map((r) => [r.kind, r.depth, r.label])).toEqual([
       ['block', 0, 'CASH IN'], ['category', 1, 'Sales & trade receipts'], ['row', 2, '300-0000 · AR'], ['total', 0, 'Total Cash In'],
@@ -82,64 +81,19 @@ describe('the Cash Flow as a table', () => {
     expect(t.rows[7]!.cells).toEqual([20000, null]);
     expect(t.rows[9]!.cells).toEqual([-10000, null]);
     expect(t.rows[10]!.cells).toEqual([10000, null]);
-    /* The surplus, 200.00 of 500.00 received: 40.0% of the receipts. */
     expect(t.rows[8]!.cells).toEqual([20000, 40]);
-    /* "% beside" off on the screen: the export drops the % column with it. */
-    const plain = cashFlowTable(rp, { pct: false });
+    const plain = cashFlowTable(rp, { pct: false, codes: true });
     expect(plain.columns.map((c) => c.label)).toEqual(['Total']);
     expect(plain.rows[8]!.cells).toEqual([20000]);
   });
 
   it('carries the ticked columns before Total — a zero there is a dash, as on the screen — and folds to the level', () => {
-    const t = cashFlowTable(rp, { columns: ['320-0000', '310-0010'], level: 1 });
+    const t = cashFlowTable(rp, { columns: ['320-0000', '310-0010'], level: 1, codes: true });
     expect(t.columns.map((c) => c.label)).toEqual(['310-0010 BANK', '320-0000 CASH', 'Total', '%']);
     expect(t.rows.map((r) => r.label)).toEqual(['CASH IN', 'Sales & trade receipts', 'Total Cash In', 'OPERATIONS OUTFLOWS', '900-S100 · SALARIES', 'Total operations outflows', 'Net operation surplus / (deficit)', 'Cash surplus / (deficit)', 'Balance b/f', 'Balance c/f']);
     expect(t.rows[1]!.cells).toEqual([50000, null, 50000, 100]);
     expect(t.rows[8]!.cells).toEqual([-10000, null, -10000, null]);
-    /* A hand-opened category shows its rows past the level, as on the screen. */
-    expect(cashFlowTable(rp, { level: 1, open: { 'cf:in:sales': true } }).rows.map((r) => r.label)).toContain('300-0000 · AR');
-  });
-});
-
-const perf: PerformanceReport = {
-  from: '2026-07-01', to: '2026-07-31',
-  orders: { counted: 4, notDelivered: 3, excludedDraft: 1, excludedCancelled: 1 },
-  groups: [
-    { key: 'sofa', label: 'Sofa', lines: 1, salesSen: 300000, cogsSen: 180000, gpSen: 120000, gpPct: 40 },
-    { key: 'accessory', label: 'Accessory', lines: 1, salesSen: 0, cogsSen: 12000, gpSen: -12000, gpPct: null },
-  ],
-  totals: { salesSen: 300000, cogsSen: 192000, gpSen: 108000, gpPct: 36, salesExServiceSen: 300000 },
-  operatingExpense: { rateBp: 1600, baseSen: 300000, amountSen: 48000, account: '900-O001', accountName: 'OPERATIING EXPENSE', accountFound: true, bookedSen: 0 },
-  otherIncome: [], otherIncomeSen: 0,
-  otherExpenses: [{ code: '900-R048', name: 'RENTAL OF SHOWROOM', amountSen: 450000 }], otherExpensesSen: 450000,
-  netSen: 108000 - 48000 - 450000, netPct: -130,
-  settings: { rateBp: 1600, account: '900-O001' },
-  layout: {
-    stored: true, baseSen: 300000,
-    otherIncome: [],
-    expenses: [{ kind: 'category', id: 'cat:fixed', label: 'Fixed costs', amountSen: 498000, pct: 166, children: [
-      acc('900-R048', '900-R048 · RENTAL OF SHOWROOM', 450000, 150),
-      acc('900-O001', 'Operating expense — 16.00% of sales, in place of 900-O001', 48000, 16),
-    ] }],
-  },
-};
-
-describe('the Performance P&L as tables', () => {
-  it('lays the groups with their total, then the summary folded to the level, and the notes', () => {
-    const { tables, notes } = performanceTables(perf, { level: 1 });
-    expect(tables[0]!.columns.map((c) => [c.label, c.kind])).toEqual([['Sales', 'amount'], ['Cost of sales', 'amount'], ['Gross profit', 'amount'], ['GP %', 'pct']]);
-    expect(tables[0]!.rows).toEqual([
-      { kind: 'row', depth: 0, label: 'Sofa', cells: [300000, 180000, 120000, 40] },
-      { kind: 'row', depth: 0, label: 'Accessory', cells: [0, 12000, -12000, null] },
-      { kind: 'total', depth: 0, label: 'Total', cells: [300000, 192000, 108000, 36] },
-    ]);
-    expect(tables[1]!.columns.map((c) => c.label)).toEqual(['Amount', '% of sales']);
-    expect(tables[1]!.rows.map((r) => [r.kind, r.depth, r.label])).toEqual([
-      ['total', 0, 'Gross profit'], ['total', 0, 'Total other income (as booked)'], ['category', 1, 'Fixed costs'],
-      ['total', 0, 'Total expenses (operating expense at 16.00% + as booked)'], ['net', 0, 'NET PERFORMANCE'],
-    ]);
-    expect(performanceTables(perf).tables[1]!.rows.map((r) => r.label)).toContain('900-R048 · RENTAL OF SHOWROOM');
-    expect(notes.length).toBeGreaterThan(0);
+    expect(cashFlowTable(rp, { level: 1, open: { 'cf:in:sales': true }, codes: true }).rows.map((r) => r.label)).toContain('300-0000 · AR');
   });
 });
 
@@ -195,14 +149,36 @@ describe('the Cash Flow\'s Settlement / Deposit columns as a table (owner 2026-1
     ]);
     expect(t.rows[0]!.cells).toEqual([90_000, 100, 50_000, 40_000]);
     expect(t.rows[0]!.spans).toBeUndefined();
-    expect(t.rows[2]).toMatchObject({ cells: [5_000, 2.5, 5_000, null], spans: { 2: 2 } });
+    expect(t.rows[2]).toMatchObject({ cells: [5_000, 2.5, 5_000, ''], spans: { 2: 2 } });
   });
   it('an open group\'s merged cells move with its figures to its Total row; its bare title has none', () => {
     const rows = rowsWithTotalsBelow([
       { kind: 'category', depth: 1, label: 'OTHER', cells: [5, null, 5, null], spans: { 2: 2 } },
-      { kind: 'row', depth: 2, label: 'x', cells: [5, null, 5, null], spans: { 2: 2 } },
+      { kind: 'row', depth: 2, label: 'x', cells: [3, null, 3, null], spans: { 2: 2 } },
+      { kind: 'row', depth: 2, label: 'y', cells: [2, null, 2, null], spans: { 2: 2 } },
     ]);
     expect(rows[0]).toEqual({ kind: 'category', depth: 1, label: 'OTHER', cells: [] });
-    expect(rows[2]).toEqual({ kind: 'total', depth: 1, label: 'Total OTHER', cells: [5, null, 5, null], spans: { 2: 2 } });
+    expect(rows[3]).toEqual({ kind: 'total', depth: 1, label: 'Total OTHER', cells: [5, null, 5, null], spans: { 2: 2 } });
+  });
+  it('as the screen (owner 2026-11-27): no Total row repeating the one row under its group', () => {
+    const rows = rowsWithTotalsBelow([
+      { kind: 'category', depth: 1, label: 'COST OF FUNDS', cells: [900, 10] },
+      { kind: 'category', depth: 2, label: 'PURCHASES', cells: [900, 10] },
+      { kind: 'row', depth: 3, label: 'p1', cells: [600, 7] },
+      { kind: 'row', depth: 3, label: 'p2', cells: [300, 3] },
+      { kind: 'category', depth: 1, label: 'COMMISSION', cells: [100, 1] },
+      { kind: 'row', depth: 2, label: 'c1', cells: [100, 1] },
+      { kind: 'category', depth: 1, label: 'RADIUS', cells: [250, 2] },
+      { kind: 'row', depth: 2, label: 'x1', cells: [200, 2] },
+    ]);
+    expect(rows.map((r) => r.label)).toEqual(['COST OF FUNDS', 'PURCHASES', 'p1', 'p2', 'Total PURCHASES', 'COMMISSION', 'c1', 'RADIUS', 'x1', 'Total RADIUS']);
+  });
+  it('a cell with nothing is blank, as on the screen (owner 2026-11-27)', () => {
+    const t = statementColumnsTable([{ key: 'total', label: 'Total', pct: true }, { key: '2026-10', label: 'Oct 2026', pct: false }],
+      [{ id: 'a', label: '900-A001 · ADVERT', kind: 'row', depth: 1, code: '900-A001', cells: { total: { amountSen: 500, pct: 5 } } }]);
+    expect(t.rows[0]!.cells).toEqual([500, 5, '']);
+  });
+  it('codes off: an account prints its name alone, on the Cash Flow as on the screen', () => {
+    expect(cashFlowTable(rp, { level: 1, open: { 'cf:in:sales': true }, codes: false }).rows.map((r) => r.label)).toContain('AR');
   });
 });

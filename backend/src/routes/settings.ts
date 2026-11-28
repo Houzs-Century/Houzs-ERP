@@ -6,7 +6,6 @@ import { audit } from "../services/audit";
 
 const app = new Hono<{ Bindings: Env }>();
 
-// ── Email channel toggles ────────────────────────────────────
 
 app.get("/email", requirePermission("settings.manage"), async (c) => {
   const settings = await getAllEmailSettings(c.env);
@@ -38,7 +37,6 @@ app.patch("/email", requirePermission("settings.manage"), async (c) => {
     if (!ALLOWED.has(k)) continue;
     if (typeof v !== "boolean") continue;
     await setSetting(c.env, k, { value: v }, user?.id ?? null);
-    // Audit channel flips (esp. customer-facing) — tamper-evident WHO/WHAT/WHEN.
     await audit(c, {
       action: "settings.email_channel",
       entityType: "app_setting",
@@ -51,7 +49,6 @@ app.patch("/email", requirePermission("settings.manage"), async (c) => {
   return c.json({ settings });
 });
 
-// ── Recent email log ─────────────────────────────────────────
 
 app.get("/email/log", requirePermission("settings.manage"), async (c) => {
   const limit = Math.min(parseInt(c.req.query("limit") || "100", 10), 500);
@@ -81,8 +78,6 @@ app.get("/email/log", requirePermission("settings.manage"), async (c) => {
   return c.json({ data: rows.results ?? [] });
 });
 
-// ── Manual test send ─────────────────────────────────────────
-// Lets an admin verify Resend setup without waiting for a real event.
 
 app.post("/email/test", requirePermission("settings.manage"), async (c) => {
   const body = await c.req.json<{ to?: string }>();

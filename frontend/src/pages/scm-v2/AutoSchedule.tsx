@@ -61,7 +61,7 @@ import { useLorries } from '../../vendor/scm/lib/lorries-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { DateField } from "../../vendor/scm/components/DateField";
-import { fmtSen } from "../../vendor/shared/format";
+import { fmtSen } from "../../../../shared/src/vendor/shared/format";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -74,12 +74,9 @@ const groupLabel = (g: string): string => (g === 'KLANG_VALLEY' ? 'Klang Valley 
 
 export const AutoSchedule = () => {
   const navigate = useNavigate();
-  // Single click opens the job panel; double click goes to the document.
   const [jobPanel, setJobPanel] = useState<JobPanelTarget | null>(null);
   const propose = useProposeDelivery();
   const schedule = useScheduleDelivery();
-  /* The board's inline Driver / Lorry cells share the fleet option lists — the
-     cells are part of the shared board, not this page's propose flow. */
   const drivers = useDrivers();
   const lorries = useLorries();
   const notify = useNotify();
@@ -110,9 +107,6 @@ export const AutoSchedule = () => {
     [queueOrders, dateSide],
   );
 
-  /* ── Propose dates — over the SELECTED rows (SO-only, like every board bulk
-     action). Start date defaults to today; everything else (depot, capacity
-     ceilings) rides the server defaults silently. */
   const [startDate, setStartDate] = useState<string>(todayMY());
   const [result, setResult] = useState<ProposeResponse | null>(null);
   /* The proposal renders BELOW the whole queue board; without a scroll the
@@ -146,8 +140,6 @@ export const AutoSchedule = () => {
     });
   };
 
-  /* The DAY-grouped proposal view (pure fold, propose-days.ts) — the lorry
-     dimension is dropped before render, so it cannot leak onto this page. */
   const proposalDays = useMemo<ProposalDay[]>(
     () => (result ? groupProposalsByDay(result.proposals) : []),
     [result],
@@ -162,7 +154,6 @@ export const AutoSchedule = () => {
     }))) return;
     setApplying(true);
     let ok = 0; let failed = 0;
-    // Cap concurrency at 4, like the schedule drawer's fan-out.
     const jobs = [...result.proposals];
     const worker = async () => {
       while (jobs.length > 0) {
@@ -192,9 +183,6 @@ export const AutoSchedule = () => {
      the board narrows to the essential columns (a render-time overlay — the
      user's own column prefs are untouched). */
   const [mapOpen, setMapOpen] = useMapPanelOpen('date-arrangement');
-  /* Compact columns: a per-page-persisted DEFAULT, never a lock — the pill on
-     the panel header toggles it, and any explicit Columns-panel choice while
-     the map is open switches it off (the user's picks win instantly). */
   const [mapCompact, setMapCompact] = useMapCompactColumns('date-arrangement');
   const [mapDate, setMapDate] = useState<string>(todayMY());
   const [mapRegion, setMapRegion] = useState<string>('ALL');
@@ -205,8 +193,6 @@ export const AutoSchedule = () => {
     () => zoneSummary(geo.data?.points ?? [], queueRegionTabs, mapRegion),
     [geo.data?.points, queueRegionTabs, mapRegion],
   );
-  /* Two-way linkage: board row click → enlarge + pan; pin click → scroll +
-     highlight the board row (rowIdOf keys SO rows as `so:<docNo>`). */
   const [selectedPin, setSelectedPin] = useState<string | null>(null);
   const [scrollTo, setScrollTo] = useState<{ key: string; nonce: number } | null>(null);
   const onPinClick = (ref: string) => {
@@ -214,7 +200,6 @@ export const AutoSchedule = () => {
     setScrollTo({ key: `so:${ref}`, nonce: Date.now() });
   };
 
-  /* ── Day locks — reversible freezes per DATE (no depot dimension here). */
   const locks = useDayLocks({});
   const lockedDates = useMemo(() => new Set((locks.data ?? []).map((l) => l.deliveryDate)), [locks.data]);
   const lockByDate = useMemo(() => new Map((locks.data ?? []).map((l) => [l.deliveryDate, l])), [locks.data]);
@@ -240,11 +225,9 @@ export const AutoSchedule = () => {
         description="Tick pending orders and propose delivery dates by postcode zone — apply writes the amended date only; lorries and times are arranged next in Delivery Time Arrangement."
       />
 
-      {/* ── Option B split: board (left) / sticky map (right). ─────────────── */}
       <div className="lg:flex lg:items-start lg:gap-4">
       <div className="min-w-0 space-y-4 lg:flex-1">
 
-      {/* Split chips — the derived date side of the pipeline. */}
       <div className="flex flex-wrap gap-1.5">
         {(['ALL', 'PENDING_DATE', 'DATE_ARRANGED'] as const).map((side) => (
           <button
@@ -284,7 +267,6 @@ export const AutoSchedule = () => {
         onRegionChange={setQueueRegion}
         isLoading={queue.isLoading}
         error={queue.error}
-        /* No stateTabs — the fetch is locked to PENDING_SCHEDULE, split above. */
         selectedKeys={queueSel}
         onToggle={(k) => setQueueSel((p) => {
           const n = new Set(p);
@@ -303,8 +285,6 @@ export const AutoSchedule = () => {
         lorries={lorries.data ?? []}
         storageKey="dg-date-arrangement-v2"
         exportName="DeliveryDateArrangement"
-        /* Map-open narrowing (a DEFAULT — the compact pill / an explicit
-           Columns-panel choice turns it off) + two-way linkage (Option B). */
         visibleColumnsOverride={mapOpen && mapCompact ? MAP_ESSENTIAL_COLUMNS : null}
         onUserAdjustColumns={() => { if (mapOpen && mapCompact) setMapCompact(false); }}
         onRowClick={(o) => { if (mapOpen && o.row_type === 'so') setSelectedPin(o.so_doc_no); setJobPanel(panelTargetOf(o)); }}
@@ -319,7 +299,6 @@ export const AutoSchedule = () => {
         onRowDoubleClick={(o) => { const to = rowDocumentPath(o); if (to) navigate(to); else setJobPanel(panelTargetOf(o)); }}
         bulkExtras={
           <>
-            {/* The packer walks days forward from here — default today. */}
             <DateField
               value={startDate}
               onChange={(iso) => setStartDate(iso)}
@@ -343,8 +322,6 @@ export const AutoSchedule = () => {
           : [])}
       />
 
-      {/* ── The proposal: DAY -> orders (postcode-zone grouped). NO lorry
-          dimension — sets / revenue appear only as day summary numbers. */}
       <div ref={proposalRef} />
       {result && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -392,7 +369,7 @@ export const AutoSchedule = () => {
         </div>
       )}
 
-      </div>{/* /board column */}
+      </div>
 
       {mapOpen && (
         <DeliveryMapPanel
@@ -401,7 +378,6 @@ export const AutoSchedule = () => {
           onClose={() => setMapOpen(false)}
           headerControls={
             <>
-              {/* REQUIRED picked date — the map always shows exactly one day. */}
               <DateField
                 required
                 value={mapDate}
@@ -409,8 +385,6 @@ export const AutoSchedule = () => {
                 title="The day the map shows"
                 style={{ ...selStyle, width: 140 }}
               />
-              {/* Region chips zoom/filter the map viewport (server-side filter,
-                  same buckets as the board's chips). */}
               {queueRegionTabs.map((r) => (
                 <button
                   key={r.key}
@@ -442,13 +416,11 @@ export const AutoSchedule = () => {
           isLoading={geo.isLoading}
         />
       )}
-      </div>{/* /split */}
+      </div>
     </div>
   );
 };
 
-/* One proposed DAY (+ zone group): the date, the zone, summary numbers, the
-   orders — and the reversible day lock. No lorry appears here by design. */
 const ProposalDayCard = ({ day, locked, onToggleLock, lockBusy }: {
   day: ProposalDay; locked: boolean; onToggleLock: () => void; lockBusy: boolean;
 }) => (

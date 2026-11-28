@@ -1,14 +1,3 @@
-/* The earlier delivery attempts of one Delivery Order — the POD that an
-   "Undo delivered" took off the order (lib/do-pod-attempts.ts writes them).
-
-   GET /delivery-orders-mfg/:id/pod-attempts                     newest first
-   GET /delivery-orders-mfg/:id/pod-attempts/:attemptId/photo/:n the n-th photo
-
-   A separate file on the DO prefix because delivery-orders-mfg.ts is past its
-   size ceiling; it shares the DO area guard through the prefix, so these read
-   exactly where the current POD photo route (/:id/pod-photo/:n) reads. Every
-   statement carries the active company AND the delivery order, so a guessed
-   attempt id from another order or another company streams nothing. */
 import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';

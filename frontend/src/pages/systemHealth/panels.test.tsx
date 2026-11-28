@@ -6,7 +6,6 @@ import { QueuesPanel } from "./QueuesPanel";
 const { apiGet } = vi.hoisted(() => ({ apiGet: vi.fn() }));
 
 vi.mock("../../api/client", () => ({ api: { get: apiGet } }));
-// A minimal useQuery: fetch once on mount.
 vi.mock("../../hooks/useQuery", async () => {
   const React = await import("react");
   return {

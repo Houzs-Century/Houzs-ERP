@@ -1,19 +1,9 @@
-// The SO fair picker's reads. One hook, used by BOTH the desktop and the mobile
-// SO forms — the owner's standing rule is one shared logic layer with the two
-// surfaces differing only in presentation, and a picker that decides which
-// exhibition a sale is attributed to is exactly the kind of rule that must not
-// exist twice.
-//
-// Backend: backend/src/scm/routes/mfg-so-fairs.ts. The RULE (which fairs appear,
-// in which group, and when a row shows its dates) is entirely server-side in
-// scm/lib/fair-options.ts — this file renders what it is given and never
-// re-derives it.
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
 import { useDebouncedValue } from './hooks';
 import { writeFailedAs } from './mutation-error';
-import { fmtDayMonthRange } from '../../shared/format';
+import { fmtDayMonthRange } from '../../../../../shared/src/vendor/shared/format';
 
 /** One brand's booth inside a row (backend twin `FairBooth`). */
 export type FairBooth = { projectId: number; brand: string | null };
@@ -23,19 +13,10 @@ export type FairOption = {
   key: string;
   venue: string;
   organizer: string;
-  /** Set by the server for a solo roadshow: the label reads "SOLO" where an
-   *  exhibition names its organizer. Optional so a response cached from before
-   *  the field existed still renders. */
   solo?: boolean;
-  /** The event's PERIOD. Half the row's identity, not decoration: it is sent
-   *  back on save (`fairStart` / `fairEnd`) and is what lets the server match
-   *  the exact occurrence the operator picked. */
   startDate: string;
   endDate: string | null;
   projectIds: number[];
-  /** The booths with their brand — what Fair Links names each choice by (owner
-   *  2026-10-20). Optional so a response cached from before the field existed
-   *  still renders; its booths then read as "No brand". */
   booths?: FairBooth[];
 };
 
@@ -48,13 +29,8 @@ export type LinkedFair = Pick<FairOption, 'venue' | 'organizer' | 'solo' | 'star
 
 export type FairOptionsResponse = {
   date: string;
-  /** Fairs running on the order's date. Nothing pre-selects one: an order with
-   *  only a place shows that place (FairPicker rule 5). */
   running: FairOption[];
-  /** The rest of the lookback window: fairs that have already CLOSED, newest
-   *  first. Never anything in the future — the window ends at the order date. */
   earlier: FairOption[];
-  /** The company's venue master — the list behind "Others". */
   venues: VenueMasterRow[];
 };
 
@@ -167,7 +143,6 @@ export function useFairBooth(req: FairBoothRequest | null) {
     queryFn: () => authedFetch<FairBoothResponse>('/mfg-sales-orders/fair-booth', { method: 'POST', body: body! }),
     enabled: body != null,
     staleTime: 60_000,
-    /* A line edit re-asks; the pick stays on screen meanwhile. */
     placeholderData: keepPreviousData,
   });
 }
@@ -178,13 +153,10 @@ export type FairPendingRow = {
   venue: string | null;
   branding: string | null;
   project_id: number | null;
-  /** NULL = an order keyed before the picker, listed from 1 September 2026. */
   fair_match: 'PENDING' | 'AMBIGUOUS' | 'UNMATCHED' | 'NO_FAIR' | null;
   status: string | null;
   local_total_sen: number | null;
   salesperson_id: string | null;
-  /** The Ref No. — the slip number the evening report lists. Shown with the
-   *  SO page's rule (lib/customer-ref.ts). Absent from an older server. */
   ref?: string | null;
   customer_so_no?: string | null;
   /** Put aside on Fair Links (owner 2026-10-21): when, and by whom. Only the
@@ -193,12 +165,8 @@ export type FairPendingRow = {
   fair_put_aside_by?: string | null;
 };
 
-/** Orders with no fair link a person should see (backend scm/lib/fair-pending.ts).
- *  The reasons share this list and the screen keeps them apart — see the
- *  `fair_match` column. */
 type FairPendingResponse = { rows: FairPendingRow[]; putAside?: FairPendingRow[] };
 
-/** One read, two views of it: the list, and the orders put aside. */
 const fairPendingQuery = (limit: number) => ({
   queryKey: ['fair-pending', 'list', limit],
   queryFn: () => authedFetch<FairPendingResponse>(`/mfg-sales-orders/fair-pending?limit=${limit}`),
@@ -244,13 +212,8 @@ export type FairCheckRow = Omit<FairPendingRow, 'fair_match'> & {
    *  order, linked elsewhere or to nothing. */
   check: 'VENUE_DIFFERS' | 'NEEDS_ATTENDING' | 'REPORT_ELSEWHERE';
   note: string;
-  /** REPORT_ELSEWHERE: the booth the report puts it at; null when two fairs'
-   *  reports both list it. `title` / `detail` are its two lines (owner
-   *  2026-10-21); an older server sends `label` only. */
   target?: ({ projectId: number; label: string; reportDate: string | null } & Partial<FairCheckBooth>) | null;
-  /** REPORT_ELSEWHERE: the booth the order is under now; null with none. */
   current?: FairCheckBooth | null;
-  /** REPORT_ELSEWHERE with no target: the booths whose reports both list it. */
   candidates?: FairCheckBooth[];
 };
 
@@ -317,8 +280,6 @@ export function useAssignFair() {
       await qc.invalidateQueries({ queryKey: ['fair-pending'] });
       await qc.invalidateQueries({ queryKey: ['mfg-sales-orders'] });
     },
-    /* A server refusal that reaches nobody is worse than a crash — the owner
-       reported that class as "the button does nothing". */
     onError: writeFailedAs('Fair not assigned'),
   });
 }

@@ -1,18 +1,3 @@
-// ----------------------------------------------------------------------------
-// DpOrders — the raw DP Order registry (/scm/dp-orders).
-//
-// The optional P3 item of docs/delivery-planning-jobtypes-spec.md: GET
-// /api/scm/dp-orders had no consumer, so a DP order was reachable ONLY through
-// the Delivery Planning board's union — which deliberately SUPPRESSES any
-// dp_order carrying a source ref (the anti-double-count guard) and drops
-// cancelled jobs entirely. Those rows weren't gone, just unreachable. This list
-// is the flat registry: every DP order, every status, schedulable and
-// cancellable in place via the same drawer/hooks the board uses.
-//
-// Nav: Transportation > DP Orders, right after Delivery Planning. Same
-// scm.transportation.drivers gate as the board; the backend list additionally
-// row-scopes field crew to their own jobs (dp-orders.ts).
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -23,12 +8,13 @@ import { DpRowActions } from './DpRowActions';
 import { Button } from '../../components/Button';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDate, fmtSen } from '../../vendor/shared/format';
+import { fmtDate, fmtSen } from '../../../../shared/src/vendor/shared/format';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 import {
   useDpOrders,
   useCancelDpOrder,
   dpJobTypeLabel,
+  dpTotalAmountSen,
   type DpOrderRow,
 } from '../../vendor/scm/lib/delivery-planning-queries';
 import { NewDpOrderDrawer } from '../../vendor/scm/components/NewDpOrderDrawer';
@@ -38,7 +24,7 @@ import {
   type ScheduleDpOrderTarget,
 } from '../../vendor/scm/components/ScheduleDpOrderDrawer';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import { statusLabel } from '../../vendor/scm/lib/status-pill';
+import { statusLabel } from '../../../../shared/src/vendor/scm/lib/status-pill';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { cancelledDocNoClass, cancelledRowClass } from '../../lib/scm';
@@ -55,8 +41,6 @@ const joinedFrom = (r: DpOrderRow): string =>
   [r.from_name, r.from_address1, r.from_address2, r.from_city, r.from_postcode, r.from_state]
     .filter(Boolean).join(', ');
 
-/* Provenance, humanised. party_name already carries the resolved party, so the
-   supplier/project/case refs only need to say WHERE the snapshot came from. */
 const sourceRef = (r: DpOrderRow): string => {
   if (r.so_doc_no) return r.so_doc_no;
   if (r.project_id != null) return `Project #${r.project_id}`;
@@ -65,8 +49,6 @@ const sourceRef = (r: DpOrderRow): string => {
   return 'Manual';
 };
 
-/* The drawer reads a board-row subset; synthesize it from the raw registry row.
-   `DP:<id>` mirrors how the board stamps the DP id onto so_doc_no. */
 const asScheduleTarget = (r: DpOrderRow): ScheduleDpOrderTarget => ({
   so_doc_no: `DP:${r.id}`,
   dp_job_type: r.job_type,
@@ -76,7 +58,6 @@ const asScheduleTarget = (r: DpOrderRow): ScheduleDpOrderTarget => ({
   customer_delivery_date: null,
 });
 
-/* A DP order is always a job on the run: its panel shows the timeline and POD. */
 const dpPanel = (r: DpOrderRow): JobPanelTarget => ({ kind: 'job', ref: { sourceType: 'dp', sourceId: r.id, leg: r.job_type }, title: r.party_name });
 
 export const DpOrders = () => {
@@ -85,8 +66,6 @@ export const DpOrders = () => {
   const cancelDp = useCancelDpOrder();
   const notify = useNotify();
   const askConfirm = useConfirm();
-  /* Salesperson column — the source SO's agent/salesperson_id resolved against
-     the staff roster, same helper as the SO list (never a raw UUID). */
   const { nameOf: salespersonNameOf } = useStaffLookup();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -105,7 +84,6 @@ export const DpOrders = () => {
   };
   const allDp = useMemo(() => list.data?.dpOrders ?? [], [list.data]);
   const statusChips = useMemo(() => {
-    // Follows the data (A-Z, as the column filter lists them), so no status can be dropped.
     return ['all', ...[...new Set(allDp.map((r) => r.status))].sort()];
   }, [allDp]);
 
@@ -139,9 +117,6 @@ export const DpOrders = () => {
             tone: 'error',
           });
         } else if (res?.lorryUnblocked?.failed) {
-          // The mirror of the stop-left-behind case: a cancelled service that
-          // kept its availability window holds a perfectly free lorry off the
-          // board, and nothing else would ever say so.
           notify({
             title: 'Cancelled, but the lorry is still blocked',
             body: `Clear its unavailable window in Fleet Maintenance: ${res.lorryUnblocked.reason ?? 'unknown error'}.`,
@@ -231,13 +206,11 @@ export const DpOrders = () => {
       render: (r) => sourceRef(r),
     },
     {
-      /* The source SO's grand total — n/a on non-SO rows (a job has no order
-         value; RM 0.00 would read as a paid-up order). */
       key: 'total_amount', label: 'Total Amount', width: '130px', align: 'right',
-      getValue: (r) => (r.so_total_sen == null ? '' : r.so_total_sen / 100),
-      render: (r) => (r.so_total_sen == null
+      getValue: (r) => { const s = dpTotalAmountSen(r); return s == null ? '' : s / 100; },
+      render: (r) => { const s = dpTotalAmountSen(r); return s == null
         ? <span style={{ color: 'var(--fg-muted)' }}>—</span>
-        : <span style={{ fontFamily: 'var(--font-mark)', fontWeight: 700 }}>{fmtSen(r.so_total_sen)}</span>),
+        : <span style={{ fontFamily: 'var(--font-mark)', fontWeight: 700 }}>{fmtSen(s)}</span>; },
     },
     {
       key: 'trip', label: 'Trip', width: '90px',

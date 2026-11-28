@@ -46,9 +46,6 @@ const gateSource = (): string => {
   throw new Error(`${REL} not found above ${process.cwd()} — this test must never pass on an empty read`);
 };
 
-/* A corpus of the shapes that actually occur in this data, not invented ones:
-   a straight inch mark, the two curly ones Windows produces, a trailing space
-   (TARONI), and an ordinary code. */
 const MASTER = ['10"', '12“', '14”', 'TARONI', 'PC151'];
 
 describe('an empty pool OPENS the picker, it never empties it', () => {
@@ -65,9 +62,6 @@ describe('an empty pool OPENS the picker, it never empties it', () => {
   });
 
   it('the SAVE GATE reads an empty pool the same way — no restriction', () => {
-    /* Read from the backend source so the two readings cannot drift apart
-       silently. If this regex stops matching, the rule moved and this test must
-       be re-read rather than deleted. */
     const src = gateSource();
     expect(src).toMatch(/const hasRestriction[\s\S]{0,200}?Array\.isArray\(pool\)\s*&&\s*pool\.length\s*>\s*0/);
   });
@@ -79,9 +73,6 @@ describe('a non-empty pool restricts the picker to exactly what the gate accepts
   });
 
   it('keeps a value already ON the line even when the pool no longer lists it', () => {
-    /* Deliberate: an old order must stay editable. The gate has the matching
-       allowance — this is not a disagreement, it is the same decision on both
-       sides. */
     expect(restrictStringsToPool(MASTER, ['PC151'], '10"')).toEqual(['10"', 'PC151']);
   });
 });
@@ -93,8 +84,6 @@ describe('both sides normalise the SAME way — the TARONI class', () => {
   });
 
   it('a pool entry with a TRAILING SPACE still offers its value', () => {
-    /* The measured case: 79 sofa Models carry `"TARONI "`. Before the fold, the
-       screen offered TARONI and the save refused it. */
     expect(restrictStringsToPool(MASTER, ['TARONI '])).toEqual(['TARONI']);
   });
 
@@ -107,11 +96,8 @@ describe('both sides normalise the SAME way — the TARONI class', () => {
   });
 
   it('the fold is quotes-and-trim ONLY — case is NOT folded, on either side', () => {
-    /* Stated as an assertion because "make it lenient" is the tempting wrong
-       fix: these strings also compose `variant_key`, the inventory bucket
-       identity, so widening the match here would merge two real buckets. */
     expect(restrictStringsToPool(MASTER, ['taroni'])).toEqual([]);
-    expect(gateSource()).toMatch(/No trim, no case folding/);
+    expect(gateSource()).toMatch(/const foldForPool[^\n]*=>\s*normaliseTypographicQuotes\(s\)\.trim\(\);\r?\n/);
   });
 });
 
@@ -119,8 +105,6 @@ describe('the pair is invisible to the mirror checker, so it is pinned here', ()
   it('the gate really is a separate implementation under a different name', () => {
     const src = gateSource();
     expect(src).toContain('hasRestriction');
-    /* If the backend ever imports the picker helper, this pair stops being two
-       implementations and this whole file can go. Until then it cannot. */
     expect(src).not.toContain('restrictStringsToPool');
   });
 });

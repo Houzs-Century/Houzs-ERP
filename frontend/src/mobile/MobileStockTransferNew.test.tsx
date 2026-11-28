@@ -1,9 +1,3 @@
-/* Phone twin of pages/scm-v2/stock-new-next-step.test.tsx. After a transfer
-   is created the phone offers "New stock transfer" beside "Done", and "New"
-   must REMOUNT the screen so the next transfer gets its own idempotency key —
-   resetting the fields by hand would leave the first transfer's key in place
-   and the second, different transfer would be answered with the first one's
-   replay. Real useIdempotencyKey, real ConfirmProvider. */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';

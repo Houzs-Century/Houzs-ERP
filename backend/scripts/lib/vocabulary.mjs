@@ -250,7 +250,7 @@ export const VOCABULARY = [
        router that still reads them. NOTE: an earlier progress doc named
        `customer_so_no` canonical; #2429's owner ruling supersedes that with `ref`. */
     retired: [],
-    declaredIn: "frontend/src/lib/customer-ref.ts",
+    declaredIn: "shared/src/lib/customer-ref.ts",
     allow: [],
     note:
       "The customer's own reference (their PO / order number) on a sales document. " +

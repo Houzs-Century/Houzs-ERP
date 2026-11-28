@@ -1,13 +1,3 @@
-/* DEV-56 (Syasya 2026-10-07, HC-SO-2609-009): a Logistic Admin holding
- * `scm.so.edit_after_do` could not change a delivered order's address — the
- * Override banner lives in the ?edit=1 editor, and this read page greyed out
- * the only way in (Edit / Add line) for anyone without `scm.so.attribute_other`.
- * DEV-32's tests mounted the editor directly, so the door was never tried.
- *
- * Same harness as so-v2-history-and-activity.test.tsx: the real page under a
- * router, only its data hooks faked. The order is HC-SO-2609-009's shape:
- * DELIVERED, every line on one LOADED DO, no invoice.
- */
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -49,7 +39,6 @@ vi.mock("../../components/scm-v2/DocumentRelationshipMapModal", () => ({
 }));
 vi.mock("../../vendor/scm/components/PaymentsTable", () => ({ PaymentsTable: () => null }));
 vi.mock("../../auth/AuthContext", () => ({ useAuth: () => ({ can: (k: string) => perms.has(k) }) }));
-/* ?edit=1 swaps in the lazy editor; only the URL is under test here. */
 vi.mock("./SalesOrderDetail", () => ({ SalesOrderDetail: () => <div data-testid="editor" /> }));
 
 import SalesOrderDetailV2 from "./SalesOrderDetailV2";
@@ -117,8 +106,6 @@ describe("a delivered order, every line on an open DO", () => {
   });
 });
 
-/* DEV-70 — `scm.so.edit_price_after_do` alone opens the editor (the $ dialog
-   lives there), but not Add line: it re-prices delivered lines, it adds none. */
 describe("a delivered order, with only Edit SO line price after DO", () => {
   it("Edit opens the editor, Add line stays shut", () => {
     perms.add("scm.so.edit_price_after_do");

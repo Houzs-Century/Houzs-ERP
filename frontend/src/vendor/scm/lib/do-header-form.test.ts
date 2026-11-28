@@ -1,5 +1,3 @@
-/* The Delivery Order header edit, as data — shared by the desktop edit form and
- * the phone's edit sheet. See do-header-form.ts. */
 import { describe, expect, it } from 'vitest';
 import { buildDoHeaderBody, seedDoHeaderForm } from './do-header-form';
 

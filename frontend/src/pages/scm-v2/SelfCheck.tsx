@@ -1,36 +1,10 @@
-// ----------------------------------------------------------------------------
-// SelfCheck — Books › Self-check in the owner's redesign (batch 6 §3,
-// Finance-1a-Books-checks): the reconciliation the books carry about
-// themselves, as one list of checks in three groups. Each row is a status
-// tile, the check's name over its one-line state, its figure and a tag —
-// Clean, or what needs looking at; a row with findings opens by default, a
-// clean one stays one line, and whichever is open stays open while you are
-// away. Run again re-reads every check.
-//
-//   Control accounts against their documents — Trade / Other debtors and
-//   creditors (the control roles AR, AR_OTHER, AP, AP_OTHER): the ledger
-//   balance; the documents whose journal disagrees with them; lines from
-//   sources that do not belong on the account. Reads only.
-//   Payments and their entries — payments that never reached the ledger
-//   (Why? asks the gate in a dry run, nothing written; Book N payments only
-//   after a dry run it refused none of, behind an inline confirm), and
-//   payments that no longer agree with their entry (reads only; no button).
-//   Money the books are not done with — cancelled orders still holding money
-//   (Refund and Convert are on the order), and official receipts owed to
-//   history (Create N receipts behind an inline confirm; nothing in the
-//   ledger moves).
-//
-// Every call is today's: the control check, the dry run and the real backfill
-// of customer payments, the cancelled-orders list, the receipts plan and its
-// batched run. Nothing posts differently.
-// ----------------------------------------------------------------------------
 
 import { Children, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ChevronUp, HandCoins, Info, Loader2, Receipt, RefreshCw, Scale } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
 import { useOpenDocInTab } from '../../lib/openDocInTab';
-import { fmtDate, fmtDateTime, fmtSen } from '../../vendor/shared/format';
+import { fmtDate, fmtDateTime, fmtSen } from '../../../../shared/src/vendor/shared/format';
 import { fmtLedger } from '../../vendor/scm/lib/ledger-queries';
 import { useCancelledWithMoney, type ConvertSource } from '../../vendor/scm/lib/so-money-queries';
 import {
@@ -49,13 +23,10 @@ import s from './books/SelfCheck.module.css';
 const plural = (n: number, one: string, many: string): string => `${n.toLocaleString('en-MY')} ${n === 1 ? one : many}`;
 const rm = (sen: number): string => fmtSen(sen);
 
-/* ── One row ──────────────────────────────────────────────────────────── */
 
 type TagTone = 'late' | 'info' | 'calm' | 'warn';
 const tagClass = (t: TagTone): string => (t === 'late' ? b.toneLate : t === 'info' ? b.toneInfo : t === 'warn' ? b.toneWarn : b.toneCalm);
 
-/** What was opened or closed, kept while the page is away (the design keeps
-    it across visits to the page; nothing is stored). */
 const openMemory = new Map<string, boolean>();
 
 type CheckRowProps = {
@@ -64,9 +35,7 @@ type CheckRowProps = {
   sub: ReactNode;
   figure?: string | null;
   tag: { label: string; tone: TagTone; dot?: boolean };
-  /** Findings: the red tile, and the row opens by default. */
   bad: boolean;
-  /** Still reading, or not readable: the grey tile. */
   quiet?: boolean;
   children?: ReactNode;
 };
@@ -123,7 +92,6 @@ const Act = ({ label, primary, busy, onClick }: { label: string; primary?: boole
   </button>
 );
 
-/* ── Control accounts against their documents ────────────────────────── */
 
 /** The control roles by the names Finance uses for them. */
 export function controlTitle(role: string): string {
@@ -200,7 +168,6 @@ function ControlRow({ c, open }: { c: ControlCheckRow; open: (path: string) => v
   );
 }
 
-/* ── Payments that reached the ledger ─────────────────────────────────── */
 
 type UnbookedRow = UnbookedPayments['rows'][number];
 type ShownPayment = { id: string; docNo: string; source?: string; customer: string | null; salesperson: string | null; paidOn: string; method: string; amountSen: number; status?: string; reason?: string };
@@ -289,7 +256,6 @@ export function UnbookedRowCheck({ p, onToast }: { p: UnbookedPayments; onToast:
 
   return (
     <CheckRow id="unbooked" title="Payments that reached the ledger" sub={sub} figure={findings && !p.error ? rm(totalSen) : null} tag={tag} bad={findings}>
-      {/* The period this check speaks about, always — including when it speaks about nothing. */}
       {p.error && <div className={s.note}>The check could not run: {p.error}</div>}
       {!p.error && (
         <div className={s.note}>
@@ -341,7 +307,6 @@ export function UnbookedRowCheck({ p, onToast }: { p: UnbookedPayments; onToast:
   );
 }
 
-/* ── Payments that still agree with their entry ──────────────────────── */
 
 const driftWords: Record<PaymentDriftRow['fields'][number], string> = {
   amount: 'amount', date: 'date', method: 'how it was paid',
@@ -349,14 +314,8 @@ const driftWords: Record<PaymentDriftRow['fields'][number], string> = {
 
 export const driftFindings = (d: PaymentDrift): boolean => Boolean(d.error) || d.rows.length > 0;
 
-/* It reads. It writes nothing, and offers no button to: putting the entry
-   right is the payment edit's own repost, and a fix offered here would be a
-   second way to post. The table stays plain on purpose (a grid brings its
-   own buttons). */
 export function DriftRowCheck({ d }: { d: PaymentDrift }) {
   const clean = d.ok && d.rows.length === 0;
-  /* Nothing booked here yet is not the same statement as everything agrees,
-     and the row must not borrow the second one's words for the first. */
   const nothingToCompare = clean && d.scanned === 0;
   const sub = d.error
     ? 'The check could not run'
@@ -402,7 +361,6 @@ export function DriftRowCheck({ d }: { d: PaymentDrift }) {
   );
 }
 
-/* ── Cancelled orders still holding money ─────────────────────────────── */
 
 type CancelledOrder = ConvertSource & { salesperson?: string | null };
 
@@ -448,7 +406,6 @@ export function CancelledRowCheck({ q }: { q: ReturnType<typeof useCancelledWith
   );
 }
 
-/* ── Official receipts ────────────────────────────────────────────────── */
 
 export function ReceiptsRowCheck({ q, onToast }: { q: ReturnType<typeof useReceiptBackfillPlan>; onToast: (text: string) => void }) {
   const [progress, setProgress] = useState<BackfillResult | null>(null);
@@ -525,7 +482,6 @@ export function ReceiptsRowCheck({ q, onToast }: { q: ReturnType<typeof useRecei
   );
 }
 
-/* ── The page ─────────────────────────────────────────────────────────── */
 
 const GROUPS = [
   { key: 'controls', label: 'Control accounts against their documents', icon: Scale },
@@ -574,9 +530,6 @@ export const SelfCheckTab = () => {
       ? 'Checking…'
       : `Checked ${fmtDateTime(new Date(checkedAt))} · ${counts.checks} checks · ${counts.toLook > 0 ? `${counts.toLook} to look at` : 'all clean'}`;
 
-  /* Run again (batch 6 c3): the server makes the three reads in one go and
-     keeps their sum for To do; the page takes the reads it hands back. A run
-     the server refuses falls back to reading the three again. */
   const runAgain = async () => {
     setRunning(true);
     try {

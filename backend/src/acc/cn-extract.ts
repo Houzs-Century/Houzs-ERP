@@ -16,32 +16,24 @@ import { isoOrNull, readPaperJson, rmToSen, type BillFile } from './bill-extract
 import type { AiUsageTag } from '../services/aiUsage';
 
 export type CnLine = {
-  /** The line's words as printed: the item's name and anything printed under it
-      (an event, a period) — never the item code, which has its own field. */
   description: string | null;
-  /** The invoice this line credits, when the line prints one. */
   invoiceNo: string | null;
-  /** The supplier's own item / article code. */
   itemCode: string | null;
   qty: number | null;
   unitPriceSen: number | null;
-  /** The line total as printed (before tax). */
   amountSen: number | null;
 };
 
 export type CnExtraction = {
-  /** False when the paper is not a credit note at all (an invoice, a statement). */
   isCreditNote: boolean;
   vendorName: string | null;
   vendorRegNo: string | null;
   cnNumber: string | null;
   cnDate: string | null;
-  /** Every invoice number the note names, on its lines or in its header — once each. */
   invoiceNumbers: string[];
   subtotalSen: number | null;
   sstSen: number | null;
   totalSen: number | null;
-  /** The printed remark or reason, e.g. "25% display discount". */
   remark: string | null;
   lines: CnLine[];
 };

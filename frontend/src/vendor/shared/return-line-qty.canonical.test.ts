@@ -3,10 +3,6 @@ import { resolve } from 'node:path';
 import { describe, expect, test } from 'vitest';
 import { parseReturnLineQty } from './return-line-qty';
 
-/* The delivery return quantity rule has ONE text and two copies: the server
- * refuses on it (400 invalid_qty) and the New Return / edit forms block on it
- * before sending. If they drift, the form sends what the server refuses, or
- * blocks what the server would take. */
 describe('the two copies of return-line-qty are the same file', () => {
   const norm = (p: string) => readFileSync(resolve(process.cwd(), p), 'utf8').replace(/\r\n/g, '\n');
 

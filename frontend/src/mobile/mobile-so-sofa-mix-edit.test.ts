@@ -31,7 +31,6 @@ const read = (rel: string): string => readFileSync(resolve(process.cwd(), rel), 
 const mobileSource = read('src/mobile/MobileNewSO.tsx');
 const desktopDetailSource = read('src/pages/scm-v2/SalesOrderDetail.tsx');
 
-/** Body of `async function saveOnce(` (the save behind the one-press lock) up to the next top-level declaration. */
 const saveBody = (): string => {
   const start = mobileSource.indexOf('async function saveOnce(asDraft: boolean) {');
   expect(start, 'MobileNewSO save() anchor not found').toBeGreaterThan(-1);
@@ -73,17 +72,10 @@ describe('mobile hands the differential question to the backend, like the server
   });
 
   test('the draft carries the STORED line groups as origItemGroups (the "before" set)', () => {
-    /* Fed the edited set twice, the backend differential collapses to the flat
-       rule and can never see the mix was already there. The persisted lines are
-       origItems (seeded from the detail prefill). */
     expect(draftBody()).toContain('origItemGroups: origItems.map((it) => it.item_group)');
   });
 
   test('desktop moves together — it also hands the differential to the backend', () => {
-    /* SalesOrderDetail now posts its edit draft to /mfg-sales-orders/validate with
-       the STORED line groups as origItemGroups, so the backend computes the SAME
-       differential (mixes(after) && !mixes(before)) it does for the phone. The
-       client mix rules — flat and differential — are gone from the desktop edit. */
     expect(desktopDetailSource).toContain('/mfg-sales-orders/validate');
     expect(desktopDetailSource).toContain('origItemGroups: items.map((it) => it.item_group)');
     expect(desktopDetailSource, 'desktop must not keep the flat create-path rule')

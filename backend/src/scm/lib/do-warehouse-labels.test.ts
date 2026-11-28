@@ -1,6 +1,3 @@
-// Conts-ERP #717: the DO detail GET hands the printed DO its ship-from warehouse
-// NAME. The lookup is company-scoped, so another company's warehouse never
-// resolves even when its id is asked for.
 import { describe, expect, test } from 'vitest';
 import { doWarehouseLabels } from './do-warehouse-labels';
 

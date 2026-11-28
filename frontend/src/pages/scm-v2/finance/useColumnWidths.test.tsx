@@ -1,7 +1,3 @@
-/* The Finance grids' column widths (batch 6 §1.3): the tracks a grid opens on,
-   a width a person set in place of its default, the grid's floor before it
-   scrolls sideways, and the widths kept under fin-<kind>-cw until "Reset
-   column widths". */
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { columnWidthsKey, gridMinWidth, gridTemplate, useColumnWidths } from './useColumnWidths';
@@ -46,7 +42,6 @@ describe('useColumnWidths', () => {
   /* A form grid (the AP invoice's lines, owner 2026-11-16): each cell is a text
      box exactly as wide as its column, so a double-click fits to the box's TEXT. */
   test('a double-click fits a column of text boxes to the longest text the boxes show, padding included', () => {
-    /* jsdom has no canvas: a stub where a capital is 9px wide and anything else 7px. */
     const measure = (t: string) => [...t].reduce((s, c) => s + (/[A-Z]/.test(c) ? 9 : 7), 0);
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
       .mockReturnValue({ font: '', measureText: (t: string) => ({ width: measure(t) }) } as unknown as CanvasRenderingContext2D);
@@ -58,12 +53,10 @@ describe('useColumnWidths', () => {
             <span data-cw-cell={0}><span data-cw-lbl="">Description</span><span {...cw.handle(0)} /></span>
             <span data-cw-cell={1}><span data-cw-lbl="">Amount</span></span>
           </div>
-          {/* Shown in capitals (data-upper), so measured in capitals. */}
           <div data-cw-row="" style={{ gridTemplateColumns: cw.template }}>
             <span><input aria-label="one" defaultValue="transport fee" style={{ padding: '0 10px', border: '1px solid', textTransform: 'uppercase' }} /></span>
             <span><input type="text" aria-label="one amount" defaultValue="1,300.00" /></span>
           </div>
-          {/* Empty: its placeholder is what it shows. */}
           <div data-cw-row="" style={{ gridTemplateColumns: cw.template }}>
             <span><input aria-label="two" placeholder="a note" style={{ padding: '0 10px' }} /></span>
             <span><input type="checkbox" aria-label="two ticked" /></span>
@@ -73,7 +66,6 @@ describe('useColumnWidths', () => {
     };
     render(<FormGrid />);
     fireEvent.doubleClick(screen.getByTitle('Drag to resize · double-click to fit'));
-    /* The text, 10px of padding and 1px of border a side, and the fit's 2px of air. */
     expect(JSON.parse(window.localStorage.getItem('fin-fx-cw') ?? 'null')).toEqual([Math.ceil(measure('TRANSPORT FEE') + 20 + 2) + 2, null]);
   });
 });

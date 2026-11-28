@@ -18,21 +18,15 @@ export type GroupableLine = {
   id: string;
   itemCode: string;
   productName: string | null;
-  /* null while a blind take hides the figure from this viewer. */
   systemQty: number | null;
-  /* '' = uncounted (the sheet's draft convention). */
   countedQtyInput: string;
 };
 
 export type ModelGroup<T extends GroupableLine> = {
-  /* The grouping key — the product code (the model). */
   itemCode: string;
   productName: string | null;
   lines: T[];
-  /* Sum of system qty across the group; null when ANY line hides it (blind) —
-     a partial sum would leak the very number the blind flag withholds. */
   systemTotal: number | null;
-  /* Sum of the counted entries typed so far (uncounted lines contribute 0). */
   countedTotal: number;
   countedLines: number;
 };

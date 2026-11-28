@@ -1,6 +1,3 @@
-// New combo presets (Products > Combo Pricing > Combos; the screen says "combo"), read and written on
-// /sofa-combo-presets. Each write shows its failure (writeFailedAs); a caller
-// that awaits mutateAsync only decides whether its dialog stays open.
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';

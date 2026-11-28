@@ -69,13 +69,8 @@ export function companyRequiresStockLocation(companyCode: unknown): boolean {
 }
 
 export type SoLocationFacts = {
-  /** Active company code ('HOUZS' | '2990' | ...) — see the note above on an
-   *  absent one. */
   companyCode: unknown;
-  /** The header's `sales_location` — the warehouse label the State derived, or
-   *  an explicit one the caller sent. Blank / null = no location. */
   salesLocation: string | null | undefined;
-  /** The order's `customer_state`, used ONLY to tell the two causes apart. */
   customerState: string | null | undefined;
 };
 

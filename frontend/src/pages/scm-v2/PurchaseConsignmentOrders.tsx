@@ -1,19 +1,3 @@
-// ----------------------------------------------------------------------------
-// PurchaseConsignmentOrders — Purchase Consignment Order list, cloned from the
-// polished Purchase Orders list (PurchaseOrders.tsx). Same DataGrid UX:
-//   • double-click a row → open the detail page
-//   • right-click → context menu (View · Edit · Cancel)
-//   • click a row → drill-down with full line items
-//
-// Reuses the shared DataGrid + ItemGroupPill + fmtDateOrDash UNCHANGED; only the
-// queries are repointed at `/purchase-consignment-orders` (pc-order hooks) and
-// navigation points at /purchase-consignment.
-//
-// Dropped from the PO clone (per scope): the "From Sales Order" button + the
-// multi-select "Transfer to Goods Received" batch flow + the per-line "Received (GRN)"
-// breakdown column (consignment receiving lives on the parallel Purchase
-// Consignment Receive flow).
-// ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -35,7 +19,7 @@ import {
   type PoItemRow,
   type Currency,
 } from '../../vendor/scm/lib/suppliers-queries';
-import { poStatusLabel } from '../../vendor/scm/lib/po-status';
+import { poStatusLabel } from '../../../../shared/src/vendor/scm/lib/po-status';
 import { warehouseLabel } from '../../vendor/scm/lib/warehouse-label';
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { DataGridCompat, type GridColumn } from '../../components/DataGridCompat';
@@ -60,9 +44,6 @@ const STATUS_CHIPS: { value: StatusFilter; label: string }[] = [
 const fmtMoney = (centi: number, currency: Currency): string =>
   currency === 'MYR' ? fmtSen(centi) : fmtMoneySen(centi, currency);
 
-// The backend PC-orders list returns pc_number (the consignment doc number),
-// but the shared PoHeaderRow type carries po_number. Read pc_number first with
-// a po_number fallback so the doc number renders instead of `undefined`.
 const pcNo = (po: PoHeaderRow): string =>
   (po as { pc_number?: string }).pc_number ?? po.po_number ?? '';
 
@@ -83,12 +64,8 @@ const PC_ORDER_LIST_STORAGE_KEY = 'pc-order-list.layout.v1';
 const buildColumns = (): GridColumn<PoHeaderRow>[] => [
   {
     key: 'pc_number', label: 'P/CO No.', width: 150, sortable: true,
-    // Backend (purchase-consignment-orders list) returns pc_number, not the
-    // PO's po_number — the PoHeaderRow type is shared with real POs, so read
-    // pc_number with a po_number fallback.
     accessor: (po) => <span style={{ fontWeight: 700, color: 'var(--hz-c-primary)', fontVariantNumeric: 'tabular-nums' }} className={cancelledDocNoClass(po.status)}>{pcNo(po)}</span>,
     searchValue: (po) => pcNo(po),
-    /* Accessor is JSX → export the raw doc-no string or the cell exports blank. */
     exportValue: (po) => pcNo(po),
     sortFn: (a, b) => pcNo(a).localeCompare(pcNo(b)),
   },
@@ -133,7 +110,6 @@ const buildColumns = (): GridColumn<PoHeaderRow>[] => [
       );
     },
     searchValue: (po) => (po.items ?? []).map((it) => `${it.item_code} ${it.qty}`).join(' '),
-    /* Accessor is JSX → export the readable "code×qty · …" summary string. */
     exportValue: (po) => summarizeItems(po.items) ?? '',
   },
   {
@@ -172,8 +148,6 @@ const buildColumns = (): GridColumn<PoHeaderRow>[] => [
       </span>
     ),
     searchValue: (po) => fmtMoney(po.total_sen, po.currency),
-    /* Accessor is JSX → export the NUMBER in ringgit (not "MYR 1,234.00") so
-       Excel can SUM the column. */
     exportValue: (po) => (po.total_sen ?? 0) / 100,
     exportFormat: 'money',
     sortFn: (a, b) => a.total_sen - b.total_sen,
@@ -182,24 +156,16 @@ const buildColumns = (): GridColumn<PoHeaderRow>[] => [
     key: 'status', label: 'Status', width: 160, sortable: true, groupable: true,
     accessor: (po) => <StatusPill docType="po" status={po.status} />,
     searchValue: (po) => poStatusLabel(po.status),
-    /* Accessor is JSX → export the human status label, not blank. */
     exportValue: (po) => poStatusLabel(po.status),
     groupValue: (po) => poStatusLabel(po.status),
     sortFn: (a, b) => poStatusLabel(a.status).localeCompare(poStatusLabel(b.status)),
   },
 ];
 
-/* Status TONE for the drawer badge: every line received = success, cancelled
-   = error, draft = neutral, anything still open = warning. A function, not a
-   status map, so the po_status vocabulary keeps its one home (po-status.ts).
-   LABEL is poStatusLabel. */
 const pcoTone = (s: string): DrawerTone =>
   s === 'RECEIVED' ? 'success' : s === 'CANCELLED' ? 'error' : s === 'DRAFT' ? 'neutral' : 'warning';
 const PCO_LINE_COLS = 'grid-cols-[minmax(0,1fr)_44px_96px]';
 
-/* Quick-view drawer — row click opens the same right slide-over the Sales
-   Order / Purchase Order lists have. Lines ride the SAME detail query the
-   expand chevron uses. */
 export function PurchaseConsignmentOrderDrawer({
   row, onClose, onOpenFull, onEdit, onReceive, onCancel,
 }: {
@@ -302,7 +268,6 @@ export function PurchaseConsignmentOrderDrawer({
 
 export const PurchaseConsignmentOrders = () => {
   const [status, setStatus] = useState<StatusFilter>('outstanding');
-  /* Row click → quick-view drawer. */
   const [selected, setSelected] = useState<PoHeaderRow | null>(null);
   const navigate = useNavigate();
   const cancelPo = useCancelPurchaseConsignmentOrder();
@@ -418,7 +383,6 @@ export const PurchaseConsignmentOrders = () => {
   );
 };
 
-/* ─────────────────── Expanded drill-down ────────────────────────────── */
 const buildDrilldownColumns = (
   currency: Currency,
   headerExpectedAt: string | null,

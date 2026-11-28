@@ -1,10 +1,3 @@
-/* Employees & Attendance > Working Hours (v3 design). Hours worked per employee
- * over a range: days, regular / overtime hours and late minutes, with a total.
- * Overtime here is each day's hours over the employee's standard day (the exact
- * paid OT, rounded per pay rules, is on Payroll). A row opens the employee's
- * per-day breakdown, and "Log hours" / a day open the day editor — where HR
- * logs, splits or corrects the hours that pay (AUTO from the punch, or MANUAL),
- * unchanged. */
 import { useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
@@ -12,7 +5,7 @@ import { api } from "../../api/client";
 import { ResizableDrawer } from "../../components/ResizableDrawer";
 import { useToast } from "../../hooks/useToast";
 import { formatDate } from "../../lib/utils";
-import { todayMY } from "../../vendor/shared/format";
+import { todayMY } from "../../../../shared/src/vendor/shared/format";
 import { DateField } from "../../vendor/scm/components/DateField";
 import { Field, errText, ghostBtn, inputCls, primaryBtn } from "../pos-admin/posAdminUi";
 import { hrPrimaryBtn } from "./HrPageHeader";

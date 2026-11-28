@@ -3,16 +3,12 @@ import { cn } from "../lib/utils";
 
 interface Props {
   userId: number | null | undefined;
-  /** R2 key (or any truthy marker that the user has a picture). */
   hasImage?: boolean | string | null;
   name?: string | null;
   email?: string | null;
   size?: number;
   className?: string;
-  /** Add a thin brass ring around the circle — used in podium / chips. */
   ring?: boolean;
-  /** "circle" (default) or "square" (rounded-rect) — square is used by the
-   *  departmental org chart, which mirrors a photo-ID card layout. */
   shape?: "circle" | "square";
 }
 
@@ -36,11 +32,6 @@ export function Avatar({
   shape = "circle",
 }: Props) {
   const shapeCls = shape === "square" ? "rounded-md" : "rounded-full";
-  /* The fetch + object-URL lifetime moved to `lib/profilePicture` so the mobile
-     identity card reads the same photo through the same path. It also BINDS the
-     failure reason, which this used to end with a bare `.catch(() => {})` — one
-     of the sites `audit:swallowed-reads` counts. The render is unchanged: no
-     photo still means initials. */
   const { src } = useProfilePicUrl(userId, hasImage);
 
   const dim = { width: size, height: size, fontSize: Math.round(size * 0.4) };

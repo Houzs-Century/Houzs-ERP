@@ -1,11 +1,5 @@
 import type { Variables } from '../env';
 
-/* Header fields an entity-audit row needs, read defensively.
-   Moved out of routes/grns.ts on 2026-08-20: it is a pure read with no route
-   scope, and the file-size ratchet charges GROWTH - the honest way to add the
-   transaction wrapper was to give this back rather than raise a ceiling.
-   Swallows its error on purpose: audit metadata that cannot be read must not
-   fail the write it is describing; the caller records nulls. */
 export async function loadGrnAuditMeta(
   sb: Variables['supabase'],
   grnId: string,

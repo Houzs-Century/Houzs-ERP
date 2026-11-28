@@ -118,27 +118,17 @@ export const isNonCashName = (name: string): boolean => /DEPRECIATION|AMORTI[SZ]
 
 /** One forecast money movement, on the account the Cash Flow places it on. */
 export type CashLeg = {
-  /** The month the money moves (YYYY-MM). */
   ym: string;
-  /** The forecast month it comes from (an order's or a bill's own month). */
   fromYm: string;
-  /** The document behind it: an order's or a bill's number; none for the Forecast P&L or a keyed amount. */
   ref: string | null;
-  /** The Forecast P&L, an amount keyed in the Capex & financing table, an open order, a supplier's bill, the trade-finance plan. */
   source: 'pnl' | 'input' | 'order' | 'bill' | 'tf';
   flow: 'in' | 'out';
-  /** The account it lands on, and the row's own key (the code, or the debtor control's kind row). */
   code: string;
   key: string;
-  /** The row's name: the account's, or the debtor control's forecast row. */
   name: string;
-  /** Under the debtor control: Deposit or Settlement, as the actual money prints. */
   group?: { id: ReceiptKind; label: string };
-  /** Signed for the flow: money in on an In leg, out on an Out leg. */
   sen: number;
-  /** Who: the supplier, "Forecast sales", or the line itself. */
   party: string;
-  /** How it was timed. */
   note: string;
 };
 
@@ -150,15 +140,11 @@ export type PnlCashInput = {
   grid: ForecastGrid;
   suppliers: SupplierGrid;
   accounts: ForecastAccount[];
-  /** The debtor control: where the customers' money lands. */
   arCode: string;
   receiptMix: ReceiptMix;
-  /** A purchase line keyed whole: its recent suppliers' terms, weighted by what each billed it. */
   purchaseMix: (code: string) => TermMix;
-  /** A supplier's term in months (flagged when it has none usable) and its name. */
   supplierTerm: (id: string) => TermInfo;
   supplierName: (id: string) => string;
-  /** The P&L layout's Salary & related accounts: paid the month after. */
   salaryCodes: ReadonlySet<string>;
 };
 
@@ -176,7 +162,6 @@ export function buildPnlCashLegs(input: PnlCashInput): { legs: CashLeg[]; nonCas
   for (const S of Object.keys(input.grid).sort()) {
     const f = monthFigures(input.grid[S] ?? {}, input.suppliers[S] ?? {}, input.accounts);
     const from = `${monthTitle(S)} Forecast P&L`;
-    /* Sales: by the receipts mix, each part a Deposit or a Settlement on the debtor control. */
     for (const p of spreadSen(f.salesSen, input.receiptMix)) {
       legs.push({
         ym: addMonthsYm(S, p.months), fromYm: S, ref: null, source: 'pnl', flow: 'in', code: input.arCode, key: `${input.arCode}:${p.kind}:FC`, name: FORECAST_ROW_NAME,

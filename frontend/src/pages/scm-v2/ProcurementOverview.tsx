@@ -11,7 +11,7 @@ import { DrillDrawer, col, type Drill } from "../../components/scm-v2/DrillDrawe
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "../../components/Layout";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
-import { fmtSen, todayMY } from "../../vendor/shared/format";
+import { fmtSen, todayMY } from "../../../../shared/src/vendor/shared/format";
 import { cn } from "../../lib/utils";
 import { Th, Td, Panel, Toggle, SELECT_CLS } from "../../components/scm-v2/OverviewKit";
 import { DashboardPeriodPicker, useDashboardPeriod, periodEnd } from "../../components/scm-v2/DashboardPeriod";
@@ -54,7 +54,6 @@ type Turnover = {
 type Payload = {
   turnover: Turnover;
   today: string; from: string; to: string; asOf: string; basis: "original" | "promised";
-  /** When these figures were computed (the server's kept copy can be up to 2 h old). */
   cachedAt?: string;
   stockScope: string; warehouseKinds: Record<string, string>; needSource: { stored: number; estimated: number };
   categories: string[]; currentLead: Partial<Record<string, number>>; leadOverrides: Partial<Record<string, Array<{ warehouse: string; days: number }>>>;
@@ -77,12 +76,10 @@ const days = (x: number | null) => (x == null ? "—" : `${x}`);
 const pctTxt = (x: number | null) => (x == null ? "—" : `${x}%`);
 const share = (part: number, whole: number) => (whole > 0 ? `${Math.round((part / whole) * 100)}%` : "—");
 const MIN_RECEIPTS = 10;
-/* Location kinds from the warehouse type: display = display + showroom. */
 const STOCK_SCOPE_OPTIONS: Array<[string, string]> = [
   ["all", "All locations"], ["no_display", "Exclude display"], ["no_display_service", "Exclude display and service"],
   ["warehouse", "Warehouse only"], ["display", "Display only"], ["service", "Service only"], ["others", "Others only"],
 ];
-/* The MRP categories a lead time can be set for (mrp-lead-times). */
 const MRP_CATEGORY: Partial<Record<string, LeadCategory>> = { MATTRESS: "mattress", BEDFRAME: "bedframe", SOFA: "sofa", ACCESSORY: "accessory" };
 
 /** `embedded`: inside the phone shell, which draws its own header. */
@@ -131,14 +128,12 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
     queryFn: () => authedFetch<Payload>(scoreUrl),
     staleTime: 60_000,
   });
-  /* Served from a copy up to 2 h old: say when it was computed, and offer figures computed now. */
   const { refresh, refreshing } = useCacheRefresh();
   const onRefresh = () => void refresh([
     { queryKey: mainKey, load: () => authedFetch<Payload>(withFresh(mainUrl)) },
     ...(scoreUrl === mainUrl ? [] : [{ queryKey: scoreKey, load: () => authedFetch<Payload>(withFresh(scoreUrl)) }]),
   ]);
   const cachedAt = oldestCachedAt([q.data?.cachedAt, scoreQ.data?.cachedAt]);
-  /* Quality cases per 100 received, Quality Overview's own figure for the same 90 days. */
   const quality = useQuery({
     queryKey: ["quality-overview", scoreFrom, today],
     queryFn: () => api.get<{ suppliers: Array<{ name: string; receivedQty: number; ratePct: number | null }> }>(`/api/assr/quality-overview?from=${scoreFrom}&to=${today}`),
@@ -146,7 +141,6 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   });
   const qualityRate = useMemo(() => (quality.data ? new Map(quality.data.suppliers
     .filter((x) => x.receivedQty >= 30 && x.ratePct != null && x.ratePct <= 100)
-    /* Quality may report a group of companies as one row ("Hookka Manufacturing + Hookka Industries + Ohana"): each takes the group's rate. */
     .flatMap((x) => x.name.split(" + ").map((n) => [supplierKey(n), x.ratePct as number] as const))) : null), [quality.data]);
   /* Decision C (owner 2026-10-17): the system only suggests a lead time; it
      changes when someone presses Apply. */
@@ -159,10 +153,8 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
   const shown = groups.filter((g) => g.raised.sen || g.due.openSen || g.receivedSen || billedOf(g.key) || g.open.sen);
   const outstanding = useMemo(() => (d?.lines ?? []).filter((l) => l.openQty > 0
     && (!focus || (by === "category" ? l.category === focus : l.supplier === focus))), [d, focus, by]);
-  /* "this month" / "this quarter" / "in 2026-08" — the period in plain words. */
   const when = period.key === "month" ? "this month" : period.key === "quarter" ? "this quarter" : period.key === "year" ? "this year" : `in ${period.label}`;
   const When = when.charAt(0).toUpperCase() + when.slice(1);
-  /* "as of today" alone read as live; the figures are the kept copy's, so the note carries its time. */
   const stamp = cacheStampLabel(cachedAt);
   const asOfNote = d ? `${d.asOf === today ? "as of today" : `as of ${d.asOf}, the period's last day`}${stamp ? ` (${stamp.toLowerCase()})` : ""}` : "";
 
@@ -385,7 +377,6 @@ export function ProcurementOverview({ embedded }: { embedded: boolean }) {
 }
 
 type ByKind = { warehouse: number; others: number; service: number; display: number };
-/** Which locations the stock figures cover; the same choice as the bar at the top. */
 function ScopePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
     <label className="flex items-center gap-1.5 text-[12px] text-ink-secondary">
@@ -416,7 +407,6 @@ function PickChip({ label, onClear }: { label: string; onClear: () => void }) {
   );
 }
 
-/** A clickable row: the picked one is highlighted, a second click clears it. */
 const pickRow = (key: string, picked: string | null, onPick: (k: string) => void) => ({
   onClick: () => onPick(key), "aria-selected": picked === key,
   className: cn("cursor-pointer hover:bg-surface-2/50", picked === key && "bg-primary-soft/50", picked != null && picked !== key && "opacity-60"),

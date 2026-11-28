@@ -32,31 +32,13 @@ import { checkRateLimit, clearRateLimit, clientIp } from "../middleware/rateLimi
 import { recordFailedLogin, recordRateLimitedOnce } from "../services/failedLogins";
 import { provisionPersonalMailbox } from "../lib/mail-provision";
 
-/**
- * Auth routes — UNAUTHENTICATED entry points.
- *
- * Mounted at /api/auth/* OUTSIDE the auth middleware so unauthenticated
- * users can hit /login, /bootstrap, /accept-invite. /me and /logout
- * require a valid bearer token.
- */
 const app = new Hono<{ Bindings: Env }>();
 
-/* A real PBKDF2 record in the stored `salt$hash` shape, derived from a string
-   that is not anyone's password. It exists ONLY so that a login attempt for an
-   address with no account performs the same 100k-iteration derivation as one
-   that does — see the login handler. It is never compared against successfully;
-   nothing authenticates with it. */
 const TIMING_EQUALISER_HASH =
   "BF3yX+3ocRPnH9KBKydn5A==$5iHFIc7Z3t8/vEm8jA4GuwdjcaL5/yajl4dWitx/PBU=";
 
-const RESET_TTL_SECONDS = 60 * 60; // matches the admin-initiated reset
+const RESET_TTL_SECONDS = 60 * 60;
 
-/* A member flagged to change their password (users.password_change_required_at)
-   who proves the password gets a session that can ONLY change it — never the
-   ordinary or "remember me" session, because the password just proven may be one
-   an outsider also holds (docs/staging-dump-artifact-exposure-coe.md). No pass is
-   minted: the session lives for one form, and the auth gate refuses it on both
-   paths anyway. No staffId either, so the POS does not treat it as a sign-in. */
 async function passwordChangeLoginResponse(c: Context<{ Bindings: Env }>, userId: number) {
   const token = await createSession(
     c.env,
@@ -67,13 +49,8 @@ async function passwordChangeLoginResponse(c: Context<{ Bindings: Env }>, userId
   );
   return c.json({ token, user_id: userId, password_change_required: true });
 }
-const TOTP_CHALLENGE_TTL_SECONDS = 5 * 60; // window to enter the 2FA code
+const TOTP_CHALLENGE_TTL_SECONDS = 5 * 60;
 
-/**
- * GET /api/auth/status
- * Public — used by the frontend to decide whether to show the login or
- * the bootstrap (first-owner) screen.
- */
 app.get("/status", async (c) => {
   const row = await c.env.DB.prepare(
     `SELECT COUNT(*) as count FROM users WHERE status = 'active'`
@@ -81,12 +58,6 @@ app.get("/status", async (c) => {
   return c.json({ has_users: (row?.count || 0) > 0 });
 });
 
-/**
- * POST /api/auth/bootstrap
- * Public — only works when there are zero active users. Creates the
- * first Owner. Anyone calling this endpoint after the first user
- * exists gets a 409.
- */
 app.post("/bootstrap", async (c) => {
   const existing = await c.env.DB.prepare(
     `SELECT COUNT(*) as count FROM users WHERE status = 'active'`
@@ -121,10 +92,6 @@ app.post("/bootstrap", async (c) => {
   return c.json({ token, user_id: userId, ...(sessionPass ? { session_pass: sessionPass } : {}) });
 });
 
-/**
- * POST /api/auth/login
- * Public — exchanges email + password for a session token.
- */
 app.post("/login", async (c) => {
   const body = await c.req.json<{ email: string; password: string; remember?: boolean }>();
   /* "Remember me on this device" (owner 2026-09-02). A ticked box mints a
@@ -138,7 +105,6 @@ app.post("/login", async (c) => {
   }
   const email = body.email.toLowerCase().trim();
 
-  // Brute-force speed bump: 10 attempts / 15 min per email+IP. Fail-open.
   const rlKey = `${email}:${clientIp(c)}`;
   const limited = await checkRateLimit(c, "login", rlKey);
   if (limited) {
@@ -158,29 +124,6 @@ app.post("/login", async (c) => {
       password_change_required_at: string | null;
     }>();
 
-  /* Two account-existence oracles used to live here, and both are closed below.
-     Telling someone WHICH half of the pair was wrong hands anyone holding a list
-     of email addresses the first step of a credential attack: they learn which
-     addresses are real staff accounts without ever guessing a password.
-
-     ORACLE 1 — TIMING. The unknown-email branch returned before verifyPassword,
-     so a real address cost a 100k-iteration PBKDF2 derivation and an unknown one
-     cost an indexed SELECT. That difference is measurable over the network. We
-     now always derive, against a throwaway hash of the correct shape when there
-     is no user, so both answers cost the same work.
-
-     ORACLE 2 — STATUS CODE. The `status !== 'active'` check ran BEFORE the
-     password was verified, so ONE request carrying a junk password separated a
-     real-but-disabled account (403 "Account is disabled") from an unknown one
-     (401). That also enumerated every pending invite — accounts that have no
-     password yet and are the most attractive targets. The check now runs AFTER
-     verifyPassword, so learning that an account is disabled requires already
-     knowing its password, at which point nothing is being disclosed. A
-     legitimately disabled staff member who types their real password still gets
-     the clear "Account is disabled" answer they need.
-
-     The rate limiter is NOT a mitigation for either: it is keyed email+IP, so an
-     attacker walking a list of addresses gets a fresh budget per address. */
   const stored = user?.password_hash || TIMING_EQUALISER_HASH;
   const ok = await verifyPassword(body.password, stored);
 
@@ -202,13 +145,8 @@ app.post("/login", async (c) => {
     return c.json({ error: "Account is disabled" }, 403);
   }
 
-  // Clear the counter — the password was correct, so this isn't a brute force.
   await clearRateLimit(c, "login", rlKey);
 
-  // Second factor: when 2FA is on we do NOT mint a session here. Instead we
-  // stash a short-lived challenge in KV and ask the client for a code; the real
-  // session is issued by /totp/login. Fail CLOSED — if the challenge can't be
-  // stored we refuse rather than fall through to a 2FA-less session.
   if (user.totp_enabled) {
     const kv = c.env.SESSION_CACHE;
     if (!kv) {
@@ -217,9 +155,6 @@ app.post("/login", async (c) => {
     }
     const challenge = generateToken();
     try {
-      // The challenge carries the remember choice through the 2FA step —
-      // "<userId>" (legacy, still parsed) or "<userId>:1" when the box was
-      // ticked — so a 2FA account gets the same rolling session as everyone else.
       await kv.put(`2fa:${challenge}`, remember ? `${user.id}:1` : String(user.id), {
         expirationTtl: TOTP_CHALLENGE_TTL_SECONDS,
       });
@@ -241,16 +176,6 @@ app.post("/login", async (c) => {
   return c.json({ token, user_id: user.id, staffId: await lookupStaffId(c.env, user.id), ...(sessionPass ? { session_pass: sessionPass } : {}) });
 });
 
-/* staffId: the caller's scm.staff uuid. The 2990 POS signs in by email through
-   THIS endpoint post-#949 and keys its whole session on it (apps/pos auth.tsx
-   reads body.staffId; without it the POS stored id='' — token minted, app
-   unusable, which locked every non-sales member out of the POS). Best-effort by
-   design: the ERP web frontend ignores the field, so a missing scm schema (the
-   D1 test mirror) or a transient read must never fail the web login. Members
-   without a staff row get null — the POS then fails loud instead of half-in.
-   Deliberately NOT also echoing a camelCase userId: the POS fallback chain
-   (staffId ?? userId ?? id) would seize on the integer and poison every
-   staff-keyed store with a non-uuid. */
 async function lookupStaffId(env: Env, userId: number): Promise<string | null> {
   try {
     const s = await env.DB.prepare(`SELECT id FROM scm.staff WHERE user_id = ?`)
@@ -262,20 +187,8 @@ async function lookupStaffId(env: Env, userId: number): Promise<string | null> {
   }
 }
 
-/**
- * POST /api/auth/pin-login
- * Public — crew sign-in with staff code + 6-digit PIN. The whole rule set
- * (who, how many tries, what the session may reach) is in routes/fieldPinLogin.ts
- * and services/fieldPin.ts.
- */
 app.post("/pin-login", fieldPinLogin);
 
-/**
- * POST /api/auth/totp/login
- * Second step of a 2FA login. Body: { challenge, code }. `code` is a 6-digit
- * TOTP or a backup code. On success the challenge is consumed and a session is
- * issued. Rate-limited per challenge to bound code-guessing.
- */
 app.post("/totp/login", async (c) => {
   const body = await c.req.json<{ challenge?: string; code?: string }>();
   const challenge = (body.challenge || "").trim();
@@ -289,7 +202,6 @@ app.post("/totp/login", async (c) => {
     return c.json({ error: "Two-factor is temporarily unavailable. Try again shortly." }, 503);
   }
 
-  // 5 guesses / 5 min per challenge.
   const limited = await checkRateLimit(c, "totp", challenge, 5, 300);
   if (limited) {
     recordRateLimitedOnce(c, null, "totp_rate_limited", challenge, 300);
@@ -304,7 +216,6 @@ app.post("/totp/login", async (c) => {
   const [userIdPart, rememberPart, doorPart] = String(userIdRaw).split(":");
   const userId = parseInt(userIdPart, 10);
   const remember = rememberPart === "1";
-  // A challenge issued at the crew PIN door must end in a field session.
   const fieldDoor = doorPart === "field";
 
   const row = await c.env.DB.prepare(
@@ -335,13 +246,8 @@ app.post("/totp/login", async (c) => {
           .run();
       }
     } catch {
-      /* malformed JSON → treat as no backup codes */
     }
   }
-  /* Plain words, not "Invalid code" — and the same sentence for a wrong code
-     and an expired 30-second window, because the user can't tell those apart
-     and the remedy is identical: read the current code again. Backup codes are
-     accepted on this endpoint, so the message names them. */
   if (!ok) {
     recordFailedLogin(c, null, userId, "totp_failed");
     return c.json(
@@ -350,14 +256,12 @@ app.post("/totp/login", async (c) => {
     );
   }
 
-  // Consume the challenge (single-use) and clear the guess counter.
   await kv.delete(`2fa:${challenge}`).catch(() => {});
   await clearRateLimit(c, "totp", challenge);
 
   await c.env.DB.prepare(`UPDATE users SET last_login_at = datetime('now') WHERE id = ?`)
     .bind(userId)
     .run();
-  // The crew PIN door never asked for the password, so the flag does not apply.
   if (!fieldDoor && row.password_change_required_at) return passwordChangeLoginResponse(c, userId);
   const token = fieldDoor
     ? await createSession(c.env, userId, SESSION_ORIGIN_FIELD)
@@ -365,19 +269,9 @@ app.post("/totp/login", async (c) => {
       ? await createSession(c.env, userId, undefined, REMEMBER_TTL_SECONDS, REMEMBER_TTL_SECONDS)
       : await createSession(c.env, userId);
   const sessionPass = await mintSessionPass(c.env, token, Date.now());
-  // Same staffId contract as /login — the POS email path may be 2FA-gated.
   return c.json({ token, user_id: userId, staffId: await lookupStaffId(c.env, userId), ...(sessionPass ? { session_pass: sessionPass } : {}) });
 });
 
-/**
- * POST /api/auth/forgot-password
- * Public — the self-service half of the reset flow (mig 027 reserved
- * `requested_by = NULL` for exactly this). Anti-enumeration: always
- * answers 200 {ok} whether or not the email maps to an account, and a
- * per-user cooldown (1 request / 5 min) bounds outbound email volume.
- * Sessions are NOT revoked here — only the consume endpoint below does
- * that, once the requester has proven control of the mailbox.
- */
 app.post("/forgot-password", async (c) => {
   const body = await c.req
     .json<{ email?: string }>()
@@ -386,9 +280,6 @@ app.post("/forgot-password", async (c) => {
   const done = () => c.json({ ok: true });
   if (!email || !email.includes("@")) return done();
 
-  // Per-email rate limit (5 / 15 min). Anti-enumeration: when over the cap we
-  // return the same {ok} instead of a 429, so it never reveals which emails
-  // exist. Stacks with the 5-min per-user cooldown below.
   if (await checkRateLimit(c, "forgot", email, 5, 900)) return done();
 
   const user = await c.env.DB.prepare(
@@ -411,14 +302,7 @@ app.post("/forgot-password", async (c) => {
     }>();
   if (!user) return done();
 
-  // Never-joined accounts ('invited') have no password to reset — a reset
-  // link would dead-end, and the old behavior (silent no-op) left invitees
-  // whose original invite expired or got spam-filtered with NO way to get
-  // in ("reset password but nothing arrives in Gmail", 2026-07-09). Re-send
-  // their invitation instead, behind the same anti-enumeration {ok}.
   if (user.status === "invited") {
-    // 5-min cooldown against repeat taps (created_at can be NULL on legacy
-    // rows — treated as old).
     const lastInv = await c.env.DB.prepare(
       `SELECT created_at FROM invitations
         WHERE email = ? AND accepted_at IS NULL
@@ -434,7 +318,7 @@ app.post("/forgot-password", async (c) => {
       if (String(lastInv.created_at).replace("T", " ") > cutoff) return done();
     }
     const inviteToken = generateToken();
-    const inviteExpires = isoIn(60 * 60 * 24 * 14); // 14 days, matches /users/invite
+    const inviteExpires = isoIn(60 * 60 * 24 * 14);
     await c.env.DB.prepare(
       `INSERT INTO invitations
          (email, role_id, token, invited_by, expires_at, department_id, position_id, manager_id)
@@ -450,8 +334,6 @@ app.post("/forgot-password", async (c) => {
         user.manager_id ?? null
       )
       .run();
-    // PRE-AUTH: no companyContext here — brand by the request hostname, the
-    // same default the middleware would resolve (erp.2990shome.com → 2990).
     const inviteCompanyCode = defaultCompanyCodeForHost(c.req.header("host") ?? "");
     const inviteProduct = erpProductName(
       await getBrandingForCompany(c.env, inviteCompanyCode),
@@ -474,10 +356,8 @@ app.post("/forgot-password", async (c) => {
     return done();
   }
 
-  // Any other non-active status (disabled, etc.) stays a silent no-op.
   if (user.status !== "active") return done();
 
-  // Cooldown — skip silently if a reset was issued in the last 5 min.
   const last = await c.env.DB.prepare(
     `SELECT created_at FROM password_resets
       WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`
@@ -509,7 +389,6 @@ app.post("/forgot-password", async (c) => {
     .run();
 
   const name = (user.name || user.email.split("@")[0]).split(" ")[0];
-  // PRE-AUTH: brand by request hostname (same default companyContext uses).
   const resetCompanyCode = defaultCompanyCodeForHost(c.req.header("host") ?? "");
   const resetProduct = erpProductName(
     await getBrandingForCompany(c.env, resetCompanyCode),
@@ -532,11 +411,6 @@ app.post("/forgot-password", async (c) => {
   return done();
 });
 
-/**
- * GET /api/auth/invite/:token
- * Public preflight — lets the accept screen show "You're invited as
- * <role>" and pre-fill the email + any name preset at invite time.
- */
 app.get("/invite/:token", async (c) => {
   const token = c.req.param("token");
   if (!token) return c.json({ error: "Bad token" }, 400);
@@ -567,11 +441,6 @@ app.get("/invite/:token", async (c) => {
   return c.json({ email: row.email, name: row.name, role_name: row.role_name });
 });
 
-/**
- * POST /api/auth/accept-invite
- * Public — exchanges an invitation token + name + password for a new
- * active user + session.
- */
 app.post("/accept-invite", async (c) => {
   const body = await c.req.json<{
     token: string;
@@ -602,19 +471,11 @@ app.post("/accept-invite", async (c) => {
     return c.json({ error: "Invitation has expired" }, 410);
   }
 
-  // Strength gate runs after the invite lookup so the email local-part
-  // rule can apply ("password can't contain your email name").
   const strength = validatePasswordStrength(body.password, inv.email);
   if (!strength.ok) return c.json({ error: strength.error }, 400);
 
   const hash = await hashPassword(body.password);
 
-  // Promote the placeholder user (created at invite time) to active. The
-  // placeholder already carries the invitation's role; an admin who changed
-  // the member's Role on the profile BEFORE the person signed in must win, so
-  // the invitation's role is written only if the row somehow has none
-  // (2026-09-16: seven invitations still pointed at the 0-key placeholder role
-  // after their members had been moved to real roles).
   const userResult = await c.env.DB.prepare(
     `UPDATE users
      SET name = COALESCE(?, name),
@@ -644,8 +505,6 @@ app.post("/accept-invite", async (c) => {
     .bind(inv.id)
     .run();
 
-  // An invite from before DEV-03, or one sent without a name, has no address
-  // yet; the name is known now. The account is already live, so best-effort.
   try {
     await provisionPersonalMailbox(c.env, user.id);
   } catch (e) {
@@ -657,10 +516,6 @@ app.post("/accept-invite", async (c) => {
   return c.json({ token, user_id: user.id, ...(sessionPass ? { session_pass: sessionPass } : {}) });
 });
 
-/**
- * POST /api/auth/logout
- * Authenticated — invalidates the caller's session.
- */
 app.post("/logout", async (c) => {
   const header = c.req.header("Authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
@@ -668,16 +523,11 @@ app.post("/logout", async (c) => {
   return c.json({ ok: true });
 });
 
-/**
- * GET /api/auth/me
- * Authenticated — returns the current user + permissions.
- */
 app.get("/me", async (c) => {
   const header = c.req.header("Authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
   if (!token) return c.json({ error: "Unauthorized" }, 401);
 
-  // Legacy shared key — service identity, no DB lookup.
   if (c.env.DASHBOARD_API_KEY && timingSafeEqualStr(token, c.env.DASHBOARD_API_KEY)) {
     return c.json({
       user: {
@@ -688,12 +538,6 @@ app.get("/me", async (c) => {
         role_name: "Service",
         status: "active",
         permissions: ["*"],
-        // The service identity is a wildcard holder, so it resolves through the
-        // SAME registry rather than being handed a hand-written answer — a
-        // second, hand-maintained capability map for one caller is the drift
-        // this file exists to stop. The cost/margin DISPLAY switch is applied to
-        // this caller too — it is GLOBAL, so even the wildcard service loses
-        // scm.finance.view when costing display is turned off.
         capabilities: resolveCapabilities(
           { permissions: ["*"] },
           { costingDisplayEnabled: isCostingDisplayEnabled(c.env) },
@@ -705,17 +549,6 @@ app.get("/me", async (c) => {
   const user = await getUserBySession(c.env, token);
   if (!user) return c.json({ error: "Unauthorized" }, 401);
 
-  // Opportunistic prune — keeps the sessions table small. It is a WRITE, and
-  // /auth/me sits at the head of every page load's critical path: awaiting it
-  // charged one DELETE round trip to every navigation in the app before the
-  // caller saw a byte. Nothing in the response depends on it, so it moves off
-  // the critical path via waitUntil and settles after the response is sent.
-  // A failed prune must not fail an otherwise valid /me either — it is a
-  // housekeeping sweep, and the next request retries it.
-  //
-  // c.executionCtx throws when the runtime did not supply one (some test
-  // harnesses); a floating promise is the correct fallback for fire-and-forget
-  // work, same pattern as the error reporter in index.ts.
   const prune = pruneExpiredSessions(c.env).catch(() => {});
   try {
     c.executionCtx.waitUntil(prune);
@@ -750,23 +583,10 @@ app.get("/me", async (c) => {
   return c.json({
     user: {
       ...user,
-      // The SPA's AuthGate shows only the change-password screen while true.
       password_change_required: user.session_origin === SESSION_ORIGIN_PASSWORD_CHANGE,
       project_finance_viewer: isFinanceViewer(user),
       product_cost_viewer: isProductCostViewer(user),
-      // scm_config_writer: "may you WRITE SCM master data / config" — the SAME
-      // predicate the API gate uses (scm/lib/houzs-perms.canWriteScmConfig
-      // delegates to it), surfaced so a screen never re-derives it. SO
-      // Maintenance asked `can('scm.config.write')`, the FLAT half only, and so
-      // told every position-granted config writer the page was read-only while
-      // the API would have accepted their edits. Third flag on this response for
-      // the third time the FE and BE drifted by exactly one rule.
       scm_config_writer: userCanWriteScmConfig(user),
-      // costingDisplayEnabled: the GLOBAL cost/margin DISPLAY switch (env
-      // COSTING_DISPLAY_ENABLED). Passed here so scm.finance.view is dropped for
-      // EVERYONE when display is off — the FE reads that capability and hides the
-      // cost/margin columns, matching canViewScmFinance stripping the fields from
-      // every SCM sales-document response. One switch, both sides of the wire.
       capabilities: resolveCapabilities(user, {
         costingDisplayEnabled: isCostingDisplayEnabled(c.env),
       }),
@@ -774,11 +594,6 @@ app.get("/me", async (c) => {
   });
 });
 
-/**
- * GET /api/auth/reset/:token
- * Public — verifies a reset token and returns the email it's for so
- * the reset page can show "Reset password for alice@…".
- */
 app.get("/reset/:token", async (c) => {
   const token = c.req.param("token");
   if (!token) return c.json({ error: "Bad token" }, 400);
@@ -806,12 +621,6 @@ app.get("/reset/:token", async (c) => {
   return c.json({ email: row.email, name: row.name });
 });
 
-/**
- * POST /api/auth/reset/:token
- * Public — consumes the token, sets a new password hash, invalidates
- * prior sessions. Does NOT auto-log-in; the user goes back to the
- * login page so they verify the new password works.
- */
 app.post("/reset/:token", async (c) => {
   const token = c.req.param("token");
   const body = await c.req.json<{ password: string }>();
@@ -841,8 +650,6 @@ app.post("/reset/:token", async (c) => {
   const strength = validatePasswordStrength(body.password, row.email);
   if (!strength.ok) return c.json({ error: strength.error }, 400);
   const hash = await hashPassword(body.password);
-  // A reset link proves the mailbox and replaces the password outright, so it
-  // also satisfies a pending required change.
   await c.env.DB.prepare(
     `UPDATE users SET password_hash = ?, password_change_required_at = NULL WHERE id = ?`
   )
@@ -853,17 +660,11 @@ app.post("/reset/:token", async (c) => {
   )
     .bind(row.id)
     .run();
-  // Belt + braces: kill any remaining sessions. Bust their cached-user entries
-  // BEFORE the delete (reads the live tokens) so a reset password can't ride a
-  // still-cached session for up to 60s.
   await bustUserSessions(c.env, row.user_id);
   await c.env.DB.prepare(`DELETE FROM sessions WHERE user_id = ?`).bind(row.user_id).run();
   return c.json({ ok: true });
 });
 
-// /api/auth/* lives outside the global auth middleware so login etc
-// are reachable pre-auth. /me endpoints need to pull the token manually
-// — same pattern as the existing GET /me below.
 async function requireAuthed(c: any) {
   const header = c.req.header("Authorization") || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
@@ -873,11 +674,6 @@ async function requireAuthed(c: any) {
   return { user, token };
 }
 
-/**
- * PATCH /api/auth/me
- * Authenticated — lets the signed-in user edit their own display name.
- * Email + role are NOT editable here (privileged operations).
- */
 app.patch("/me", async (c) => {
   const auth = await requireAuthed(c);
   if ("error" in auth) return c.json({ error: auth.error }, 401);
@@ -901,12 +697,6 @@ app.patch("/me", async (c) => {
   return c.json({ ok: true });
 });
 
-/**
- * POST /api/auth/me/password
- * Authenticated — user changes their own password. Requires current
- * password to prove possession of the account (defends against a
- * stolen session token being used to lock the owner out).
- */
 app.post("/me/password", async (c) => {
   const auth = await requireAuthed(c);
   if ("error" in auth) return c.json({ error: auth.error }, 401);
@@ -924,8 +714,6 @@ app.post("/me/password", async (c) => {
   if (!row?.password_hash) return c.json({ error: "No password on file" }, 400);
   const ok = await verifyPassword(body.current, row.password_hash);
   if (!ok) return c.json({ error: "Current password is incorrect" }, 403);
-  // A required change exists because the OLD password may be known to someone
-  // else, so keeping it would satisfy the form and fix nothing.
   if (row.password_change_required_at && body.next === body.current) {
     return c.json({ error: "Choose a password different from your current one." }, 400);
   }
@@ -935,9 +723,6 @@ app.post("/me/password", async (c) => {
   )
     .bind(next, auth.user.id)
     .run();
-  // A restricted session must not survive the change: it was granted on the old
-  // password. End EVERY session the member holds and hand back a fresh ordinary
-  // one, so the screen they are on simply continues into the app.
   if (auth.user.session_origin === SESSION_ORIGIN_PASSWORD_CHANGE) {
     await bustUserSessions(c.env, auth.user.id);
     await c.env.DB.prepare(`DELETE FROM sessions WHERE user_id = ?`)
@@ -950,11 +735,6 @@ app.post("/me/password", async (c) => {
     const sessionPass = await mintSessionPass(c.env, token, Date.now());
     return c.json({ ok: true, token, ...(sessionPass ? { session_pass: sessionPass } : {}) });
   }
-  // Keep the current session alive — caller just proved they know the
-  // old password. Revoke OTHER sessions on the account as a defensive
-  // measure (if the old password was compromised elsewhere). Bust their
-  // cached-user entries first (keeping this session's), so the revoked
-  // sessions can't ride the 60s cache.
   await bustUserSessions(c.env, auth.user.id, auth.token);
   await c.env.DB.prepare(
     `DELETE FROM sessions WHERE user_id = ? AND token != ?`

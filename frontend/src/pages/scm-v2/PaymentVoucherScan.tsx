@@ -73,23 +73,20 @@ import { NOT_A_BILL_LABEL, claimEvidenceOf, isClaimForm, isNotABill, repeatsOf, 
 import type { AiReadStage } from '../../vendor/scm/lib/ai-read-job';
 import { clearPile, getPile, pileKey, updatePile, usePile, type PileState } from '../../vendor/scm/lib/bill-pile-store';
 import { getActiveCompanySnapshot, subscribeActiveCompany } from '../../lib/activeCompany';
-import { fmtDate } from '../../vendor/shared/format';
+import { fmtDate } from '../../../../shared/src/vendor/shared/format';
 import { PageHeader } from '../../components/Layout';
 import styles from './SalesOrderDetail.module.css';
 
-import { fmtSen } from '../../vendor/shared/format';
+import { fmtSen } from '../../../../shared/src/vendor/shared/format';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const ACCEPT_MIMES = 'image/jpeg,image/png,image/webp,application/pdf';
-/* How many bills are with the reader at once — the rest wait their turn. */
 export const READ_AT_ONCE = 3;
 /* A pile, not a dropped folder (owner 2026-10-05: 一次最多 50 张). */
 export const MAX_PILE_FILES = 50;
 
 const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
-/* Another live request, voucher or AP invoice printed with this bill's number
-   and date — said beside the bill before it is opened. */
 const PileBillMatches = ({ no, date }: { no: string | null; date: string | null }) => {
   const q = useBillMatches(no ?? '', date ?? '');
   return <BillMatchesNote matches={q.data?.matches} />;
@@ -108,23 +105,15 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
   const pile = usePile(key);
   const { picked, billGroups, results, billFiles, opened, progress, rereading, stages } = pile;
   const set = (change: (p: PileState) => PileState) => updatePile(key, change);
-  /* A changed pile is a new pile: the old answers go, and any read still out is ended. */
   const pileChanged = (change: (p: PileState) => Partial<PileState>) =>
     set((p) => ({ ...p, ...change(p), results: null, billFiles: [], opened: [], run: p.run + 1 }));
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   const [splitGroups, setSplitGroups] = useState<Set<string>>(new Set());
-  /* Case 4: the read bills (by index) ticked for ONE voucher across groups. */
   const [tickedForOne, setTickedForOne] = useState<Set<number>>(new Set());
-  /* Set-aside pages the person said ARE bills after all. */
   const [treatAsBill, setTreatAsBill] = useState<Set<number>>(new Set());
   const [note, setNote] = useState<string | null>(null);
-  /* While the reader has bills the pile holds still — an answer lands by its
-     place in the pile, so the pile may not shift under it. */
   const busy = progress != null || rereading.length > 0;
 
-  /* The same allowlist the server enforces — a dropped .docx is refused at the
-     door with a sentence, not uploaded to fail later. ONE home: the string
-     feeds both the picker's accept= and the drop/paste filter. */
   const accepted = (f: File) => ACCEPT_MIMES.split(',').includes(f.type) || /\.pdf$/i.test(f.name);
 
   const addFileArray = (files: File[]) => {
@@ -173,7 +162,6 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     setTicked(new Set());
   };
 
-  /* One PDF of several bills → one bill per page, in the PDF's place in the pile. */
   const [splitting, setSplitting] = useState<string | null>(null);
   const splitPdf = async (rid: string) => {
     const f = picked.find((p) => p.rid === rid);
@@ -210,24 +198,16 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     }));
   };
 
-  /* Only the run that sent a bill may land its answer — a cleared or re-read
-     pile drops a late one. The pile is read from the store, never from this
-     render: the page may have been left and come back meanwhile. */
   const forRun = (runId: number, change: (p: PileState) => PileState) =>
     updatePile(key, (p) => (p.run === runId ? change(p) : p));
-  /* A bill's answer, put in its place in the pile (a read-again replaces the old one). */
   const land = (runId: number, b: ExtractedBill) => forRun(runId, (p) => {
     const stillReading = { ...p.stages };
     delete stillReading[b.index];
     return { ...p, stages: stillReading, results: [...(p.results ?? []).filter((r) => r.index !== b.index), b].sort((x, y) => x.index - y.index) };
   });
-  /* Where a sent bill is on the scan queue: waiting for the reader, or read now. */
   const stageOf = (runId: number, index: number, stage: AiReadStage) =>
     forRun(runId, (p) => (p.results?.some((r) => r.index === index) && !p.rereading.includes(index) ? p : { ...p, stages: { ...p.stages, [index]: stage } }));
 
-  /* ONE bill to the reader — its own request, its own wait. A bill that cannot
-     be read (or a reader that took too long) is that bill's answer, never the
-     pile's. */
   const readBill = async (runId: number, index: number, rids: string[], byRid: Map<string, File>): Promise<void> => {
     let files: PvFilePayload[];
     try {
@@ -258,7 +238,6 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     setTreatAsBill(new Set());
     setNote(null);
     let next = 0;
-    /* READ_AT_ONCE lanes, each taking the next bill as its last one lands. */
     const lane = async () => {
       while (next < bills.length && getPile(key).run === runId) {
         const i = next++;
@@ -278,25 +257,16 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     await readBill(runId, index, rids, new Map(picked.map((p) => [p.rid, p.file])));
     forRun(runId, (p) => ({ ...p, rereading: p.rereading.filter((i) => i !== index) }));
   };
-  /* A bill opened as a document — the pile says so when you come back. */
   const markOpened = (indices: number[]) => set((p) => ({ ...p, opened: [...new Set([...p.opened, ...indices])] }));
-  /* The files a bill was made of, by name — how a failed bill is told apart. */
   const namesOf = (index: number): string => {
     const byRid = new Map(picked.map((p) => [p.rid, p.file.name]));
     return (billGroups[index] ?? []).map((rid) => byRid.get(rid) ?? '').filter(Boolean).join(' + ');
   };
 
-  /* Group the READ bills by matched supplier; unmatched ones group by the
-     printed vendor name so two TNB bills still sit together. */
   const okBills = useMemo(() => (results ?? []).filter((b): b is Extract<ExtractedBill, { ok: true }> => b.ok), [results]);
-  /* The three heaps: receipts (grouped below), and the set-aside pages — not
-     a bill, a repeat of a receipt already in the pile, or a receipt a claim
-     form in the pile lists (bill-pile-sort.ts). */
   const { receipts, setAside, asideWhy, evidence } = useMemo(() => {
     const counted = okBills.filter((b) => !isNotABill(b.extraction) || treatAsBill.has(b.index));
     const repeats = repeatsOf(counted);
-    /* The file a bill was cut from: a page split off a PDF keeps its PDF's id
-       (`<rid>-p<n>`, splitPdf), so the claim form's own pages are told apart. */
     const sourceOf = (index: number): string => (billGroups[index]?.[0] ?? `bill-${index}`).replace(/-p\d+$/, '');
     const ev = claimEvidenceOf(counted.filter((b) => !repeats.has(b.index) && !treatAsBill.has(b.index)), sourceOf);
     const why = new Map<number, string>();
@@ -314,16 +284,12 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     }
     return { receipts: okBills.filter((b) => !why.has(b.index)), setAside: okBills.filter((b) => why.has(b.index)), asideWhy: why, evidence: ev };
   }, [okBills, treatAsBill, billGroups]);
-  /* A claim form's evidence pages, by index — they ride along whenever the form is opened. */
   const evidenceOf = (index: number): number[] =>
     setAside.filter((s) => evidence.get(s.index)?.claim === index).map((s) => s.index);
-  /* The pages a bill opens with: its own, and its receipts' when it is a claim form, in pile order. */
   const filesOf = (indices: number[]) => {
     const all = [...new Set(indices.flatMap((i) => [i, ...evidenceOf(i)]))].sort((x, y) => x - y);
     return { indices: all, files: all.flatMap((i) => billFiles[i] ?? []) };
   };
-  /* What a claim form says under it: its rows are the lines, and how many of
-     them have their receipt in the pile. */
   const claimNote = (b: Extract<ExtractedBill, { ok: true }>): string | null => {
     if (!isClaimForm(b.extraction)) return null;
     const rows = b.extraction.lines.map((l, i) => ({ row: i + 1, amountSen: l.amountSen })).filter((r) => r.amountSen != null && r.amountSen > 0);
@@ -352,10 +318,6 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
   }, [receipts]);
 
   const openVoucher = (extraction: BillExtraction, extras?: { lines?: Array<{ description: string | null; amountSen: number | null }>; memory?: VendorMemory | null; files?: PvFilePayload[]; eventSuggestions?: EventSuggestion[] }) => {
-    /* The bill's own bytes ride ALONG (module stash, not location.state — see
-       pv-file-handoff.ts): the New page attaches them once the voucher saves,
-       so the evidence lives with the document instead of dying with this tab.
-       Stashed even when empty, so a stale earlier pile can't attach here. */
     stashPvFiles(extras?.files ?? []);
     navigate('/scm/payment-vouchers/new', { state: { billPrefill: { extraction, ...(extras?.lines ? { lines: extras.lines } : {}), memory: extras?.memory ?? null, ...(extras?.eventSuggestions ? { eventSuggestions: extras.eventSuggestions } : {}) } } });
   };
@@ -371,22 +333,16 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     files: PvFilePayload[],
     lines?: Array<{ description: string | null; amountSen: number | null }>,
   ) => {
-    /* The bill's pages ride the same stash as the voucher and AP invoice; the
-       New Purchase Invoice attaches them once it saves. */
     stashPvFiles(files);
     navigate('/scm/purchase-invoices/new', { state: { scanBill: { extraction, supplierId, ...(lines ? { lines } : {}) } } });
   };
 
-  /* One bill = one AP invoice (target="ap"): the list page opens its New form
-     pre-filled from this bill, the pages riding the same stash the voucher
-     uses, attached on save. */
   const openApInvoice = (b: Extract<ExtractedBill, { ok: true }>) => {
     markOpened([b.index]);
     stashPvFiles(billFiles[b.index] ?? []);
     navigate('/scm/ap-invoices', { state: { apPrefill: { extraction: b.extraction, supplierMatch: b.supplierMatch, memory: b.memory, eventSuggestions: b.eventSuggestions ?? [] } } });
   };
 
-  /* Case 4 — the ticked receipts, whatever shop each came from, as ONE voucher. */
   const failedCount = (results ?? []).length - okBills.length;
   const labelOf = (b: Extract<ExtractedBill, { ok: true }>) => b.supplierMatch?.name ?? b.extraction.vendorName ?? `Unnamed bill ${b.index + 1}`;
   const tickedBills = receipts.filter((b) => tickedForOne.has(b.index));
@@ -394,7 +350,6 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
   const tickedLines = tickedBills.flatMap((b) => voucherLinesOf(b.extraction, [labelOf(b), b.extraction.invoiceNumber].filter(Boolean).join(' ')));
   const tickedTotalSen = tickedLines.every((l) => l.amountSen != null) ? tickedLines.reduce((s, l) => s + (l.amountSen ?? 0), 0) : null;
   const tickedCurrencies = new Set(tickedBills.map((b) => b.extraction.currency));
-  /* Every receipt as a line, every set-aside page as attached evidence. */
   const tickEveryReceipt = () => setTickedForOne(new Set(okBills.map((b) => b.index)));
   const openTickedAsOne = () => {
     if (tickedLines.length < 2 || tickedCurrencies.size > 1) return;
@@ -408,22 +363,17 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
     const lines = tickedLines;
     const first = tickedBills[0]!;
     const dates = tickedBills.map((b) => b.extraction.invoiceDate).filter((d): d is string => !!d).sort();
-    /* A ticked claim form brings its receipts' pages even when they are not ticked. */
     const pages = filesOf([...tickedBills, ...tickedAside].map((b) => b.index));
     markOpened(pages.indices);
     openVoucher(
       {
         ...first.extraction,
-        /* Three shops have no one payee: left blank for the person, and no
-           shop's vendor memory (payee, account) is borrowed for the lot. */
         vendorName: null, vendorRegNo: null, documentKind: 'receipt', sstSen: null, dueDate: null,
         invoiceDate: dates.length > 0 ? dates[dates.length - 1]! : null,
         invoiceNumber: tickedBills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null,
         totalSen: tickedTotalSen,
         lines,
       },
-      /* Every ticked receipt's pages and every ticked set-aside page (the
-         slips, the summary), in pile order — the voucher carries all its evidence. */
       { lines, memory: null, files: pages.files },
     );
   };
@@ -434,14 +384,10 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
       description: [g.label, b.extraction.invoiceNumber].filter(Boolean).join(' '),
       amountSen: b.extraction.totalSen,
     }));
-    /* One vendor per group by construction, so the first bill's memory IS the
-       group's. */
     const pages = filesOf(g.bills.map((b) => b.index));
     markOpened(pages.indices);
     openVoucher(
       { ...first.extraction, invoiceNumber: g.bills.map((b) => b.extraction.invoiceNumber).filter(Boolean).join(', ') || null },
-      /* Every member bill's pages, in bill order — the ONE voucher carries the
-         whole statement's evidence. */
       { lines, memory: first.memory, files: pages.files },
     );
   };
@@ -557,7 +503,6 @@ export const PaymentVoucherScan = ({ target = 'pv' }: { target?: 'pv' | 'ap' } =
             </section>
           )}
           {groups.map((g) => {
-            /* An AP invoice is one per bill by nature — a group never merges. */
             const split = ap || splitGroups.has(g.key) || g.bills.length === 1;
             return (
               <section key={g.key} className={styles.card}>

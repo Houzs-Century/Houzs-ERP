@@ -1,36 +1,19 @@
-// Sofa build / configurator pure functions. Lifted from prototype
-// pos-sofa-config.jsx + pos-data.jsx. Phase 2 step A — pricing math + grouping +
-// adjacency. analyzeSofa closure validation deferred to step B.
-//
-// All functions are pure (no DOM, no module-level state). Depth & per-Model
-// pricing flow through arguments. Same code runs on POS, Backend preview,
-// and Cloudflare Workers when /orders does the server-side recompute.
 
 import { pickComboMatch, type SofaComboRow, type SofaPriceTier } from './sofa-combo-pricing';
 export type { SofaComboRow } from './sofa-combo-pricing';
 export { comboChargedPrices } from './sofa-combo-pricing';
-// One-way edge: mfg-pricing.ts imports nothing (fully self-contained), so this
-// does NOT create a cycle. resolveSeatHeightSelling powers the SELLING assembly
-// helper below; MfgSeatHeightPrice is the per-(height,tier) entry shape.
 import { resolveSeatHeightSelling, resolveSeatHeightSen, type MfgSeatHeightPrice, type MfgFabricTier } from './mfg-pricing';
 
-/* ─── Public types ─────────────────────────────────────────────────── */
 
 export type Rot = 0 | 90 | 180 | 270;
-// Seat depth in inches, as a string (e.g. '24', '28', '30', '32'). Was a
-// '24'|'28' union; widened (F5) so the configurator can offer each Model's real
-// depths from products.depth_options. Display + plan-view width only — never a
-// pricing dimension.
 export type Depth = string;
 
 export interface Cell {
-  /** Optional client-side cell id for grouping by reference. */
   id?: string;
   moduleId: string;
   x: number;
   y: number;
   rot: Rot;
-  /** Per-seat recliner upgrades. seatIdx 0-based, left-to-right at rot=0. */
   recliners?: { seatIdx: number; open: boolean }[];
 }
 
@@ -38,9 +21,7 @@ export interface SofaModuleSpec {
   id: string;
   group: '1-seater' | '2-seater' | '3-seater' | 'Corner' | 'L-Shape' | 'Accessory';
   label: string;
-  /** Width along the cushion axis (cm), 24″ baseline. */
   w: number;
-  /** Depth (cm). */
   d: number;
   cushions: number;
   accessory?: boolean;
@@ -49,51 +30,24 @@ export interface SofaModuleSpec {
 export interface SofaProductPricingRow {
   compartmentId: string;
   active: boolean;
-  /** SEN. Was whole MYR until 2026-08-14; the rename is deliberate so that a
-   *  missed call site fails to compile instead of being silently 100x off. */
   priceSen: number;
 }
 export interface SofaProductPricingBundle {
   bundleId: string;
   active: boolean;
-  /** SEN — see SofaProductPricingRow.priceSen. */
   priceSen: number;
 }
 export interface SofaProductPricing {
   compartments: SofaProductPricingRow[];
   bundles: SofaProductPricingBundle[];
-  /** SEN — see SofaProductPricingRow.priceSen. */
   reclinerUpgradeSen: number;
-  /** Per-Model name for the per-seat upgrade ('Power slide','Headrest', …).
-   *  null/undefined → this Model offers no per-seat upgrade (POS hides the add
-   *  button). Display only — the upgrade price is `reclinerUpgradeSen`.
-   *  F3, 2026-05-23 (migration 0039). */
   seatUpgradeLabel?: string | null;
-  /** true → upgraded seat opens a footrest (power recliner/incliner/slide/leg);
-   *  false → no footrest (headrest). Defaults to true when omitted. */
   seatUpgradeFootrest?: boolean;
-  /** Per-Model fabric availability + surcharge (spec 2026-05-24). Optional so
-   *  callers that don't price fabric (e.g. plan-view) can omit it.
-   *  `computeSofaPrice` ignores this — surcharge is a caller-applied line add. */
   fabrics?: SofaProductPricingFabric[];
-  /** Sofa Combo Pricing rows (Commander 2026-05-28). When the group's modules
-   *  + tier match a combo row's modules + tier, the combo price OVERRIDES the
-   *  à la carte / bundle pricing. Pass [] to disable; pass a SofaComboRow[]
-   *  fetched per-call to enable. The picker is tolerant of empty baseModel
-   *  (POS doesn't have the retail↔mfg base_model bridge yet — relies on
-   *  modules-match alone). */
   combos?: import('./sofa-combo-pricing').SofaComboRow[];
-  /** Pieces placed on this build. Covered pieces are included in the combo
-   *  total; callers charge only pieces outside comboMatchedAccessoryIds. */
   accessories?: import('./sofa-combo-pricing').SofaPricedAccessory[];
-  /** Fabric tier of the currently-selected fabric (PRICE_1 / PRICE_2 / PRICE_3).
-   *  Used when looking up a combo override. Combos with tier=null match any
-   *  tier; combos with a specific tier require an exact match. */
   fabricTier?: import('./sofa-combo-pricing').SofaPriceTier | null;
-  /** Seat height as combos store it (e.g. '24'). Defaults to the depth param
-   *  cast as string when omitted. */
   comboHeight?: string;
-  /** Base model code for combo lookup. POS sets to '' for wildcard match. */
   baseModel?: string;
 }
 
@@ -101,24 +55,13 @@ export interface SofaProductPricingFabric {
   fabricId: string;
   active: boolean;
   surcharge: number;
-  /** Active colour ids for this fabric — the server uses them to validate the
-   *  chosen colour. Display labels/hex are loaded separately for the UI. */
   colourIds: string[];
 }
 
 export interface BundleDef {
   id: string;
   label: string;
-  /** Canonical detection signature — sorted family multiset, e.g. '2A+1NA+L'.
-   * Additional equivalent signatures (e.g. customer-assembled variants that
-   * form the same shape) are registered in BUNDLE_BY_SIG. */
   signature: string;
-  /** Canonical SKU composition for invoice / PO line items. When a customer's
-   * build matches this bundle, the cart represents the sofa as this list of
-   * compartments so the backend can issue a PO that the factory understands
-   * (each entry is a real orderable SKU, not the loose set of modules the
-   * customer happened to drag onto the canvas). Family ids only — actual
-   * LHF/RHF orientation is derived from the laid-out cells at swap time. */
   canonicalModules: readonly string[];
 }
 
@@ -130,29 +73,13 @@ export interface SofaGroupPrice {
   aLaCarteTotal: number;
   reclinerCount: number;
   reclinerExtra: number;
-  /** What the customer pays for this group. min(bundle, à la carte) + recliners. */
   finalPrice: number;
-  /** Where finalPrice came from. */
   basis: 'combo' | 'bundle' | 'a_la_carte';
-  /** When basis='combo', the matched combo's price for the current height
-   *  (before recliner extras). This covers ONLY the matched subset of cells.
-   *  null otherwise. */
   comboPrice?: number | null;
-  /** When basis='combo', the à-la-carte sum of the SUBSET the combo replaced
-   *  (HOOKKA's subsetSum). null otherwise. */
   comboSubsetALaCarte?: number | null;
-  /** When basis='combo', the à-la-carte sum of the EXTRA cells outside the
-   *  matched subset — they stay at full master price and are added on top of
-   *  the combo price. 0 when the combo covered the whole group. null when
-   *  basis !== 'combo'. */
   comboExtrasALaCarte?: number | null;
-  /** When basis='combo', the cellIds of the matched subset (the cells the
-   *  combo price covers). Extras = cellIds − comboMatchedCellIds. Lets the
-   *  cart show "combo applied + extras separate" like HOOKKA. null otherwise. */
   comboMatchedCellIds?: string[] | null;
-  /** Sofa Accessory pieces already included in this group's combo price. */
   comboMatchedAccessoryIds?: string[];
-  /** The rule that actually supplied this group's selling price. */
   comboId?: string | null;
 }
 
@@ -161,41 +88,23 @@ export interface SofaPriceResult {
   total: number;
 }
 
-/* ─── Module catalogue ─────────────────────────────────────────────── */
-// 24″ baseline. 28″ depth adds 10cm × cushions to the .w (length) axis only.
 
-// Module ids use the PARENS form — the ONE canonical compartment vocabulary
-// shared with the Maintenance master pool, Modular allowed-options, mfg SKU
-// suffixes ({MODEL}-1A(LHF)) and SO descriptions (Loo 2026-06-04: "one name
-// everywhere, no translating here and there"). The legacy dash form
-// (1A-LHF) survives only inside normalizeCompartmentCode for tolerance.
 export const SOFA_MODULES: readonly SofaModuleSpec[] = [
-  // 1-seaters (LHF/RHF = left/right hand facing — supplier convention)
   { id: '1A(LHF)', group: '1-seater',  label: '1A · Left hand facing',  w: 95,  d: 95,  cushions: 1 },
   { id: '1A(RHF)', group: '1-seater',  label: '1A · Right hand facing', w: 95,  d: 95,  cushions: 1 },
   { id: '1B(LHF)', group: '1-seater',  label: '1B · Left hand facing (wide arm)',  w: 105, d: 95, cushions: 1 },
   { id: '1B(RHF)', group: '1-seater',  label: '1B · Right hand facing (wide arm)', w: 105, d: 95, cushions: 1 },
   { id: '1NA',    group: '1-seater',  label: '1NA · No arms',          w: 75,  d: 95,  cushions: 1 },
-  // 2-seaters
   { id: '2A(LHF)', group: '2-seater',  label: '2A · Left hand facing',  w: 158, d: 95,  cushions: 2 },
   { id: '2A(RHF)', group: '2-seater',  label: '2A · Right hand facing', w: 158, d: 95,  cushions: 2 },
   { id: '2B(LHF)', group: '2-seater',  label: '2B · Left hand facing (wide arm)',  w: 170, d: 95, cushions: 2 },
   { id: '2B(RHF)', group: '2-seater',  label: '2B · Right hand facing (wide arm)', w: 170, d: 95, cushions: 2 },
   { id: '2NA',    group: '2-seater',  label: '2NA · No arms',          w: 142, d: 95,  cushions: 2 },
-  // Corner — single SKU per supplier; canvas rotation orients NW/NE/SE/SW.
   { id: 'CNR',    group: 'Corner',    label: 'Corner piece',           w: 95,  d: 95,  cushions: 1 },
-  // L-shape chaise
   { id: 'L(LHF)',  group: 'L-Shape',   label: 'L · Left hand facing chaise',  w: 95, d: 165, cushions: 1 },
   { id: 'L(RHF)',  group: 'L-Shape',   label: 'L · Right hand facing chaise', w: 95, d: 165, cushions: 1 },
-  // Accessory — 45cm wood console. Slots between sofa pieces; doesn't count
-  // toward bundles or closure.
   { id: 'Console', group: 'Accessory', label: 'Wood console · 45cm',    w: 45,  d: 95,  cushions: 0, accessory: true },
-  // Ottoman / stool — 75×75 free-standing accessory (F1). Doesn't count toward
-  // bundles or closure. Art: STOOL.png (Loo provides).
   { id: 'STOOL',  group: 'Accessory', label: 'Ottoman / stool',        w: 75,  d: 75,  cushions: 0, accessory: true },
-  // Pool-sourced first-class compartments (2026-06-01). Whole-unit presets carry
-  // both end arms; functional 1-seater variants (P=power, R=recliner, L=power leg)
-  // keep the base 1A/1NA closed footprint. Approx dims — Chairman adjusts later.
   { id: '1S', group: '1-seater', label: '1-Seater (both arms)', w: 115, d: 95, cushions: 1 },
   { id: '2S', group: '2-seater', label: '2-Seater (both arms)', w: 174, d: 95, cushions: 2 },
   { id: '3S', group: '3-seater', label: '3-Seater (both arms)', w: 220, d: 95, cushions: 3 },
@@ -208,7 +117,6 @@ export const SOFA_MODULES: readonly SofaModuleSpec[] = [
   { id: '1NA(P)', group: '1-seater', label: '1NA · Power · No arms',    w: 75, d: 95, cushions: 1 },
   { id: '1NA(R)', group: '1-seater', label: '1NA · Recliner · No arms', w: 75, d: 95, cushions: 1 },
   { id: '1NA(L)', group: '1-seater', label: '1NA · Power leg · No arms', w: 75, d: 95, cushions: 1 },
-  // 1-Seater (both arms) functional variants — 1S body + forward footrest.
   { id: '1S(P)', group: '1-seater', label: '1S · Power · Both arms',     w: 115, d: 95, cushions: 1 },
   { id: '1S(R)', group: '1-seater', label: '1S · Recliner · Both arms',  w: 115, d: 95, cushions: 1 },
   { id: '1S(L)', group: '1-seater', label: '1S · Power leg · Both arms', w: 115, d: 95, cushions: 1 },
@@ -216,23 +124,8 @@ export const SOFA_MODULES: readonly SofaModuleSpec[] = [
 
 const MODULE_BY_ID = new Map<string, SofaModuleSpec>(SOFA_MODULES.map((m) => [m.id, m]));
 
-/* ─── Structural fallback (Maintenance-is-master, Loo 2026-06-04) ───────
- *
- * A compartment code RENAMED on the Maintenance master pool follows into the
- * Model ticks, combos and quick picks (rename_sofa_compartment; only a code no
- * SKU uses) — but the
- * canvas still needs to know the shape. As long as the rename keeps the
- * STRUCTURE tokens — base family (1A/1B/2A/2B/1NA/2NA/1S/2S/3S/CNR/L/
- * Console/STOOL), optional (LHF)/(RHF) orientation, optional (P)/(R)/(L)
- * mechanism — `findModule` synthesizes a spec from the family's canonical
- * geometry and `cellEdges` derives the arm sides the same way, so e.g.
- * '1A(LHF)(28)' or a re-cased '1a(lhf)' keeps rendering, pricing and
- * closing exactly like '1A(LHF)'. A base the structure parser doesn't know
- * still returns undefined: a brand-new physical module needs real dims +
- * art, which is dev work by design. */
 
 export interface CompartmentStructure {
-  /** Upper-cased base family token, e.g. '1A', '2NA', 'CNR', 'CONSOLE'. */
   base: string;
   orientation: 'LHF' | 'RHF' | null;
   mechanism: 'P' | 'R' | 'L' | null;
@@ -250,8 +143,6 @@ export const parseCompartmentStructure = (raw: string): CompartmentStructure | n
   return { base, orientation, mechanism };
 };
 
-/** Canonical representative id per structure — geometry + edges come from
- *  this id's SOFA_MODULES / MODULE_EDGES_BASE entry. */
 const familyRepresentative = (s: CompartmentStructure): string | undefined => {
   const o = s.orientation ?? 'LHF';
   switch (s.base) {
@@ -307,29 +198,8 @@ export const representativeArtCode = (code: string): string => {
 
 export const isAccessoryModule = (id: string): boolean => findModule(id)?.accessory === true;
 
-/* ─── Compartment code canonicalizer (unified 2026-06-04) ──────────────
- *
- * The ONE compartment vocabulary is the PARENS form (`1A(LHF)`,
- * `1A(P)(LHF)`) — same as the Maintenance master pool, Modular
- * allowed-options, mfg SKU suffixes and SO descriptions.
- * `normalizeCompartmentCode` canonicalizes any input to that form, so a
- * stray legacy dash code (`1A-LHF` from a pre-migration snapshot or a
- * free-typed Maintenance entry) still resolves to the same module. It is
- * an input spell-checker at the boundary — NOT a display translation; the
- * canonical form IS what renders everywhere.
- *
- * `classifySofaCompartment` groups a code into the POS palette buckets so
- * CustomBuilder can build "1-SEATER / 2-SEATER / CORNER / L-SHAPE / OTHER"
- * sections from the Model's allowed-options list. Mirrors SOFA_MODULES.group
- * for codes the shared lib already knows about; unknown pool codes fall
- * back to a prefix heuristic so they still show up under the right header.
- * ─────────────────────────────────────────────────────────────────────── */
 
 export const normalizeCompartmentCode = (raw: string): string => {
-  // Collapse any parens/dash mix down to dash tokens first, then re-emit
-  // the canonical parens form: base token + each following token wrapped.
-  // '1A-LHF' → '1A(LHF)'; '1A(P)-LHF' → '1A(P)(LHF)'; '1NA' → '1NA';
-  // codes with no dash/parens structure ('Console', 'STOOL') pass through.
   const dash = raw.trim().replace(/\(([^)]*)\)/g, '-$1').replace(/-+$/, '');
   const parts = dash.split('-').filter(Boolean);
   if (parts.length <= 1) return dash;
@@ -352,9 +222,6 @@ export const classifySofaCompartment = (rawCode: string): SofaCompartmentGroup =
   const norm = normalizeCompartmentCode(rawCode);
   const known = MODULE_BY_ID.get(norm);
   if (known) return known.group;
-  // Heuristic fallback for codes outside SOFA_MODULES (recliner variants,
-  // Console alias, etc.). Matches the descriptions in
-  // COMPARTMENT_DESCRIPTION_OVERRIDE on the Backend side.
   if (/^L[-(]/i.test(norm) || /^L$/i.test(norm)) return 'L-Shape';
   if (/^CNR$/i.test(norm) || /^CORNER/i.test(norm)) return 'Corner';
   if (/^STOOL|^Console|^WC-/i.test(norm)) return 'Accessory';
@@ -363,12 +230,6 @@ export const classifySofaCompartment = (rawCode: string): SofaCompartmentGroup =
   return 'Other';
 };
 
-/* ─── Mirror helpers (Quick Pick L↔R flip, 2026-06-01) ───────────────────
- * Flip a saved Quick Pick layout left↔right: reverse the slot order and swap
- * each handed code's LHF↔RHF. Codes with no orientation (1NA, 2NA, Console,
- * CNR, STOOL, power variants without a hand) pass through unchanged. Works on
- * BOTH the dash form (`2A-LHF`) and the parens form (`1A(P)(LHF)`) because
- * LHF/RHF only ever appear as the orientation token, never both in one code. */
 export const mirrorCode = (code: string): string => {
   if (code.includes('LHF')) return code.replace('LHF', 'RHF');
   if (code.includes('RHF')) return code.replace('RHF', 'LHF');
@@ -389,16 +250,6 @@ export const canMirror = (modules: string[][]): boolean => {
   return rep(modules) !== rep(mirrorModules(modules));
 };
 
-/* ─── SELLING helpers (per-Model module-SKU prices — SOFA-SELLING-PLAN.md,
- * Chairman 2026-05-31) ───────────────────────────────────────────────────
- * A configured mfg sofa is priced from the Model's per-module SELLING prices.
- * Each module of each Model is its own mfg SKU (e.g. Booqit's 2A(LHF) → SKU
- * `BOOQIT-2A(LHF)`), and that SKU's `sell_price_sen` IS the per-Model module
- * price (Master Admin sets it). Custom builds sum each module's price; a
- * matched Combo overrides (always — Q2). The POS (so a custom build is no
- * longer RM0) and the server selling recompute (so its drift-reject matches
- * the POS by construction) both build the SAME per-Model module→price map
- * through these pure helpers — same source, same math, zero divergence. */
 
 /** Per-Model module SELLING price map: normalized module code (dash form,
  *  matches a laid-out `cell.moduleId`) → price in sen. Built from the Model's
@@ -535,12 +386,6 @@ export const computeSofaSellingResult = (
     reclinerUpgradeSen: 0,
     combos,
     accessories,
-    // Match combos at PRICE_1 — the base tier the whole sofa runs at (Chairman
-    // 2026-06-01). Module seat prices load at PRICE_1 and every combo is
-    // authored at PRICE_1, so the POS (Configurator sofaPricing) and this
-    // server drift gate MUST agree on PRICE_1; querying PRICE_2 here would make
-    // the server price à-la-carte while the POS applied the combo → false drift
-    // reject on POST /orders.
     fabricTier: 'PRICE_1',
     comboHeight: String(depth),
     baseModel: '',
@@ -577,12 +422,7 @@ export const sofaComboCostSen = (
   return sum;
 };
 
-/* ─── Recliner eligibility ─────────────────────────────────────────── */
 
-// Structure-based (Maintenance-is-master): a plain armed/armless seat is
-// recliner-upgradeable; whole-unit presets (1S/2S/3S), accessories, L-shape
-// and seats that ALREADY carry a (P)/(R)/(L) mechanism are not. Survives a
-// Maintenance rename that keeps the family + orientation tokens.
 const RECLINER_FAMILIES = new Set(['1A', '1B', '2A', '2B', '1NA', '2NA']);
 export const reclinerEligible = (modId: string): boolean => {
   const s = parseCompartmentStructure(modId);
@@ -595,10 +435,6 @@ export const seatCount = (modId: string): number => {
   return s?.base.startsWith('2') ? 2 : 1;
 };
 
-/* ─── Bundle catalogue + auto-detect ───────────────────────────────── */
-// Family = the base token before the first "(" (1A(LHF) → 1A). Used for the
-// multiset signature that bundles match against. Accessories drop out before
-// signing.
 
 export const moduleFamily = (id: string): string => {
   const paren = id.indexOf('(');
@@ -612,10 +448,6 @@ export const familySignature = (modIds: string[]): string =>
     .sort()
     .join('+');
 
-// For bundle detection only: 1B (wide-arm 1-seater) and 1A are the same
-// shape, just different arm widths; same for 2B vs 2A. Collapsing them at
-// detection time lets a 1A+1B custom build match the 2S bundle without
-// listing every armed-variant combination explicitly.
 const BUNDLE_FAMILY_COLLAPSE: Record<string, string> = {
   '1B': '1A',
   '2B': '2A',
@@ -643,44 +475,18 @@ const bundleSignature = (modIds: string[]): string =>
 export const isWideArmSeat = (id: string): boolean =>
   Object.prototype.hasOwnProperty.call(BUNDLE_FAMILY_COLLAPSE, moduleFamily(id));
 
-// Canonical SKU composition per bundle. These are the line items the factory
-// orders against — same physical sofa as the customer's drag-out, but
-// expressed as the SKUs the supplier stocks. e.g. a customer who built a
-// 2-seater out of two armed 1-seaters (1A+1A) ships as one 2-seater
-// compartment (2A) on the PO.
 export const BUNDLES: readonly BundleDef[] = [
   { id: '1S',  label: '1-Seater', signature: '1A',       canonicalModules: ['1A'] },
   { id: '2S',  label: '2-Seater', signature: '2A',       canonicalModules: ['2A'] },
-  // 2.5-Seater — a widened 2-seater sold via Quick Pick only (Loo 2026-05-23).
-  // No distinct module/art: the POS reuses 2S.png rendered wider (see
-  // Configurator QUICK_PRESET_META + bundleArtSrc). The signature is an
-  // intentionally non-matchable family ('2.5A') so detectBundle never
-  // auto-selects it from a custom build — there is no 2.5A module to compose.
   { id: '2.5S',label: '2.5-Seater',signature: '2.5A',    canonicalModules: ['2A'] },
   { id: '3S',  label: '3-Seater', signature: '1A+2A',    canonicalModules: ['1A', '2A'] },
   { id: '2+L', label: '2 + L',    signature: '2A+L',     canonicalModules: ['2A', 'L'] },
   { id: '3+L', label: '3 + L',    signature: '1NA+2A+L', canonicalModules: ['2A', '1NA', 'L'] },
-  // 2-Seater + Console (F6) — two single-arm 1-seaters flanking a wood console,
-  // Quick-Pick only. Non-matchable signature so a custom 1A+WC+1A never
-  // auto-detects as this priced preset.
   { id: '2WC', label: '2-Seater + Console', signature: '2WC-PRESET', canonicalModules: ['1A', 'Console', '1A'] },
-  // 2-Seater + 2 Power slide combo (F7, DSL 8027) — a 2-seater sold as a fixed
-  // Quick-Pick at the combo price; per-seat power slide stays available in Custom
-  // Build too. Label IS the invoice text. Non-matchable signature.
   { id: '2PS', label: '2-Seater + 2 Power slide', signature: '2PS-PRESET', canonicalModules: ['2A'] },
-  // Corner package (F4, 5539) — 1A + corner + 2A, Quick-Pick only, composed
-  // preview (no composite PNG). Non-matchable signature.
   { id: 'CORNER', label: 'Corner', signature: 'CORNER-PRESET', canonicalModules: ['1A', 'CNR', '2A'] },
 ];
 
-// Each entry is a signature → bundle. Multiple signatures map to the same
-// bundle when distinct compartment compositions form the same shape:
-//   - 2S: '2A' (canonical) OR '1A+1A' (two armed 1-seaters)
-//   - 3S: '1A+2A' (canonical) OR '1A+1A+1NA' (three 1-seaters, middle no-arm)
-//   - 3+L: '2A+1NA+L' (canonical) OR '1A+2NA+L' (legacy) OR '1A+1A+1NA+L'
-// Closure (proper arm at each end) is enforced separately by groupPrice via
-// analyzeSofa — invalid layouts like two LHF modules adjacent share the
-// '1A+1A' signature but fail closure and fall back to à la carte pricing.
 const BY_2S = '2S' as const;
 const BY_3S = '3S' as const;
 const BY_2L = '2+L' as const;
@@ -690,7 +496,7 @@ const BUNDLE_BY_SIG = new Map<string, BundleDef>([
   ['1A+1A',         BUNDLES.find((b) => b.id === BY_2S)!],
   ['1A+1A+1NA',     BUNDLES.find((b) => b.id === BY_3S)!],
   ['1A+1A+L',       BUNDLES.find((b) => b.id === BY_2L)!],
-  ['1A+2NA+L',      BUNDLES.find((b) => b.id === BY_3L)!],  // legacy/equivalent shape
+  ['1A+2NA+L',      BUNDLES.find((b) => b.id === BY_3L)!],
   ['1A+1A+1NA+L',   BUNDLES.find((b) => b.id === BY_3L)!],
 ]);
 
@@ -714,9 +520,6 @@ export const detectBundle = (modIds: string[]): BundleDef | null =>
 export const summarizeSofaCells = (
   cells: Cell[],
   depth: Depth,
-  /** Per-Model upgrade label — when set AND any seat is upgraded, the summary
-   *  gets a "+ N <label>" suffix (e.g. "2-Seater + 2 Power slide"). Omitted by
-   *  callers that lack pricing in hand; then no suffix is added. F3 2026-05-23. */
   seatUpgradeLabel?: string | null,
 ): string => {
   if (cells.length === 0) return 'Custom (empty)';
@@ -737,33 +540,20 @@ export const summarizeSofaCells = (
   return base;
 };
 
-/* ─── Invoice / order line description (Track 2 §8.1) ──────────────── */
-// Single-piece bundles (1S/2S/2.5S) show the bundle name; multi-piece bundles
-// (3S/2+L/3+L/corner/console) decompose to oriented module ids. Reads the
-// persisted order_items.config (bundleId = Quick-Pick, cells = Custom Build).
-// Display only — never used for pricing.
 
 const SINGLE_PIECE_BUNDLES = new Set(['1S', '2S', '2.5S']);
 
-// Canonical oriented decomposition for a Quick-Pick bundle (no cells to read).
-// Outer arms face out (leftmost LHF, rightmost RHF); mirror is equally valid
-// (Loo 2026-05-24). Keyed by bundle id; single-piece bundles aren't listed here
-// (they render as their name).
 const BUNDLE_INVOICE_DECOMP: Record<string, string> = {
   '3S':  '1A(LHF) + 2A(RHF)',
   '2+L': '2A(LHF) + L(RHF)',
   '3+L': '2A(LHF) + 1NA + L(RHF)',
-  // Console (F6): two single-arm 1-seaters flanking a wood console.
   '2WC': '1A(LHF) + Console + 1A(RHF)',
-  // Corner package (F4, 5539): 1A + corner + 2A (1A is the chaise leg).
   'CORNER': '1A(LHF) + CNR + 2A(RHF)',
 };
 
 const bundleLabelById = (bundleId: string): string =>
   BUNDLES.find((b) => b.id === bundleId)?.label ?? bundleId;
 
-// Seats in a bundle, from its canonical module families (1x → 1, 2x → 2, L/CNR → 0).
-// Counts auto-included headrests on a quick-pick (F3).
 const bundleSeatCount = (bundleId: string): number => {
   const b = BUNDLES.find((x) => x.id === bundleId);
   if (!b) return 0;
@@ -774,16 +564,10 @@ const bundleSeatCount = (bundleId: string): number => {
 };
 
 export interface SofaLineDescriptor {
-  /** Quick-Pick: the chosen bundle id. */
   bundleId?: string;
-  /** Custom Build: the laid-out cells (module ids already carry orientation). */
   cells?: Cell[];
   depth?: Depth;
-  /** Per-Model upgrade label snapshot; suffixes "+ N <label>" when seats upgraded. */
   seatUpgradeLabel?: string | null;
-  /** Upgrade footrest flag. false = auto-included (headrest) → shown on a quick-pick
-   *  as "+ N <label>" (N = seat count). true/undefined = opt-in power upgrade added
-   *  per seat in Custom Build, NOT auto-appended on quick-pick. F3. */
   seatUpgradeFootrest?: boolean;
 }
 
@@ -825,8 +609,6 @@ export const describeSofaLine = (cfg: SofaLineDescriptor): string => {
     const base = SINGLE_PIECE_BUNDLES.has(cfg.bundleId)
       ? bundleLabelById(cfg.bundleId)
       : (BUNDLE_INVOICE_DECOMP[cfg.bundleId] ?? bundleLabelById(cfg.bundleId));
-    // Auto-included non-footrest upgrade (headrest) → "+ N <label>" (N = seat count).
-    // Opt-in footrest upgrades (power) are added per seat in Custom Build, not here.
     if (cfg.seatUpgradeLabel && cfg.seatUpgradeFootrest === false) {
       const n = bundleSeatCount(cfg.bundleId);
       if (n > 0) return `${base} + ${n} ${cfg.seatUpgradeLabel}`;
@@ -837,10 +619,9 @@ export const describeSofaLine = (cfg: SofaLineDescriptor): string => {
   return 'Sofa';
 };
 
-/* ─── Edge typing & rotation ───────────────────────────────────────── */
 
 export type EdgeType = 'arm' | 'open' | 'back' | 'front';
-export type EdgeIdx = 0 | 1 | 2 | 3; // [W, N, E, S]
+export type EdgeIdx = 0 | 1 | 2 | 3;
 export const EDGE_W: EdgeIdx = 0;
 export const EDGE_N: EdgeIdx = 1;
 export const EDGE_E: EdgeIdx = 2;
@@ -857,18 +638,14 @@ const MODULE_EDGES_BASE: Record<string, [EdgeType, EdgeType, EdgeType, EdgeType]
   '2B(LHF)': ['arm',  'back', 'open', 'front'],
   '2B(RHF)': ['open', 'back', 'arm',  'front'],
   '2NA':    ['open', 'back', 'open', 'front'],
-  // CNR base orientation = NW (arms on N+W). Other orientations come from canvas rot.
   'CNR':    ['arm',  'arm',  'open', 'open'],
   'L(LHF)':  ['open', 'back', 'open', 'front'],
   'L(RHF)':  ['open', 'back', 'open', 'front'],
   'Console':['open', 'open', 'open', 'open'],
   'STOOL':  ['open', 'open', 'open', 'open'],
-  // Whole-unit presets — both end arms so a lone unit self-closes; two placed
-  // adjacent read as two separate armed units (arm-to-arm), priced individually.
   '1S': ['arm', 'back', 'arm', 'front'],
   '2S': ['arm', 'back', 'arm', 'front'],
   '3S': ['arm', 'back', 'arm', 'front'],
-  // Functional 1-seater variants mirror their base 1A(LHF) / 1A(RHF) arm side.
   '1A(P)(LHF)': ['arm',  'back', 'open', 'front'],
   '1A(P)(RHF)': ['open', 'back', 'arm',  'front'],
   '1A(R)(LHF)': ['arm',  'back', 'open', 'front'],
@@ -878,13 +655,11 @@ const MODULE_EDGES_BASE: Record<string, [EdgeType, EdgeType, EdgeType, EdgeType]
   '1NA(P)': ['open', 'back', 'open', 'front'],
   '1NA(R)': ['open', 'back', 'open', 'front'],
   '1NA(L)': ['open', 'back', 'open', 'front'],
-  // 1S functional variants carry both end arms, same as the plain 1S preset.
   '1S(P)': ['arm', 'back', 'arm', 'front'],
   '1S(R)': ['arm', 'back', 'arm', 'front'],
   '1S(L)': ['arm', 'back', 'arm', 'front'],
 };
 
-/** Clockwise 90° shifts [W,N,E,S] → [S,W,N,E]. */
 const rotateEdges = (edges: EdgeType[], rot: Rot): EdgeType[] => {
   const r = ((rot % 360) + 360) % 360;
   const turns = r / 90;
@@ -894,8 +669,6 @@ const rotateEdges = (edges: EdgeType[], rot: Rot): EdgeType[] => {
 };
 
 export const cellEdges = (cell: Cell): EdgeType[] => {
-  // Structural fallback: a Maintenance-renamed code that kept its family +
-  // orientation tokens derives its arm sides from the family representative.
   let base: (typeof MODULE_EDGES_BASE)[string] | undefined = MODULE_EDGES_BASE[cell.moduleId];
   if (!base) {
     const s = parseCompartmentStructure(cell.moduleId);
@@ -920,10 +693,7 @@ export const lCapEdgeOf = (moduleId: string, rot: Rot): EdgeIdx | -1 => {
   return ((baseCap + steps) % 4) as EdgeIdx;
 };
 
-/* ─── Footprint + bbox ─────────────────────────────────────────────── */
 
-// Plan-view length grows with seat depth: 2.5cm per inch per cushion, anchored
-// on the 24″ baseline (24→0, 28→+10, 30→+15, 32→+20). Non-numeric/below-baseline → 0.
 const widthOffsetPerCushion = (depth: Depth): number => {
   const inch = parseInt(depth, 10);
   return Number.isFinite(inch) ? Math.max(0, (inch - 24) * 2.5) : 0;
@@ -944,7 +714,6 @@ export const cellBbox = (cell: Cell, depth: Depth): Bbox | null => {
   return { x: cell.x, y: cell.y, w: fp.w, h: fp.h };
 };
 
-/** Footrest extends 35cm out of the FRONT of a cell when an open recliner is present. */
 const FOOTREST_CM = 35;
 export const cellEffectiveBbox = (cell: Cell, depth: Depth): Bbox | null => {
   const b = cellBbox(cell, depth);
@@ -952,8 +721,6 @@ export const cellEffectiveBbox = (cell: Cell, depth: Depth): Bbox | null => {
   const hasOpen = (cell.recliners ?? []).some((r) => r.open);
   if (!hasOpen) return b;
   const r = ((cell.rot % 360) + 360) % 360;
-  // Front direction at rot=0 is S (+y). Each 90° CW rotation shifts:
-  // 0→S, 90→W, 180→N, 270→E.
   switch (r) {
     case 0:   return { x: b.x,                y: b.y,                w: b.w,                  h: b.h + FOOTREST_CM };
     case 90:  return { x: b.x - FOOTREST_CM,  y: b.y,                w: b.w + FOOTREST_CM,    h: b.h };
@@ -977,13 +744,6 @@ export const cellsBbox = (cells: Cell[], depth: Depth): Bbox | null => {
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 };
 
-/* Translate a layout so its bounding box is centered within a `w`×`h` area
-   (e.g. the CustomBuilder room). Pure translation — every cell shifts by the
-   same delta, so relative geometry, grouping, pricing, and left-to-right order
-   are all unchanged. A freshly-generated layout (cellsFromComboModules) is
-   anchored at (0,0); without this it renders jammed into the top-left corner
-   when handed to a room. Returns the cells unchanged when there's no
-   measurable footprint. */
 export const centerCellsWithin = (cells: Cell[], depth: Depth, w: number, h: number): Cell[] => {
   const bb = cellsBbox(cells, depth);
   if (!bb) return cells;
@@ -992,9 +752,8 @@ export const centerCellsWithin = (cells: Cell[], depth: Depth, w: number, h: num
   return cells.map((c) => ({ ...c, x: c.x + dx, y: c.y + dy }));
 };
 
-/* ─── Adjacency + grouping ─────────────────────────────────────────── */
 
-const CONTACT_TOL = 2; // cm — anything closer than this counts as touching.
+const CONTACT_TOL = 2;
 
 interface EdgePair { edgeA: EdgeIdx; edgeB: EdgeIdx }
 
@@ -1003,7 +762,6 @@ export const edgeContacts = (a: Cell, b: Cell, depth: Depth): EdgePair[] => {
   const bb = cellBbox(b, depth);
   if (!ba || !bb) return [];
   const out: EdgePair[] = [];
-  // a's right edge ↔ b's left edge
   if (Math.abs(ba.x + ba.w - bb.x) <= CONTACT_TOL) {
     const yOv = Math.min(ba.y + ba.h, bb.y + bb.h) - Math.max(ba.y, bb.y);
     if (yOv > CONTACT_TOL) out.push({ edgeA: EDGE_E, edgeB: EDGE_W });
@@ -1023,14 +781,6 @@ export const edgeContacts = (a: Cell, b: Cell, depth: Depth): EdgePair[] => {
   return out;
 };
 
-/** Two cells form ONE sofa only when they share a contact along a *connectable*
- *  edge — i.e. a SIDE ('arm' or 'open'). A module can only seam to another along
- *  its sides; its FRONT (seating side, where you sit) and its BACK (backrest)
- *  have no panel to attach to. So pieces that only ever touch front-to-anything
- *  (one shoved against another's seat-front) OR back-to-back (backrest against
- *  backrest) are two separate sofas, not one "Whole sofa". Every valid layout
- *  (straight run / L / U / corner) connects via sides, so nothing legit
- *  regresses. */
 const hasConnectingContact = (a: Cell, b: Cell, depth: Depth): boolean => {
   const contacts = edgeContacts(a, b, depth);
   if (contacts.length === 0) return false;
@@ -1074,7 +824,6 @@ export const groupSofas = (cells: Cell[], depth: Depth): Cell[][] => {
   return Array.from(groups.values());
 };
 
-/* ─── Left-to-right cell order (Loo 2026-06-12) ────────────────────── */
 
 /**
  * Canonical LEFT-TO-RIGHT order of a build's cells: wherever compartment
@@ -1098,20 +847,17 @@ export const orderSofaCellsLeftToRight = (cells: Cell[], depth: Depth): Cell[] =
   if (cells.length <= 1) return cells.slice();
   const boxes = new Map<Cell, Bbox>();
   for (const c of cells) {
-    // Degenerate snapshots (legacy carts) can miss moduleId / coordinates —
-    // keep the stored order rather than guess.
     if (typeof c.moduleId !== 'string' || !Number.isFinite(c.x) || !Number.isFinite(c.y)) {
       return cells.slice();
     }
     const b = cellBbox(c, depth);
-    if (!b) return cells.slice(); // unknown module — keep the stored order
+    if (!b) return cells.slice();
     boxes.set(c, b);
   }
   const inputIdx = new Map<Cell, number>(cells.map((c, i) => [c, i]));
   const centreX = (c: Cell): number => { const b = boxes.get(c)!; return b.x + b.w / 2; };
   const centreY = (c: Cell): number => { const b = boxes.get(c)!; return b.y + b.h / 2; };
 
-  /** Stable visual fallback — the pre-walk (x, y) reading order. */
   const readingSort = (group: Cell[]): Cell[] =>
     [...group].sort((a, b) =>
       (boxes.get(a)!.x - boxes.get(b)!.x) ||
@@ -1137,14 +883,9 @@ export const orderSofaCellsLeftToRight = (cells: Cell[], depth: Depth): Cell[] =
       parseCompartmentStructure(group[i]!.moduleId)?.orientation ?? null;
     const handA = handOf(a);
     const handB = handOf(b);
-    const X_TIE = 1; // cm — same column ⇒ decide by code hand, then height
+    const X_TIE = 1;
     const dx = centreX(group[a]!) - centreX(group[b]!);
     let start: number;
-    // Hands are customer-facing truth (supplier convention): the LHF end IS
-    // the customer's left no matter how the build is rotated on the canvas —
-    // a north-facing (rot-180) build's canvas-left is the customer's RIGHT,
-    // where canvas x would mislead. Opposite hands at the two ends decide
-    // outright; geometry only arbitrates when the hands don't.
     if (handA === 'LHF' && handB === 'RHF') start = a;
     else if (handB === 'LHF' && handA === 'RHF') start = b;
     else if (Math.abs(dx) > X_TIE) start = dx < 0 ? a : b;
@@ -1170,7 +911,6 @@ export const orderSofaCellsLeftToRight = (cells: Cell[], depth: Depth): Cell[] =
     .flatMap(({ g }) => orderGroup(g));
 };
 
-/* ─── Pricing ──────────────────────────────────────────────────────── */
 
 const compRow = (pricing: SofaProductPricing, compartmentId: string): SofaProductPricingRow | undefined =>
   pricing.compartments.find((c) => c.compartmentId === compartmentId);
@@ -1202,31 +942,13 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
   const modIds = group.map((c) => c.moduleId);
   const signature = familySignature(modIds);
 
-  // À la carte total — sum compartment prices for every cell (active + inactive count;
-  // an inactive comp shouldn't be in the cart in the first place, but if present we still
-  // price it via its row's `price` so the customer-facing total never blows up).
   let aLaCarteTotal = 0;
   for (const cell of group) {
-    // Mirror fallback (2026-06-01): a flipped Quick Pick swaps LHF↔RHF. If a
-    // Model priced only one hand, resolve the other hand to the SAME row so a
-    // mirrored sofa never prices to RM 0 or differs from its un-flipped twin.
-    // Additive only — never lowers a priced module. POS + server share this
-    // function, so the drift-reject on POST /orders can't fire from mirroring.
     const row = compRow(pricing, cell.moduleId)
       ?? compRow(pricing, mirrorCode(cell.moduleId));
     aLaCarteTotal += row?.priceSen ?? 0;
   }
 
-  // Bundle candidate — if the assembled shape matches a known bundle AND the
-  // bundle row is active AND the group is closed (proper arm at each end),
-  // use the bundle price as the canonical retail for that shape. The bundle
-  // is the "fixed complete sofa" price set in SKU master; à la carte sums of
-  // individual compartments are a fallback for shapes that DON'T match a
-  // bundle, not a price-shopping floor.
-  //
-  // Closure matters because the bundle-signature collapse (1B≡1A) means two
-  // wrong-orientation 1-seaters (e.g. LHF+LHF) still produce the '1A+1A'
-  // signature; closure rejects those layouts so they price à la carte.
   const candidate = detectBundle(modIds);
   let bundle: BundleDef | null = null;
   let bundlePrice: number | null = null;
@@ -1234,10 +956,6 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
 
   if (candidate) {
     const row = bundleRow(pricing, candidate.id);
-    // Multi-module bundles need a closed layout (proper arm at each end) so
-    // a customer can't dodge into bundle pricing with a nonsense layout like
-    // two LHF modules adjacent. Single-module bundles ARE the module — a
-    // 1A(LHF) is a left-armed 1-seater product, closed by definition.
     const closed = group.length === 1 || analyzeSofa(group, depth).closed;
     if (row && row.active && closed) {
       bundle = candidate;
@@ -1246,14 +964,6 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
     }
   }
 
-  // Combo override — Commander 2026-05-28, HOOKKA `comboMatches` 1:1. When a
-  // SUBSET of the group's cells covers a Sofa Combo Pricing row's slots (with
-  // a price at the current height), the combo price replaces that SUBSET's
-  // à-la-carte total. Q2 (Chairman 2026-05-30): the combo applies whenever it
-  // matches and is priced (> 0) — the cheaper-only guard was removed, so a
-  // matched combo is the canonical price even if dearer than à-la-carte. The
-  // EXTRA cells outside the matched subset keep their full master price.
-  // Recliner extras still add on top.
   let comboPrice: number | null = null;
   let comboSubsetALaCarte: number | null = null;
   let comboExtrasALaCarte: number | null = null;
@@ -1268,53 +978,27 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
         modules: modIds,
         cellIds,
         accessories: pricing.accessories,
-        customerId: null,        // 2990 B2C — only default-scope rows in play
+        customerId: null,
         tier: pricing.fabricTier ?? 'PRICE_2',
         height: heightStr,
       },
       pricing.combos,
     );
     if (match) {
-      // `match.comboPriceSen` is SEN, which IS sen — the combo dialog
-      // stores `Math.round(rm * 100)`. Everything in groupPrice is sen now, so
-      // it is carried straight through.
-      //
-      // This line used to read `Math.round(match.comboPriceSen / 100)`,
-      // converting the combo total DOWN to whole MYR because the rest of the
-      // object was whole-MYR. That is the defect: production carries 23
-      // part-ringgit combo prices out of 163, so RM3152.63 billed as RM3153.00
-      // and RM5712.11 as RM5712.00 — over- and under-charging, with margin
-      // computed against a rounded revenue while cost stayed exact.
-      // Ledger B4, answered by Actions -> "Sofa price rounding check".
       const comboPriceSen = match.comboPriceSen;
-      // À-la-carte sum of the matched subset (the cells the combo replaces).
-      // SEN — sums compartment `.priceSen`.
       const matchedSet = new Set(match.matchedIndices);
       let subsetSum = 0;
       for (let i = 0; i < group.length; i++) {
         if (!matchedSet.has(i)) continue;
         const cell = group[i]!;
-        // Mirror fallback — SAME lookup as the à-la-carte loop above (audit
-        // 2026-06-11 C1). Without it a matched cell priced only on the other
-        // hand counts in aLaCarteTotal but not here, so comboExtrasALaCarte
-        // (= aLaCarteTotal − subsetSum) wrongly re-charges that module ON TOP
-        // of the combo price — a mirrored build paid combo + module twice.
         const row = compRow(pricing, cell.moduleId)
           ?? compRow(pricing, mirrorCode(cell.moduleId));
         subsetSum += row?.priceSen ?? 0;
       }
-      // Q2 (Chairman 2026-05-30): the Master Account combo price is the
-      // canonical price for a matched set — apply it whenever it matches and is
-      // priced (> 0), even if the matched subset's à-la-carte sum is lower. The
-      // former cheaper-only guard ("ignore equal / dearer combos") was removed
-      // per the always-use-combo ruling. `comboSubsetALaCarte` is still recorded
-      // for display, but no longer gates whether the combo applies.
       if (comboPriceSen > 0) {
         basis = 'combo';
         comboPrice = comboPriceSen;
         const includedIds = new Set(match.matchedAccessoryIds);
-        // Pieces are not part of aLaCarteTotal: add their value to the savings
-        // comparison only, never subtract it from the extra MODULES' total.
         const seenPieces = new Set<string>();
         const includedAccessoriesSen = (pricing.accessories ?? []).reduce((sum, p) => {
           if (!includedIds.has(p.id) || seenPieces.has(p.id)) return sum;
@@ -1326,15 +1010,12 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
         comboMatchedCellIds = match.matchedIndices.map((i) => cellIds[i]!);
         comboMatchedAccessoryIds = match.matchedAccessoryIds;
         comboId = match.row.id;
-        // A combo match overrides the bundle path — clear bundle so
-        // SofaGroupPrice.basis reads cleanly as 'combo'.
         bundle = null;
         bundlePrice = null;
       }
     }
   }
 
-  // Recliner extras add on top regardless of basis.
   let reclinerCount = 0;
   for (const cell of group) {
     if (!reclinerEligible(cell.moduleId)) continue;
@@ -1342,8 +1023,6 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
   }
   const reclinerExtra = reclinerCount * pricing.reclinerUpgradeSen;
 
-  // Base price by basis. For 'combo', the subset price + extras-at-full-price
-  // (HOOKKA: comboTotal + Σ extras). For 'bundle' / à la carte, unchanged.
   let basePrice: number;
   if (basis === 'combo' && comboPrice != null) {
     basePrice = comboPrice + (comboExtrasALaCarte ?? 0);
@@ -1397,7 +1076,6 @@ export const computeSofaPrice = (
   return { groups: groupPrices, total };
 };
 
-/* ─── Snap math (drag UI) ──────────────────────────────────────────── */
 
 /** Threshold in cm — drag releases snap to a neighbour edge if within this. */
 export const SNAP_CM = 20;
@@ -1454,7 +1132,6 @@ export const findSnap = (
   };
 };
 
-/* ─── Sofa analysis (closure / arm violations) ─────────────────────── */
 
 export type ViolationReason = 'Arm-to-arm' | 'Arm blocked by module';
 export interface ArmViolation { aId: string; bId: string; reason: ViolationReason }
@@ -1536,13 +1213,6 @@ export const analyzeSofa = (group: Cell[], depth: Depth): SofaAnalysis => {
   }
 
   const outwardArms: { edge: EdgeIdx; lCap?: boolean }[] = [];
-  // Tracks edges of type 'open' that face outward (no neighbour) and aren't
-  // covered by an arm or L-cap. Accessory cells (e.g. WC-45 console) are
-  // exempt — their faces are 'open' by design and never get armrests.
-  // An L-shape sofa whose bbox dominant axis is closed at both extremes can
-  // STILL have an unclosed open cushion edge protruding off-axis (e.g. the
-  // right end of an L's top row when the corner sits at the inside angle).
-  // We need to flag that as not-closed even though head/tail pass.
   const unclosedByDir: Record<EdgeIdx, boolean> = {
     [EDGE_W]: false, [EDGE_N]: false, [EDGE_E]: false, [EDGE_S]: false,
   };
@@ -1553,7 +1223,6 @@ export const analyzeSofa = (group: Cell[], depth: Depth): SofaAnalysis => {
     const isL = c.moduleId.startsWith('L(');
     const isAcc = isAccessoryModule(c.moduleId);
 
-    // Outer cap of an L-chaise (rotation-aware) — shared with renderSeamlessGroup.
     const lCapEdge = lCapEdgeOf(c.moduleId, c.rot);
 
     ([EDGE_W, EDGE_N, EDGE_E, EDGE_S] as EdgeIdx[]).forEach((e) => {
@@ -1567,15 +1236,11 @@ export const analyzeSofa = (group: Cell[], depth: Depth): SofaAnalysis => {
       if (t === 'arm') {
         outwardArms.push({ edge: e });
       } else if (t === 'open' && !isAcc) {
-        // Outward 'open' edge with no arm/L-cap covering it. 'back' and
-        // 'front' faces are by-design exposed (wall-side and seating-side
-        // respectively) and don't fail closure.
         unclosedByDir[e] = true;
       }
     });
   });
 
-  // Bounding box → dominant axis.
   let bbW = 0, bbH = 0;
   if (group.length > 0) {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -1617,9 +1282,6 @@ export const analyzeSofa = (group: Cell[], depth: Depth): SofaAnalysis => {
   else if (!headArm) reason = bbW >= bbH ? 'Left end has no arm' : 'Top end has no arm';
   else if (!tailArm) reason = bbW >= bbH ? 'Right end has no arm' : 'Bottom end has no arm';
   else if (hasUnclosedOpen) {
-    // Head/tail axis is fine but an off-axis open edge is exposed (typical
-    // L-shape with corner). Point the user at the first unclosed direction
-    // we found, using the same vocabulary as the on-axis reasons.
     if (unclosedByDir[EDGE_W])      reason = 'Left end has no arm';
     else if (unclosedByDir[EDGE_E]) reason = 'Right end has no arm';
     else if (unclosedByDir[EDGE_N]) reason = 'Top end has no arm';
@@ -1628,9 +1290,6 @@ export const analyzeSofa = (group: Cell[], depth: Depth): SofaAnalysis => {
 
   const allAccessories = group.length > 0 && group.every((c) => isAccessoryModule(c.moduleId));
   if (allAccessories) {
-    // A stool / ottoman is free-standing — a stool-only group is a complete,
-    // sellable piece on its own. The wood Console must slot beside a sofa, so
-    // an accessory-only group that includes one is not a closed sofa.
     const everyPieceStandsAlone = group.every((c) => c.moduleId === 'STOOL');
     closed = everyPieceStandsAlone;
     reason = everyPieceStandsAlone ? null : 'Console needs a sofa next to it';
@@ -1639,7 +1298,6 @@ export const analyzeSofa = (group: Cell[], depth: Depth): SofaAnalysis => {
   return { violations, closed, reason, leftArm: headArm, rightArm: tailArm };
 };
 
-/* ─── PO SKU translation ───────────────────────────────────────────── */
 
 /**
  * One line item for the supplier's purchase order. `sku` is what the
@@ -1679,8 +1337,6 @@ export const cellsToPoSkus = (cells: Cell[], depth: Depth): PoSkuLine[] => {
   const groups = groupSofas(cells, depth);
   const out: PoSkuLine[] = [];
   for (const group of groups) {
-    // Split off accessories first — they never count toward bundle signature
-    // and ship as their own SKU.
     const sofaCells: Cell[] = [];
     for (const c of group) {
       if (isAccessoryModule(c.moduleId)) {
@@ -1697,7 +1353,6 @@ export const cellsToPoSkus = (cells: Cell[], depth: Depth): PoSkuLine[] => {
     if (bundle) {
       out.push({ sku: bundle.id, label: bundle.label, qty: 1 });
     } else {
-      // Ad-hoc layout: emit each cell as its own SKU line.
       for (const c of sofaCells) {
         const m = findModule(c.moduleId);
         out.push({ sku: c.moduleId, label: m?.label ?? c.moduleId, qty: 1 });
@@ -1734,11 +1389,6 @@ export const cellsToPoSkus = (cells: Cell[], depth: Depth): PoSkuLine[] => {
  * Stable: two LHF pieces keep the order the caller gave them, because nothing
  * distinguishes them and the caller's order is then the only evidence there is.
  */
-/* THE ORDER, DECLARED ONCE. It was a rank map plus a separate
-   `['LHF','MID','RHF']` walk below, which `audit:duplicated-decisions` flagged
-   and was right to: two statements of one sequence, and the walk is the half
-   that would silently disagree if a hand were ever added. The walk now reads
-   the map. */
 const SOFA_HANDS = ['LHF', 'MID', 'RHF'] as const;
 type SofaHand = (typeof SOFA_HANDS)[number];
 const SOFA_HAND_RANK = new Map<SofaHand, number>(SOFA_HANDS.map((h, i) => [h, i]));
@@ -1776,9 +1426,6 @@ export const orderSofaCellsForNewLines = (cells: Cell[], depth: Depth): Cell[] =
         - (SOFA_HAND_RANK.get(sofaModuleHand(b.c.moduleId)) ?? 1))
       || (a.i - b.i));
 
-  /* Within one hand — two LHF pieces, or several armless middles — the codes
-     say nothing, so real geometry breaks the tie when there is any and the
-     caller's own order does when there is not. */
   const byHand = new Map<SofaHand, Cell[]>();
   for (const { c } of ranked) {
     const h = sofaModuleHand(c.moduleId);

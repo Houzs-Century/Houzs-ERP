@@ -3,6 +3,7 @@
 One line per open item: what — waiting on — since. Delete the line when it is done. Older items were dropped on 2026-09-15; they are in tag `archive/docs-2026-09-15`.
 
 ## Waiting on owner
+- AI Connector `get_pdf`: Sales and Purchase Orders now come back as the PDF file (drawn on the Worker by the page's own generator); delivery orders, invoices, GRN, PI, credit notes, returns and vouchers still answer with the page link. Each needs its print-time reads injected the way SO / PO were (`*-pdf-render.ts` + sources). Owner picks which next — 2026-11-26
 - HC-API-2610-035 (Houzs, overriding commission Jun-Aug 2026) is booked to 410-0070 ACCRUAL - COMMISSION, but the books' opening carries no accrual on it, so 410-0070 shows a debit and the overriding never reached the P&L. Owner 2026-11-25: overriding goes straight to commission. Finance points the bill's lines at 900-C003 COMMISSION ( EVENT ) (an edit re-posts the bill on its own date) — Finance — 2026-11-25
 - The GitHub Actions secret `ANTHROPIC_API_KEY` is rejected by Anthropic (401 invalid x-api-key, run 43420961221), so model-calling tools in `run-script.yml` cannot run; the Worker's own key works. Owner re-enters a current key in GitHub repo secrets (since 2026-11-13).
 - STOCK WORK ON HOLD (owner 2026-11-11: "don't touch stock; someone else checks"). Nothing below may be applied until that person signs off:
@@ -152,6 +153,10 @@ Measured on prod 2026-10-22, warm: Overview `procurement-overview` 5.5 s, Invent
 - Delivery Planning, done 2026-10-26/27 (#4958 #4961 #4962 #4963): working tabs read `state=OPEN` (1.5 MB, ~2.3 s, was 5.4 MB / 5-12 s); an edit re-reads only its order (0.4-1.0 s); a trigger-fed change log refreshes others' changes every 30 s (poll 84 ms). Left: All / Delivered still read every row (3.8 s, 5.4 MB); scroll renders ~10 ms per new row (inline editors) — 2026-10-27
 - AI reads on the scan queue (bill reader, request bill, supplier CN, receipt): after the deploy, compare `scan_timing` and p95 of the four `/enqueue` doors with the old synchronous ones; remove the synchronous doors (`/payment-vouchers/extract`, `/credit-notes/scan`, `/payment-requests/read-bill`, `/scan-payment/extract`) once no request reaches them for a week — dev — 2026-11-11
 - Hard-bound cost backfill (`backfill-hard-bound-cost.mjs`, company 1): run the PLAN after #5619 is merged and the cutover no-spec revert has been applied; APPLY waits on the owner (closed months 2026-09 / 2026-10 expected) — 2026-11-10
+
+- AutoCount outbox can post a document twice: host saves, reply lost (fetch error/5xx), `mark()` re-queues, next sweep saves again; no DocNo check before `Save()`, no fetch timeout. TLA+ counterexample `formal/ac-outbox-claim/AcOutboxClaimFinding.cfg`. Unverified: does AutoCount refuse a duplicate DocNo. Waiting on owner decision, since 2026-11-25 — dev
+- Trips `POST /:id/location` reads the trip by id with no company predicate (crew-gated only); add `scopeToAllowedCompanies` like `GET /active/locations`. Found by PR #6050, since 2026-11-26 — dev
+- Fair ledger cost categories live twice (backend `LEDGER_COST_CATEGORIES`, frontend `LEDGER_COST_CATS`); serve the frontend from the API. Found by PR #6050, since 2026-11-26 — dev
 
 ## Recurring
 - Monthly: read every `docs/modules/*.md` against the code it describes and correct what drifted; the guides are orientation, the code is the authority (last done 2026-09-16) — dev

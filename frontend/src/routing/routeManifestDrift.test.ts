@@ -157,57 +157,6 @@ describe("executable route contract", () => {
       .filter((path) => path !== "*");
     expect([...new Set(["/survey/:token", ...mountedPublic])].sort())
       .toEqual([...PUBLIC_ROUTE_PATTERNS].sort());
-    // 158 since 2026-09-03 — /scm/chart-of-accounts; see the staff-route count above.
-    // (157 since 2026-09-02.)
-    // (156 since 2026-08-25.)
-    // (153 since 2026-08-25: /scm/loading-list.)
-    // (152 since 2026-08-21.) (151 since 2026-08-16.) (150 since 2026-08-15.)
-    // 160 since 2026-09-03 night — /scm/receipts; see the staff-route count above.
-    // 161 since 2026-09-05 — /scm/official-receipts; see the staff-route count above.
-    // 162 since 2026-09-06 — /scm/ap-invoices; see the staff-route count above.
-    // 163 since 2026-09-08 — /scm/ap-invoices/scan; see the staff-route count above.
-    // 164 since 2026-09-08 — /change-log; see the staff-route count above.
-    // 165 since 2026-09-08 — /scm/cancel-requests; see the staff-route count above.
-    // 166 for a few hours on 2026-09-09 (/memos), 165 again the same day; see
-    // the staff-route count above.
-    // 166 since 2026-09-12 — /scm/credit-notes; see the staff-route count above.
-    // 167 since 2026-09-12 — /scm/deposit-invoices; see the staff-route count above.
-    // 168 since 2026-09-12 — /venture-portal-feed; see the staff-route count.
-    // 169 since 2026-09-13 — /scm/fair-pending; see the staff-route count above.
-    // 170 since 2026-09-21 — /scm/forecast; see the staff-route count above.
-    // 171 since 2026-09-21 — /scm/finance-dashboard; see the staff-route count above.
-    // 172 since 2026-09-29 — /scm/ar-invoices; see the staff-route count above.
-    // 173 since 2026-09-30 — /scm/payment-requests; see the staff-route count above.
-    // 174 since 2026-09-30 — /scm/unmatched-payments; see the staff-route count above.
-    // 175 since 2026-09-30 — /scm/payment-backdate-requests; same.
-    // 176 since 2026-10-01 — /scm/official-docs; see the staff-route count above.
-    // 177 since 2026-10-02 — /scm/supplier-maintenance; see the staff-route count above.
-    // 178 since 2026-10-06 — /scm/product-requests; see the staff-route count above.
-    // 180 since 2026-10-07 — /scm/stock-adjustments/:id and /:id/edit (BUG-66).
-    // 181 since 2026-10-13 — /it-support; see the staff-route count above.
-    // 182 since 2026-10-14 — /scm/lorry-live-map (DEV-42).
-    // 183 since 2026-10-14 — /pos-admin; see the staff-route count above.
-    // 184 — /ai-usage (DEV-35).
-    // 185 — /ocr (DEV-35).
-    // 187 since 2026-10-17 — the Logistic and Procurement Overviews.
-    // 188 since 2026-10-21 — /scm/delivery-planning-driver; see the staff-route count above.
-    // 189 since 2026-10-21 — /hr/employees; see the staff-route count above.
-    // 190 since 2026-10-28 — /scm/opening-balance; see the staff-route count above.
-    // 191 since 2026-10-28 — /scm/supplier-notes; see the staff-route count above.
-    // 192 since 2026-11-02 — /scm/finance/rules; see the staff-route count above.
-    // 193 since 2026-11-02 — /scm/saved-locations; see the staff-route count above.
-    // 196 since 2026-11-03 — the bill and note pages (batch 4, step 6); see the staff-route count above.
-    // 199 since 2026-11-03 — the three invoice document pages; see the staff-route count above.
-    // 201 since 2026-11-03 — the two receipt document pages; see the staff-route count above.
-    // 203 since 2026-11-03 — the sundry receipt and other debtor pages; see the staff-route count above.
-    // 203 still since 2026-11-03 — /scm/official-receipts moved from page to legacy redirect.
-    // 204 since 2026-11-03 — Setup › Deposit invoices (+1), /scm/deposit-invoices a legacy redirect.
-    // 205 since 2026-11-08 — /scm/payment-listing; see the staff-route count above.
-    // 206 since 2026-11-10 — /scm/ap-invoices/duplicates; see the staff-route count above.
-    // 207 since 2026-11-23 — /meetings; see the staff-route count above.
-    // 208 since 2026-11-23 — /scm/daily-bank-cashbook; see the staff-route count above.
-    // 209 since 2026-11-24 — /scm/stock-take-approvals; see the staff-route count above.
-    // 210 since 2026-11-25 — /ai-connector; see the staff-route note above.
     expect(ROUTE_CONTRACT).toHaveLength(210);
   });
 

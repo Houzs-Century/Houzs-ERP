@@ -21,7 +21,7 @@ import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { DataTable, type Column } from '../../components/DataTable';
 import { monthEnd } from '../../lib/dateRangePresets';
 import { useProductChanges, type ProductChangeRow } from '../../vendor/scm/lib/product-change-queries';
-import { fmtDate, fmtSenPlain } from '../../vendor/shared/format';
+import { fmtDate, fmtSenPlain } from '../../../../shared/src/vendor/shared/format';
 import {
   BUCKET_LABEL, CHANGE_NOTES, SUMMARY_LINES, bySalesperson, detailSheet, filterRows, fmtDelta, lineText, monthBounds, monthsBetween,
   ordersScope, ordersShown, periodText, pickableMonths, routeShort, routeText, summaryColumns, summaryRed, summarySheet, totalsOf, typesText, whoText, type BucketView, type SalespersonRow,
@@ -168,7 +168,6 @@ const DETAIL_COLUMNS: Column<ProductChangeRow>[] = [
   },
 ];
 
-/* ── Product changes: one month ─────────────────────────────────────────── */
 export const ProductChangesTab = () => {
   const r = useReportRange();
   const [params, setParams] = useSearchParams();
@@ -244,7 +243,6 @@ export const ProductChangesTab = () => {
   );
 };
 
-/* ── Product changes P&L: a month or a range ───────────────────────────── */
 const PERSON_COLUMNS: Column<SalespersonRow>[] = [
   { key: 'salesperson', label: 'Salesperson', getValue: (p) => p.salesperson, render: (p) => <span className={s.strong}>{p.salesperson}</span> },
   { key: 'margin_changes', label: 'Changes', align: 'right', getValue: (p) => p.events, render: (p) => p.events },

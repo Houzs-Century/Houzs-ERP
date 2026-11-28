@@ -1,15 +1,3 @@
-// ---------------------------------------------------------------------------
-// Mail Center — Compose (start a NEW outbound conversation).
-//
-// The reply composer in Thread.tsx only replies inside an existing thread. This
-// dialog lets the operator send a brand-new email to any address. It posts to
-// POST /api/mail-center/compose, which creates the thread + first outbound
-// message and SENDS via Resend (the Houzs sender derives the From from Branding).
-//
-// Rendered as a fixed-overlay card (the house way). Exposed as a named
-// `ComposeDialog` (embedded from Inbox.tsx + Thread.tsx forward); a thin default
-// export mounts it open over the inbox so a lazy import never explodes.
-// ---------------------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
@@ -20,7 +8,6 @@ import { saveDraft, deleteDraftBestEffort, type MailDraft } from "./mail-local";
 import { pickDefaultFromAddress } from "./mail-from-default";
 import { sentToast } from "./mail-delivery";
 import { NEEDS_ACK_HINT } from "./mail-acks";
-// To / Cc / Bcc parsing + validation, shared with the phone's composer.
 import { parseRecipients, firstInvalid, addRecipients } from "./mail-recipients";
 import { RecipientPicker } from "./RecipientPicker";
 import { RecipientSuggestInput } from "./RecipientSuggestInput";
@@ -29,9 +16,6 @@ import {
   MAIL_ATTACH_MAX_COUNT,
   MAIL_ATTACH_MAX_TOTAL_BYTES,
 } from "./mail-attachments";
-// The pick → read → validate pipeline is shared with the reply composer and the
-// phone. contentBase64 is the RAW base64 (the `data:...;base64,` prefix is
-// stripped on read) so it maps 1:1 onto the backend EmailAttachment shape.
 import {
   pickMailAttachments,
   attachmentPayload,
@@ -45,8 +29,6 @@ type MailAddress = {
   address: string;
   label: string;
   active: boolean;
-  // Served by GET /api/mail-center/addresses — the user this mailbox is assigned
-  // to. Used to default the From to the logged-in user's own mailbox.
   assignedUserId?: string | number | null;
 };
 
@@ -62,10 +44,7 @@ type ComposeResponse = {
 export type ComposeDialogProps = {
   open: boolean;
   onClose: () => void;
-  // Fired after a successful send so the parent can refresh / show the thread.
   onSent?: (threadId: string) => void;
-  // When resuming a saved draft (from the Drafts folder / Forward) the parent
-  // passes it here so the form opens pre-filled. Drafts are local-only.
   initialDraft?: MailDraft | null;
 };
 
@@ -83,16 +62,10 @@ export function ComposeDialog({
     [],
   );
 
-  // The signed-in member's OWN outward alias (users.email_alias), e.g.
-  // lim@houzscentury.com. With the free-alias model this is the member's personal
-  // sending identity. It may not appear in the scoped /addresses list (that lists
-  // shared/dept mailboxes), so we splice it into the From options ourselves.
   const ownAlias = (user?.email_alias ?? "").trim().toLowerCase();
 
   const activeAddresses = useMemo(() => {
     const list = (addresses ?? []).filter((a) => a.active);
-    // Prepend the member's own alias as a first-class From option when it's not
-    // already represented in the scoped address list (case-insensitive).
     if (
       ownAlias &&
       !list.some((a) => (a.address ?? "").toLowerCase() === ownAlias)
@@ -111,19 +84,13 @@ export function ComposeDialog({
     return list;
   }, [addresses, ownAlias, user?.id]);
 
-  // The mailbox that belongs to the logged-in user. Prefer the member's own alias
-  // (their personal sending identity); else fall back to the assigned/granted
-  // mailbox match. "" when the user owns no listed mailbox → fall back below.
   const userDefaultFrom = useMemo(
     () => ownAlias || pickDefaultFromAddress(activeAddresses, user),
     [activeAddresses, user, ownAlias],
   );
 
-  // Explicit From override the operator picked (empty = follow the default).
   const [fromOverride, setFromOverride] = useState("");
   const [to, setTo] = useState("");
-  /* Cc/Bcc start hidden — most mail is to one person, and two empty fields on
-     every compose is the cost of a feature used sometimes. */
   const [cc, setCc] = useState("");
   const [bcc, setBcc] = useState("");
   const [showCopies, setShowCopies] = useState(false);
@@ -138,9 +105,6 @@ export function ComposeDialog({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
 
-  // Reset the form each time the dialog is freshly opened. The From override is
-  // preserved across opens (operator's last chosen mailbox). When resuming a
-  // draft, seed the fields (and the From) from it instead.
   const wasOpen = useRef(false);
   useEffect(() => {
     if (open && !wasOpen.current) {
@@ -161,10 +125,6 @@ export function ComposeDialog({
 
   const noMailbox = activeAddresses.length === 0;
   const onlyOneMailbox = activeAddresses.length === 1;
-  // Effective From, derived: the operator's explicit pick wins; otherwise, when
-  // resuming a draft, the draft's saved sender; then the logged-in user's OWN
-  // mailbox; then the first active mailbox. Each candidate must still be a valid
-  // active address to be honoured.
   const draftFrom =
     draftId && initialDraft?.id === draftId ? initialDraft.fromAddress : "";
   const fromAddress =
@@ -254,8 +214,6 @@ export function ComposeDialog({
         },
       );
       if (!payload?.ok) {
-        // payload.error can be a raw provider string (Resend/Brevo) — never show
-        // it to the user; a single plain sentence covers every send failure.
         toast.error("Failed to send email. Please try again.");
         return;
       }
@@ -291,7 +249,6 @@ export function ComposeDialog({
         aria-label="Compose new email"
         className="relative mx-4 flex max-h-[90vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-surface shadow-slab"
       >
-        {/* Header */}
         <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">
             <Mail className="h-4 w-4 text-accent" />
@@ -309,7 +266,6 @@ export function ComposeDialog({
           </button>
         </div>
 
-        {/* Body */}
         <div className="flex-1 space-y-3 overflow-y-auto p-4">
           {noMailbox ? (
             <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
@@ -318,7 +274,6 @@ export function ComposeDialog({
             </div>
           ) : (
             <>
-              {/* From */}
               <div className="space-y-1">
                 <label className="text-xs font-medium text-ink-muted">From</label>
                 {onlyOneMailbox ? (
@@ -343,9 +298,6 @@ export function ComposeDialog({
                 )}
               </div>
 
-              {/* To — a LIST. `type="email"` is deliberately not used: the browser
-                  rejects a comma-separated value outright, which is what made
-                  this field single-recipient in the first place. */}
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-medium text-ink-muted">To</label>
@@ -398,7 +350,6 @@ export function ComposeDialog({
                 )}
               </div>
 
-              {/* Cc / Bcc — one send carrying everyone, never one send each. */}
               {showCopies && (
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
@@ -431,7 +382,6 @@ export function ComposeDialog({
                 </div>
               )}
 
-              {/* Subject */}
               <div className="space-y-1">
                 <label className="text-xs font-medium text-ink-muted">
                   Subject
@@ -445,7 +395,6 @@ export function ComposeDialog({
                 />
               </div>
 
-              {/* Body */}
               <div className="space-y-1">
                 <label className="text-xs font-medium text-ink-muted">
                   Message
@@ -460,8 +409,6 @@ export function ComposeDialog({
                 />
               </div>
 
-              {/* Attachments — removable chips. Images + PDF only, ≤10 files,
-                  ≤5 MB total (mirrors the backend cap in mail-attachments.ts). */}
               {files.length > 0 && (
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-ink-muted">
@@ -575,8 +522,6 @@ export function ComposeDialog({
   );
 }
 
-// Thin default export — Compose is only ever a modal over the inbox, but a lazy
-// import path that lands here still renders something coherent.
 export default function ComposePage() {
   const navigate = useNavigate();
   return <ComposeDialog open onClose={() => navigate("/mail-center")} />;

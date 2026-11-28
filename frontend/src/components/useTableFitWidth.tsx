@@ -3,10 +3,6 @@ import { Shrink } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 
-/* DataTable's Fit switch: zoom the table down until its fixed width fits the
-   scroll box, so a wide board reads without scrolling sideways. A personal
-   preference per table, like Wrap. `scaleRef` converts screen px (a column
-   drag, the row window) back to table px. */
 export function useTableFitWidth(
   idKey: string,
   enabled: boolean,

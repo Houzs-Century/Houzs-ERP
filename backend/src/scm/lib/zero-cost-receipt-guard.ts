@@ -61,7 +61,6 @@ export type ReceiptCostLine = {
   qtyAccepted: number;
   unitCostSen: number;
   itemGroup?: string | null;
-  /** Operator ticked "this really is free" for THIS line. */
   zeroCostAck?: boolean | null;
 };
 
@@ -69,8 +68,6 @@ export type UncostedReceiptLine = {
   id: string | null;
   itemCode: string;
   qtyAccepted: number;
-  /** What this SKU is known to have cost before — the evidence that the zero is
-   *  a missing price rather than a free unit. */
   knownUnitCostSen: number;
 };
 
@@ -129,7 +126,6 @@ export async function recordReceivedWithNoPrice(
     const { error } = await sb.from('grn_items')
       .update({
         zero_cost_ack: true,
-        /* NULL on purpose — see RECEIVED_WITH_NO_PRICE. Nobody claimed it. */
         zero_cost_ack_by: null,
         zero_cost_ack_at: now,
         zero_cost_reason: RECEIVED_WITH_NO_PRICE,
@@ -145,12 +141,6 @@ export function normalizeMaterialCode(code: string | null | undefined): string {
   return (code ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
 }
 
-/* ── The acknowledgement, as it is written ─────────────────────────────────
-   Every write path that can carry a tick goes through here, so the four
-   columns can never drift apart: an ack with nobody's name on it, or a name
-   left behind after the tick was removed, would both be worse than no column
-   at all. `undefined` in means "the request did not mention it" — the caller
-   spreads the result, so an untouched line keeps whatever it already had. */
 export function zeroCostAckColumns(
   body: { zeroCostAck?: unknown; zeroCostReason?: unknown },
   userId: string | null,
@@ -160,7 +150,6 @@ export function zeroCostAckColumns(
   const reasonGiven = body.zeroCostReason !== undefined;
   const reason = reasonGiven ? (String(body.zeroCostReason ?? '').trim() || null) : undefined;
   if (body.zeroCostAck === undefined) {
-    // A reason on its own is still worth keeping next to the line.
     if (reasonGiven) out.zero_cost_reason = reason;
     return out;
   }
@@ -173,17 +162,12 @@ export function zeroCostAckColumns(
   return out;
 }
 
-/* The pure rule, kept free of any client so it can be tested directly. Given
-   the receipt's lines and what each SKU is known to have cost, return the lines
-   that would open a zero-cost stock layer. Empty array = safe to post. */
 export function findUncostedReceiptLines(
   lines: ReceiptCostLine[],
   knownCostSenByCode: Map<string, number>,
 ): UncostedReceiptLine[] {
   const out: UncostedReceiptLine[] = [];
   for (const line of lines) {
-    // A SERVICE line (freight) creates no inventory movement, so it can never
-    // open a lot — its amount is pooled into the goods lines' landed cost.
     if (isServiceLine({ itemGroup: line.itemGroup ?? null, itemCode: line.itemCode })) continue;
     if (!(Number(line.qtyAccepted) > 0)) continue;
     if (Number(line.unitCostSen) > 0) continue;
@@ -218,28 +202,11 @@ export function zeroCostReceiptResponse(lines: UncostedReceiptLine[]) {
       'Open the receipt, edit the line, and enter the unit price shown on the supplier goods-received document; or',
       'if the line really did arrive free (GWP, demo, display), tick "Received free" on that line and say why, then confirm again.',
     ],
-    /* The line PATCH field the tick maps to: PATCH /scm/grns/:id/items/:itemId
-       { zeroCostAck: true, zeroCostReason: "..." }. Named in the body so the
-       remedy is discoverable from the refusal itself. */
     ackField: 'zeroCostAck',
     lines,
   };
 }
 
-/* ── Answering the refusal, so the operator can actually act on it ──────────
-   The remedy above is "enter the unit price, then confirm again", and for a
-   caller sending an Idempotency-Key that was IMPOSSIBLE until 2026-08-17.
-   lib/no-write-refusal.ts carries the full trace and the contract; this wrapper
-   exists so the zero-cost exits cannot state the release WITHOUT stating their
-   proof.
-
-   `nothingWritten` is a REQUIRED argument rather than a default because the
-   four exits do not agree: the three single-document routes delete their
-   grn_items and grns rows before answering, while the batch receive raises one
-   GRN per supplier bucket and an earlier bucket can have committed its
-   document, its stock IN and its AutoCount conversion before a later one is
-   refused. Releasing the key there would let the corrected resubmit receive
-   those goods a SECOND time. */
 export function refuseZeroCostReceipt(
   c: Context,
   body: ReturnType<typeof zeroCostReceiptResponse> | Record<string, unknown>,
@@ -249,16 +216,6 @@ export function refuseZeroCostReceipt(
   return c.json(body, 409);
 }
 
-/* What has this company actually paid for these SKUs? Read from the ledger the
-   ERP owns rather than from any cutover snapshot, so the answer keeps working
-   long after the AutoCount import is history.
-
-   MOST RECENT non-zero lot cost per product, not the maximum: an audit of the
-   AutoCount book measured MAX overstating 28 of 319 lines by RM14,244 (worst
-   +123%) because one invoice can carry several builds of the same item code.
-   Here the figure is only ever used as EVIDENCE that a non-zero price exists —
-   never written to a lot — so its exact value cannot corrupt anything; it is
-   shown to the operator so they can see what the item normally costs. */
 export async function loadKnownPurchaseCostSen(
   sb: any,
   itemCodes: string[],
@@ -268,10 +225,6 @@ export async function loadKnownPurchaseCostSen(
   const known = new Map<string, number>();
   if (codes.length === 0) return known;
   try {
-    /* chunkIn, not one read capped at 1,000 rows: lots of the busiest codes
-       filled the page and the rest read as "never priced", letting a zero-cost
-       receipt through unchallenged. Newest first within each batch; a code
-       lives in one batch. */
     const { data, error } = await chunkIn(codes, (part, from, to) => {
       let q = pgrestIn(sb.from('inventory_lots')
         .select('item_code, unit_cost_sen, received_at'), 'item_code', part)
@@ -287,14 +240,9 @@ export async function loadKnownPurchaseCostSen(
     }
     for (const r of (data ?? []) as Array<{ item_code: string; unit_cost_sen: number | null }>) {
       const k = normalizeMaterialCode(r.item_code);
-      // Rows arrive newest-first, so the first sighting of a code IS its most
-      // recent priced receipt.
       if (!known.has(k) && Number(r.unit_cost_sen) > 0) known.set(k, Number(r.unit_cost_sen));
     }
   } catch {
-    /* The guard must not be the reason a receipt cannot be posted. A read
-       failure means "no evidence", which allows the post — the same posture
-       verifyGrnOverReceipt takes for its own verification read. */
     return new Map();
   }
   return known;
@@ -313,7 +261,6 @@ export async function checkReceiptCosts(
       && l.zeroCostAck !== true
       && !isServiceLine({ itemGroup: l.itemGroup ?? null, itemCode: l.itemCode }),
   );
-  // Nothing is zero-priced — do not spend a query.
   if (candidates.length === 0) return null;
   const known = await loadKnownPurchaseCostSen(sb, candidates.map((l) => l.itemCode), companyId);
   const offenders = findUncostedReceiptLines(candidates, known);

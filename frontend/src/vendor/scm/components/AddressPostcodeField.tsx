@@ -3,18 +3,6 @@ import { SearchableSelect } from './SearchableSelect';
 import { SgPostcodeField } from './SgPostcodeField';
 import { sortByNumeric } from '../lib/sort-options';
 
-/* The Postcode field shared by the address forms. Normally a SearchableSelect
-   over the my_localities cascade; but when the address is in Singapore — whose
-   ~150k real per-building postcodes are NOT seeded (only 55 area codes are) — it
-   becomes a live OneMap lookup (SgPostcodeField). Country is passed in: the forms
-   derive it from the picked State.
-
-   Two onChange paths on purpose: `onCascadePick` reverse-resolves State/City off
-   my_localities (non-SG), while `onChange` is the raw setter SG needs — a real SG
-   code the cascade does not hold, so there is nothing to reverse-resolve.
-
-   `classes` carries each host form's own CSS-module class names so the field
-   matches the surrounding form. */
 export const AddressPostcodeField = ({
   country,
   value,
@@ -37,7 +25,6 @@ export const AddressPostcodeField = ({
   placeholder: string;
   disabled?: boolean;
   title?: string;
-  /** The field's caption; "Postcode" when not given. */
   label?: ReactNode;
   classes?: { field?: string; label?: string; select?: string; selectWrap?: string; chevron?: string; input?: string };
 }) => {
