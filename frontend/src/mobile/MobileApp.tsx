@@ -45,6 +45,7 @@ const MobileSearch = lazy(() => import("./MobileSearch").then((m) => ({ default:
 const MobileInbox = lazy(() => import("./MobileInbox").then((m) => ({ default: m.MobileInbox })));
 const MobileServiceCase = lazy(() => import("./MobileServiceCase").then((m) => ({ default: m.MobileServiceCase })));
 const MobilePMS = lazy(() => import("./MobilePMS").then((m) => ({ default: m.MobilePMS })));
+const MobilePmsDefectList = lazy(() => import("./MobilePmsDefectList").then((m) => ({ default: m.MobilePmsDefectList })));
 const MobileMailCenter = lazy(() => import("./MobileMailCenter").then((m) => ({ default: m.MobileMailCenter })));
 const MobileRoles = lazy(() => import("./MobileRoles").then((m) => ({ default: m.MobileRoles })));
 const MobileTitles = lazy(() => import("./MobileTitles").then((m) => ({ default: m.MobileTitles })));
@@ -123,6 +124,7 @@ type Screen =
   | { t: "delivery-planning-driver"; completedDoNumber: string | null }
   | { t: "overview"; kind: "logistic" | "procurement" }
   | { t: "pms"; projectId?: number }
+  | { t: "pms-defects" }
   | { t: "mail" }
   | { t: "roles" }
   | { t: "titles" }
@@ -148,7 +150,10 @@ export function destinationScreen(to: string, label: string): DestinationTarget 
   if (path === "/scm/amendments") return { t: "amendments" };
   if (path === "/scm/po-amendments") return { t: "po-amendments" };
   if (path === "/assr") return { t: "service" };
-  if (path === "/projects") return { t: "pms" };
+  if (path === "/projects") {
+    const view = new URLSearchParams((to.split("?")[1] || "")).get("view");
+    return view === "defects" ? { t: "pms-defects" } : { t: "pms" };
+  }
   if (path === "/mail-center") return { t: "mail" };
   if (path === "/announcements") return { t: "announcements" };
   if (path === "/it-support") return { t: "it-support" };
@@ -321,6 +326,7 @@ export const MOBILE_MENU_GROUPS: { group: string; items: MobileMenuItem[] }[] = 
   ]},
   { group: "Projects · PMS", items: [
     { to: "/projects", label: "Projects" },
+    { to: "/projects?view=defects", label: "Defect List" },
   ]},
   { group: "After-sales", items: [
     { to: "/assr", label: "Service Case" },
@@ -791,6 +797,12 @@ function MobileAppInner() {
       // does, so one create path serves both surfaces.
       onCreateSO={() => setScreen({ t: "new-so", mode: "new" })}
       onCreateCase={() => setScreen({ t: "service", startNew: true })}
+    />
+  );
+  else if (screen.t === "pms-defects") overlay = (
+    <MobilePmsDefectList
+      onBack={back}
+      onOpenProject={(id) => setScreen({ t: "pms", projectId: id })}
     />
   );
   else if (screen.t === "mail") overlay = <MobileMailCenter onBack={back} />;

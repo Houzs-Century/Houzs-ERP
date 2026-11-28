@@ -206,10 +206,10 @@ describe("mobile route drift gate", () => {
     // (Driver)", beside Last Mile Delivery in the Logistics group.
     // 44 since 2026-10-22: /hr/punch, Punch In / Out (HC-0125), the Attendance
     // group's one row: the employee's own clock.
-    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(44);
+    expect(MOBILE_MENU_GROUPS.flatMap((group) => group.items)).toHaveLength(45);
     expect(PROFILE_ORG_ITEMS).toHaveLength(9);
-    expect(allMobile).toHaveLength(53);
-    expect(new Set(allMobile.map((item) => item.to)).size).toBe(53);
+    expect(allMobile).toHaveLength(54);
+    expect(new Set(allMobile.map((item) => item.to)).size).toBe(54);
     expect(new Set(allMobile.map((item) => item.to.split("?")[0])).size).toBe(52);
   });
 
