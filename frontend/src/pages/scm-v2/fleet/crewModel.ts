@@ -15,16 +15,23 @@ export type CrewKind = "driver" | "helper";
 export type CrewPerson = {
   id: string; code: string; name: string; phone: string; ic: string; vehicle: string;
   inHouse: boolean; carrierId: string | null; warehouseId: string | null; active: boolean;
+  // Office-maintained outsource-driver profile (owner 2026-11-28). Driver-only;
+  // a helper carries blanks. photoKey is the R2 marker, not the bytes.
+  photoKey: string | null; licenseNo: string; licenseExpiry: string; address: string;
+  emergencyName: string; emergencyPhone: string;
 };
 
 export const driverAsCrew = (d: DriverRow): CrewPerson => ({
   id: d.id, code: d.driver_code, name: d.name, phone: d.phone, ic: d.ic_number ?? "", vehicle: d.vehicle ?? "",
   inHouse: (d.inHouse ?? d.in_house) !== false, carrierId: d.threepl_company_id ?? null, warehouseId: d.warehouse_id ?? null, active: d.active,
+  photoKey: d.photo_r2_key ?? null, licenseNo: d.license_no ?? "", licenseExpiry: d.license_expiry ?? "",
+  address: d.address ?? "", emergencyName: d.emergency_contact_name ?? "", emergencyPhone: d.emergency_contact_phone ?? "",
 });
 
 export const helperAsCrew = (h: HelperRow): CrewPerson => ({
   id: h.id, code: h.helper_code, name: h.name, phone: h.contact ?? "", ic: h.ic_number ?? "", vehicle: "",
   inHouse: (h.inHouse ?? h.in_house) !== false, carrierId: h.threepl_company_id ?? null, warehouseId: h.warehouse_id ?? null, active: h.active,
+  photoKey: null, licenseNo: "", licenseExpiry: "", address: "", emergencyName: "", emergencyPhone: "",
 });
 
 /** Who employs them, as the one select shows it: in-house, outsource with no company, or a 3PL company id. */
@@ -36,15 +43,26 @@ export function employerLabel(p: Pick<CrewPerson, "inHouse" | "carrierId">, carr
   return p.inHouse ? "In-house" : "Outsource";
 }
 
-export type CrewForm = { name: string; phone: string; ic: string; vehicle: string; employer: Employer; warehouseId: string };
+export type CrewForm = {
+  name: string; phone: string; ic: string; vehicle: string; employer: Employer; warehouseId: string;
+  licenseNo: string; licenseExpiry: string; address: string; emergencyName: string; emergencyPhone: string;
+};
 
 export const crewFormOf = (p: CrewPerson | null): CrewForm => p
-  ? { name: p.name, phone: p.phone, ic: p.ic, vehicle: p.vehicle, employer: employerOf(p), warehouseId: p.warehouseId ?? "" }
-  : { name: "", phone: "", ic: "", vehicle: "", employer: "in", warehouseId: "" };
+  ? {
+      name: p.name, phone: p.phone, ic: p.ic, vehicle: p.vehicle, employer: employerOf(p), warehouseId: p.warehouseId ?? "",
+      licenseNo: p.licenseNo, licenseExpiry: p.licenseExpiry, address: p.address, emergencyName: p.emergencyName, emergencyPhone: p.emergencyPhone,
+    }
+  : {
+      name: "", phone: "", ic: "", vehicle: "", employer: "in", warehouseId: "",
+      licenseNo: "", licenseExpiry: "", address: "", emergencyName: "", emergencyPhone: "",
+    };
 
 export type CrewPatch = {
   name?: string; phone?: string; contact?: string; icNumber?: string; vehicle?: string;
   inHouse?: boolean; threeplCompanyId?: string | null; warehouseId?: string | null;
+  licenseNo?: string | null; licenseExpiry?: string | null; address?: string | null;
+  emergencyContactName?: string | null; emergencyContactPhone?: string | null;
 };
 
 function employerPatch(before: Employer | null, next: Employer): Pick<CrewPatch, "inHouse" | "threeplCompanyId"> {
@@ -64,6 +82,17 @@ export function crewPatch(kind: CrewKind, before: CrewPerson | null, f: CrewForm
   if (!before ? ic !== "" : ic !== b.ic) out.icNumber = ic;
   if (kind === "driver" && (!before ? vehicle !== "" : vehicle !== b.vehicle)) out.vehicle = vehicle;
   if (!before || f.warehouseId !== b.warehouseId) out.warehouseId = f.warehouseId || null;
+  if (kind === "driver") {
+    type ProfileKey = "licenseNo" | "licenseExpiry" | "address" | "emergencyContactName" | "emergencyContactPhone";
+    const profile: Array<[keyof CrewForm, ProfileKey]> = [
+      ["licenseNo", "licenseNo"], ["licenseExpiry", "licenseExpiry"], ["address", "address"],
+      ["emergencyName", "emergencyContactName"], ["emergencyPhone", "emergencyContactPhone"],
+    ];
+    for (const [from, to] of profile) {
+      const next = f[from].trim();
+      if (!before ? next !== "" : next !== b[from]) out[to] = next || null;
+    }
+  }
   return { ...out, ...(before ? employerPatch(employerOf(before), f.employer) : employerPatch(null, f.employer)) };
 }
 

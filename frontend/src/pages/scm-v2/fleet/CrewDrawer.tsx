@@ -1,14 +1,16 @@
 // One driver or helper (owner 2026-11-07, the Coverage & Fleet design): their details, the
 // lorry they usually crew, their leave and whether they are active. Read first, Edit to
 // change; with no person it is the New driver / New helper form.
-import { useState } from "react";
+import { useState, type ChangeEvent, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { formatPhone } from "@2990s/shared/phone";
 import { ResizableDrawer } from "../../../components/ResizableDrawer";
-import { todayMY } from "../../../../../shared/src/vendor/shared/format";
+import { fmtDate, todayMY } from "../../../../../shared/src/vendor/shared/format";
 import { DateField } from "../../../vendor/scm/components/DateField";
 import { useConfirm } from "../../../vendor/scm/components/ConfirmDialog";
 import { writeFailedAs } from "../../../vendor/scm/lib/mutation-error";
 import { useCreateDriver, useUpdateDriver } from "../../../vendor/scm/lib/drivers-queries";
+import { useDriverPhoto, useDriverPhotoUrl } from "../../../vendor/scm/lib/driver-photo";
 import { useCreateHelper, useUpdateHelper } from "../../../vendor/scm/lib/helpers-queries";
 import { useCreateDriverLeave, useDeleteDriverLeave, type DriverLeaveRow } from "../../../vendor/scm/lib/delivery-zones-queries";
 import type { LorryRow } from "../../../vendor/scm/lib/lorries-queries";
@@ -52,9 +54,18 @@ export function CrewDrawer({ kind, person, lorries, warehouses, carriers, leave,
           <div className="space-y-3 p-4">
             <Card title="Details">
               <ReadRows rows={[
+                ...(kind === "driver" ? [["Photo", <DriverPhotoThumb key="ph" person={person} />] as [string, ReactNode]] : []),
                 ["Phone", person.phone ? formatPhone(person.phone) : "Not recorded"],
                 ["IC number", person.ic || "Not recorded"],
-                ...(kind === "driver" ? [["Vehicle", person.vehicle || "—"] as [string, string]] : []),
+                ...(kind === "driver" ? [
+                  ["Vehicle", person.vehicle || "—"] as [string, string],
+                  ["Licence no.", person.licenseNo || "Not recorded"] as [string, string],
+                  ["Licence expiry", person.licenseExpiry ? fmtDate(person.licenseExpiry) : "Not recorded"] as [string, string],
+                  ["Address", person.address || "Not recorded"] as [string, string],
+                  ["Emergency contact", person.emergencyName || person.emergencyPhone
+                    ? `${person.emergencyName || "—"}${person.emergencyPhone ? ` · ${person.emergencyPhone}` : ""}`
+                    : "Not recorded"] as [string, string],
+                ] : []),
                 ["Works for", employerLabel(person, carrierName)],
                 ["Works from", warehouses.find((w) => w.id === person.warehouseId)?.name ?? "Not set"],
                 [kind === "driver" ? "Usually drives" : "Usually rides in", <UsualLorry key="l" lorries={lorriesOf(lorries, kind, person.id)} />],
@@ -190,11 +201,61 @@ function CrewEdit({ kind, person, warehouses, carriers, onDone }: {
           </select>
         </Field>
       </div>
+      {kind === "driver" && (
+        <div className="space-y-3 border-t border-border-subtle pt-4">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-muted">Profile</p>
+          {person
+            ? <DriverPhotoField person={person} />
+            : <p className="text-[12px] text-ink-muted">Add the driver first, then upload a photo.</p>}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Licence no."><input value={f.licenseNo} onChange={(e) => setF({ ...f, licenseNo: e.target.value })} className={inputCls} /></Field>
+            <Field label="Licence expiry"><DateField value={f.licenseExpiry} onChange={(v) => setF({ ...f, licenseExpiry: v })} fullWidth aria-label="Licence expiry" /></Field>
+            <Field label="Address" wide><input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} placeholder="Home address" className={inputCls} /></Field>
+            <Field label="Emergency contact"><input value={f.emergencyName} onChange={(e) => setF({ ...f, emergencyName: e.target.value })} placeholder="Name" className={inputCls} /></Field>
+            <Field label="Emergency phone"><input value={f.emergencyPhone} onChange={(e) => setF({ ...f, emergencyPhone: e.target.value })} placeholder="Phone" className={inputCls} /></Field>
+          </div>
+        </div>
+      )}
       <p className="text-[12px] text-ink-muted">{person ? "The usual lorry is set on the lorry, in the Lorries tab." : "The code is given automatically when you add them."}</p>
       {problem && f.name !== "" && <p className="text-[12.5px] text-[color:var(--hz-dk-err,#8a2c2c)]">{problem}</p>}
       <div className="flex gap-2">
         <button type="button" disabled={problem !== null || pending} onClick={save} className={primaryBtn}>{pending ? "Saving…" : person ? "Save changes" : `Add ${kind}`}</button>
         <button type="button" onClick={onDone} className={secondaryBtn}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function DriverPhotoThumb({ person }: { person: CrewPerson }) {
+  const { src } = useDriverPhotoUrl(person.id, person.photoKey);
+  if (!person.photoKey) return <span className="text-ink-muted">Not uploaded</span>;
+  return src
+    ? <img src={src} alt={person.name} className="h-16 w-16 rounded-md object-cover" />
+    : <span className="text-ink-muted">Loading…</span>;
+}
+
+function DriverPhotoField({ person }: { person: CrewPerson }) {
+  const qc = useQueryClient();
+  const { src } = useDriverPhotoUrl(person.id, person.photoKey);
+  const { busy, upload } = useDriverPhoto(person.id, () => qc.invalidateQueries({ queryKey: ["drivers"] }));
+  const [err, setErr] = useState<string | null>(null);
+  const onPick = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    e.target.value = "";
+    if (!file) return;
+    setErr(await upload(file));
+  };
+  return (
+    <div className="flex items-center gap-3">
+      <span className="grid h-16 w-16 flex-none place-items-center overflow-hidden rounded-md bg-primary-soft text-[15px] font-bold text-primary">
+        {src ? <img src={src} alt={person.name} className="h-full w-full object-cover" /> : initials(person.name)}
+      </span>
+      <div className="flex flex-col gap-1">
+        <label className="inline-flex cursor-pointer items-center rounded-md border border-border px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:bg-surface-2">
+          <input type="file" accept="image/*" className="hidden" onChange={onPick} disabled={busy} />
+          {busy ? "Uploading…" : src ? "Replace photo" : "Upload photo"}
+        </label>
+        {err && <p className="text-[12px] text-[color:var(--hz-dk-err,#8a2c2c)]">{err}</p>}
       </div>
     </div>
   );
