@@ -2,13 +2,18 @@
 // LogisticsSpend — the Logistics cost report's Spend by lorry view (owner
 // 2026-11-25: 「我应该要的是每一辆lorry的spend，就是包括petrol，tol，等等」, after a
 // repairs-only view): what each lorry costs, from the books — its petrol, toll &
-// parking, repairs, HP instalment and insurance & road tax, one group per lorry,
-// and Not tied to a lorry for driver pay and bills that name none. Every period
-// shows two figures (「两个我都要看，每个月实际和平摊」): Actual, each line in full
-// in the month it is booked, and Spread, as the P&L counts it — so the Spread
-// columns add up to the P&L's Total In-house Expenses (the check and Difference
-// rows). A line on one lorry's account that names another is listed under To
-// check, never moved: the books decide, Finance corrects the posting.
+// parking, repairs, HP instalment and insurance & road tax. The lorries run
+// across the top, one pair of columns each (2026-11-28: 「一列 Lori、一列 Lori
+// 这样从左到右，不是往下」), then Not tied to a lorry (driver pay, bills that name
+// none), then Total; the costs run down, and every lorry has its HP instalment
+// line (「还需要包括 installment 的费用，就是一辆lorry每个月的 HP installment」),
+// a dash in a month nothing was paid. Each lorry shows two figures
+// (「两个我都要看，每个月实际和平摊」): Actual, each line in full in the month it is
+// booked, and Spread, as the P&L counts it — so Total's Spread adds up to the
+// P&L's Total In-house Expenses (the check and Difference rows). By month: the
+// whole range first, then a block per month. A line on one lorry's account that
+// names another is listed under To check, never moved: the books decide, Finance
+// corrects the posting.
 // Server: scm/lib/lorry-spend.ts, on GET /acc-events/logistics/pnl.
 // ----------------------------------------------------------------------------
 
@@ -25,27 +30,50 @@ import s from './Logistics.module.css';
 /** Actual: a line in full in the month it is booked. Spread: as the P&L counts it. */
 export type SpendFigure = 'actual' | 'spread';
 export type SpendScope = { months: string[]; figure: SpendFigure };
+/** The months a block of rows adds up: the whole range, or one month. */
+export type SpendPeriod = { key: string; label: string; totalLabel: string; months: string[] };
 
-/** Whole range: the period's Actual and Spread. By month: Total's, then each
- *  month's. Each column names the months and the figure it adds up. */
-export function spendColumns(months: readonly string[], mode: Mode): { columns: GridColumn[]; scopes: Map<string, SpendScope> } {
+const TOTAL = 'all';
+const FIGURES: ReadonlyArray<{ suffix: 'A' | 'S'; figure: SpendFigure; label: string }> = [
+  { suffix: 'A', figure: 'actual', label: 'Actual' },
+  { suffix: 'S', figure: 'spread', label: 'Spread' },
+];
+const SPREAD_TOTAL = `${TOTAL}:S`;
+
+export const lorryName = (e: LogisticsLorrySpend): string => e.plate ?? 'Not tied to a lorry';
+const lorryKey = (e: LogisticsLorrySpend): string => e.plate ?? 'none';
+
+/** Each lorry across the top, its Actual and Spread side by side, then Total's. */
+export function spendColumns(lorries: readonly LogisticsLorrySpend[]): GridColumn[] {
+  const pair = (key: string, group: string, total: boolean): GridColumn[] => FIGURES.map((f, i) => ({
+    key: `${key}:${f.suffix}`, label: f.label, group, kind: 'money', width: 104, total, edge: i === FIGURES.length - 1,
+  }));
+  return [...lorries.flatMap((e) => pair(lorryKey(e), lorryName(e), false)), ...pair(TOTAL, 'Total', true)];
+}
+
+/** Whole range: one block. By month: the whole range first, then each month. */
+export function spendPeriods(months: readonly string[], mode: Mode): SpendPeriod[] {
   const short = (m: string) => monthName(`${m}-01`);
   const all = [...months];
-  const span = all.length === 0 ? '' : all.length === 1 ? short(all[0]!) : `${short(all[0]!)} – ${short(all[all.length - 1]!)}`;
-  const scopes = new Map<string, SpendScope>();
-  const columns: GridColumn[] = [];
-  const pair = (key: string, group: string, ms: string[], total: boolean) => {
-    columns.push({ key: `${key}:A`, label: 'Actual', group, kind: 'money', width: 120, total });
-    scopes.set(`${key}:A`, { months: ms, figure: 'actual' });
-    columns.push({ key: `${key}:S`, label: 'Spread', group, kind: 'money', width: 120, total, edge: true });
-    scopes.set(`${key}:S`, { months: ms, figure: 'spread' });
-  };
-  if (mode === 'single') pair('T', span, all, true);
-  else {
-    pair('T', `Total · ${all.length} month${all.length === 1 ? '' : 's'}`, all, true);
-    for (const m of all) pair(m, short(m), [m], false);
+  const count = `${all.length} month${all.length === 1 ? '' : 's'}`;
+  if (mode === 'single') {
+    const span = all.length === 0 ? '' : all.length === 1 ? short(all[0]!) : `${short(all[0]!)} – ${short(all[all.length - 1]!)}`;
+    return [{ key: TOTAL, label: span, totalLabel: 'Total in-house spend', months: all }];
   }
-  return { columns, scopes };
+  return [
+    { key: TOTAL, label: `Total · ${count}`, totalLabel: `Total in-house spend · ${count}`, months: all },
+    ...all.map((m) => ({ key: m, label: short(m), totalLabel: `Total in-house spend · ${short(m)}`, months: [m] })),
+  ];
+}
+
+function columnOf(key: string, lorries: readonly LogisticsLorrySpend[]): { who: LogisticsLorrySpend[]; figure: SpendFigure; total: boolean } | null {
+  const at = key.lastIndexOf(':');
+  const fig = FIGURES.find((f) => f.suffix === key.slice(at + 1));
+  if (at < 0 || !fig) return null;
+  const who = key.slice(0, at);
+  if (who === TOTAL) return { who: [...lorries], figure: fig.figure, total: true };
+  const e = lorries.find((x) => lorryKey(x) === who);
+  return e ? { who: [e], figure: fig.figure, total: false } : null;
 }
 
 export const KIND_ORDER: readonly LogisticsSpendKind[] = ['petrol', 'upkeep', 'instalment', 'roadtax', 'other', 'manpower'];
@@ -53,6 +81,7 @@ export const KIND_LABEL: Record<LogisticsSpendKind, string> = {
   petrol: 'Petrol, toll & parking', upkeep: 'Repairs & maintenance', instalment: 'Instalment (HP)',
   roadtax: 'Insurance & road tax', other: 'Other lorry cost', manpower: 'Manpower',
 };
+const SHOWN_FOR_EVERY_LORRY: ReadonlySet<LogisticsSpendKind> = new Set<LogisticsSpendKind>(['petrol', 'upkeep', 'instalment', 'roadtax']);
 
 const sumIn = (byMonth: Record<string, number>, months: readonly string[]): number => months.reduce((t, m) => t + (byMonth[m] ?? 0), 0);
 /** A line's figure in a column: in full in its booked month (Actual), or as the P&L counts it (Spread). */
@@ -60,7 +89,6 @@ export const lineIn = (l: LogisticsSpendLine, sc: SpendScope): number =>
   (sc.figure === 'actual' ? (sc.months.includes(l.day.slice(0, 7)) ? l.amountSen : 0) : sumIn(l.byMonth, sc.months));
 const spendIn = (e: LogisticsLorrySpend, sc: SpendScope, kind: LogisticsSpendKind | null): number =>
   e.lines.reduce((t, l) => t + (kind == null || l.kind === kind ? lineIn(l, sc) : 0), 0);
-export const lorryName = (e: LogisticsLorrySpend): string => e.plate ?? 'Not tied to a lorry';
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 const wholeRm = (sen: number): string => {
   const text = Math.round(Math.abs(sen) / 100).toLocaleString('en-US');
@@ -69,27 +97,49 @@ const wholeRm = (sen: number): string => {
 
 export function SpendView({ p, mode, period, months }: ViewProps) {
   const lorries = useMemo(() => p.lorrySpend ?? [], [p]);
-  const { columns, scopes } = useMemo(() => spendColumns(months, mode), [months, mode]);
+  const columns = useMemo(() => spendColumns(lorries), [lorries]);
+  const periods = useMemo(() => spendPeriods(months, mode), [months, mode]);
   const single = mode === 'single';
 
   const rows = useMemo<GridRow[]>(() => {
-    const cellsOf = (f: (sc: SpendScope) => number | null) => Object.fromEntries([...scopes].map(([k, sc]) => [k, f(sc)]));
-    const whole = (figure: SpendFigure): SpendScope => ({ months, figure });
-    const shown = (l: LogisticsSpendLine) => lineIn(l, whole('actual')) !== 0 || lineIn(l, whole('spread')) !== 0;
-    const linesDetail = (e: LogisticsLorrySpend, kind: LogisticsSpendKind) => (key: string): ReactNode | null => {
-      const sc = scopes.get(key);
-      if (!sc) return null;
-      const lines = e.lines.filter((l) => l.kind === kind).map((l) => ({ ...l, here: lineIn(l, sc) })).filter((l) => l.here !== 0);
+    const kinds = KIND_ORDER.filter((k) => SHOWN_FOR_EVERY_LORRY.has(k) || lorries.some((e) => e.lines.some((l) => l.kind === k)));
+    const cellsOf = (f: (e: LogisticsLorrySpend, figure: SpendFigure) => number): Record<string, number> => {
+      const out: Record<string, number> = {};
+      for (const fig of FIGURES) {
+        let all = 0;
+        for (const e of lorries) {
+          const v = f(e, fig.figure);
+          out[`${lorryKey(e)}:${fig.suffix}`] = v;
+          all += v;
+        }
+        out[`${TOTAL}:${fig.suffix}`] = all;
+      }
+      return out;
+    };
+    const linesDetail = (pd: SpendPeriod, kind: LogisticsSpendKind) => (key: string): ReactNode | null => {
+      const col = columnOf(key, lorries);
+      if (!col) return null;
+      const sc: SpendScope = { months: pd.months, figure: col.figure };
+      const lines = col.who
+        .flatMap((e) => e.lines.filter((l) => l.kind === kind).map((l) => ({ ...l, lorry: lorryName(e), here: lineIn(l, sc) })))
+        .filter((l) => l.here !== 0)
+        .sort((x, y) => x.day.localeCompare(y.day) || x.lineId.localeCompare(y.lineId));
       if (lines.length === 0) return null;
       const spreadNote = (l: LogisticsSpendLine) => (l.months <= 1 ? null
         : sc.figure === 'actual' ? `Spread over ${l.months} months on the P&L` : `RM ${fmtMoney(l.amountSen)} over ${l.months} months`);
       return (
         <table className={s.detailTable}>
-          <thead><tr><th>Date</th><th>Document</th><th>Description</th><th className={s.num}>{sc.figure === 'actual' ? 'Actual' : 'Spread'}</th><th>Note</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Date</th>{col.total && <th>Lorry</th>}<th>Document</th><th>Description</th>
+              <th className={s.num}>{sc.figure === 'actual' ? 'Actual' : 'Spread'}</th><th>Note</th>
+            </tr>
+          </thead>
           <tbody>
             {lines.map((l) => (
               <tr key={l.lineId}>
                 <td>{fmtDateOrDash(l.day)}</td>
+                {col.total && <td>{l.lorry}</td>}
                 <td>{l.docNo ?? '-'}</td>
                 <td>{l.notes ?? ''}</td>
                 <td className={s.num}>{fmtMoney(l.here)}</td>
@@ -100,31 +150,40 @@ export function SpendView({ p, mode, period, months }: ViewProps) {
         </table>
       );
     };
-    const groups: GridRow[] = lorries.map((e) => {
-      const id = `lorry:${e.plate ?? 'none'}`;
-      const label = lorryName(e);
-      const cells = cellsOf((sc) => spendIn(e, sc, null));
-      const kids: GridRow[] = KIND_ORDER.filter((k) => e.lines.some((l) => l.kind === k)).map((k) => ({
-        id: `${id}:${k}`, label: KIND_LABEL[k],
-        cap: single ? plural(e.lines.filter((l) => l.kind === k && shown(l)).length, 'line') : null,
-        cells: cellsOf((sc) => spendIn(e, sc, k)), detail: linesDetail(e, k),
-      }));
-      const cap = e.plate == null ? 'driver pay and bills that name no lorry' : e.ours ? null : 'not in the lorry list';
-      if (kids.length === 0) return { id, label, cap: single ? 'nothing in the books' : null, cells };
-      return { id, label, cap, kind: 'group', totalLabel: `Total ${label}`, kids, cells };
-    });
-    const total = cellsOf((sc) => lorries.reduce((t, e) => t + spendIn(e, sc, null), 0));
     const inHouseOf = (m: string) => p.perMonth.find((x) => x.month === m)?.rows.find((r) => r.key === 'inhouse_total')?.totalSen ?? 0;
-    const books = cellsOf((sc) => (sc.figure === 'spread' ? sc.months.reduce((t, m) => t + inHouseOf(m), 0) : null));
-    const diff = Object.fromEntries(Object.keys(total).map((k) => [k, books[k] == null ? null : (total[k] ?? 0) - books[k]!]));
-    const off = Object.values(diff).some((v) => v != null && v !== 0);
-    return [
-      ...groups,
-      { id: 'total', label: 'Total in-house spend', kind: 'final', cells: total },
-      { id: 'check', label: 'Logistics P&L · Total In-house Expenses (from the books)', kind: 'check', cells: books },
-      { id: 'diff', label: 'Difference (Spread less the P&L)', kind: off ? 'bad' : 'check', zeroShows: true, cells: diff },
-    ];
-  }, [p, lorries, scopes, months, single]);
+
+    const block = (pd: SpendPeriod) => {
+      const scope = (figure: SpendFigure): SpendScope => ({ months: pd.months, figure });
+      const linesOf = (k: LogisticsSpendKind) => lorries.reduce((t, e) => t + e.lines
+        .filter((l) => l.kind === k && (lineIn(l, scope('actual')) !== 0 || lineIn(l, scope('spread')) !== 0)).length, 0);
+      const kindRows: GridRow[] = kinds.map((k) => {
+        const n = single ? linesOf(k) : 0;
+        return {
+          id: `${pd.key}:${k}`, label: KIND_LABEL[k], cap: n > 0 ? plural(n, 'line') : null,
+          cells: cellsOf((e, figure) => spendIn(e, scope(figure), k)), detail: linesDetail(pd, k),
+        };
+      });
+      const totals = cellsOf((e, figure) => spendIn(e, scope(figure), null));
+      const books = pd.months.reduce((t, m) => t + inHouseOf(m), 0);
+      const diff = (totals[SPREAD_TOTAL] ?? 0) - books;
+      const cap = single ? null : pd.label;
+      const checks: GridRow[] = [
+        { id: `${pd.key}:check`, label: 'P&L Total In-house Expenses', cap, kind: 'check', cells: { [SPREAD_TOTAL]: books } },
+        { id: `${pd.key}:diff`, label: 'Difference (Spread less the P&L)', cap, kind: diff !== 0 ? 'bad' : 'check', zeroShows: true, cells: { [SPREAD_TOTAL]: diff } },
+      ];
+      return { kindRows, totals, checks };
+    };
+
+    if (single) {
+      const pd = periods[0]!;
+      const b = block(pd);
+      return [...b.kindRows, { id: 'total', label: pd.totalLabel, kind: 'final', cells: b.totals }, ...b.checks];
+    }
+    return periods.flatMap((pd) => {
+      const b = block(pd);
+      return [{ id: `period:${pd.key}`, label: pd.label, totalLabel: pd.totalLabel, kids: b.kindRows, cells: b.totals }, ...b.checks];
+    });
+  }, [p, lorries, periods, single]);
 
   if (!p.lorrySpend) return <ReportMessage>Spend by lorry is not on the server yet. Refresh in a minute.</ReportMessage>;
   if (lorries.length === 0) return <ReportMessage>No lorry cost is in the books for {period}.</ReportMessage>;
@@ -152,7 +211,7 @@ export function SpendView({ p, mode, period, months }: ViewProps) {
       sub: flagged.length > 0 ? `RM ${wholeRm(flagged.reduce((t, x) => t + x.l.amountSen, 0))} names another lorry` : 'none',
     },
   ];
-  const sheet = () => gridSheet({ title: 'Logistics cost · spend by lorry', subtitle: `${period} · RM`, period, nameLabel: 'Lorry', columns, rows, showPct: false });
+  const sheet = () => gridSheet({ title: 'Logistics cost · spend by lorry', subtitle: `${period} · RM`, period, nameLabel: 'Cost', columns, rows, showPct: false });
 
   return (
     <>
@@ -170,9 +229,9 @@ export function SpendView({ p, mode, period, months }: ViewProps) {
           </ul>
         </section>
       )}
-      <FinanceGrid layoutKey={`logistics-lorry-spend|${mode}`} nameColumn={{ label: 'Lorry', width: 300 }} columns={columns} rows={rows}
+      <FinanceGrid layoutKey={`logistics-lorry-columns|${mode}`} nameColumn={{ label: 'Cost', width: 260 }} columns={columns} rows={rows}
         title="Logistics cost · spend by lorry" subtitle={`${period} · RM`} ariaLabel="Spend by lorry" drillKey={`${months.join()}|${mode}`}
-        foot={<span>From the books: each lorry&rsquo;s lines by the lorry its account names, else its description; driver pay and bills that name no lorry are Not tied. Actual: each line in full in the month it is booked. Spread: as the P&amp;L counts it (repairs and insurance over the months Finance gives them), so the Spread columns add up to the P&amp;L&rsquo;s Total In-house Expenses. A figure opens its lines.</span>} />
+        foot={<span>From the books, one pair of columns per lorry: each line goes to the lorry its account names, else its description; driver pay and bills that name no lorry are Not tied. Actual: each line in full in the month it is booked. Spread: as the P&amp;L counts it (repairs and insurance over the months Finance gives them), so Total&rsquo;s Spread adds up to the P&amp;L&rsquo;s Total In-house Expenses. Instalment (HP) is what was paid on each lorry&rsquo;s HP account. A figure opens its lines.</span>} />
     </>
   );
 }
