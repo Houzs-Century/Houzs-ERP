@@ -187,28 +187,29 @@ describe('By region & trip', () => {
 });
 
 describe('Spend by lorry', () => {
-  /* Owner 2026-11-28: 「一列 Lori、一列 Lori 这样从左到右，不是往下」 — the lorries run
-     across the top, Actual and Spread each, then Not tied and Total; the costs run
-     down, and every lorry has its Instalment (HP) line. */
-  test('one column pair per lorry, left to right, then Not tied and Total; the costs down; Spread is the P&L in-house total', async () => {
+  /* Owner 2026-11-28: 「它应该是一个月份，然后有多少 lorry 就在里面，一个月一个月从左到右，
+     最新的月份最靠左」 — a block per month, newest first, a column per lorry in each;
+     the costs run down, every lorry with its Instalment (HP) line; repairs and
+     insurance as actual and spread. */
+  test('a month block with a column per lorry, then Not tied and Total; the costs down; the spread total is the P&L in-house total', async () => {
     draw('?lv=lorries');
     const table = await screen.findByRole('table', { name: 'Spend by lorry' });
     const heads = within(table).getAllByRole('columnheader').map((h) => h.textContent);
-    const groups = ['VNB9058', 'VPC9058', 'VQE9058', 'VRH9058', 'Not tied to a lorry', 'Total'];
-    expect(groups.map((g) => heads.indexOf(g))).toEqual([...groups.map((g) => heads.indexOf(g))].sort((a, b) => a - b));
-    expect(groups.every((g) => heads.includes(g))).toBe(true);
-    expect(heads.filter((h) => h.includes('Actual'))).toHaveLength(groups.length);
-    expect(heads.filter((h) => h.includes('Spread'))).toHaveLength(groups.length);
-    expect(within(table).queryByText('Total VNB9058')).toBeNull();
-    expect(rowText(table, 'Petrol, toll & parking')).toBe('Petrol, toll & parking2 lines500.00500.001,000.001,000.00------1,500.001,500.00');
-    expect(rowText(table, 'Repairs & maintenance')).toBe('Repairs & maintenance2 lines300.00300.00--600.00100.00----900.00400.00');
-    expect(rowText(table, 'Instalment (HP)')).toBe('Instalment (HP)1 line2,521.002,521.00--------2,521.002,521.00');
-    expect(rowText(table, 'Insurance & road tax')).toBe(`Insurance & road tax${'-'.repeat(12)}`);
-    expect(rowText(table, 'Manpower')).toBe('Manpower1 line--------16,287.9116,287.9116,287.9116,287.91');
+    const cols = ['VNB9058', 'VPC9058', 'VQE9058', 'VRH9058', 'Not tied', 'Total'];
+    expect(heads.filter((h) => cols.includes(h))).toEqual(cols);
+    expect(heads.some((h) => /^[A-Z][a-z]{2} \d{4}$/.test(h))).toBe(true);
+    expect(rowText(table, 'Petrol, toll & parking')).toBe('Petrol, toll & parking500.001,000.00---1,500.00');
+    expect(rowText(table, 'Repairs & maintenance (actual)')).toBe('Repairs & maintenance (actual)300.00-600.00--900.00');
+    expect(rowText(table, 'Repairs & maintenance (spread)')).toBe('Repairs & maintenance (spread)300.00-100.00--400.00');
+    expect(rowText(table, 'Instalment (HP)')).toBe('Instalment (HP)2,521.00----2,521.00');
+    expect(rowText(table, 'Insurance & road tax (actual)')).toBe(`Insurance & road tax (actual)${'-'.repeat(6)}`);
+    expect(rowText(table, 'Insurance & road tax (spread)')).toBe(`Insurance & road tax (spread)${'-'.repeat(6)}`);
+    expect(rowText(table, 'Manpower')).toBe('Manpower----16,287.9116,287.91');
     expect(within(table).queryByText('Other lorry cost')).toBeNull();
-    expect(rowText(table, 'Total in-house spend')).toBe('Total in-house spend3,321.003,321.001,000.001,000.00600.00100.00--16,287.9116,287.9121,208.9120,708.91');
-    expect(rowText(table, 'P&L Total In-house Expenses')).toMatch(/-20,708\.91$/);
-    expect(rowText(table, 'Difference (Spread less the P&L)')).toMatch(/-0\.00$/);
+    expect(rowText(table, 'Total spend (actual)')).toBe('Total spend (actual)3,321.001,000.00600.00-16,287.9121,208.91');
+    expect(rowText(table, 'Total spend (spread)')).toBe('Total spend (spread)3,321.001,000.00100.00-16,287.9120,708.91');
+    expect(rowText(table, 'P&L Total In-house Expenses')).toBe('P&L Total In-house Expenses-----20,708.91');
+    expect(rowText(table, 'Difference (spread less the P&L)')).toBe('Difference (spread less the P&L)-----0.00');
     expect(screen.getByRole('group', { name: 'Spend by lorry totals' }).textContent).toContain('Actual21,209');
     expect(screen.queryByRole('switch', { name: /% of DO/ })).toBeNull();
   });
@@ -224,31 +225,32 @@ describe('Spend by lorry', () => {
     expect(check.textContent).toContain('HC-HPV-2609-001');
     expect(check.textContent).toContain('the description says VNB9058, but it is booked to VPC9058 (900-P010)');
     const table = screen.getByRole('table', { name: 'Spend by lorry' });
-    const petrol = () => within(table).getByText('Petrol, toll & parking').closest('tr')!;
-    fireEvent.click(within(petrol()).getAllByRole('button', { name: '1,000.00' })[0]!);
+    const row = (label: string) => within(table).getByText(label).closest('tr')!;
+    fireEvent.click(within(row('Petrol, toll & parking')).getByRole('button', { name: '1,000.00' }));
     expect(within(table).getByText('VNB 9058 - TOLL')).toBeTruthy();
     expect(within(table).getByText('Says VNB9058')).toBeTruthy();
     expect(within(table).queryByText('VNB 9058 - DIESEL')).toBeNull();
-    fireEvent.click(within(within(table).getByText('Repairs & maintenance').closest('tr')!).getByRole('button', { name: '100.00' }));
+    fireEvent.click(within(row('Repairs & maintenance (spread)')).getByRole('button', { name: '100.00' }));
     expect(within(table).getByText('RM 600.00 over 6 months')).toBeTruthy();
-    fireEvent.click(within(petrol()).getAllByRole('button', { name: '1,500.00' })[0]!);
+    fireEvent.click(within(row('Petrol, toll & parking')).getByRole('button', { name: '1,500.00' }));
     const lines = within(table).getByText('VNB 9058 - DIESEL').closest('table')!;
     expect(within(lines).getByRole('columnheader', { name: 'Lorry' })).toBeTruthy();
     expect(within(lines).getByText('VNB 9058 - TOLL')).toBeTruthy();
     expect(within(lines).getByText('VPC9058')).toBeTruthy();
   });
 
-  test('By month: the lorries stay across the top; a block for the whole range first, then one per month, each with its Instalment (HP) line and its P&L check', async () => {
-    draw('?lv=lorries&dm=months');
+  test('By month: one block per month, newest on the left, then the range Total; each block has every lorry and its own P&L check', async () => {
+    draw('?lv=lorries&dm=months&from=2026-09-01&to=2026-11-30');
     const table = await screen.findByRole('table', { name: 'Spend by lorry' });
     const heads = within(table).getAllByRole('columnheader').map((h) => h.textContent);
-    expect(heads.includes('VNB9058') && heads.includes('Total')).toBe(true);
-    const blocks = within(table).getAllByRole('button', { name: /^Close / }).map((b) => b.getAttribute('aria-label'));
-    expect(blocks[0]).toMatch(/^Close Total · \d+ months?$/);
-    expect(blocks.length).toBeGreaterThanOrEqual(2);
-    expect(within(table).getAllByText('Instalment (HP)')).toHaveLength(blocks.length);
-    expect(within(table).getAllByText('Difference (Spread less the P&L)')).toHaveLength(blocks.length);
-    expect(within(table).getAllByText(/^Total in-house spend · /)).toHaveLength(blocks.length);
+    expect(heads.filter((h) => /^([A-Z][a-z]{2} \d{4}|Total · \d+ months)$/.test(h))).toEqual(['Nov 2026', 'Oct 2026', 'Sep 2026', 'Total · 3 months']);
+    expect(heads.filter((h) => h === 'VNB9058')).toHaveLength(4);
+    const hp = '2,521.00----2,521.00';
+    expect(rowText(table, 'Instalment (HP)')).toBe(`Instalment (HP)${hp}${hp}${hp}7,563.00----7,563.00`);
+    expect(rowText(table, 'Repairs & maintenance (actual)')).toBe('Repairs & maintenance (actual)300.00----300.00300.00----300.00300.00-600.00--900.00900.00-600.00--1,500.00');
+    expect(rowText(table, 'Repairs & maintenance (spread)')).toBe('Repairs & maintenance (spread)300.00-100.00--400.00300.00-100.00--400.00300.00-100.00--400.00900.00-300.00--1,200.00');
+    expect(rowText(table, 'P&L Total In-house Expenses')).toBe(`P&L Total In-house Expenses${'-----20,708.91'.repeat(3)}-----62,126.73`);
+    expect(rowText(table, 'Difference (spread less the P&L)')).toBe(`Difference (spread less the P&L)${'-----0.00'.repeat(4)}`);
     expect(screen.queryByRole('switch', { name: /Split each month by region/ })).toBeNull();
   });
 });
