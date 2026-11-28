@@ -32,6 +32,24 @@ const stop = (stop_no: number, items: PackingItem[], extra: Partial<PackingStop>
 
 const variantFromD2 = (it: PackingItem): string => it.description2 ?? '';
 
+describe('sofa accessories go with their sofa (owner 2026-11-28)', () => {
+  test('fabric_accessory is picked in the SOFA section', () => {
+    for (const g of ['fabric_accessory', 'FABRIC_ACCESSORY', 'fabric accessory', 'sofa_accessory']) expect(packCategory(g)).toBe('SOFA');
+    expect(packCategory('accessory')).toBe('ACCESSORIES');
+  });
+
+  test("a sofa order's square pillow is listed under that order's SO with its sofa", () => {
+    const sections = buildPickSections([
+      stop(2, [item('XAM-1S', 'sofa', 1), item('SQUARE PILLOW', 'fabric_accessory', 3)], { so_doc_no: 'SO-2' }),
+      stop(1, [item('PIL-STD', 'accessory', 2)], { so_doc_no: 'SO-1' }),
+    ], variantFromD2);
+    expect(sections.map((s) => s.category)).toEqual(['ACCESSORIES', 'SOFA']);
+    const sofa = sections.find((s) => s.category === 'SOFA')!;
+    expect(sofa.groups.map((g) => g.so_doc_no)).toEqual(['SO-2']);
+    expect(sofa.groups[0].rows.map((r) => r.item_code).sort()).toEqual(['SQUARE PILLOW', 'XAM-1S']);
+  });
+});
+
 describe('packCategory', () => {
   test('maps item_group case-insensitively; anything else is OTHER', () => {
     expect(packCategory('MATTRESS')).toBe('MATTRESS');
