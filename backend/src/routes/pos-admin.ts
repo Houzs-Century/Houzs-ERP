@@ -20,7 +20,7 @@ import {
 import { requireActiveCompanyId } from "../scm/lib/companyScope";
 import { hashPassword } from "../services/auth";
 import { internalEan13 } from "../scm/shared/ean13";
-import { POS_SETTINGS_GROUPS, normalizePosSettings, normalizePosSettingsGroup, type PosSettingsGroup } from "../scm/shared/pos-settings";
+import { POS_SETTINGS_GROUPS, normalizePosSettings, normalizePosSettingsGroup, receiptNoFormatProblem, type PosSettingsGroup } from "../scm/shared/pos-settings";
 import { skuByCodes, skuFactsByIds, skuSearch } from "./lib/pos-sku";
 import { deviceTokenHash, mintDeviceToken } from "./lib/pos-bundle";
 import { loadPosBundle } from "./lib/pos-bundle-load";
@@ -125,6 +125,9 @@ posAdmin.put("/settings/:group", async (c) => {
   const group = c.req.param("group") as PosSettingsGroup;
   if (!POS_SETTINGS_GROUPS.includes(group)) return c.json({ error: "unknown_group" }, 400);
   const body = await c.req.json<{ value?: unknown }>().catch(() => ({} as { value?: unknown }));
+  const fmt = group === "general" ? (body.value as { receipt_no_format?: unknown } | undefined)?.receipt_no_format : undefined;
+  const fmtProblem = typeof fmt === "string" ? receiptNoFormatProblem(fmt) : null;
+  if (fmtProblem) return c.json({ error: "receipt_no_format_invalid", message: fmtProblem }, 400);
   const value = normalizePosSettingsGroup(group, body.value);
   const db = getDb(c.env);
   await db

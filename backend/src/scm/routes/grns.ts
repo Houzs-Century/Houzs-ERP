@@ -1730,15 +1730,58 @@ grns.patch('/:id', async (c) => {
   });
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  for (const [from, to] of [
+    ['supplierId', 'supplier_id'], ['receivedAt', 'received_at'], ['notes', 'notes'],
+    ['deliveryNoteRef', 'delivery_note_ref'], ['warehouseId', 'warehouse_id'], ['currency', 'currency'],
+  ] as const) {
+    if (body[from] !== undefined) updates[to] = body[from];
+  }
+  if (updates.currency !== undefined) updates.currency = normalizeCurrency(updates.currency);
+  {
+    const rateGuard = await assertForeignRatePatchable(sb, {
+      fromCurrency: before.currency,
+      toCurrency: updates.currency,
+      operatorRate: body.exchangeRate,
+      docLabel: 'GRN',
+    });
+    if (!rateGuard.ok) return refuseWithoutWriting(c, rateGuard.body, 422);
+  }
+  let methodChanged = false;
+  if (body.allocationMethod !== undefined) {
+    updates.allocation_method = normalizeAllocationMethod(body.allocationMethod);
+    methodChanged = true;
+  }
+  let rateChanged = false;
+  if (body.exchangeRate !== undefined || updates.currency !== undefined) {
+    let effectiveCurrency = updates.currency as string | undefined;
+    if (effectiveCurrency === undefined) {
+      effectiveCurrency = (before.currency as string | undefined) ?? 'MYR';
+    }
+    if (body.exchangeRate !== undefined) {
+      updates.exchange_rate = normalizeExchangeRate(body.exchangeRate, effectiveCurrency);
+      rateChanged = true;
+    } else if (String(effectiveCurrency).toUpperCase() === 'MYR') {
+      updates.exchange_rate = 1;
+      rateChanged = true;
+    }
+  }
+
+  /* docs/bugs/README.md "A best-effort side effect": the relocation is ONE insert
+     (OUT old + IN new), written BEFORE the header and checked. A failed insert
+     writes nothing, so the refusal leaves warehouse and stock in step; a failed
+     header write after it puts the stock back (relocationUndo) and says so. */
+  let relocated: Parameters<typeof writeMovements>[1] = [];
   const migratedNoStock = isMigratedNoStock(before as { migrated_no_stock?: boolean | null });
   if (body.warehouseId !== undefined && !migratedNoStock) {
     const c0 = (beforeRow ?? null) as unknown as { grn_number: string; status: string | null; warehouse_id: string | null; exchange_rate?: string | number | null } | null;
     const oldWh = c0?.warehouse_id ?? null;
     const newWh = (body.warehouseId as string | null) ?? null;
     if (c0 && (c0.status ?? '').toUpperCase() === 'POSTED' && newWh && oldWh && newWh !== oldWh) {
-      const { data: lines } = await sb.from('grn_items')
+      const { data: lines, error: linesErr } = await sb.from('grn_items')
         .select('purchase_order_item_id, qty_accepted, item_code, material_name, unit_price_sen, item_group, variants')
         .eq('grn_id', id);
+      if (linesErr) return refuseWithoutWriting(c, linesUnreadableBody('the receipt lines', 'moved to the new warehouse', linesErr), 503);
       const lineList = (lines ?? []) as Array<{
         purchase_order_item_id: string | null; qty_accepted: number;
         item_code: string; material_name: string | null; unit_price_sen: number | null;
@@ -1784,60 +1827,39 @@ grns.patch('/:id', async (c) => {
           ];
         });
       if (movements.length > 0) {
-        try {
-          await writeMovements(sb, movements, activeCompanyId(c));
-          await reconcileUncostedAfterIn(sb, movements, user?.id ?? null);
-          try {
-            const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
-            await recomputeAllocationAfterSave(sb, 'post-grn-relocate');
-          } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-relocate failed:', e); }
-        } catch (e) {
-          return c.json({ error: 'relocate_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
-        }
+        const wrote = await writeMovements(sb, movements, activeCompanyId(c));
+        if (!wrote.ok) return refuseWithoutWriting(c, { error: 'relocate_failed', message: 'The stock could not be moved to the new warehouse, so the warehouse was NOT changed. Please try again.', reason: wrote.reason ?? 'unknown' }, 500);
+        relocated = movements;
       }
     }
   }
 
-  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  for (const [from, to] of [
-    ['supplierId', 'supplier_id'], ['receivedAt', 'received_at'], ['notes', 'notes'],
-    ['deliveryNoteRef', 'delivery_note_ref'], ['warehouseId', 'warehouse_id'], ['currency', 'currency'],
-  ] as const) {
-    if (body[from] !== undefined) updates[to] = body[from];
-  }
-  if (updates.currency !== undefined) updates.currency = normalizeCurrency(updates.currency);
-  {
-    const rateGuard = await assertForeignRatePatchable(sb, {
-      fromCurrency: before.currency,
-      toCurrency: updates.currency,
-      operatorRate: body.exchangeRate,
-      docLabel: 'GRN',
-    });
-    if (!rateGuard.ok) return c.json(rateGuard.body, 422);
-  }
-  let methodChanged = false;
-  if (body.allocationMethod !== undefined) {
-    updates.allocation_method = normalizeAllocationMethod(body.allocationMethod);
-    methodChanged = true;
-  }
-  let rateChanged = false;
-  if (body.exchangeRate !== undefined || updates.currency !== undefined) {
-    let effectiveCurrency = updates.currency as string | undefined;
-    if (effectiveCurrency === undefined) {
-      effectiveCurrency = (before.currency as string | undefined) ?? 'MYR';
+  const relocationUndo = async (why: string): Promise<Response> => {
+    const undo = await writeMovements(sb, relocated.map((m, i) => ({
+      ...m,
+      warehouse_id: relocated[i ^ 1]!.warehouse_id,
+      notes: 'GRN warehouse change undone — header save failed',
+    })), activeCompanyId(c));
+    if (undo.ok) {
+      return c.json({ error: 'update_failed', reason: why,
+        message: 'The warehouse change could not be saved. The stock was moved back to the old warehouse; nothing changed.' }, 500);
     }
-    if (body.exchangeRate !== undefined) {
-      updates.exchange_rate = normalizeExchangeRate(body.exchangeRate, effectiveCurrency);
-      rateChanged = true;
-    } else if (String(effectiveCurrency).toUpperCase() === 'MYR') {
-      updates.exchange_rate = 1;
-      rateChanged = true;
-    }
-  }
+    return c.json({ error: 'relocate_stranded', reason: why, undoReason: undo.reason ?? 'unknown',
+      message: 'The warehouse change could not be saved AND the stock could not be moved back: the stock now sits in the new warehouse while this GRN still names the old one. Run /inventory/reconcile.' }, 500);
+  };
+
   const { data, error } = await scopeToCompanyId(sb.from('grns')
     .update(coerceEmptyDates(updates)).eq('id', id), co.companyId).select(HEADER).maybeSingle();
-  if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
-  if (!data) return c.json(NOT_THIS_COMPANY, 404);
+  if (error) return relocated.length ? relocationUndo(error.message) : c.json({ error: 'update_failed', reason: error.message }, 500);
+  if (!data) return relocated.length ? relocationUndo('not_found') : c.json(NOT_THIS_COMPANY, 404);
+
+  if (relocated.length) {
+    await reconcileUncostedAfterIn(sb, relocated, user?.id ?? null);
+    try {
+      const { recomputeAllocationAfterSave } = await import('../lib/stock-allocation-job');
+      await recomputeAllocationAfterSave(sb, 'post-grn-relocate');
+    } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-grn-relocate failed:', e); }
+  }
 
   {
     const auditPatch: Record<string, unknown> = {};
@@ -2423,41 +2445,42 @@ grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, async (
       item_code: string; material_name: string | null; unit_price_sen: number | null;
       item_group?: string | null; variants?: VariantAttrs | null;
     };
-    try { await recomputePoReceived(sb, [l.purchase_order_item_id]); } catch { }
+    /* docs/bugs/README.md "A best-effort side effect": every step below is
+       checked, and a non-2xx return makes runScmPgCommand roll the line delete
+       back with it. A thrown error does the same (500 command_failed). */
+    const recount = await recomputePoReceived(sb, [l.purchase_order_item_id]);
+    if (!recount.ok) return refuseWithoutWriting(c, { error: 'po_recount_failed', message: 'The PO received quantity could not be recounted, so the line was NOT removed. Please try again.', reason: recount.reason ?? 'unknown' }, 500);
 
     if ((l.qty_accepted ?? 0) > 0 && !noCommittedStock) {
-      let stockReversed = false;
-      try {
-        const { data: grnHeader } = await sb.from('grns')
-          .select('grn_number, warehouse_id').eq('id', grnId).maybeSingle();
-        const warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
-          ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
-        if (warehouseId) {
-          const variantKey = await bk.ownDocBucketKey(sb, { type: 'GRN', id: grnId, movement: 'IN', companyId: activeCompanyId(c) ?? null }, l.item_code, computeVariantKey(l.item_group, l.variants ?? null));
-          const batchMap = await resolvePoBatchByItem(sb, [l.purchase_order_item_id]);
-          const batchNo: string | null = l.purchase_order_item_id
-            ? (batchMap.get(l.purchase_order_item_id) ?? null)
-            : null;
-          await writeMovements(sb, [{
-            movement_type: 'OUT' as const,
-            warehouse_id: warehouseId,
-            item_code: l.item_code,
-            variant_key: variantKey,
-            product_name: l.material_name,
-            qty: l.qty_accepted,
-            ...(batchNo ? { batch_no: batchNo } : {}),
-            source_doc_type: 'GRN' as const,
-            source_doc_id: grnId,
-            source_doc_no: (grnHeader as { grn_number: string } | null)?.grn_number ?? grnId,
-            performed_by: user.id,
-            notes: 'GRN line deleted — reversing receipt',
-          }], activeCompanyId(c));
-          stockReversed = true;
-        }
-      } catch { }
+      const { data: grnHeader, error: grnHeaderErr } = await sb.from('grns')
+        .select('grn_number, warehouse_id').eq('id', grnId).maybeSingle();
+      if (grnHeaderErr) return refuseWithoutWriting(c, { error: 'lookup_failed', message: 'The GRN could not be re-read, so the line was NOT removed. Please try again.', reason: grnHeaderErr.message }, 500);
+      const warehouseId = (grnHeader as { warehouse_id: string | null } | null)?.warehouse_id
+        ?? (await defaultWarehouseId(sb, activeCompanyId(c)));
+      if (!warehouseId) return refuseWithoutWriting(c, { error: 'warehouse_required', message: 'This GRN has no warehouse to take the received stock back out of, so the line was NOT removed. Set the GRN warehouse first.' }, 409);
+      const variantKey = await bk.ownDocBucketKey(sb, { type: 'GRN', id: grnId, movement: 'IN', companyId: activeCompanyId(c) ?? null }, l.item_code, computeVariantKey(l.item_group, l.variants ?? null));
+      const batchMap = await resolvePoBatchByItem(sb, [l.purchase_order_item_id]);
+      const batchNo: string | null = l.purchase_order_item_id
+        ? (batchMap.get(l.purchase_order_item_id) ?? null)
+        : null;
+      const wrote = await writeMovements(sb, [{
+        movement_type: 'OUT' as const,
+        warehouse_id: warehouseId,
+        item_code: l.item_code,
+        variant_key: variantKey,
+        product_name: l.material_name,
+        qty: l.qty_accepted,
+        ...(batchNo ? { batch_no: batchNo } : {}),
+        source_doc_type: 'GRN' as const,
+        source_doc_id: grnId,
+        source_doc_no: (grnHeader as { grn_number: string } | null)?.grn_number ?? grnId,
+        performed_by: user.id,
+        notes: 'GRN line deleted — reversing receipt',
+      }], activeCompanyId(c));
+      if (!wrote.ok) return refuseWithoutWriting(c, { error: 'stock_reversal_failed', message: 'The received stock could not be taken back out, so the line was NOT removed. Please try again.', reason: wrote.reason ?? 'unknown' }, 500);
       /* DURABLE: queues with the OUT above, and is NOT caught - a failed
          enqueue must fail the delete. docs/modules/grn.md 7c. */
-      if (stockReversed) await scheduleStockAllocationAfterCommand(c, sb, `grn-line-delete:${grnId}`);
+      await scheduleStockAllocationAfterCommand(c, sb, `grn-line-delete:${grnId}`);
     }
   }
 

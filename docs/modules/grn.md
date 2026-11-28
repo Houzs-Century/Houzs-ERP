@@ -126,7 +126,9 @@ go through `/api/scm/grns`.
   `exchange_rate` / `allocation_method` freeze (`409 grn_header_inherited_locked`);
   other header fields, including warehouse, stay editable — a warehouse change on
   a POSTED GRN physically moves stock (OUT of old + IN to new) and is NOT gated by
-  `grnHasDownstream`.
+  `grnHasDownstream`. The move is one insert written BEFORE the header: a failed
+  insert refuses (`relocate_failed`, warehouse unchanged); a failed header save
+  after it moves the stock back (`relocate_stranded` if that also fails).
 - Service/freight lines never create inventory movements (goods lines only); their
   amount is pooled and spread across goods lines by the header's `allocation_method`.
 - `item_group` / stock variant key for a hand-entered line is resolved server-side
@@ -140,8 +142,9 @@ go through `/api/scm/grns`.
   inside one DB transaction (`runScmPgCommand`): document write, stock reversal,
   audit row, AutoCount outbox row and SO-allocation recompute request commit
   together or not at all; answers `503` if no direct DB connection is available
-  rather than risk a half-written reversal. The other four GRN write paths are
-  still best-effort.
+  rather than risk a half-written reversal. Every step of the line DELETE (PO
+  recount, header read, warehouse, stock OUT) is checked and a failure rolls the
+  delete back. The other four GRN write paths are still best-effort.
 - Every pre-write refusal must release the request's idempotency key
   (`refuseWithoutWriting` / `refuseZeroCostReceipt`) so a corrected resubmit is not
   permanently blocked by its own failed first attempt.

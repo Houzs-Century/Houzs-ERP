@@ -1220,11 +1220,12 @@ export async function resyncInventoryForDo(sb: any, deliveryOrderId: string, per
 }
 
 export async function reverseInventoryForDo(sb: any, deliveryOrderId: string, performedBy: string): Promise<string[]> {
-  const { count: existing } = await sb
+  const { count: existing, error: existingErr } = await sb
     .from('inventory_movements')
     .select('id', { head: true, count: 'exact' })
     .eq('source_doc_type', 'ADJUSTMENT')
     .eq('source_doc_id', deliveryOrderId);
+  if (existingErr) return [`DO reversal skipped: could not check for an earlier reversal (${existingErr.message ?? 'unknown'})`];
   if ((existing ?? 0) > 0) return [];
 
   let hdrRes = await sb.from('delivery_orders')
@@ -1285,6 +1286,27 @@ export async function reverseInventoryForDo(sb: any, deliveryOrderId: string, pe
     movsRes = await sb.from('inventory_movements')
       .select('movement_type, warehouse_id, item_code, variant_key, qty, total_cost_sen, product_name')
       .eq('source_doc_type', 'DO').eq('source_doc_id', deliveryOrderId);
+  }
+  if (movsRes.error) {
+    const reason = movsRes.error.message ?? 'unknown';
+    /* docs/bugs/README.md "A failed read taken as an absence", audit H4: an unread
+       movement list is not an empty one. Reported like a failed write. */
+    // eslint-disable-next-line no-console -- the Worker log twin of the movementErrors entry returned below
+    console.error(`[do-reverse] DO stock movements could not be read for DO ${deliveryOrderId}: ${reason}`);
+    try {
+      await recordEntityAudit(sb, {
+        entityType: 'DELIVERY_ORDER',
+        entityId: deliveryOrderId,
+        entityDocNo: (doHeader as { do_number?: string | null } | null)?.do_number ?? null,
+        action: 'RECOUNT_FAILED',
+        companyId: (doHeader as { company_id?: number | null } | null)?.company_id ?? null,
+        source: 'reverseInventoryForDo',
+        note:
+          `DO cancelled but its stock movements could not be read, so NO reversal was written: ${reason}. ` +
+          `The shipped stock is still deducted until /inventory/reconcile or a re-cancel repairs it.`,
+      });
+    } catch { }
+    return [`DO reversal skipped: the DO stock movements could not be read (${reason})`];
   }
   const movs = movsRes.data;
 
