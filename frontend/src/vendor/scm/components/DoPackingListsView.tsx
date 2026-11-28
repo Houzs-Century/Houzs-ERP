@@ -9,12 +9,12 @@
    usePackingPrint, so the two places can never print different sheets.
 
    The date is URL state (`date`), like every other filter on this page; so are
-   the By lorry / By region switch (`view=region`) and, in By region, the
-   "only DOs not on a lorry yet" tick (`unassigned=1`).
+   the By lorry / By region switch (`view=region`). By region lists every
+   delivery order of the day, lorry or not (owner, 2026-11-28).
    ---------------------------------------------------------------------------- */
 
 import { useSearchParams } from 'react-router-dom';
-import { Eye, Printer } from 'lucide-react';
+import { Download, Eye, Printer } from 'lucide-react';
 import { Button } from '../../../components/Button';
 import { Badge } from '../../../components/Badge';
 import { DataTable, type Column } from '../../../components/DataTable';
@@ -38,10 +38,9 @@ export function DoPackingListsView() {
   const rawDate = params.get('date');
   const date = isIsoDate(rawDate) ? rawDate : today;
   const byRegion = params.get('view') === 'region';
-  const unassignedOnly = byRegion && params.get('unassigned') === '1';
   const query = usePackingLists({ date, warehouseId: null });
   const lists = query.data?.lists ?? [];
-  const regionQuery = usePackingRegions({ date, unassignedOnly, enabled: byRegion });
+  const regionQuery = usePackingRegions({ date, unassignedOnly: false, enabled: byRegion });
   const regions = regionQuery.data?.regions ?? [];
   const regionDos = regions.reduce((n, r) => n + r.do_count, 0);
   const print = usePackingPrint(date);
@@ -50,7 +49,6 @@ export function DoPackingListsView() {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
     else next.delete(key);
-    if (key === 'view' && !value) next.delete('unassigned');
     setParams(next, { replace: true });
   };
 
@@ -97,11 +95,12 @@ export function DoPackingListsView() {
       getValue: (l) => rollupLabel(rollupDeliveryStatus(l.stops)) ?? '',
     },
     {
-      key: 'actions', label: '', align: 'right', width: '190px',
+      key: 'actions', label: '', align: 'right', width: '290px',
       render: (l) => (
         <span className="inline-flex gap-1">
           <Button variant="ghost" icon={<Eye size={13} />} disabled={print.busy} onClick={() => print.one(l, 'preview')}>Open</Button>
           <Button variant="ghost" icon={<Printer size={13} />} disabled={print.busy} onClick={() => print.one(l, 'print')}>Print</Button>
+          <Button variant="ghost" icon={<Download size={13} />} disabled={print.busy} onClick={() => print.one(l, 'save')}>Download</Button>
         </span>
       ),
     },
@@ -136,6 +135,15 @@ export function DoPackingListsView() {
           </Button>
         ))}
         <span className="hidden flex-1 sm:block" />
+        <Button
+          variant="secondary"
+          icon={<Download size={14} />}
+          disabled={print.busy || (byRegion ? nr === 0 : n === 0)}
+          onClick={() => (byRegion ? print.regions(regions, 'save') : print.all(lists, 'save'))}
+          className="w-full sm:w-auto"
+        >
+          {byRegion ? `Download all ${nr} ${nr === 1 ? 'region' : 'regions'}` : `Download all ${n} ${n === 1 ? 'lorry' : 'lorries'}`}
+        </Button>
         {byRegion ? (
           <Button
             variant="primary"
@@ -173,21 +181,10 @@ export function DoPackingListsView() {
             </button>
           ))}
         </div>
-        {byRegion && (
-          <label className="inline-flex cursor-pointer items-center gap-2 text-[12px] text-ink">
-            <input
-              type="checkbox"
-              checked={unassignedOnly}
-              onChange={(e) => setParam('unassigned', e.target.checked ? '1' : null)}
-              className="h-4 w-4"
-            />
-            Only DOs not on a lorry yet
-          </label>
-        )}
       </div>
       <p className="text-[12px] text-ink-muted">
         {byRegion
-          ? `${fmtDate(date)} · one packing list per region (the Delivery Planning regions), lorry or not. Picks by category; each line shows its lorry.`
+          ? `${fmtDate(date)} · one packing list per region (the Delivery Planning regions), lorry or not. Picks by category.`
           : `${fmtDate(date)} · one packing list per lorry. Part A picks by category; Part B loads the last customer first.`}
       </p>
       {print.error && <p role="alert" className="text-[12px] text-err">{print.error}</p>}
@@ -197,7 +194,6 @@ export function DoPackingListsView() {
           regions={regionQuery.data ? regions : null}
           loading={regionQuery.isLoading}
           error={regionQuery.error ? `Could not load the delivery orders by region for this day. ${regionQuery.error instanceof Error ? regionQuery.error.message : ''}` : null}
-          unassignedOnly={unassignedOnly}
           busy={print.busy}
           onPrint={print.regions}
         />

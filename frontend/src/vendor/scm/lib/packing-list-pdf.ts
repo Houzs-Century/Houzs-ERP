@@ -106,7 +106,7 @@ function variantText(item: PackingItem, fabric: Fabric): string {
   return d2 && d2 !== (item.description ?? '').trim() ? d2 : '';
 }
 
-function itemCell(doc: Doc, colW: number, code: string, description: string | null, variant: string): string {
+function itemCell(doc: Doc, colW: number, code: string, description: string | null, variant: string, withCode: boolean): string {
   const name = stripBookText((description ?? '').replace(/\s+/g, ' ').trim());
   font(doc, S.min + 0.5, 'bold');
   const room = colW - CELL_PAD.left - CELL_PAD.right - 0.5;
@@ -116,6 +116,7 @@ function itemCell(doc: Doc, colW: number, code: string, description: string | nu
     short = `${short.trimEnd()}...`;
   }
   const c = code.trim() || DASH;
+  if (!withCode) return [short || c, stripBookText(variant.trim())].filter(Boolean).join('\n');
   return [c, short && short !== c ? short : '', stripBookText(variant.trim())].filter(Boolean).join('\n');
 }
 
@@ -169,6 +170,7 @@ function drawSlimHeader(doc: Doc, spec: HeaderSpec): number {
   }
 
   let x = M;
+  let logoH = 0;
   const logo = spec.logo ?? getBrandingLogoCache();
   if (logo) {
     const BOX_W = 22;
@@ -177,6 +179,7 @@ function drawSlimHeader(doc: Doc, spec: HeaderSpec): number {
     try {
       doc.addImage(logo.dataUrl, logo.format, M, M, logo.width * scale, logo.height * scale);
       x = M + logo.width * scale + 4;
+      logoH = logo.height * scale;
       bottom = Math.max(bottom, M + logo.height * scale);
     } catch { }
   }
@@ -184,8 +187,10 @@ function drawSlimHeader(doc: Doc, spec: HeaderSpec): number {
   font(doc, S.company - 2, 'bold');
   setInk(doc, T.ink);
   const name = doc.splitTextToSize(COMPANY.name, room) as string[];
-  let ny = baselineOf(M + 1, S.company - 2);
-  name.slice(0, 2).forEach((line, i) => {
+  const shown = name.slice(0, 2);
+  const nameH = pt(S.company - 2) * (1 + 1.1 * (shown.length - 1));
+  let ny = baselineOf(M + Math.max(1, (logoH - nameH) / 2), S.company - 2);
+  shown.forEach((line, i) => {
     if (i) ny += pt(S.company - 2) * 1.1;
     doc.text(line, x, ny);
   });
@@ -323,6 +328,7 @@ type PickLayout = {
   head: string[];
   cols: Record<number, Record<string, unknown>>;
   lorryOf: ((customers: readonly number[]) => string[]) | null;
+  showCust: boolean;
   emptyText: string;
 };
 
@@ -337,22 +343,23 @@ const LORRY_LAYOUT: PickLayout = {
     5: { cellWidth: 11, halign: 'center' as const },
   },
   lorryOf: null,
+  showCust: true,
   emptyText: 'Nothing to pick: no delivery order on this lorry has goods lines.',
 };
 
 function regionLayout(region: Pick<PackingRegionRow, 'dos'>): PickLayout {
   return {
-    head: [COL.item, COL.po, COL.rack, COL.qty, COL.cust, COL.lorry, COL.tick],
+    head: [COL.item, COL.po, COL.rack, COL.qty, COL.lorry, COL.tick],
     cols: {
       0: { cellWidth: 'auto' as const, fontStyle: 'bold' as const },
-      1: { cellWidth: 31, fontSize: S.min },
-      2: { cellWidth: 16, halign: 'center' as const, fontStyle: 'bold' as const },
-      3: { cellWidth: 11, halign: 'right' as const, fontStyle: 'bold' as const, fontSize: S.body },
-      4: { cellWidth: 14, halign: 'center' as const, fontStyle: 'bold' as const },
-      5: { cellWidth: 22, fontSize: S.min },
-      6: { cellWidth: 10, halign: 'center' as const },
+      1: { cellWidth: 33, fontSize: S.min },
+      2: { cellWidth: 18, halign: 'center' as const, fontStyle: 'bold' as const },
+      3: { cellWidth: 12, halign: 'right' as const, fontStyle: 'bold' as const, fontSize: S.body },
+      4: { cellWidth: 22, fontSize: S.min },
+      5: { cellWidth: 11, halign: 'center' as const },
     },
     lorryOf: (customers) => lorriesFor(customers, region),
+    showCust: false,
     emptyText: 'Nothing to pick: no delivery order in this region has goods lines.',
   };
 }
@@ -360,12 +367,12 @@ function regionLayout(region: Pick<PackingRegionRow, 'dos'>): PickLayout {
 const itemColW = (layout: PickLayout): number =>
   CONTENT_W - Object.values(layout.cols).reduce<number>((n, c) => n + (typeof c.cellWidth === 'number' ? c.cellWidth : 0), 0);
 
-const pickBody = (doc: Doc, rows: readonly PickRow[], layout: PickLayout): string[][] => rows.map((r) => [
-  itemCell(doc, itemColW(layout), r.item_code, r.description, r.variant),
+const pickBody = (doc: Doc, rows: readonly PickRow[], layout: PickLayout, withCode: boolean): string[][] => rows.map((r) => [
+  itemCell(doc, itemColW(layout), r.item_code, r.description, r.variant, withCode),
   poCell(r.pos, r.worked_out),
   rackCell(r.racks, r.worked_out),
   qtyText(r.qty),
-  r.customers.join(', '),
+  ...(layout.showCust ? [r.customers.join(', ')] : []),
   ...(layout.lorryOf ? [layout.lorryOf(r.customers).join('\n') || DASH] : []),
   '',
 ]);
@@ -419,7 +426,8 @@ function drawPickTable(
     const lines = (doc.splitTextToSize(first.content, w - CELL_PAD.left - CELL_PAD.right) as string[]).length;
     return n + Math.max(ROW_EST, lines * pt(size) * 1.15 + pad.top + pad.bottom + 0.5);
   }, 0);
-  if (startY + headH + firstRowH > TABLE_BOTTOM) { doc.addPage(); startY = CONT_TOP_A; }
+  const footH = foot && body.length === 1 ? pt(S.body) * 1.15 + CELL_PAD.top + CELL_PAD.bottom + 0.5 : 0;
+  if (startY + headH + firstRowH + footH > TABLE_BOTTOM) { doc.addPage(); startY = CONT_TOP_A; }
   autoTable(doc, {
     ...baseTable({ startY, contTop: CONT_TOP_A }),
     head,
@@ -462,7 +470,7 @@ function drawPartA(doc: Doc, autoTable: AutoTable, startY: number, sections: Pic
     const labels = si === 0 ? [layout.head] : [];
     if (si > 0) y += 3;
     if (section.category !== 'SOFA') {
-      y = drawPickTable(doc, autoTable, y, layout, [...labels, sectionHeadRow(section, layout)], pickBody(doc, section.rows, layout), lastSection ? totalFoot : null);
+      y = drawPickTable(doc, autoTable, y, layout, [...labels, sectionHeadRow(section, layout)], pickBody(doc, section.rows, layout, false), lastSection ? totalFoot : null);
       return;
     }
     section.groups.forEach((g, gi) => {
@@ -482,7 +490,7 @@ function drawPartA(doc: Doc, autoTable: AutoTable, startY: number, sections: Pic
       ];
       const head = gi === 0 ? [...labels, sectionHeadRow(section, layout), soRow] : [soRow];
       const lastGroup = gi === section.groups.length - 1;
-      y = drawPickTable(doc, autoTable, y, layout, head, pickBody(doc, g.rows, layout), lastSection && lastGroup ? totalFoot : null);
+      y = drawPickTable(doc, autoTable, y, layout, head, pickBody(doc, g.rows, layout, true), lastSection && lastGroup ? totalFoot : null);
     });
   });
   return y + 3;
@@ -528,7 +536,6 @@ function drawStopHeader(doc: Doc, top: number, stop: PackingStop, draw: boolean)
   font(doc, S.min + 0.5);
   const detail = [
     stop.address ?? 'No address on this stop',
-    stop.phone ? `Tel ${formatPhone(stop.phone)}` : 'Tel —',
     stop.time_range ? `Time ${stop.time_range}` : null,
   ].filter(Boolean).join('  ·  ');
   const detailLines = doc.splitTextToSize(detail, midW) as string[];
@@ -558,7 +565,7 @@ function drawStopHeader(doc: Doc, top: number, stop: PackingStop, draw: boolean)
 function stopRows(doc: Doc, stop: PackingStop, fabric: Fabric): string[][] {
   return stop.items.map((it) => [
     isSofaAccessory(it.item_group) ? 'SOFA ACC' : shortType(packCategory(it.item_group)),
-    itemCell(doc, B_ITEM_W, it.item_code, it.description, variantText(it, fabric)),
+    itemCell(doc, B_ITEM_W, it.item_code, it.description, variantText(it, fabric), packCategory(it.item_group) === 'SOFA'),
     poCell(splitPos(it.po), it.worked_out),
     rackCell(splitRacks(it.rack), it.worked_out),
     qtyText(it.qty),
@@ -776,7 +783,6 @@ function drawRegionSummary(doc: Doc, top: number, region: PackingRegionRow): num
       lines: [[`${region.do_count} DO · ${region.customer_count} ${region.customer_count === 1 ? 'customer' : 'customers'} · ${unitsLabel(region.units)}`, true]],
     },
     { caption: 'Lorries', lines: [[region.lorry_plates.length > 0 ? region.lorry_plates.join(', ') : 'None yet', true]] },
-    { caption: 'No lorry yet', lines: [[`${region.not_arranged} of ${region.do_count} DO`, true]] },
   ]);
 }
 

@@ -171,8 +171,10 @@ describe('Part A — pick by category', () => {
     const { spans } = await render(SMALL);
     expect(spans.filter((s) => s.text === 'PO NO')).toHaveLength(2);
     expect(spans.some((s) => /^Take everything|^Load from the top/.test(s.text))).toBe(false);
-    expect(has(spans, 'AKM-MAT-Q10')).toBe(true);
+    expect(has(spans, 'AKM-MAT-Q10')).toBe(false);
     expect(has(spans, 'AKM-MAT-Q10 description')).toBe(true);
+    expect(has(spans, 'XAM-1S-LHF')).toBe(true);
+    expect(has(spans, 'XAM-1S-LHF description')).toBe(true);
     expect(has(spans, 'TOTAL TO PICK')).toBe(true);
   });
 
@@ -196,15 +198,18 @@ describe('Part B — load by customer', () => {
     expect(numbers).toEqual(['3', '2', '1']);
   });
 
-  test('each block names DO, SO, units, phone and time slot; lines keep the SO order they arrive in', async () => {
+  test('each block names DO, SO, units and time slot, never the customer phone; lines keep the SO order they arrive in', async () => {
     const { spans } = await render(SMALL);
     const after = spans.slice(firstIdx(spans, 'PART B'));
     expect(has(after, 'DO HC-DO-2611-101')).toBe(true);
     expect(has(after, 'SO HC-SO-2610-201  ·  2 units')).toBe(true);
     expect(after.some((s) => s.text.includes('Time 9am - 11am'))).toBe(true);
+    expect(after.some((s) => s.text.includes('Tel ') || s.text.includes('7003 933'))).toBe(false);
     const liaw = after.findIndex((s) => s.text === 'LIAW TECK CHAI');
     const block = after.slice(liaw);
-    expect(block.findIndex((s) => s.text === 'BF-Q-OAK')).toBeLessThan(block.findIndex((s) => s.text === 'AKM-MAT-Q10'));
+    const bf = block.findIndex((s) => s.text === 'BF-Q-OAK description');
+    expect(bf).toBeGreaterThanOrEqual(0);
+    expect(bf).toBeLessThan(block.findIndex((s) => s.text === 'AKM-MAT-Q10 description'));
   });
 
   test('compact: Part B follows Part A on the same page when there is room (owner: 23 pages is too many)', async () => {
