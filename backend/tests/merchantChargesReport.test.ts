@@ -5,6 +5,8 @@
        the payout landed, and the two together are the charge % of gross;
      • a total line per month across acquirers, and a grand total;
      • each month-and-acquirer carries the reports (files) behind it;
+     • a report's statement charge (AEON's subvention fee) is in its lines' fees,
+       shared by gross;
      • the confirmed-only and acquirer filters are the caller's; a bad range
        is refused; the permission gate answers at this end;
      • cash and online payments keyed on sales orders are rows of their own at
@@ -141,6 +143,35 @@ describe('the Merchant charges report', () => {
     expect(ghl.body.months).toHaveLength(1);
     expect(ghl.body.months[0].acquirers.map((a: any) => a.acquirer)).toEqual(['GHL']);
     expect(ghl.body.totals).toMatchObject({ lines: 1, grossSen: 50000, feeSen: 2000, bankChargeSen: 0 });
+  });
+
+  /* Owner 2026-11-28: Pine Labs 手续费对的，你帮我更改，把它加去每一笔的费用里面，根据那时候说的
+     算法去算 — AEON's statement-level subvention fee goes into its lines' fees, by gross
+     (acc/settlement-sold-by chargeSharesOf), so the fee % is what the machine cost. */
+  test('a statement charge is shared into its report\'s line fees by gross, a line outside the range keeping its own share', async () => {
+    const { app } = harness([GL_PERM], () => fakeSb({
+      ...MERCHANT_TABLES(),
+      acc_settlement_batches: [
+        ...MERCHANT_TABLES().acc_settlement_batches!,
+        { id: 21, company_id: CO, acquirer_code: 'AEON', file_name: '20260630_000000000000001.csv', period_from: '2026-06-30', period_to: '2026-07-01', adjustment_sen: 50000 },
+      ],
+      acc_settlement_rows: [
+        ...MERCHANT_TABLES().acc_settlement_rows!,
+        line(21, 'AEON', '2026-06-30', 600000, 7200),
+        line(21, 'AEON', '2026-07-01', 400000, 4800),
+      ],
+    }));
+    const june = await read(app, 'from=2026-06&to=2026-06');
+    const aeon = june.body.months[0].acquirers.find((a: any) => a.acquirer === 'AEON');
+    expect(aeon).toMatchObject({ lines: 1, grossSen: 600000, feeSen: 7200 + 30000, netSen: 600000 - 37200, feePct: 6.2, chargeSen: 37200 });
+    expect(aeon.reports[0]).toMatchObject({ batchId: 21, feeSen: 37200 });
+    const both = await read(app, 'from=2026-06&to=2026-07');
+    const july = both.body.months[1].acquirers.find((a: any) => a.acquirer === 'AEON');
+    expect(july).toMatchObject({ grossSen: 400000, feeSen: 4800 + 20000, netSen: 400000 - 24800 });
+    /* The two shares are the whole charge; a report with none is unchanged. */
+    const aeonFee = both.body.months.flatMap((m: any) => m.acquirers).filter((a: any) => a.acquirer === 'AEON').reduce((t: number, a: any) => t + a.feeSen, 0);
+    expect(aeonFee).toBe(7200 + 4800 + 50000);
+    expect(both.body.months[0].acquirers.find((a: any) => a.acquirer === 'GHL')).toMatchObject({ feeSen: 2000 });
   });
 
   test('a bad range is refused, and the permission gate answers at this end', async () => {

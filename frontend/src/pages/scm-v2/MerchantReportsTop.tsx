@@ -186,7 +186,7 @@ const rm = (sen: number): string => `RM ${(sen / 100).toLocaleString('en-MY', { 
 
 /* What a report takes off beyond its lines' own fees (owner 2026-11-06: 做，改四格): AEON's
    subvention fee is the one that happens; a report paying more than its lines is a rebate. */
-const chargeLabel = (b: SettlementBatch): string =>
+export const chargeLabel = (b: Pick<SettlementBatch, 'adjustment_sen' | 'acquirer_code'>): string =>
   (b.adjustment_sen < 0 ? 'Rebate' : b.acquirer_code === 'AEON' ? 'Subvention fee' : 'Other charge');
 
 /** `payNote` says where an unpaid report's money stands when the acquirer has more to say than the default (Public Bank's advice). */

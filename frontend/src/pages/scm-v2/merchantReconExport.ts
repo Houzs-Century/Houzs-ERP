@@ -7,6 +7,7 @@
 import type { LineExportMatrix } from '../../components/dataTableLineExport';
 import type { PrintedLine, PrintedReport } from '../../vendor/scm/lib/merchant-recon-pdf';
 import type { SettlementBatch, SettlementRow } from './settlement-queries';
+import { lineFeeSen, lineNetSen } from './settlement-line-money';
 import { payableOf } from './settlement-ui';
 
 /** Whichever side is showing, the ORDER columns read from one shape, so a claimed
@@ -84,8 +85,8 @@ const printedLine = (r: SettlementRow): PrintedLine => {
     lineNo: r.line_no,
     ref: isQrLine(r) ? QR_REF_WORDS : r.ref,
     grossSen: Number(r.gross_sen),
-    feeSen: Number(r.fee_sen),
-    netSen: Number(r.net_sen),
+    feeSen: lineFeeSen(r),
+    netSen: lineNetSen(r),
     document: orders.length === 0 && r.candidates.length > 0 ? `${r.candidates.length} possible` : null,
     orders: orders.map((o) => ({
       docNo: o.docNo, customer: o.customer, sales: o.sales, sheet: o.sheet, paidOn: o.paidOn, code: o.code,

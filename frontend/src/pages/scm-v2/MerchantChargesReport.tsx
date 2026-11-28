@@ -132,7 +132,7 @@ export function merchantChargesSheet(r: MerchantChargesReport, open: ReadonlySet
 const swiped = (from: string | null, to: string | null): string =>
   `${fmtDateOrDash(from)}${to && to !== from ? ` – ${fmtDate(to)}` : ''}`;
 
-const NOTE_FEES = 'Fee % is the merchant’s fee against the gross they reported. Bank charge is what the bank took on the payout day (booked on Payment advice); Charge % is fee and bank charge together against the gross. A merchant opens to its reports.';
+const NOTE_FEES = 'Fee % is the merchant’s fee against the gross they reported, a report’s own charge included (AEON’s subvention fee, shared over its lines by their gross). Bank charge is what the bank took on the payout day (booked on Payment advice); Charge % is fee and bank charge together against the gross. A merchant opens to its reports.';
 const NOTE_CASH = 'Cash and Online are the payments keyed on sales orders, by payment date, with no fee; they count in the month and the total, and open to the payments.';
 
 const MERCHANT_COLORS = [REPORT_CHART_COLORS.petrol, REPORT_CHART_COLORS.gold, REPORT_CHART_COLORS.grey, '#0c3f39', '#a16a2e', '#5f6459'];
