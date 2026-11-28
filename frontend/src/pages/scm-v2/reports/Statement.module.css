@@ -65,12 +65,13 @@
 /* One figure across columns (a Cash Flow line not split): centred over both, as his workbook merges it. */
 .cellAcross { text-align: center; }
 .cellAcross .cellInner { justify-content: center; }
+/* A figure opens its lines; its dotted line shows under the mouse only (owner 2026-11-27:
+   a line under every figure made the table busy). */
 .figure {
   padding: 0; border: 0; background: none; font: inherit; color: inherit; cursor: pointer;
-  text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--fin-input);
+  text-decoration: none; text-underline-offset: 3px;
 }
-.figure:hover, .figure[aria-pressed='true'] { color: var(--fin-petrol); text-decoration-color: var(--fin-petrol); }
-.dash { color: var(--fin-input); }
+.figure:hover, .figure:focus-visible, .figure[aria-pressed='true'] { color: var(--fin-petrol); text-decoration: underline dotted var(--fin-petrol); }
 .pct { flex: none; width: 44px; text-align: right; font-size: 11px; font-weight: 500; color: #8a8f84; }
 .colRule { border-right: 1px solid var(--fin-rule-soft); }
 .colTotal { background: var(--fin-row); }

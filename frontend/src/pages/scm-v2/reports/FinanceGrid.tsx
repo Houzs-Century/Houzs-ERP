@@ -336,7 +336,8 @@ export function FinanceGrid({ layoutKey, nameColumn, columns, rows, showPct = fa
       if (isNode(v)) inner = <span className={s.inner} data-fit title={v.title}>{v.node}</span>;
       else {
         const text = withValues ? cellText(v, c.kind, r) : null;
-        const fig = text == null ? <span className={s.dash}>-</span> : text;
+        /* An empty cell stays blank (owner 2026-11-27: the dashes made the tables busy). */
+        const fig = text ?? '';
         const drillable = text != null && r.detail != null && r.detail(c.key, closeDrill) != null;
         const shownFig = drillable ? (
           <button type="button" className={s.figure} aria-pressed={drill?.row === r.id && drill.col === c.key && drill.at === at}

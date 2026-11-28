@@ -60,6 +60,7 @@ import {
   ReportExports, ReportHeaderActions, ReportMessage, ReportSwitch, ReportTool, ReportToolbar, Segmented, useReportSubtitle,
 } from './reports/reportParts';
 import { StatementSkeleton, StatementTable } from './reports/StatementTable';
+import { CodesSwitch, linesWithCodes, useShowCodes } from './reports/statementTools';
 import { MONTH_COUNTS, columnsSpan, monthColumns, monthName, type StatementColumn, type StatementLine } from './reports/statementColumns';
 import { splitColumns, splitLines } from './reports/cashFlowSplit';
 import { forecastColumns, forecastNote, isForecastKey, rollForecast } from './reports/cashFlowForecast';
@@ -203,6 +204,7 @@ export const ReceiptsPaymentsTab = () => {
   const [months, setMonths] = useState<number>(6);
   const [level, setLevel] = useState<Level>('all');
   const [showPct, setShowPct] = useState(true);
+  const [showCodes, setShowCodes] = useShowCodes();
   const [editing, setEditing] = useState(false);
   const [ticked, setTicked] = useState<string[]>([]);
   const { can } = useAuth();
@@ -274,7 +276,7 @@ export const ReceiptsPaymentsTab = () => {
   };
 
   const sheet = (): ReportSheet | null => {
-    if (view === 'total') return report ? cashFlowSheet(report, { columns: codes, level, open: tree.open, pct: showPct }) : null;
+    if (view === 'total') return report ? cashFlowSheet(report, { columns: codes, level, open: tree.open, pct: showPct, codes: showCodes }) : null;
     if (columns.some((c) => !byKey[c.key])) return null;
     const split = view === 'split';
     const sheetCols = split ? splitCols : monthCols;
@@ -286,7 +288,7 @@ export const ReceiptsPaymentsTab = () => {
       meta: [{ label: 'Months', value: `${monthName(span.from)} – ${monthName(span.to)}` }, { label: 'Rows', value: rowsWord }],
       tables: [statementColumnsTable(sheetCols.map((c) => ({
         key: c.key, label: c.label, pct: showPct && c.pct, edge: c.kind === 'total', ...(c.group ? { group: c.group.label } : {}),
-      })), shown)],
+      })), linesWithCodes(shown, showCodes))],
       fmt: fmtRp,
     };
   };
@@ -332,6 +334,7 @@ export const ReceiptsPaymentsTab = () => {
           </ReportTool>
         )}
         <ReportSwitch on={showPct} onChange={setShowPct}>% beside</ReportSwitch>
+        <CodesSwitch on={showCodes} onChange={setShowCodes} />
         <button type="button" className={s.pickerButton} onClick={() => setOpeningOpen(true)}>Opening bills</button>
       </ReportToolbar>
       {editing && <ReportLayoutEditor report="rp" onClose={() => setEditing(false)} />}
@@ -359,6 +362,7 @@ export const ReceiptsPaymentsTab = () => {
           level={level}
           tree={tree}
           showPct={showPct}
+          showCodes={showCodes}
           fmt={fmtRp}
           finalId="bal:closing"
           strongIds={STRONG}

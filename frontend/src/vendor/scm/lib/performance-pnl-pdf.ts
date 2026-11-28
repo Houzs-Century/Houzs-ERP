@@ -14,7 +14,7 @@ import { generateReportPdf } from './report-sheet-pdf';
 import { downloadReportXlsx } from './report-sheet-xlsx';
 
 /** The Performance P&L as the screen shows it, ready for paper or Excel. */
-export function performanceSheet(r: PerformanceReport, opts: PerformanceSheetOptions = {}): ReportSheet {
+export function performanceSheet(r: PerformanceReport, opts: PerformanceSheetOptions): ReportSheet {
   const period = `${fmtDate(r.from)} – ${fmtDate(r.to)}`;
   const { tables, notes } = performanceTables(r, opts);
   return {
@@ -32,8 +32,8 @@ export function performanceSheet(r: PerformanceReport, opts: PerformanceSheetOpt
 
 const fileBase = (r: PerformanceReport): string => `performance-pnl-${r.from}-to-${r.to}`;
 
-export const generatePerformancePdf = (r: PerformanceReport, opts: PerformanceSheetOptions & { action?: PdfAction } = {}): Promise<void> =>
+export const generatePerformancePdf = (r: PerformanceReport, opts: PerformanceSheetOptions & { action?: PdfAction }): Promise<void> =>
   generateReportPdf(performanceSheet(r, opts), { fileName: `${fileBase(r)}.pdf`, action: opts.action });
 
-export const downloadPerformanceXlsx = (r: PerformanceReport, opts: PerformanceSheetOptions = {}): Promise<void> =>
+export const downloadPerformanceXlsx = (r: PerformanceReport, opts: PerformanceSheetOptions): Promise<void> =>
   downloadReportXlsx(performanceSheet(r, opts), `${fileBase(r)}.xlsx`);

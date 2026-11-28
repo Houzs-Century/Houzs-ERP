@@ -97,6 +97,7 @@ export const BROWSER_STORAGE_KEY_REGISTRY: readonly StorageKeyRegistration[] = [
   { id: "hr-subnav", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "hr-subnav-w (width 200-420) + hr-subnav-open ('1'/'0')", matches: (key) => key === "hr-subnav-w" || key === "hr-subnav-open" },
   { id: "finance-report-range", classification: "TRANSIENT", storage: ["sessionStorage"], keyFamily: "fin-report-range", matches: exact("fin-report-range") },
   { id: "finance-statement-widths", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-reports-colw-v2", matches: exact("fin-reports-colw-v2") },
+  { id: "finance-statement-codes", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-statement-codes", matches: exact("fin-statement-codes") },
   // A Finance table's layout a person set (owner 2026-11-05, FinanceGrid): column
   // widths, order, hidden and frozen columns, one key per table. No identity data.
   { id: "finance-grid-layout", classification: "DEVICE_PREF", storage: ["localStorage"], keyFamily: "fin-grid-v1:<table>", matches: prefix("fin-grid-v1:") },
