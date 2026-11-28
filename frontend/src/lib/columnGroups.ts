@@ -50,7 +50,7 @@ const RULES: Rule[] = [
   },
   {
     group: COLUMN_GROUPS.logistics,
-    any: /\bm3\b|\b(mileage|insurance|puspakom|downtime|problem|drops|stops|dos|volume|sets|dispose|disposal|inspection|services?|duration|transfer|ctn|etd|vessel|voyage|port|slot|replacement|consignment|card|delivery|deliveries|deliver|delivered|dispatch|shipout|carrier|tracking|eta|arrival|arrives|departure|driver|helpers?|lorry|loading|vehicle|plate|fleet|registration|trip|route|zone|warehouse|whse|rack|shelf|venue|location|transport|pickup|pickups|scheduled|unscheduled|sched|processing date|collected|setup|dismantle|lift booking|do|transfer to|transfer from|stock status|expected|earliest|latest|when|time|days left|work days|repair days|utilisation|covers|areas|radius|km|gps|google|drive|on-site|building type)\b/,
+    any: /\bm3\b|\b(mileage|insurance|puspakom|downtime|problem|drops|stops|dos|volume|sets|dispose|disposal|inspection|services?|duration|transfer|ctn|etd|vessel|voyage|port|slot|replacement|consignment|card|delivery|deliveries|deliver|delivered|dispatch|shipout|carrier|tracking|eta|arrival|arrives|departure|driver|helpers?|lorry|loading|loaded|prepared|vehicle|plate|fleet|registration|trip|route|zone|warehouse|whse|rack|shelf|venue|location|transport|pickup|pickups|scheduled|unscheduled|sched|processing date|collected|setup|dismantle|lift booking|do|transfer to|transfer from|stock status|expected|earliest|latest|when|time|days left|work days|repair days|utilisation|covers|areas|radius|km|gps|google|drive|on-site|building type)\b/,
   },
   {
     group: COLUMN_GROUPS.stock,
