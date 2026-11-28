@@ -50,7 +50,7 @@ import { DO_SIZE as S, DO_THEME as T, pt } from './delivery-order-theme';
 import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 import { stripBookText } from '../../../../../shared/src/vendor/scm/lib/book-text';
 import {
-  buildPickSections, fmtM3, formatRacksCompact, loadingOrder, lorriesFor, packCategory, regionLorryLabel, regionStops,
+  buildPickSections, isSofaAccessory, fmtM3, formatRacksCompact, loadingOrder, lorriesFor, packCategory, regionLorryLabel, regionStops,
   type PickRow, type PickSection,
 } from './packing-list-model';
 import type { PackingItem, PackingListRow, PackingRegionRow, PackingStop } from './packing-list-queries';
@@ -492,7 +492,7 @@ function drawStopHeader(doc: Doc, top: number, stop: PackingStop, draw: boolean)
 
 function stopRows(stop: PackingStop, fabric: Fabric): string[][] {
   return stop.items.map((it) => [
-    shortType(packCategory(it.item_group)),
+    isSofaAccessory(it.item_group) ? 'SOFA ACC' : shortType(packCategory(it.item_group)),
     it.item_code,
     describe(it.description, variantText(it, fabric)),
     poCell(splitPos(it.po), it.worked_out),
