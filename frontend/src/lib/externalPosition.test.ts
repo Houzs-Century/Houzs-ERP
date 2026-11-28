@@ -1,6 +1,20 @@
 import { describe, expect, test } from "vitest";
-import { isExternalPosition } from "./externalPosition";
+import { EXTERNAL_POSITION_MESSAGE, isExternalPosition } from "./externalPosition";
 
+describe("EXTERNAL_POSITION_MESSAGE", () => {
+  test("describes the Team-invite flow instead of sending the admin away from it", () => {
+    for (const fact of [
+      "stays out of the Team Member list",
+      "appears in Fleet as a driver automatically",
+      "do not add them in Fleet by hand",
+      "Set a password and give the Driver role",
+      "Dispatch ticked for this position",
+    ]) {
+      expect(EXTERNAL_POSITION_MESSAGE).toContain(fact);
+    }
+    expect(EXTERNAL_POSITION_MESSAGE).not.toMatch(/not Members|belongs in Fleet/i);
+  });
+});
 
 describe("isExternalPosition", () => {
   test("matches an outsourced Title by name or slug", () => {

@@ -1,16 +1,18 @@
-/* A Title that names an OUTSOURCED role — an external 3PL driver / transporter,
- * not a staff member. Such crew belong in the Fleet module (an scm.drivers row
- * under a 3PL company), NOT in the member directory: creating one as a member
- * also spawns a duplicate Fleet driver row, because a Driver-position member is
- * auto-synced into scm.drivers (mig 0060 trigger). Owner rule 2026-09-17:
- * 「不想 Outsource 的混进我自己的 member 里面」.
+/**
+ * The note shown when an admin picks an outsourced Title (a 3PL driver /
+ * transporter) in Team invite or on a member profile.
  *
- * This is a member-creation UI HINT, not an authz decision. It only nudges the
- * admin toward the right place, so keying it on the Title name is safe — a miss
- * just means the nudge does not show. It never blocks. */
-
+ * Owner decision 2026-11-28 (PR #6146, #6148): an outsourced driver who uploads
+ * POD gets a login created from Team. It stays out of the member directory, and
+ * the sync_user_to_tms trigger gives the exact Title "Outsource Transporter" its
+ * Fleet driver row. POD itself is gated on the position's scm.do.dispatch
+ * capability (Roles & Permissions > Actions), not on the role.
+ *
+ * This is a UI hint, not an authz decision: it keys on the Title name and never
+ * blocks.
+ */
 export const EXTERNAL_POSITION_MESSAGE =
-  "Outsourced transport belongs in Fleet, not Members. Add this driver in the Fleet module under a 3PL company — creating them here also duplicates them in the fleet.";
+  "Outsource Transporter login: stays out of the Team Member list (Show outsource reveals it) and appears in Fleet as a driver automatically, so do not add them in Fleet by hand (that makes a duplicate). Set a password and give the Driver role. Uploading POD on the phone also needs Dispatch ticked for this position in Roles & Permissions > Actions.";
 
 export function isExternalPosition(
   position: { name?: string | null; slug?: string | null } | null | undefined,
