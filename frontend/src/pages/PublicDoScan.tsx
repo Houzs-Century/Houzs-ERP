@@ -51,8 +51,9 @@ import {
   requestIdFromResponse,
 } from "../lib/requestCorrelation";
 
-type SheetKind = "trip" | "lorry_day";
-const isSheet = (kind: string | undefined): kind is SheetKind => kind === "trip" || kind === "lorry_day";
+type SheetKind = "trip" | "lorry_day" | "region_day";
+const isSheet = (kind: string | undefined): kind is SheetKind =>
+  kind === "trip" || kind === "lorry_day" || kind === "region_day";
 
 type Member = {
   stopNo: number;
@@ -69,10 +70,23 @@ type TripSummary = {
   tripNo: string | null;
   tripDate: string | null;
   lorryPlate: string | null;
+  title?: string;
+  nextStep?: "prepare" | "load" | "done" | null;
+  preparedAtText?: string;
+  loadedAtText?: string;
   status: string;
   step: { status: string; label: string; note: string } | null;
   blockReason: string | null;
   members: Member[];
+};
+
+type PrepareResult = {
+  kind: SheetKind;
+  mode: "prepare";
+  outcome: "DONE" | "ALREADY_DONE";
+  headline: string;
+  message: string;
+  preparedAtText: string;
 };
 
 type MemberOutcome = {
@@ -99,6 +113,8 @@ type RunResult = {
   loaded: number;
   moved: number;
   members: MemberOutcome[];
+  preparedAtText?: string;
+  loadedAtText?: string;
 };
 
 type Summary = {
@@ -134,7 +150,7 @@ export function PublicDoScan() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [done, setDone] = useState<AdvanceResult | RunResult | null>(null);
+  const [done, setDone] = useState<AdvanceResult | RunResult | PrepareResult | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -166,7 +182,7 @@ export function PublicDoScan() {
     void load();
   }, [token, load]);
 
-  async function advance(to: string) {
+  async function advance(to: string, sheetStep: "prepare" | "load" | null) {
     setSaving(true);
     setError(null);
     try {
@@ -175,7 +191,7 @@ export function PublicDoScan() {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to }),
+          body: JSON.stringify(sheetStep ? { step: sheetStep, to } : { to }),
         },
       );
       if (!res.ok) {
@@ -184,7 +200,7 @@ export function PublicDoScan() {
           requestIdFromResponse(res),
         );
       }
-      setDone(await consumeCorrelated(res, () => res.json() as Promise<AdvanceResult | RunResult>));
+      setDone(await consumeCorrelated(res, () => res.json() as Promise<AdvanceResult | RunResult | PrepareResult>));
     } catch (e) {
       setError(errorText(e) || "Could not record this step. Try again, or call the office.");
     } finally {
@@ -217,19 +233,27 @@ export function PublicDoScan() {
   const step = done ? null : data.step;
   const isRun = isSheet(data.kind);
   const run = isRun ? (data as TripSummary) : null;
+  const sheetStep = run && (run.nextStep === "prepare" || run.nextStep === "load") ? run.nextStep : null;
+  const runTitle = run ? run.title || (run.lorryPlate ? `Lorry ${run.lorryPlate}` : `Packing list ${run.tripNo ?? ""}`) : "";
+  const prepared = done && "preparedAtText" in done && done.preparedAtText ? done.preparedAtText : run?.preparedAtText;
+  const loaded = done && "loadedAtText" in done && done.loadedAtText ? done.loadedAtText : run?.loadedAtText;
 
   return (
     <Frame title={isRun ? "Scan packing list" : "Scan delivery order"}>
       {run ? (
         <div className="rounded-md border border-line bg-surface px-4 py-3 text-sm">
-          <div className="text-base font-semibold">
-            {run.lorryPlate ? `Lorry ${run.lorryPlate}` : `Packing list ${run.tripNo ?? ""}`}
-          </div>
+          <div className="text-base font-semibold">{runTitle}</div>
           <div className="text-ink-secondary">
             {run.lorryPlate && run.tripNo ? `${run.tripNo} · ` : ""}
             {run.tripDate ?? "—"} · {run.members.length} delivery order
             {run.members.length === 1 ? "" : "s"}
           </div>
+          {run.nextStep !== undefined && run.nextStep !== null && (
+            <ul className="mt-2 space-y-0.5 tabular-nums" aria-label="Scan times">
+              <li className={prepared ? "font-semibold" : "text-ink-secondary"}>{prepared ? `Prepared at ${prepared}` : "Not prepared yet"}</li>
+              <li className={loaded ? "font-semibold" : "text-ink-secondary"}>{loaded ? `Loaded at ${loaded}` : "Not loaded yet"}</li>
+            </ul>
+          )}
         </div>
       ) : (
         <div className="rounded-md border border-line bg-surface px-4 py-3 text-sm">
@@ -245,7 +269,19 @@ export function PublicDoScan() {
         </div>
       )}
 
-      {done && isSheet(done.kind) && (
+      {done && "mode" in done && done.mode === "prepare" && (
+        <Notice tone="ok" title={done.headline}>
+          {done.message}
+        </Notice>
+      )}
+
+      {run && !done && run.nextStep === "done" && (
+        <Notice tone="ok" title={`${runTitle}: packing list loaded`}>
+          Prepared at {run.preparedAtText || "—"}, loaded at {run.loadedAtText || "—"}. Both scans of this sheet are recorded.
+        </Notice>
+      )}
+
+      {done && isSheet(done.kind) && !("mode" in done && done.mode === "prepare") && (
         <>
           <Notice
             tone={(done as RunResult).outcome === "PARTIAL" ? "warn" : "ok"}
@@ -281,7 +317,7 @@ export function PublicDoScan() {
       )}
 
       {!done && data.blockReason && (
-        <Notice tone={data.status === "CANCELLED" ? "warn" : "hold"} title={run ? (run.lorryPlate ? `Lorry ${run.lorryPlate}` : run.tripNo ?? "Packing list") : (data as Summary).doNumber}>
+        <Notice tone={data.status === "CANCELLED" ? "warn" : "hold"} title={run ? runTitle : (data as Summary).doNumber}>
           {data.blockReason}
         </Notice>
       )}
@@ -291,13 +327,13 @@ export function PublicDoScan() {
           <button
             type="button"
             disabled={saving}
-            onClick={() => void advance(step.status)}
+            onClick={() => void advance(step.status, sheetStep)}
             className="flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-3 text-base font-semibold text-white disabled:opacity-60"
           >
             <PackageCheck size={18} /> {saving ? "Saving…" : step.label}
           </button>
           <p className="text-xs text-ink-secondary">{step.note}</p>
-          {isRun && (
+          {isRun && sheetStep !== "prepare" && (
             <p className="text-xs text-ink-secondary">
               Only confirmed delivery orders are marked Loaded. Drafts, cancelled or held ones, ones on another
               company&apos;s books, and ones already in transit or delivered are left alone and listed back to you.

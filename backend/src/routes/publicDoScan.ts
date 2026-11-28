@@ -127,8 +127,15 @@ import {
   LORRY_LOAD_TARGET,
   decideLorryLoad,
   dominantPlate,
-  lorryLoadHeadline,
+  sheetLoadHeadline,
 } from '../scm/lib/lorry-load-scan';
+import {
+  checkPackingScanStep,
+  fmtMalaysiaTime,
+  markSheetLoaded,
+  markSheetPrepared,
+  nextPackingScanStep,
+} from '../scm/lib/packing-scan-steps';
 
 export const publicDoScan = new Hono<{ Bindings: Env }>();
 
@@ -212,8 +219,13 @@ type PublicTripMember = {
   note: string;
 };
 
+type SheetKind = 'trip' | 'lorry_day' | 'region_day';
+
 type ScanSheet = {
-  kind: 'trip' | 'lorry_day';
+  kind: SheetKind;
+  title: string;
+  region: string | null;
+  twoStep: ResolvedLorryDayScan | null;
   companyId: number;
   tripNo: string | null;
   sheetDate: string | null;
@@ -223,11 +235,18 @@ type ScanSheet = {
 };
 
 type PublicTripSummary = {
-  kind: 'trip' | 'lorry_day';
+  kind: SheetKind;
   mode: 'load_all';
   tripNo: string | null;
   tripDate: string | null;
   lorryPlate: string | null;
+  region: string | null;
+  title: string;
+  nextStep: 'prepare' | 'load' | 'done' | null;
+  preparedAt: string | null;
+  preparedAtText: string;
+  loadedAt: string | null;
+  loadedAtText: string;
   status: string;
   step: { status: string; label: string; note: string } | null;
   blockReason: string | null;
@@ -237,6 +256,11 @@ type PublicTripSummary = {
 const LOAD_ALL_LABEL = 'Mark whole lorry loaded';
 const LOAD_ALL_NOTE =
   'Press this once everything on this packing list is on the lorry. Every confirmed delivery order on it is marked Loaded. Stock is not touched: it left when each delivery order was confirmed.';
+const LOAD_NOTHING_NOTE =
+  'Nothing on this packing list will change status (see each line below). Pressing still records the time it was loaded.';
+const PREPARE_LABEL = 'Mark packing list prepared';
+const PREPARE_NOTE =
+  'Press this when everything on this packing list is picked and ready. It only records the prepared time; no delivery order changes. Scan the same QR again when the lorry is loaded.';
 
 type ScanDb = ReturnType<typeof getSupabaseService>;
 
@@ -252,20 +276,28 @@ async function lorryPlateFor(sb: ScanDb, companyId: number, members: TripScanMem
 }
 
 async function tripSheet(sb: ScanDb, trip: ResolvedTripScan, members: TripScanMember[]): Promise<ScanSheet> {
+  const lorryPlate = await lorryPlateFor(sb, trip.companyId, members);
   return {
     kind: 'trip',
+    title: lorryPlate ? `Lorry ${lorryPlate}` : `Packing list ${trip.tripNo}`,
+    region: null,
+    twoStep: null,
     companyId: trip.companyId,
     tripNo: trip.tripNo,
     sheetDate: trip.tripDate,
     sheetStatus: String(trip.status ?? ''),
-    lorryPlate: await lorryPlateFor(sb, trip.companyId, members),
+    lorryPlate,
     members: members.map((m) => ({ ...m, movedReason: null })),
   };
 }
 
 function lorryDaySheet(set: ResolvedLorryDayScan, members: LorryDayMember[]): ScanSheet {
+  const isRegion = set.sheetKind === 'region';
   return {
-    kind: 'lorry_day',
+    kind: isRegion ? 'region_day' : 'lorry_day',
+    title: isRegion ? `Region ${set.region ?? ''}` : `Lorry ${set.lorryPlate ?? ''}`,
+    region: isRegion ? set.region : null,
+    twoStep: set,
     companyId: set.companyId,
     tripNo: null,
     sheetDate: set.deliveryDate,
@@ -292,25 +324,53 @@ const decideMember = (m: LorryDayMember) => decideLorryLoad(m.status, m.onHold, 
 
 function buildTripSummary(sheet: ScanSheet): PublicTripSummary {
   const decided = sheet.members.map((m) => ({ m, d: decideMember(m) }));
+  const next = sheet.twoStep ? nextPackingScanStep(sheet.twoStep.preparedAt, sheet.twoStep.loadedAt) : null;
   const members: PublicTripMember[] = decided.map(({ m, d }) => ({
     stopNo: m.stopNo,
     doNumber: m.doNumber,
     customerName: m.customerName,
     status: m.foreign ? null : String(m.status ?? ''),
-    willLoad: d.action === 'write',
-    note: d.action === 'write' ? 'Will be marked Loaded.' : d.message,
+    willLoad: d.action === 'write' && next !== 'done',
+    note: d.action === 'write'
+      ? next === 'prepare' ? 'Will be marked Loaded at the loaded scan.' : 'Will be marked Loaded.'
+      : d.message,
   }));
   const anyToLoad = members.some((m) => m.willLoad);
   const allLoaded = decided.length > 0
     && decided.every(({ d }) => d.action === 'skip' && d.outcome !== 'BLOCKED' && d.outcome !== 'MOVED');
   const alreadyLoaded = decided.filter(({ d }) => d.action === 'skip' && d.outcome === 'ALREADY_DONE').length;
-  return {
+  const times = {
+    region: sheet.region,
+    title: sheet.title,
+    nextStep: next,
+    preparedAt: sheet.twoStep?.preparedAt ?? null,
+    preparedAtText: fmtMalaysiaTime(sheet.twoStep?.preparedAt ?? null),
+    loadedAt: sheet.twoStep?.loadedAt ?? null,
+    loadedAtText: fmtMalaysiaTime(sheet.twoStep?.loadedAt ?? null),
+  };
+  const head = {
     kind: sheet.kind,
-    mode: 'load_all',
+    mode: 'load_all' as const,
     tripNo: sheet.tripNo,
     tripDate: sheet.sheetDate,
     lorryPlate: sheet.lorryPlate,
+    ...times,
     status: sheet.sheetStatus,
+  };
+  if (next === 'prepare') {
+    return { ...head, step: { status: 'prepare', label: PREPARE_LABEL, note: PREPARE_NOTE }, blockReason: null, members };
+  }
+  if (next === 'load') {
+    return {
+      ...head,
+      step: { status: LORRY_LOAD_TARGET, label: LOAD_ALL_LABEL, note: anyToLoad ? LOAD_ALL_NOTE : LOAD_NOTHING_NOTE },
+      blockReason: null,
+      members,
+    };
+  }
+  if (next === 'done') return { ...head, step: null, blockReason: null, members };
+  return {
+    ...head,
     step: anyToLoad ? { status: LORRY_LOAD_TARGET, label: LOAD_ALL_LABEL, note: LOAD_ALL_NOTE } : null,
     blockReason: anyToLoad
       ? null
@@ -324,7 +384,9 @@ function buildTripSummary(sheet: ScanSheet): PublicTripSummary {
 }
 
 const sheetLabel = (found: SheetToken) =>
-  found.kind === 'trip' ? found.row.tripNo : `Lorry ${found.row.lorryPlate} ${found.row.deliveryDate}`;
+  found.kind === 'trip'
+    ? found.row.tripNo
+    : `${found.row.sheetKind === 'region' ? `Region ${found.row.region}` : `Lorry ${found.row.lorryPlate}`} ${found.row.deliveryDate}`;
 
 const OFF_RUNG_SINGLE =
   'This delivery order has moved on since this page was opened. Reload the page to see its next step.';
@@ -630,10 +692,11 @@ publicDoScan.post('/:token/advance', async (c) => {
   const tokenLimited = await checkRateLimit(c, 'do_scan_doc', token, PER_TOKEN_MAX, WINDOW_SEC);
   if (tokenLimited) return tokenLimited;
 
-  const body = (await c.req.json().catch(() => ({}))) as { to?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as { to?: unknown; step?: unknown };
   const wanted = typeof body.to === 'string' ? body.to.trim().toUpperCase() : '';
   const TARGETS = doScanLadderOrder().slice(1);
-  if (!wanted || !TARGETS.includes(wanted.toLowerCase())) {
+  const namesLadderStep = !!wanted && TARGETS.includes(wanted.toLowerCase());
+  if (!namesLadderStep && body.step === undefined) {
     return c.json({
       error: 'step_required',
       message: 'This scan did not name a step this delivery order can take. Reload the page and try again.',
@@ -644,6 +707,50 @@ publicDoScan.post('/:token/advance', async (c) => {
   const found = await resolveScanToken(sb, token);
   if (found.status === 'read_failed') return readFailed(c);
   if (found.status === 'unknown') return unknownToken(c);
+
+  if (found.kind === 'lorry_day') {
+    const set = found.row;
+    const check = checkPackingScanStep(body.step, wanted || null, set.preparedAt, set.loadedAt);
+    if (!check.ok) return c.json({ error: check.code, message: check.message }, check.status);
+    if (check.step === 'prepare') {
+      const stamped = check.already
+        ? { status: 'ok' as const, at: set.preparedAt ?? '' }
+        : await markSheetPrepared(sb, set, new Date().toISOString());
+      if (stamped.status === 'read_failed') return readFailed(c);
+      const title = set.sheetKind === 'region' ? `Region ${set.region ?? ''}` : `Lorry ${set.lorryPlate ?? ''}`;
+      return c.json({
+        kind: set.sheetKind === 'region' ? 'region_day' : 'lorry_day',
+        mode: 'prepare',
+        outcome: check.already ? 'ALREADY_DONE' : 'DONE',
+        headline: `${title}: packing list prepared`,
+        message: `Prepared at ${fmtMalaysiaTime(stamped.at)}. Scan the same QR again when the lorry is loaded.`,
+        preparedAt: stamped.at,
+        preparedAtText: fmtMalaysiaTime(stamped.at),
+      });
+    }
+    const sheet = await loadSheet(sb, found);
+    if (!sheet) return readFailed(c);
+    const result = await loadWholeLorry(c, sb, sheet);
+    const stamped = await markSheetLoaded(sb, set, new Date().toISOString());
+    const loadedAt = stamped.status === 'ok' ? stamped.at : null;
+    return c.json({
+      ...result,
+      message: loadedAt
+        ? result.message
+        : [result.message, 'The loaded time could not be saved. Scan again to record it; nothing will be loaded twice.'].filter(Boolean).join(' '),
+      preparedAt: set.preparedAt,
+      preparedAtText: fmtMalaysiaTime(set.preparedAt),
+      loadedAt,
+      loadedAtText: fmtMalaysiaTime(loadedAt),
+    });
+  }
+
+  if (!namesLadderStep) {
+    return c.json({
+      error: 'step_required',
+      message: 'This scan did not name a step this delivery order can take. Reload the page and try again.',
+    }, 400);
+  }
 
   if (found.kind !== 'do') {
     if (wanted !== LORRY_LOAD_TARGET) {
@@ -730,7 +837,7 @@ async function loadWholeLorry(
   sb: ScanDb,
   sheet: ScanSheet,
 ): Promise<{
-  kind: 'trip' | 'lorry_day'; mode: 'load_all'; tripNo: string | null; lorryPlate: string | null;
+  kind: SheetKind; mode: 'load_all'; tripNo: string | null; lorryPlate: string | null; region: string | null;
   outcome: 'DONE' | 'PARTIAL' | 'NOTHING'; to: string; headline: string; message: string;
   total: number; loaded: number; moved: number; members: MemberOutcome[];
 }> {
@@ -779,9 +886,10 @@ async function loadWholeLorry(
     mode: 'load_all',
     tripNo: sheet.tripNo,
     lorryPlate,
+    region: sheet.region,
     outcome,
     to: LORRY_LOAD_TARGET,
-    headline: lorryLoadHeadline(lorryPlate, sheet.tripNo ?? '', loaded, results.length),
+    headline: sheetLoadHeadline(sheet.title, loaded, results.length),
     message,
     total: results.length,
     loaded,

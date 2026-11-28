@@ -665,6 +665,9 @@ function seedLorryDay(opts: {
   members?: Array<{ status?: string; plate?: string | null; vehicle?: string | null; company_id?: number; on_hold?: boolean }>;
   sheetCompany?: number;
   revoked?: boolean;
+  preparedAt?: string | null;
+  loadedAt?: string | null;
+  region?: string;
 } = {}) {
   seed();
   const list = opts.members ?? [{}, {}];
@@ -684,8 +687,15 @@ function seedLorryDay(opts: {
     tables.inventory_movements.push({ id: `mv-${id}`, source_doc_type: 'DO', source_doc_id: id, movement_type: 'OUT', qty: 1 });
   });
   tables.packing_scan_sets = [{
-    id: 'sheet-1', company_id: opts.sheetCompany ?? CO, lorry_plate: 'VJK 8821', delivery_date: '2026-11-28',
+    id: 'sheet-1', company_id: opts.sheetCompany ?? CO,
+    sheet_kind: opts.region ? 'region' : 'lorry',
+    lorry_plate: opts.region ? null : 'VJK 8821',
+    region: opts.region ?? null,
+    delivery_date: '2026-11-28',
     do_ids: list.map((_, i) => uuidFor(i + 1)), qr_token: SHEET_TOKEN,
+    prepared_at: opts.preparedAt === undefined ? '2026-11-28T00:30:00Z' : opts.preparedAt,
+    prepared_by_scan: opts.preparedAt !== null,
+    loaded_at: opts.loadedAt ?? null,
     qr_revoked_at: opts.revoked ? '2026-11-28T02:00:00Z' : null,
   }];
   touched = [];
@@ -725,12 +735,13 @@ describe('the lorry-day packing list QR (no trip behind it)', () => {
     expect(tables.delivery_orders.find((d) => d.id === uuidFor(99))!.status).toBe('LOADED');
   });
 
-  test('scanning twice changes nothing the second time', async () => {
+  test('scanning twice changes nothing the second time: the loaded sheet refuses a second load', async () => {
     seedLorryDay({ members: [{}, {}, { status: 'DRAFT' }] });
     await advance(SHEET_TOKEN, 'DISPATCHED');
     const after1 = JSON.stringify(tables.delivery_orders);
-    const again = await (await advance(SHEET_TOKEN, 'DISPATCHED')).json() as any;
-    expect(again.moved).toBe(0);
+    const again = await advance(SHEET_TOKEN, 'DISPATCHED');
+    expect(again.status).toBe(409);
+    expect((await again.json() as any).message).toContain('already marked loaded');
     expect(JSON.stringify(tables.delivery_orders)).toBe(after1);
   });
 
@@ -775,6 +786,193 @@ describe('the lorry-day packing list QR (no trip behind it)', () => {
     seedLorryDay();
     const body = await (await batchLookup([SHEET_TOKEN])).json() as any;
     expect(body.lines[0].blockReason).toContain('packing list');
+  });
+});
+
+const stepPost = (t: string, step: unknown) =>
+  publicDoScan.request(`/${t}/advance`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ step }),
+  }, env);
+
+describe('the packing list QR is scanned twice: prepared, then loaded (owner 2026-11-28)', () => {
+  test('a fresh sheet offers "prepared"; pressing it records the time and writes no DO status', async () => {
+    seedLorryDay({ members: [{}, {}], preparedAt: null });
+    const page = await (await get(SHEET_TOKEN)).json() as any;
+    expect(page).toMatchObject({ nextStep: 'prepare', preparedAt: null, loadedAt: null });
+    expect(page.step).toMatchObject({ status: 'prepare', label: 'Mark packing list prepared' });
+    const before = JSON.stringify(tables.delivery_orders);
+    const res = await stepPost(SHEET_TOKEN, 'prepare');
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body).toMatchObject({ mode: 'prepare', outcome: 'DONE', kind: 'lorry_day' });
+    expect(body.headline).toBe('Lorry VJK 8821: packing list prepared');
+    expect(tables.packing_scan_sets[0]!.prepared_at).toBe(body.preparedAt);
+    expect(tables.packing_scan_sets[0]!.prepared_by_scan).toBe(true);
+    expect(tables.packing_scan_sets[0]!.loaded_at).toBeNull();
+    expect(JSON.stringify(tables.delivery_orders)).toBe(before);
+    expect(touched).not.toContain('inventory_movements');
+  });
+
+  test('a double tap on "prepared" keeps the first time and is answered as already done', async () => {
+    seedLorryDay({ preparedAt: null });
+    const first = await (await stepPost(SHEET_TOKEN, 'prepare')).json() as any;
+    const second = await stepPost(SHEET_TOKEN, 'prepare');
+    expect(second.status).toBe(200);
+    const body = await second.json() as any;
+    expect(body.outcome).toBe('ALREADY_DONE');
+    expect(body.preparedAt).toBe(first.preparedAt);
+    expect(tables.packing_scan_sets[0]!.prepared_at).toBe(first.preparedAt);
+  });
+
+  test('a stale page pressing "loaded" on an unprepared sheet is refused, and nothing moves', async () => {
+    seedLorryDay({ preparedAt: null });
+    const res = await stepPost(SHEET_TOKEN, 'load');
+    expect(res.status).toBe(409);
+    expect((await res.json() as any).message).toContain('Reload the page');
+    expect(tables.delivery_orders.every((d) => d.status === 'LOADED')).toBe(true);
+    expect(tables.packing_scan_sets[0]!.loaded_at).toBeNull();
+    const legacy = await advance(SHEET_TOKEN, 'DISPATCHED');
+    expect(legacy.status).toBe(409);
+  });
+
+  test('the second scan loads every DO, records the loaded time, and shows both times after', async () => {
+    seedLorryDay({ members: [{}, { status: 'DRAFT' }] });
+    const page = await (await get(SHEET_TOKEN)).json() as any;
+    expect(page).toMatchObject({ nextStep: 'load', preparedAtText: '2026/11/28 08:30' });
+    expect(page.step).toMatchObject({ status: 'DISPATCHED', label: 'Mark whole lorry loaded' });
+    const body = await (await stepPost(SHEET_TOKEN, 'load')).json() as any;
+    expect(body.outcome).toBe('PARTIAL');
+    expect(body.loadedAt).toBeTruthy();
+    expect(tables.packing_scan_sets[0]!.loaded_at).toBe(body.loadedAt);
+    expect(tables.delivery_orders.map((d) => d.status)).toEqual(['DISPATCHED', 'DRAFT']);
+    const after = await (await get(SHEET_TOKEN)).json() as any;
+    expect(after).toMatchObject({ nextStep: 'done', step: null, preparedAtText: '2026/11/28 08:30' });
+    expect(after.loadedAtText).toMatch(/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/);
+    expect(after.members).toHaveLength(2);
+    expect(after.members.every((m: any) => m.willLoad === false)).toBe(true);
+  });
+
+  test('a lorry already loaded DO by DO still offers "loaded", so the loaded time can be recorded', async () => {
+    seedLorryDay({ members: [{ status: 'DISPATCHED' }, { status: 'DISPATCHED' }] });
+    const page = await (await get(SHEET_TOKEN)).json() as any;
+    expect(page.blockReason).toBeNull();
+    expect(page.step.note).toContain('records the time');
+    const body = await (await stepPost(SHEET_TOKEN, 'load')).json() as any;
+    expect(body.moved).toBe(0);
+    expect(tables.packing_scan_sets[0]!.loaded_at).toBeTruthy();
+  });
+
+  test('pressing "prepared" on a sheet already loaded is refused as stale', async () => {
+    seedLorryDay({ loadedAt: '2026-11-28T03:00:00Z' });
+    const res = await stepPost(SHEET_TOKEN, 'prepare');
+    expect(res.status).toBe(409);
+    expect(tables.packing_scan_sets[0]!.prepared_at).toBe('2026-11-28T00:30:00Z');
+  });
+
+  test('an unknown step word is refused before anything is written', async () => {
+    seedLorryDay({ preparedAt: null });
+    expect((await stepPost(SHEET_TOKEN, 'ship')).status).toBe(400);
+    expect(tables.packing_scan_sets[0]!.prepared_at).toBeNull();
+  });
+
+  test('a failed save of the prepared time is 503, not a success', async () => {
+    seedLorryDay({ preparedAt: null });
+    failing.add('packing_scan_sets');
+    expect((await stepPost(SHEET_TOKEN, 'prepare')).status).toBe(503);
+  });
+
+  test('the prepared stamp is scoped to the sheet\'s own company', async () => {
+    seedLorryDay({ preparedAt: null });
+    tables.packing_scan_sets.push({ ...tables.packing_scan_sets[0]!, id: 'sheet-1', company_id: OTHER_CO, qr_token: 'zzzzzzzzzz' });
+    await stepPost(SHEET_TOKEN, 'prepare');
+    expect(tables.packing_scan_sets[1]!.prepared_at).toBeNull();
+  });
+
+  test('a trip packing list keeps its one-step load: a "prepared" press is refused, nothing moves', async () => {
+    seedRun({ members: [{ status: 'LOADED' }] });
+    const res = await stepPost(TRIP_TOKEN, 'prepare');
+    expect(res.status).toBe(400);
+    expect(tables.delivery_orders.every((d) => d.status === 'LOADED')).toBe(true);
+    const page = await (await get(TRIP_TOKEN)).json() as any;
+    expect(page.nextStep).toBeNull();
+    expect(page.step).toMatchObject({ status: 'DISPATCHED' });
+  });
+});
+
+describe('the two-step scan, every remaining scenario (owner 2026-11-28)', () => {
+  test('two phones press "prepared" at the same moment: one prepared time, both told it is prepared', async () => {
+    seedLorryDay({ preparedAt: null });
+    const [a, b] = await Promise.all([stepPost(SHEET_TOKEN, 'prepare'), stepPost(SHEET_TOKEN, 'prepare')]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    const [ja, jb] = [await a.json() as any, await b.json() as any];
+    expect(ja.preparedAt).toBe(jb.preparedAt);
+    expect(tables.packing_scan_sets[0]!.prepared_at).toBe(ja.preparedAt);
+    expect(jb.message).toContain('Prepared at');
+  });
+
+  test('a mixed sheet: only Confirmed loads, each line says why, PARTIAL, and the loaded time is still recorded', async () => {
+    seedLorryDay({
+      members: [{}, { status: 'DRAFT' }, { status: 'CANCELLED' }, { on_hold: true }, { status: 'DISPATCHED' }, { status: 'IN_TRANSIT' }],
+    });
+    const body = await (await stepPost(SHEET_TOKEN, 'load')).json() as any;
+    expect(body.members.map((m: any) => m.outcome)).toEqual(['DONE', 'BLOCKED', 'BLOCKED', 'BLOCKED', 'ALREADY_DONE', 'PAST']);
+    expect(body.members[1].message).toContain('Draft');
+    expect(body.members[2].message).toContain('cancelled');
+    expect(body.members.every((m: any) => typeof m.message === 'string' && m.message.length > 0)).toBe(true);
+    expect(body.outcome).toBe('PARTIAL');
+    expect(tables.delivery_orders.map((d) => d.status)).toEqual(['DISPATCHED', 'DRAFT', 'CANCELLED', 'LOADED', 'DISPATCHED', 'IN_TRANSIT']);
+    expect(tables.packing_scan_sets[0]!.loaded_at).toBeTruthy();
+  });
+
+  test('a revoked sheet refuses "prepared" with the unknown-code answer and writes nothing', async () => {
+    seedLorryDay({ revoked: true, preparedAt: null });
+    const res = await stepPost(SHEET_TOKEN, 'prepare');
+    expect(res.status).toBe(404);
+    expect(tables.packing_scan_sets[0]!.prepared_at).toBeNull();
+    expect((await stepPost('m3n4p5q6r7', 'prepare')).status).toBe(404);
+  });
+
+  test('a QR printed before this change (row has no kind and no times) starts fresh: first scan = prepared', async () => {
+    seedLorryDay({ preparedAt: null });
+    const legacy = tables.packing_scan_sets[0]!;
+    delete legacy.sheet_kind; delete legacy.region; delete legacy.prepared_at; delete legacy.loaded_at; delete legacy.prepared_by_scan;
+    const page = await (await get(SHEET_TOKEN)).json() as any;
+    expect(page).toMatchObject({ kind: 'lorry_day', nextStep: 'prepare', lorryPlate: 'VJK 8821' });
+    const body = await (await stepPost(SHEET_TOKEN, 'prepare')).json() as any;
+    expect(body.outcome).toBe('DONE');
+    expect(legacy.prepared_at).toBe(body.preparedAt);
+    expect(tables.delivery_orders.every((d) => d.status === 'LOADED')).toBe(true);
+  });
+});
+
+describe('the region packing list QR ignores lorries (owner 2026-11-28)', () => {
+  test('every printed DO is decided on its own status: a DO on another lorry or on none is loaded', async () => {
+    seedLorryDay({ region: 'KL', members: [{}, { plate: 'WXY 1234' }, { plate: null }, { status: 'DRAFT' }] });
+    const page = await (await get(SHEET_TOKEN)).json() as any;
+    expect(page).toMatchObject({ kind: 'region_day', region: 'KL', title: 'Region KL', lorryPlate: null });
+    expect(page.members.map((m: any) => m.willLoad)).toEqual([true, true, true, false]);
+    const body = await (await stepPost(SHEET_TOKEN, 'load')).json() as any;
+    expect(body.members.map((m: any) => m.outcome)).toEqual(['DONE', 'DONE', 'DONE', 'BLOCKED']);
+    expect(body.headline).toBe('Region KL: 3 of 4 delivery orders loaded');
+    expect(touched).not.toContain('delivery_order_crew');
+    expect(tables.packing_scan_sets[0]!.loaded_at).toBeTruthy();
+  });
+
+  test('the region sheet is two-step too', async () => {
+    seedLorryDay({ region: 'KL', preparedAt: null });
+    const body = await (await stepPost(SHEET_TOKEN, 'prepare')).json() as any;
+    expect(body).toMatchObject({ kind: 'region_day', headline: 'Region KL: packing list prepared' });
+    expect(tables.delivery_orders.every((d) => d.status === 'LOADED')).toBe(true);
+  });
+
+  test('another company\'s DO on a region sheet is still never written', async () => {
+    seedLorryDay({ region: 'KL', members: [{}, { company_id: OTHER_CO }] });
+    const body = await (await stepPost(SHEET_TOKEN, 'load')).json() as any;
+    expect(body.members[1].outcome).toBe('MOVED');
+    expect(tables.delivery_orders[1].status).toBe('LOADED');
   });
 });
 
