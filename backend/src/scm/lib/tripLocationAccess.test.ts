@@ -55,8 +55,8 @@ describe('trip location ping — pingCallerAllowed', () => {
   });
 
   it('a bypassed LORRY account on its plate pings its trip (driver is someone else)', () => {
-    // The owner dispatches Driver = a person; the lorry login is never the driver
-    // id, so only the plate arm lets it ping its own trip's GPS.
+    // Owner 2026-11-28, one phone per lorry: Driver = a person, so the lorry login
+    // is never the driver id — only the plate arm lets it ping its own trip's GPS.
     const lorryStop = { driverIds: ['someone-else'], helperIds: [], lorryPlate: 'MCF 3084' };
     expect(pingCallerAllowed(self([], [], ['MCF3084']), lorryStop, true)).toBe(true);
     expect(pingCallerAllowed(self([], [], ['W1591T']), lorryStop, true)).toBe(false);

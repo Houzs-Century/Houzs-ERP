@@ -156,10 +156,10 @@ export async function resolveDeliveryScope(
 
   const driverIds = new Set<string>();
   const helperIds = new Set<string>();
-  // The login's OWN lorry plate(s), for the lorry-plate arm above (owner
-  // 2026-11-28). We read the login's own driver row only — NEVER expand by other
-  // drivers' `vehicle` (the abandoned approach that would have shown one driver
-  // another's lorry): the plate is the login's account identity. `vehicle` if an admin set it
+  // The login's OWN lorry plate(s), for the lorry-plate arm above. We read the
+  // login's own driver row only — NEVER expand by other drivers' `vehicle` (the
+  // abandoned approach that would show one driver another's lorry; owner 2026-11-28):
+  // the plate is the login's account identity. `vehicle` if an admin set it
   // (Fleet profile), else the account `name` — for a lorry account the name IS
   // the plate ("MCF 3084"). normalizePlate drops anything with no alphanumerics,
   // so a person driver whose name is not a plate contributes nothing matchable.
