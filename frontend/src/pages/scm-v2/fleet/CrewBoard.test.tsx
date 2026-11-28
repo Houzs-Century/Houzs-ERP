@@ -84,7 +84,9 @@ describe('Drivers tab', () => {
     fireEvent.change(screen.getByPlaceholderText('Home address'), { target: { value: 'New address' } });
     fireEvent.click(screen.getByText('Save changes'));
     await waitFor(() => {
-      const patch = authedFetch.mock.calls.find(([p, o]: [string, { method?: string }?]) => p === '/drivers/d1' && o?.method === 'PATCH');
+      const patch = authedFetch.mock.calls.find(
+        (call) => call[0] === '/drivers/d1' && (call[1] as { method?: string } | undefined)?.method === 'PATCH',
+      );
       expect(patch).toBeTruthy();
       expect(JSON.parse((patch![1] as { body: string }).body)).toEqual({ licenseNo: 'X99', address: 'New address' });
     });
