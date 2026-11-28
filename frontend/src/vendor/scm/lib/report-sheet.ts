@@ -15,7 +15,6 @@ import { fmtSenPlain } from '../../../../../shared/src/vendor/shared/format';
 import { flattenLaid, fmtPct, linesVisible, nameWithoutCode, pctOf, type LaidNode } from './report-layout';
 import type { FlatLine, MonthColumn, MonthlyLine } from './report-monthly';
 import { AUTOCOUNT_LINE_ID, AUTOCOUNT_LINE_LABEL, balanceParts, withAutoCountLine, type RpReport } from './rp-report-queries';
-import { performanceNotes, performanceSummaryLines, type PerformanceReport } from './performance-report-queries';
 
 export type SheetRowKind = 'block' | 'category' | 'row' | 'unassigned' | 'total' | 'net' | 'memo';
 export type SheetColumn = {
@@ -154,28 +153,6 @@ export function cashFlowTable(r: RpReport, opts: CashFlowSheetOptions): SheetTab
   rows.push({ kind: 'net', depth: 0, label: 'Balance c/f', cells: cellsOf(r.totals.closing, r.totals.closingTotalSen, null) });
   rows.push(...parts(r.totals.closing, r.totals.closingTotalSen));
   return { columns, rows };
-}
-
-
-export type PerformanceSheetOptions = { level?: number | 'all'; open?: Record<string, boolean>; codes: boolean };
-
-/** The two tables the screen draws: the groups (sales, cost, gross profit,
-    GP %) with their total, then the summary from gross profit to net on the
-    report's tree, folded to the level; the notes ride along. */
-export function performanceTables(r: PerformanceReport, opts: PerformanceSheetOptions): { tables: SheetTable[]; notes: string[] } {
-  const groups: SheetTable = {
-    columns: [AMOUNT_COLUMN('Sales'), AMOUNT_COLUMN('Cost of sales'), AMOUNT_COLUMN('Gross profit'), PCT_COLUMN('GP %')],
-    rows: [
-      ...r.groups.map((g): SheetRow => ({ kind: 'row', depth: 0, label: g.label, cells: [g.salesSen, g.cogsSen, g.gpSen, g.gpPct] })),
-      { kind: 'total', depth: 0, label: 'Total', cells: [r.totals.salesSen, r.totals.cogsSen, r.totals.gpSen, r.totals.gpPct] },
-    ],
-  };
-  const all = performanceSummaryLines(r);
-  const summary: SheetTable = {
-    columns: [AMOUNT_COLUMN(), PCT_COLUMN('% of sales')],
-    rows: linesVisible(all, opts.level ?? 'all', opts.open ?? {}).map((l): SheetRow => ({ kind: l.kind, depth: l.depth, label: opts.codes ? l.label : nameWithoutCode(l.label, l.code), cells: [l.amountSen, l.pct] })),
-  };
-  return { tables: [groups, summary], notes: performanceNotes(r) };
 }
 
 

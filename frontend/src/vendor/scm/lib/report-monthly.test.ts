@@ -7,7 +7,7 @@ import { describe, expect, test } from 'vitest';
 import type { LaidNode } from './report-layout';
 import {
   balanceSheetLines, mergeColumns, monthBefore, monthColumns, monthEnd, monthLabel, monthlyCsv, monthlyDepth, monthlyLinesAtLevel,
-  monthsBack, performanceLines, pnlLines, rpLines, treeLines, type FlatLine,
+  monthsBack, pnlLines, rpLines, treeLines, type FlatLine,
 } from './report-monthly';
 
 const acc = (code: string, amountSen: number, pct: number | null = null, cells?: Record<string, number>): LaidNode =>
@@ -121,24 +121,6 @@ describe('each report as lines', () => {
     expect(lines.find((l) => l.id === 'net:check')).toMatchObject({ label: 'BALANCED', amountSen: 101_000, pct: 100 });
     const out = balanceSheetLines({ ...r, totals: { ...r.totals, checkSen: 500 } }).find((l) => l.id === 'net:check')!;
     expect(out).toMatchObject({ label: 'OUT OF BALANCE', amountSen: 500, pct: null });
-  });
-
-  test('the Performance P&L: sales, cost and gross profit per group with their totals, then the summary lines by their ids', () => {
-    const r = {
-      groups: [{ key: 'sofa', label: 'Sofa', salesSen: 300_000, cogsSen: 180_000, gpSen: 120_000, gpPct: 40 }, { key: 'service', label: 'Service', salesSen: 20_000, cogsSen: 0, gpSen: 20_000, gpPct: 100 }],
-      totals: { salesSen: 320_000, cogsSen: 180_000, gpSen: 140_000, gpPct: 43.8 },
-    };
-    const summary = [
-      { id: 'sum:gross', kind: 'total' as const, label: 'Gross profit', amountSen: 140_000, pct: 43.8, depth: 0 },
-      { id: 'acc:900-O001', kind: 'row' as const, label: 'Operating expense — 16.00%…', amountSen: 48_000, pct: 15, depth: 1 },
-      { id: 'sum:net', kind: 'net' as const, label: 'NET PERFORMANCE', amountSen: 92_000, pct: 28.8, depth: 0 },
-    ];
-    const lines = performanceLines(r, summary);
-    expect(lines.map((l) => l.id)).toEqual(['blk:sales', 'sales:sofa', 'sales:service', 'tot:sales', 'blk:cogs', 'cogs:sofa', 'cogs:service', 'tot:cogs', 'blk:gp', 'gp:sofa', 'gp:service', 'tot:gp', 'sum:gross', 'acc:900-O001', 'sum:net']);
-    expect(lines.find((l) => l.id === 'sales:sofa')).toMatchObject({ label: 'Sofa', amountSen: 300_000, pct: 93.8, depth: 1 });
-    expect(lines.find((l) => l.id === 'gp:sofa')).toMatchObject({ amountSen: 120_000, pct: 40 });
-    expect(lines.find((l) => l.id === 'tot:gp')).toMatchObject({ amountSen: 140_000, pct: 43.8, kind: 'total' });
-    expect(lines.find((l) => l.id === 'sum:net')).toMatchObject({ kind: 'net', depth: 0 });
   });
 
   test('the Cash Flow: each top category as a block, its tree, its own subtotal name; a running subtotal; then Cash surplus / (deficit), Balance b/f, Balance c/f', () => {
