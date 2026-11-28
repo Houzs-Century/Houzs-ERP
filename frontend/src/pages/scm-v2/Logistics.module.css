@@ -60,3 +60,5 @@
 .detailTable { border-collapse: collapse; font-size: 12.5px; color: var(--fin-ink); font-variant-numeric: tabular-nums; }
 .detailTable th { padding: 4px 12px 4px 0; font-size: 11.5px; font-weight: 600; color: var(--fin-detail); text-align: left; white-space: nowrap; }
 .detailTable td { padding: 3px 12px 3px 0; border-top: 1px solid var(--fin-rule-soft); white-space: nowrap; }
+.perKmHigh { color: var(--fin-late-fg); font-weight: 600; }
+.perKmSub { color: var(--fin-detail); font-size: 11.5px; }

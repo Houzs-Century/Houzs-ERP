@@ -19,6 +19,8 @@ import { FinanceGrid, fmtMoney, type GridColumn, type GridRow } from './reports/
 import { ReportExports, ReportHeaderActions, ReportMessage, ReportTiles, type ReportTile } from './reports/reportParts';
 import { monthName } from './reports/statementColumns';
 import { gridSheet, type Mode } from './logisticsColumns';
+import { useLorryKmMonths } from '../../vendor/scm/lib/lorries-queries';
+import { PETROL_RM_PER_KM_LIMIT, petrolPerKm, type PetrolKmRow } from './petrolPerKm';
 import type { ViewProps } from './LogisticsCost';
 import s from './Logistics.module.css';
 
@@ -71,6 +73,8 @@ export function SpendView({ p, mode, period, months }: ViewProps) {
   const lorries = useMemo(() => p.lorrySpend ?? [], [p]);
   const { columns, scopes } = useMemo(() => spendColumns(months, mode), [months, mode]);
   const single = mode === 'single';
+  const km = useLorryKmMonths(months);
+  const perKm = useMemo(() => petrolPerKm(lorries, km.byMonth, months, PETROL_RM_PER_KM_LIMIT), [lorries, km.byMonth, months]);
 
   const rows = useMemo<GridRow[]>(() => {
     const cellsOf = (f: (sc: SpendScope) => number | null) => Object.fromEntries([...scopes].map(([k, sc]) => [k, f(sc)]));
@@ -173,6 +177,42 @@ export function SpendView({ p, mode, period, months }: ViewProps) {
       <FinanceGrid layoutKey={`logistics-lorry-spend|${mode}`} nameColumn={{ label: 'Lorry', width: 300 }} columns={columns} rows={rows}
         title="Logistics cost · spend by lorry" subtitle={`${period} · RM`} ariaLabel="Spend by lorry" drillKey={`${months.join()}|${mode}`}
         foot={<span>From the books: each lorry&rsquo;s lines by the lorry its account names, else its description; driver pay and bills that name no lorry are Not tied. Actual: each line in full in the month it is booked. Spread: as the P&amp;L counts it (repairs and insurance over the months Finance gives them), so the Spread columns add up to the P&amp;L&rsquo;s Total In-house Expenses. A figure opens its lines.</span>} />
+      <PetrolPerKm rows={perKm} months={months} loading={km.loading} failed={km.failed} />
     </>
+  );
+}
+
+function PetrolPerKm({ rows, months, loading, failed }: { rows: PetrolKmRow[]; months: readonly string[]; loading: boolean; failed: boolean }) {
+  const high = rows.reduce((t, r) => t + months.filter((m) => r.cells[m]!.high).length, 0);
+  return (
+    <section aria-label="Petrol per GPS km">
+      <h3 className={s.notCountedTitle}>{`Petrol per GPS km · flag above RM ${fmtMoney(Math.round(PETROL_RM_PER_KM_LIMIT * 100))} per km${high > 0 ? ` · ${plural(high, 'lorry-month')} flagged` : ''}`}</h3>
+      {failed && <ReportMessage>GPS km could not be read. Refresh to try again.</ReportMessage>}
+      {loading && <ReportMessage>Reading GPS km...</ReportMessage>}
+      <table className={s.detailTable}>
+        <thead>
+          <tr><th>Lorry</th>{months.map((m) => <th key={m} className={s.num}>{monthName(`${m}-01`)}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.plate}>
+              <td>{r.plate}</td>
+              {months.map((m) => {
+                const c = r.cells[m]!;
+                const rate = c.rmPerKm == null ? 'no GPS km' : `RM ${fmtMoney(Math.round(c.rmPerKm * 100))}/km`;
+                const sub = c.km == null ? `RM ${fmtMoney(c.petrolSen)}` : `RM ${fmtMoney(c.petrolSen)} / ${Math.round(c.km).toLocaleString('en-US')} km · GPS ${c.gpsDays} of ${c.days} days`;
+                return (
+                  <td key={m} className={c.high ? `${s.num} ${s.perKmHigh}` : s.num}>
+                    <div>{c.high ? `${rate} high` : rate}</div>
+                    <div className={s.perKmSub}>{sub}</div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className={s.perKmSub}>Petrol is the books&rsquo; petrol, toll &amp; parking lines (Actual) of the month; GPS km is the trackers&rsquo; km (straight line between fixes, so a little under the road km). A month with GPS on only some days reads high.</p>
+    </section>
   );
 }

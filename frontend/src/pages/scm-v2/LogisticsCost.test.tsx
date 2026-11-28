@@ -107,6 +107,8 @@ const { fetchMock } = vi.hoisted(() => {
       if (init?.method === 'PUT' && /^\/acc-events\/logistics\/(income-rate|fair-income-rate|area-rate|spread|trip)$/.test(path)) return { ok: true };
       const m = /^\/acc-events\/logistics\/pnl\?from=([\d-]+)&to=([\d-]+)/.exec(path);
       if (m) return pnlFor(m[1]!, m[2]!);
+      const k = /^\/lorries\/km-daily\?from=([\d-]+)&to=([\d-]+)/.exec(path);
+      if (k) return { days: [k[1], k[2]], lorries: [{ id: '1', plate: 'VNB 9058', km: [500, null], odoKm: [null, null] }, { id: '2', plate: 'VPC 9058', km: [1000, 1000], odoKm: [null, null] }] };
       throw new Error(`unexpected ${path}`);
     }),
   };
@@ -205,6 +207,16 @@ describe('Spend by lorry', () => {
     expect(rowText(table, 'Difference (Spread less the P&L)')).toMatch(/-0\.00$/);
     expect(screen.getByRole('group', { name: 'Spend by lorry totals' }).textContent).toContain('Actual21,209');
     expect(screen.queryByRole('switch', { name: /% of DO/ })).toBeNull();
+  });
+
+  test('petrol per GPS km: each of our lorries per month, flagged above the limit', async () => {
+    draw('?lv=lorries');
+    const box = await screen.findByRole('region', { name: 'Petrol per GPS km' });
+    await within(box).findAllByText('RM 1.00/km high');
+    expect(box.textContent).toContain('RM 500.00 / 500 km · GPS 1 of 2 days');
+    expect(within(box).getAllByText('RM 0.50/km').length).toBeGreaterThan(0);
+    expect(within(box).getAllByText('no GPS km').length).toBeGreaterThan(0);
+    expect(box.textContent).not.toContain('Not tied');
   });
 
   test('the repairs-only address opens this view', async () => {
