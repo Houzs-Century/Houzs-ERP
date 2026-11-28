@@ -15,6 +15,10 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { unreadableMovementError } from '../lib/failed-read-refusal';
 import { recordEntityAudit, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
+import { findTransferShortages, shortageMessage, sumByBucket, STOCK_TRANSFER_ALLOW_SHORT,
+  type TransferShortage } from '../lib/stock-transfer-shortages';
+import { hasHouzsPerm } from '../lib/houzs-perms';
+import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 
 export const stockTransfers = new Hono<{ Bindings: Env; Variables: Variables }>();
 stockTransfers.use('*', supabaseAuth);
@@ -26,6 +30,19 @@ const LINE =
   'id, stock_transfer_id, item_code, product_name, variant_key, qty, notes, created_at';
 
 const VALID_STATUS = new Set(['POSTED', 'CANCELLED']);
+
+type ShortStockCtx = Parameters<typeof hasHouzsPerm>[0] & Parameters<typeof markIdempotencyNoWrite>[0];
+
+function shortStockRefusal(c: ShortStockCtx, shortages: TransferShortage[], overrideAsked: boolean) {
+  if (shortages.length === 0) return null;
+  const canOverride = hasHouzsPerm(c, STOCK_TRANSFER_ALLOW_SHORT);
+  if (overrideAsked && canOverride) return null;
+  markIdempotencyNoWrite(c);
+  return { error: 'insufficient_stock' as const, message: shortageMessage(shortages), shortages, canOverride };
+}
+
+const shortOverrideNote = (shortages: TransferShortage[]) =>
+  `Posted with short stock (override): ${shortageMessage(shortages)}`;
 
 const nextTransferNo = async (sb: ScmClient, c: CompanyScopeCtx): Promise<string> => {
   const yymm = yymmFor();
@@ -214,6 +231,7 @@ stockTransfers.patch('/:id', async (c) => {
 
   let oldLineRows: Array<{ id: string; item_code: string; variant_key: string | null; qty: number }> = [];
   let sameBuckets = false;
+  let shortPosted: TransferShortage[] = [];
   if (itemsInput) {
     const { data: oldLines, error: oldLinesErr } = await db
       .from('stock_transfer_lines', CENTRALISED(
@@ -231,38 +249,11 @@ stockTransfers.patch('/:id', async (c) => {
       && Number(o.qty) === newLineRows[i]!.qty);
 
     if (!sameBuckets) {
-      const bucketKey = (itemCode: string, variantKey: string | null) => `${itemCode}::${variantKey ?? ''}`;
-      const oldByBucket = new Map<string, number>();
-      for (const l of oldLineRows) {
-        const k = bucketKey(l.item_code, l.variant_key);
-        oldByBucket.set(k, (oldByBucket.get(k) ?? 0) + Number(l.qty));
-      }
-      const newByBucket = new Map<string, number>();
-      for (const l of newLineRows) {
-        const k = bucketKey(l.item_code, l.variant_key);
-        newByBucket.set(k, (newByBucket.get(k) ?? 0) + l.qty);
-      }
-
-      const shortages: Array<{ itemCode: string; variantKey: string; requested: number; available: number }> = [];
-      for (const [k, requested] of newByBucket.entries()) {
-        const [itemCode, variantKey] = k.split('::');
-        const { data: lots, error: lotsErr } = await db
-          .from('v_inventory_lots_open', companyScope(c))
-          .select('qty_remaining')
-          .eq('warehouse_id', before.from_warehouse_id)
-          .eq('item_code', itemCode)
-          .eq('variant_key', variantKey);
-        if (lotsErr) return c.json({ error: 'stock_check_failed', reason: lotsErr.message }, 500);
-        const currentOpen = (lots ?? []).reduce((s: number, r: { qty_remaining: number | null }) => s + Number(r.qty_remaining ?? 0), 0);
-        const available = currentOpen + (oldByBucket.get(k) ?? 0);
-        if (requested > available) shortages.push({ itemCode: itemCode!, variantKey: variantKey ?? '', requested, available });
-      }
-      if (shortages.length) {
-        const message = shortages
-          .map((s) => `${s.itemCode}${s.variantKey ? ` (${s.variantKey})` : ''}: requested ${s.requested}, only ${s.available} available at the source warehouse`)
-          .join('; ');
-        return c.json({ error: 'insufficient_stock', message, shortages }, 409);
-      }
+      const check = await findTransferShortages(db, c, before.from_warehouse_id, sumByBucket(newLineRows), sumByBucket(oldLineRows));
+      if (!check.ok) return c.json({ error: 'stock_check_failed', reason: check.reason }, 500);
+      const refusal = shortStockRefusal(c, check.shortages, body.allowShortStock === true);
+      if (refusal) return c.json(refusal, 409);
+      shortPosted = check.shortages;
     }
   }
 
@@ -321,7 +312,9 @@ stockTransfers.patch('/:id', async (c) => {
     action: 'UPDATE',
     actor: c.get('houzsUser'),
     companyId: before.company_id,
-    note: movementErrors.length ? `Item edit — movement re-apply INCOMPLETE: ${movementErrors.join('; ')}` : undefined,
+    note: movementErrors.length
+      ? `Item edit — movement re-apply INCOMPLETE: ${movementErrors.join('; ')}`
+      : shortPosted.length ? shortOverrideNote(shortPosted) : undefined,
     fieldChanges: compactChanges([
       ...(hasHeaderNotes ? [fieldChange('notes', before.notes, (body.notes as string | null) ?? null)] : []),
       ...(itemsInput ? [
@@ -459,6 +452,16 @@ stockTransfers.post('/', async (c) => {
   if (whErr) return c.json({ error: 'warehouse_check_failed', reason: whErr.message }, 500);
   if ((ownWhs ?? []).length !== wanted.length) return c.json(NOT_THIS_COMPANY, 404);
 
+  const requestedByBucket = sumByBucket(items.map((it) => ({
+    item_code: String(it.itemCode ?? ''),
+    variant_key: (it.variantKey as string | undefined) ?? '',
+    qty: Math.max(0, Math.floor(Number(it.qty ?? 0))),
+  })).filter((l) => l.item_code && l.qty > 0));
+  const stockCheck = await findTransferShortages(db, c, fromWarehouseId, requestedByBucket, new Map());
+  if (!stockCheck.ok) return c.json({ error: 'stock_check_failed', reason: stockCheck.reason }, 500);
+  const shortRefusal = shortStockRefusal(c, stockCheck.shortages, body.allowShortStock === true);
+  if (shortRefusal) return c.json(shortRefusal, 409);
+
   const headerInsert: Record<string, unknown> = {
     status:             'POSTED',
     posted_at:          new Date().toISOString(),
@@ -559,6 +562,7 @@ stockTransfers.post('/', async (c) => {
     actor: c.get('houzsUser'),
     companyId: activeCompanyId(c),
     statusSnapshot: 'POSTED',
+    note: stockCheck.shortages.length ? shortOverrideNote(stockCheck.shortages) : undefined,
     fieldChanges: transferChanges,
   });
 

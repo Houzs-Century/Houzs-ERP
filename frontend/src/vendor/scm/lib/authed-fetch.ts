@@ -232,6 +232,36 @@ async function confirmSoHasPo(raw: string): Promise<boolean> {
   }
 }
 
+function transferShortageLines(raw: string): string {
+  const body = JSON.parse(raw.slice(raw.indexOf('{'))) as {
+    shortages?: Array<{ itemCode: string; variantKey: string; requested: number; available: number }>;
+  };
+  return (body.shortages ?? []).map((s) =>
+    `• ${s.itemCode}${s.variantKey ? ` (${s.variantKey})` : ''}\n   Transfer ${s.requested}, only ${s.available} at the source warehouse (short ${s.requested - s.available})`,
+  ).join('\n\n');
+}
+
+/** The refusal shown to someone who may not post a stock transfer short of stock. */
+export function transferShortStockRefusal(raw: string): string {
+  let lines = '';
+  try { lines = transferShortageLines(raw); } catch { lines = ''; }
+  return `Not enough stock at the source warehouse, so the stock transfer was not posted.${lines ? `\n\n${lines}` : ''}\n\n`
+    + `Lower the quantity, or ask someone with the "Post a stock transfer short of stock" permission to post it.`;
+}
+
+async function confirmTransferShortStock(raw: string): Promise<boolean> {
+  try {
+    return await serviceConfirm({
+      title: 'Stock not enough at the source warehouse',
+      body: `${transferShortageLines(raw)}\n\nPost anyway? (Stock at the source warehouse will go negative, and the audit log records the override.)`,
+      confirmLabel: 'Post anyway',
+      danger: true,
+    });
+  } catch {
+    return false;
+  }
+}
+
 async function confirmShortStock(raw: string): Promise<boolean> {
   try {
     const jsonStart = raw.indexOf('{');
@@ -357,6 +387,14 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
           );
         }
         mergedBody = { ...mergedBody, confirmDuplicatePo: true };
+      } else if (text.includes('"insufficient_stock"') && text.includes('"canOverride":true') && mergedBody.allowShortStock !== true) {
+        if (!(await confirmTransferShortStock(text))) {
+          throw correlateError(
+            new Error('Not enough stock at the source warehouse, so the stock transfer was not posted. Nothing has changed.'),
+            requestIdFromResponse(res),
+          );
+        }
+        mergedBody = { ...mergedBody, allowShortStock: true };
       } else if (text.includes('"short_stock"') && mergedBody.confirmShortStock !== true) {
         if (mergedBody.dropShip !== true && !(await confirmShortStock(text))) break;
         mergedBody = { ...mergedBody, confirmShortStock: true };
@@ -385,6 +423,9 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
 
   if (res.status === 409) {
     const text = await consumeCorrelated(res, () => res.clone().text());
+    if (text.includes('"insufficient_stock"') && text.includes('"canOverride":false')) {
+      throw correlateError(new Error(transferShortStockRefusal(text)), requestIdFromResponse(res));
+    }
     if (text.includes('"sofa_no_batch"')) {
       let msg = "This sofa set can't ship yet — no single production batch on hand covers the whole set. Wait until one complete batch is received.";
       try { const b = JSON.parse(text) as { message?: string }; if (b?.message) msg = b.message; } catch { }

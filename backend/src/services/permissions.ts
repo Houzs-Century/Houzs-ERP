@@ -88,6 +88,8 @@ export const PERMISSIONS: PermissionDef[] = [
   // the last 14 days (scm/shared/payment-slip-date.ts owns the window). This key
   // is the exception: Finance / management keying a receipt that surfaced late.
   // Owner + IT Admin cover it via "*"; grant the ROLE under Team > Roles & Permissions.
+  // Owner 2026-11-27 — a stock transfer short at the source warns; this key may post it anyway (audited).
+  { key: "scm.stock_transfer.allow_short", resource: "Supply Chain", verb: "manage", label: "Post a stock transfer short of stock", description: "Post or edit a stock transfer that takes more than the source warehouse holds; the source goes negative and the audit row lists each short item" },
   { key: "scm.payment.backdate", resource: "Supply Chain", verb: "manage", label: "Backdate a payment slip", description: "Record or re-date a Sales Order payment whose transaction-slip date is older than the 14-day window (or in the future); the entry is audited as an override" },
   // Owner 2026-09-30: Logistic decides backdate REQUESTS without being able to
   // key an old slip itself — their own late slips still go through a request.
