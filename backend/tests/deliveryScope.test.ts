@@ -123,6 +123,37 @@ describe('resolveDeliveryScope — IDENTITY gate (fleet link)', () => {
   });
 });
 
+describe('resolveDeliveryScope — Outsource Transporter (3PL POD driver, owner 2026-11-28)', () => {
+  const outsourceCaller = (id: number) => ({
+    id, position_name: 'Outsource Transporter', department_name: 'Operation',
+  });
+
+  test('a LINKED Outsource Transporter is scoped to its own driver id (sees + PODs only its own stops)', async () => {
+    const scope = await resolveDeliveryScope(
+      fakeSb({ drivers: [{ id: 'drv-3pl', user_id: 42 }] }),
+      outsourceCaller(42),
+    );
+    expect(scope.mode).toBe('self');
+    if (scope.mode === 'self') {
+      expect([...scope.driverIds]).toEqual(['drv-3pl']);
+      expect(scopeMatchesAssignment(scope, { driverIds: ['drv-3pl'], helperIds: [] })).toBe(true);
+      expect(scopeMatchesAssignment(scope, { driverIds: ['drv-other'], helperIds: [] })).toBe(false);
+    }
+  });
+
+  test('an UNLINKED Outsource Transporter fails CLOSED — empty self scope, NOT the whole board', async () => {
+    // Before Outsource Transporter joined FLEET_POSITIONS this returned `all`
+    // (a restricted-but-not-fleet caller kept the whole board). It must fail
+    // closed so a mis-set 3PL account never sees every driver's jobs.
+    const scope = await resolveDeliveryScope(fakeSb({ drivers: [], helpers: [] }), outsourceCaller(42));
+    expect(scope.mode).toBe('self');
+    if (scope.mode === 'self') {
+      expect(scope.driverIds.size).toBe(0);
+      expect(scopeMatchesAssignment(scope, { driverIds: ['drv-9'], helperIds: ['hlp-9'] })).toBe(false);
+    }
+  });
+});
+
 describe('scopeMatchesAssignment', () => {
   const selfScope: DeliveryScope = {
     mode: 'self',
