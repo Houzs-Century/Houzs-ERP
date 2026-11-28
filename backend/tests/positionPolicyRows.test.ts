@@ -38,6 +38,8 @@ const PG_MIGRATION = resolve(HERE, "../src/db/migrations-pg/20260916T1600_positi
 const D1_MIRROR = resolve(HERE, "../src/db/migrations/155_position_policy.sql");
 const PG_DUTY_MIGRATION = resolve(HERE, "../src/db/migrations-pg/20260916T1800_position_policy_duty.sql");
 const D1_DUTY_MIRROR = resolve(HERE, "../src/db/migrations/157_position_policy_duty.sql");
+const PG_FLEET_MIGRATION = resolve(HERE, "../src/db/migrations-pg/20261128T1500_position_policy_outsource_fleet.sql");
+const D1_FLEET_MIRROR = resolve(HERE, "../src/db/migrations/184_position_policy_outsource_fleet.sql");
 
 function rowOf(entry: (typeof POSITION_POLICY_SEED)[number], positionId = 999): PositionPolicyRow {
   return {
@@ -134,16 +136,37 @@ describe("position_policy migrations carry exactly the seed", () => {
     [e.slug, e.cohort, e.profile, e.can_move_money ? 1 : 0, e.can_write_config ? 1 : 0, e.is_fleet ? 1 : 0].join("|"),
   ).sort();
 
-  test("the Postgres migration's VALUES list", () => {
+  // is_fleet for a Title can be changed after the original seed by a dedicated
+  // override migration (like the duty column was), so the EFFECTIVE is_fleet is
+  // the seed migration's value THEN the override migrations applied. This flips
+  // the is_fleet field (index 5) of every slug an override migration sets true,
+  // so what we assert is "seed migration + is_fleet overrides == SEED".
+  const slugsSetFleetTrue = (...sqls: string[]): Set<string> => {
+    const out = new Set<string>();
+    for (const sql of sqls)
+      for (const m of sql.matchAll(/SET is_fleet = (?:true|1)\s+WHERE[\s\S]*?slug\s+IN\s+\(([^)]+)\)/gi))
+        for (const s of m[1].split(",")) out.add(s.trim().replace(/^'|'$/g, ""));
+    return out;
+  };
+  const applyFleetOverrides = (tuples: string[], trueSlugs: Set<string>): string[] =>
+    tuples.map((t) => {
+      const parts = t.split("|");
+      if (trueSlugs.has(parts[0])) parts[5] = "1";
+      return parts.join("|");
+    });
+
+  test("the Postgres migration's VALUES list (plus the is_fleet override)", () => {
     const sql = readFileSync(PG_MIGRATION, "utf8");
     const tuples = [...sql.matchAll(/\('([a-z_-]+)',\s*'(\w+)',\s*(NULL|'\w+'),\s*(\d),\s*(\d),\s*(\d)\)/g)].map((m) =>
       [m[1], m[2], m[3] === "NULL" ? null : m[3].slice(1, -1), Number(m[4]), Number(m[5]), Number(m[6])].join("|"),
     );
-    expect(tuples.sort()).toEqual(seedTuples);
+    const effective = applyFleetOverrides(tuples, slugsSetFleetTrue(readFileSync(PG_FLEET_MIGRATION, "utf8")));
+    expect(effective.sort()).toEqual(seedTuples);
     expect(sql).toMatch(/^-- REVERSAL:/m);
+    expect(readFileSync(PG_FLEET_MIGRATION, "utf8")).toMatch(/^-- REVERSAL:/m);
   });
 
-  test("the D1 mirror's per-slug INSERTs", () => {
+  test("the D1 mirror's per-slug INSERTs (plus the is_fleet override)", () => {
     const sql = readFileSync(D1_MIRROR, "utf8");
     const tuples: string[] = [];
     for (const m of sql.matchAll(/SELECT id, '(\w+)', (NULL|'\w+'), (\d), (\d), (\d) FROM positions WHERE slug IN \(([^)]+)\)/g)) {
@@ -151,7 +174,22 @@ describe("position_policy migrations carry exactly the seed", () => {
       for (const slug of m[6].split(",").map((x) => x.trim().replace(/^'|'$/g, "")))
         tuples.push([slug, m[1], profile, Number(m[3]), Number(m[4]), Number(m[5])].join("|"));
     }
-    expect(tuples.sort()).toEqual(seedTuples);
+    const effective = applyFleetOverrides(tuples, slugsSetFleetTrue(readFileSync(D1_FLEET_MIRROR, "utf8")));
+    expect(effective.sort()).toEqual(seedTuples);
+  });
+
+  test("the is_fleet override migrations flip exactly the slugs the seed now marks fleet but the original seed did not", () => {
+    const origFleet = new Map<string, boolean>();
+    for (const m of readFileSync(PG_MIGRATION, "utf8").matchAll(
+      /\('([a-z_-]+)',\s*'\w+',\s*(?:NULL|'\w+'),\s*\d,\s*\d,\s*(\d)\)/g,
+    ))
+      origFleet.set(m[1], m[2] === "1");
+    const expected = POSITION_POLICY_SEED.filter((e) => e.is_fleet && origFleet.get(e.slug) === false)
+      .map((e) => e.slug)
+      .sort();
+    expect(expected).toContain("outsource_transporter");
+    for (const file of [PG_FLEET_MIGRATION, D1_FLEET_MIRROR])
+      expect([...slugsSetFleetTrue(readFileSync(file, "utf8"))].sort()).toEqual(expected);
   });
 });
 

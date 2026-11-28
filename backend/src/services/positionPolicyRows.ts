@@ -250,6 +250,6 @@ export const POSITION_POLICY_SEED: ReadonlyArray<PositionPolicySeedEntry> = [
   seed("warehouse_crew_kl", "Warehouse Crew KL", "Operation Department", "restricted", "storekeeper", { duty: "warehouse" }),
   seed("driver", "Driver", "Operation Department", "restricted", "driver_helper", { fleet: true, duty: "driver" }),
   seed("helper", "Helper", "Operation Department", "restricted", "driver_helper", { fleet: true, duty: "helper" }),
-  seed("outsource_transporter", "Outsource Transporter", "Operation Department", "restricted", "driver_helper"),
+  seed("outsource_transporter", "Outsource Transporter", "Operation Department", "restricted", "driver_helper", { fleet: true }),
   seed("calendar-viewer", "Calendar Viewer", "Management", "restricted", "calendar_viewer"),
 ];
