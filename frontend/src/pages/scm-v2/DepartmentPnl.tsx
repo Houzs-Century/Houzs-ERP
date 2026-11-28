@@ -426,7 +426,7 @@ function DeptView({ p, mode, showPct, period }: { p: DepartmentView; mode: Mode;
           not, each line&rsquo;s own cost{p.orders ? ` — ${p.orders.counted.toLocaleString('en-US')} orders, ${p.orders.notDelivered.toLocaleString('en-US')} not yet delivered` : ''}.
           Expenses: what the {p.label} department booked, by journal date, its commission at the month&rsquo;s commission bills and merchandise at its rate
           in place of the terminal charges. Paid to other departments: each a rate of the sales excluding service. Every % is of the column&rsquo;s sales.
-          {estimatesRebates ? ' Other income adds each supplier rebate estimated from the month\u2019s bills from that supplier; the supplier\u2019s own credit note is booked in Actual, not here.' : ''}
+          {estimatesRebates ? ' Other income adds each supplier rebate estimated from the month\u2019s bills from that supplier, and the display discount on the month\u2019s POs from it; the supplier\u2019s own credit notes are booked in Actual, not here.' : ''}
           {' '}Click a figure for the lines behind it.
         </span> : <span>
           The books by journal date, month by month: sales and cost of sales as booked, less what the {p.label} department booked{pays ? ' and what it pays the other departments, each a rate of its sales excluding service' : ''}.

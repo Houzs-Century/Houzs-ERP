@@ -24,7 +24,8 @@
 //                                            own P&L, G&A or Setup & dismantle's fair transport
 //   PUT /departments/rate                    { dept: 'ga' | 'operation' | 'merchandise', pct }
 //   PUT /departments/rebates                 { rules } — the company's supplier rebate rules, the
-//                                            selling department's estimate in Performance
+//                                            selling department's estimate in Performance, with
+//                                            the display discount on its POs
 //                                            (scm/lib/supplier-rebates.ts; owner 2026-11-27: 「做设定框」)
 //
 // Logistics' own report by DO is the Logistics cost report's (GET /logistics/pnl), which the
@@ -67,8 +68,8 @@ import {
 } from '../lib/department-charges';
 import { buildLogisticsUnit, buildOperationUnit, buildSetupDismantleUnit, type UnitKind, type UnitView } from '../lib/department-units';
 import {
-  parseSupplierRebates, readSupplierRebateRules, rebateFigures, rebateKey, rebateMonths, rebateWorking,
-  type RebateFigure, type RebateMonth, type SupplierRebateRule,
+  displayPoLines, displayPoWorking, parseSupplierRebates, readSupplierRebateRules, rebateFigures, rebateKey, rebateMonths, rebateWorking,
+  type RebateFigure, type RebateMonth, type RebatePoLine, type SupplierRebateRule,
 } from '../lib/supplier-rebates';
 import { loadRebateInputs } from '../lib/supplier-rebates-load';
 
@@ -356,13 +357,17 @@ const setupDismantleUnitOf = (setup: Setup, r: Range, charges: readonly MonthCha
 
 /** Each supplier rebate rule of the company, read and estimated month by month
     (owner 2026-11-27: only for the selling department in Performance). */
-type RebateRead = { rule: SupplierRebateRule; months: RebateMonth[] };
+type RebateRead = { rule: SupplierRebateRule; months: RebateMonth[]; displayLines: RebatePoLine[] };
 async function rebatesOf(sb: any, companyId: number, setup: Setup, r: Range): Promise<{ ok: true; reads: RebateRead[] } | Failed> {
   const reads: RebateRead[] = [];
   for (const rule of setup.supplierRebates) {
     const got = await loadRebateInputs(sb, companyId, rule, r.from, r.to);
     if (!got.ok) return { ok: false, what: `${rule.label} rebates`, reason: got.reason };
-    reads.push({ rule, months: rebateMonths(rule, r.months, got.inputs.lines, got.inputs.notes) });
+    reads.push({
+      rule,
+      months: rebateMonths(rule, r.months, got.inputs.lines, got.inputs.notes, got.inputs.poLines),
+      displayLines: displayPoLines(rule, got.inputs.poLines),
+    });
   }
   return { ok: true, reads };
 }
@@ -719,7 +724,7 @@ export const departmentLinesHandler = async (c: any): Promise<Response> => {
   if (onOrders && block === 'otherIncome' && wantsRebates(setup, dept, b.basis) && keys.some((k) => k.startsWith('rebate:'))) {
     const reb = await rebatesOf(sb, companyId, setup, r);
     if (!reb.ok) return fail(c, reb.what, reb.reason);
-    for (const { rule, months } of reb.reads) {
+    for (const { rule, months, displayLines } of reb.reads) {
       for (const kind of ['sponsor', 'sales'] as const) {
         const key = rebateKey(rule.supplierCode, kind);
         if (!keys.includes(key)) continue;
@@ -731,6 +736,14 @@ export const departmentLinesHandler = async (c: any): Promise<Response> => {
             ref: null, text: rebateWorking(rule, m, kind), dept, team: null, sen, source: 'rate',
           });
         }
+      }
+      const displayKey = rebateKey(rule.supplierCode, 'display');
+      if (!keys.includes(displayKey)) continue;
+      for (const l of displayLines) {
+        rateLines.push({
+          id: `${displayKey}:${l.id}`, month: l.month, day: l.day, accountCode: rule.supplierCode, accountName: `${rule.label} display discount (estimate)`,
+          ref: l.poNo, text: displayPoWorking(rule, l), dept, team: null, sen: l.discountSen, source: 'rate',
+        });
       }
     }
   }
