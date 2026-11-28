@@ -186,30 +186,6 @@ export const balanceSheetLines = (r: BsLike): FlatLine[] => {
   ];
 };
 
-type PerfLike = {
-  groups: Array<{ key: string; label: string; salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null }>;
-  totals: { salesSen: number; cogsSen: number; gpSen: number; gpPct: number | null };
-};
-export type PerfSummaryLike = { id?: string; kind: 'total' | 'category' | 'row' | 'net'; label: string; amountSen: number; pct: number | null; depth: number };
-
-/** The Performance P&L as lines: sales per group, cost per group, gross
-    profit per group (each with its total), then the summary from gross
-    profit to net — the same summary lines the single-period screen draws. */
-export const performanceLines = (r: PerfLike, summary: PerfSummaryLike[]): FlatLine[] => {
-  const base = r.totals.salesSen > 0 ? r.totals.salesSen : null;
-  const per = (key: string, title: string, pick: (g: PerfLike['groups'][number]) => number, totalSen: number, pctOf: (g: PerfLike['groups'][number]) => number | null, totalPct: number | null): FlatLine[] => [
-    fixedLine(`blk:${key}`, title, 'block', 0, null),
-    ...r.groups.map((g): FlatLine => ({ id: `${key}:${g.key}`, label: g.label, kind: 'row', depth: 1, amountSen: pick(g), pct: pctOf(g) })),
-    fixedLine(`tot:${key}`, `Total ${title.toLowerCase()}`, 'total', totalSen, totalPct),
-  ];
-  return [
-    ...per('sales', 'Sales', (g) => g.salesSen, r.totals.salesSen, (g) => pctOfBase(g.salesSen, base), pctOfBase(r.totals.salesSen, base)),
-    ...per('cogs', 'Cost of sales', (g) => g.cogsSen, r.totals.cogsSen, (g) => pctOfBase(g.cogsSen, base), pctOfBase(r.totals.cogsSen, base)),
-    ...per('gp', 'Gross profit by group', (g) => g.gpSen, r.totals.gpSen, (g) => g.gpPct, r.totals.gpPct),
-    ...summary.map((l, i): FlatLine => ({ id: l.id ?? `sum:${i}:${l.label}`, label: l.label, kind: l.kind === 'net' ? 'net' : l.kind, depth: l.depth, amountSen: l.amountSen, pct: l.pct })),
-  ];
-};
-
 type RpLike = {
   columns: RpColumn[];
   opening: Record<string, number>;

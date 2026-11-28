@@ -2,14 +2,13 @@
    Excel and PDF draw (owner 2026-09-19: 我这页显示什么就要 export 什么). Pinned:
    a statement's lines as rows of amount and %; the Cash Flow with the ticked
    columns, folded to the level, a zero in an account column a dash; the
-   Performance P&L's two tables and notes; the monthly grid in amounts mode
+   monthly grid in amounts mode
    (a % beside each amount) and in % mode; a cell's text. */
 import { describe, expect, it } from 'vitest';
 import type { LaidNode } from './report-layout';
 import type { FlatLine, MonthColumn, MonthlyLine } from './report-monthly';
 import type { RpReport } from './rp-report-queries';
-import type { PerformanceReport } from './performance-report-queries';
-import { cashFlowTable, exportFileName, monthlyTable, performanceTables, rowsWithTotalsBelow, sheetText, statementColumnsTable, statementTable } from './report-sheet';
+import { cashFlowTable, exportFileName, monthlyTable, rowsWithTotalsBelow, sheetText, statementColumnsTable, statementTable } from './report-sheet';
 
 const acc = (code: string, label: string, amountSen: number, pct: number | null): LaidNode =>
   ({ kind: 'account', id: `acc:${code}`, label, code, key: code, amountSen, pct, children: [] });
@@ -98,48 +97,6 @@ describe('the Cash Flow as a table', () => {
   });
 });
 
-const perf: PerformanceReport = {
-  from: '2026-07-01', to: '2026-07-31',
-  orders: { counted: 4, notDelivered: 3, excludedDraft: 1, excludedCancelled: 1 },
-  groups: [
-    { key: 'sofa', label: 'Sofa', lines: 1, salesSen: 300000, cogsSen: 180000, gpSen: 120000, gpPct: 40 },
-    { key: 'accessory', label: 'Accessory', lines: 1, salesSen: 0, cogsSen: 12000, gpSen: -12000, gpPct: null },
-  ],
-  totals: { salesSen: 300000, cogsSen: 192000, gpSen: 108000, gpPct: 36, salesExServiceSen: 300000 },
-  operatingExpense: { rateBp: 1600, baseSen: 300000, amountSen: 48000, account: '900-O001', accountName: 'OPERATIING EXPENSE', accountFound: true, bookedSen: 0 },
-  otherIncome: [], otherIncomeSen: 0,
-  otherExpenses: [{ code: '900-R048', name: 'RENTAL OF SHOWROOM', amountSen: 450000 }], otherExpensesSen: 450000,
-  netSen: 108000 - 48000 - 450000, netPct: -130,
-  settings: { rateBp: 1600, account: '900-O001' },
-  layout: {
-    stored: true, baseSen: 300000,
-    otherIncome: [],
-    expenses: [{ kind: 'category', id: 'cat:fixed', label: 'Fixed costs', amountSen: 498000, pct: 166, children: [
-      acc('900-R048', '900-R048 · RENTAL OF SHOWROOM', 450000, 150),
-      acc('900-O001', 'Operating expense — 16.00% of sales, in place of 900-O001', 48000, 16),
-    ] }],
-  },
-};
-
-describe('the Performance P&L as tables', () => {
-  it('lays the groups with their total, then the summary folded to the level, and the notes', () => {
-    const { tables, notes } = performanceTables(perf, { level: 1, codes: true });
-    expect(tables[0]!.columns.map((c) => [c.label, c.kind])).toEqual([['Sales', 'amount'], ['Cost of sales', 'amount'], ['Gross profit', 'amount'], ['GP %', 'pct']]);
-    expect(tables[0]!.rows).toEqual([
-      { kind: 'row', depth: 0, label: 'Sofa', cells: [300000, 180000, 120000, 40] },
-      { kind: 'row', depth: 0, label: 'Accessory', cells: [0, 12000, -12000, null] },
-      { kind: 'total', depth: 0, label: 'Total', cells: [300000, 192000, 108000, 36] },
-    ]);
-    expect(tables[1]!.columns.map((c) => c.label)).toEqual(['Amount', '% of sales']);
-    expect(tables[1]!.rows.map((r) => [r.kind, r.depth, r.label])).toEqual([
-      ['total', 0, 'Gross profit'], ['total', 0, 'Total other income (as booked)'], ['category', 1, 'Fixed costs'],
-      ['total', 0, 'Total expenses (operating expense at 16.00% + as booked)'], ['net', 0, 'NET PERFORMANCE'],
-    ]);
-    expect(performanceTables(perf, { codes: true }).tables[1]!.rows.map((r) => r.label)).toContain('900-R048 · RENTAL OF SHOWROOM');
-    expect(notes.length).toBeGreaterThan(0);
-  });
-});
-
 describe('the monthly grid as a table', () => {
   const columns: MonthColumn[] = [
     { key: 'cumulative', label: 'Cumulative 08/2026 – 09/2026', from: '2026-08-01', to: '2026-09-30', cumulative: true },
@@ -221,8 +178,7 @@ describe('the Cash Flow\'s Settlement / Deposit columns as a table (owner 2026-1
       [{ id: 'a', label: '900-A001 · ADVERT', kind: 'row', depth: 1, code: '900-A001', cells: { total: { amountSen: 500, pct: 5 } } }]);
     expect(t.rows[0]!.cells).toEqual([500, 5, '']);
   });
-  it('codes off: an account prints its name alone, on the Cash Flow and the Performance P&L as on the screen', () => {
+  it('codes off: an account prints its name alone, on the Cash Flow as on the screen', () => {
     expect(cashFlowTable(rp, { level: 1, open: { 'cf:in:sales': true }, codes: false }).rows.map((r) => r.label)).toContain('AR');
-    expect(performanceTables(perf, { codes: false }).tables[1]!.rows.map((r) => r.label)).toContain('RENTAL OF SHOWROOM');
   });
 });

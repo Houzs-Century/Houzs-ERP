@@ -67,9 +67,11 @@ describe('the Finance sidebar', () => {
       '/scm/supplier-notes',
       '/scm/daily-bank-cashbook',
     ]) expect(tos, `${to} is still reachable`).toContain(to);
-    for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'performance', 'products', 'logistics', 'departments', 'changesum']) {
+    for (const tab of ['je', 'gl', 'tb', 'close', 'check', 'pnl', 'bs', 'rp', 'ar', 'ap', 'corrections', 'collection', 'charges', 'groups', 'products', 'logistics', 'departments', 'changesum']) {
       expect(tos, `tab ${tab} is deep-linked`).toContain(`/scm/accounting?tab=${tab}`);
     }
+    /* The Overall P&L's Performance view is gone (owner 2026-11-28); its old links land on Actual. */
+    expect(tos).not.toContain('/scm/accounting?tab=performance');
     expect(new Set(tos).size, 'no destination twice').toBe(tos.length);
   });
 

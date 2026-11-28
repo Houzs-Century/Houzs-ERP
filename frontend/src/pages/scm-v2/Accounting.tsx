@@ -1,8 +1,8 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import { accountingTabFromSearch, type AccountingTab } from './accounting-tabs';
-import { reportOfAccountingTab, type ReportItem } from './reports-catalog';
+import { movedPnlSearch, reportOfAccountingTab, type ReportItem } from './reports-catalog';
 import { ReportShell } from './reports/ReportShell';
 import {
   useAccounts,
@@ -19,7 +19,6 @@ import { ReceiptsPaymentsTab } from './ReceiptsPayments';
 import { PaymentCorrectionsTab } from './PaymentCorrectionsTab';
 import { CollectionTab } from './CollectionReport';
 import { MerchantChargesTab } from './MerchantChargesReport';
-import { PerformanceTab } from './PerformancePnl';
 import { EventCostsTab } from './EventCosts';
 import { EventCommissionTab } from './EventCommission';
 import { ProductProfitTab } from './ProductProfit';
@@ -42,7 +41,17 @@ type Tab = AccountingTab;
 
 const OWN_HEADER: ReadonlySet<Tab> = new Set<Tab>(['je', 'gl', 'check', 'close', 'commrel']);
 
+/** An old link to the Overall P&L's Performance view lands where movedPnlSearch says, the rest
+ *  of the address kept (owner 2026-11-28: Remove Performance View 的 P&L). */
 export const Accounting = () => {
+  const [params] = useSearchParams();
+  const { pathname } = useLocation();
+  const moved = movedPnlSearch(params);
+  if (!moved) return <AccountingTabs />;
+  return <Navigate to={{ pathname, search: `?${moved.toString()}` }} replace />;
+};
+
+const AccountingTabs = () => {
   /* THE TAB THE URL NAMES (docs/bugs/0824). The Finance sidebar deep-links
      every tab (/scm/accounting?tab=pnl …) and is the ONE way between them
      (owner 2026-09-12: 只靠侧栏就好，不然太乱了 — the strip of sixteen buttons
@@ -79,7 +88,6 @@ export const Accounting = () => {
       {tab === 'corrections' && <PaymentCorrectionsTab />}
       {tab === 'collection' && <CollectionTab />}
       {tab === 'charges' && <MerchantChargesTab />}
-      {tab === 'performance' && <PerformanceTab />}
       {tab === 'events' && <EventCostsTab />}
       {tab === 'commission' && <EventCommissionTab />}
       {tab === 'products' && <ProductProfitTab />}

@@ -1,20 +1,20 @@
 
 import type { LucideIcon } from 'lucide-react';
 import {
-  ArrowLeftRight, Banknote, BarChart3, BookOpen, CalendarDays, Columns3, CreditCard, FileText, Flag, Gauge, HandCoins, History,
+  ArrowLeftRight, Banknote, BarChart3, BookOpen, CalendarDays, Columns3, CreditCard, FileText, Flag, HandCoins, History,
   LayoutDashboard, ListChecks, Network, Package, PieChart, Replace, Scale, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react';
 import type { PnlFamily, ReportId } from '../reports-catalog';
 
 /** The list's entry for each P&L, its views folded into it (owner 2026-11-25). */
 export const PNL_LOOK: Readonly<Record<PnlFamily, { label: string; icon: LucideIcon; desc: string }>> = {
-  overall: { label: 'Overall P&L', icon: BarChart3, desc: 'The company as a whole, in three views: Actual by sales invoice, Performance by sales order, Forecast' },
+  overall: { label: 'Overall P&L', icon: BarChart3, desc: 'The company as a whole, in two views: Actual by sales invoice and Forecast' },
   department: { label: 'Department P&L', icon: Network, desc: 'Each department by its own P&L — Exhibition, Operation, Logistics, G&A — Actual by sales invoice or Performance by sales order' },
 };
 
 export const REPORT_LOOK: Readonly<Record<ReportId, { icon: LucideIcon; desc: string }>> = {
   pnl: { icon: BarChart3, desc: 'Income and expenses for a period on the report layout, with each line’s % of sales' },
-  pnlviews: { icon: Columns3, desc: 'The Overall P&L’s views side by side — Actual, Performance and Forecast on the same rows, with their differences' },
+  pnlviews: { icon: Columns3, desc: 'The Overall P&L’s views side by side — Actual and Forecast on the same rows, with their difference' },
   departments: { icon: Network, desc: 'Each department by its own P&L: the Exhibition on its orders, Operation by its sheet, G&A against its share, Logistics with its whole cost report' },
   bs: { icon: Scale, desc: 'What the company owns and owes as at a day, with each line’s % of total assets' },
   rp: { icon: Banknote, desc: 'Money in and out of every bank and cash account, by layout row' },
@@ -23,7 +23,6 @@ export const REPORT_LOOK: Readonly<Record<ReportId, { icon: LucideIcon; desc: st
   ap: { icon: Wallet, desc: 'What is owed to each creditor as at a day, by invoice month or days, with unapplied money' },
   collection: { icon: Users, desc: 'Deposit and balance collected per salesman, for orders opened in a period by SO date' },
   fair: { icon: TrendingUp, desc: 'Sales orders, delivery orders and invoices anchored on the fair, and each fair’s P&L' },
-  performance: { icon: Gauge, desc: 'Sales and cost from the sales orders by product group, with operating expense as a % of sales' },
   products: { icon: Package, desc: 'Every product the month sold, ranked by gross profit after its share of the gifts' },
   changes: { icon: Replace, desc: 'Every product change on an order in a month: selling and cost before and after, and whether the price covered the cost' },
   changesum: { icon: ArrowLeftRight, desc: 'Product changes added up by month and by salesperson: selling, cost and margin change, and the shortfall' },

@@ -1,8 +1,8 @@
 /* The Overall P&L's views side by side (owner 2026-11-25: 一张表并排). Pinned:
    one table on the P&L's rows, a column per view named in the address (each
-   with its % of its own sales), then the differences — each view less the
-   Forecast where it is picked, else Performance less Actual — on every line a
-   view names; Performance's own cost line where only it has a figure; the
+   with its % of its own sales), then the difference — Actual less Forecast —
+   on every line a view names; an old link's Performance left out (owner
+   2026-11-28: Remove Performance View 的 P&L), its own lines with it; the
    range read as its whole months; no Forecast for the months, said, and its
    column left out; a view the reader may not open left out; one view is not
    a table. By month (the same day: 可以by month 显示两份以上吗？): the Total
@@ -77,10 +77,9 @@ beforeEach(() => {
 });
 
 describe('the columns', () => {
-  test('a view each, then each view less the Forecast where it is picked, else Performance less Actual', () => {
-    expect(differencesOf(['actual', 'performance', 'forecast'])).toEqual([['actual', 'forecast'], ['performance', 'forecast']]);
-    expect(differencesOf(['actual', 'performance'])).toEqual([['performance', 'actual']]);
-    expect(differencesOf(['performance', 'forecast'])).toEqual([['performance', 'forecast']]);
+  test('a view each, then Actual less the Forecast where the Forecast is on', () => {
+    expect(differencesOf(['actual', 'forecast'])).toEqual([['actual', 'forecast']]);
+    expect(differencesOf(['actual'])).toEqual([]);
     expect(sideBySideColumns(['actual', 'forecast'], [{ key: null, label: 'Nov 2026', from: '2026-11-01', to: '2026-11-30' }])
       .map((c) => [c.key, c.label, c.kind, c.pct, c.group?.label ?? null])).toEqual([
       ['actual', 'Actual', 'period', true, null], ['forecast', 'Forecast', 'period', true, null], ['actual-forecast', 'Actual − Forecast', 'change', false, null],
@@ -88,11 +87,11 @@ describe('the columns', () => {
   });
 
   test('by month: the views and their difference under each period’s name, keyed by the period', () => {
-    const cols = sideBySideColumns(['actual', 'performance'], monthPeriods('2026-10-01', '2026-11-30', '2026-12-05'));
+    const cols = sideBySideColumns(['actual', 'forecast'], monthPeriods('2026-10-01', '2026-11-30', '2026-12-05'));
     expect(cols.map((c) => [c.key, c.label, c.group?.label])).toEqual([
-      ['total:actual', 'Actual', 'Total'], ['total:performance', 'Performance', 'Total'], ['total:performance-actual', 'Performance − Actual', 'Total'],
-      ['2026-11:actual', 'Actual', 'Nov 2026'], ['2026-11:performance', 'Performance', 'Nov 2026'], ['2026-11:performance-actual', 'Performance − Actual', 'Nov 2026'],
-      ['2026-10:actual', 'Actual', 'Oct 2026'], ['2026-10:performance', 'Performance', 'Oct 2026'], ['2026-10:performance-actual', 'Performance − Actual', 'Oct 2026'],
+      ['total:actual', 'Actual', 'Total'], ['total:forecast', 'Forecast', 'Total'], ['total:actual-forecast', 'Actual − Forecast', 'Total'],
+      ['2026-11:actual', 'Actual', 'Nov 2026'], ['2026-11:forecast', 'Forecast', 'Nov 2026'], ['2026-11:actual-forecast', 'Actual − Forecast', 'Nov 2026'],
+      ['2026-10:actual', 'Actual', 'Oct 2026'], ['2026-10:forecast', 'Forecast', 'Oct 2026'], ['2026-10:actual-forecast', 'Actual − Forecast', 'Oct 2026'],
     ]);
     expect(cols.filter((c) => c.group?.key === '2026-10').map((c) => [c.from, c.to])).toEqual(Array(3).fill(['2026-10-01', '2026-10-31']));
   });
@@ -118,30 +117,26 @@ describe('by month’s periods', () => {
 });
 
 describe('the table', () => {
-  test('three views on the P&L’s rows with their differences; the range read as its whole months', async () => {
+  test('Actual and Forecast on the P&L’s rows with their difference; an old link’s Performance left out; the range read as its whole months', async () => {
     draw('&views=actual,performance,forecast&from=2026-11-01&to=2026-11-25');
     const t = await table();
     expect(fetchMock).toHaveBeenCalledWith('/accounting/reports/pnl-views?from=2026-11-01&to=2026-11-30');
-    for (const h of ['Actual', 'Performance', 'Forecast', 'Actual − Forecast', 'Performance − Forecast']) {
-      expect(heads(t).some((x) => x.startsWith(h))).toBe(true);
-    }
+    for (const h of ['Actual', 'Forecast', 'Actual − Forecast']) expect(heads(t).some((x) => x.startsWith(h))).toBe(true);
+    expect(heads(t).some((x) => x.includes('Performance'))).toBe(false);
     const sales = rowText(t, 'SALES OF BEDDING');
     expect(sales).toContain('1,000,000.00');
-    expect(sales).toContain('1,200,000.00');
     expect(sales).toContain('1,500,000.00');
     expect(sales).toContain('(500,000.00)');
-    expect(sales).toContain('(300,000.00)');
-    const cost = rowText(t, 'Cost of the goods on the orders');
-    expect(cost).toContain('600,000.00');
+    expect(sales).not.toContain('1,200,000.00');
+    expect(within(t).queryByText('Cost of the goods on the orders')).toBeNull();
     expect(rowText(t, 'NET PROFIT')).toContain('350,000.00');
     expect(screen.getByText(/Each % is of that view’s own sales/)).toBeTruthy();
   });
 
-  test('Actual and Performance: Performance less Actual', async () => {
+  test('Actual alone (an old Actual and Performance link) is not a table', async () => {
     draw('&views=actual,performance&from=2026-11-01&to=2026-11-30');
-    const t = await table();
-    expect(heads(t).some((h) => h.startsWith('Performance − Actual'))).toBe(true);
-    expect(rowText(t, 'SALES OF BEDDING')).toContain('200,000.00');
+    expect(await screen.findByText('Turn on Actual and Forecast above to see them side by side.')).toBeTruthy();
+    await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
   });
 
   test('no Forecast for the months: said, and its column left out', async () => {
@@ -154,7 +149,7 @@ describe('the table', () => {
   });
 
   test('the Show switch reads the table month by month', async () => {
-    draw('&views=actual,performance&from=2026-09-01&to=2026-11-30');
+    draw('&views=actual,forecast&from=2026-09-01&to=2026-11-30');
     await table();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: 'By month' }));
@@ -165,7 +160,7 @@ describe('the table', () => {
   test('a view the reader may not open is left out; one view is not a table', async () => {
     auth.access = new Set(['scm.finance', 'scm.finance.reports']);
     draw('&views=actual,forecast&from=2026-11-01&to=2026-11-30');
-    expect(await screen.findByText('Pick two or three views above to see them side by side.')).toBeTruthy();
+    expect(await screen.findByText('Turn on Actual and Forecast above to see them side by side.')).toBeTruthy();
     await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
   });
 });
@@ -194,22 +189,14 @@ describe('by month', () => {
     fetchMock.mockImplementation(async (path: string) => BY_PATH[path] ?? payload(true));
   });
 
-  test('the Total, then each month newest first, each its own read: the views and Performance less Actual under its name', async () => {
-    draw('&views=actual,performance&from=2026-09-01&to=2026-11-25&by=month');
+  test('the Total, then each month newest first, each its own read: the views and their difference under its name', async () => {
+    draw('&views=actual,forecast&from=2026-09-01&to=2026-11-25&by=month');
     const t = await table();
     expect(fetchMock.mock.calls.map((c) => c[0]).sort()).toEqual(Object.keys(BY_PATH).sort());
     expect(headings(t)).toEqual([
       expect.stringMatching(/^Total3 months/), expect.stringMatching(/^Nov 2026/), expect.stringMatching(/^Oct 2026/), expect.stringMatching(/^Sep 2026/),
     ]);
-    expect(amounts(t, 'SALES OF BEDDING')).toEqual([
-      '600,000.00', '710,000.00', '110,000.00',
-      '300,000.00', '330,000.00', '30,000.00',
-      '200,000.00', '260,000.00', '60,000.00',
-      '100,000.00', '120,000.00', '20,000.00',
-    ]);
-    expect(amounts(t, 'Cost of the goods on the orders')).toEqual([
-      '', '355,000.00', '355,000.00', '', '165,000.00', '165,000.00', '', '130,000.00', '130,000.00', '', '60,000.00', '60,000.00',
-    ]);
+    expect(within(t).queryByText('Cost of the goods on the orders')).toBeNull();
     expect(screen.getByText(/By month: the Total over the months, then each month, newest first/)).toBeTruthy();
   });
 

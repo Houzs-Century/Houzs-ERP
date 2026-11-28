@@ -1,11 +1,11 @@
 // ----------------------------------------------------------------------------
 // PnlSideBySide — the Overall P&L's views side by side (owner 2026-11-25: 这个
 // view 我可以select我要看什么view，也可以同时显示两个还是三个; 一张表并排):
-// one table on the P&L's own rows, a column per view picked in the P&L views
-// bar — Actual (by sales invoice: the books), Performance (by sales order),
-// Forecast (the targets) — each with its % of its own sales, then the
-// differences: each view less the Forecast where the Forecast is picked, else
-// Performance less Actual. The range's whole months, as the Forecast is kept.
+// one table on the P&L's own rows, a column per view on in the P&L views bar —
+// Actual (by sales invoice: the books) and Forecast (the targets; the
+// Performance view is gone, owner 2026-11-28) — each with its % of its own
+// sales, then the difference, Actual less Forecast. The range's whole months,
+// as the Forecast is kept.
 //
 // Whole range | By month (the same day: 可以by month 显示两份以上吗？): By month
 // puts those columns under each month's name — the Total over the months
@@ -13,11 +13,9 @@
 // newest 12 months at most. Each period is the server's read for it; a month
 // with no forecast leaves its Forecast and differences blank, and says so.
 //
-// The rows are the P&L's (GET /accounting/reports/pnl-views lays the other two
-// views on its tree): Performance's sales stand on each product group's sales
-// account, its cost of sales on a line of its own (the cost of the goods on the
-// orders), its operating expense at its rate and its commission at the bills.
-// A view the reader may not open is left out, as the bar leaves it out.
+// The rows are the P&L's (GET /accounting/reports/pnl-views lays the Forecast
+// on its tree). A view the reader may not open is left out, as the bar leaves
+// it out.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
@@ -29,7 +27,7 @@ import { linesVisible } from '../../vendor/scm/lib/report-layout';
 import { statementColumnsTable, type ReportSheet } from '../../vendor/scm/lib/report-sheet';
 import { usePnlViews, type PnlViewsPayload } from '../../vendor/scm/lib/pnl-views-queries';
 import { useReportTree, type Level } from './ReportLayoutTree';
-import { PNL_BY_MONTH, PNL_CHOICES, pnlViewsOf, type PnlView } from './reports-catalog';
+import { PNL_BY_MONTH, PNL_CHOICES, pnlViewsOf, type OverallPnlView } from './reports-catalog';
 import { FinanceDateRange } from './reports/FinanceDateRange';
 import { useVisibleReports } from './reports/ReportRail';
 import {
@@ -40,9 +38,8 @@ import { monthName, monthsSpanned, type StatementColumn, type StatementLine } fr
 import { CodesSwitch, LevelTool, linesWithCodes, useShowCodes } from './reports/statementTools';
 import { useReportRange } from './reports/useReportRange';
 
-const VIEW_COLUMN: Record<PnlView, { label: string; sub: string; mark: NonNullable<StatementColumn['mark']> }> = {
+const VIEW_COLUMN: Record<OverallPnlView, { label: string; sub: string; mark: NonNullable<StatementColumn['mark']> }> = {
   actual: { label: 'Actual', sub: 'by sales invoice', mark: 'petrol' },
-  performance: { label: 'Performance', sub: 'by sales order', mark: 'brass' },
   forecast: { label: 'Forecast', sub: 'the targets', mark: 'gold' },
 };
 
@@ -80,14 +77,14 @@ export function monthPeriods(from: string, to: string, today: string): SideBySid
 
 const keyIn = (period: string | null, key: string): string => (period ? `${period}:${key}` : key);
 
-/** The differences a set of views shows: each less the Forecast where it is picked, else Performance less Actual. */
-export function differencesOf(views: readonly PnlView[]): Array<[PnlView, PnlView]> {
-  if (views.includes('forecast')) return views.filter((v) => v !== 'forecast').map((v): [PnlView, PnlView] => [v, 'forecast']);
-  return views.includes('actual') && views.includes('performance') ? [['performance', 'actual']] : [];
+/** The differences a set of views shows: each less the Forecast where it is on. */
+export function differencesOf(views: readonly OverallPnlView[]): Array<[OverallPnlView, OverallPnlView]> {
+  if (!views.includes('forecast')) return [];
+  return views.filter((v) => v !== 'forecast').map((v): [OverallPnlView, OverallPnlView] => [v, 'forecast']);
 }
 
 /** The table's columns: a view each, then the differences — by month, the lot under each period's name. */
-export function sideBySideColumns(views: readonly PnlView[], periods: readonly SideBySidePeriod[]): StatementColumn[] {
+export function sideBySideColumns(views: readonly OverallPnlView[], periods: readonly SideBySidePeriod[]): StatementColumn[] {
   return periods.flatMap((p) => {
     const group = p.key ? { group: { key: p.key, label: p.label, ...(p.sub ? { sub: p.sub } : {}) } } : {};
     return [
@@ -105,7 +102,7 @@ export function sideBySideColumns(views: readonly PnlView[], periods: readonly S
 /** The views' lines on the P&L's rows, merged — each period's views where its read has
  *  them — and each period's differences worked out on every line a view names, where
  *  the period has both views. */
-export function sideBySideLines(reads: ReadonlyArray<{ period: string | null; data: PnlViewsPayload }>, views: readonly PnlView[]): StatementLine[] {
+export function sideBySideLines(reads: ReadonlyArray<{ period: string | null; data: PnlViewsPayload }>, views: readonly OverallPnlView[]): StatementLine[] {
   const merged = mergeColumns(reads.flatMap(({ period, data }) => views.flatMap((v) => {
     const side = data[v];
     return side ? [{ key: keyIn(period, v), lines: pnlLines(side) }] : [];
@@ -127,9 +124,8 @@ export function sideBySideLines(reads: ReadonlyArray<{ period: string | null; da
   });
 }
 
-const NOTE = 'Actual is the books: sales as invoiced. Performance is the sales orders by SO date: its sales on each product group’s sales account, '
-  + 'its cost of sales one line (the cost of the goods on the orders), the operating expense at its rate and the commission at the month’s bills. '
-  + 'Forecast is the targets per account. Each % is of that view’s own sales; a difference is the first view less the second.';
+const NOTE = 'Actual is the books: sales as invoiced. Forecast is the targets per account. '
+  + 'Each % is of that view’s own sales; the difference is Actual less Forecast.';
 const MONTH_NOTE = ' By month: the Total over the months, then each month, newest first.';
 
 export const PnlSideBySideTab = () => {
@@ -195,7 +191,7 @@ export const PnlSideBySideTab = () => {
         <ReportSwitch on={showPct} onChange={setShowPct}>% beside</ReportSwitch>
         <CodesSwitch on={showCodes} onChange={setShowCodes} />
       </ReportToolbar>
-      {!enough && <ReportMessage>Pick two or three views above to see them side by side.</ReportMessage>}
+      {!enough && <ReportMessage>Turn on Actual and Forecast above to see them side by side.</ReportMessage>}
       {enough && q.failed > 0 && (
         <ReportMessage tone="error">The views could not be read — {q.error instanceof Error ? q.error.message : String(q.error)}</ReportMessage>
       )}

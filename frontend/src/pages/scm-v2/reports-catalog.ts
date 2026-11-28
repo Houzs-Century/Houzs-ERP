@@ -19,10 +19,12 @@
 // so the Finance group's own gate still applies). Journal entries, the General
 // ledger and the Trial balance keep their Books entries' gates.
 //
-// THE P&Ls ARE TWO ENTRIES, each with three views (owner 2026-11-25: 入口可以改成
-// 根据overall P&L, Department P&L 每个P&L 有三个view): Overall P&L and
-// Department P&L, and across the top of each its views, Actual (by sales
-// invoice: the books) | Performance (by sales order) | Forecast (PNL_CHOICES).
+// THE P&Ls ARE TWO ENTRIES (owner 2026-11-25: 入口可以改成根据overall P&L,
+// Department P&L 每个P&L 有三个view): Overall P&L and Department P&L, and across
+// the top of each its views (PNL_FAMILY_VIEWS, PNL_CHOICES): the Overall P&L's
+// Actual (by sales invoice: the books) | Forecast — its Performance view is gone
+// (owner 2026-11-28: Remove Performance View 的 P&L), its links landing on Actual;
+// the Department P&L's Actual | Performance (by sales order) | Forecast.
 // Each view stays a report of its own here — its address, its gate, its method
 // and data — so old links land where they did and a reader is offered only the
 // views they may open. Logistics cost (by DO) and the Product changes P&L are
@@ -38,7 +40,7 @@ export type ReportGroupId = 'statements' | 'owes' | 'sales' | 'events' | 'cards'
 export type ReportId =
   | 'pnl' | 'pnlviews' | 'departments' | 'bs' | 'rp' | 'tb'
   | 'ar' | 'ap'
-  | 'collection' | 'fair' | 'performance' | 'products' | 'changes' | 'changesum' | 'sotodo'
+  | 'collection' | 'fair' | 'products' | 'changes' | 'changesum' | 'sotodo'
   | 'events' | 'commission' | 'logistics'
   | 'charges'
   | 'forecast' | 'dashboard'
@@ -96,15 +98,13 @@ const tabItem = (tab: AccountingTab & ReportId, group: ReportGroupId, books = fa
 
 /** Every report, in the design's order (the list draws them group by group). */
 export const REPORT_CATALOG: readonly ReportItem[] = [
-  // The Overall P&L's three views, each with its own method and data (owner 2026-11-25: 我会有很多个不同的p&L,
+  // The Overall P&L's views, each with its own method and data (owner 2026-11-25: 我会有很多个不同的p&L,
   // 每个的算法和提取的资料不一样). Actual: the books' P&L.
   tabItem('pnl', 'statements'),
-  // Performance: the month's orders per group against a budgeted operating expense (owner 2026-09-12; docs/bugs/0835).
-  tabItem('performance', 'statements'),
   // Forecast: the Forecast P&L (owner 2026-09-21: the Hookka Forecast P&L, trading edition — a target per account on
   // the P&L's own tree; the Dashboard reads them beside the actuals).
   { id: 'forecast', label: 'Forecast P&L', group: 'statements', path: '/scm/forecast', navTo: '/scm/forecast', gate: FORECAST_GATE },
-  // The Overall P&L's views side by side, two or three on the P&L's own rows (owner 2026-11-25: 一张表并排).
+  // The Overall P&L's views side by side, Actual and Forecast on the P&L's own rows (owner 2026-11-25: 一张表并排).
   tabItem('pnlviews', 'statements'),
   // The Department P&L: each department by its own P&L, Actual on the invoices or Performance on the orders
   // (`dbasis`; owner 2026-11-19, 2026-11-25).
@@ -148,13 +148,18 @@ export const REPORT_CATALOG: readonly ReportItem[] = [
 ];
 
 /** The two P&L entries and their views (owner 2026-11-25): Overall P&L and
- *  Department P&L, each Actual by sales invoice (the books), Performance by
- *  sales order, Forecast. A view opens a report of the list; the Department
- *  P&L takes its basis from `dbasis` (none reads as Performance there). A view
- *  with no row is not built yet (the Department P&L's Forecast). */
+ *  Department P&L, Actual by sales invoice (the books), Performance by sales
+ *  order, Forecast. A view opens a report of the list; the Department P&L
+ *  takes its basis from `dbasis` (none reads as Performance there). A view a
+ *  P&L has with no row is not built yet (the Department P&L's Forecast). */
 export type PnlFamily = 'overall' | 'department';
 export type PnlView = 'actual' | 'performance' | 'forecast';
 export type PnlChoice = { family: PnlFamily; view: PnlView; report: ReportId; dbasis: 'actual' | 'performance' | null };
+
+/** The Overall P&L's views: no Performance (owner 2026-11-28: Overall P&L 那边，可以帮我 Remove Performance View 的 P&L 吗？);
+ *  the Department P&L keeps its own (its Exhibition and the supplier rebates read it). */
+export const OVERALL_PNL_VIEWS = ['actual', 'forecast'] as const;
+export type OverallPnlView = (typeof OVERALL_PNL_VIEWS)[number];
 
 export const PNL_FAMILIES: ReadonlyArray<{ id: PnlFamily; label: string }> = [
   { id: 'overall', label: 'Overall P&L' },
@@ -165,15 +170,19 @@ export const PNL_VIEWS: ReadonlyArray<{ id: PnlView; label: string }> = [
   { id: 'performance', label: 'Performance' },
   { id: 'forecast', label: 'Forecast' },
 ];
+/** The views each P&L offers across its top, in order: the Department P&L all three. */
+export const PNL_FAMILY_VIEWS: Readonly<Record<PnlFamily, readonly PnlView[]>> = {
+  overall: OVERALL_PNL_VIEWS,
+  department: PNL_VIEWS.map((v) => v.id),
+};
 export const PNL_CHOICES: readonly PnlChoice[] = [
   { family: 'overall', view: 'actual', report: 'pnl', dbasis: null },
-  { family: 'overall', view: 'performance', report: 'performance', dbasis: null },
   { family: 'overall', view: 'forecast', report: 'forecast', dbasis: null },
   { family: 'department', view: 'actual', report: 'departments', dbasis: 'actual' },
   { family: 'department', view: 'performance', report: 'departments', dbasis: 'performance' },
 ];
 
-/** The Overall P&L's views side by side (`?tab=pnlviews&views=actual,forecast`): two or three on one table. */
+/** The Overall P&L's views side by side (`?tab=pnlviews&views=actual,forecast`): both on one table. */
 export const PNL_SIDE_BY_SIDE: { family: PnlFamily; report: ReportId } = { family: 'overall', report: 'pnlviews' };
 /** The side-by-side table read month by month (`&by=month`); it stays as the views turn on and off. */
 export const PNL_BY_MONTH = { param: 'by', value: 'month' } as const;
@@ -182,11 +191,34 @@ export const PNL_BY_MONTH = { param: 'by', value: 'month' } as const;
 export const pnlFamilyOf = (id: ReportId): PnlFamily | null =>
   PNL_CHOICES.find((c) => c.report === id)?.family ?? (id === PNL_SIDE_BY_SIDE.report ? PNL_SIDE_BY_SIDE.family : null);
 
-/** The views an address names (`views=actual,forecast`), each once, in the picker's order. */
-export const pnlViewsOf = (raw: string | null): PnlView[] => {
+/** The Overall P&L views an address names (`views=actual,forecast`), each once, in the picker's order;
+ *  an old link's `performance` is dropped. */
+export const pnlViewsOf = (raw: string | null): OverallPnlView[] => {
   const named = new Set((raw ?? '').split(',').map((v) => v.trim()));
-  return PNL_VIEWS.filter((v) => named.has(v.id)).map((v) => v.id);
+  return OVERALL_PNL_VIEWS.filter((v) => named.has(v));
 };
+
+/** Where an old Overall P&L address lands now that its Performance view is gone (owner 2026-11-28):
+ *  the Performance page on Actual; the side-by-side table keeps its other views, and with one left
+ *  it is Actual's own page. Null when the address needs no move. */
+export function movedPnlSearch(params: URLSearchParams): URLSearchParams | null {
+  const tab = params.get('tab');
+  const q = new URLSearchParams(params);
+  if (tab === 'performance') {
+    q.set('tab', 'pnl');
+    return q;
+  }
+  if (tab !== PNL_SIDE_BY_SIDE.report || !(params.get('views') ?? '').split(',').some((v) => v.trim() === 'performance')) return null;
+  const left = pnlViewsOf(params.get('views'));
+  if (left.length >= 2) {
+    q.set('views', left.join(','));
+    return q;
+  }
+  q.set('tab', 'pnl');
+  q.delete('views');
+  q.delete(PNL_BY_MONTH.param);
+  return q;
+}
 
 /** The view a page is: its report, and on the Department P&L its basis. */
 export function pnlChoiceOf(id: ReportId, dbasis: string | null): PnlChoice | null {
