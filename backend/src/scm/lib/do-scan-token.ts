@@ -378,7 +378,7 @@ export async function resolveScanToken(sb: any, token: string): Promise<Resolved
 async function resolveLorryDayToken(sb: Parameters<typeof resolveScanToken>[0], token: string): Promise<ResolvedScanResult> {
   const { data, error } = await sb
     .from('packing_scan_sets')
-    .select('id, company_id, sheet_kind, lorry_plate, region, delivery_date, do_ids, prepared_at, loaded_at, qr_revoked_at')
+    .select('id, company_id, sheet_kind, lorry_plate, region, delivery_date, do_ids, prepared_at, loaded_at, qr_revoked_at, part_no, part_count')
     .eq('qr_token', token)
     .maybeSingle();
   if (error) return { status: 'read_failed' };
@@ -387,6 +387,7 @@ async function resolveLorryDayToken(sb: Parameters<typeof resolveScanToken>[0], 
     id?: string; company_id?: number | string | null; sheet_kind?: string | null; lorry_plate?: string | null;
     region?: string | null; delivery_date?: string | null; do_ids?: unknown;
     prepared_at?: string | null; loaded_at?: string | null; qr_revoked_at?: string | null;
+    part_no?: number | null; part_count?: number | null;
   };
   if (row.qr_revoked_at) return { status: 'unknown' };
   const companyId = Number(row.company_id);
@@ -408,6 +409,7 @@ async function resolveLorryDayToken(sb: Parameters<typeof resolveScanToken>[0], 
       doIds,
       preparedAt: row.prepared_at ?? null,
       loadedAt: row.loaded_at ?? null,
+      part: row.part_no && row.part_count ? { no: Number(row.part_no), count: Number(row.part_count) } : null,
     },
   };
 }

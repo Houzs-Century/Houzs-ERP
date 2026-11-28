@@ -81,7 +81,8 @@ describe('which scan comes next', () => {
 
 describe('the day status, folded per lorry and per region', () => {
   const row = (r: Partial<PackingScanSetRow>): PackingScanSetRow => ({
-    sheet_kind: 'lorry', lorry_plate: null, region: null, prepared_at: null, loaded_at: null, qr_revoked_at: null, ...r,
+    sheet_kind: 'lorry', lorry_plate: null, region: null, prepared_at: null, loaded_at: null, qr_revoked_at: null,
+    part_no: null, part_count: null, created_at: '2026-11-28T00:00:00Z', ...r,
   });
 
   test('a lorry printed twice reports the earliest prepared and the latest loaded time', () => {
@@ -91,8 +92,30 @@ describe('the day status, folded per lorry and per region', () => {
       row({ lorry_plate: 'VJK8821', prepared_at: null, loaded_at: null }),
     ]);
     expect(out).toEqual([
-      { kind: 'lorry', key: 'VJK8821', prepared_at: '2026-11-28T01:00:00Z', loaded_at: '2026-11-28T04:00:00Z' },
+      { kind: 'lorry', key: 'VJK8821', prepared_at: '2026-11-28T01:00:00Z', loaded_at: '2026-11-28T04:00:00Z', parts_total: 1, parts_prepared: 1, parts_loaded: 1 },
     ]);
+  });
+
+  test('a lorry in two parts has a time only once both parts have one, and then the later one', () => {
+    const p = (no: number, prepared: string | null, loaded: string | null) =>
+      row({ lorry_plate: 'VJK 8821', part_no: no, part_count: 2, prepared_at: prepared, loaded_at: loaded, created_at: '2026-11-28T00:10:00Z' });
+    expect(aggregatePackingScanStatus([p(1, '2026-11-28T01:00:00Z', '2026-11-28T03:00:00Z'), p(2, null, null)])).toEqual([
+      { kind: 'lorry', key: 'VJK8821', prepared_at: null, loaded_at: null, parts_total: 2, parts_prepared: 1, parts_loaded: 1 },
+    ]);
+    expect(aggregatePackingScanStatus([p(1, '2026-11-28T01:00:00Z', '2026-11-28T03:00:00Z'), p(2, '2026-11-28T02:00:00Z', null)])).toEqual([
+      { kind: 'lorry', key: 'VJK8821', prepared_at: '2026-11-28T02:00:00Z', loaded_at: null, parts_total: 2, parts_prepared: 2, parts_loaded: 1 },
+    ]);
+    expect(aggregatePackingScanStatus([p(2, '2026-11-28T02:00:00Z', '2026-11-28T04:00:00Z'), p(1, '2026-11-28T01:00:00Z', '2026-11-28T03:00:00Z')])[0])
+      .toMatchObject({ prepared_at: '2026-11-28T02:00:00Z', loaded_at: '2026-11-28T04:00:00Z', parts_loaded: 2 });
+  });
+
+  test('the newest print decides the shape: a whole sheet re-printed as two parts waits for both parts', () => {
+    const out = aggregatePackingScanStatus([
+      row({ lorry_plate: 'VJK 8821', prepared_at: '2026-11-28T01:00:00Z', created_at: '2026-11-28T00:00:00Z' }),
+      row({ lorry_plate: 'VJK 8821', part_no: 1, part_count: 2, prepared_at: '2026-11-28T02:00:00Z', created_at: '2026-11-28T01:30:00Z' }),
+      row({ lorry_plate: 'VJK 8821', part_no: 2, part_count: 2, created_at: '2026-11-28T01:30:00Z' }),
+    ]);
+    expect(out).toEqual([{ kind: 'lorry', key: 'VJK8821', prepared_at: null, loaded_at: null, parts_total: 2, parts_prepared: 1, parts_loaded: 0 }]);
   });
 
   test('regions and lorries are separate lines; revoked and keyless sheets are ignored', () => {
@@ -103,8 +126,8 @@ describe('the day status, folded per lorry and per region', () => {
       row({ lorry_plate: '  ' }),
     ]);
     expect(out).toEqual([
-      { kind: 'region', key: 'KL', prepared_at: '2026-11-28T01:00:00Z', loaded_at: null },
-      { kind: 'lorry', key: 'KL', prepared_at: null, loaded_at: null },
+      { kind: 'region', key: 'KL', prepared_at: '2026-11-28T01:00:00Z', loaded_at: null, parts_total: 1, parts_prepared: 1, parts_loaded: 0 },
+      { kind: 'lorry', key: 'KL', prepared_at: null, loaded_at: null, parts_total: 1, parts_prepared: 0, parts_loaded: 0 },
     ]);
   });
 });
@@ -134,6 +157,27 @@ describe('arming a region packing list QR', () => {
     const changed = await (await h.get('region-day-scan-token', { region: 'KL', date: '2026-11-28', doIds: A })).json() as any;
     expect(changed.scanToken).not.toBe(one.scanToken);
     expect(h.tables.packing_scan_sets).toHaveLength(2);
+  });
+
+  test('each part of a split sheet gets its own token and records which part it is', async () => {
+    const h = harness();
+    const p1 = await (await h.get('region-day-scan-token', { region: 'KL', date: '2026-11-28', doIds: A, part: '1', parts: '2' })).json() as any;
+    const p2 = await (await h.get('region-day-scan-token', { region: 'KL', date: '2026-11-28', doIds: B, part: '2', parts: '2' })).json() as any;
+    expect(p1.scanToken).not.toBe(p2.scanToken);
+    expect(h.tables.packing_scan_sets.map((r) => [r.part_no, r.part_count])).toEqual([[1, 2], [2, 2]]);
+    const again = await (await h.get('region-day-scan-token', { region: 'KL', date: '2026-11-28', doIds: A, part: '1', parts: '2' })).json() as any;
+    expect(again.scanToken).toBe(p1.scanToken);
+    const whole = await (await h.get('region-day-scan-token', { region: 'KL', date: '2026-11-28', doIds: A })).json() as any;
+    expect(whole.scanToken).not.toBe(p1.scanToken);
+    expect(h.tables.packing_scan_sets.at(-1)).toMatchObject({ part_no: null, part_count: null });
+  });
+
+  test('a bad part number is a 400 and mints nothing', async () => {
+    const h = harness();
+    for (const q of [{ part: '3', parts: '2' }, { part: '1', parts: '1' }, { part: '1' }, { part: 'x', parts: '2' }, { part: '0', parts: '2' }]) {
+      expect((await h.get('lorry-day-scan-token', { plate: 'VJK 8821', date: '2026-11-28', doIds: A, ...q })).status).toBe(400);
+    }
+    expect(h.tables.packing_scan_sets).toHaveLength(0);
   });
 
   test('a lorry sheet with the same DOs is not reused for a region (and back)', async () => {
@@ -172,8 +216,8 @@ describe('the office reads the day\'s scan times', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as any;
     expect(body.sheets).toEqual([
-      { kind: 'lorry', key: 'VJK8821', prepared_at: '2026-11-28T01:00:00Z', loaded_at: null },
-      { kind: 'region', key: 'KL', prepared_at: '2026-11-28T00:50:00Z', loaded_at: '2026-11-28T02:00:00Z' },
+      { kind: 'lorry', key: 'VJK8821', prepared_at: '2026-11-28T01:00:00Z', loaded_at: null, parts_total: 1, parts_prepared: 1, parts_loaded: 0 },
+      { kind: 'region', key: 'KL', prepared_at: '2026-11-28T00:50:00Z', loaded_at: '2026-11-28T02:00:00Z', parts_total: 1, parts_prepared: 1, parts_loaded: 1 },
     ]);
   });
 

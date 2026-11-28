@@ -8,6 +8,7 @@ import { DataTable, type Column } from '../../../components/DataTable';
 import { packingScanTimesFor, type PackingRegionRow, type PackingScanStatus } from '../lib/packing-list-queries';
 import { fmtScanTime, regionCategoryUnits, regionLorrySummary } from '../lib/packing-list-model';
 import { ScanTimeCell } from './PackingScanTimeCell';
+import { partCountFor } from '../lib/packing-list-split';
 import type { PdfAction } from '../lib/pdf-common';
 
 type Props = {
@@ -41,12 +42,12 @@ export function DoPackingRegionsTable({ date, regions, loading, error, scanSheet
     { key: 'units', width: '64px', label: 'Units', align: 'right', render: (r) => <span className="font-semibold tabular-nums">{r.units}</span>, getValue: (r) => r.units, exportFormat: 'number' },
     {
       key: 'prepared', label: 'Prepared', width: '132px',
-      render: (r) => <ScanTimeCell iso={times(r)?.prepared_at ?? null} date={date} what="prepared" doCount={r.do_count} />,
+      render: (r) => <ScanTimeCell times={times(r)} date={date} what="prepared" expectedParts={partCountFor(r.do_count)} />,
       getValue: (r) => fmtScanTime(times(r)?.prepared_at ?? null, date),
     },
     {
       key: 'loaded', label: 'Loaded', width: '132px',
-      render: (r) => <ScanTimeCell iso={times(r)?.loaded_at ?? null} date={date} what="loaded" doCount={r.do_count} />,
+      render: (r) => <ScanTimeCell times={times(r)} date={date} what="loaded" expectedParts={partCountFor(r.do_count)} />,
       getValue: (r) => fmtScanTime(times(r)?.loaded_at ?? null, date),
     },
     {

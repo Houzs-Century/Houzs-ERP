@@ -132,7 +132,7 @@ async function render(r: PackingRegionRow, runUrl: string | null = null) {
   ]);
   const doc = new jsPDF({ unit: 'mm', format: 'letter' });
   const spans = capture(doc);
-  await renderPackingRegionInto(doc, autoTable, r, { date: '2026-11-28', runUrl, logo: null });
+  await renderPackingRegionInto(doc, autoTable, r, { date: '2026-11-28', runUrl, logo: null, part: null });
   return { doc, spans };
 }
 
@@ -276,7 +276,7 @@ describe('print helpers', () => {
     const rows = [realisticRegion(), { ...realisticRegion(), region: 'SOUTHERN', label: 'Southern' }];
     for (let i = 0; i < rows.length; i += 1) {
       if (i > 0) doc.addPage();
-      await renderPackingRegionInto(doc, autoTable, rows[i]!, { date: '2026-11-28', runUrl: null, logo: null });
+      await renderPackingRegionInto(doc, autoTable, rows[i]!, { date: '2026-11-28', runUrl: null, logo: null, part: null });
     }
     const second = spans.find((s) => s.text === 'Region : Southern')!;
     const firstPages = spans.filter((s) => s.text.startsWith('KL/SEL · 2026/11/28 · Page')).map((s) => s.page);
@@ -290,7 +290,7 @@ test.skipIf(!process.env.PL_REGION_SAMPLE_OUT)('writes a sample region PDF', asy
   console.log(`region sample pages: ${doc.getNumberOfPages()}`);
   const [{ default: autoTable }, { renderPackingRegionInto }] = await Promise.all([import('jspdf-autotable'), import('./packing-list-pdf')]);
   doc.addPage();
-  await renderPackingRegionInto(doc, autoTable, stressRegion(), { date: '2026-11-28', runUrl: null, logo: null });
+  await renderPackingRegionInto(doc, autoTable, stressRegion(), { date: '2026-11-28', runUrl: null, logo: null, part: null });
   writeFileSync(process.env.PL_REGION_SAMPLE_OUT as string, Buffer.from(doc.output('arraybuffer')));
 }, 60_000);
 

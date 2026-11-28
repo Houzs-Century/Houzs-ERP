@@ -146,7 +146,23 @@ export type PackingScanStatus = {
   key: string;
   prepared_at: string | null;
   loaded_at: string | null;
+  parts_total: number;
+  parts_prepared: number;
+  parts_loaded: number;
 };
+
+/** "1 of 2 parts" while a sheet printed in parts is only partly scanned, else null.
+ *  Before any part is scanned, `expectedParts` (from the DO count) says how many there are. */
+export function scanPartsLine(
+  times: PackingScanStatus | null,
+  what: 'prepared' | 'loaded',
+  expectedParts: number,
+): string | null {
+  const total = times?.parts_total ?? expectedParts;
+  if (total <= 1) return null;
+  const done = (what === 'loaded' ? times?.parts_loaded : times?.parts_prepared) ?? 0;
+  return `${done} of ${total} parts`;
+}
 
 export type PackingScanStatusResponse = { date: string; sheets: PackingScanStatus[] };
 

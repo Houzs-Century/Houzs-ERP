@@ -18,7 +18,7 @@ vi.mock('../lib/packing-list-queries', async (importOriginal) => ({
   },
 }));
 
-const scanState: { data: { date: string; sheets: Array<{ kind: 'lorry' | 'region'; key: string; prepared_at: string | null; loaded_at: string | null }> } | undefined; lastDate: string | null } = {
+const scanState: { data: { date: string; sheets: Array<{ kind: 'lorry' | 'region'; key: string; prepared_at: string | null; loaded_at: string | null; parts_total?: number; parts_prepared?: number; parts_loaded?: number }> } | undefined; lastDate: string | null } = {
   data: undefined, lastDate: null,
 };
 
@@ -197,10 +197,22 @@ describe('Prepared and Loaded on the Packing Lists tab (owner 2026-11-28)', () =
     expect(screen.getAllByTitle(/Not scanned as/).length).toBe(3);
   });
 
-  it('a sheet over 60 DOs says it prints without a QR instead of a dash', () => {
-    state.data = { date: '2026-11-28', lists: [row({ do_count: 61 })] };
+  it('a sheet over 60 DOs prints in parts: no part scanned yet reads 0 of 2 parts', () => {
+    state.data = { date: '2026-11-28', lists: [row({ do_count: 61, source: 'crew' })] };
     render(<MemoryRouter initialEntries={['/scm/delivery-orders?tab=packing&date=2026-11-28']}><DoPackingListsView /></MemoryRouter>);
-    expect(screen.getAllByText('No QR (over 60 DOs)')).toHaveLength(2);
+    expect(screen.getAllByText('0 of 2 parts')).toHaveLength(2);
+    expect(screen.queryByText(/No QR/)).toBeNull();
+  });
+
+  it('a lorry in parts shows how many parts are scanned, and the time once all are', () => {
+    scanState.data = {
+      date: '2026-11-28',
+      sheets: [{ kind: 'lorry', key: 'VJK8821', prepared_at: '2026-11-28T01:42:00Z', loaded_at: null, parts_total: 2, parts_prepared: 2, parts_loaded: 1 }],
+    };
+    state.data = { date: '2026-11-28', lists: [row({ do_count: 70, source: 'crew' })] };
+    render(<MemoryRouter initialEntries={['/scm/delivery-orders?tab=packing&date=2026-11-28']}><DoPackingListsView /></MemoryRouter>);
+    expect(screen.getByText('09:42')).toBeTruthy();
+    expect(screen.getByText('1 of 2 parts')).toBeTruthy();
   });
 
   it('the phone card shows the same times per lorry and region', () => {

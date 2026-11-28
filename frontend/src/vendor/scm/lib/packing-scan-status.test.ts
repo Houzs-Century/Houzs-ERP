@@ -19,8 +19,8 @@ describe('packing list scan times (owner 2026-11-28)', () => {
 
   test('a lorry matches by the server plate key; a region by its key', () => {
     const sheets = [
-      { kind: 'lorry' as const, key: 'VJK8821', prepared_at: 'p', loaded_at: null },
-      { kind: 'region' as const, key: 'KL', prepared_at: 'r', loaded_at: null },
+      { kind: 'lorry' as const, key: 'VJK8821', prepared_at: 'p', loaded_at: null, parts_total: 1, parts_prepared: 1, parts_loaded: 0 },
+      { kind: 'region' as const, key: 'KL', prepared_at: 'r', loaded_at: null, parts_total: 1, parts_prepared: 1, parts_loaded: 0 },
     ];
     expect(packingPlateKey(' vjk-8821 ')).toBe('VJK8821');
     expect(packingScanTimesFor(sheets, 'lorry', 'VJK 8821')?.prepared_at).toBe('p');

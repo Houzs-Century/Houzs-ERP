@@ -11,7 +11,7 @@ vi.mock('../src/scm/middleware/auth', () => ({
 import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import { tripScanToken } from '../src/scm/routes/trip-scan-token';
 import { DO_SCAN_TOKEN_RE } from '../src/scm/lib/do-scan-token';
-import { lorryDayMovedReason, parseLorryDaySheet } from '../src/scm/lib/lorry-day-scan';
+import { lorryDayMovedReason, packingSheetTitle, parseLorryDaySheet } from '../src/scm/lib/lorry-day-scan';
 
 const CO = 1;
 const A = '11111111-1111-4111-8111-111111111111';
@@ -110,9 +110,16 @@ describe('arming a lorry-day packing list QR', () => {
 });
 
 describe('the pure parts', () => {
+  test('the scan page names a split sheet by its part', () => {
+    expect(packingSheetTitle({ sheetKind: 'lorry', lorryPlate: 'VJK 8821', region: null, part: null })).toBe('Lorry VJK 8821');
+    expect(packingSheetTitle({ sheetKind: 'region', lorryPlate: null, region: 'KL', part: { no: 2, count: 3 } })).toBe('Region KL · Part 2 of 3');
+    expect(parseLorryDaySheet({ lorryPlate: 'X1', deliveryDate: '2026-11-28', doIds: [A], part: '2', parts: '3' }))
+      .toMatchObject({ ok: true, sheet: { part: { no: 2, count: 3 } } });
+  });
+
   test('parseLorryDaySheet keeps sheet order, drops duplicates, caps at 60', () => {
     const ok = parseLorryDaySheet({ lorryPlate: ' VJK 8821 ', deliveryDate: '2026-11-28', doIds: [B, A, B.toUpperCase()] });
-    expect(ok).toEqual({ ok: true, sheet: { lorryPlate: 'VJK 8821', deliveryDate: '2026-11-28', doIds: [B, A] } });
+    expect(ok).toEqual({ ok: true, sheet: { lorryPlate: 'VJK 8821', deliveryDate: '2026-11-28', doIds: [B, A], part: null } });
     const many = Array.from({ length: 61 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
     expect(parseLorryDaySheet({ lorryPlate: 'X1', deliveryDate: '2026-11-28', doIds: many }).ok).toBe(false);
   });

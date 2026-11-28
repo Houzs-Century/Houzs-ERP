@@ -22,6 +22,7 @@ import { DateField } from './DateField';
 import { packingScanTimesFor, usePackingLists, usePackingRegions, usePackingScanStatus, type PackingListRow } from '../lib/packing-list-queries';
 import { fmtM3, fmtScanTime, rollupDeliveryStatus, rollupLabel, shiftIsoDate } from '../lib/packing-list-model';
 import { ScanTimeCell } from './PackingScanTimeCell';
+import { partCountFor } from '../lib/packing-list-split';
 import { usePackingPrint } from './usePackingPrint';
 import { DoPackingRegionsTable } from './DoPackingRegionsTable';
 import { fmtDate, todayMY } from '../../../../../shared/src/vendor/shared/format';
@@ -99,12 +100,12 @@ export function DoPackingListsView() {
     },
     {
       key: 'prepared', label: 'Prepared', width: '132px',
-      render: (l) => <ScanTimeCell iso={lorryTimes(l)?.prepared_at ?? null} date={date} what="prepared" doCount={l.do_count} />,
+      render: (l) => <ScanTimeCell times={lorryTimes(l)} date={date} what="prepared" expectedParts={l.source === 'trip' ? 1 : partCountFor(l.do_count)} />,
       getValue: (l) => fmtScanTime(lorryTimes(l)?.prepared_at ?? null, date),
     },
     {
       key: 'loaded', label: 'Loaded', width: '132px',
-      render: (l) => <ScanTimeCell iso={lorryTimes(l)?.loaded_at ?? null} date={date} what="loaded" doCount={l.do_count} />,
+      render: (l) => <ScanTimeCell times={lorryTimes(l)} date={date} what="loaded" expectedParts={l.source === 'trip' ? 1 : partCountFor(l.do_count)} />,
       getValue: (l) => fmtScanTime(lorryTimes(l)?.loaded_at ?? null, date),
     },
     {
