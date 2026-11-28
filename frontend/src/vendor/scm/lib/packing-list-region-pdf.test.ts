@@ -125,14 +125,14 @@ function stressRegion(): PackingRegionRow {
   return region(dos, { label: 'KL/SEL' });
 }
 
-async function render(r: PackingRegionRow) {
+async function render(r: PackingRegionRow, runUrl: string | null = null) {
   setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
   const [{ jsPDF }, { default: autoTable }, { renderPackingRegionInto }] = await Promise.all([
     import('jspdf'), import('jspdf-autotable'), import('./packing-list-pdf'),
   ]);
   const doc = new jsPDF({ unit: 'mm', format: 'letter' });
   const spans = capture(doc);
-  await renderPackingRegionInto(doc, autoTable, r, { date: '2026-11-28', logo: null });
+  await renderPackingRegionInto(doc, autoTable, r, { date: '2026-11-28', runUrl, logo: null });
   return { doc, spans };
 }
 
@@ -158,7 +158,13 @@ describe('region model helpers', () => {
 });
 
 describe('the region sheet', () => {
-  test('letterhead: PACKING LIST, Region : KL/SEL, the delivery date; no QR', async () => {
+  test('an armed region sheet prints the QR with the two-scan caption (owner 2026-11-28)', async () => {
+    const { spans } = await render(realisticRegion(), `https://erp.example.test/d/${'k'.repeat(10)}`);
+    expect(has(spans, 'SCAN: PREPARED, THEN LOADED')).toBe(true);
+    expect(has(spans, 'Region : KL/SEL')).toBe(true);
+  });
+
+  test('letterhead: PACKING LIST, Region : KL/SEL, the delivery date; no QR when not armed', async () => {
     const { spans } = await render(realisticRegion());
     expect(has(spans, 'PACKING LIST')).toBe(true);
     expect(has(spans, 'Region : KL/SEL')).toBe(true);
@@ -270,7 +276,7 @@ describe('print helpers', () => {
     const rows = [realisticRegion(), { ...realisticRegion(), region: 'SOUTHERN', label: 'Southern' }];
     for (let i = 0; i < rows.length; i += 1) {
       if (i > 0) doc.addPage();
-      await renderPackingRegionInto(doc, autoTable, rows[i]!, { date: '2026-11-28', logo: null });
+      await renderPackingRegionInto(doc, autoTable, rows[i]!, { date: '2026-11-28', runUrl: null, logo: null });
     }
     const second = spans.find((s) => s.text === 'Region : Southern')!;
     const firstPages = spans.filter((s) => s.text.startsWith('KL/SEL · 2026/11/28 · Page')).map((s) => s.page);
@@ -279,12 +285,12 @@ describe('print helpers', () => {
 });
 
 test.skipIf(!process.env.PL_REGION_SAMPLE_OUT)('writes a sample region PDF', async () => {
-  const { doc } = await render(realisticRegion());
+  const { doc } = await render(realisticRegion(), 'https://erp.example.test/d/k7m2n9p4q8');
   // eslint-disable-next-line no-console -- the page count is the point of this opt-in sample run
   console.log(`region sample pages: ${doc.getNumberOfPages()}`);
   const [{ default: autoTable }, { renderPackingRegionInto }] = await Promise.all([import('jspdf-autotable'), import('./packing-list-pdf')]);
   doc.addPage();
-  await renderPackingRegionInto(doc, autoTable, stressRegion(), { date: '2026-11-28', logo: null });
+  await renderPackingRegionInto(doc, autoTable, stressRegion(), { date: '2026-11-28', runUrl: null, logo: null });
   writeFileSync(process.env.PL_REGION_SAMPLE_OUT as string, Buffer.from(doc.output('arraybuffer')));
 }, 60_000);
 

@@ -5,8 +5,9 @@
 import { Download, Eye, Printer } from 'lucide-react';
 import { Button } from '../../../components/Button';
 import { DataTable, type Column } from '../../../components/DataTable';
-import type { PackingRegionRow } from '../lib/packing-list-queries';
-import { regionCategoryUnits, regionLorrySummary } from '../lib/packing-list-model';
+import { packingScanTimesFor, type PackingRegionRow, type PackingScanStatus } from '../lib/packing-list-queries';
+import { fmtScanTime, regionCategoryUnits, regionLorrySummary } from '../lib/packing-list-model';
+import { ScanTimeCell } from './PackingScanTimeCell';
 import type { PdfAction } from '../lib/pdf-common';
 
 type Props = {
@@ -14,13 +15,15 @@ type Props = {
   regions: PackingRegionRow[] | null;
   loading: boolean;
   error: string | null;
+  scanSheets: readonly PackingScanStatus[] | undefined;
   busy: boolean;
   onPrint: (rows: readonly PackingRegionRow[], action: PdfAction) => void;
 };
 
 const count = (n: number) => <span className="tabular-nums">{n}</span>;
 
-export function DoPackingRegionsTable({ date, regions, loading, error, busy, onPrint }: Props) {
+export function DoPackingRegionsTable({ date, regions, loading, error, scanSheets, busy, onPrint }: Props) {
+  const times = (r: PackingRegionRow) => packingScanTimesFor(scanSheets, 'region', r.region);
   const units = (r: PackingRegionRow) => regionCategoryUnits(r);
   const columns: Column<PackingRegionRow>[] = [
     { key: 'region', label: 'Region', width: '120px', render: (r) => <span className="font-semibold text-ink">{r.label}</span>, getValue: (r) => r.label },
@@ -36,6 +39,16 @@ export function DoPackingRegionsTable({ date, regions, loading, error, busy, onP
     { key: 'accessories', width: '96px', label: 'Accessories', align: 'right', render: (r) => count(units(r).ACCESSORIES), getValue: (r) => units(r).ACCESSORIES, exportFormat: 'number' },
     { key: 'sofa', width: '96px', label: 'Sofa pcs', align: 'right', render: (r) => count(units(r).SOFA), getValue: (r) => units(r).SOFA, exportFormat: 'number' },
     { key: 'units', width: '64px', label: 'Units', align: 'right', render: (r) => <span className="font-semibold tabular-nums">{r.units}</span>, getValue: (r) => r.units, exportFormat: 'number' },
+    {
+      key: 'prepared', label: 'Prepared', width: '132px',
+      render: (r) => <ScanTimeCell iso={times(r)?.prepared_at ?? null} date={date} what="prepared" doCount={r.do_count} />,
+      getValue: (r) => fmtScanTime(times(r)?.prepared_at ?? null, date),
+    },
+    {
+      key: 'loaded', label: 'Loaded', width: '132px',
+      render: (r) => <ScanTimeCell iso={times(r)?.loaded_at ?? null} date={date} what="loaded" doCount={r.do_count} />,
+      getValue: (r) => fmtScanTime(times(r)?.loaded_at ?? null, date),
+    },
     {
       key: 'actions', label: '', align: 'right', width: '270px',
       render: (r) => (

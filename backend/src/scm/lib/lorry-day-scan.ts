@@ -21,16 +21,12 @@ export const LORRY_DAY_MAX_DOS = 60;
 
 export type LorryDaySheetInput = { lorryPlate: string; deliveryDate: string; doIds: string[] };
 
-/** PURE. The request body, checked: a plate, a YYYY-MM-DD date, 1..60 distinct uuids
- *  in the order given (the sheet order). */
-export function parseLorryDaySheet(raw: unknown):
-  | { ok: true; sheet: LorryDaySheetInput }
-  | { ok: false; message: string } {
-  const b = (raw ?? {}) as { lorryPlate?: unknown; deliveryDate?: unknown; doIds?: unknown };
-  const lorryPlate = typeof b.lorryPlate === 'string' ? b.lorryPlate.trim() : '';
-  if (!lorryPlate || lorryPlate.length > 40 || !normalizePlate(lorryPlate)) {
-    return { ok: false, message: 'A lorry plate is needed to print this packing list QR.' };
-  }
+/** A sheet printed per Delivery Planning region per delivery day (no lorry check on its scan). */
+export type RegionDaySheetInput = { region: string; deliveryDate: string; doIds: string[] };
+
+type DayAndDos = { ok: true; deliveryDate: string; doIds: string[] } | { ok: false; message: string };
+
+function parseDayAndDos(b: { deliveryDate?: unknown; doIds?: unknown }): DayAndDos {
   const deliveryDate = typeof b.deliveryDate === 'string' ? b.deliveryDate.trim() : '';
   if (!DATE_RE.test(deliveryDate) || Number.isNaN(Date.parse(`${deliveryDate}T00:00:00Z`))) {
     return { ok: false, message: 'The delivery date is not a valid date.' };
@@ -46,7 +42,37 @@ export function parseLorryDaySheet(raw: unknown):
   if (doIds.length > LORRY_DAY_MAX_DOS) {
     return { ok: false, message: `A packing list QR can cover up to ${LORRY_DAY_MAX_DOS} delivery orders.` };
   }
-  return { ok: true, sheet: { lorryPlate, deliveryDate, doIds } };
+  return { ok: true, deliveryDate, doIds };
+}
+
+/** PURE. The request body, checked: a plate, a YYYY-MM-DD date, 1..60 distinct uuids
+ *  in the order given (the sheet order). */
+export function parseLorryDaySheet(raw: unknown):
+  | { ok: true; sheet: LorryDaySheetInput }
+  | { ok: false; message: string } {
+  const b = (raw ?? {}) as { lorryPlate?: unknown; deliveryDate?: unknown; doIds?: unknown };
+  const lorryPlate = typeof b.lorryPlate === 'string' ? b.lorryPlate.trim() : '';
+  if (!lorryPlate || lorryPlate.length > 40 || !normalizePlate(lorryPlate)) {
+    return { ok: false, message: 'A lorry plate is needed to print this packing list QR.' };
+  }
+  const rest = parseDayAndDos(b);
+  if (!rest.ok) return rest;
+  return { ok: true, sheet: { lorryPlate, deliveryDate: rest.deliveryDate, doIds: rest.doIds } };
+}
+
+/** PURE. The region sheet's request, checked like the lorry one: a region key (1..60
+ *  characters), a YYYY-MM-DD date, 1..60 distinct uuids in sheet order. */
+export function parseRegionDaySheet(raw: unknown):
+  | { ok: true; sheet: RegionDaySheetInput }
+  | { ok: false; message: string } {
+  const b = (raw ?? {}) as { region?: unknown; deliveryDate?: unknown; doIds?: unknown };
+  const region = typeof b.region === 'string' ? b.region.trim() : '';
+  if (!region || region.length > 60) {
+    return { ok: false, message: 'A region is needed to print this packing list QR.' };
+  }
+  const rest = parseDayAndDos(b);
+  if (!rest.ok) return rest;
+  return { ok: true, sheet: { region, deliveryDate: rest.deliveryDate, doIds: rest.doIds } };
 }
 
 const sameSet = (a: readonly string[], b: readonly string[]) =>
@@ -57,44 +83,50 @@ export type MintedLorryDayToken =
   | { status: 'foreign'; doIds: string[] }
   | { status: 'read_failed' };
 
+/** Which sheet a token belongs to: a lorry's (by plate) or a region's (by region key). */
+export type PackingSheetKey = { kind: 'lorry'; lorryPlate: string } | { kind: 'region'; region: string };
+
 /**
  * Create-or-reuse the token for one printed sheet. AUTHENTICATED CALLERS ONLY.
  * Every DO id must be a delivery order of `companyId`, or nothing is minted and the
- * missing / other-company ids are returned. The same company + plate + date + DO set
- * returns the existing live token, so a re-print carries the same QR.
+ * missing / other-company ids are returned. The same company + sheet key + date + DO
+ * set returns the existing live token, so a re-print carries the same QR.
  */
-export async function mintLorryDayScanToken(
+export async function mintPackingScanToken(
   sb: Db,
   companyId: number,
-  sheet: LorryDaySheetInput,
+  key: PackingSheetKey,
+  deliveryDate: string,
+  doIds: string[],
   createdBy: string | null,
 ): Promise<MintedLorryDayToken> {
   const { data: own, error: ownErr } = await scopeToCompanyId(
-    sb.from('delivery_orders').select('id').in('id', sheet.doIds),
+    sb.from('delivery_orders').select('id').in('id', doIds),
     companyId,
   );
   if (ownErr) return { status: 'read_failed' };
   const mine = new Set((own as Array<{ id: string }>).map((r) => String(r.id).toLowerCase()));
-  const foreign = sheet.doIds.filter((id) => !mine.has(id));
+  const foreign = doIds.filter((id) => !mine.has(id));
   if (foreign.length > 0) return { status: 'foreign', doIds: foreign };
 
-  const { data: existing, error: exErr } = await scopeToCompanyId(
-    sb.from('packing_scan_sets').select('qr_token, do_ids')
-      .eq('lorry_plate', sheet.lorryPlate).eq('delivery_date', sheet.deliveryDate)
-      .is('qr_revoked_at', null),
-    companyId,
-  );
+  const sameDay = sb.from('packing_scan_sets').select('qr_token, do_ids').eq('delivery_date', deliveryDate);
+  const sameSheet = key.kind === 'lorry'
+    ? sameDay.eq('sheet_kind', 'lorry').eq('lorry_plate', key.lorryPlate)
+    : sameDay.eq('sheet_kind', 'region').eq('region', key.region);
+  const { data: existing, error: exErr } = await scopeToCompanyId(sameSheet.is('qr_revoked_at', null), companyId);
   if (exErr) return { status: 'read_failed' };
   const reuse = (existing as Array<{ qr_token: string; do_ids: string[] | null }>)
-    .find((r) => sameSet((r.do_ids ?? []).map((x) => String(x).toLowerCase()), sheet.doIds));
+    .find((r) => sameSet((r.do_ids ?? []).map((x) => String(x).toLowerCase()), doIds));
   if (reuse) return { status: 'ok', token: reuse.qr_token };
 
   const token = newDoScanToken();
   const { error: insErr } = await sb.from('packing_scan_sets').insert({
     company_id: companyId,
-    lorry_plate: sheet.lorryPlate,
-    delivery_date: sheet.deliveryDate,
-    do_ids: sheet.doIds,
+    sheet_kind: key.kind,
+    lorry_plate: key.kind === 'lorry' ? key.lorryPlate : null,
+    region: key.kind === 'region' ? key.region : null,
+    delivery_date: deliveryDate,
+    do_ids: doIds,
     qr_token: token,
     created_by: createdBy,
   });
@@ -102,13 +134,37 @@ export async function mintLorryDayScanToken(
   return { status: 'ok', token };
 }
 
+/** The lorry sheet's mint (see mintPackingScanToken). */
+export function mintLorryDayScanToken(
+  sb: Db,
+  companyId: number,
+  sheet: LorryDaySheetInput,
+  createdBy: string | null,
+): Promise<MintedLorryDayToken> {
+  return mintPackingScanToken(sb, companyId, { kind: 'lorry', lorryPlate: sheet.lorryPlate }, sheet.deliveryDate, sheet.doIds, createdBy);
+}
+
+/** The region sheet's mint (see mintPackingScanToken). */
+export function mintRegionDayScanToken(
+  sb: Db,
+  companyId: number,
+  sheet: RegionDaySheetInput,
+  createdBy: string | null,
+): Promise<MintedLorryDayToken> {
+  return mintPackingScanToken(sb, companyId, { kind: 'region', region: sheet.region }, sheet.deliveryDate, sheet.doIds, createdBy);
+}
+
 /** The printed sheet a token resolved to. `companyId` is the row's own. */
 export type ResolvedLorryDayScan = {
   id: string;
   companyId: number;
-  lorryPlate: string;
+  sheetKind: 'lorry' | 'region';
+  lorryPlate: string | null;
+  region: string | null;
   deliveryDate: string;
   doIds: string[];
+  preparedAt: string | null;
+  loadedAt: string | null;
 };
 
 export type LorryDayMember = TripScanMember & { movedReason: string | null };
@@ -136,8 +192,9 @@ export type LorryDayMembersResult =
   | { status: 'ok'; members: LorryDayMember[] }
   | { status: 'read_failed' };
 
-/** The printed DOs in sheet order, each with its current status and whether it has
- *  left this lorry. Both reads are scoped to the sheet's company. */
+/** The printed DOs in sheet order, each with its current status and, on a lorry sheet,
+ *  whether it has left this lorry. A region sheet ignores lorries (owner 2026-11-28),
+ *  so it reads no crew and reports nothing as MOVED. Every read is scoped to the sheet's company. */
 export async function loadLorryDayMembers(
   sb: Db,
   sheet: ResolvedLorryDayScan,
@@ -147,11 +204,16 @@ export async function loadLorryDayMembers(
     sheet.companyId,
   );
   if (doErr) return { status: 'read_failed' };
-  const { data: crewData, error: crewErr } = await scopeToCompanyId(
-    sb.from('delivery_order_crew').select('do_id, lorry_plate').in('do_id', sheet.doIds),
-    sheet.companyId,
-  );
-  if (crewErr) return { status: 'read_failed' };
+  const printedPlate = sheet.sheetKind === 'lorry' ? sheet.lorryPlate : null;
+  let crewData: unknown[] = [];
+  if (printedPlate !== null) {
+    const crew = await scopeToCompanyId(
+      sb.from('delivery_order_crew').select('do_id, lorry_plate').in('do_id', sheet.doIds),
+      sheet.companyId,
+    );
+    if (crew.error) return { status: 'read_failed' };
+    crewData = crew.data as unknown[];
+  }
 
   const byId = new Map<string, {
     do_number: string | null; debtor_name: string | null; status: string | null;
@@ -182,7 +244,9 @@ export async function loadLorryDayMembers(
       status: row.status ?? null,
       onHold: row.on_hold ?? null,
       foreign: false,
-      movedReason: lorryDayMovedReason(sheet.lorryPlate, plateOf.get(doId) ?? null, row.vehicle ?? null),
+      movedReason: printedPlate === null
+        ? null
+        : lorryDayMovedReason(printedPlate, plateOf.get(doId) ?? null, row.vehicle ?? null),
     };
   });
   return { status: 'ok', members };

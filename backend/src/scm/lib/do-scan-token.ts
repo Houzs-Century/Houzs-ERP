@@ -378,29 +378,36 @@ export async function resolveScanToken(sb: any, token: string): Promise<Resolved
 async function resolveLorryDayToken(sb: Parameters<typeof resolveScanToken>[0], token: string): Promise<ResolvedScanResult> {
   const { data, error } = await sb
     .from('packing_scan_sets')
-    .select('id, company_id, lorry_plate, delivery_date, do_ids, qr_revoked_at')
+    .select('id, company_id, sheet_kind, lorry_plate, region, delivery_date, do_ids, prepared_at, loaded_at, qr_revoked_at')
     .eq('qr_token', token)
     .maybeSingle();
   if (error) return { status: 'read_failed' };
   if (!data) return { status: 'unknown' };
   const row = data as {
-    id?: string; company_id?: number | string | null; lorry_plate?: string | null;
-    delivery_date?: string | null; do_ids?: unknown; qr_revoked_at?: string | null;
+    id?: string; company_id?: number | string | null; sheet_kind?: string | null; lorry_plate?: string | null;
+    region?: string | null; delivery_date?: string | null; do_ids?: unknown;
+    prepared_at?: string | null; loaded_at?: string | null; qr_revoked_at?: string | null;
   };
   if (row.qr_revoked_at) return { status: 'unknown' };
   const companyId = Number(row.company_id);
   if (!Number.isInteger(companyId) || companyId <= 0) return { status: 'unknown' };
   const doIds = Array.isArray(row.do_ids) ? row.do_ids.filter((x): x is string => typeof x === 'string') : [];
-  if (!row.id || !row.lorry_plate || !row.delivery_date || doIds.length === 0) return { status: 'unknown' };
+  const sheetKind = row.sheet_kind === 'region' ? 'region' : 'lorry';
+  const keyOk = sheetKind === 'region' ? !!row.region : !!row.lorry_plate;
+  if (!row.id || !keyOk || !row.delivery_date || doIds.length === 0) return { status: 'unknown' };
   return {
     status: 'ok',
     kind: 'lorry_day',
     row: {
       id: row.id,
       companyId,
-      lorryPlate: row.lorry_plate,
+      sheetKind,
+      lorryPlate: sheetKind === 'lorry' ? row.lorry_plate ?? null : null,
+      region: sheetKind === 'region' ? row.region ?? null : null,
       deliveryDate: String(row.delivery_date).slice(0, 10),
       doIds,
+      preparedAt: row.prepared_at ?? null,
+      loadedAt: row.loaded_at ?? null,
     },
   };
 }

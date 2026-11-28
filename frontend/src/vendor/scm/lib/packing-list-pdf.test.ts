@@ -149,11 +149,11 @@ describe('letterhead and crew box', () => {
     expect(spans.some((s) => /12-388 4410|123884410/.test(s.text.replace(/\s/g, ' ')))).toBe(true);
   });
 
-  test('the QR is captioned SCAN WHEN FULLY LOADED, and only drawn when armed', async () => {
+  test('the QR is captioned SCAN: PREPARED, THEN LOADED, and only drawn when armed', async () => {
     const withQr = await render(SMALL, `https://erp.example.test/d/${'a'.repeat(10)}`);
-    expect(has(withQr.spans, 'SCAN WHEN FULLY LOADED')).toBe(true);
+    expect(has(withQr.spans, 'SCAN: PREPARED, THEN LOADED')).toBe(true);
     const without = await render(SMALL, null);
-    expect(has(without.spans, 'SCAN WHEN FULLY LOADED')).toBe(false);
+    expect(has(without.spans, 'SCAN: PREPARED, THEN LOADED')).toBe(false);
   });
 });
 
@@ -426,6 +426,6 @@ test.skipIf(!process.env.PL_PO_RACK_SAMPLE_OUT)('writes the worked-out PO / Rack
       lorry_plate: 'VPC9058', driver_name: 'Ah Meng', driver_phone: null, helper_1_name: null, helper_2_name: null,
       trip_no: null, trip_stop_no: null, state: 'Selangor', country: 'Malaysia', units: s.units, items: s.items,
     })),
-  }, { date: '2026-11-28', logo: null });
+  }, { date: '2026-11-28', runUrl: null, logo: null });
   writeFileSync(process.env.PL_PO_RACK_SAMPLE_OUT as string, Buffer.from(doc.output('arraybuffer')));
 }, 60_000);
