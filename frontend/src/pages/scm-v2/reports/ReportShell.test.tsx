@@ -25,7 +25,7 @@ vi.mock('../../../vendor/scm/lib/report-sheet-xlsx', () => ({ downloadReportXlsx
 vi.mock('../../../vendor/scm/lib/report-sheet-pdf', () => ({ generateReportPdf: (...a: unknown[]) => pdf(...a) }));
 
 import { ACCOUNTING_TAB_TITLES } from '../accounting-tabs';
-import { PNL_CHOICES, REPORT_CATALOG, REPORT_GROUPS, pnlChoiceOf, pnlFamilyOf, pnlViewsOf, reportHref, reportOfAccountingTab } from '../reports-catalog';
+import { PNL_CHOICES, PNL_FAMILY_VIEWS, REPORT_CATALOG, REPORT_GROUPS, movedPnlSearch, pnlChoiceOf, pnlFamilyOf, pnlViewsOf, reportHref, reportOfAccountingTab } from '../reports-catalog';
 import { REPORT_RANGE_PRESETS, presetLabel } from '../../../lib/dateRangePresets';
 import { classifyBrowserStorageKey } from '../../../lib/browserStorageRegistry';
 import { ReportShell } from './ReportShell';
@@ -66,17 +66,20 @@ describe('the report catalog', () => {
       'Statements', 'Who owes whom', 'Sales & collection', 'Events & logistics', 'Card money', 'Plan', 'Books', 'Audit',
     ]);
     expect(REPORT_CATALOG.map((r) => r.id)).toEqual([
-      'pnl', 'performance', 'forecast', 'pnlviews', 'departments', 'bs', 'rp', 'tb', 'ar', 'ap', 'collection', 'fair', 'products', 'changes', 'changesum', 'sotodo',
+      'pnl', 'forecast', 'pnlviews', 'departments', 'bs', 'rp', 'tb', 'ar', 'ap', 'collection', 'fair', 'products', 'changes', 'changesum', 'sotodo',
       'events', 'commission', 'logistics', 'charges', 'dashboard', 'je', 'gl', 'corrections',
     ]);
     /* Two P&Ls, each with its views (owner 2026-11-25); the Department P&L on its basis, its Forecast not built yet. */
     expect(PNL_CHOICES.map((c) => `${c.family}/${c.view}: ${c.report}${c.dbasis ? `?dbasis=${c.dbasis}` : ''}`)).toEqual([
-      'overall/actual: pnl', 'overall/performance: performance', 'overall/forecast: forecast',
+      'overall/actual: pnl', 'overall/forecast: forecast',
       'department/actual: departments?dbasis=actual', 'department/performance: departments?dbasis=performance',
     ]);
     expect(REPORT_CATALOG.filter((r) => pnlFamilyOf(r.id)).map((r) => `${r.id}:${pnlFamilyOf(r.id)}:${r.group}`))
-      .toEqual(['pnl:overall:statements', 'performance:overall:statements', 'forecast:overall:statements', 'pnlviews:overall:statements', 'departments:department:statements']);
+      .toEqual(['pnl:overall:statements', 'forecast:overall:statements', 'pnlviews:overall:statements', 'departments:department:statements']);
+    /* Owner 2026-11-28 (Remove Performance View 的 P&L): the Overall P&L is Actual | Forecast, the Department P&L keeps Performance. */
+    expect(PNL_FAMILY_VIEWS).toEqual({ overall: ['actual', 'forecast'], department: ['actual', 'performance', 'forecast'] });
     expect(pnlViewsOf('forecast,actual,actual,bogus')).toEqual(['actual', 'forecast']);
+    expect(pnlViewsOf('actual,performance')).toEqual(['actual']);
     expect(pnlViewsOf(null)).toEqual([]);
     for (const r of REPORT_CATALOG) {
       if (r.tab) expect(r.label).toBe(ACCOUNTING_TAB_TITLES[r.tab]);
@@ -208,9 +211,9 @@ describe('two P&Ls, Overall and Department, each with its views Actual | Perform
   const lit = (el: HTMLElement) => within(el).getAllByRole('link').filter((a) => a.getAttribute('aria-current') === 'page').map((a) => a.textContent);
   const href = (el: HTMLElement, name: string) => within(el).getByRole('link', { name }).getAttribute('href');
 
-  test('the list shows the Overall P&L where its three views were, and the Department P&L, each lit on its own views; Logistics cost and the Product changes P&L are entries of their own', () => {
+  test('the list shows the Overall P&L where its views were, and the Department P&L, each lit on its own views; Logistics cost and the Product changes P&L are entries of their own', () => {
     auth.access = new Set(ALL);
-    at('/scm/accounting?tab=performance&from=2026-09-01&to=2026-09-30', <ReportShell report="performance"><p>body</p></ReportShell>);
+    at('/scm/accounting?tab=pnl&from=2026-09-01&to=2026-09-30', <ReportShell report="pnl"><p>body</p></ReportShell>);
     const nav = screen.getByRole('navigation', { name: 'Reports' });
     expect(names(within(nav).getByRole('group', { name: 'Statements' }))).toEqual(['Overall P&L', 'Department P&L', ACCOUNTING_TAB_TITLES.bs, ACCOUNTING_TAB_TITLES.rp]);
     const shown = within(nav).getAllByRole('link').map((a) => a.getAttribute('aria-label') ?? a.textContent);
@@ -221,7 +224,7 @@ describe('two P&Ls, Overall and Department, each with its views Actual | Perform
       expect(a.getAttribute('href')).toBe('/scm/accounting?tab=pnl&from=2026-09-01&to=2026-09-30');
       expect(a.getAttribute('aria-current')).toBe('page');
     }
-    expect(overall[1]!.getAttribute('title')).toMatch(/^The company as a whole, in three views/);
+    expect(overall[1]!.getAttribute('title')).toMatch(/^The company as a whole, in two views/);
     for (const a of within(nav).getAllByRole('link', { name: 'Department P&L' })) {
       expect(a.getAttribute('href')).toBe('/scm/accounting?tab=departments&from=2026-09-01&to=2026-09-30');
       expect(a.getAttribute('aria-current')).toBeNull();
@@ -236,46 +239,48 @@ describe('two P&Ls, Overall and Department, each with its views Actual | Perform
   const toggle = (name: string) => within(views()).getByRole('button', { name: new RegExp(`^${name}$`) });
   const pressed = () => toggles().filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent);
 
-  test('the Overall P&L: its name, then Actual | Performance | Forecast turning on and off — one on is its own page, two or three the side-by-side table', () => {
+  test('the Overall P&L: its name, then Actual | Forecast turning on and off (no Performance, owner 2026-11-28) — one on is its own page, both the side-by-side table', () => {
     auth.access = new Set(ALL);
     at('/scm/accounting?tab=pnl&from=2026-09-01&to=2026-09-30', <ReportShell report="pnl"><p>body</p></ReportShell>);
     expect(within(picker()).getByText('Overall P&L')).toBeTruthy();
-    expect(toggles().map((b) => b.textContent)).toEqual(['Actual', 'Performance', 'Forecast']);
+    expect(toggles().map((b) => b.textContent)).toEqual(['Actual', 'Forecast']);
+    expect(within(picker()).queryByText('Performance')).toBeNull();
     expect(pressed()).toEqual(['Actual']);
-    expect(within(picker()).getByText(/two or three to see them side by side/)).toBeTruthy();
+    expect(within(picker()).getByText(/Turn both on to see them side by side/)).toBeTruthy();
     expect(toggle('Actual').getAttribute('title')).toMatch(/sales invoice.*stays on/);
-    expect(toggle('Performance').getAttribute('title')).toMatch(/sales order/);
     fireEvent.click(toggle('Actual'));
     expect(address()).toBe('/scm/accounting?tab=pnl&from=2026-09-01&to=2026-09-30');
     fireEvent.click(toggle('Forecast'));
     expect(address()).toBe('/scm/accounting?tab=pnlviews&views=actual%2Cforecast&from=2026-09-01&to=2026-09-30');
   });
 
-  test('on the side-by-side table: its views on; one off leaves the others, down to one view’s own page', () => {
+  test('on the side-by-side table: both views on; one off is the other view’s own page', () => {
     auth.access = new Set(ALL);
-    at('/scm/accounting?tab=pnlviews&views=actual,performance,forecast&from=2026-09-01&to=2026-09-30', <ReportShell report="pnlviews"><p>body</p></ReportShell>);
-    expect(pressed()).toEqual(['Actual', 'Performance', 'Forecast']);
-    fireEvent.click(toggle('Performance'));
-    expect(address()).toBe('/scm/accounting?tab=pnlviews&views=actual%2Cforecast&from=2026-09-01&to=2026-09-30');
-    cleanup();
-    at('/scm/accounting?tab=pnlviews&views=actual,performance&from=2026-09-01&to=2026-09-30', <ReportShell report="pnlviews"><p>body</p></ReportShell>);
-    expect(pressed()).toEqual(['Actual', 'Performance']);
-    fireEvent.click(toggle('Actual'));
-    expect(address()).toBe('/scm/accounting?tab=performance&from=2026-09-01&to=2026-09-30');
+    at('/scm/accounting?tab=pnlviews&views=actual,forecast&from=2026-09-01&to=2026-09-30', <ReportShell report="pnlviews"><p>body</p></ReportShell>);
+    expect(pressed()).toEqual(['Actual', 'Forecast']);
+    fireEvent.click(toggle('Forecast'));
+    expect(address()).toBe('/scm/accounting?tab=pnl&from=2026-09-01&to=2026-09-30');
     const nav = screen.getByRole('navigation', { name: 'Reports' });
     expect(within(nav).getAllByRole('link', { name: 'Overall P&L' }).map((a) => a.getAttribute('aria-current'))).toEqual(['page', 'page']);
     expect(within(nav).getAllByRole('link').map((a) => a.getAttribute('href'))).not.toContain('/scm/accounting?tab=pnlviews&from=2026-09-01&to=2026-09-30');
   });
 
-  test('on the side-by-side table By month stays as the views change; a view’s own page does not take it', () => {
+  test('on the side-by-side table By month: a view’s own page does not take it', () => {
     auth.access = new Set(ALL);
-    at('/scm/accounting?tab=pnlviews&views=actual,performance&by=month&from=2026-09-01&to=2026-11-30', <ReportShell report="pnlviews"><p>body</p></ReportShell>);
+    at('/scm/accounting?tab=pnlviews&views=actual,forecast&by=month&from=2026-09-01&to=2026-11-30', <ReportShell report="pnlviews"><p>body</p></ReportShell>);
     fireEvent.click(toggle('Forecast'));
-    expect(address()).toBe('/scm/accounting?tab=pnlviews&views=actual%2Cperformance%2Cforecast&from=2026-09-01&to=2026-11-30&by=month');
-    cleanup();
-    at('/scm/accounting?tab=pnlviews&views=actual,performance&by=month&from=2026-09-01&to=2026-11-30', <ReportShell report="pnlviews"><p>body</p></ReportShell>);
-    fireEvent.click(toggle('Actual'));
-    expect(address()).toBe('/scm/accounting?tab=performance&from=2026-09-01&to=2026-11-30');
+    expect(address()).toBe('/scm/accounting?tab=pnl&from=2026-09-01&to=2026-11-30');
+  });
+
+  test('an old link to the Overall P&L’s Performance view lands on Actual; an old side-by-side link keeps its other views (owner 2026-11-28)', () => {
+    const moved = (search: string) => movedPnlSearch(new URLSearchParams(search))?.toString() ?? null;
+    expect(moved('tab=performance&from=2026-09-01&to=2026-09-30')).toBe('tab=pnl&from=2026-09-01&to=2026-09-30');
+    expect(moved('tab=pnlviews&views=actual,performance,forecast&by=month')).toBe('tab=pnlviews&views=actual%2Cforecast&by=month');
+    expect(moved('tab=pnlviews&views=actual,performance&by=month&from=2026-09-01')).toBe('tab=pnl&from=2026-09-01');
+    expect(moved('tab=pnlviews&views=performance')).toBe('tab=pnl');
+    expect(moved('tab=pnlviews&views=actual,forecast')).toBeNull();
+    expect(moved('tab=pnl')).toBeNull();
+    expect(moved('tab=departments&dbasis=performance')).toBeNull();
   });
 
   test('the Department P&L: Actual | Performance, its Forecast greyed as coming later; the other view keeps the department and its view', () => {
@@ -298,7 +303,7 @@ describe('two P&Ls, Overall and Department, each with its views Actual | Perform
     expect(pnlChoiceOf('departments', null)).toMatchObject({ family: 'department', view: 'performance' });
     expect(pnlChoiceOf('departments', 'actual')).toMatchObject({ family: 'department', view: 'actual' });
     expect(pnlChoiceOf('changesum', null)).toBeNull();
-    for (const [tab, family] of [['pnl', 'overall'], ['performance', 'overall'], ['departments', 'department']] as const) {
+    for (const [tab, family] of [['pnl', 'overall'], ['departments', 'department']] as const) {
       expect(pnlFamilyOf(reportOfAccountingTab(tab, false)!.id), tab).toBe(family);
     }
   });
@@ -314,17 +319,15 @@ describe('two P&Ls, Overall and Department, each with its views Actual | Perform
 
   test('with no dates in the address the views carry the range picked earlier in the tab, never the bare default', () => {
     window.sessionStorage.setItem('fin-report-range', JSON.stringify({ from: '2026-07-01', to: '2026-09-30' }));
-    at('/scm/accounting?tab=performance', <ReportShell report="performance"><p>body</p></ReportShell>);
-    fireEvent.click(toggle('Actual'));
-    expect(address()).toBe('/scm/accounting?tab=pnlviews&views=actual%2Cperformance&from=2026-07-01&to=2026-09-30');
+    auth.access = new Set(ALL);
+    at('/scm/accounting?tab=pnl', <ReportShell report="pnl"><p>body</p></ReportShell>);
+    fireEvent.click(toggle('Forecast'));
+    expect(address()).toBe('/scm/accounting?tab=pnlviews&views=actual%2Cforecast&from=2026-07-01&to=2026-09-30');
   });
 
-  test('a reader is offered only the views they may open; a report that is not a P&L has no picker', () => {
+  test('a reader is offered only the views they may open — one view is no picker; a report that is not a P&L has none', () => {
     at('/scm/accounting?tab=pnl', <ReportShell report="pnl"><p>body</p></ReportShell>);
-    expect(toggles().map((b) => b.textContent)).toEqual(['Actual', 'Performance']);
-    cleanup();
-    at('/scm/accounting?tab=pnlviews&views=actual,forecast', <ReportShell report="pnlviews"><p>body</p></ReportShell>);
-    expect(pressed()).toEqual(['Actual']);
+    expect(screen.queryByRole('navigation', { name: 'P&L views' })).toBeNull();
     cleanup();
     at('/scm/accounting?tab=logistics', <ReportShell report="logistics"><p>body</p></ReportShell>);
     expect(screen.queryByRole('navigation', { name: 'P&L views' })).toBeNull();
@@ -363,6 +366,7 @@ describe('two P&Ls, Overall and Department, each with its views Actual | Perform
   });
 
   test('the picker steps aside with the header buttons while the Layout editor stands in for the report', async () => {
+    auth.access = new Set(ALL);
     const Report = () => (
       <>
         <p>the statement</p>
