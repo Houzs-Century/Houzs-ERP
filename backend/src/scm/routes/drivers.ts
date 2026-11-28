@@ -179,6 +179,9 @@ export const patchDriverHandler = async (c: Ctx) => {
 };
 
 export const getDriverPhotoHandler = async (c: Ctx) => {
+  // company-scope: unified fleet roster — scm.drivers is one shared list across
+  // all companies (see the list handler and the PATCH handler's note), so, like
+  // every by-id access here, the photo is read by id with no company predicate.
   const id = c.req.param('id');
   const sb = c.get('supabase');
   const { data: row, error } = await sb
@@ -195,6 +198,9 @@ export const getDriverPhotoHandler = async (c: Ctx) => {
 };
 
 export const postDriverPhotoHandler = async (c: Ctx) => {
+  // company-scope: unified fleet roster — the photo is set by id exactly as the
+  // PATCH handler above sets a driver's other fields; scm.drivers is one shared
+  // list across companies, so there is no company predicate to apply on this write.
   const id = c.req.param('id');
   const filename = c.req.query('name') || `driver-${Date.now()}.bin`;
   const contentType = c.req.header('content-type') || 'application/octet-stream';
