@@ -168,21 +168,22 @@ describe('the region sheet', () => {
 
   test('summary box: region, DOs, customers, units, plates and how many are not arranged', async () => {
     const { spans } = await render(realisticRegion());
-    for (const t of ['KL/SEL', '9', '36 units', '3 of 9 DO']) expect(has(spans, t), t).toBe(true);
     const box = spans.filter((s) => s.page === 1).map((s) => s.text).join(' ');
+    for (const t of ['Region : KL/SEL', '9 DO · ', '36 units', '3 of 9 DO']) expect(box.includes(t), t).toBe(true);
     expect(box).toMatch(/VJK 8821, ?\s*WXY 1234/);
   });
 
   test('Part A only: categories in order, a LORRY column, no loading order', async () => {
     const { spans } = await render(realisticRegion());
-    const order = ['MATTRESS', 'BEDFRAME · one line per piece', 'ACCESSORIES', 'SOFA · one line per piece']
-      .map((t) => spans.findIndex((s) => s.text.includes(t)));
+    const order = ['MATTRESS', 'BEDFRAME', 'ACCESSORIES', 'SOFA'].map((t) => spans.findIndex((s) => s.text === t));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(has(spans, 'LORRY')).toBe(true);
     expect(has(spans, 'Not arranged')).toBe(true);
     expect(spans.some((s) => s.text.includes('PART B') || s.text.includes('LOAD BY CUSTOMER'))).toBe(false);
-    expect(spans.some((s) => s.text.includes('Customer 3 · PHOON JIA YEONG') && s.text.includes('Lorry VJK 8821'))).toBe(true);
+    const so = spans.findIndex((s) => s.text.includes('Customer 3 · PHOON JIA YEONG'));
+    expect(so).toBeGreaterThanOrEqual(0);
+    expect(spans.slice(so, so + 4).some((s) => s.text.includes('Lorry VJK 8821'))).toBe(true);
   });
 
   test('the customer key names every DO with its lorry', async () => {

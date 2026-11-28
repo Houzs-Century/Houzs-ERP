@@ -138,15 +138,14 @@ describe('letterhead and crew box', () => {
     expect(title.right).toBeLessThanOrEqual(PAGE_W - M + 0.01);
   });
 
-  test('the crew box: plate biggest, driver + phone, both helpers, trip, customers, units, volume', async () => {
+  test('the crew strip: driver + phone, both helpers, customers, DO, units, volume, trip, warehouse; the plate only once', async () => {
     const { spans } = await render(SMALL);
-    const plate = spans.find((s) => s.text === 'VJK 8821')!;
-    expect(plate).toBeTruthy();
-    const page1 = spans.filter((s) => s.page === 1 && s.text !== 'PACKING LIST');
-    expect(plate.size).toBe(Math.max(...page1.map((s) => s.size)));
-    for (const t of ['Ah Meng', 'Raju', 'Kumar', 'TRIP-2611-014', '3 (3 DO)', '6 units', '11.62 m³', 'Balakong HQ', 'Helper 1', 'Helper 2']) {
-      expect(has(spans, t), t).toBe(true);
-    }
+    expect(spans.filter((s) => s.page === 1 && s.text.includes('VJK 8821') && !s.text.includes('Page :')).map((s) => s.text)).toEqual(['Lorry : VJK 8821']);
+    expect(has(spans, 'Ah Meng')).toBe(true);
+    expect(has(spans, 'Raju, Kumar')).toBe(true);
+    expect(has(spans, '3 customers · 3 DO · 6 units')).toBe(true);
+    const text = spans.map((s) => s.text).join(' ');
+    for (const t of ['11.62 m³', 'TRIP-2611-014', 'Balakong HQ']) expect(text.includes(t), t).toBe(true);
     expect(spans.some((s) => /12-388 4410|123884410/.test(s.text.replace(/\s/g, ' ')))).toBe(true);
   });
 
@@ -161,11 +160,19 @@ describe('letterhead and crew box', () => {
 describe('Part A — pick by category', () => {
   test('categories in the owner\'s order, sofa grouped under its sales order', async () => {
     const { spans } = await render(SMALL);
-    const order = ['MATTRESS', 'BEDFRAME · one line per piece', 'ACCESSORIES', 'SOFA · one line per piece']
-      .map((t) => firstIdx(spans, t));
+    const order = ['MATTRESS', 'BEDFRAME', 'ACCESSORIES', 'SOFA'].map((t) => spans.findIndex((s) => s.text === t));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(spans.some((s) => s.text.startsWith('HC-SO-2610-203 · Customer 3 · PHOON JIA YEONG · 2 pieces · PO HC-PO-2611-021'))).toBe(true);
+    expect(has(spans, 'HC-SO-2610-203 · Customer 3 · PHOON JIA YEONG')).toBe(true);
+    expect(has(spans, '2 pieces')).toBe(true);
+  });
+
+  test('the column titles print once, not under every category, and no instruction text', async () => {
+    const { spans } = await render(SMALL);
+    expect(spans.filter((s) => s.text === 'PO NO')).toHaveLength(2);
+    expect(spans.some((s) => /^Take everything|^Load from the top/.test(s.text))).toBe(false);
+    expect(has(spans, 'AKM-MAT-Q10')).toBe(true);
+    expect(has(spans, 'AKM-MAT-Q10 description')).toBe(true);
     expect(has(spans, 'TOTAL TO PICK')).toBe(true);
   });
 
@@ -282,7 +289,8 @@ describe('the stress lorry — nothing overlaps, clips or runs off the page', ()
     const spans = capture(doc);
     await renderPackingListInto(doc, autoTable, SMALL, { date: '2026-11-28', runUrl: `https://erp.example.test/d/${'e'.repeat(10)}`, logo: null });
     expect(spans.some((s) => s.text === 'PACKING LIST')).toBe(true);
-    expect(spans.some((s) => s.text.includes('Menara SUEZCAP'))).toBe(true);
+    expect(spans.some((s) => s.text.includes('2990 HOME'))).toBe(true);
+    expect(spans.some((s) => s.text.includes('Menara SUEZCAP'))).toBe(false);
     expect(clashesOf(spans)).toEqual([]);
     for (const s of spans) expect(s.right, s.text).toBeLessThanOrEqual(PAGE_W - M + 0.6);
   });
