@@ -277,7 +277,7 @@ export function PublicDoScan() {
 
       {run && !done && run.nextStep === "done" && (
         <Notice tone="ok" title={`${runTitle}: packing list loaded`}>
-          Prepared at {run.preparedAtText || "—"}, loaded at {run.loadedAtText || "—"}. Nothing left to scan on this sheet.
+          Prepared at {run.preparedAtText || "—"}, loaded at {run.loadedAtText || "—"}. Both scans of this sheet are recorded.
         </Notice>
       )}
 
