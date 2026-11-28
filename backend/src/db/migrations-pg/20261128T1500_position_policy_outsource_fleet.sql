@@ -1,8 +1,8 @@
 -- 20261128T1500_position_policy_outsource_fleet.sql
 -- REVERSAL:
---   UPDATE public.position_policy SET is_fleet = false
+--   UPDATE public.position_policy SET is_fleet = 0
 --    WHERE position_id IN (SELECT id FROM public.positions WHERE slug IN ('outsource_transporter'));
---   This restores the 2026-09-16 seed value. With is_fleet back to false and
+--   This restores the 2026-09-16 seed value. With is_fleet back to 0 and
 --   "Outsource Transporter" still in FLEET_POSITIONS, the ROW wins in
 --   isFleetPosition, so an unlinked one would again resolve to the whole board --
 --   i.e. the exact pre-migration behaviour.
@@ -16,6 +16,7 @@
 -- when a row exists), so flipping the row -- not only the name list in
 -- services/positionPolicy.ts (FLEET_POSITIONS) -- is what makes the fail-closed
 -- actually take effect in production. Separate migration (like the duty one) so
--- the applied 20260916T1600 seed migration is never edited.
-UPDATE public.position_policy SET is_fleet = true
+-- the applied 20260916T1600 seed migration is never edited. NOTE: is_fleet is an
+-- INTEGER column (0/1), so this writes 1, not a boolean `true`.
+UPDATE public.position_policy SET is_fleet = 1
  WHERE position_id IN (SELECT id FROM public.positions WHERE slug IN ('outsource_transporter'));
