@@ -56,6 +56,7 @@
 
 import { resolvePositionPolicy, isFleetPosition } from "../../services/positionPolicy";
 import type { PositionPolicyRow } from "../../services/positionPolicyRows";
+import { normalizePlate } from "./plate-normalize";
 
 /** The caller shape this module reads — a subset of the SCM `houzsUser`
  *  (env.ts Variables.houzsUser): the real Houzs integer user id plus the org +
@@ -70,15 +71,33 @@ export interface DeliveryScopeCaller {
   permissions_set?: ReadonlySet<string>;
 }
 
+// LORRY-PLATE ARM (owner, 2026-11-28). ONE PHONE PER LORRY: a "lorry account"
+// (an Outsource Transporter login named after a PLATE, e.g. "MCF 3084", linked
+// to its own scm.drivers row) must see + POD every delivery on its PLATE, no
+// matter WHICH person is the assigned Driver. The owner dispatches Lorry Plate =
+// the lorry and Driver = whoever drives it that day, so the lorry account is
+// never the assigned driver id — the driver-id arm alone showed it nothing. So a
+// `self` scope also carries the login's OWN lorry plate(s), and a job matches
+// when ITS lorry plate equals one of them. Plates are compared in the repo's ONE
+// canonical form (plate-normalize.ts: letters+digits only, uppercased) because
+// production stores them inconsistently — the login name is "MCF 3084" (spaced),
+// scm.lorries.plate is "MCF3084", and delivery_order_crew.lorry_plate holds BOTH
+// — so only canonicalisation makes them meet. An empty plate never matches, so
+// this never links two plate-less accounts.
+
 /** The resolved visibility. `all` = no restriction (the whole board, unchanged).
  *  `self` = only jobs whose assigned driver id ∈ driverIds OR helper id ∈
- *  helperIds. */
+ *  helperIds, OR whose lorry plate (canonicalised) ∈ lorryPlates. */
 export type DeliveryScope =
   | { readonly mode: "all" }
   | {
       readonly mode: "self";
       readonly driverIds: ReadonlySet<string>;
       readonly helperIds: ReadonlySet<string>;
+      /** Canonical plates (normalizePlate) of the login's OWN lorry account(s);
+       *  empty for a person driver / unlinked login, so it widens nobody by
+       *  accident (owner 2026-11-28). */
+      readonly lorryPlates: ReadonlySet<string>;
     };
 
 const SCOPE_ALL: DeliveryScope = { mode: "all" };
@@ -89,6 +108,11 @@ const SCOPE_ALL: DeliveryScope = { mode: "all" };
 export interface CrewAssignment {
   readonly driverIds: ReadonlyArray<string | null | undefined>;
   readonly helperIds: ReadonlyArray<string | null | undefined>;
+  /** The delivery's own lorry plate (any spelling — it is canonicalised before
+   *  the match). Null/empty never matches. Board SO rows carry the
+   *  delivery_order_crew.lorry_plate; trip-based rows resolve trips.lorry_id →
+   *  scm.lorries.plate. See docs/modules/delivery-tms.md (owner 2026-11-28). */
+  readonly lorryPlate?: string | null;
 }
 
 function hasWildcard(caller: DeliveryScopeCaller): boolean {
@@ -132,13 +156,25 @@ export async function resolveDeliveryScope(
 
   const driverIds = new Set<string>();
   const helperIds = new Set<string>();
+  // The login's OWN lorry plate(s), for the lorry-plate arm above (owner
+  // 2026-11-28). We read the login's own driver row only — NEVER expand by other
+  // drivers' `vehicle` (the abandoned approach that would have shown one driver
+  // another's lorry): the plate is the login's account identity. `vehicle` if an admin set it
+  // (Fleet profile), else the account `name` — for a lorry account the name IS
+  // the plate ("MCF 3084"). normalizePlate drops anything with no alphanumerics,
+  // so a person driver whose name is not a plate contributes nothing matchable.
+  const lorryPlates = new Set<string>();
   try {
     const [d, h] = await Promise.all([
-      sb.from("drivers").select("id").eq("user_id", Number(uid)),
+      sb.from("drivers").select("id, vehicle, name").eq("user_id", Number(uid)),
       sb.from("helpers").select("id").eq("user_id", Number(uid)),
     ]);
     if (d?.error || h?.error) return SCOPE_ALL;
-    for (const r of (d?.data ?? []) as Array<{ id?: string }>) if (r.id) driverIds.add(String(r.id));
+    for (const r of (d?.data ?? []) as Array<{ id?: string; vehicle?: string | null; name?: string | null }>) {
+      if (r.id) driverIds.add(String(r.id));
+      const plate = normalizePlate(r.vehicle || r.name);
+      if (plate) lorryPlates.add(plate);
+    }
     for (const r of (h?.data ?? []) as Array<{ id?: string }>) if (r.id) helperIds.add(String(r.id));
   } catch (e) {
     console.log(
@@ -154,12 +190,15 @@ export async function resolveDeliveryScope(
   // keeps the whole board. A transient lookup error already returned SCOPE_ALL
   // above, so this branch is only the clean "no rows" case.
   if (driverIds.size === 0 && helperIds.size === 0) {
+    // No driver/helper row ⇒ no lorry plate either (lorryPlates is only built
+    // from the login's own driver rows), so a fail-closed fleet login matches
+    // nothing on ANY arm — including the new plate arm. Still closed (owner 2026-11-28).
     return isFleetPosition(caller.position_name ?? null, caller.position_policy ?? null)
-      ? { mode: "self", driverIds, helperIds }
+      ? { mode: "self", driverIds, helperIds, lorryPlates }
       : SCOPE_ALL;
   }
 
-  return { mode: "self", driverIds, helperIds };
+  return { mode: "self", driverIds, helperIds, lorryPlates };
 }
 
 /**
@@ -175,6 +214,14 @@ export function scopeMatchesAssignment(
   if (scope.mode === "all") return true;
   for (const d of assignment.driverIds) if (d && scope.driverIds.has(String(d))) return true;
   for (const h of assignment.helperIds) if (h && scope.helperIds.has(String(h))) return true;
+  // Lorry-plate arm (owner 2026-11-28): the job's own lorry plate equals one of
+  // the login's plates (both canonicalised). Guarded on size + a non-empty
+  // canonical plate so an empty/absent plate — the common case for typed crew
+  // with no lorry — never matches, and a login with no plate (a person) never gains a row.
+  if (scope.lorryPlates.size > 0 && assignment.lorryPlate) {
+    const plate = normalizePlate(assignment.lorryPlate);
+    if (plate && scope.lorryPlates.has(plate)) return true;
+  }
   return false;
 }
 

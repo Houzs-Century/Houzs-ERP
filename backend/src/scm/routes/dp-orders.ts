@@ -43,6 +43,7 @@ import {
   resolveDeliveryScope, scopeMatchesAssignment,
   type CrewAssignment, type DeliveryScope,
 } from '../lib/deliveryScope';
+import { lorryPlatesByIds } from '../lib/lorry-plate-lookup';
 import { supabaseAuth } from '../middleware/auth';
 import { ADDRESS_COLS } from '../lib/so-address-on-save';
 import {
@@ -68,14 +69,20 @@ async function tripCrewByIds(
   const ids = [...new Set(tripIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return out;
   const { data } = await sb.from('trips')
-    .select('id, driver_id, helper_1_id, helper_2_id')
+    .select('id, driver_id, helper_1_id, helper_2_id, lorry_id')
     .in('id', ids);
-  for (const t of (data ?? []) as Array<Record<string, unknown>>) {
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+  // trips.lorry_id → plate, for the lorry-plate scope arm (owner 2026-11-28): a
+  // lorry account sees every DP job on its plate, whoever the assigned driver is.
+  const plates = await lorryPlatesByIds(sb, rows.map((t) => (t.lorryId ?? t.lorry_id) as string | null));
+  for (const t of rows) {
     const id = String(t.id ?? '');
     if (!id) continue;
+    const lid = (t.lorryId ?? t.lorry_id) as string | null;
     out.set(id, {
       driverIds: [(t.driverId ?? t.driver_id) as string | null],
       helperIds: [(t.helper1Id ?? t.helper_1_id) as string | null, (t.helper2Id ?? t.helper_2_id) as string | null],
+      lorryPlate: lid ? plates.get(String(lid)) ?? null : null,
     });
   }
   return out;

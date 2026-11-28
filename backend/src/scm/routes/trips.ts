@@ -28,7 +28,8 @@ import {
   type MasterName as DayMasterName, type MasterLorry as DayMasterLorry,
   type MasterWarehouse as DayMasterWarehouse, type LatLng as DayLatLng,
 } from '../lib/fleet-day-view';
-import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
+import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment, type DeliveryScope } from '../lib/deliveryScope';
+import { lorryPlatesByIds } from '../lib/lorry-plate-lookup';
 import { reconcileStopsToBoard, reconcileFieldsFor, type ReconcileStop } from '../lib/tripReconcile';
 import { validatePing, shouldAcceptPing, latestPerDriver, PING_ACCEPTED_STATUSES, pingCallerAllowed } from '../lib/tripLocation';
 import { dateOrNull } from '../lib/date-coerce';
@@ -51,11 +52,28 @@ const STOP_COLS =
 
 const TRIP_STATUSES = new Set(['PLANNED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']);
 
-function tripAssignment(row: Record<string, unknown>): CrewAssignment {
+function tripAssignment(row: Record<string, unknown>, platesById?: ReadonlyMap<string, string> | null): CrewAssignment {
+  const lid = dual<string | null>(row, 'lorry_id');
   return {
     driverIds: [dual<string | null>(row, 'driver_id')],
     helperIds: [dual<string | null>(row, 'helper_1_id'), dual<string | null>(row, 'helper_2_id')],
+    lorryPlate: lid && platesById ? platesById.get(String(lid)) ?? null : null,
   };
+}
+
+/** trips.lorry_id → plate, resolved ONLY for a `self` scope that carries lorry
+ *  plates (a lorry account, owner 2026-11-28). An `all` scope never matches, and
+ *  a person-driver self scope has no plates, so neither pays for the lorries
+ *  read. Best-effort: an empty map just means the plate arm does not fire. The
+ *  rows must carry lorry_id (every trip select here does). */
+async function platesForTripRows(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the scm PostgREST client, untyped like every scm route
+  sb: any,
+  scope: DeliveryScope,
+  rows: ReadonlyArray<Record<string, unknown>>,
+): Promise<ReadonlyMap<string, string>> {
+  if (scope.mode !== 'self' || scope.lorryPlates.size === 0) return new Map();
+  return lorryPlatesByIds(sb, rows.map((r) => dual<string | null>(r, 'lorry_id')));
 }
 
 function dual<T = unknown>(row: Record<string, unknown>, snake: string): T {
@@ -119,9 +137,10 @@ trips.get('/', async (c) => {
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  const plates = await platesForTripRows(sb, scope, data ?? []);
   const scoped = scope.mode === 'all'
     ? (data ?? [])
-    : (data ?? []).filter((r) => scopeMatchesAssignment(scope, tripAssignment(r)));
+    : (data ?? []).filter((r) => scopeMatchesAssignment(scope, tripAssignment(r, plates)));
   const codes = companyCodeMap(c);
   const trips = scoped.map((r) => withCompanyCode(r, codes));
   return c.json({ trips });
@@ -162,9 +181,10 @@ trips.get('/day', async (c) => {
   if (tripErr) return c.json({ error: 'load_failed', reason: tripErr.message }, 500);
 
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  const dayPlates = await platesForTripRows(sb, scope, tripData ?? []);
   const scopedTrips = (scope.mode === 'all'
     ? (tripData ?? [])
-    : (tripData ?? []).filter((r) => scopeMatchesAssignment(scope, tripAssignment(r))));
+    : (tripData ?? []).filter((r) => scopeMatchesAssignment(scope, tripAssignment(r, dayPlates))));
 
   const rawTrips: RawTripRow[] = scopedTrips.map((r) => ({
     id: String(dual<string>(r, 'id')),
@@ -503,9 +523,10 @@ export async function loadPackingDay(sb: any, c: CompanyScopeCtx, date: string, 
   if (tripErr) return { error: tripErr.message };
 
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  const packPlates = await platesForTripRows(sb, scope, tripData ?? []);
   const scopedTrips = (scope.mode === 'all'
     ? (tripData ?? [])
-    : (tripData ?? []).filter((r) => scopeMatchesAssignment(scope, tripAssignment(r))));
+    : (tripData ?? []).filter((r) => scopeMatchesAssignment(scope, tripAssignment(r, packPlates))));
   const packTrips: PackTripRow[] = scopedTrips.map((r) => ({
     id: String(dual<string>(r, 'id')),
     trip_no: dual<string | null>(r, 'trip_no'),
@@ -594,6 +615,7 @@ export async function loadPackingDay(sb: any, c: CompanyScopeCtx, date: string, 
       const assignment = {
         driverIds: [dual<string | null>(cr, 'driver_1_id'), dual<string | null>(cr, 'driver_2_id')],
         helperIds: [dual<string | null>(cr, 'helper_1_id'), dual<string | null>(cr, 'helper_2_id')],
+        lorryPlate: dual<string | null>(cr, 'lorry_plate'),
       };
       if (scopeMatchesAssignment(scope, assignment)) visible.add(String(dual<string>(cr, 'do_id')));
     }
@@ -779,7 +801,8 @@ trips.get('/:id', async (c) => {
   if (t.error) return c.json({ error: 'load_failed', reason: t.error.message }, 500);
   if (!t.data) return c.json({ error: 'not_found' }, 404);
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
-  if (scope.mode === 'self' && !scopeMatchesAssignment(scope, tripAssignment(t.data as unknown as Record<string, unknown>))) {
+  const onePlate = await platesForTripRows(sb, scope, [t.data as unknown as Record<string, unknown>]);
+  if (scope.mode === 'self' && !scopeMatchesAssignment(scope, tripAssignment(t.data as unknown as Record<string, unknown>, onePlate))) {
     return c.json({ error: 'not_found' }, 404);
   }
   return c.json({ trip: t.data, stops: s.data ?? [] });
@@ -906,12 +929,13 @@ export const patchTripStatusHandler = async (c: any) => {
   // company-scope: widened to the caller's ALLOWED companies, same set GET /
   // lists under - see the COMPANY BOUND note on PATCH /:id above.
   const { data: cur } = await scopeToAllowedCompanies(
-    sb.from('trips').select('clock_in_at, clock_out_at, driver_id, helper_1_id, helper_2_id').eq('id', id), c,
+    sb.from('trips').select('clock_in_at, clock_out_at, driver_id, helper_1_id, helper_2_id, lorry_id').eq('id', id), c,
   ).maybeSingle();
   if (!cur) return c.json({ error: 'not_found' }, 404);
   {
     const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
-    if (scope.mode === 'self' && !scopeMatchesAssignment(scope, tripAssignment(cur as Record<string, unknown>))) {
+    const curPlate = await platesForTripRows(sb, scope, [cur as Record<string, unknown>]);
+    if (scope.mode === 'self' && !scopeMatchesAssignment(scope, tripAssignment(cur as Record<string, unknown>, curPlate))) {
       return c.json({ error: 'You can only update a delivery job assigned to you.' }, 403);
     }
   }
@@ -1357,13 +1381,14 @@ trips.post('/:id/location', async (c) => {
   const sb = c.get('supabase');
   // company-scope: crew-gated by pingCallerAllowed below; the trip read has no company predicate (open finding, tasks/TODO.md)
   const { data: trip } = await sb.from('trips')
-    .select('id, status, company_id, driver_id, helper_1_id, helper_2_id')
+    .select('id, status, company_id, driver_id, helper_1_id, helper_2_id, lorry_id')
     .eq('id', tripId).maybeSingle();
   if (!trip) return c.json({ error: 'trip_not_found' }, 404);
   const t = trip as Record<string, unknown>;
 
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
-  if (!pingCallerAllowed(scope, tripAssignment(t), c.get('scmWriteBypassed') === true)) {
+  const pingPlate = await platesForTripRows(sb, scope, [t]);
+  if (!pingCallerAllowed(scope, tripAssignment(t, pingPlate), c.get('scmWriteBypassed') === true)) {
     return c.json({ error: 'not_your_trip' }, 403);
   }
 
@@ -1409,11 +1434,12 @@ trips.get('/:id/locations/latest', async (c) => {
   const sb = c.get('supabase');
 
   const { data: trip } = await scopeToAllowedCompanies(
-    sb.from('trips').select('id, driver_id, helper_1_id, helper_2_id').eq('id', tripId), c,
+    sb.from('trips').select('id, driver_id, helper_1_id, helper_2_id, lorry_id').eq('id', tripId), c,
   ).maybeSingle();
   if (!trip) return c.json({ error: 'trip_not_found' }, 404);
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
-  if (scope.mode === 'self' && !scopeMatchesAssignment(scope, tripAssignment(trip as Record<string, unknown>))) {
+  const latPlate = await platesForTripRows(sb, scope, [trip as Record<string, unknown>]);
+  if (scope.mode === 'self' && !scopeMatchesAssignment(scope, tripAssignment(trip as Record<string, unknown>, latPlate))) {
     return c.json({ error: 'not_found' }, 404);
   }
 
@@ -1428,14 +1454,15 @@ trips.get('/active/locations', async (c) => {
   const sb = c.get('supabase');
 
   let tripQ = sb.from('trips')
-    .select('id, driver_id, helper_1_id, helper_2_id').eq('status', 'IN_PROGRESS');
+    .select('id, driver_id, helper_1_id, helper_2_id, lorry_id').eq('status', 'IN_PROGRESS');
   tripQ = scopeToAllowedCompanies(tripQ, c);
   const { data: activeTrips, error: tErr } = await tripQ;
   if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
 
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
+  const activePlates = await platesForTripRows(sb, scope, (activeTrips ?? []) as Array<Record<string, unknown>>);
   const visible = (activeTrips ?? []).filter((r) =>
-    scope.mode === 'all' || scopeMatchesAssignment(scope, tripAssignment(r as Record<string, unknown>)));
+    scope.mode === 'all' || scopeMatchesAssignment(scope, tripAssignment(r as Record<string, unknown>, activePlates)));
   const tripIds = visible.map((r) => dual<string>(r as Record<string, unknown>, 'id')).filter(Boolean);
   if (tripIds.length === 0) return c.json({ locations: [] });
 
