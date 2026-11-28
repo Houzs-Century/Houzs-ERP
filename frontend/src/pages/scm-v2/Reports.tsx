@@ -56,7 +56,7 @@ import {
   type ReportTile,
 } from './reports/reportParts';
 import { StatementSkeleton, StatementTable } from './reports/StatementTable';
-import { LevelTool, MONTH_OPTIONS, sheetTable, useColumnReads, useOpenLedger } from './reports/statementTools';
+import { CodesSwitch, LevelTool, MONTH_OPTIONS, sheetTable, useColumnReads, useOpenLedger, useShowCodes } from './reports/statementTools';
 import {
   COMPARE_WITH, balanceColumns, columnsSpan, monthName, pnlColumns, statementLines,
   type CompareWith, type StatementColumn, type StatementLine, type StatementView,
@@ -141,6 +141,7 @@ export const PnLTab = () => {
   const [months, setMonths] = useState<number>(6);
   const [level, setLevel] = useState<Level>('all');
   const [showPct, setShowPct] = useState(true);
+  const [showCodes, setShowCodes] = useShowCodes();
   const [editing, setEditing] = useState(false);
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
@@ -175,7 +176,7 @@ export const PnLTab = () => {
     title: 'P&L',
     subtitle: `${periodText} · ${showPct ? '% of sales beside' : 'amounts'}${layoutWord(stored)}${levelText}`,
     meta: [{ label: 'Period', value: view === 'month' ? `${monthName(span.from)} – ${monthName(span.to)}` : `${fmtDate(r.from)} – ${fmtDate(r.to)}` }],
-    tables: [sheetTable(view, columns, shown, showPct, '% of sales')],
+    tables: [sheetTable(view, columns, shown, showPct, showCodes, '% of sales')],
   } : null);
 
   const noteAfter = (l: StatementLine) => (l.id === 'tot:costOfSales' && head?.stock?.closingProvisional ? (
@@ -198,6 +199,7 @@ export const PnLTab = () => {
         )}
         <LevelTool depth={depth} level={level} onLevel={setLevel} />
         <ReportSwitch on={showPct} onChange={setShowPct}>% beside</ReportSwitch>
+        <CodesSwitch on={showCodes} onChange={setShowCodes} />
       </ReportToolbar>
       {editing && <ReportLayoutEditor report="pnl" onClose={() => setEditing(false)} />}
       {chartWin && <PnlChart win={chartWin} />}
@@ -218,6 +220,7 @@ export const PnLTab = () => {
           level={level}
           tree={tree}
           showPct={showPct}
+          showCodes={showCodes}
           finalId="net:net"
           onCategoryFigure={openLedger}
           noteAfter={noteAfter}
@@ -299,7 +302,7 @@ export const BalanceSheetTab = () => {
     title: 'Balance Sheet',
     subtitle: `${periodText} · ${showPct ? '% of total assets beside' : 'amounts'}${layoutWord(stored)}${levelText}`,
     meta: [{ label: 'As at', value: fmtDate(asAt) }],
-    tables: [sheetTable(view, shownCols, shown, showPct, '% of total assets')],
+    tables: [sheetTable(view, shownCols, shown, showPct, true, '% of total assets')],
   } : null);
   const fileBase = view === 'month' ? `balance-sheet-monthly${forecastOn ? '-forecast' : ''}-${span.from.slice(0, 7)}-${span.to.slice(0, 7)}` : `balance-sheet-${asAt}`;
 
@@ -340,6 +343,7 @@ export const BalanceSheetTab = () => {
           level={level}
           tree={tree}
           showPct={showPct}
+          showCodes
           finalId="net:check"
           strongIds={STRONG_BS}
           onCategoryFigure={openLedger}

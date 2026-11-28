@@ -42,11 +42,11 @@
 .inner { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 .cv { display: flex; justify-content: flex-end; align-items: baseline; gap: 8px; }
 .pct { flex: none; width: 46px; text-align: right; font-size: 11px; font-weight: 500; color: #8a8f84; }
-.dash { color: var(--fin-input); }
 .colTotal { background: var(--fin-row); }
 .colEdge { border-right: 1px solid var(--fin-line); }
-.figure { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: underline dotted var(--fin-input); text-underline-offset: 3px; }
-.figure:hover, .figure[aria-pressed='true'] { color: var(--fin-petrol); text-decoration-color: var(--fin-petrol); }
+/* A figure that opens its lines shows its dotted line under the mouse only (owner 2026-11-27). */
+.figure { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: none; text-underline-offset: 3px; }
+.figure:hover, .figure:focus-visible, .figure[aria-pressed='true'] { color: var(--fin-petrol); text-decoration: underline dotted var(--fin-petrol); }
 
 .name { text-align: left; padding-left: 16px; }
 .nameInner { display: flex; align-items: center; gap: 6px; min-width: 0; }

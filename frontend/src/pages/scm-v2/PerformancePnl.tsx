@@ -43,7 +43,7 @@ import {
   ReportExports, ReportHeaderActions, ReportMessage, ReportTool, ReportToolbar, Segmented, useReportSubtitle,
 } from './reports/reportParts';
 import { StatementSkeleton, StatementTable } from './reports/StatementTable';
-import { LevelTool, MONTH_OPTIONS, sheetTable, useColumnReads, useOpenLedger } from './reports/statementTools';
+import { CodesSwitch, LevelTool, MONTH_OPTIONS, sheetTable, useColumnReads, useOpenLedger, useShowCodes } from './reports/statementTools';
 import { columnsSpan, monthColumns, monthName, statementLines, type StatementColumn, type StatementLine } from './reports/statementColumns';
 import { REPORT_CHART_COLORS, ReportBarChart, thousands, useChartMonths, type ChartBarSeries, type ChartMonth } from './reports/ReportBarChart';
 import { windowMonths, type ChartWindow } from './reports/chartWindow';
@@ -242,6 +242,7 @@ export const PerformanceTab = () => {
   const [view, setView] = useState<PerfView>('single');
   const [months, setMonths] = useState<number>(6);
   const [level, setLevel] = useState<Level>('all');
+  const [showCodes, setShowCodes] = useShowCodes();
   const [editing, setEditing] = useState(false);
   const { can } = useAuth();
   const canArrange = can('scm.payment_voucher.post');
@@ -275,12 +276,12 @@ export const PerformanceTab = () => {
     ? `performance-pnl-monthly-${span.from.slice(0, 7)}-${span.to.slice(0, 7)}`
     : `performance-pnl-${r.from}-to-${r.to}`;
   const sheet = (): ReportSheet | null => {
-    if (view === 'single') return rep ? performanceSheet(rep, { level, open: tree.open }) : null;
+    if (view === 'single') return rep ? performanceSheet(rep, { level, open: tree.open, codes: showCodes }) : null;
     return reads.complete ? {
       title: 'Performance P&L',
       subtitle: `${monthName(span.from)} – ${monthName(span.to)} · ${months} months · sales orders by SO date · % beside`,
       meta: [{ label: 'Period', value: `${monthName(span.from)} – ${monthName(span.to)}` }],
-      tables: [sheetTable('month', monthCols, shown, true, '% of sales')],
+      tables: [sheetTable('month', monthCols, shown, true, showCodes, '% of sales')],
       fmt: fmtPerf,
     } : null;
   };
@@ -297,6 +298,7 @@ export const PerformanceTab = () => {
           <ReportTool label="Months"><Segmented options={MONTH_OPTIONS} value={months} onChange={setMonths} label="Months" /></ReportTool>
         )}
         <LevelTool depth={depth} level={level} onLevel={setLevel} />
+        <CodesSwitch on={showCodes} onChange={setShowCodes} />
       </ReportToolbar>
       {rep && <OperatingExpenseLine r={rep} />}
       {editing && <ReportLayoutEditor report="performance" onClose={() => setEditing(false)} />}
@@ -320,6 +322,7 @@ export const PerformanceTab = () => {
           level={level}
           tree={tree}
           showPct
+          showCodes={showCodes}
           fmt={fmtPerf}
           finalId="sum:net"
           onCategoryFigure={openLedger}

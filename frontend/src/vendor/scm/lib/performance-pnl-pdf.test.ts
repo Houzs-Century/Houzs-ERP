@@ -39,7 +39,7 @@ const r: PerformanceReport = {
 
 describe('performanceSheet', () => {
   it('names the report, its period and its orders; the groups table then the summary; the notes at the foot', () => {
-    const s = performanceSheet(r);
+    const s = performanceSheet(r, { codes: true });
     expect(s.title).toBe('Performance P&L');
     expect(s.subtitle).toBe('Sales orders dated 2026/07/01 – 2026/07/31 · 4 orders, 3 not yet delivered · % of sales');
     expect(s.meta).toEqual([{ label: 'Period', value: '2026/07/01 – 2026/07/31' }, { label: 'Orders', value: '4 (3 not yet delivered)' }]);
@@ -63,7 +63,7 @@ describe('performanceSheet', () => {
     expect(s.tables[1]!.rows[7]!.cells).toEqual([-4345000, -1164.9]);
     expect(s.notes).toEqual(performanceNotes(r));
     expect(s.fmt).toBe(fmtPerf);
-    expect(performanceSheet(r, { level: 1 }).tables[1]!.rows.map((x) => x.label)).not.toContain('590-0000 · RENT RECEIVED');
+    expect(performanceSheet(r, { level: 1, codes: true }).tables[1]!.rows.map((x) => x.label)).not.toContain('590-0000 · RENT RECEIVED');
   });
 
   it('the notes say where each side came from and what the rate replaced', () => {

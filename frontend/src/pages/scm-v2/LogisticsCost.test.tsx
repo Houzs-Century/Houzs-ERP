@@ -168,7 +168,7 @@ describe('By region & trip', () => {
     const table = await screen.findByRole('table', { name: 'Delivery cost by region and trip' });
     expect(rowText(table, 'VNB9058')).toContain('1 trip · 1 DO');
     expect(rowText(table, 'MSJ TRANSPORT SERVICE')).toContain('15,970.00');
-    expect(rowText(table, '3PL bill lines on no DO yet')).toMatch(/----380\.00$/);
+    expect(rowText(table, '3PL bill lines on no DO yet')).toMatch(/1 line380\.00$/);
     expect(rowText(table, 'Total delivery cost')).toContain('38,058.91');
     expect(rowText(table, 'Logistics P&L · TOTAL EXPENSE (from the books)')).toContain('38,058.91');
     expect(rowText(table, 'Difference')).toMatch(/0\.00$/);
@@ -201,8 +201,8 @@ describe('Spend by lorry', () => {
     expect(rowText(table, 'VRH9058')).toContain('nothing in the books');
     expect(rowText(table, 'Total Not tied to a lorry')).toContain('16,287.9116,287.91');
     expect(rowText(table, 'Total in-house spend')).toContain('21,208.9120,708.91');
-    expect(rowText(table, 'Logistics P&L · Total In-house Expenses (from the books)')).toMatch(/-20,708\.91$/);
-    expect(rowText(table, 'Difference (Spread less the P&L)')).toMatch(/-0\.00$/);
+    expect(rowText(table, 'Logistics P&L · Total In-house Expenses (from the books)')).toMatch(/books\)20,708\.91$/);
+    expect(rowText(table, 'Difference (Spread less the P&L)')).toMatch(/P&L\)0\.00$/);
     expect(screen.getByRole('group', { name: 'Spend by lorry totals' }).textContent).toContain('Actual21,209');
     expect(screen.queryByRole('switch', { name: /% of DO/ })).toBeNull();
   });
