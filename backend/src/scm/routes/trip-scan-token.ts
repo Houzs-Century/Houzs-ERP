@@ -39,6 +39,8 @@ tripScanToken.get('/lorry-day-scan-token', async (c) => {
     lorryPlate: c.req.query('plate'),
     deliveryDate: c.req.query('date'),
     doIds: (c.req.query('doIds') ?? '').split(',').filter(Boolean),
+    part: c.req.query('part'),
+    parts: c.req.query('parts'),
   });
   if (!parsed.ok) return c.json({ error: 'invalid_sheet', message: parsed.message }, 400);
 
@@ -71,6 +73,8 @@ tripScanToken.get('/region-day-scan-token', async (c) => {
     region: c.req.query('region'),
     deliveryDate: c.req.query('date'),
     doIds: (c.req.query('doIds') ?? '').split(',').filter(Boolean),
+    part: c.req.query('part'),
+    parts: c.req.query('parts'),
   });
   if (!parsed.ok) return c.json({ error: 'invalid_sheet', message: parsed.message }, 400);
 

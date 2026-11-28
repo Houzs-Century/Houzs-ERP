@@ -101,12 +101,16 @@ export function markSheetLoaded(sb: Db, sheet: ResolvedLorryDayScan, now: string
   return stampOnce(sb, sheet, 'loaded_at', now);
 }
 
-/** One lorry's or region's scan times for a day, for the office's Packing Lists tab. */
+/** One lorry's or region's scan times for a day, for the office's Packing Lists tab. A sheet
+ *  split into parts (over 60 DOs) has a time only once every part has it; `parts_*` say how far. */
 export type PackingScanStatus = {
   kind: 'lorry' | 'region';
   key: string;
   prepared_at: string | null;
   loaded_at: string | null;
+  parts_total: number;
+  parts_prepared: number;
+  parts_loaded: number;
 };
 
 export type PackingScanSetRow = {
@@ -116,34 +120,63 @@ export type PackingScanSetRow = {
   prepared_at: string | null;
   loaded_at: string | null;
   qr_revoked_at: string | null;
+  part_no: number | null;
+  part_count: number | null;
+  created_at: string | null;
 };
 
 const earlier = (a: string | null, b: string | null) => (!a ? b : !b ? a : Date.parse(b) < Date.parse(a) ? b : a);
 const later = (a: string | null, b: string | null) => (!a ? b : !b ? a : Date.parse(b) > Date.parse(a) ? b : a);
 
+const printedAt = (r: PackingScanSetRow) => (r.created_at ? Date.parse(r.created_at) || 0 : 0);
+const partsOf = (r: PackingScanSetRow) => (r.part_count && r.part_count > 1 ? r.part_count : 1);
+
 /**
  * PURE. Every printed sheet of a day folded to one line per lorry (key = normalised
- * plate) and per region (key = region key). A lorry re-printed with a different DO set
- * has several sheets: it reports the earliest prepared time and the latest loaded time.
- * Revoked sheets are ignored.
+ * plate) and per region (key = region key). Revoked sheets are ignored.
+ * The newest print decides the shape: a whole sheet, or N parts. Re-prints of the same
+ * shape fold together, each part (or the whole sheet) reporting its earliest prepared and
+ * latest loaded time. The line's time is shown only when every part has one, and is then
+ * the last part's time: the lorry is prepared when its last part is.
  */
 export function aggregatePackingScanStatus(rows: readonly PackingScanSetRow[]): PackingScanStatus[] {
-  const out = new Map<string, PackingScanStatus>();
+  const groups = new Map<string, { kind: 'lorry' | 'region'; key: string; rows: PackingScanSetRow[] }>();
   for (const r of rows) {
     if (r.qr_revoked_at) continue;
     const kind = r.sheet_kind === 'region' ? 'region' : 'lorry';
     const key = kind === 'region' ? String(r.region ?? '').trim() : normalizePlate(r.lorry_plate);
     if (!key) continue;
     const id = `${kind}:${key}`;
-    const prev = out.get(id);
-    out.set(id, {
-      kind,
-      key,
-      prepared_at: earlier(prev?.prepared_at ?? null, r.prepared_at ?? null),
-      loaded_at: later(prev?.loaded_at ?? null, r.loaded_at ?? null),
+    const g = groups.get(id) ?? { kind, key, rows: [] };
+    g.rows.push(r);
+    groups.set(id, g);
+  }
+  const out: PackingScanStatus[] = [];
+  for (const g of groups.values()) {
+    const newest = g.rows.reduce((a, b) => (printedAt(b) > printedAt(a) ? b : a));
+    const total = partsOf(newest);
+    const parts = new Map<number, { prepared: string | null; loaded: string | null }>();
+    for (const r of g.rows) {
+      if (partsOf(r) !== total) continue;
+      const no = total === 1 ? 1 : r.part_no ?? 0;
+      if (no < 1 || no > total) continue;
+      const prev = parts.get(no);
+      parts.set(no, { prepared: earlier(prev?.prepared ?? null, r.prepared_at ?? null), loaded: later(prev?.loaded ?? null, r.loaded_at ?? null) });
+    }
+    const done = [...parts.values()];
+    const prepared = done.filter((p) => p.prepared);
+    const loaded = done.filter((p) => p.loaded);
+    out.push({
+      kind: g.kind,
+      key: g.key,
+      prepared_at: prepared.length === total ? prepared.reduce<string | null>((t, p) => later(t, p.prepared), null) : null,
+      loaded_at: loaded.length === total ? loaded.reduce<string | null>((t, p) => later(t, p.loaded), null) : null,
+      parts_total: total,
+      parts_prepared: prepared.length,
+      parts_loaded: loaded.length,
     });
   }
-  return [...out.values()];
+  return out;
 }
 
 export type PackingScanStatusResult = { status: 'ok'; sheets: PackingScanStatus[] } | { status: 'read_failed' };
@@ -152,7 +185,7 @@ export type PackingScanStatusResult = { status: 'ok'; sheets: PackingScanStatus[
 export async function loadPackingScanStatus(sb: Db, companyId: number, date: string): Promise<PackingScanStatusResult> {
   const { data, error } = await scopeToCompanyId(
     sb.from('packing_scan_sets')
-      .select('sheet_kind, lorry_plate, region, prepared_at, loaded_at, qr_revoked_at')
+      .select('sheet_kind, lorry_plate, region, prepared_at, loaded_at, qr_revoked_at, part_no, part_count, created_at')
       .eq('delivery_date', date),
     companyId,
   );

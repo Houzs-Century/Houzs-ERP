@@ -19,14 +19,34 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** At most this many DOs on one printed sheet (the public scan's basket cap). */
 export const LORRY_DAY_MAX_DOS = 60;
 
-export type LorryDaySheetInput = { lorryPlate: string; deliveryDate: string; doIds: string[] };
+/** Which part of a split sheet (over LORRY_DAY_MAX_DOS DOs) was printed; null for a whole sheet. */
+export type SheetPart = { no: number; count: number };
+
+/** Most parts one sheet can be split into (the migration's CHECK). */
+export const MAX_SHEET_PARTS = 50;
+
+export type LorryDaySheetInput = { lorryPlate: string; deliveryDate: string; doIds: string[]; part: SheetPart | null };
 
 /** A sheet printed per Delivery Planning region per delivery day (no lorry check on its scan). */
-export type RegionDaySheetInput = { region: string; deliveryDate: string; doIds: string[] };
+export type RegionDaySheetInput = { region: string; deliveryDate: string; doIds: string[]; part: SheetPart | null };
 
-type DayAndDos = { ok: true; deliveryDate: string; doIds: string[] } | { ok: false; message: string };
+type DayAndDos = { ok: true; deliveryDate: string; doIds: string[]; part: SheetPart | null } | { ok: false; message: string };
 
-function parseDayAndDos(b: { deliveryDate?: unknown; doIds?: unknown }): DayAndDos {
+const PART_RE = /^\d{1,2}$/;
+
+function parsePart(b: { part?: unknown; parts?: unknown }): { ok: true; part: SheetPart | null } | { ok: false; message: string } {
+  const rawNo = typeof b.part === 'string' ? b.part.trim() : b.part === undefined ? '' : String(b.part);
+  const rawCount = typeof b.parts === 'string' ? b.parts.trim() : b.parts === undefined ? '' : String(b.parts);
+  if (!rawNo && !rawCount) return { ok: true, part: null };
+  const bad = { ok: false as const, message: 'The part number of this packing list is not valid.' };
+  if (!PART_RE.test(rawNo) || !PART_RE.test(rawCount)) return bad;
+  const no = Number(rawNo);
+  const count = Number(rawCount);
+  if (count < 2 || count > MAX_SHEET_PARTS || no < 1 || no > count) return bad;
+  return { ok: true, part: { no, count } };
+}
+
+function parseDayAndDos(b: { deliveryDate?: unknown; doIds?: unknown; part?: unknown; parts?: unknown }): DayAndDos {
   const deliveryDate = typeof b.deliveryDate === 'string' ? b.deliveryDate.trim() : '';
   if (!DATE_RE.test(deliveryDate) || Number.isNaN(Date.parse(`${deliveryDate}T00:00:00Z`))) {
     return { ok: false, message: 'The delivery date is not a valid date.' };
@@ -42,7 +62,9 @@ function parseDayAndDos(b: { deliveryDate?: unknown; doIds?: unknown }): DayAndD
   if (doIds.length > LORRY_DAY_MAX_DOS) {
     return { ok: false, message: `A packing list QR can cover up to ${LORRY_DAY_MAX_DOS} delivery orders.` };
   }
-  return { ok: true, deliveryDate, doIds };
+  const part = parsePart(b);
+  if (!part.ok) return part;
+  return { ok: true, deliveryDate, doIds, part: part.part };
 }
 
 /** PURE. The request body, checked: a plate, a YYYY-MM-DD date, 1..60 distinct uuids
@@ -50,14 +72,14 @@ function parseDayAndDos(b: { deliveryDate?: unknown; doIds?: unknown }): DayAndD
 export function parseLorryDaySheet(raw: unknown):
   | { ok: true; sheet: LorryDaySheetInput }
   | { ok: false; message: string } {
-  const b = (raw ?? {}) as { lorryPlate?: unknown; deliveryDate?: unknown; doIds?: unknown };
+  const b = (raw ?? {}) as { lorryPlate?: unknown; deliveryDate?: unknown; doIds?: unknown; part?: unknown; parts?: unknown };
   const lorryPlate = typeof b.lorryPlate === 'string' ? b.lorryPlate.trim() : '';
   if (!lorryPlate || lorryPlate.length > 40 || !normalizePlate(lorryPlate)) {
     return { ok: false, message: 'A lorry plate is needed to print this packing list QR.' };
   }
   const rest = parseDayAndDos(b);
   if (!rest.ok) return rest;
-  return { ok: true, sheet: { lorryPlate, deliveryDate: rest.deliveryDate, doIds: rest.doIds } };
+  return { ok: true, sheet: { lorryPlate, deliveryDate: rest.deliveryDate, doIds: rest.doIds, part: rest.part } };
 }
 
 /** PURE. The region sheet's request, checked like the lorry one: a region key (1..60
@@ -65,14 +87,14 @@ export function parseLorryDaySheet(raw: unknown):
 export function parseRegionDaySheet(raw: unknown):
   | { ok: true; sheet: RegionDaySheetInput }
   | { ok: false; message: string } {
-  const b = (raw ?? {}) as { region?: unknown; deliveryDate?: unknown; doIds?: unknown };
+  const b = (raw ?? {}) as { region?: unknown; deliveryDate?: unknown; doIds?: unknown; part?: unknown; parts?: unknown };
   const region = typeof b.region === 'string' ? b.region.trim() : '';
   if (!region || region.length > 60) {
     return { ok: false, message: 'A region is needed to print this packing list QR.' };
   }
   const rest = parseDayAndDos(b);
   if (!rest.ok) return rest;
-  return { ok: true, sheet: { region, deliveryDate: rest.deliveryDate, doIds: rest.doIds } };
+  return { ok: true, sheet: { region, deliveryDate: rest.deliveryDate, doIds: rest.doIds, part: rest.part } };
 }
 
 const sameSet = (a: readonly string[], b: readonly string[]) =>
@@ -90,7 +112,7 @@ export type PackingSheetKey = { kind: 'lorry'; lorryPlate: string } | { kind: 'r
  * Create-or-reuse the token for one printed sheet. AUTHENTICATED CALLERS ONLY.
  * Every DO id must be a delivery order of `companyId`, or nothing is minted and the
  * missing / other-company ids are returned. The same company + sheet key + date + DO
- * set returns the existing live token, so a re-print carries the same QR.
+ * set + part returns the existing live token, so a re-print carries the same QR.
  */
 export async function mintPackingScanToken(
   sb: Db,
@@ -98,6 +120,7 @@ export async function mintPackingScanToken(
   key: PackingSheetKey,
   deliveryDate: string,
   doIds: string[],
+  part: SheetPart | null,
   createdBy: string | null,
 ): Promise<MintedLorryDayToken> {
   const { data: own, error: ownErr } = await scopeToCompanyId(
@@ -109,14 +132,15 @@ export async function mintPackingScanToken(
   const foreign = doIds.filter((id) => !mine.has(id));
   if (foreign.length > 0) return { status: 'foreign', doIds: foreign };
 
-  const sameDay = sb.from('packing_scan_sets').select('qr_token, do_ids').eq('delivery_date', deliveryDate);
+  const sameDay = sb.from('packing_scan_sets').select('qr_token, do_ids, part_no, part_count').eq('delivery_date', deliveryDate);
   const sameSheet = key.kind === 'lorry'
     ? sameDay.eq('sheet_kind', 'lorry').eq('lorry_plate', key.lorryPlate)
     : sameDay.eq('sheet_kind', 'region').eq('region', key.region);
   const { data: existing, error: exErr } = await scopeToCompanyId(sameSheet.is('qr_revoked_at', null), companyId);
   if (exErr) return { status: 'read_failed' };
-  const reuse = (existing as Array<{ qr_token: string; do_ids: string[] | null }>)
-    .find((r) => sameSet((r.do_ids ?? []).map((x) => String(x).toLowerCase()), doIds));
+  const reuse = (existing as Array<{ qr_token: string; do_ids: string[] | null; part_no: number | null; part_count: number | null }>)
+    .find((r) => sameSet((r.do_ids ?? []).map((x) => String(x).toLowerCase()), doIds)
+      && (r.part_no ?? null) === (part?.no ?? null) && (r.part_count ?? null) === (part?.count ?? null));
   if (reuse) return { status: 'ok', token: reuse.qr_token };
 
   const token = newDoScanToken();
@@ -128,6 +152,8 @@ export async function mintPackingScanToken(
     delivery_date: deliveryDate,
     do_ids: doIds,
     qr_token: token,
+    part_no: part?.no ?? null,
+    part_count: part?.count ?? null,
     created_by: createdBy,
   });
   if (insErr) return { status: 'read_failed' };
@@ -141,7 +167,7 @@ export function mintLorryDayScanToken(
   sheet: LorryDaySheetInput,
   createdBy: string | null,
 ): Promise<MintedLorryDayToken> {
-  return mintPackingScanToken(sb, companyId, { kind: 'lorry', lorryPlate: sheet.lorryPlate }, sheet.deliveryDate, sheet.doIds, createdBy);
+  return mintPackingScanToken(sb, companyId, { kind: 'lorry', lorryPlate: sheet.lorryPlate }, sheet.deliveryDate, sheet.doIds, sheet.part, createdBy);
 }
 
 /** The region sheet's mint (see mintPackingScanToken). */
@@ -151,7 +177,7 @@ export function mintRegionDayScanToken(
   sheet: RegionDaySheetInput,
   createdBy: string | null,
 ): Promise<MintedLorryDayToken> {
-  return mintPackingScanToken(sb, companyId, { kind: 'region', region: sheet.region }, sheet.deliveryDate, sheet.doIds, createdBy);
+  return mintPackingScanToken(sb, companyId, { kind: 'region', region: sheet.region }, sheet.deliveryDate, sheet.doIds, sheet.part, createdBy);
 }
 
 /** The printed sheet a token resolved to. `companyId` is the row's own. */
@@ -165,7 +191,14 @@ export type ResolvedLorryDayScan = {
   doIds: string[];
   preparedAt: string | null;
   loadedAt: string | null;
+  part: SheetPart | null;
 };
+
+/** PURE. "Lorry VJK 8821", "Region KL · Part 1 of 2": how the scan page names a sheet. */
+export function packingSheetTitle(set: Pick<ResolvedLorryDayScan, 'sheetKind' | 'lorryPlate' | 'region' | 'part'>): string {
+  const base = set.sheetKind === 'region' ? `Region ${set.region ?? ''}` : `Lorry ${set.lorryPlate ?? ''}`;
+  return set.part ? `${base} · Part ${set.part.no} of ${set.part.count}` : base;
+}
 
 export type LorryDayMember = TripScanMember & { movedReason: string | null };
 

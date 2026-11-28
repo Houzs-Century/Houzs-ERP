@@ -4,7 +4,8 @@
    usePackingRegions / usePackingPrint). */
 import { DateField } from "../vendor/scm/components/DateField";
 import { useState } from "react";
-import { packingScanTimesFor, usePackingLists, usePackingRegions, usePackingScanStatus, PACKING_QR_MAX_DOS, type PackingScanStatus } from "../vendor/scm/lib/packing-list-queries";
+import { packingScanTimesFor, scanPartsLine, usePackingLists, usePackingRegions, usePackingScanStatus, type PackingScanStatus } from "../vendor/scm/lib/packing-list-queries";
+import { partCountFor } from "../vendor/scm/lib/packing-list-split";
 import { usePackingPrint } from "../vendor/scm/components/usePackingPrint";
 import { fmtScanTime, regionLorrySummary, shiftIsoDate } from "../vendor/scm/lib/packing-list-model";
 import { fmtDate, todayMY } from "../../../shared/src/vendor/shared/format";
@@ -19,20 +20,23 @@ const btn = (on: boolean) => ({
   background: on ? "var(--hz-c-primary)" : "var(--hz-c-surface)", color: on ? "#fff" : "var(--hz-c-primary)",
 }) as const;
 
-/** "Prepared 09:42 · Loaded —" for one lorry or region on the phone card. */
-export function scanTimesLine(t: PackingScanStatus | null, date: string, doCount: number): string {
-  if (!t && doCount > PACKING_QR_MAX_DOS) return `No QR (over ${PACKING_QR_MAX_DOS} DOs)`;
-  return `Prepared ${fmtScanTime(t?.prepared_at ?? null, date)} · Loaded ${fmtScanTime(t?.loaded_at ?? null, date)}`;
+/** "Prepared 09:42 · Loaded —" for one lorry or region on the phone card; a sheet printed in
+ *  parts (over 60 DOs) reads "1 of 2 parts" until every part is scanned. */
+export function scanTimesLine(t: PackingScanStatus | null, date: string, expectedParts: number): string {
+  const one = (what: 'prepared' | 'loaded') => {
+    const iso = what === 'loaded' ? t?.loaded_at ?? null : t?.prepared_at ?? null;
+    return iso ? fmtScanTime(iso, date) : scanPartsLine(t, what, expectedParts) ?? fmtScanTime(null, date);
+  };
+  return `Prepared ${one('prepared')} · Loaded ${one('loaded')}`;
 }
 
 export function MobilePackingLists() {
   const today = todayMY();
   const [date, setDate] = useState(today);
   const [byRegion, setByRegion] = useState(false);
-  const [unassignedOnly, setUnassignedOnly] = useState(false);
   const query = usePackingLists({ date, warehouseId: null });
   const lists = query.data?.lists ?? [];
-  const regionQuery = usePackingRegions({ date, unassignedOnly, enabled: byRegion });
+  const regionQuery = usePackingRegions({ date, unassignedOnly: false, enabled: byRegion });
   const regions = regionQuery.data?.regions ?? [];
   const print = usePackingPrint(date);
   const scanSheets = usePackingScanStatus(date).data?.sheets;
@@ -64,12 +68,6 @@ export function MobilePackingLists() {
         <button type="button" style={{ ...btn(!byRegion), flex: 1 }} aria-pressed={!byRegion} onClick={() => setByRegion(false)}>By lorry</button>
         <button type="button" style={{ ...btn(byRegion), flex: 1 }} aria-pressed={byRegion} onClick={() => setByRegion(true)}>By region</button>
       </div>
-      {byRegion && (
-        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginTop: 8, cursor: "pointer" }}>
-          <input type="checkbox" checked={unassignedOnly} onChange={(e) => setUnassignedOnly(e.target.checked)} style={{ width: 18, height: 18 }} />
-          Only DOs not on a lorry yet
-        </label>
-      )}
       {byRegion ? (
         <button
           type="button"
@@ -96,7 +94,7 @@ export function MobilePackingLists() {
           {regionQuery.error && <p role="alert" style={err}>Could not load the delivery orders by region for this day.</p>}
           {regionQuery.data && nr === 0 && (
             <p style={{ fontSize: 12, margin: "8px 0 0" }}>
-              {unassignedOnly ? "Every delivery order on this day is already on a lorry." : "No delivery orders are due for delivery on this day."}
+              No delivery orders are due for delivery on this day.
             </p>
           )}
           {regions.map((r) => (
@@ -105,7 +103,7 @@ export function MobilePackingLists() {
                 <div style={{ fontWeight: 700 }}>{r.label}</div>
                 <div style={muted}>{`${r.do_count} DO · ${r.customer_count} ${r.customer_count === 1 ? "customer" : "customers"} · ${r.units} ${r.units === 1 ? "unit" : "units"}`}</div>
                 <div style={{ ...muted, fontFamily: "ui-monospace, monospace" }}>{regionLorrySummary(r)}</div>
-                <div style={muted}>{scanTimesLine(packingScanTimesFor(scanSheets, "region", r.region), date, r.do_count)}</div>
+                <div style={muted}>{scanTimesLine(packingScanTimesFor(scanSheets, "region", r.region), date, partCountFor(r.do_count))}</div>
               </div>
               <button type="button" style={btn(false)} disabled={print.busy} onClick={() => print.regions([r], "preview")}>Print</button>
             </div>
@@ -123,7 +121,7 @@ export function MobilePackingLists() {
             <div style={muted}>
               {[l.driver_name, `${l.stop_count} ${l.stop_count === 1 ? "customer" : "customers"}`, `${l.units} ${l.units === 1 ? "unit" : "units"}`].filter(Boolean).join(" · ")}
             </div>
-            <div style={muted}>{scanTimesLine(packingScanTimesFor(scanSheets, "lorry", l.lorry_plate), date, l.do_count)}</div>
+            <div style={muted}>{scanTimesLine(packingScanTimesFor(scanSheets, "lorry", l.lorry_plate), date, l.source === "trip" ? 1 : partCountFor(l.do_count))}</div>
           </div>
           <button type="button" style={btn(false)} disabled={print.busy} onClick={() => print.one(l, "preview")}>Print</button>
         </div>

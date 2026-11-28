@@ -53,6 +53,7 @@ import {
   type PickRow, type PickSection,
 } from './packing-list-model';
 import type { PackingItem, PackingListRow, PackingRegionRow, PackingStop } from './packing-list-queries';
+import { partLabel, splitPackingList, splitPackingRegion, type SheetPart } from './packing-list-split';
 import { getBrandingLogoCache, type BrandingLogo } from '../../../lib/branding';
 import { drawQrIntoPdf } from './pdf-qr';
 import { PDF_COMPRESS } from '../../../../../shared/src/vendor/scm/lib/pdf-options';
@@ -69,6 +70,8 @@ const CONT_TOP_A = RUNNING_RULE_Y + 4;
 const CONT_TOP_B = RUNNING_RULE_Y + 10;
 
 export const SCAN_CAPTION = 'SCAN: PREPARED, THEN LOADED';
+
+const partSuffix = (part: SheetPart | null) => (part ? ` · ${partLabel(part)}` : '');
 
 const qtyText = (n: number): string => String(n);
 const unitsLabel = (n: number): string => `${qtyText(n)} ${n === 1 ? 'unit' : 'units'}`;
@@ -657,7 +660,7 @@ export async function renderPackingListInto(
   doc: Doc,
   autoTable: AutoTable,
   list: PackingListRow,
-  opts: { date: string; runUrl: string | null; logo: BrandingLogo | null },
+  opts: { date: string; runUrl: string | null; logo: BrandingLogo | null; part: SheetPart | null },
 ): Promise<void> {
   await ensurePdfCjkFont(doc, [list]);
   const allItems = list.stops.flatMap((s) => s.items);
@@ -670,7 +673,7 @@ export async function renderPackingListInto(
   const dateText = fmtDocDate(dateIso);
 
   const ruleY = drawSlimHeader(doc, {
-    docNoText: `Lorry : ${plate}`,
+    docNoText: `Lorry : ${plate}${partSuffix(opts.part)}`,
     subLine: `Delivery Date ${dateText}${day ? ` (${day})` : ''}`,
     qr: opts.runUrl ? { url: opts.runUrl, caption: SCAN_CAPTION } : null,
     logo: opts.logo,
@@ -693,8 +696,8 @@ export async function renderPackingListInto(
   for (let p = startPage; p <= pageCount; p += 1) {
     doc.setPage(p);
     const pageNo = p - startPage + 1;
-    const footRight = `${plate} · ${dateText} · Page : ${pageNo} of ${total}`;
-    if (p > startPage) drawRunningHeader(doc, `PACKING LIST · Lorry : ${plate}`, [dateText, ...crew]);
+    const footRight = `${plate}${partSuffix(opts.part)} · ${dateText} · Page : ${pageNo} of ${total}`;
+    if (p > startPage) drawRunningHeader(doc, `PACKING LIST · Lorry : ${plate}${partSuffix(opts.part)}`, [dateText, ...crew]);
     if (p === pageCount) {
       drawSignatureClosing(doc, {
         titles: ['Picked By (Warehouse)', 'Loaded By (Helper)', 'Driver Signature'],
@@ -734,6 +737,7 @@ async function newDoc(): Promise<{ doc: Doc; autoTable: AutoTable }> {
 export async function runUrlFor(
   list: Pick<PackingListRow, 'trip_id' | 'source' | 'lorry_plate' | 'trip_date' | 'stops'>,
   date: string,
+  part: SheetPart | null,
 ): Promise<string | null> {
   if (typeof window === 'undefined') return null;
   const arm = await import('./packing-scan-token-arm');
@@ -741,22 +745,32 @@ export async function runUrlFor(
   const plate = (list.lorry_plate ?? '').trim();
   const doIds = loadingOrder(list.stops).map((s) => s.stop.do_id).filter((id): id is string => !!id);
   if (!plate || doIds.length === 0) return null;
-  const token = await arm.armLorryDayScanToken({ lorryPlate: plate, deliveryDate: list.trip_date ?? date, doIds });
+  const token = await arm.armLorryDayScanToken({ lorryPlate: plate, deliveryDate: list.trip_date ?? date, doIds, part });
   return packingRunUrl(window.location.origin, token);
 }
 
 /** Where a region sheet's QR points: a region-day token holding the DOs printed on it,
- *  in sheet order. Null off the browser, when arming fails, or over 60 DOs. */
+ *  in sheet order. Null off the browser or when arming fails. */
 export async function regionRunUrlFor(
   region: { region: string; dos: ReadonlyArray<{ do_id: string | null }> },
   date: string,
+  part: SheetPart | null,
 ): Promise<string | null> {
   if (typeof window === 'undefined') return null;
   const doIds = region.dos.map((d) => d.do_id).filter((id): id is string => !!id);
   if (!region.region.trim() || doIds.length === 0) return null;
   const arm = await import('./packing-scan-token-arm');
-  const token = await arm.armRegionDayScanToken({ region: region.region, deliveryDate: date, doIds });
+  const token = await arm.armRegionDayScanToken({ region: region.region, deliveryDate: date, doIds, part });
   return packingRunUrl(window.location.origin, token);
+}
+
+async function renderListPieces(doc: Doc, autoTable: AutoTable, list: PackingListRow, date: string): Promise<void> {
+  const pieces = splitPackingList(list);
+  for (let i = 0; i < pieces.length; i += 1) {
+    if (i > 0) doc.addPage();
+    const { sheet, part } = pieces[i]!;
+    await renderPackingListInto(doc, autoTable, sheet, { date, runUrl: await runUrlFor(sheet, date, part), logo: null, part });
+  }
 }
 
 /** One lorry's packing list -> its own file / print job / preview tab. */
@@ -765,7 +779,7 @@ export async function generatePackingListPdf(
   opts: { date: string; action: PdfAction },
 ): Promise<void> {
   const { doc, autoTable } = await newDoc();
-  await renderPackingListInto(doc, autoTable, list, { date: opts.date, runUrl: await runUrlFor(list, opts.date), logo: null });
+  await renderListPieces(doc, autoTable, list, opts.date);
   deliverPdf(doc, packingListFileName(list, list.trip_date ?? opts.date), opts.action);
 }
 
@@ -778,8 +792,7 @@ export async function generatePackingListsPdf(
   const { doc, autoTable } = await newDoc();
   for (let i = 0; i < lists.length; i += 1) {
     if (i > 0) doc.addPage();
-    const list = lists[i]!;
-    await renderPackingListInto(doc, autoTable, list, { date: opts.date, runUrl: await runUrlFor(list, opts.date), logo: null });
+    await renderListPieces(doc, autoTable, lists[i]!, opts.date);
   }
   deliverPdf(doc, `packing-lists-${opts.date}.pdf`, opts.action);
 }
@@ -842,7 +855,7 @@ export async function renderPackingRegionInto(
   doc: Doc,
   autoTable: AutoTable,
   region: PackingRegionRow,
-  opts: { date: string; runUrl: string | null; logo: BrandingLogo | null },
+  opts: { date: string; runUrl: string | null; logo: BrandingLogo | null; part: SheetPart | null },
 ): Promise<void> {
   await ensurePdfCjkFont(doc, [region]);
   const fabric = await loadCustomerFabricMaps(region.dos.flatMap((d) => d.items));
@@ -852,7 +865,7 @@ export async function renderPackingRegionInto(
   const dateText = fmtDocDate(opts.date);
 
   const ruleY = drawSlimHeader(doc, {
-    docNoText: `Region : ${label}`,
+    docNoText: `Region : ${label}${partSuffix(opts.part)}`,
     subLine: `Delivery Date ${dateText}${day ? ` (${day})` : ''}`,
     qr: opts.runUrl ? { url: opts.runUrl, caption: SCAN_CAPTION } : null,
     logo: opts.logo,
@@ -869,8 +882,8 @@ export async function renderPackingRegionInto(
   const total = pageCount - startPage + 1;
   for (let p = startPage; p <= pageCount; p += 1) {
     doc.setPage(p);
-    const footRight = `${label} · ${dateText} · Page : ${p - startPage + 1} of ${total}`;
-    if (p > startPage) drawRunningHeader(doc, `PACKING LIST · Region : ${label}`, [dateText, `${region.do_count} DO`]);
+    const footRight = `${label}${partSuffix(opts.part)} · ${dateText} · Page : ${p - startPage + 1} of ${total}`;
+    if (p > startPage) drawRunningHeader(doc, `PACKING LIST · Region : ${label}${partSuffix(opts.part)}`, [dateText, `${region.do_count} DO`]);
     if (p === pageCount) {
       drawSignatureClosing(doc, {
         titles: ['Picked By (Warehouse)', 'Checked By'],
@@ -893,9 +906,12 @@ export async function generatePackingRegionsPdf(
   if (regions.length === 0) return;
   const { doc, autoTable } = await newDoc();
   for (let i = 0; i < regions.length; i += 1) {
-    if (i > 0) doc.addPage();
-    const region = regions[i]!;
-    await renderPackingRegionInto(doc, autoTable, region, { date: opts.date, runUrl: await regionRunUrlFor(region, opts.date), logo: null });
+    const pieces = splitPackingRegion(regions[i]!);
+    for (let j = 0; j < pieces.length; j += 1) {
+      if (i > 0 || j > 0) doc.addPage();
+      const { sheet, part } = pieces[j]!;
+      await renderPackingRegionInto(doc, autoTable, sheet, { date: opts.date, runUrl: await regionRunUrlFor(sheet, opts.date, part), logo: null, part });
+    }
   }
   const name = regions.length === 1 ? packingRegionFileName(regions[0]!, opts.date) : `packing-regions-${opts.date}.pdf`;
   deliverPdf(doc, name, opts.action);

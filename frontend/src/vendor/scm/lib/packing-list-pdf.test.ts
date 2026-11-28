@@ -92,7 +92,7 @@ async function render(l: PackingListRow, runUrl: string | null = null) {
   ]);
   const doc = new jsPDF({ unit: 'mm', format: 'letter' });
   const spans = capture(doc);
-  await renderPackingListInto(doc, autoTable, l, { date: '2026-11-28', runUrl, logo: null });
+  await renderPackingListInto(doc, autoTable, l, { date: '2026-11-28', runUrl, logo: null, part: null });
   return { doc, spans };
 }
 
@@ -292,7 +292,7 @@ describe('the stress lorry — nothing overlaps, clips or runs off the page', ()
     ]);
     const doc = new jsPDF({ unit: 'mm', format: 'letter' });
     const spans = capture(doc);
-    await renderPackingListInto(doc, autoTable, SMALL, { date: '2026-11-28', runUrl: `https://erp.example.test/d/${'e'.repeat(10)}`, logo: null });
+    await renderPackingListInto(doc, autoTable, SMALL, { date: '2026-11-28', runUrl: `https://erp.example.test/d/${'e'.repeat(10)}`, logo: null, part: null });
     expect(spans.some((s) => s.text === 'PACKING LIST')).toBe(true);
     expect(spans.some((s) => s.text.includes('2990 HOME'))).toBe(true);
     expect(spans.some((s) => s.text.includes('Menara SUEZCAP'))).toBe(false);
@@ -354,7 +354,7 @@ describe('print helpers', () => {
     const lists = [SMALL, { ...SMALL, trip_id: 't2', lorry_plate: 'ABC 999' }];
     for (let i = 0; i < lists.length; i += 1) {
       if (i > 0) doc.addPage();
-      await renderPackingListInto(doc, autoTable, lists[i]!, { date: '2026-11-28', runUrl: null, logo: null });
+      await renderPackingListInto(doc, autoTable, lists[i]!, { date: '2026-11-28', runUrl: null, logo: null, part: null });
     }
     const second = spans.find((s) => s.text === 'Lorry : ABC 999')!;
     const firstLorryPages = spans.filter((s) => s.text.startsWith('VJK 8821 · 2026/11/28 · Page')).map((s) => s.page);
@@ -369,9 +369,9 @@ test.skipIf(!process.env.PL_SAMPLE_OUT)('writes a sample PDF', async () => {
     import('jspdf'), import('jspdf-autotable'), import('./packing-list-pdf'),
   ]);
   const doc = new jsPDF({ unit: 'mm', format: 'letter' });
-  await renderPackingListInto(doc, autoTable, SMALL, { date: '2026-11-28', runUrl: `https://erp.example.test/d/${'c'.repeat(10)}`, logo: null });
+  await renderPackingListInto(doc, autoTable, SMALL, { date: '2026-11-28', runUrl: `https://erp.example.test/d/${'c'.repeat(10)}`, logo: null, part: null });
   doc.addPage();
-  await renderPackingListInto(doc, autoTable, stressList(), { date: '2026-11-28', runUrl: `https://erp.example.test/d/${'d'.repeat(10)}`, logo: null });
+  await renderPackingListInto(doc, autoTable, stressList(), { date: '2026-11-28', runUrl: `https://erp.example.test/d/${'d'.repeat(10)}`, logo: null, part: null });
   writeFileSync(process.env.PL_SAMPLE_OUT as string, Buffer.from(doc.output('arraybuffer')));
 }, 60_000);
 
@@ -416,7 +416,7 @@ test.skipIf(!process.env.PL_PO_RACK_SAMPLE_OUT)('writes the worked-out PO / Rack
     import('jspdf'), import('jspdf-autotable'), import('./packing-list-pdf'),
   ]);
   const doc = new jsPDF({ unit: 'mm', format: 'letter' });
-  await renderPackingListInto(doc, autoTable, WORKED, { date: '2026-11-28', runUrl: null, logo: null });
+  await renderPackingListInto(doc, autoTable, WORKED, { date: '2026-11-28', runUrl: null, logo: null, part: null });
   doc.addPage();
   await renderPackingRegionInto(doc, autoTable, {
     region: 'KL_SEL', label: 'KL/SEL', do_count: 2, customer_count: 2, units: 5, lorry_plates: ['VPC9058'], not_arranged: 0,
@@ -426,6 +426,6 @@ test.skipIf(!process.env.PL_PO_RACK_SAMPLE_OUT)('writes the worked-out PO / Rack
       lorry_plate: 'VPC9058', driver_name: 'Ah Meng', driver_phone: null, helper_1_name: null, helper_2_name: null,
       trip_no: null, trip_stop_no: null, state: 'Selangor', country: 'Malaysia', units: s.units, items: s.items,
     })),
-  }, { date: '2026-11-28', runUrl: null, logo: null });
+  }, { date: '2026-11-28', runUrl: null, logo: null, part: null });
   writeFileSync(process.env.PL_PO_RACK_SAMPLE_OUT as string, Buffer.from(doc.output('arraybuffer')));
 }, 60_000);

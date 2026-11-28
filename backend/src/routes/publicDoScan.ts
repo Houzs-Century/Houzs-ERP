@@ -110,6 +110,7 @@ import {
 } from '../scm/lib/do-scan-token';
 import {
   loadLorryDayMembers,
+  packingSheetTitle,
   type LorryDayMember,
   type ResolvedLorryDayScan,
 } from '../scm/lib/lorry-day-scan';
@@ -295,7 +296,7 @@ function lorryDaySheet(set: ResolvedLorryDayScan, members: LorryDayMember[]): Sc
   const isRegion = set.sheetKind === 'region';
   return {
     kind: isRegion ? 'region_day' : 'lorry_day',
-    title: isRegion ? `Region ${set.region ?? ''}` : `Lorry ${set.lorryPlate ?? ''}`,
+    title: packingSheetTitle(set),
     region: isRegion ? set.region : null,
     twoStep: set,
     companyId: set.companyId,
@@ -717,7 +718,7 @@ publicDoScan.post('/:token/advance', async (c) => {
         ? { status: 'ok' as const, at: set.preparedAt ?? '' }
         : await markSheetPrepared(sb, set, new Date().toISOString());
       if (stamped.status === 'read_failed') return readFailed(c);
-      const title = set.sheetKind === 'region' ? `Region ${set.region ?? ''}` : `Lorry ${set.lorryPlate ?? ''}`;
+      const title = packingSheetTitle(set);
       return c.json({
         kind: set.sheetKind === 'region' ? 'region_day' : 'lorry_day',
         mode: 'prepare',
